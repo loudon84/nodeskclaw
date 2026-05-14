@@ -170,6 +170,11 @@ async def get_current_user(
         )
     user = await _get_user_by_token(credentials.credentials, db)
     _auth_actor.set(AuthActor("user", user.id, user.name))
+    _ensure_password_change_allowed(user)
+    return user
+
+
+def _ensure_password_change_allowed(user: User) -> None:
     if user.must_change_password:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -179,7 +184,6 @@ async def get_current_user(
                 "message": "请先修改密码",
             },
         )
-    return user
 
 
 async def get_current_user_unchecked(
@@ -238,10 +242,13 @@ async def get_current_user_or_agent(
 
     try:
         user = await _get_user_by_token(token, db)
+    except HTTPException as exc:
+        if exc.status_code != status.HTTP_401_UNAUTHORIZED:
+            raise
+    else:
         _auth_actor.set(AuthActor("user", user.id, user.name))
+        _ensure_password_change_allowed(user)
         return user
-    except HTTPException:
-        pass
 
     from app.models.instance import Instance
     result = await db.execute(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -22,6 +23,7 @@ _THINK_OPEN_RE = re.compile(r"<\s*(?:think(?:ing)?|thought|antthinking)\s*>", re
 _THINK_CLOSE_RE = re.compile(r"<\s*/\s*(?:think(?:ing)?|thought|antthinking)\s*>", re.I)
 
 _PREAMBLE_BUF_LIMIT = 2000
+_CALLBACK_RETRY_DELAYS = (0.5, 1.5)
 
 
 class HermesChannel:
@@ -70,6 +72,50 @@ class HermesChannel:
             return
 
         await self._stream_response(headers, payload, request_id, trace_id)
+
+
+    async def handle_learning_task(self, task: dict[str, Any]) -> None:
+        callback_url = str(task.get("callback_url") or "")
+        if not callback_url:
+            logger.warning("Hermes learning task missing callback_url")
+            return
+
+        try:
+            content = await self._complete_text(
+                [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are processing a NoDeskClaw skill gene task. "
+                            "Return only one JSON object. Do not use markdown unless it is inside JSON string values."
+                        ),
+                    },
+                    {"role": "user", "content": _build_learning_prompt(task)},
+                ],
+                session_id=f"learning:{task.get('task_id', '')}",
+            )
+            result = _extract_learning_result(task, content)
+        except Exception as exc:
+            logger.error("Hermes learning task failed: %s", exc)
+            result = _failed_learning_result(task, str(exc))
+
+        await _post_learning_callback(callback_url, result)
+
+    async def _complete_text(self, messages: list[dict[str, Any]], *, session_id: str) -> str:
+        headers = {"Content-Type": "application/json"}
+        if self._api_key:
+            headers["Authorization"] = f"Bearer {self._api_key}"
+        if session_id:
+            headers["X-Hermes-Session-Id"] = session_id
+
+        body = {"model": self._model, "messages": messages, "stream": False}
+        url = f"{self._hermes_base_url}/v1/chat/completions"
+        async with httpx.AsyncClient(timeout=httpx.Timeout(1800.0, connect=10.0)) as http:
+            response = await http.post(url, headers=headers, json=body)
+            if response.status_code != 200:
+                error_msg = _extract_error_message(response.status_code, response.content)
+                raise RuntimeError(error_msg)
+            return _extract_completion_text(response.json())
 
     async def _inject_context(self, headers: dict[str, str], payload: dict[str, Any]) -> None:
         body = dict(payload)
@@ -239,6 +285,169 @@ class _ThinkingPreambleFilter:
 
         return "".join(result)
 
+
+
+def _build_learning_prompt(task: dict[str, Any]) -> str:
+    mode = str(task.get("mode") or "learn")
+    if mode == "forget":
+        return _build_forget_prompt(task)
+    if mode == "create":
+        return _build_create_prompt(task)
+    return _build_learn_prompt(task)
+
+
+def _build_learn_prompt(task: dict[str, Any]) -> str:
+    gene_slug = str(task.get("gene_slug") or "")
+    gene_content = str(task.get("gene_content") or "")
+    force_deep = bool(task.get("force_deep_learn"))
+    prompt = f"[Gene Learning Task] task_id: {task.get('task_id')}\n\n"
+    prompt += f"Learn the gene \"{gene_slug}\".\n\nGene content:\n```\n{gene_content}\n```\n\n"
+    learning = task.get("learning")
+    if isinstance(learning, dict):
+        objectives = learning.get("objectives")
+        if isinstance(objectives, list) and objectives:
+            prompt += "Learning objectives:\n" + "\n".join(f"- {item}" for item in objectives) + "\n\n"
+        scenarios = learning.get("scenarios")
+        if isinstance(scenarios, list) and scenarios:
+            prompt += "Practice scenarios:\n"
+            for scenario in scenarios:
+                if isinstance(scenario, dict):
+                    prompt += f"- Scenario: {scenario.get('prompt')}\n  Context: {scenario.get('context') or 'N/A'}\n"
+            prompt += "\n"
+    if force_deep:
+        prompt += "You cannot choose direct_install. Produce a complete personalized SKILL.md with YAML frontmatter.\n\n"
+        decisions = '"learned" or "failed"'
+    else:
+        prompt += "Choose direct_install if the existing content is already complete; choose learned if you personalize it.\n\n"
+        decisions = '"direct_install", "learned", or "failed"'
+    prompt += f"Return only JSON: {{\"decision\": {decisions}, \"content\": \"SKILL.md when learned\", \"self_eval\": 0.0, \"reason\": \"...\"}}"
+    return prompt
+
+
+def _build_create_prompt(task: dict[str, Any]) -> str:
+    prompt = f"[Gene Creation Task] task_id: {task.get('task_id')}\n\n"
+    prompt += str(task.get("creation_prompt") or "Based on your work experience, create a new gene.") + "\n\n"
+    prompt += (
+        "Generate a complete gene package. Return only JSON: "
+        "{\"decision\": \"created\" or \"failed\", \"content\": \"SKILL.md content\", "
+        "\"self_eval\": 0.0, \"meta\": {\"gene_name\": \"...\", \"gene_slug\": \"...\", "
+        "\"gene_description\": \"...\", \"suggested_tags\": [\"...\"], \"suggested_category\": \"...\"}, "
+        "\"reason\": \"...\"}"
+    )
+    return prompt
+
+
+def _build_forget_prompt(task: dict[str, Any]) -> str:
+    prompt = f"[Gene Forgetting Task] task_id: {task.get('task_id')}\n\n"
+    prompt += f"Review whether to forget or simplify the gene \"{task.get('gene_slug') or ''}\".\n\n"
+    if task.get("gene_content"):
+        prompt += f"Current gene skill content:\n```\n{task.get('gene_content')}\n```\n\n"
+    if task.get("learning_output"):
+        prompt += f"Personalized learning output:\n```\n{task.get('learning_output')}\n```\n\n"
+    prompt += (
+        "Return only JSON: {\"decision\": \"forgotten\", \"simplified\", or \"forget_failed\", "
+        "\"content\": \"forgetting summary or simplified SKILL.md\", \"self_eval\": 0.0, \"reason\": \"...\"}"
+    )
+    return prompt
+
+
+def _extract_completion_text(body: dict[str, Any]) -> str:
+    choices = body.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return ""
+    first = choices[0]
+    if not isinstance(first, dict):
+        return ""
+    message = first.get("message")
+    if isinstance(message, dict):
+        content = message.get("content")
+        return content if isinstance(content, str) else ""
+    text = first.get("text")
+    return text if isinstance(text, str) else ""
+
+
+def _extract_learning_result(task: dict[str, Any], raw: str) -> dict[str, Any]:
+    data = _parse_json_object(raw)
+    mode = str(task.get("mode") or "learn")
+    result = {
+        "task_id": str(task.get("task_id") or data.get("task_id") or ""),
+        "instance_id": str(task.get("instance_id") or data.get("instance_id") or os.environ.get("NODESKCLAW_INSTANCE_ID") or ""),
+        "mode": mode,
+        "decision": str(data.get("decision") or _default_success_decision(mode)),
+        "content": data.get("content"),
+        "self_eval": data.get("self_eval"),
+        "meta": data.get("meta"),
+        "reason": data.get("reason"),
+    }
+    return {k: v for k, v in result.items() if v is not None}
+
+
+def _parse_json_object(raw: str) -> dict[str, Any]:
+    text = _strip_think_blocks(raw).strip()
+    fence = re.search(r"```(?:json)?\s*(.*?)```", text, re.I | re.S)
+    if fence:
+        text = fence.group(1).strip()
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end == -1 or end < start:
+        raise ValueError("Hermes learning response did not contain a JSON object")
+    parsed = json.loads(text[start : end + 1])
+    if not isinstance(parsed, dict):
+        raise ValueError("Hermes learning response JSON must be an object")
+    return parsed
+
+
+def _strip_think_blocks(raw: str) -> str:
+    text = re.sub(r"<\s*(?:think(?:ing)?|thought|antthinking)\s*>.*?<\s*/\s*(?:think(?:ing)?|thought|antthinking)\s*>", "", raw, flags=re.I | re.S)
+    text = re.sub(r"<\s*(?:think(?:ing)?|thought|antthinking)\s*>.*$", "", text, flags=re.I | re.S)
+    return text
+
+
+def _default_success_decision(mode: str) -> str:
+    if mode == "create":
+        return "created"
+    if mode == "forget":
+        return "forgotten"
+    return "learned"
+
+
+def _failed_learning_result(task: dict[str, Any], reason: str) -> dict[str, Any]:
+    mode = str(task.get("mode") or "learn")
+    return {
+        "task_id": str(task.get("task_id") or ""),
+        "instance_id": str(task.get("instance_id") or os.environ.get("NODESKCLAW_INSTANCE_ID") or ""),
+        "mode": mode,
+        "decision": "forget_failed" if mode == "forget" else "failed",
+        "reason": reason,
+    }
+
+
+async def _post_learning_callback(callback_url: str, result: dict[str, Any]) -> None:
+    last_error: Exception | None = None
+    attempts = len(_CALLBACK_RETRY_DELAYS) + 1
+    async with httpx.AsyncClient(timeout=60) as http:
+        for attempt in range(1, attempts + 1):
+            try:
+                response = await http.post(callback_url, headers={"Content-Type": "application/json"}, json=result)
+                if response.status_code < 400:
+                    return
+                error = RuntimeError(f"Learning callback failed: HTTP {response.status_code} {response.text[:300]}")
+                if response.status_code != 429 and response.status_code < 500:
+                    raise error
+                last_error = error
+            except (httpx.TimeoutException, httpx.TransportError) as exc:
+                last_error = exc
+
+            if attempt < attempts:
+                logger.warning(
+                    "Hermes learning callback attempt %d/%d failed: %s",
+                    attempt,
+                    attempts,
+                    last_error,
+                )
+                await asyncio.sleep(_CALLBACK_RETRY_DELAYS[attempt - 1])
+
+    raise RuntimeError(f"Learning callback failed after {attempts} attempts: {last_error}") from last_error
 
 def _extract_error_message(status_code: int, raw_body: bytes) -> str:
     default = f"Hermes API returned {status_code}"

@@ -28,6 +28,7 @@ async def _run_bridge() -> None:
     client = TunnelClient(callbacks=callbacks)
     channel = HermesChannel(client)
     client.on_chat_request = channel.handle_chat_request
+    client.on_learning_task = channel.handle_learning_task
     await client.run_forever()
 
 

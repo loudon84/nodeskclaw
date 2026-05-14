@@ -8,6 +8,7 @@ import base64
 import json
 import logging
 import pathlib
+import shutil
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -369,7 +370,11 @@ class DockerFS:
 
     async def remove(self, remote_path: str) -> None:
         p = self._resolve(remote_path)
-        if p.exists():
+        if not p.exists():
+            return
+        if p.is_dir():
+            shutil.rmtree(p)
+        else:
             p.unlink()
 
     async def exists(self, remote_path: str) -> bool:

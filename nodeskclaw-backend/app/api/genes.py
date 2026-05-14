@@ -3,14 +3,14 @@
 import logging
 import re
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.deps import get_current_org, get_db
+from app.core.deps import get_current_org, get_current_org_or_agent, get_db
 from app.core.exceptions import BadRequestError, NotFoundError
-from app.core.security import get_current_user
+from app.core.security import get_auth_actor, get_current_user
 from app.models.user import User
 from app.schemas.common import ApiResponse, PaginatedResponse, Pagination
 from app.schemas.gene import (
@@ -33,6 +33,19 @@ from app.services import gene_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def _ensure_agent_instance_access(instance_id: str) -> None:
+    actor = get_auth_actor()
+    if actor and actor.actor_type == "agent" and actor.actor_id != instance_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error_code": 40320,
+                "message_key": "errors.instance.agent_access_forbidden",
+                "message": "AI 员工只能访问自己的实例资源",
+            },
+        )
 
 
 def _validate_gene_callback_auth(
@@ -77,11 +90,12 @@ async def list_genes(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    org_ctx=Depends(get_current_org_or_agent),
 ):
+    _current_user, org = org_ctx
     genes, total = await gene_service.list_genes(
         db, keyword=keyword, tag=tag, category=category, source=source,
-        visibility=visibility, org_id=current_user.current_org_id,
+        visibility=visibility, org_id=org.id,
         sort=sort, page=page, page_size=page_size,
     )
     return PaginatedResponse(
@@ -93,7 +107,7 @@ async def list_genes(
 @router.get("/genes/tags")
 async def gene_tags(
     db: AsyncSession = Depends(get_db),
-    _current_user: User = Depends(get_current_user),
+    _org_ctx=Depends(get_current_org_or_agent),
 ):
     tags = await gene_service.get_gene_tags(db)
     return ApiResponse(data=[t.model_dump() for t in tags])
@@ -103,7 +117,7 @@ async def gene_tags(
 async def featured_genes(
     limit: int = Query(10, ge=1, le=50),
     db: AsyncSession = Depends(get_db),
-    _current_user: User = Depends(get_current_user),
+    _org_ctx=Depends(get_current_org_or_agent),
 ):
     genes = await gene_service.get_featured_genes(db, limit=limit)
     return ApiResponse(data=genes)
@@ -113,7 +127,7 @@ async def featured_genes(
 async def get_gene(
     gene_slug: str,
     db: AsyncSession = Depends(get_db),
-    _current_user: User = Depends(get_current_user),
+    _org_ctx=Depends(get_current_org_or_agent),
 ):
     gene = await gene_service.get_gene(db, gene_slug)
     return ApiResponse(data=gene)
@@ -123,7 +137,7 @@ async def get_gene(
 async def gene_variants(
     gene_slug: str,
     db: AsyncSession = Depends(get_db),
-    _current_user: User = Depends(get_current_user),
+    _org_ctx=Depends(get_current_org_or_agent),
 ):
     variants = await gene_service.get_gene_variants(db, gene_slug)
     return ApiResponse(data=variants)
@@ -133,7 +147,7 @@ async def gene_variants(
 async def gene_synergies(
     gene_slug: str,
     db: AsyncSession = Depends(get_db),
-    _current_user: User = Depends(get_current_user),
+    _org_ctx=Depends(get_current_org_or_agent),
 ):
     synergies = await gene_service.get_gene_synergies(db, gene_slug)
     return ApiResponse(data=synergies)
@@ -143,7 +157,7 @@ async def gene_synergies(
 async def gene_genomes(
     gene_slug: str,
     db: AsyncSession = Depends(get_db),
-    _current_user: User = Depends(get_current_user),
+    _org_ctx=Depends(get_current_org_or_agent),
 ):
     data = await gene_service.get_gene_genomes(db, gene_slug)
     return ApiResponse(data=data)
@@ -181,7 +195,7 @@ async def list_genomes(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
-    _current_user: User = Depends(get_current_user),
+    _org_ctx=Depends(get_current_org_or_agent),
 ):
     genomes, total = await gene_service.list_genomes(db, keyword=keyword, page=page, page_size=page_size)
     return PaginatedResponse(
@@ -194,7 +208,7 @@ async def list_genomes(
 async def featured_genomes(
     limit: int = Query(10, ge=1, le=50),
     db: AsyncSession = Depends(get_db),
-    _current_user: User = Depends(get_current_user),
+    _org_ctx=Depends(get_current_org_or_agent),
 ):
     genomes = await gene_service.get_featured_genomes(db, limit=limit)
     return ApiResponse(data=genomes)
@@ -204,7 +218,7 @@ async def featured_genomes(
 async def get_genome(
     genome_id: str,
     db: AsyncSession = Depends(get_db),
-    _current_user: User = Depends(get_current_user),
+    _org_ctx=Depends(get_current_org_or_agent),
 ):
     genome = await gene_service.get_genome(db, genome_id)
     return ApiResponse(data=genome)
@@ -230,8 +244,9 @@ async def rate_genome(
 async def instance_genes(
     instance_id: str,
     db: AsyncSession = Depends(get_db),
-    org_ctx=Depends(get_current_org),
+    org_ctx=Depends(get_current_org_or_agent),
 ):
+    _ensure_agent_instance_access(instance_id)
     _current_user, org = org_ctx
     genes = await gene_service.get_instance_genes(db, instance_id, org.id)
     return ApiResponse(data=genes)
@@ -241,8 +256,9 @@ async def instance_genes(
 async def instance_skills(
     instance_id: str,
     db: AsyncSession = Depends(get_db),
-    org_ctx=Depends(get_current_org),
+    org_ctx=Depends(get_current_org_or_agent),
 ):
+    _ensure_agent_instance_access(instance_id)
     _current_user, org = org_ctx
     skills = await gene_service.get_instance_skills(db, instance_id, org.id)
     return ApiResponse(data=skills)
@@ -317,8 +333,9 @@ async def install_gene(
     instance_id: str,
     req: InstallGeneRequest,
     db: AsyncSession = Depends(get_db),
-    org_ctx=Depends(get_current_org),
+    org_ctx=Depends(get_current_org_or_agent),
 ):
+    _ensure_agent_instance_access(instance_id)
     _current_user, org = org_ctx
     result = await gene_service.install_gene(db, instance_id, req.gene_slug, org_id=org.id)
     return ApiResponse(data=result)
@@ -329,8 +346,9 @@ async def uninstall_gene(
     instance_id: str,
     req: UninstallGeneRequest,
     db: AsyncSession = Depends(get_db),
-    org_ctx=Depends(get_current_org),
+    org_ctx=Depends(get_current_org_or_agent),
 ):
+    _ensure_agent_instance_access(instance_id)
     _current_user, org = org_ctx
     result = await gene_service.uninstall_gene(db, instance_id, req.gene_id, org_id=org.id)
     return ApiResponse(data=result)
@@ -341,8 +359,9 @@ async def apply_genome(
     instance_id: str,
     req: ApplyGenomeRequest,
     db: AsyncSession = Depends(get_db),
-    org_ctx=Depends(get_current_org),
+    org_ctx=Depends(get_current_org_or_agent),
 ):
+    _ensure_agent_instance_access(instance_id)
     _current_user, org = org_ctx
     result = await gene_service.apply_genome(db, instance_id, req.genome_id, org.id)
     return ApiResponse(data=result)

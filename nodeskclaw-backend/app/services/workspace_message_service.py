@@ -7,6 +7,7 @@ from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.workspace_message import WorkspaceMessage
+from app.services.agent_output_sanitizer import strip_think_blocks
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +15,16 @@ NO_REPLY_TOKEN = "NO_REPLY"
 _NO_REPLY_VARIANTS = frozenset({"no_reply", "no reply", "noreply"})
 DEFAULT_COLLABORATION_DEPTH = 3
 ABSOLUTE_MAX_COLLABORATION_DEPTH = 20
+
+
+def visible_agent_content(sender_type: str, content: str) -> str:
+    if sender_type == "agent":
+        return strip_think_blocks(content)
+    return content
+
+
+def visible_message_content(message: WorkspaceMessage) -> str:
+    return visible_agent_content(message.sender_type, message.content)
 
 
 async def get_collaboration_depth_limit(db: AsyncSession, workspace_id: str) -> int:
@@ -46,12 +57,14 @@ async def record_message(
     attachments: list[dict] | None = None,
     conversation_id: str | None = None,
 ) -> WorkspaceMessage:
+    visible_content = visible_agent_content(sender_type, content)
+
     msg = WorkspaceMessage(
         workspace_id=workspace_id,
         sender_type=sender_type,
         sender_id=sender_id,
         sender_name=sender_name,
-        content=content,
+        content=visible_content,
         message_type=message_type,
         target_instance_id=target_instance_id,
         depth=depth,
@@ -69,7 +82,7 @@ async def record_message(
         conv = result.scalar_one_or_none()
         if conv:
             conv.last_message_at = func.now()
-            conv.last_message_preview = content[:100] if content else None
+            conv.last_message_preview = visible_content[:100] if visible_content else None
 
     await db.commit()
     await db.refresh(msg)
@@ -238,7 +251,8 @@ def build_context_prompt(
         msg_lines = []
         for m in all_messages[-30:]:
             ts = m.created_at.strftime("%H:%M") if isinstance(m.created_at, datetime) else ""
-            line = f"[{ts} {m.sender_name}]: {m.content}"
+            content = visible_message_content(m)
+            line = f"[{ts} {m.sender_name}]: {content}"
             if m.attachments:
                 for idx, att in enumerate(m.attachments, 1):
                     size = att.get("size", 0)
@@ -284,10 +298,11 @@ def is_no_reply(text: str) -> bool:
     the agent prepends filler text before the token (e.g. "这不是给我的\\nNO_REPLY").
     Bare "no" is intentionally excluded to avoid swallowing legitimate short replies.
     """
-    normalized = text.strip().lower()
+    cleaned = strip_think_blocks(text)
+    normalized = cleaned.strip().lower()
     if normalized in _NO_REPLY_VARIANTS:
         return True
-    lines = [ln.strip().lower() for ln in text.strip().splitlines() if ln.strip()]
+    lines = [ln.strip().lower() for ln in cleaned.strip().splitlines() if ln.strip()]
     if lines and lines[-1] in _NO_REPLY_VARIANTS:
         return True
     return False

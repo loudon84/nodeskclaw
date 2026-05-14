@@ -1,6 +1,7 @@
 """FastAPI dependency injection – DB session + RBAC helpers + FeatureGate."""
 
 from collections.abc import AsyncGenerator
+from types import SimpleNamespace
 
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy import select
@@ -77,6 +78,51 @@ async def get_current_org_or_agent(
     user=Depends(_get_current_user_or_agent_dep()),
 ):
     """与 get_current_org 相同逻辑，但同时接受 JWT 和 proxy_token（AI 员工）认证。"""
+    from app.core.security import get_auth_actor
+
+    actor = get_auth_actor()
+    if actor and actor.actor_type == "agent":
+        from app.models.instance import Instance
+        from app.models.organization import Organization
+
+        result = await db.execute(
+            select(Instance).where(
+                Instance.id == actor.actor_id,
+                Instance.deleted_at.is_(None),
+            )
+        )
+        instance = result.scalar_one_or_none()
+        if instance is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={
+                    "error_code": 40101,
+                    "message_key": "errors.auth.token_invalid",
+                    "message": "Token 无效",
+                },
+            )
+
+        if instance.org_id is None:
+            return user, SimpleNamespace(id=None)
+
+        result = await db.execute(
+            select(Organization).where(
+                Organization.id == instance.org_id,
+                Organization.deleted_at.is_(None),
+            )
+        )
+        org = result.scalar_one_or_none()
+        if org is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "error_code": 40010,
+                    "message_key": "errors.org.user_has_no_org",
+                    "message": "用户未加入任何组织",
+                },
+            )
+        return user, org
+
     from app.services.org.factory import get_org_provider
 
     provider = get_org_provider()

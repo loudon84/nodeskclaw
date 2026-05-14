@@ -101,7 +101,7 @@ async def get_conversation_messages(
             "sender_type": m.sender_type,
             "sender_id": m.sender_id,
             "sender_name": m.sender_name,
-            "content": m.content,
+            "content": wm_msg_service.visible_message_content(m),
             "message_type": m.message_type,
             "target_instance_id": m.target_instance_id,
             "depth": m.depth,

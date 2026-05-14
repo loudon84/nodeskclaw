@@ -15,6 +15,10 @@ from app.models.workspace import Workspace
 from app.models.workspace_agent import WorkspaceAgent
 from app.services import workspace_message_service as msg_service
 from app.services import workspace_service
+from app.services.agent_output_sanitizer import (
+    ThinkBlockStreamSanitizer,
+    strip_think_blocks,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -501,6 +505,7 @@ async def _invoke_target_agent(
     full_response = ""
     buffer = ""
     flushed = False
+    stream_sanitizer = ThinkBlockStreamSanitizer()
 
     try:
         chat_stream = await tunnel_adapter.send_chat_request(
@@ -532,9 +537,12 @@ async def _invoke_target_agent(
                 continue
 
             full_response += content
+            visible_content = stream_sanitizer.feed(content)
+            if not visible_content:
+                continue
 
             if not flushed:
-                buffer += content
+                buffer += visible_content
                 if len(buffer) > 20:
                     if msg_service.is_no_reply(buffer.strip()):
                         broadcast_event(workspace_id, "agent:done", _event_payload(
@@ -552,7 +560,7 @@ async def _invoke_target_agent(
                 broadcast_event(workspace_id, "agent:chunk", _event_payload(
                     instance_id=instance_id,
                     agent_name=agent_name,
-                    content=content,
+                    content=visible_content,
                 ))
     except Exception as e:
         logger.error("Target agent %s streaming failed: %s", agent_name, e)
@@ -563,6 +571,17 @@ async def _invoke_target_agent(
             error_detail=str(e)[:256],
         ))
         return False
+
+    tail_content = stream_sanitizer.flush()
+    if tail_content:
+        if not flushed:
+            buffer += tail_content
+        else:
+            broadcast_event(workspace_id, "agent:chunk", _event_payload(
+                instance_id=instance_id,
+                agent_name=agent_name,
+                content=tail_content,
+            ))
 
     if not flushed and buffer:
         if msg_service.is_no_reply(buffer.strip()):
@@ -577,11 +596,13 @@ async def _invoke_target_agent(
             content=buffer,
         ))
 
-    if full_response and not msg_service.is_no_reply(full_response.strip()):
+    visible_full_response = strip_think_blocks(full_response)
+
+    if visible_full_response and not msg_service.is_no_reply(visible_full_response.strip()):
         broadcast_event(workspace_id, "agent:done", _event_payload(
             instance_id=instance_id,
             agent_name=agent_name,
-            full_content=full_response,
+            full_content=visible_full_response,
         ))
 
         async with async_session_factory() as save_db:
@@ -591,13 +612,13 @@ async def _invoke_target_agent(
                 sender_type="agent",
                 sender_id=instance_id,
                 sender_name=agent_name,
-                content=full_response,
+                content=visible_full_response,
                 message_type=persist_message_type,
                 target_instance_id=source_instance_id,
                 depth=depth,
                 conversation_id=conversation_id,
             )
-    elif not full_response:
+    elif not visible_full_response:
         broadcast_event(workspace_id, "agent:error", _event_payload(
             instance_id=instance_id,
             agent_name=agent_name,

@@ -31,6 +31,7 @@ import {
 } from 'lucide-vue-next'
 import { renderMarkdown } from '@/utils/markdown'
 import { copyToClipboard } from '@/utils/clipboard'
+import { getRuntimeCaps } from '@/utils/runtimeCapabilities'
 import { useGeneStore } from '@/stores/gene'
 import type { GeneItem, GenomeItem } from '@/stores/gene'
 import api from '@/services/api'
@@ -47,7 +48,7 @@ const synergies = ref<GeneItem[]>([])
 const variants = ref<GeneItem[]>([])
 const parentGenomes = ref<GenomeItem[]>([])
 const installDialogOpen = ref(false)
-const instances = ref<{ id: string; name: string; slug: string; status: string }[]>([])
+const instances = ref<{ id: string; name: string; slug: string; status: string; runtime: string }[]>([])
 const instancesLoading = ref(false)
 const installedInstanceIds = ref<Set<string>>(new Set())
 
@@ -92,11 +93,14 @@ function localizeGeneMeta(value?: string) {
   return translated === key ? value : translated
 }
 
+const geneCapableInstances = computed(() =>
+  instances.value.filter(i => getRuntimeCaps(i.runtime || 'openclaw').genes)
+)
 const availableInstances = computed(() =>
-  instances.value.filter(i => !installedInstanceIds.value.has(i.id))
+  geneCapableInstances.value.filter(i => !installedInstanceIds.value.has(i.id))
 )
 const installedInstances = computed(() =>
-  instances.value.filter(i => installedInstanceIds.value.has(i.id))
+  geneCapableInstances.value.filter(i => installedInstanceIds.value.has(i.id))
 )
 
 const iconMap: Record<string, typeof Package> = {
@@ -191,11 +195,12 @@ function openInstallDialog() {
   installedInstanceIds.value = new Set()
 
   const fetchInstances = api.get('/instances').then((res) => {
-    instances.value = (res.data.data || []).map((i: { id: string; name: string; slug: string; status: string }) => ({
+    instances.value = (res.data.data || []).map((i: { id: string; name: string; slug: string; status: string; runtime?: string }) => ({
       id: i.id,
       name: i.name,
       slug: i.slug,
       status: i.status,
+      runtime: i.runtime || 'openclaw',
     }))
   }).catch(() => {
     instances.value = []
@@ -600,7 +605,7 @@ function selectInstance(instanceId: string) {
             <Loader2 class="w-6 h-6 animate-spin text-muted-foreground" />
           </div>
           <div v-else class="max-h-72 overflow-y-auto space-y-4">
-            <div v-if="instances.length === 0" class="text-sm text-muted-foreground py-4 text-center">
+            <div v-if="geneCapableInstances.length === 0" class="text-sm text-muted-foreground py-4 text-center">
               {{ t('gene.noAvailableInstances') }}
             </div>
             <template v-else>

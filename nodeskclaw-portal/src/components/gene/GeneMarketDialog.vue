@@ -227,7 +227,6 @@ async function handleInstallGene(slug: string) {
   installing.value = true
   try {
     await store.installGene(props.instanceId, slug)
-    localInstalledSlugs.value.add(slug)
     toast.success(t('geneMarketDialog.learnSuccess'))
     emit('installed')
   } catch {

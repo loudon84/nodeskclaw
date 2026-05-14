@@ -3,6 +3,11 @@ import { ref, computed } from 'vue'
 import api from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
 import { resolveActiveConversationId } from '@/utils/workspaceConversations'
+import {
+  AgentThinkingStreamFilter,
+  stripAgentThinkingBlocks,
+  visibleAgentContent,
+} from '@/utils/agentOutput'
 
 export interface AgentBrief {
   instance_id: string
@@ -742,7 +747,10 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   async function fetchConversations(workspaceId: string) {
     try {
       const res = await api.get(`/workspaces/${workspaceId}/conversations`)
-      conversations.value = (res.data.data || []) as Conversation[]
+      conversations.value = ((res.data.data || []) as Conversation[]).map((conv) => ({
+        ...conv,
+        last_message_preview: conv.last_message_preview ? stripAgentThinkingBlocks(conv.last_message_preview) : conv.last_message_preview,
+      }))
       activeConversationId.value = resolveActiveConversationId(conversations.value, activeConversationId.value)
     } catch (e) {
       console.error('fetchConversations error:', e)
@@ -769,7 +777,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
         sender_type: m.sender_type as 'user' | 'agent' | 'system',
         sender_id: m.sender_id as string,
         sender_name: m.sender_name as string,
-        content: m.content as string,
+        content: visibleAgentContent(m.sender_type as string, m.content as string),
         message_type: m.message_type as string,
         created_at: m.created_at as string,
         conversation_id: m.conversation_id as string | undefined,
@@ -794,7 +802,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
         sender_type: m.sender_type as 'user' | 'agent' | 'system',
         sender_id: m.sender_id as string,
         sender_name: m.sender_name as string,
-        content: m.content as string,
+        content: visibleAgentContent(m.sender_type as string, m.content as string),
         message_type: m.message_type as string,
         created_at: m.created_at as string,
         conversation_id: m.conversation_id as string | undefined,
@@ -863,6 +871,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   }
 
   const _typingTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  const _streamFilters = new Map<string, AgentThinkingStreamFilter>()
 
   function _handleAgentTyping(data: Record<string, unknown>) {
     const instanceId = data.instance_id as string
@@ -881,6 +890,17 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       conversationId: data.conversation_id as string | undefined,
       traceId: data.trace_id as string | undefined,
     }
+  }
+
+  function _streamFilterKey(instanceId: string, data: Record<string, unknown>) {
+    const { conversationId, traceId } = _streamKey(data)
+    return `${instanceId}:${conversationId || ''}:${traceId || ''}`
+  }
+
+  function _getStreamFilter(instanceId: string, data: Record<string, unknown>) {
+    const key = _streamFilterKey(instanceId, data)
+    if (!_streamFilters.has(key)) _streamFilters.set(key, new AgentThinkingStreamFilter())
+    return _streamFilters.get(key)!
   }
 
   function _findStreamingMessage(instanceId: string, data: Record<string, unknown>) {
@@ -903,10 +923,12 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   function _handleAgentChunk(data: Record<string, unknown>) {
     const instanceId = data.instance_id as string
     const agentName = data.agent_name as string
-    const content = data.content as string
 
     typingAgents.value.delete(instanceId)
     _clearTypingTimer(instanceId)
+
+    const content = _getStreamFilter(instanceId, data).feed(data.content as string)
+    if (!content) return
 
     const existing = _findStreamingMessage(instanceId, data)
     if (existing) {
@@ -941,11 +963,32 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     typingAgents.value.delete(instanceId)
     _clearTypingTimer(instanceId)
 
+    const filterKey = _streamFilterKey(instanceId, data)
+    const streamTail = _streamFilters.get(filterKey)?.flush() || ''
+    _streamFilters.delete(filterKey)
+
     const streaming = _findStreamingMessage(instanceId, data)
+    const fullContent = data.full_content as string | undefined
+    const finalContent = fullContent ? stripAgentThinkingBlocks(fullContent) : streamTail
     if (streaming) {
       streaming.streaming = false
-      streaming.content = (data.full_content as string) || streaming.content
+      streaming.content = finalContent || streaming.content
       _applyStreamMetadata(streaming, data)
+    } else if (finalContent) {
+      chatMessages.value.push({
+        id: (data.envelope_id as string) || `done-${instanceId}-${Date.now()}`,
+        sender_type: 'agent',
+        sender_id: instanceId,
+        sender_name: (data.agent_name as string) || 'Agent',
+        content: finalContent,
+        message_type: 'chat',
+        created_at: new Date().toISOString(),
+        trace_id: data.trace_id as string | undefined,
+        causation_id: data.causation_id as string | undefined,
+        envelope_id: data.envelope_id as string | undefined,
+        conversation_id: data.conversation_id as string | undefined,
+      })
+      _incrementUnread()
     }
   }
 
@@ -965,6 +1008,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     }
 
     const streaming = _findStreamingMessage(instanceId, data)
+    _streamFilters.delete(_streamFilterKey(instanceId, data))
     if (streaming) {
       streaming.streaming = false
       streaming.error = errorObj
@@ -987,7 +1031,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   function _handleAgentCollaboration(data: Record<string, unknown>) {
     const agentName = data.agent_name as string
     const instanceId = data.instance_id as string
-    const content = data.content as string
+    const content = stripAgentThinkingBlocks(data.content as string)
     const traceId = data.trace_id as string | undefined
     const intent = data.intent as string | undefined
     const priority = data.priority as string | undefined
@@ -1002,6 +1046,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       existingStreaming.streaming = false
       existingStreaming.message_type = 'collaboration'
       existingStreaming.content = content
+      _streamFilters.delete(_streamFilterKey(instanceId, data))
       existingStreaming.id = msgId
       existingStreaming.intent = intent
       existingStreaming.priority = priority
@@ -1084,6 +1129,26 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       _structureRefreshTimer = null
       void refreshWorkspaceStructure(workspaceId)
     }, 150)
+  }
+
+  async function _syncActiveConversationMessages(workspaceId: string) {
+    try {
+      const convId = activeConversationId.value
+      const messages = convId
+        ? await fetchConversationMessages(workspaceId, convId)
+        : await fetchChatHistory(workspaceId, { limit: 50 })
+      const streamingMessages = chatMessages.value.filter((message) => message.streaming)
+      const streamingIds = new Set(streamingMessages.map((message) => message.id))
+      chatMessages.value = [
+        ...messages.filter((message) => !streamingIds.has(message.id)),
+        ...streamingMessages,
+      ]
+      for (const message of chatMessages.value) {
+        if (message.id && !message.streaming) _isDuplicateMessage(message.id)
+      }
+    } catch (err) {
+      console.warn('[SSE] Failed to sync missed messages after reconnect', err)
+    }
   }
 
   async function connectSSE(workspaceId: string, onEvent?: ChatSSECallback) {
@@ -1320,7 +1385,9 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     }
 
     eventSource.onopen = () => {
+      const shouldSyncMessages = _reconnectAttempts > 0
       _reconnectAttempts = 0
+      if (shouldSyncMessages) void _syncActiveConversationMessages(workspaceId)
     }
 
     eventSource.onerror = () => {

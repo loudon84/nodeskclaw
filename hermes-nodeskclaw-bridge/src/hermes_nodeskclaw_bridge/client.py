@@ -26,6 +26,7 @@ ChatRequestHandler = Callable[
     [str, str, list[dict[str, Any]], str, bool],
     Awaitable[None],
 ]
+LearningTaskHandler = Callable[[dict[str, Any]], Awaitable[None]]
 
 
 @dataclass
@@ -52,6 +53,7 @@ class TunnelClient:
         instance_id: str = "",
         token: str = "",
         on_chat_request: ChatRequestHandler | None = None,
+        on_learning_task: LearningTaskHandler | None = None,
         callbacks: TunnelCallbacks | None = None,
     ) -> None:
         api_url = os.environ.get("NODESKCLAW_API_URL", "") or os.environ.get("DESKCLAW_API_URL", "")
@@ -66,6 +68,7 @@ class TunnelClient:
         )
         self._token = token or os.environ.get("NODESKCLAW_TOKEN", "") or os.environ.get("DESKCLAW_TOKEN", "")
         self.on_chat_request = on_chat_request
+        self.on_learning_task = on_learning_task
         self._callbacks = callbacks or TunnelCallbacks()
 
         self._ws: ClientConnection | None = None
@@ -168,6 +171,9 @@ class TunnelClient:
         elif msg_type == "chat.cancel":
             logger.debug("Tunnel bridge: chat cancel for %s", msg.get("payload", {}).get("id"))
 
+        elif msg_type == "learning.task":
+            asyncio.create_task(self._dispatch_learning_task(msg))
+
         else:
             logger.debug("Tunnel bridge: unhandled message type=%s", msg_type)
 
@@ -189,6 +195,19 @@ class TunnelClient:
         except Exception as exc:
             logger.error("Tunnel bridge: chat_request handler error: %s", exc)
             await self.send_response_error(request_id, trace_id, str(exc))
+
+    async def _dispatch_learning_task(self, msg: dict[str, Any]) -> None:
+        if not self.on_learning_task:
+            logger.warning("Tunnel bridge: no learning_task handler, ignoring")
+            return
+        payload = msg.get("payload", {})
+        if not isinstance(payload, dict):
+            logger.warning("Tunnel bridge: invalid learning_task payload")
+            return
+        try:
+            await self.on_learning_task(payload)
+        except Exception as exc:
+            logger.error("Tunnel bridge: learning_task handler error: %s", exc)
 
     async def send_response_chunk(self, reply_to: str, trace_id: str, content: str) -> None:
         await self._send({

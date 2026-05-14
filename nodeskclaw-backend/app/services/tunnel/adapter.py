@@ -19,6 +19,10 @@ from starlette.websockets import WebSocket, WebSocketDisconnect, WebSocketState
 
 from app.services.runtime.messaging.envelope import MessageEnvelope
 from app.services.runtime.transport.base import DeliveryResult
+from app.services.agent_output_sanitizer import (
+    ThinkBlockStreamSanitizer,
+    strip_think_blocks,
+)
 from app.services.tunnel.protocol import TunnelMessage, TunnelMessageType
 from app.services.workspace_message_service import (
     ABSOLUTE_MAX_COLLABORATION_DEPTH,
@@ -584,6 +588,7 @@ class TunnelAdapter:
         flushed = False
         full_response = ""
         error_msg: str | None = None
+        stream_sanitizer = ThinkBlockStreamSanitizer()
         error_type: str | None = None
         error_raw: str | None = None
 
@@ -605,8 +610,11 @@ class TunnelAdapter:
                     continue
 
                 full_response += content
+                visible_content = stream_sanitizer.feed(content)
+                if not visible_content:
+                    continue
                 if not flushed:
-                    buffer += content
+                    buffer += visible_content
                     if len(buffer) > NO_REPLY_BUFFER_SIZE:
                         if msg_service.is_no_reply(buffer.strip()):
                             logger.info("Agent %s replied NO_REPLY", agent_name)
@@ -633,7 +641,7 @@ class TunnelAdapter:
                     chunk_evt2: dict = {
                         "instance_id": target_node_id,
                         "agent_name": agent_name,
-                        "content": content,
+                        "content": visible_content,
                         "trace_id": envelope.traceid,
                     }
                     if orig_conv_id:
@@ -660,6 +668,21 @@ class TunnelAdapter:
                 latency_ms=int((time.monotonic() - start) * 1000),
             )
 
+        tail_content = stream_sanitizer.flush()
+        if tail_content:
+            if not flushed:
+                buffer += tail_content
+            else:
+                tail_visible_evt: dict = {
+                    "instance_id": target_node_id,
+                    "agent_name": agent_name,
+                    "content": tail_content,
+                    "trace_id": envelope.traceid,
+                }
+                if orig_conv_id:
+                    tail_visible_evt["conversation_id"] = orig_conv_id
+                broadcast_event(workspace_id, "agent:chunk", tail_visible_evt)
+
         if not flushed and buffer:
             if msg_service.is_no_reply(buffer.strip()):
                 done_evt_nr: dict = {"instance_id": target_node_id, "agent_name": agent_name}
@@ -680,7 +703,9 @@ class TunnelAdapter:
                 tail_chunk_evt["conversation_id"] = orig_conv_id
             broadcast_event(workspace_id, "agent:chunk", tail_chunk_evt)
 
-        delegation = _parse_delegation(full_response)
+        visible_full_response = strip_think_blocks(full_response)
+
+        delegation = _parse_delegation(visible_full_response)
         if delegation:
             action, delegate_target = delegation
             logger.info("Agent %s issued %s to %s", agent_name, action, delegate_target)
@@ -691,15 +716,15 @@ class TunnelAdapter:
             except Exception as e:
                 logger.warning("Delegation %s->%s failed: %s", action, delegate_target, e)
 
-        elif full_response and not msg_service.is_no_reply(full_response.strip()):
+        elif visible_full_response and not msg_service.is_no_reply(visible_full_response.strip()):
             upstream_sender = data.sender.name if data.sender else ""
             mentions = _extract_mentions(
-                full_response, ws_ctx.members, agent_name,
+                visible_full_response, ws_ctx.members, agent_name,
                 exclude_names=[upstream_sender] if upstream_sender else None,
             )
             logger.info(
                 "Agent %s response mentions=%s (upstream=%s, response_len=%d)",
-                agent_name, [m["name"] for m in mentions], upstream_sender, len(full_response),
+                agent_name, [m["name"] for m in mentions], upstream_sender, len(visible_full_response),
             )
             if mentions:
                 depth = (data.extensions or {}).get("depth", 0)
@@ -713,7 +738,7 @@ class TunnelAdapter:
                             sender_type="agent",
                             sender_id=target_node_id,
                             sender_name=agent_name,
-                            content=full_response,
+                            content=visible_full_response,
                             message_type="collaboration",
                             depth=depth,
                             conversation_id=orig_conv_id,
@@ -722,7 +747,7 @@ class TunnelAdapter:
                     base_collab_evt: dict = {
                         "instance_id": target_node_id,
                         "agent_name": agent_name,
-                        "content": full_response,
+                        "content": visible_full_response,
                         "envelope_id": saved_msg.id,
                         "trace_id": envelope.traceid,
                     }
@@ -755,7 +780,7 @@ class TunnelAdapter:
                                 source_instance_id=target_node_id,
                                 source_name=agent_name,
                                 target=f"agent:{mention['name']}",
-                                content=full_response,
+                                content=visible_full_response,
                                 depth=depth + 1,
                                 conversation_id=collab_conv_id,
                                 group_member_ids=collab_members,
@@ -775,7 +800,7 @@ class TunnelAdapter:
                                 if hh:
                                     await _route_to_human(
                                         route_db, workspace_id,
-                                        target_node_id, agent_name, hh, full_response,
+                                        target_node_id, agent_name, hh, visible_full_response,
                                     )
                                 else:
                                     logger.warning(
@@ -799,11 +824,11 @@ class TunnelAdapter:
                         depth, collab_limit,
                     )
 
-        if full_response and not msg_service.is_no_reply(full_response.strip()):
+        if visible_full_response and not msg_service.is_no_reply(visible_full_response.strip()):
             final_done_evt: dict = {
                 "instance_id": target_node_id,
                 "agent_name": agent_name,
-                "full_content": full_response,
+                "full_content": visible_full_response,
                 "trace_id": envelope.traceid,
             }
             if orig_conv_id:
@@ -817,10 +842,10 @@ class TunnelAdapter:
                     sender_type="agent",
                     sender_id=target_node_id,
                     sender_name=agent_name,
-                    content=full_response,
+                    content=visible_full_response,
                     conversation_id=orig_conv_id,
                 )
-        elif not full_response:
+        elif not visible_full_response:
             empty_err_evt: dict = {
                 "instance_id": target_node_id, "agent_name": agent_name,
                 "error": "empty_response",

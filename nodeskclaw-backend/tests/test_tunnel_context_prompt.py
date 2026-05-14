@@ -292,6 +292,69 @@ async def test_single_agent_workspace_without_mention_still_replies():
 
 
 @pytest.mark.asyncio
+async def test_human_mention_receives_sanitized_response():
+    db = _make_db_mock(
+        workspace_name="Dev Office",
+        members_rows=[("agent", AGENT_NAME), ("human", "Reviewer")],
+    )
+    envelope = _make_envelope(mention_targets=[TARGET_NODE_ID])
+    adapter = TunnelAdapter()
+    session_db = AsyncMock()
+    human_hex = MagicMock()
+    route_to_human = AsyncMock()
+
+    @asynccontextmanager
+    async def _fake_session_factory():
+        yield session_db
+
+    response = "<think>secret reasoning</think>\n你好 @Reviewer"
+
+    with patch(
+        "app.services.workspace_message_service.get_recent_messages",
+        new_callable=AsyncMock,
+        return_value=[],
+    ), patch(
+        "app.services.corridor_router.get_reachable_names",
+        new_callable=AsyncMock,
+        return_value=None,
+    ), patch(
+        "app.services.workspace_message_service.build_context_prompt",
+        return_value="mocked prompt",
+    ), patch.object(
+        adapter, "send_chat_request", new_callable=AsyncMock,
+        return_value=_fake_tunnel_stream(response),
+    ), patch(
+        "app.core.deps.async_session_factory",
+        side_effect=_fake_session_factory,
+    ), patch(
+        "app.services.tunnel.adapter.get_collaboration_depth_limit",
+        new_callable=AsyncMock,
+        return_value=3,
+    ), patch(
+        "app.services.workspace_message_service.record_message",
+        new_callable=AsyncMock,
+        return_value=MagicMock(id="msg-001"),
+    ), patch(
+        "app.services.collaboration_service._find_human_by_display_name",
+        new_callable=AsyncMock,
+        return_value=human_hex,
+    ), patch(
+        "app.services.collaboration_service._route_to_human",
+        route_to_human,
+    ), patch("app.api.workspaces.broadcast_event"):
+        result = await adapter._do_deliver(
+            envelope, TARGET_NODE_ID, WORKSPACE_ID, db, time.monotonic(),
+        )
+
+    assert result.success is True
+    route_to_human.assert_awaited_once()
+    routed_text = route_to_human.await_args.args[5]
+    assert routed_text == "你好 @Reviewer"
+    assert "secret reasoning" not in routed_text
+    assert "<think>" not in routed_text
+
+
+@pytest.mark.asyncio
 async def test_node_card_not_found_returns_error():
     """目标 node_card 不存在时应直接返回失败，不执行上下文查询。"""
     db = AsyncMock()

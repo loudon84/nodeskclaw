@@ -43,6 +43,10 @@ from app.services.workspace_actor_access import (
     require_workspace_actor_access,
     require_workspace_actor_member,
 )
+from app.services.agent_output_sanitizer import (
+    ThinkBlockStreamSanitizer,
+    strip_think_blocks,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -1606,9 +1610,9 @@ async def list_workspace_messages(
             "sender_type": m.sender_type,
             "sender_id": m.sender_id,
             "sender_name": m.sender_name,
-            "content": m.content,
+            "content": msg_service.visible_message_content(m),
             "message_type": m.message_type,
-            "conversation_id": m.conversation_id,
+            "conversation_id": getattr(m, "conversation_id", None),
             "attachments": m.attachments,
             "created_at": m.created_at.isoformat() if m.created_at else None,
         }
@@ -1670,7 +1674,7 @@ async def list_collaboration_timeline(
             "sender_type": m.sender_type,
             "sender_id": m.sender_id,
             "sender_name": m.sender_name,
-            "content": m.content,
+            "content": msg_service.visible_message_content(m),
             "message_type": m.message_type,
             "target_instance_id": m.target_instance_id,
             "depth": m.depth,
@@ -1708,7 +1712,7 @@ async def list_agent_collaboration_messages(
             "sender_type": m.sender_type,
             "sender_id": m.sender_id,
             "sender_name": m.sender_name,
-            "content": m.content,
+            "content": msg_service.visible_message_content(m),
             "message_type": m.message_type,
             "target_instance_id": m.target_instance_id,
             "depth": m.depth,
@@ -1772,6 +1776,7 @@ async def agent_chat(
 
     async def stream():
         full_response = ""
+        stream_sanitizer = ThinkBlockStreamSanitizer()
         try:
             chat_stream = await tunnel_adapter.send_chat_request(
                 instance_id, messages,
@@ -1789,11 +1794,18 @@ async def agent_chat(
                 content = chunk_msg.payload.get("content", "")
                 if content:
                     full_response += content
-                    yield f"data: {json.dumps({'content': content})}\n\n"
+                    visible_content = stream_sanitizer.feed(content)
+                    if visible_content:
+                        yield f"data: {json.dumps({'content': visible_content})}\n\n"
         except ConnectionError as e:
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
-        if full_response and not msg_service.is_no_reply(full_response):
+        tail_content = stream_sanitizer.flush()
+        if tail_content:
+            yield f"data: {json.dumps({'content': tail_content})}\n\n"
+
+        visible_full_response = strip_think_blocks(full_response)
+        if visible_full_response and not msg_service.is_no_reply(visible_full_response):
             async with async_session_factory() as save_db:
                 await msg_service.record_message(
                     save_db,
@@ -1801,7 +1813,7 @@ async def agent_chat(
                     sender_type="agent",
                     sender_id=instance_id,
                     sender_name=agent_name,
-                    content=full_response,
+                    content=visible_full_response,
                 )
 
     return StreamingResponse(stream(), media_type="text/event-stream")
@@ -2065,6 +2077,7 @@ async def _stream_agent_response(
     buffer = ""
     flushed = False
     full_response = ""
+    stream_sanitizer = ThinkBlockStreamSanitizer()
 
     try:
         chat_stream = await tunnel_adapter.send_chat_request(
@@ -2096,9 +2109,12 @@ async def _stream_agent_response(
                 continue
 
             full_response += content
+            visible_content = stream_sanitizer.feed(content)
+            if not visible_content:
+                continue
 
             if not flushed:
-                buffer += content
+                buffer += visible_content
                 if len(buffer) > NO_REPLY_BUFFER_SIZE:
                     if msg_service.is_no_reply(buffer.strip()):
                         logger.info("Agent %s replied NO_REPLY, discarding", agent_name)
@@ -2117,7 +2133,7 @@ async def _stream_agent_response(
                 broadcast_event(workspace_id, "agent:chunk", {
                     "instance_id": instance_id,
                     "agent_name": agent_name,
-                    "content": content,
+                    "content": visible_content,
                 })
     except Exception as e:
         logger.error("Agent %s streaming failed: %s", agent_name, e)
@@ -2128,6 +2144,17 @@ async def _stream_agent_response(
             "error_detail": str(e)[:256],
         })
         return
+
+    tail_content = stream_sanitizer.flush()
+    if tail_content:
+        if not flushed:
+            buffer += tail_content
+        else:
+            broadcast_event(workspace_id, "agent:chunk", {
+                "instance_id": instance_id,
+                "agent_name": agent_name,
+                "content": tail_content,
+            })
 
     if not flushed and buffer:
         if msg_service.is_no_reply(buffer.strip()):
@@ -2143,11 +2170,13 @@ async def _stream_agent_response(
             "content": buffer,
         })
 
-    if full_response and not msg_service.is_no_reply(full_response.strip()):
+    visible_full_response = strip_think_blocks(full_response)
+
+    if visible_full_response and not msg_service.is_no_reply(visible_full_response.strip()):
         broadcast_event(workspace_id, "agent:done", {
             "instance_id": instance_id,
             "agent_name": agent_name,
-            "full_content": full_response,
+            "full_content": visible_full_response,
         })
 
         async with async_session_factory() as save_db:
@@ -2157,9 +2186,9 @@ async def _stream_agent_response(
                 sender_type="agent",
                 sender_id=instance_id,
                 sender_name=agent_name,
-                content=full_response,
+                content=visible_full_response,
             )
-    elif not full_response:
+    elif not visible_full_response:
         broadcast_event(workspace_id, "agent:error", {
             "instance_id": instance_id,
             "agent_name": agent_name,

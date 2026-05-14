@@ -9,7 +9,7 @@ from app.models.organization import Organization
 from app.models.user import User
 from app.models.workspace import Workspace
 from app.models.workspace_message import WorkspaceMessage
-from app.services.workspace_message_service import get_recent_messages
+from app.services.workspace_message_service import get_recent_messages, record_message
 
 TEST_DATABASE_URL = "postgresql+asyncpg://nodeskclaw:nodeskclaw@localhost:5432/nodeskclaw_test"
 engine = create_async_engine(TEST_DATABASE_URL, echo=False)
@@ -155,3 +155,44 @@ async def test_normal_conversation_history_excludes_legacy_unscoped_messages():
         messages = await get_recent_messages(db, workspace.id, conversation_id=normal.id)
 
         assert [message.id for message in messages] == ["msg-normal-only"]
+
+
+@pytest.mark.asyncio
+async def test_record_message_sanitizes_agent_content_and_conversation_preview():
+    async with TestSessionLocal() as db:
+        org = Organization(id="org-record-sanitize", name="Org", slug="org-record-sanitize")
+        user = User(id="user-record-sanitize", name="Tester", username="tester-record-sanitize")
+        workspace = Workspace(
+            id="ws-record-sanitize",
+            org_id=org.id,
+            name="Workspace",
+            description="",
+            color="#111111",
+            icon="bot",
+            created_by=user.id,
+        )
+        conversation = Conversation(
+            id="conv-record-sanitize",
+            workspace_id=workspace.id,
+            name="Normal",
+            is_blackboard_group=False,
+            member_node_ids=["agent-1"],
+            member_hash="record-sanitize",
+        )
+        db.add_all([org, user, workspace, conversation])
+        await db.commit()
+
+        message = await record_message(
+            db,
+            workspace_id=workspace.id,
+            sender_type="agent",
+            sender_id="agent-1",
+            sender_name="Agent",
+            content="<think>English reasoning</think>\n中文正文",
+            conversation_id=conversation.id,
+        )
+
+        await db.refresh(conversation)
+
+        assert message.content == "中文正文"
+        assert conversation.last_message_preview == "中文正文"

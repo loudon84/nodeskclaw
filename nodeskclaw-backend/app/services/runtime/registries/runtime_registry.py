@@ -64,6 +64,7 @@ RUNTIME_REGISTRY = RuntimeRegistry()
 
 
 def _register_builtins() -> None:
+    from app.services.runtime.hermes_gene_install_adapter import HermesGeneInstallAdapter
     from app.services.runtime.noop_gene_install_adapter import NoopGeneInstallAdapter
     from app.services.runtime.openclaw_gene_install_adapter import OpenClawGeneInstallAdapter
 
@@ -73,6 +74,7 @@ def _register_builtins() -> None:
         skills_extra_dir="/root/.openclaw/skills",
         scripts_dir_rel=".deskclaw/tools",
     )
+    _hermes_gene_adapter = HermesGeneInstallAdapter()
     _noop_gene_adapter = NoopGeneInstallAdapter()
 
     RUNTIME_REGISTRY.register(RuntimeSpec(
@@ -119,7 +121,7 @@ def _register_builtins() -> None:
     RUNTIME_REGISTRY.register(RuntimeSpec(
         runtime_id="hermes",
         adapter=None,
-        gene_install_adapter=_noop_gene_adapter,
+        gene_install_adapter=_hermes_gene_adapter,
         description="Hermes runtime -- general-purpose long-running agent.",
         requires_companion=False,
         display_name="自进化员工引擎",
