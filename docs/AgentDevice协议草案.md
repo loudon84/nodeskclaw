@@ -191,7 +191,7 @@ v1 不做以下协议层抽象：
 | `MCP` / Tool Schema | Agent 是否能调用某个接口 | 否 |
 | `Agent Device` | 外部设备是否作为 Device Context 中的受治理生产资源 | 是 |
 
-一个 Agent 可以拥有某类设备的 Skill，也可以通过 MCP 调用对应工具，但这不等于它拥有某个设备实例的使用权。
+一个 Agent 可以拥有某类设备的 Skill，也可以通过 MCP 调用对应工具，但这不等于它正在操作一个受治理的、有连续状态的设备现场。
 
 MCP / Tool / Skill 解决“Agent 如何调用能力”；Agent Device 解决“一个会产生真实外部影响的连续设备会话，如何在 Device Context 中被占用、观察、交接、回收和审计”。
 
