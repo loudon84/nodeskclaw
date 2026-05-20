@@ -34,12 +34,17 @@ GENE_FILES = [
     "meta_gene_self_improve.json",
     "meta_gene_innovation.json",
     "meta_gene_akr_decomposer.json",
+    "content_topic_editor.json",
+    "content_writer.json",
+    "content_reviewer.json",
+    "content_distributor.json",
 ]
 
 GENOME_FILES = [
     "genome_self_management.json",
     "genome_ai_employee_basics.json",
     "workflow_genome_example.json",
+    "genome_content_media_studio.json",
 ]
 
 VALID_CATEGORIES = {
@@ -112,7 +117,7 @@ def build_gene_manifest(tpl: dict) -> dict:
         "short_description": tpl.get("short_description", ""),
         "category": _map_category(tpl.get("category", "")),
         "tags": _map_tags(tpl.get("tags", [])),
-        "version": "1.0.0",
+        "version": str(tpl.get("version") or "1.0.0"),
         "author": {"ref": "", "name": "NoDeskAI", "type": "human"},
         "compatibility": tpl.get("compatibility", inner.get("compatibility", default_compat)),
         "dependencies": [],
@@ -154,7 +159,7 @@ def build_genome_payload(tpl: dict) -> dict:
         "short_description": tpl.get("short_description", ""),
         "category": _map_category(tpl.get("category", "efficiency")),
         "tags": _map_tags(tpl.get("tags", [])) if tpl.get("tags") else ["ability"],
-        "version": "1.0.0",
+        "version": str(tpl.get("version") or "1.0.0"),
         "author": {"ref": "", "name": "NoDeskAI", "type": "organization"},
         "genes": genes,
         "compatibility": tpl.get("compatibility", default_compat),
