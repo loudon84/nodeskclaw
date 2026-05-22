@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Any
 
@@ -96,32 +97,7 @@ def _clean_template_display_name(value: str | None) -> str | None:
     return cleaned[:128] if cleaned else None
 
 
-def _agent_bundle_text_blob(manifest: dict[str, Any]) -> str:
-    parts: list[str] = [
-        str(manifest.get("name") or ""),
-        str(manifest.get("slug") or ""),
-        str(manifest.get("description") or ""),
-    ]
-    config = manifest.get("config")
-    if isinstance(config, dict):
-        for key in ("name", "slug", "description", "welcomeMessage", "welcome_message", "role", "persona"):
-            value = config.get(key)
-            if isinstance(value, str):
-                parts.append(value)
-    files = manifest.get("files") if isinstance(manifest.get("files"), dict) else {}
-    for key in ("AGENT.md", "SOUL.md", "README.md"):
-        value = files.get(key)
-        if isinstance(value, str):
-            parts.append(value[:2000])
-    for skill in manifest.get("skills", []):
-        if isinstance(skill, dict):
-            parts.append(str(skill.get("name") or ""))
-            parts.append(str(skill.get("slug") or ""))
-            parts.append(str(skill.get("description") or ""))
-    return "\n".join(parts).lower()
-
-
-def _suggest_agent_bundle_display_name(manifest: dict[str, Any]) -> str:
+def _suggest_agent_bundle_display_name(manifest: dict[str, Any]) -> str | None:
     config = manifest.get("config") if isinstance(manifest.get("config"), dict) else {}
     explicit_candidates = [
         manifest.get("display_name"),
@@ -135,26 +111,33 @@ def _suggest_agent_bundle_display_name(manifest: dict[str, Any]) -> str:
         cleaned = _clean_template_display_name(candidate)
         if cleaned:
             return cleaned
+    return None
 
-    text = _agent_bundle_text_blob(manifest)
-    rules: list[tuple[tuple[str, ...], str]] = [
-        (("小红书", "xiaohongshu", "redbook", "爆款"), "小红书爆款作者"),
-        (("数字人", "avatar", "video clone", "clone video", "视频复刻", "复刻视频"), "数字人视频复刻专家"),
-        (("video", "短视频", "视频", "剪辑"), "视频内容制作专家"),
-        (("travel", "trip", "itinerary", "旅行", "行程"), "旅行规划师"),
-        (("business", "商业", "经营", "财务", "strategy", "market analysis"), "商业分析师"),
-        (("research", "调研", "研究", "资料", "文献"), "研究分析师"),
-        (("text-polish", "text-summary", "text-structure", "润色", "摘要", "结构化", "纯文本"), "文本编辑助理"),
-        (("copywriting", "content", "内容", "文案", "写作", "social"), "内容创作策划"),
-        (("code", "software", "developer", "dev", "coding", "研发", "代码"), "软件研发工程师"),
-        (("data", "analytics", "analysis", "数据", "报表"), "数据分析师"),
-        (("customer", "support", "客服", "售后"), "客户支持专员"),
-        (("operation", "ops", "运营"), "运营增长专员"),
-    ]
-    for keywords, display_name in rules:
-        if any(keyword in text for keyword in keywords):
-            return display_name
-    return "业务智能助理"
+
+_EXPERT_PLACEHOLDER_RE = re.compile(r"^专家([1-9]\d*)$")
+
+
+def _next_agent_bundle_placeholder_name(existing_names: list[str]) -> str:
+    used: set[int] = set()
+    for name in existing_names:
+        match = _EXPERT_PLACEHOLDER_RE.match(str(name or "").strip())
+        if match:
+            used.add(int(match.group(1)))
+    index = 1
+    while index in used:
+        index += 1
+    return f"专家{index}"
+
+
+async def _suggest_next_agent_bundle_display_name(db: AsyncSession, org_id: str | None) -> str:
+    result = await db.execute(
+        select(InstanceTemplate.name).where(
+            InstanceTemplate.template_type == InstanceTemplateType.agent_bundle,
+            InstanceTemplate.org_id == org_id,
+            not_deleted(InstanceTemplate),
+        )
+    )
+    return _next_agent_bundle_placeholder_name([name for name in result.scalars().all() if name])
 
 
 async def _resolve_gene_refs(db: AsyncSession, slugs: list[str]) -> list[GeneRef]:
@@ -594,7 +577,11 @@ async def import_agent_bundle_manifest(
     )
     items_input = [TemplateItemInput(type="gene", slug=s) for s in gene_slugs]
 
-    template_name = _clean_template_display_name(name) or _suggest_agent_bundle_display_name(manifest)
+    template_name = (
+        _clean_template_display_name(name)
+        or _suggest_agent_bundle_display_name(manifest)
+        or await _suggest_next_agent_bundle_display_name(db, org_id)
+    )
 
     tpl = InstanceTemplate(
         name=template_name,

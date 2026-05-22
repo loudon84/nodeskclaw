@@ -14,6 +14,7 @@ from app.services.agent_bundle_service import (
 )
 from app.services.deploy_service import _collect_secret_env_refs
 from app.services.instance_template_service import (
+    _next_agent_bundle_placeholder_name,
     _suggest_agent_bundle_display_name,
     import_agent_bundle_manifest,
 )
@@ -118,20 +119,23 @@ def test_secret_env_refs_are_injected_as_k8s_secret_refs_not_configmap_data() ->
     assert env_by_name["OAUTH_ACCESS_TOKEN"].value_from.secret_key_ref.key == "access_token"
 
 
-def test_agent_bundle_display_name_uses_role_heuristics() -> None:
+def test_agent_bundle_display_name_uses_only_explicit_display_name() -> None:
     video_manifest = parse_agent_bundle_dir(FIXTURES / "p5_video_clone_mock_agent")
-    text_manifest = {
+    explicit_manifest = {
         "name": "plain-text-skills-agent",
         "slug": "plain-text-skills-agent",
         "description": "",
-        "skills": [
-            {"name": "text-polish", "slug": "text-polish", "description": "Polish Chinese text"},
-            {"name": "text-summary", "slug": "text-summary", "description": "Summarize text"},
-        ],
+        "config": {"display_name": "文本编辑助理"},
     }
 
-    assert _suggest_agent_bundle_display_name(video_manifest) == "数字人视频复刻专家"
-    assert _suggest_agent_bundle_display_name(text_manifest) == "文本编辑助理"
+    assert _suggest_agent_bundle_display_name(video_manifest) is None
+    assert _suggest_agent_bundle_display_name(explicit_manifest) == "文本编辑助理"
+
+
+def test_agent_bundle_placeholder_name_uses_next_expert_index() -> None:
+    assert _next_agent_bundle_placeholder_name([]) == "专家1"
+    assert _next_agent_bundle_placeholder_name(["专家1", "数字人视频复刻专家"]) == "专家2"
+    assert _next_agent_bundle_placeholder_name(["专家1", "专家2", "专家4"]) == "专家3"
 
 
 @pytest.mark.asyncio
@@ -147,7 +151,7 @@ async def test_import_agent_bundle_creates_private_template_and_genes(require_te
         )
 
         assert template.template_type == "agent_bundle"
-        assert template.name == "业务智能助理"
+        assert template.name == "专家1"
         assert template.slug == "p1-template-import-agent"
         assert template.agent_bundle is not None
         assert template.agent_bundle["name"] == "Template Import Agent"
