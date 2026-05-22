@@ -858,6 +858,7 @@ const enUS = {
     skillEditor: {
       title: "Role & Prompts",
       rolePromptTitle: "Base Prompt",
+      bundleDocsTitle: "Template Bundle Docs",
       skillPromptTitle: "Skill Prompts",
       save: "Save Changes",
       saved: "Saved",
@@ -868,6 +869,7 @@ const enUS = {
       empty: "No skills",
       loadFailed: "Failed to load skill content",
       roleLoadFailed: "Failed to load base prompt",
+      bundleDocsLoadFailed: "Failed to load template bundle docs",
     },
   },
   runtimeDefaultCapabilities: {

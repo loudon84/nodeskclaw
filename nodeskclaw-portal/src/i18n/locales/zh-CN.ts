@@ -858,6 +858,7 @@ const zhCN = {
     skillEditor: {
       title: "角色与提示词",
       rolePromptTitle: "基础提示词",
+      bundleDocsTitle: "模板包文档",
       skillPromptTitle: "技能提示词",
       save: "保存修改",
       saved: "已保存",
@@ -868,6 +869,7 @@ const zhCN = {
       empty: "暂无技能",
       loadFailed: "加载技能内容失败",
       roleLoadFailed: "加载基础提示词失败",
+      bundleDocsLoadFailed: "加载模板包文档失败",
     },
   },
   runtimeDefaultCapabilities: {
