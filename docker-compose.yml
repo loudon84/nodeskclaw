@@ -45,6 +45,7 @@ services:
       DATABASE_NAME_SUFFIX: ""
       LLM_PROXY_URL: ${LLM_PROXY_URL:-http://localhost:${LLM_PROXY_PORT:-4511}}
       LLM_PROXY_INTERNAL_URL: http://llm-proxy:8080
+      LLM_ATTRIBUTION_SECRET: ${LLM_ATTRIBUTION_SECRET:-}
       NODESKCLAW_EDITION: ce
       DOCKER_DATA_DIR: /nodeskclaw-data
       DOCKER_HOST_DATA_DIR: ${NODESKCLAW_DATA_DIR:-${HOME:-.}/.nodeskclaw/docker-instances}
@@ -76,6 +77,7 @@ services:
       - ${CODEX_HOME_DIR:-$HOME/.codex}:/root/.codex
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://nodeskclaw:nodeskclaw@postgres:5432/nodeskclaw}
+      LLM_ATTRIBUTION_SECRET: ${LLM_ATTRIBUTION_SECRET:-}
       CODEX_HOME: /root/.codex
       TZ: ${TZ:-Asia/Shanghai}
     ports:

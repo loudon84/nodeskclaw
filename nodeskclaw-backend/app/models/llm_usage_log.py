@@ -26,6 +26,10 @@ class LlmUsageLog(Base):
     instance_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("instances.id"), nullable=False, index=True
     )
+    workspace_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("workspaces.id"), nullable=True, index=True
+    )
+    attribution_source: Mapped[str | None] = mapped_column(String(32), nullable=True)
     provider: Mapped[str] = mapped_column(String(32), nullable=False)
     model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     prompt_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)

@@ -7,8 +7,7 @@ Schema is owned by nodeskclaw-backend; this service never runs migrations.
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Integer, String, Text, func
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import BigInteger, Boolean, DateTime, String, Text, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -28,6 +27,23 @@ class Instance(Base):
     wp_api_key: Mapped[str | None] = mapped_column(String(96), unique=True, nullable=True)
     created_by: Mapped[str] = mapped_column(String(36), nullable=False)
     org_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class Workspace(Base):
+    __tablename__ = "workspaces"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    org_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class WorkspaceAgent(Base):
+    __tablename__ = "workspace_agents"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    instance_id: Mapped[str] = mapped_column(String(36), nullable=False)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
@@ -89,6 +105,8 @@ class LlmUsageLog(Base):
     org_llm_key_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     user_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     instance_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    workspace_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    attribution_source: Mapped[str | None] = mapped_column(String(32), nullable=True)
     provider: Mapped[str | None] = mapped_column(String(32), nullable=True)
     model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     prompt_tokens: Mapped[int] = mapped_column(default=0)

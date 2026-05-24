@@ -5,6 +5,7 @@ class Settings(BaseSettings):
     DATABASE_URL: str = ""
     HTTPS_PROXY: str = ""
     LLM_LOG_CONTENT: bool = False
+    LLM_ATTRIBUTION_SECRET: str = ""
     CODEX_COMMAND: str = "codex"
     CODEX_HOME: str = ""
     CODEX_SKIP_GIT_REPO_CHECK: bool = True

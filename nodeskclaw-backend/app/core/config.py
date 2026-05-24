@@ -124,6 +124,7 @@ class Settings(BaseSettings):
     NODESKCLAW_HOST: str = ""  # 外部可达域名，如 https://nodeskclaw.example.com（废弃，保留兼容）
     LLM_PROXY_URL: str = ""  # 独立 LLM Proxy 服务外部地址，如 https://llm-proxy.example.com
     LLM_PROXY_INTERNAL_URL: str = ""  # K8s 集群内网地址，用于 openclaw.json 中的 baseUrl（绕过 ALB）
+    LLM_ATTRIBUTION_SECRET: str = ""  # LLM 用量归属签名密钥，后端和 LLM Proxy 保持一致
 
     @model_validator(mode="after")
     def _qualify_llm_proxy_internal_url(self) -> "Settings":

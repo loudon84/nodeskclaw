@@ -335,7 +335,6 @@ async def org_akr_summary(
 ):
     """Aggregate AKR data across all workspaces in the org."""
     from app.models.workspace import Workspace
-    from app.models.workspace_agent import WorkspaceAgent
     from app.models.workspace_objective import WorkspaceObjective
     from app.models.workspace_task import WorkspaceTask
     from app.models.llm_usage_log import LlmUsageLog
@@ -369,15 +368,13 @@ async def org_akr_summary(
 
     token_rows = (await db.execute(
         select(
-            WorkspaceAgent.workspace_id,
+            LlmUsageLog.workspace_id,
             func.coalesce(func.sum(LlmUsageLog.total_tokens), 0),
         )
-        .join(LlmUsageLog, LlmUsageLog.instance_id == WorkspaceAgent.instance_id)
         .where(
-            WorkspaceAgent.workspace_id.in_(ws_ids),
-            WorkspaceAgent.deleted_at.is_(None),
+            LlmUsageLog.workspace_id.in_(ws_ids),
         )
-        .group_by(WorkspaceAgent.workspace_id)
+        .group_by(LlmUsageLog.workspace_id)
     )).all()
     token_by_ws = {r[0]: int(r[1]) for r in token_rows}
 

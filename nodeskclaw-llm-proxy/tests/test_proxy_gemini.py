@@ -3,6 +3,7 @@ import inspect
 import json
 import os
 import sys
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -15,9 +16,9 @@ from app import proxy
 
 
 class FakeRequest:
-    def __init__(self, body: dict | bytes, *, method: str = "POST") -> None:
+    def __init__(self, body: dict | bytes, *, method: str = "POST", headers: dict | None = None) -> None:
         self.method = method
-        self.headers = {}
+        self.headers = headers or {}
         self._body = body if isinstance(body, bytes) else json.dumps(body).encode("utf-8")
 
     async def body(self) -> bytes:
@@ -213,3 +214,110 @@ def test_gemini_streaming_returns_explicit_400(monkeypatch) -> None:
 
 def test_codex_branch_does_not_reference_removed_config_name() -> None:
     assert 'if config.key_source != "personal"' not in inspect.getsource(proxy.llm_proxy)
+
+
+def test_signed_attribution_token_resolves_workspace(monkeypatch) -> None:
+    async def run_test() -> None:
+        async def workspace_belongs_to_org(_db, workspace_id, org_id) -> bool:
+            return workspace_id == "ws-1" and org_id == "org-1"
+
+        monkeypatch.setattr(proxy.settings, "LLM_ATTRIBUTION_SECRET", "secret")
+        monkeypatch.setattr(proxy, "_workspace_belongs_to_org", workspace_belongs_to_org)
+        token = proxy._sign_attribution_payload({
+            "org_id": "org-1",
+            "workspace_id": "ws-1",
+            "instance_id": "inst-1",
+            "source": "veginette",
+            "exp": int(time.time()) + 60,
+        }, "secret")
+        request = FakeRequest({}, headers={"x-nodeskclaw-llm-attribution": token})
+
+        workspace_id, source = await proxy._resolve_usage_attribution(
+            request,
+            object(),
+            SimpleNamespace(id="inst-1", org_id="org-1"),
+        )
+
+        assert workspace_id == "ws-1"
+        assert source == "signed:veginette"
+
+    asyncio.run(run_test())
+
+
+def test_invalid_signed_attribution_token_remains_unattributed(monkeypatch) -> None:
+    async def run_test() -> None:
+        monkeypatch.setattr(proxy.settings, "LLM_ATTRIBUTION_SECRET", "secret")
+        request = FakeRequest({}, headers={"x-nodeskclaw-llm-attribution": "not-valid.%%%"})
+
+        workspace_id, source = await proxy._resolve_usage_attribution(
+            request,
+            object(),
+            SimpleNamespace(id="inst-1", org_id="org-1"),
+        )
+
+        assert workspace_id is None
+        assert source == "unattributed"
+
+    asyncio.run(run_test())
+
+
+def test_session_key_requires_workspace_agent(monkeypatch) -> None:
+    async def run_test() -> None:
+        async def workspace_belongs_to_org(_db, workspace_id, org_id) -> bool:
+            return workspace_id == "ws-1" and org_id == "org-1"
+
+        async def instance_in_workspace(_db, workspace_id, instance_id) -> bool:
+            return workspace_id == "ws-1" and instance_id == "inst-1"
+
+        monkeypatch.setattr(proxy, "_workspace_belongs_to_org", workspace_belongs_to_org)
+        monkeypatch.setattr(proxy, "_instance_in_workspace", instance_in_workspace)
+        request = FakeRequest({}, headers={"x-openclaw-session-key": "workspace:ws-1"})
+
+        workspace_id, source = await proxy._resolve_usage_attribution(
+            request,
+            object(),
+            SimpleNamespace(id="inst-1", org_id="org-1"),
+        )
+
+        assert workspace_id == "ws-1"
+        assert source == "session_key"
+
+    asyncio.run(run_test())
+
+
+def test_session_key_without_workspace_agent_stays_unattributed(monkeypatch) -> None:
+    async def run_test() -> None:
+        async def workspace_belongs_to_org(_db, workspace_id, org_id) -> bool:
+            return workspace_id == "ws-1" and org_id == "org-1"
+
+        async def instance_in_workspace(_db, _workspace_id, _instance_id) -> bool:
+            return False
+
+        monkeypatch.setattr(proxy, "_workspace_belongs_to_org", workspace_belongs_to_org)
+        monkeypatch.setattr(proxy, "_instance_in_workspace", instance_in_workspace)
+        request = FakeRequest({}, headers={"x-openclaw-session-key": "workspace:ws-1"})
+
+        workspace_id, source = await proxy._resolve_usage_attribution(
+            request,
+            object(),
+            SimpleNamespace(id="inst-1", org_id="org-1"),
+        )
+
+        assert workspace_id is None
+        assert source == "unattributed"
+
+    asyncio.run(run_test())
+
+
+def test_missing_attribution_context_remains_unattributed() -> None:
+    async def run_test() -> None:
+        workspace_id, source = await proxy._resolve_usage_attribution(
+            FakeRequest({}),
+            object(),
+            SimpleNamespace(id="inst-1", org_id="org-1"),
+        )
+
+        assert workspace_id is None
+        assert source == "unattributed"
+
+    asyncio.run(run_test())

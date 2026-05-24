@@ -618,35 +618,20 @@ async def get_performance(
     failed = sum(1 for t in rows if t.status == "failed")
     completion_rate = done / total if total > 0 else 0.0
     total_value = sum(t.actual_value or 0 for t in rows if t.status in ("done", "archived"))
-    from app.models.workspace_agent import WorkspaceAgent
     from app.models.llm_usage_log import LlmUsageLog
 
-    agent_q = await db.execute(
-        sa_select(WorkspaceAgent.instance_id).where(
-            WorkspaceAgent.workspace_id == workspace_id,
-            WorkspaceAgent.deleted_at.is_(None),
-        )
-    )
-    ws_instance_ids = [r[0] for r in agent_q.all()]
-
-    total_tokens = 0
-    total_prompt = 0
-    total_completion = 0
-    filter_ids = ws_instance_ids
+    llm_q = sa_select(
+        func.coalesce(func.sum(LlmUsageLog.total_tokens), 0),
+        func.coalesce(func.sum(LlmUsageLog.prompt_tokens), 0),
+        func.coalesce(func.sum(LlmUsageLog.completion_tokens), 0),
+    ).where(LlmUsageLog.workspace_id == workspace_id)
     if instance_id:
-        filter_ids = [instance_id] if instance_id in ws_instance_ids else []
-    if filter_ids:
-        llm_result = await db.execute(
-            sa_select(
-                func.coalesce(func.sum(LlmUsageLog.total_tokens), 0),
-                func.coalesce(func.sum(LlmUsageLog.prompt_tokens), 0),
-                func.coalesce(func.sum(LlmUsageLog.completion_tokens), 0),
-            ).where(LlmUsageLog.instance_id.in_(filter_ids))
-        )
-        llm_row = llm_result.one()
-        total_tokens = int(llm_row[0])
-        total_prompt = int(llm_row[1])
-        total_completion = int(llm_row[2])
+        llm_q = llm_q.where(LlmUsageLog.instance_id == instance_id)
+    llm_result = await db.execute(llm_q)
+    llm_row = llm_result.one()
+    total_tokens = int(llm_row[0])
+    total_prompt = int(llm_row[1])
+    total_completion = int(llm_row[2])
 
     roi = total_value / total_tokens * 1000 if total_tokens > 0 else 0.0
 
@@ -933,6 +918,7 @@ async def attribute_tokens_to_tasks(
             func.coalesce(func.sum(LlmUsageLog.prompt_tokens), 0),
             func.coalesce(func.sum(LlmUsageLog.completion_tokens), 0),
         ).where(
+            LlmUsageLog.workspace_id == workspace_id,
             LlmUsageLog.instance_id == task.assignee_instance_id,
             LlmUsageLog.created_at >= task.created_at,
         )
@@ -959,18 +945,7 @@ async def get_workspace_token_usage(
 ):
     """Aggregate LLM token usage for a workspace, grouped by provider and model."""
     await wm_service.check_workspace_member(workspace_id, user, db)
-    from app.models.workspace_agent import WorkspaceAgent
     from app.models.llm_usage_log import LlmUsageLog
-
-    agent_q = await db.execute(
-        sa_select(WorkspaceAgent.instance_id).where(
-            WorkspaceAgent.workspace_id == workspace_id,
-            WorkspaceAgent.deleted_at.is_(None),
-        )
-    )
-    instance_ids = [r[0] for r in agent_q.all()]
-    if not instance_ids:
-        return _ok({"total_prompt_tokens": 0, "total_completion_tokens": 0, "total_tokens": 0, "by_provider": []})
 
     rows = await db.execute(
         sa_select(
@@ -981,7 +956,7 @@ async def get_workspace_token_usage(
             func.sum(LlmUsageLog.total_tokens),
             func.count(),
         ).where(
-            LlmUsageLog.instance_id.in_(instance_ids),
+            LlmUsageLog.workspace_id == workspace_id,
         ).group_by(LlmUsageLog.provider, LlmUsageLog.model)
     )
 

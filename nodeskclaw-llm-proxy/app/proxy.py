@@ -1,5 +1,9 @@
 """LLM Proxy: resolves real API keys and forwards requests to upstream LLM providers."""
 
+import base64
+import binascii
+import hashlib
+import hmac
 import json
 import logging
 import time
@@ -22,7 +26,17 @@ from app.codex_cli import (
 )
 from app.config import settings
 from app.database import get_session
-from app.models import Instance, InstanceProviderConfig, LlmUsageLog, OrgLlmKey, UserLlmConfig, UserLlmKey, not_deleted
+from app.models import (
+    Instance,
+    InstanceProviderConfig,
+    LlmUsageLog,
+    OrgLlmKey,
+    UserLlmConfig,
+    UserLlmKey,
+    Workspace,
+    WorkspaceAgent,
+    not_deleted,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +61,16 @@ _API_TYPE_AUTH: dict[str, str] = {
 }
 
 _GEMINI_UNSUPPORTED_SCHEMA_KEYS = {"$schema", "additionalProperties", "strict"}
+_LLM_ATTRIBUTION_HEADER = "x-nodeskclaw-llm-attribution"
+_SESSION_KEY_HEADERS = (
+    "x-openclaw-session-key",
+    "x-nodeskclaw-session-key",
+    "x-nanobot-session-key",
+)
+_INTERNAL_CONTEXT_HEADERS = {
+    _LLM_ATTRIBUTION_HEADER,
+    *_SESSION_KEY_HEADERS,
+}
 
 _http_client: httpx.AsyncClient | None = None
 _http_client_no_verify: httpx.AsyncClient | None = None
@@ -77,6 +101,115 @@ def _extract_proxy_token(request: Request) -> str | None:
     return None
 
 
+def _b64url_encode(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _b64url_decode(raw: str) -> bytes:
+    padding = "=" * (-len(raw) % 4)
+    return base64.urlsafe_b64decode((raw + padding).encode("ascii"))
+
+
+def _sign_attribution_payload(payload: dict, secret: str) -> str:
+    body = _b64url_encode(json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8"))
+    sig = hmac.new(secret.encode("utf-8"), body.encode("ascii"), hashlib.sha256).digest()
+    return f"{body}.{_b64url_encode(sig)}"
+
+
+def _decode_attribution_token(token: str, secret: str) -> dict | None:
+    if not token or not secret:
+        return None
+    try:
+        body, sig = token.split(".", 1)
+        expected = hmac.new(secret.encode("utf-8"), body.encode("ascii"), hashlib.sha256).digest()
+        actual = _b64url_decode(sig)
+        if not hmac.compare_digest(expected, actual):
+            return None
+        payload = json.loads(_b64url_decode(body))
+        if not isinstance(payload, dict):
+            return None
+        exp = payload.get("exp")
+        if exp is not None and float(exp) < time.time():
+            return None
+        return payload
+    except (ValueError, TypeError, binascii.Error, json.JSONDecodeError):
+        return None
+
+
+def _workspace_id_from_session_key(session_key: str | None) -> str | None:
+    if not session_key:
+        return None
+    for prefix in ("workspace:", "nodeskclaw:"):
+        if session_key.startswith(prefix):
+            workspace_id = session_key[len(prefix):].strip()
+            return workspace_id or None
+    return None
+
+
+def _extract_session_workspace_id(request: Request) -> str | None:
+    for header in _SESSION_KEY_HEADERS:
+        workspace_id = _workspace_id_from_session_key(request.headers.get(header))
+        if workspace_id:
+            return workspace_id
+    return None
+
+
+async def _workspace_belongs_to_org(db, workspace_id: str, org_id: str | None) -> bool:
+    if not org_id:
+        return False
+    result = await db.execute(
+        select(Workspace.id).where(
+            Workspace.id == workspace_id,
+            Workspace.org_id == org_id,
+            not_deleted(Workspace),
+        )
+    )
+    return result.scalar_one_or_none() is not None
+
+
+async def _instance_in_workspace(db, workspace_id: str, instance_id: str) -> bool:
+    result = await db.execute(
+        select(WorkspaceAgent.id).where(
+            WorkspaceAgent.workspace_id == workspace_id,
+            WorkspaceAgent.instance_id == instance_id,
+            not_deleted(WorkspaceAgent),
+        )
+    )
+    return result.scalar_one_or_none() is not None
+
+
+async def _resolve_usage_attribution(request: Request, db, instance: Instance) -> tuple[str | None, str]:
+    token = request.headers.get(_LLM_ATTRIBUTION_HEADER, "").strip()
+    if token:
+        payload = _decode_attribution_token(token, settings.LLM_ATTRIBUTION_SECRET)
+        if not payload:
+            logger.warning("Invalid LLM attribution token for instance=%s", instance.id)
+        else:
+            workspace_id = str(payload.get("workspace_id") or "").strip()
+            token_instance_id = str(payload.get("instance_id") or "").strip()
+            token_org_id = str(payload.get("org_id") or "").strip()
+            if (
+                workspace_id
+                and token_instance_id == instance.id
+                and token_org_id == (instance.org_id or "")
+                and await _workspace_belongs_to_org(db, workspace_id, instance.org_id)
+            ):
+                source = str(payload.get("source") or "signed_context")[:16]
+                return workspace_id, f"signed:{source}"[:32]
+            logger.warning("LLM attribution token context mismatch for instance=%s", instance.id)
+
+    workspace_id = _extract_session_workspace_id(request)
+    if not workspace_id:
+        return None, "unattributed"
+    if not await _workspace_belongs_to_org(db, workspace_id, instance.org_id):
+        logger.warning("Session workspace attribution rejected: workspace=%s instance=%s", workspace_id, instance.id)
+        return None, "unattributed"
+    if not await _instance_in_workspace(db, workspace_id, instance.id):
+        logger.warning("Session workspace attribution requires WorkspaceAgent: workspace=%s instance=%s", workspace_id, instance.id)
+        return None, "unattributed"
+    return workspace_id, "session_key"
+
+
 def _build_target_url(provider: str, path: str, base_url: str | None, api_key: str | None) -> str:
     base = (base_url or PROVIDER_DEFAULTS.get(provider, {}).get("base_url", "")).rstrip("/")
     if base_url and path.startswith("v1/"):
@@ -99,7 +232,15 @@ def _build_auth_headers(
     headers = {}
     for k, v in original_headers.items():
         lower = k.lower()
-        if lower in ("host", "content-length", "transfer-encoding", "authorization", "x-api-key", "accept-encoding"):
+        if lower in (
+            "host",
+            "content-length",
+            "transfer-encoding",
+            "authorization",
+            "x-api-key",
+            "accept-encoding",
+            *_INTERNAL_CONTEXT_HEADERS,
+        ):
             continue
         headers[k] = v
 
@@ -1007,6 +1148,8 @@ async def llm_proxy(provider: str, path: str, request: Request):
             api_type = user_key.api_type
             skip_ssl_verify = user_key.skip_ssl_verify
 
+        workspace_id, attribution_source = await _resolve_usage_attribution(request, db, instance)
+
     raw_body = await request.body()
     body = _maybe_inject_stream_options(raw_body, provider)
 
@@ -1022,6 +1165,8 @@ async def llm_proxy(provider: str, path: str, request: Request):
         provider=provider,
         key_source=key_source,
         org_key_id=org_key_id,
+        workspace_id=workspace_id,
+        attribution_source=attribution_source,
         request_path=f"/{path}",
         is_stream=is_stream,
         raw_body=raw_body,
@@ -1055,15 +1200,17 @@ async def llm_proxy(provider: str, path: str, request: Request):
 
 class _RequestContext:
     __slots__ = ("instance", "provider", "key_source", "org_key_id",
-                 "request_path", "is_stream", "raw_body")
+                 "workspace_id", "attribution_source", "request_path", "is_stream", "raw_body")
 
     def __init__(self, *, instance: Instance, provider: str, key_source: str,
-                 org_key_id: str | None, request_path: str, is_stream: bool,
-                 raw_body: bytes):
+                 org_key_id: str | None, workspace_id: str | None,
+                 attribution_source: str, request_path: str, is_stream: bool, raw_body: bytes):
         self.instance = instance
         self.provider = provider
         self.key_source = key_source
         self.org_key_id = org_key_id
+        self.workspace_id = workspace_id
+        self.attribution_source = attribution_source
         self.request_path = request_path
         self.is_stream = is_stream
         self.raw_body = raw_body
@@ -1233,6 +1380,8 @@ async def _record_usage(
                 org_llm_key_id=ctx.org_key_id,
                 user_id=ctx.instance.created_by,
                 instance_id=ctx.instance.id,
+                workspace_id=ctx.workspace_id,
+                attribution_source=ctx.attribution_source,
                 provider=ctx.provider,
                 model=usage.get("model"),
                 prompt_tokens=usage.get("prompt_tokens", 0),
