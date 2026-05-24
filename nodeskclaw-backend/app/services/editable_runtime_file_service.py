@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import posixpath
 import re
+import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Literal
@@ -19,10 +20,15 @@ from app.utils.jsonc import parse_config_json
 ManagedFileContentType = Literal["markdown", "json", "yaml"]
 
 ROLE_PROMPT_KEY = "role_prompt"
+AGENT_BUNDLE_DOCS_KEY = "agent_bundle_docs"
 ROOT_DIR = "/root"
 OPENCLAW_DEFAULT_WORKSPACE = "/root/.openclaw/workspace"
 OPENCLAW_CONFIG_REL = ".openclaw/openclaw.json"
 SOUL_FILENAME = "SOUL.md"
+AGENT_BUNDLE_ROOT_REL = ".openclaw/agent-bundles"
+AGENT_BUNDLE_DOC_EXTENSIONS = (".md", ".markdown", ".txt")
+AGENT_BUNDLE_DOC_EXCLUDED = {"SOUL.md", "SKILL.md"}
+AGENT_BUNDLE_DOC_ORDER = ("AGENT.md", "rules.md", "memory.md", "README.md", "DEPLOYMENT.md")
 
 
 @dataclass(frozen=True)
@@ -97,6 +103,22 @@ def _resolve_user_path(value: str) -> str:
     return posixpath.normpath(raw)
 
 
+def _load_instance_env_vars(instance: Instance) -> dict[str, str]:
+    raw = getattr(instance, "env_vars", None)
+    if not raw:
+        return {}
+    if isinstance(raw, dict):
+        data = raw
+    else:
+        try:
+            data = json.loads(str(raw))
+        except (TypeError, ValueError):
+            return {}
+    if not isinstance(data, dict):
+        return {}
+    return {str(key): str(value) for key, value in data.items() if value is not None}
+
+
 def _resolve_openclaw_workspace(config: dict) -> str:
     agent_id = _resolve_default_agent_id(config)
     agent = _resolve_agent_entry(config, agent_id)
@@ -162,6 +184,52 @@ async def _resolve_openclaw_role_prompt(instance: Instance, fs: RemoteFS) -> Man
     return _to_managed_path(instance.runtime, posixpath.join(workspace, SOUL_FILENAME))
 
 
+async def _resolve_agent_bundle_dir(instance: Instance, fs: RemoteFS) -> ManagedFilePath | None:
+    env_vars = _load_instance_env_vars(instance)
+    bundle_dir = env_vars.get("NODESKCLAW_AGENT_BUNDLE_DIR")
+    if bundle_dir:
+        return _to_managed_path(instance.runtime, _resolve_user_path(bundle_dir))
+
+    entries = await fs.list_dir(AGENT_BUNDLE_ROOT_REL)
+    if not entries:
+        return None
+    dirs = [
+        str(item["name"])
+        for item in entries
+        if item.get("is_dir") and "/" not in str(item.get("name", ""))
+    ]
+    if not dirs:
+        return None
+    rel_path = posixpath.normpath(posixpath.join(AGENT_BUNDLE_ROOT_REL, sorted(dirs)[0]))
+    allowed_root = enterprise_file_service.get_allowed_root(instance.runtime)
+    safe_path = enterprise_file_service._validate_path(rel_path, allowed_root)
+    return ManagedFilePath(rel_path=safe_path, display_path=f"{ROOT_DIR}/{safe_path}")
+
+
+def _agent_bundle_doc_sort_key(name: str) -> tuple[int, str]:
+    try:
+        return AGENT_BUNDLE_DOC_ORDER.index(name), name.lower()
+    except ValueError:
+        return len(AGENT_BUNDLE_DOC_ORDER), name.lower()
+
+
+async def _list_agent_bundle_doc_names(fs: RemoteFS, bundle_rel_path: str) -> list[str]:
+    entries = await fs.list_dir(bundle_rel_path)
+    if not entries:
+        return []
+    names: list[str] = []
+    for item in entries:
+        name = str(item.get("name") or "")
+        if item.get("is_dir") or "/" in name:
+            continue
+        if name in AGENT_BUNDLE_DOC_EXCLUDED:
+            continue
+        if not name.lower().endswith(AGENT_BUNDLE_DOC_EXTENSIONS):
+            continue
+        names.append(name)
+    return sorted(names, key=_agent_bundle_doc_sort_key)
+
+
 _RESOURCES: dict[str, dict[str, EditableRuntimeFileResource]] = {
     ROLE_PROMPT_KEY: {
         "hermes": EditableRuntimeFileResource(
@@ -219,8 +287,70 @@ def _build_response(
     }
 
 
+def _build_agent_bundle_docs_response(
+    instance: Instance,
+    path: ManagedFilePath | None,
+    items: list[dict],
+) -> dict:
+    return {
+        "key": AGENT_BUNDLE_DOCS_KEY,
+        "runtime": instance.runtime,
+        "rel_path": path.rel_path if path else "",
+        "display_path": path.display_path if path else "",
+        "content": "",
+        "exists": bool(items),
+        "content_type": "markdown",
+        "requires_restart": False,
+        "items": items,
+    }
+
+
+async def _read_agent_bundle_docs(instance: Instance, db: AsyncSession) -> dict:
+    try:
+        async with remote_fs(instance, db) as fs:
+            bundle_path = await _resolve_agent_bundle_dir(instance, fs)
+            if bundle_path is None:
+                return _build_agent_bundle_docs_response(instance, None, [])
+
+            items: list[dict] = []
+            for name in await _list_agent_bundle_doc_names(fs, bundle_path.rel_path):
+                rel_path = posixpath.normpath(posixpath.join(bundle_path.rel_path, name))
+                stat = await fs.file_stat(rel_path)
+                if stat is None:
+                    continue
+                if stat["size"] > enterprise_file_service.MAX_PREVIEW_BYTES:
+                    raise AppException(
+                        code=41300,
+                        message="文件内容超过允许大小",
+                        message_key="errors.managed_files.too_large",
+                        status_code=413,
+                    )
+                content = await fs.read_text(rel_path)
+                items.append({
+                    "key": name,
+                    "name": name,
+                    "runtime": instance.runtime,
+                    "rel_path": rel_path,
+                    "display_path": f"{ROOT_DIR}/{rel_path}",
+                    "content": content or "",
+                    "exists": True,
+                    "content_type": "markdown",
+                    "requires_restart": False,
+                })
+            return _build_agent_bundle_docs_response(instance, bundle_path, items)
+    except NFSMountError:
+        raise AppException(
+            code=50300,
+            message="无法连接到实例",
+            message_key="errors.enterprise_files.instance_not_running",
+            status_code=503,
+        )
+
+
 async def read_managed_file(instance_id: str, resource_key: str, db: AsyncSession) -> dict:
     instance = await enterprise_file_service._get_running_instance(instance_id, db)
+    if resource_key == AGENT_BUNDLE_DOCS_KEY:
+        return await _read_agent_bundle_docs(instance, db)
     resource = _get_resource(resource_key, instance.runtime)
 
     try:

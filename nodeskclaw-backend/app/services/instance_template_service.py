@@ -2,16 +2,20 @@
 
 import json
 import logging
+import re
+from pathlib import Path
+from typing import Any
 
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import ConflictError, NotFoundError
+from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
 from app.models.base import not_deleted
-from app.models.gene import Gene, Genome, InstanceGene
+from app.models.gene import ContentVisibility, Gene, GeneSource, Genome, InstanceGene
 from app.models.instance import Instance
-from app.models.instance_template import InstanceTemplate, TemplateItem
+from app.models.instance_template import InstanceTemplate, InstanceTemplateType, TemplateItem
 from app.schemas.instance_template import (
+    AgentBundleImportRequest,
     GeneRef,
     InstanceTemplateCreate,
     InstanceTemplateFromInstance,
@@ -19,6 +23,12 @@ from app.schemas.instance_template import (
     InstanceTemplateUpdate,
     TemplateItemInput,
     TemplateItemRef,
+)
+from app.services.agent_bundle_service import (
+    build_bundle_env_vars,
+    normalize_bundle_slug,
+    parse_agent_bundle_dir,
+    summarize_agent_bundle_manifest,
 )
 
 logger = logging.getLogger(__name__)
@@ -60,6 +70,74 @@ def _parse_gene_slugs(raw: str | None) -> list[str]:
         return json.loads(raw)
     except (json.JSONDecodeError, TypeError):
         return []
+
+
+def _parse_json_obj(raw: str | None) -> dict[str, Any] | None:
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _parse_json_list(raw: str | None) -> list:
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return []
+    return data if isinstance(data, list) else []
+
+
+def _clean_template_display_name(value: str | None) -> str | None:
+    cleaned = str(value or "").strip()
+    return cleaned[:128] if cleaned else None
+
+
+def _suggest_agent_bundle_display_name(manifest: dict[str, Any]) -> str | None:
+    config = manifest.get("config") if isinstance(manifest.get("config"), dict) else {}
+    explicit_candidates = [
+        manifest.get("display_name"),
+        manifest.get("displayName"),
+        config.get("display_name"),
+        config.get("displayName"),
+        config.get("zhName"),
+        config.get("chineseName"),
+    ]
+    for candidate in explicit_candidates:
+        cleaned = _clean_template_display_name(candidate)
+        if cleaned:
+            return cleaned
+    return None
+
+
+_EXPERT_PLACEHOLDER_RE = re.compile(r"^专家([1-9]\d*)$")
+
+
+def _next_agent_bundle_placeholder_name(existing_names: list[str]) -> str:
+    used: set[int] = set()
+    for name in existing_names:
+        match = _EXPERT_PLACEHOLDER_RE.match(str(name or "").strip())
+        if match:
+            used.add(int(match.group(1)))
+    index = 1
+    while index in used:
+        index += 1
+    return f"专家{index}"
+
+
+async def _suggest_next_agent_bundle_display_name(db: AsyncSession, org_id: str | None) -> str:
+    result = await db.execute(
+        select(InstanceTemplate.name).where(
+            InstanceTemplate.template_type == InstanceTemplateType.agent_bundle,
+            InstanceTemplate.org_id == org_id,
+            not_deleted(InstanceTemplate),
+        )
+    )
+    return _next_agent_bundle_placeholder_name([name for name in result.scalars().all() if name])
 
 
 async def _resolve_gene_refs(db: AsyncSession, slugs: list[str]) -> list[GeneRef]:
@@ -180,6 +258,12 @@ def _template_to_info(
         gene_slugs=legacy_slugs,
         genes=genes or [],
         items=items,
+        template_type=tpl.template_type or InstanceTemplateType.basic,
+        agent_bundle=summarize_agent_bundle_manifest(_parse_json_obj(tpl.agent_bundle_manifest)),
+        resource_recommendation=_parse_json_obj(tpl.resource_recommendation),
+        upload_contract=_parse_json_obj(tpl.upload_contract),
+        secret_refs=_parse_json_list(tpl.secret_refs),
+        bundle_storage_key=tpl.bundle_storage_key,
         source_instance_id=tpl.source_instance_id,
         is_published=tpl.is_published,
         is_featured=tpl.is_featured,
@@ -282,6 +366,117 @@ async def get_template_gene_slugs(
     return deduped
 
 
+async def get_template_agent_bundle_manifest(
+    db: AsyncSession, template_id: str, org_id: str | None = None,
+) -> dict[str, Any] | None:
+    tpl = await _get_template_model(db, template_id, org_id)
+    if tpl.template_type != InstanceTemplateType.agent_bundle:
+        return None
+    return _parse_json_obj(tpl.agent_bundle_manifest)
+
+
+async def get_template_deploy_env_vars(
+    db: AsyncSession,
+    template_id: str,
+    org_id: str | None = None,
+    *,
+    instance_id: str | None = None,
+) -> dict[str, str]:
+    tpl = await _get_template_model(db, template_id, org_id)
+    if tpl.template_type != InstanceTemplateType.agent_bundle:
+        return {}
+    manifest = _parse_json_obj(tpl.agent_bundle_manifest)
+    return build_bundle_env_vars(manifest, tpl.slug, instance_id=instance_id)
+
+
+def _build_gene_slug(template_slug: str, skill_slug: str, org_id: str | None) -> str:
+    org_fragment = normalize_bundle_slug(org_id or "global")[:8]
+    base = normalize_bundle_slug(f"{template_slug}-{skill_slug}-{org_fragment}")
+    return base[:128].rstrip("-")
+
+
+def _build_gene_manifest(skill: dict[str, Any], files: dict[str, str], template_slug: str) -> dict[str, Any]:
+    permissions = skill.get("permissions") if isinstance(skill.get("permissions"), dict) else {}
+    tools = permissions.get("tools") if isinstance(permissions.get("tools"), list) else []
+    manifest: dict[str, Any] = {
+        "skill": {
+            "name": skill["name"],
+            "content": files.get(skill["path"], ""),
+        },
+        "agent_bundle": {
+            "template_slug": template_slug,
+            "skill_path": skill["path"],
+        },
+    }
+    if tools:
+        manifest["tool_allow"] = tools
+    scripts = skill.get("scripts") if isinstance(skill.get("scripts"), dict) else {}
+    if scripts:
+        manifest["scripts"] = {
+            Path(path).name: content
+            for path, content in scripts.items()
+        }
+    return manifest
+
+
+async def _create_agent_bundle_genes(
+    db: AsyncSession,
+    *,
+    template_slug: str,
+    manifest: dict[str, Any],
+    user_id: str,
+    org_id: str | None,
+) -> list[str]:
+    files = manifest.get("files") if isinstance(manifest.get("files"), dict) else {}
+    gene_slugs: list[str] = []
+    for skill in manifest.get("skills", []):
+        if not isinstance(skill, dict):
+            continue
+        gene_slug = _build_gene_slug(template_slug, str(skill["slug"]), org_id)
+        existing = await db.execute(
+            select(Gene).where(
+                Gene.slug == gene_slug,
+                Gene.org_id == org_id,
+                not_deleted(Gene),
+            )
+        )
+        gene = existing.scalar_one_or_none()
+        gene_manifest = _build_gene_manifest(skill, files, template_slug)
+        if gene:
+            gene.name = str(skill["name"])
+            gene.description = str(skill.get("description") or "")
+            gene.short_description = str(skill.get("description") or "")[:256]
+            gene.version = str(skill.get("version") or "1.0.0")[:16]
+            gene.manifest = json.dumps(gene_manifest, ensure_ascii=False)
+            gene.source = GeneSource.agent
+            gene.visibility = ContentVisibility.org_private
+            gene.is_published = False
+            gene.source_ref = f"agent_bundle:{template_slug}:{skill['name']}"
+        else:
+            db.add(Gene(
+                name=str(skill["name"]),
+                slug=gene_slug,
+                description=str(skill.get("description") or ""),
+                short_description=str(skill.get("description") or "")[:256],
+                category="能力",
+                tags=json.dumps(["agent_bundle", template_slug], ensure_ascii=False),
+                source=GeneSource.agent,
+                source_ref=f"agent_bundle:{template_slug}:{skill['name']}",
+                version=str(skill.get("version") or "1.0.0")[:16],
+                manifest=json.dumps(gene_manifest, ensure_ascii=False),
+                dependencies="[]",
+                synergies="[]",
+                is_featured=False,
+                is_published=False,
+                created_by=user_id,
+                org_id=org_id,
+                visibility=ContentVisibility.org_private,
+            ))
+        gene_slugs.append(gene_slug)
+    await db.flush()
+    return gene_slugs
+
+
 async def create_template(
     db: AsyncSession,
     req: InstanceTemplateCreate,
@@ -324,6 +519,100 @@ async def create_template(
     ti_list = await _get_template_items(db, tpl.id)
     item_refs = await _resolve_item_refs(db, ti_list)
     gene_slugs = [r.slug for r in item_refs if r.type == "gene"]
+    genes = await _resolve_gene_refs(db, gene_slugs)
+    return _template_to_info(tpl, genes, item_refs)
+
+
+async def import_agent_bundle_template(
+    db: AsyncSession,
+    req: AgentBundleImportRequest,
+    user_id: str,
+    org_id: str | None = None,
+) -> InstanceTemplateInfo:
+    manifest = parse_agent_bundle_dir(req.bundle_path)
+    return await import_agent_bundle_manifest(
+        db,
+        manifest,
+        user_id=user_id,
+        org_id=org_id,
+        name=req.name,
+        slug=req.slug,
+        description=req.description,
+        short_description=req.short_description,
+        icon=req.icon,
+    )
+
+
+async def import_agent_bundle_manifest(
+    db: AsyncSession,
+    manifest: dict[str, Any],
+    *,
+    user_id: str,
+    org_id: str | None = None,
+    name: str | None = None,
+    slug: str | None = None,
+    description: str | None = None,
+    short_description: str | None = None,
+    icon: str | None = None,
+) -> InstanceTemplateInfo:
+    template_slug = normalize_bundle_slug(slug or str(manifest["slug"]))
+
+    existing = await db.execute(
+        select(InstanceTemplate).where(
+            InstanceTemplate.slug == template_slug,
+            InstanceTemplate.org_id == org_id,
+            not_deleted(InstanceTemplate),
+        )
+    )
+    if existing.scalar_one_or_none():
+        raise ConflictError(f"模板 slug '{template_slug}' 已存在")
+
+    manifest["slug"] = template_slug
+    gene_slugs = await _create_agent_bundle_genes(
+        db,
+        template_slug=template_slug,
+        manifest=manifest,
+        user_id=user_id,
+        org_id=org_id,
+    )
+    items_input = [TemplateItemInput(type="gene", slug=s) for s in gene_slugs]
+
+    template_name = (
+        _clean_template_display_name(name)
+        or _suggest_agent_bundle_display_name(manifest)
+        or await _suggest_next_agent_bundle_display_name(db, org_id)
+    )
+
+    tpl = InstanceTemplate(
+        name=template_name,
+        slug=template_slug,
+        description=description if description is not None else manifest.get("description"),
+        short_description=short_description or manifest.get("description"),
+        icon=icon or "package",
+        gene_slugs=json.dumps(gene_slugs, ensure_ascii=False),
+        template_type=InstanceTemplateType.agent_bundle,
+        agent_bundle_manifest=json.dumps(manifest, ensure_ascii=False),
+        bundle_storage_key=f"db://instance_templates/{template_slug}/agent_bundle_manifest",
+        resource_recommendation=json.dumps(manifest.get("resource_recommendation"), ensure_ascii=False)
+        if manifest.get("resource_recommendation") else None,
+        upload_contract=json.dumps(manifest.get("upload_contract"), ensure_ascii=False)
+        if manifest.get("upload_contract") else None,
+        secret_refs=json.dumps(manifest.get("secret_refs") or [], ensure_ascii=False),
+        created_by=user_id,
+        org_id=org_id,
+        visibility=ContentVisibility.org_private,
+        is_published=True,
+        is_featured=False,
+    )
+    db.add(tpl)
+    await db.flush()
+    await _write_template_items(db, tpl.id, items_input)
+
+    await db.commit()
+    await db.refresh(tpl)
+
+    ti_list = await _get_template_items(db, tpl.id)
+    item_refs = await _resolve_item_refs(db, ti_list)
     genes = await _resolve_gene_refs(db, gene_slugs)
     return _template_to_info(tpl, genes, item_refs)
 
@@ -399,7 +688,10 @@ async def update_template(
 ) -> InstanceTemplateInfo:
     tpl = await _get_template_model(db, template_id, org_id, require_manage=True)
     if req.name is not None:
-        tpl.name = req.name
+        cleaned_name = _clean_template_display_name(req.name)
+        if not cleaned_name:
+            raise BadRequestError("模板显示名称不能为空")
+        tpl.name = cleaned_name
     if req.description is not None:
         tpl.description = req.description
     if req.short_description is not None:

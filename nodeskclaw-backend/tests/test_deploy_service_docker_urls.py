@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 
 from app.core.exceptions import BadRequestError
@@ -7,6 +9,7 @@ from app.services.deploy_service import (
     DEPLOY_STEPS_BASE,
     _DeployContext,
     _require_supported_runtime,
+    _restore_agent_bundle_with_retry,
     _rewrite_docker_callback_url,
     _should_sync_runtime_llm_config,
 )
@@ -129,3 +132,185 @@ async def test_execute_deploy_pipeline_skips_config_step_without_runtime_sync(mo
 
     assert captured["total"] == len(DEPLOY_STEPS_BASE)
     assert captured["steps"] == DEPLOY_STEPS_BASE
+
+
+@pytest.mark.asyncio
+async def test_execute_deploy_pipeline_adds_agent_bundle_restore_step(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    async def fake_execute_inner(ctx, async_session_factory, get_config, total, steps):
+        captured["ctx"] = ctx
+        captured["total"] = total
+        captured["steps"] = steps
+
+    ctx = _deploy_context(should_sync_runtime_llm_config=False)
+    ctx.template_agent_bundle_manifest = {"slug": "p0-echo-agent", "files": {}, "skills": []}
+    monkeypatch.setattr(deploy_service, "_execute_deploy_inner", fake_execute_inner)
+
+    await deploy_service.execute_deploy_pipeline(ctx)
+
+    assert captured["total"] == len(DEPLOY_STEPS_BASE) + 1
+    assert captured["steps"] == [*DEPLOY_STEPS_BASE, "恢复 AI 员工模板包"]
+
+
+@pytest.mark.asyncio
+async def test_compute_provider_deploy_runs_template_post_ready_steps(monkeypatch) -> None:
+    record = SimpleNamespace(status=None, finished_at=None, message="")
+    instance = SimpleNamespace(id="instance-1", status=None, advanced_config=None)
+    calls: list[tuple[str, str | None]] = []
+    published: list[dict] = []
+
+    class FakeResult:
+        def __init__(self, value):
+            self.value = value
+
+        def scalar_one(self):
+            return self.value
+
+    class FakeSession:
+        def __init__(self):
+            self.results = [record, instance]
+            self.commits = 0
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def execute(self, *_args, **_kwargs):
+            return FakeResult(self.results.pop(0))
+
+        async def commit(self):
+            self.commits += 1
+
+    class FakeProvider:
+        async def create_instance(self, config):
+            calls.append(("create", config.env_vars.get("DOCKER_IMAGE")))
+            return SimpleNamespace(endpoint="http://agent.local", extra={})
+
+    ctx = _deploy_context(should_sync_runtime_llm_config=False)
+    ctx.compute_provider = "docker"
+    ctx.env_vars = {"DOCKER_IMAGE": "example/hermes:latest"}
+    ctx.template_id = "template-1"
+    ctx.template_agent_bundle_manifest = {"slug": "p0-echo-agent", "files": {}, "skills": []}
+    ctx.template_gene_slugs = ["gene-a"]
+
+    fake_session = FakeSession()
+
+    monkeypatch.setattr("app.core.deps.async_session_factory", lambda: fake_session)
+    monkeypatch.setattr(
+        "app.services.runtime.registries.compute_registry.COMPUTE_REGISTRY.get",
+        lambda compute_id: SimpleNamespace(provider=FakeProvider()) if compute_id == "docker" else None,
+    )
+
+    async def fake_http_probe(_endpoint, path=None):
+        return {"healthy": True}
+
+    async def fake_restore(_instance, manifest, _db):
+        calls.append(("restore", manifest["slug"]))
+
+    async def fake_install(_instance_id, gene_slug):
+        calls.append(("install", gene_slug))
+
+    async def fake_restart(_instance_id, _db):
+        calls.append(("restart", None))
+
+    async def fake_increment(_db, template_id):
+        calls.append(("increment", template_id))
+
+    monkeypatch.setattr("app.services.runtime.compute.base.http_probe", fake_http_probe)
+    monkeypatch.setattr(deploy_service, "_restore_agent_bundle_with_retry", fake_restore)
+    monkeypatch.setattr("app.services.gene_service.install_gene_prerestart", fake_install)
+    monkeypatch.setattr("app.services.instance_service.restart_instance", fake_restart)
+    monkeypatch.setattr("app.services.instance_template_service.increment_use_count", fake_increment)
+    monkeypatch.setattr(
+        deploy_service.event_bus,
+        "publish",
+        lambda _topic, payload: published.append(payload),
+    )
+
+    await deploy_service._execute_via_compute_provider(ctx)
+
+    assert calls == [
+        ("create", "example/hermes:latest"),
+        ("restore", "p0-echo-agent"),
+        ("install", "gene-a"),
+        ("restart", None),
+        ("increment", "template-1"),
+    ]
+    assert record.status == deploy_service.DeployStatus.success
+    assert record.message == "部署成功"
+    assert instance.status == deploy_service.InstanceStatus.running
+    assert fake_session.commits == 2
+    assert published[0]["step_names"] == [
+        "环境预检查",
+        "启动容器",
+        "等待容器就绪",
+        "恢复 AI 员工模板包",
+        "安装模板技能基因",
+        "部署完成",
+    ]
+    template_steps = {"恢复 AI 员工模板包", "安装模板技能基因"}
+    assert [item["current_step"] for item in published if item["current_step"] in template_steps] == [
+        "恢复 AI 员工模板包",
+        "恢复 AI 员工模板包",
+        "安装模板技能基因",
+        "安装模板技能基因",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_restore_agent_bundle_retries_transient_exec_failure(monkeypatch) -> None:
+    calls = 0
+    sleeps: list[float] = []
+
+    async def fake_restore(instance, manifest, db):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("exec not ready")
+
+    async def fake_sleep(delay):
+        sleeps.append(delay)
+
+    monkeypatch.setattr("app.services.agent_bundle_service.restore_agent_bundle", fake_restore)
+    monkeypatch.setattr(deploy_service.asyncio, "sleep", fake_sleep)
+
+    await _restore_agent_bundle_with_retry(
+        SimpleNamespace(id="instance-1"),
+        {"slug": "bundle-1"},
+        None,
+        max_retries=2,
+        retry_delay=0.5,
+    )
+
+    assert calls == 2
+    assert sleeps == [0.5]
+
+
+@pytest.mark.asyncio
+async def test_restore_agent_bundle_raises_after_retries(monkeypatch) -> None:
+    calls = 0
+
+    async def fake_restore(instance, manifest, db):
+        nonlocal calls
+        calls += 1
+        raise RuntimeError("exec still unavailable")
+
+    async def fake_sleep(delay):
+        return None
+
+    monkeypatch.setattr("app.services.agent_bundle_service.restore_agent_bundle", fake_restore)
+    monkeypatch.setattr(deploy_service.asyncio, "sleep", fake_sleep)
+
+    with pytest.raises(RuntimeError, match="exec still unavailable"):
+        await _restore_agent_bundle_with_retry(
+            SimpleNamespace(id="instance-1"),
+            {"slug": "bundle-1"},
+            None,
+            max_retries=2,
+            retry_delay=0.5,
+        )
+
+    assert calls == 3

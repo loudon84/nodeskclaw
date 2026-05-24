@@ -14,7 +14,7 @@ import json
 import logging
 from typing import TYPE_CHECKING
 
-from app.services.runtime.gene_install_adapter import GeneInstallAdapter
+from app.services.runtime.gene_install_adapter import GeneInstallAdapter, validate_skill_name_segment
 from app.utils.jsonc import (
     deep_merge_config,
     ensure_channel_plugin_integrity,
@@ -45,13 +45,14 @@ class OpenClawGeneInstallAdapter(GeneInstallAdapter):
     async def deploy_skill(
         self, fs: RemoteFS, skill_name: str, content: str, description: str = "",
     ) -> None:
+        safe_skill_name = validate_skill_name_segment(skill_name)
         if not content.lstrip().startswith("---"):
-            desc = description or f"Skill: {skill_name}"
-            front_matter = f"---\nname: {skill_name}\ndescription: {desc}\n---\n\n"
+            desc = description or f"Skill: {safe_skill_name}"
+            front_matter = f"---\nname: {safe_skill_name}\ndescription: {desc}\n---\n\n"
             content = front_matter + content
 
-        await fs.mkdir(f"{self._skills_dir}/{skill_name}")
-        await fs.write_text(f"{self._skills_dir}/{skill_name}/SKILL.md", content)
+        await fs.mkdir(f"{self._skills_dir}/{safe_skill_name}")
+        await fs.write_text(f"{self._skills_dir}/{safe_skill_name}/SKILL.md", content)
         await self._ensure_skills_discovery(fs)
 
     async def allow_tools(self, fs: RemoteFS, tool_names: list[str]) -> None:
@@ -101,7 +102,8 @@ class OpenClawGeneInstallAdapter(GeneInstallAdapter):
         await inject_evolution_notification(fs, skill_name, event)
 
     async def remove_skill(self, fs: RemoteFS, skill_name: str) -> None:
-        await fs.remove(f"{self._skills_dir}/{skill_name}")
+        safe_skill_name = validate_skill_name_segment(skill_name)
+        await fs.remove(f"{self._skills_dir}/{safe_skill_name}")
 
     async def post_remove_cleanup(self, fs: RemoteFS, skill_name: str) -> None:
         from app.services.openclaw_session import (

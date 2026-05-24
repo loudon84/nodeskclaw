@@ -1,0 +1,14 @@
+{
+  "name": "Video Clone Mock Agent",
+  "slug": "p5-video-clone-mock-agent",
+  "model": "mock/video",
+  "uploadContract": {
+    "maxFileSizeMb": 50,
+    "acceptedMimeTypes": ["video/mp4", "video/quicktime"],
+    "inputKeys": ["file_url", "video_id"],
+    "businessUpload": true
+  },
+  "env": {
+    "VIDEO_API_BASE": "http://mock-video-api.local/api/v1"
+  }
+}

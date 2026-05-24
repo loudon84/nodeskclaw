@@ -311,6 +311,7 @@ interface SkillItem {
 
 interface ManagedFileContent {
   key: string
+  name?: string
   runtime: string
   rel_path: string
   display_path: string
@@ -318,6 +319,7 @@ interface ManagedFileContent {
   exists: boolean
   content_type: string
   requires_restart: boolean
+  items?: ManagedFileContent[]
 }
 
 const skillEditorOpen = ref(false)
@@ -328,6 +330,14 @@ const rolePromptLoading = ref(false)
 const rolePromptSaving = ref(false)
 const rolePromptError = ref('')
 const rolePromptDirty = computed(() => rolePromptContent.value !== rolePromptOriginal.value)
+const bundleDocs = ref<ManagedFileContent[]>([])
+const bundleDocsLoaded = ref(false)
+const bundleDocsLoading = ref(false)
+const bundleDocsError = ref('')
+const activeBundleDoc = ref('')
+const activeBundleDocItem = computed(() =>
+  bundleDocs.value.find((item) => item.key === activeBundleDoc.value) ?? bundleDocs.value[0] ?? null
+)
 const skills = ref<SkillItem[]>([])
 const skillsLoaded = ref(false)
 const activeSkill = ref('')
@@ -370,6 +380,26 @@ async function saveRolePrompt() {
     toast.error(e?.response?.data?.message || t('instanceDetail.skillEditor.roleSaveFailed'))
   } finally {
     rolePromptSaving.value = false
+  }
+}
+
+async function fetchBundleDocs() {
+  bundleDocsLoading.value = true
+  bundleDocsError.value = ''
+  try {
+    const res = await api.get(`/instances/${instanceId.value}/managed-files/agent_bundle_docs`)
+    const items = res.data?.data?.items
+    bundleDocs.value = Array.isArray(items) ? items : []
+    if (!bundleDocs.value.some((item) => item.key === activeBundleDoc.value)) {
+      activeBundleDoc.value = bundleDocs.value[0]?.key ?? ''
+    }
+  } catch (e: any) {
+    bundleDocs.value = []
+    activeBundleDoc.value = ''
+    bundleDocsError.value = e?.response?.data?.message || t('instanceDetail.skillEditor.bundleDocsLoadFailed')
+  } finally {
+    bundleDocsLoaded.value = true
+    bundleDocsLoading.value = false
   }
 }
 
@@ -436,6 +466,9 @@ function toggleSkillEditor() {
   skillEditorOpen.value = !skillEditorOpen.value
   if (skillEditorOpen.value && !rolePrompt.value && !rolePromptLoading.value && !rolePromptError.value) {
     fetchRolePrompt()
+  }
+  if (skillEditorOpen.value && !bundleDocsLoaded.value && !bundleDocsLoading.value) {
+    fetchBundleDocs()
   }
   if (skillEditorOpen.value && !skillsLoaded.value) {
     fetchSkills()
@@ -695,6 +728,50 @@ function toggleSkillEditor() {
                   {{ t('instanceDetail.skillEditor.save') }}
                 </Button>
               </div>
+            </template>
+          </div>
+
+          <div
+            v-if="bundleDocsLoading || bundleDocsError || bundleDocs.length"
+            class="px-4 py-4 border-b border-border"
+          >
+            <div class="flex items-center justify-between gap-3 mb-3">
+              <h3 class="text-sm font-medium">{{ t('instanceDetail.skillEditor.bundleDocsTitle') }}</h3>
+              <span
+                v-if="bundleDocs.length"
+                class="text-xs px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground"
+              >{{ bundleDocs.length }}</span>
+            </div>
+            <div v-if="bundleDocsLoading" class="flex items-center justify-center py-12">
+              <Loader2 class="w-5 h-5 animate-spin text-muted-foreground" />
+            </div>
+            <div v-else-if="bundleDocsError" class="py-8 text-center text-sm text-muted-foreground">
+              {{ bundleDocsError }}
+            </div>
+            <template v-else-if="activeBundleDocItem">
+              <div class="flex gap-1 pt-0 pb-0 overflow-x-auto">
+                <Button variant="unstyled" size="unstyled"
+                  v-for="doc in bundleDocs"
+                  :key="doc.key"
+                  class="px-3 py-1.5 text-xs rounded-t-lg border border-b-0 transition-colors whitespace-nowrap"
+                  :class="doc.key === activeBundleDocItem.key
+                    ? 'bg-card border-border text-foreground font-medium'
+                    : 'bg-transparent border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/30'"
+                  @click="activeBundleDoc = doc.key"
+                >{{ doc.name || doc.key }}</Button>
+              </div>
+              <p
+                v-if="activeBundleDocItem.display_path"
+                class="mb-2 text-xs text-muted-foreground font-mono break-all"
+              >
+                {{ activeBundleDocItem.display_path }}
+              </p>
+              <Textarea
+                :model-value="activeBundleDocItem.content"
+                class="w-full h-56 px-3 py-2 rounded-lg border border-border bg-background text-sm font-mono resize-y scrollbar-compact"
+                readonly
+                spellcheck="false"
+              />
             </template>
           </div>
 
