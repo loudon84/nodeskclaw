@@ -29,13 +29,11 @@ const myInstanceRole = computed(() => instance.value?.my_role ?? null)
 
 async function fetchBasic() {
   loading.value = true
+  void api.get('/engines')
+    .then((enginesRes) => setRuntimeEngines(enginesRes.data.data ?? []))
+    .catch(() => undefined)
   try {
-    const [res] = await Promise.all([
-      api.get(`/instances/${instanceId.value}`),
-      api.get('/engines')
-        .then((enginesRes) => setRuntimeEngines(enginesRes.data.data ?? []))
-        .catch(() => undefined),
-    ])
+    const res = await api.get(`/instances/${instanceId.value}`)
     instance.value = res.data.data
   } catch {
     instance.value = null
