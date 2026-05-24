@@ -1,0 +1,8 @@
+{
+  "name": "Template Import Agent",
+  "slug": "p1-template-import-agent",
+  "model": "mock/importer",
+  "env": {
+    "IMPORT_MODE": "fixture"
+  }
+}

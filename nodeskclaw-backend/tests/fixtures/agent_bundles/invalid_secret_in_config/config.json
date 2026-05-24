@@ -1,0 +1,7 @@
+{
+  "name": "Invalid Secret",
+  "slug": "invalid-secret",
+  "env": {
+    "VIDEO_AUTH_TOKEN": "plain-token-value"
+  }
+}

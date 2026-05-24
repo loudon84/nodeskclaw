@@ -14,6 +14,11 @@ class TemplateItemType(str, Enum):
     genome = "genome"
 
 
+class InstanceTemplateType(str, Enum):
+    basic = "basic"
+    agent_bundle = "agent_bundle"
+
+
 class InstanceTemplate(BaseModel):
     __tablename__ = "instance_templates"
     __table_args__ = (
@@ -32,6 +37,15 @@ class InstanceTemplate(BaseModel):
     short_description: Mapped[str | None] = mapped_column(String(256), nullable=True)
     icon: Mapped[str | None] = mapped_column(String(32), nullable=True)
     gene_slugs: Mapped[str | None] = mapped_column(Text, nullable=True)  # deprecated, use template_items
+    template_type: Mapped[str] = mapped_column(
+        String(32), default=InstanceTemplateType.basic, nullable=False,
+        server_default=InstanceTemplateType.basic,
+    )
+    agent_bundle_manifest: Mapped[str | None] = mapped_column(Text, nullable=True)
+    bundle_storage_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    resource_recommendation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    upload_contract: Mapped[str | None] = mapped_column(Text, nullable=True)
+    secret_refs: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     source_instance_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("instances.id"), nullable=True

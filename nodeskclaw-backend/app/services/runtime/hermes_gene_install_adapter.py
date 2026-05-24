@@ -2,18 +2,17 @@
 
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING
 
-from app.services.runtime.gene_install_adapter import GeneInstallAdapter
+from app.services.runtime.gene_install_adapter import GeneInstallAdapter, validate_skill_name_segment
 
 if TYPE_CHECKING:
     from app.services.nfs_mount import RemoteFS
 
-logger = logging.getLogger(__name__)
-
 
 class HermesGeneInstallAdapter(GeneInstallAdapter):
+    runtime_id = "hermes"
+
     def __init__(
         self,
         skills_dir_rel: str = ".hermes/skills",
@@ -33,18 +32,15 @@ class HermesGeneInstallAdapter(GeneInstallAdapter):
         content: str,
         description: str = "",
     ) -> None:
-        await fs.remove(f"{self._legacy_skills_dir}/{skill_name}")
+        safe_skill_name = validate_skill_name_segment(skill_name)
+        await fs.remove(f"{self._legacy_skills_dir}/{safe_skill_name}")
         content = _normalize_skill_content(content)
         if not content.lstrip().startswith("---"):
-            desc = description or f"Skill: {skill_name}"
-            content = f"---\nname: {skill_name}\ndescription: {desc}\n---\n\n{content}"
+            desc = description or f"Skill: {safe_skill_name}"
+            content = f"---\nname: {safe_skill_name}\ndescription: {desc}\n---\n\n{content}"
 
-        await fs.mkdir(f"{self._skills_dir}/{skill_name}")
-        await fs.write_text(f"{self._skills_dir}/{skill_name}/SKILL.md", content)
-
-    async def allow_tools(self, fs: RemoteFS, tool_names: list[str]) -> None:
-        if tool_names:
-            logger.info("HermesGeneInstallAdapter: ignoring OpenClaw tool_allow entries: %s", tool_names)
+        await fs.mkdir(f"{self._skills_dir}/{safe_skill_name}")
+        await fs.write_text(f"{self._skills_dir}/{safe_skill_name}/SKILL.md", content)
 
     async def deploy_scripts(self, fs: RemoteFS, scripts: dict[str, str]) -> None:
         if not scripts:
@@ -53,19 +49,13 @@ class HermesGeneInstallAdapter(GeneInstallAdapter):
         for filename, content in scripts.items():
             await fs.write_text(f"{self._scripts_dir}/{filename}", content)
 
-    async def apply_config(self, fs: RemoteFS, config_patch: dict) -> None:
-        if config_patch:
-            logger.info(
-                "HermesGeneInstallAdapter: ignoring OpenClaw runtime config patch: %s",
-                list(config_patch.keys()),
-            )
-
     async def invalidate_cache(self, fs: RemoteFS, skill_name: str, event: str = "installed") -> None:
         await fs.remove(self._snapshot_rel)
 
     async def remove_skill(self, fs: RemoteFS, skill_name: str) -> None:
-        await fs.remove(f"{self._skills_dir}/{skill_name}")
-        await fs.remove(f"{self._legacy_skills_dir}/{skill_name}")
+        safe_skill_name = validate_skill_name_segment(skill_name)
+        await fs.remove(f"{self._skills_dir}/{safe_skill_name}")
+        await fs.remove(f"{self._legacy_skills_dir}/{safe_skill_name}")
 
     async def post_remove_cleanup(self, fs: RemoteFS, skill_name: str) -> None:
         await fs.remove(self._snapshot_rel)

@@ -55,6 +55,15 @@ class GeneRef(BaseModel):
     icon: str | None = None
 
 
+class AgentBundleImportRequest(BaseModel):
+    bundle_path: str
+    name: str | None = Field(None, max_length=128)
+    slug: str | None = Field(None, max_length=128)
+    description: str | None = None
+    short_description: str | None = Field(None, max_length=256)
+    icon: str | None = Field(None, max_length=32)
+
+
 class InstanceTemplateInfo(BaseModel):
     id: str
     name: str
@@ -65,6 +74,12 @@ class InstanceTemplateInfo(BaseModel):
     gene_slugs: list[str] = []
     genes: list[GeneRef] = []
     items: list[TemplateItemRef] = []
+    template_type: Literal["basic", "agent_bundle"] = "basic"
+    agent_bundle: dict | None = None
+    resource_recommendation: dict | None = None
+    upload_contract: dict | None = None
+    secret_refs: list[dict] = []
+    bundle_storage_key: str | None = None
     source_instance_id: str | None = None
     is_published: bool = True
     is_featured: bool = False

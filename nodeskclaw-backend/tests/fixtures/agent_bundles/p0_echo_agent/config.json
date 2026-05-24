@@ -1,0 +1,8 @@
+{
+  "name": "Echo Agent",
+  "slug": "p0-echo-agent",
+  "model": "mock/echo",
+  "env": {
+    "ECHO_MODE": "true"
+  }
+}

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import {
   Search,
@@ -28,6 +28,8 @@ import {
   X,
   Globe,
   HardDrive,
+  Upload,
+  Pencil,
 } from 'lucide-vue-next'
 import { useGeneStore } from '@/stores/gene'
 import type { GeneItem, GenomeItem, TemplateInfo } from '@/stores/gene'
@@ -37,11 +39,20 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 
 const router = useRouter()
+const route = useRoute()
 const store = useGeneStore()
 const toast = useToast()
 const { t, locale } = useI18n()
 
-const viewMode = ref<'genes' | 'genomes' | 'templates' | 'evolution'>('genes')
+type GeneMarketViewMode = 'genes' | 'genomes' | 'templates' | 'evolution'
+
+function resolveViewMode(value: unknown): GeneMarketViewMode {
+  return value === 'genes' || value === 'genomes' || value === 'templates' || value === 'evolution'
+    ? value
+    : 'genes'
+}
+
+const viewMode = ref<GeneMarketViewMode>(resolveViewMode(route.query.tab))
 const keyword = ref('')
 const selectedTag = ref<string | null>(null)
 const selectedCategory = ref<string | null>(null)
@@ -128,6 +139,11 @@ const evoLoading = ref(false)
 const evoActivityLoading = ref(false)
 const evoPendingLoading = ref(false)
 const evoReviewingId = ref<string | null>(null)
+const bundleFileInput = ref<HTMLInputElement | null>(null)
+const importingBundle = ref(false)
+const editingTemplateId = ref<string | null>(null)
+const editingTemplateName = ref('')
+const savingTemplateId = ref<string | null>(null)
 
 async function loadEvolution() {
   evoLoading.value = true
@@ -272,6 +288,16 @@ watch([viewMode, selectedTag, selectedCategory, selectedVisibility, sortBy], () 
 
 watch(page, loadData)
 
+watch(
+  () => route.query.tab,
+  (tab) => {
+    const nextMode = resolveViewMode(tab)
+    if (nextMode !== viewMode.value) {
+      viewMode.value = nextMode
+    }
+  }
+)
+
 function goToGene(slug: string) {
   router.push(`/gene-market/gene/${slug}`)
 }
@@ -287,6 +313,60 @@ function hasNativeTools(gene: GeneItem): boolean {
   if (Array.isArray(mcpServers) && mcpServers.length > 0) return true
   const tags = gene.tags ?? []
   return tags.some((t) => ['mcp', 'tools'].includes(String(t).toLowerCase()))
+}
+
+function openBundleImport() {
+  bundleFileInput.value?.click()
+}
+
+function getTemplateStandardName(tpl: TemplateInfo): string {
+  return tpl.agent_bundle?.name || tpl.slug
+}
+
+function startTemplateNameEdit(tpl: TemplateInfo) {
+  editingTemplateId.value = tpl.id
+  editingTemplateName.value = tpl.name
+}
+
+function cancelTemplateNameEdit() {
+  editingTemplateId.value = null
+  editingTemplateName.value = ''
+}
+
+async function saveTemplateName(tpl: TemplateInfo) {
+  const nextName = editingTemplateName.value.trim()
+  if (!nextName) {
+    toast.error(t('template.displayNameRequired'))
+    return
+  }
+  savingTemplateId.value = tpl.id
+  try {
+    await store.updateTemplate(tpl.id, { name: nextName })
+    toast.success(t('template.displayNameUpdated'))
+    cancelTemplateNameEdit()
+  } catch (e: any) {
+    toast.error(e?.response?.data?.message || t('template.displayNameUpdateFailed'))
+  } finally {
+    savingTemplateId.value = null
+  }
+}
+
+async function handleBundleImport(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  importingBundle.value = true
+  try {
+    await store.importAgentBundle(file)
+    toast.success(t('template.bundleImported'))
+    viewMode.value = 'templates'
+    await loadData()
+  } catch (e: any) {
+    toast.error(e?.response?.data?.message || t('template.bundleImportFailed'))
+  } finally {
+    importingBundle.value = false
+    input.value = ''
+  }
 }
 
 </script>
@@ -509,7 +589,7 @@ function hasNativeTools(gene: GeneItem): boolean {
       <template v-else>
 
       <!-- Visibility filter -->
-      <div v-if="viewMode === 'genes' || viewMode === 'templates'" class="flex gap-2 mb-4">
+      <div v-if="viewMode === 'genes' || viewMode === 'templates'" class="flex flex-wrap items-center gap-2 mb-4">
         <Button variant="unstyled" size="unstyled"
           v-for="vis in [
             { value: null, key: 'geneMarket.visAll' },
@@ -527,6 +607,24 @@ function hasNativeTools(gene: GeneItem): boolean {
         >
           {{ t(vis.key) }}
         </Button>
+        <div v-if="viewMode === 'templates'" class="ml-auto">
+          <input
+            ref="bundleFileInput"
+            type="file"
+            accept=".zip"
+            class="hidden"
+            @change="handleBundleImport"
+          />
+          <Button variant="unstyled" size="unstyled"
+            class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-primary/10 text-primary hover:bg-primary/20 disabled:opacity-50 transition-colors"
+            :disabled="importingBundle"
+            @click="openBundleImport"
+          >
+            <Loader2 v-if="importingBundle" class="w-3.5 h-3.5 animate-spin" />
+            <Upload v-else class="w-3.5 h-3.5" />
+            {{ t('template.importBundle') }}
+          </Button>
+        </div>
       </div>
 
       <div class="flex flex-wrap gap-3 mb-6">
@@ -766,7 +864,65 @@ function hasNativeTools(gene: GeneItem): boolean {
                     <component :is="resolveIcon(tpl.icon)" class="w-5 h-5 text-primary" />
                   </div>
                   <div class="min-w-0 flex-1">
-                    <span class="font-medium truncate block">{{ tpl.name }}</span>
+                    <div class="flex items-start gap-2 min-w-0">
+                      <div class="min-w-0 flex-1">
+                        <div
+                          v-if="editingTemplateId === tpl.id"
+                          class="flex items-center gap-1"
+                          @click.stop
+                        >
+                          <Input
+                            v-model="editingTemplateName"
+                            class="h-8 min-w-0 text-sm"
+                            :placeholder="t('template.displayNamePlaceholder')"
+                            @keydown.enter.stop.prevent="saveTemplateName(tpl)"
+                            @keydown.esc.stop.prevent="cancelTemplateNameEdit"
+                          />
+                          <Button variant="unstyled" size="unstyled"
+                            class="shrink-0 p-1.5 rounded-md text-primary hover:bg-primary/10 disabled:opacity-50"
+                            :title="t('template.saveDisplayName')"
+                            :aria-label="t('template.saveDisplayName')"
+                            :disabled="savingTemplateId === tpl.id"
+                            @click.stop="saveTemplateName(tpl)"
+                          >
+                            <Loader2 v-if="savingTemplateId === tpl.id" class="w-4 h-4 animate-spin" />
+                            <Check v-else class="w-4 h-4" />
+                          </Button>
+                          <Button variant="unstyled" size="unstyled"
+                            class="shrink-0 p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted"
+                            :title="t('common.cancel')"
+                            :aria-label="t('common.cancel')"
+                            @click.stop="cancelTemplateNameEdit"
+                          >
+                            <X class="w-4 h-4" />
+                          </Button>
+                        </div>
+                        <div v-else class="flex items-center gap-2 min-w-0">
+                          <span class="font-medium truncate block">{{ tpl.name }}</span>
+                          <Button variant="unstyled" size="unstyled"
+                            v-if="tpl.template_type === 'agent_bundle'"
+                            class="shrink-0 p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted"
+                            :title="t('template.editDisplayName')"
+                            :aria-label="t('template.editDisplayName')"
+                            @click.stop="startTemplateNameEdit(tpl)"
+                          >
+                            <Pencil class="w-3.5 h-3.5" />
+                          </Button>
+                        </div>
+                      </div>
+                      <span
+                        v-if="tpl.template_type === 'agent_bundle'"
+                        class="shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-400"
+                      >
+                        {{ t('template.agentBundleBadge') }}
+                      </span>
+                    </div>
+                    <p
+                      v-if="tpl.template_type === 'agent_bundle'"
+                      class="text-xs text-muted-foreground truncate mt-1"
+                    >
+                      {{ t('template.standardName') }}: {{ getTemplateStandardName(tpl) }}
+                    </p>
                     <p class="text-xs text-muted-foreground line-clamp-2 mt-1">
                       {{ tpl.short_description ?? tpl.description ?? '' }}
                     </p>

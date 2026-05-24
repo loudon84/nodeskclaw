@@ -12,7 +12,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useOrgStore } from '@/stores/org'
 import { useI18n } from 'vue-i18n'
 import { useEdition } from '@/composables/useFeature'
-import { getRuntimeCaps } from '@/utils/runtimeCapabilities'
+import { getRuntimeCaps, setRuntimeEngines, type RuntimeEnginePayload } from '@/utils/runtimeCapabilities'
 import { buildDefaultSpecPresets } from '@/utils/instanceFlow'
 import {
   PROVIDERS, PROVIDER_LABELS, PROVIDER_DEFAULT_URLS,
@@ -58,6 +58,9 @@ interface EngineItem {
   display_powered_by: string
   order: number
   available: boolean
+  capabilities?: RuntimeEnginePayload['capabilities']
+  data_dir_container_path?: string | null
+  config_rel_path?: string | null
 }
 const engines = ref<EngineItem[]>([])
 const selectedRuntime = ref('openclaw')
@@ -341,6 +344,33 @@ const storageIndex = computed({
   },
 })
 
+function parseStorageGi(value: unknown): number | null {
+  if (typeof value === 'number') return value
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  if (trimmed.endsWith('Gi')) return Number(trimmed.slice(0, -2))
+  if (trimmed.endsWith('Ti')) return Number(trimmed.slice(0, -2)) * 1024
+  const n = Number(trimmed)
+  return Number.isFinite(n) ? n : null
+}
+
+function applyTemplateRecommendation(template: TemplateInfo) {
+  const rec = template.resource_recommendation
+  if (!rec) return
+  const preset = typeof rec.preset === 'string' ? rec.preset : ''
+  if (preset && specPresets.value.some(s => s.key === preset)) {
+    selectedSpec.value = preset
+  }
+  const storage = parseStorageGi(rec.storage_size)
+  if (storage && storage >= 20) {
+    const closest = storageAnchors.reduce((prev, curr) => Math.abs(curr - storage) < Math.abs(prev - storage) ? curr : prev)
+    storageGi.value = closest
+  }
+  if (rec.pvc_access_mode === 'ReadWriteOnce' || rec.pvc_access_mode === 'ReadWriteMany') {
+    pvcAccessMode.value = rec.pvc_access_mode
+  }
+}
+
 async function fetchImageTags() {
   loadingTags.value = true
   try {
@@ -464,6 +494,7 @@ onMounted(async () => {
       }
     }
     engines.value = (enginesRes.data.data ?? []) as EngineItem[]
+    setRuntimeEngines(engines.value)
     if (engines.value.length > 0 && !engines.value.find(e => e.runtime_id === selectedRuntime.value)) {
       selectedRuntime.value = engines.value[0].runtime_id
     }
@@ -499,6 +530,7 @@ onMounted(async () => {
       await geneStore.fetchTemplate(qTemplateId)
       if (geneStore.currentTemplate) {
         selectedTemplate.value = geneStore.currentTemplate
+        applyTemplateRecommendation(geneStore.currentTemplate)
       }
     } catch {
       // ignore
@@ -715,8 +747,24 @@ async function handleDeploy() {
       <!-- ══ Step 1: 基本信息 ══ -->
       <div v-if="currentStep === 1" class="space-y-8">
         <!-- 模板提示条 -->
-        <div v-if="selectedTemplate" class="flex items-center gap-2 px-4 py-2.5 rounded-lg border border-primary/30 bg-primary/5 text-sm">
-          <span class="text-primary font-medium">{{ t('template.creatingFrom', { name: selectedTemplate.name }) }}</span>
+        <div v-if="selectedTemplate" class="rounded-lg border border-primary/30 bg-primary/5 px-4 py-3 text-sm space-y-2">
+          <div class="flex items-center gap-2">
+            <span class="text-primary font-medium">{{ t('template.creatingFrom', { name: selectedTemplate.name }) }}</span>
+            <span
+              v-if="selectedTemplate.template_type === 'agent_bundle'"
+              class="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-400"
+            >
+              {{ t('template.agentBundleBadge') }}
+            </span>
+          </div>
+          <div
+            v-if="selectedTemplate.resource_recommendation || selectedTemplate.upload_contract || (selectedTemplate.secret_refs?.length ?? 0) > 0"
+            class="flex flex-wrap gap-2 text-xs text-muted-foreground"
+          >
+            <span v-if="selectedTemplate.resource_recommendation">{{ t('template.resourceRecommendationApplied') }}</span>
+            <span v-if="selectedTemplate.upload_contract">{{ t('template.uploadContractReady') }}</span>
+            <span v-if="(selectedTemplate.secret_refs?.length ?? 0) > 0">{{ t('template.secretRefsRequired', { count: selectedTemplate.secret_refs?.length ?? 0 }) }}</span>
+          </div>
         </div>
 
         <!-- 名称 -->

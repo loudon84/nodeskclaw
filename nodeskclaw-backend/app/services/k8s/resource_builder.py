@@ -37,6 +37,7 @@ from kubernetes_asyncio.client import (
     V1ResourceQuotaSpec,
     V1ResourceRequirements,
     V1Secret,
+    V1SecretKeySelector,
     V1SecretVolumeSource,
     V1Service,
     V1ServiceBackendPort,
@@ -258,6 +259,24 @@ def build_deployment(
                     ),
                 )
             )
+
+    if advanced_config:
+        for ref in advanced_config.get("secret_env_refs", []):
+            env_name = ref.get("env") or ref.get("env_name")
+            secret_name = ref.get("secret_name") or ref.get("secretName")
+            secret_key = ref.get("key") or ref.get("secret_key") or ref.get("secretKey")
+            if env_name and secret_name and secret_key:
+                env.append(
+                    V1EnvVar(
+                        name=env_name,
+                        value_from=V1EnvVarSource(
+                            secret_key_ref=V1SecretKeySelector(
+                                name=secret_name,
+                                key=secret_key,
+                            )
+                        ),
+                    )
+                )
 
     volumes = []
     volume_mounts = []
