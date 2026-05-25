@@ -41,9 +41,10 @@ def test_rewrite_docker_callback_url_leaves_remote_host_untouched() -> None:
     assert _rewrite_docker_callback_url("https://nodeskclaw.example.com/api/v1") == "https://nodeskclaw.example.com/api/v1"
 
 
-def test_should_sync_runtime_llm_config_keeps_openclaw_request_scoped() -> None:
+def test_should_sync_runtime_llm_config_uses_openclaw_org_defaults() -> None:
     assert _should_sync_runtime_llm_config("openclaw", True, []) is True
-    assert _should_sync_runtime_llm_config("openclaw", False, ["openai"]) is False
+    assert _should_sync_runtime_llm_config("openclaw", False, ["openai"]) is True
+    assert _should_sync_runtime_llm_config("openclaw", False, []) is False
 
 
 def test_should_sync_runtime_llm_config_uses_hermes_org_defaults() -> None:

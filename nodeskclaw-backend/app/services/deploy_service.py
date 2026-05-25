@@ -95,7 +95,7 @@ def _should_sync_runtime_llm_config(
     if runtime == "hermes":
         return bool(has_llm_configs or org_active_providers)
     if runtime == "openclaw":
-        return has_llm_configs
+        return bool(has_llm_configs or org_active_providers)
     return False
 
 
