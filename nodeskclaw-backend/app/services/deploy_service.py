@@ -1084,6 +1084,7 @@ async def _execute_via_compute_provider(ctx: _DeployContext) -> None:
             deploy_id=ctx.record_id, step=2, total_steps=total,
             current_step=step_names[1], status="in_progress",
             message=None, percent=30,
+            step_names=step_names,
         ).model_dump(),
     )
 
@@ -1099,6 +1100,7 @@ async def _execute_via_compute_provider(ctx: _DeployContext) -> None:
                 deploy_id=ctx.record_id, step=total, total_steps=total,
                 current_step="失败", status="failed",
                 message=str(e)[:200], percent=100,
+                step_names=step_names,
             ).model_dump(),
         )
         return
@@ -1113,6 +1115,7 @@ async def _execute_via_compute_provider(ctx: _DeployContext) -> None:
             deploy_id=ctx.record_id, step=3, total_steps=total,
             current_step=step_names[2], status="in_progress",
             message=None, percent=50,
+            step_names=step_names,
         ).model_dump(),
     )
 
@@ -1132,6 +1135,7 @@ async def _execute_via_compute_provider(ctx: _DeployContext) -> None:
                     current_step=step_names[2], status="in_progress",
                     message=f"等待容器健康检查通过... ({(tick + 1) * 2}s/60s)",
                     percent=pct,
+                    step_names=step_names,
                 ).model_dump(),
             )
             await asyncio.sleep(2)
@@ -1153,6 +1157,7 @@ async def _execute_via_compute_provider(ctx: _DeployContext) -> None:
                 deploy_id=ctx.record_id, step=total, total_steps=total,
                 current_step="失败", status="failed",
                 message=timeout_msg, percent=100,
+                step_names=step_names,
             ).model_dump(),
         )
         return
@@ -1189,6 +1194,7 @@ async def _execute_via_compute_provider(ctx: _DeployContext) -> None:
                     deploy_id=ctx.record_id, step=step, total_steps=total,
                     current_step=name, status=status,
                     message=message, percent=min(90, 65 + step * 5),
+                    step_names=step_names,
                 ).model_dump(),
             )
 
@@ -1215,6 +1221,7 @@ async def _execute_via_compute_provider(ctx: _DeployContext) -> None:
                     deploy_id=ctx.record_id, step=total, total_steps=total,
                     current_step="失败", status="failed",
                     message=f"{str(e)[:170]}，资源清理已开始", percent=100,
+                    step_names=step_names,
                 ).model_dump(),
             )
             return
@@ -1229,6 +1236,7 @@ async def _execute_via_compute_provider(ctx: _DeployContext) -> None:
             deploy_id=ctx.record_id, step=total, total_steps=total,
             current_step=step_names[-1], status="success",
             message=success_msg, percent=100,
+            step_names=step_names,
         ).model_dump(),
     )
 
@@ -1269,13 +1277,10 @@ async def _mark_deploy_failed(ctx: _DeployContext, message: str) -> None:
 async def _execute_deploy_inner(ctx, async_session_factory, get_config, total, steps) -> None:
     """实际的部署管道逻辑（拆出来方便 finally 注销任务）。"""
 
-    first_event = True
-
     def _publish(
         step: int, step_name: str, status: str = "in_progress",
         message: str | None = None, logs: list[str] | None = None,
     ):
-        nonlocal first_event
         if status in ("success", "failed"):
             pct = round(step / total * 100, 1)
         else:
@@ -1291,10 +1296,9 @@ async def _execute_deploy_inner(ctx, async_session_factory, get_config, total, s
                 message=message,
                 percent=pct,
                 logs=logs,
-                step_names=steps if first_event else None,
+                step_names=steps,
             ).model_dump(),
         )
-        first_event = False
 
     await asyncio.sleep(0.3)
 
@@ -1761,9 +1765,8 @@ async def execute_rebuild_pipeline(ctx: _DeployContext) -> None:
             message=message,
             percent=round(step / total * 100) if status in ("success", "failed") else round((step - 0.5) / total * 100),
             logs=logs,
+            step_names=steps,
         )
-        if step == 1:
-            payload.step_names = steps
         event_bus.publish("deploy_progress", payload.model_dump())
 
     try:

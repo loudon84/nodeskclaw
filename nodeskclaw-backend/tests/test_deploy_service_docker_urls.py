@@ -387,7 +387,7 @@ async def test_compute_provider_deploy_runs_template_post_ready_steps(monkeypatc
     assert record.finished_at is not None
     assert instance.status == deploy_service.InstanceStatus.running
     assert fake_session.commits == 3
-    assert json.loads(record.config_snapshot)[PROGRESS_STEP_NAMES_KEY] == [
+    expected_steps = [
         "环境预检查",
         "启动容器",
         "等待容器就绪",
@@ -395,14 +395,8 @@ async def test_compute_provider_deploy_runs_template_post_ready_steps(monkeypatc
         "安装模板技能基因",
         "部署完成",
     ]
-    assert published[0]["step_names"] == [
-        "环境预检查",
-        "启动容器",
-        "等待容器就绪",
-        "恢复 AI 员工模板包",
-        "安装模板技能基因",
-        "部署完成",
-    ]
+    assert json.loads(record.config_snapshot)[PROGRESS_STEP_NAMES_KEY] == expected_steps
+    assert all(item["step_names"] == expected_steps for item in published)
     template_steps = {"恢复 AI 员工模板包", "安装模板技能基因"}
     assert [item["current_step"] for item in published if item["current_step"] in template_steps] == [
         "恢复 AI 员工模板包",
@@ -535,6 +529,7 @@ async def test_k8s_deploy_marks_success_after_post_ready_steps(monkeypatch) -> N
     assert record.finished_at is not None
     assert instance.status == deploy_service.InstanceStatus.running
     assert published[-1]["status"] == "success"
+    assert all(item["step_names"] == DEPLOY_STEPS_BASE for item in published)
 
 
 @pytest.mark.asyncio
@@ -612,6 +607,7 @@ async def test_compute_provider_post_ready_failure_marks_record_failed(monkeypat
     assert instance.status == deploy_service.InstanceStatus.deleting
     assert finalized == [ctx.instance_id]
     assert published[-1]["status"] == "failed"
+    assert all(item["step_names"] == DOCKER_DEPLOY_STEPS for item in published)
 
 
 @pytest.mark.asyncio

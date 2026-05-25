@@ -131,8 +131,10 @@ async def test_execute_rebuild_pipeline_uses_current_k8s_builder_signatures(monk
     async def fake_resolve_image_registry(_db, _runtime):
         return "registry.example.com/deskclaw-hermes"
 
+    published: list[dict] = []
+
     monkeypatch.setattr(deploy_service.asyncio, "sleep", AsyncMock())
-    monkeypatch.setattr(deploy_service.event_bus, "publish", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(deploy_service.event_bus, "publish", lambda _topic, payload: published.append(payload))
     monkeypatch.setattr(
         deploy_service,
         "get_deploy_adapter",
@@ -176,3 +178,5 @@ async def test_execute_rebuild_pipeline_uses_current_k8s_builder_signatures(monk
     assert record.status == DeployStatus.success
     assert json.loads(record.config_snapshot)[deploy_service.PROGRESS_STEP_NAMES_KEY] == deploy_service.REBUILD_STEPS
     assert instance.status == InstanceStatus.running
+    assert published
+    assert all(item["step_names"] == deploy_service.REBUILD_STEPS for item in published)
