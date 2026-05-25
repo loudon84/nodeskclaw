@@ -482,17 +482,13 @@ async def add_agent(db: AsyncSession, workspace_id: str, data: AddAgentRequest, 
     if existing_wa.scalar_one_or_none():
         raise ValueError("该员工已在此办公室中")
 
+    occupied_positions = await _occupied_hex_positions(db, workspace_id)
     if data.hex_q is not None:
         hex_q, hex_r = data.hex_q, data.hex_r or 0
+        if (hex_q, hex_r) in occupied_positions:
+            raise ValueError("该位置已被占用，请选择其他位置")
     else:
-        existing_count = await db.execute(
-            select(func.count()).select_from(WorkspaceAgent).where(
-                WorkspaceAgent.workspace_id == workspace_id,
-                WorkspaceAgent.deleted_at.is_(None),
-            )
-        )
-        count = existing_count.scalar() or 0
-        hex_q, hex_r = _spiral_next(count)
+        hex_q, hex_r = _next_available_hex_position(occupied_positions)
 
     wa = WorkspaceAgent(
         workspace_id=workspace_id,
@@ -570,6 +566,31 @@ def _spiral_next(index: int) -> tuple[int, int]:
         ring += 1
         q += 1
     return positions[index]
+
+
+async def _occupied_hex_positions(db: AsyncSession, workspace_id: str) -> set[tuple[int, int]]:
+    from app.models.corridor import CorridorHex, HumanHex
+    from app.models.node_card import NodeCard
+
+    occupied: set[tuple[int, int]] = set()
+    for model in (NodeCard, WorkspaceAgent, CorridorHex, HumanHex):
+        result = await db.execute(
+            select(model.hex_q, model.hex_r).where(
+                model.workspace_id == workspace_id,
+                model.deleted_at.is_(None),
+            )
+        )
+        occupied.update((q, r) for q, r in result.all())
+    return occupied
+
+
+def _next_available_hex_position(occupied_positions: set[tuple[int, int]]) -> tuple[int, int]:
+    index = 0
+    while True:
+        candidate = _spiral_next(index)
+        if candidate not in occupied_positions:
+            return candidate
+        index += 1
 
 
 async def remove_agent(db: AsyncSession, workspace_id: str, instance_id: str) -> bool:
