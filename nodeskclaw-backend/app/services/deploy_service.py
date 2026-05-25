@@ -380,6 +380,8 @@ async def cancel_deploy(deploy_id: str) -> str:
         instance = inst_result.scalar_one_or_none()
         if not instance:
             return "实例记录不存在"
+        step_names = await _progress_step_names_for_record(record, db)
+        total_steps = len(step_names)
 
         # 2. 先杀后台协程（防止它继续操作 K8s / DB）
         task = _running_tasks.pop(deploy_id, None)
@@ -402,12 +404,13 @@ async def cancel_deploy(deploy_id: str) -> str:
         "deploy_progress",
         DeployProgress(
             deploy_id=deploy_id,
-            step=len(DEPLOY_STEPS_BASE),
-            total_steps=len(DEPLOY_STEPS_BASE),
+            step=total_steps,
+            total_steps=total_steps,
             current_step="已取消",
             status="failed",
             message="部署已取消，资源清理已开始",
             percent=100,
+            step_names=step_names,
         ).model_dump(),
     )
 
@@ -1781,7 +1784,7 @@ async def rebuild_instance(
     return record.id, ctx
 
 
-async def execute_rebuild_pipeline(ctx: _DeployContext) -> None:
+async def execute_rebuild_pipeline(ctx: _DeployContext, *, finalize_success: bool = True) -> None:
     """后台重建管道：从 DB 状态重建全部 K8s 资源（不删除实例记录）。"""
     from app.core.deps import async_session_factory
     from app.services.config_service import get_config
@@ -2002,12 +2005,14 @@ async def execute_rebuild_pipeline(ctx: _DeployContext) -> None:
             instance = inst_result.scalar_one()
 
             if deployment_ready:
-                record.status = DeployStatus.success
-                record.finished_at = datetime.now(timezone.utc)
+                if finalize_success:
+                    record.status = DeployStatus.success
+                    record.finished_at = datetime.now(timezone.utc)
                 instance.status = InstanceStatus.running
                 instance.available_replicas = dep_status.get("available_replicas", 0)
                 await db.commit()
-                _publish(total, "完成", status="success", message="重建成功")
+                if finalize_success:
+                    _publish(total, "完成", status="success", message="重建成功")
                 logger.info("重建成功: %s (namespace=%s)", ctx.name, ctx.namespace)
             else:
                 record.status = DeployStatus.failed

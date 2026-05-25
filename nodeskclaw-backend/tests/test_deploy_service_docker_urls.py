@@ -5,6 +5,7 @@ import pytest
 
 from app.core.exceptions import BadRequestError
 from app.models.deploy_record import DeployStatus
+from app.models.instance import InstanceStatus
 from app.schemas.deploy import DeployRequest
 from app.services import deploy_service
 from app.services.deploy_service import (
@@ -34,6 +35,32 @@ class _FakeDb:
 
     async def execute(self, *_args, **_kwargs):
         return _ScalarResult(self.value)
+
+
+class _SequenceResult:
+    def __init__(self, value):
+        self.value = value
+
+    def scalar_one_or_none(self):
+        return self.value
+
+
+class _SequenceSession:
+    def __init__(self, values):
+        self.values = list(values)
+        self.commits = 0
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_args):
+        return None
+
+    async def execute(self, *_args, **_kwargs):
+        return _SequenceResult(self.values.pop(0))
+
+    async def commit(self):
+        self.commits += 1
 
 
 def test_rewrite_docker_callback_url_rewrites_docker_desktop_host() -> None:
@@ -170,6 +197,51 @@ async def test_deploy_progress_snapshot_skips_running_record() -> None:
     )
 
     assert snapshot is None
+
+
+@pytest.mark.asyncio
+async def test_cancel_deploy_uses_saved_progress_step_names(monkeypatch) -> None:
+    step_names = [*DOCKER_DEPLOY_STEPS[:-1], "应用实例配置", DOCKER_DEPLOY_STEPS[-1]]
+    record = SimpleNamespace(
+        id="deploy-1",
+        instance_id="instance-1",
+        status=DeployStatus.running,
+        message=None,
+        finished_at=None,
+        config_snapshot=json.dumps({PROGRESS_STEP_NAMES_KEY: step_names}),
+    )
+    instance = SimpleNamespace(
+        id="instance-1",
+        name="demo",
+        status=InstanceStatus.deploying,
+    )
+    session = _SequenceSession([record, instance])
+    published: list[dict] = []
+    finalizers: list[str] = []
+
+    monkeypatch.setattr("app.core.deps.async_session_factory", lambda: session)
+    monkeypatch.setattr(
+        "app.services.instance_service.schedule_instance_deletion_finalizer",
+        lambda instance_id: finalizers.append(instance_id),
+    )
+    monkeypatch.setattr(
+        deploy_service.event_bus,
+        "publish",
+        lambda _topic, payload: published.append(payload),
+    )
+
+    result = await deploy_service.cancel_deploy("deploy-1")
+
+    assert result == "已取消，资源清理已开始"
+    assert record.status == DeployStatus.failed
+    assert record.finished_at is not None
+    assert instance.status == InstanceStatus.deleting
+    assert finalizers == ["instance-1"]
+    assert session.commits == 1
+    assert published[-1]["status"] == "failed"
+    assert published[-1]["step"] == len(step_names)
+    assert published[-1]["total_steps"] == len(step_names)
+    assert published[-1]["step_names"] == step_names
 
 
 @pytest.mark.asyncio

@@ -22,6 +22,8 @@ from app.models.backup import BackupStatus, BackupType, InstanceBackup
 from app.models.cluster import Cluster
 from app.models.deploy_record import DeployAction, DeployRecord, DeployStatus
 from app.models.instance import Instance, InstanceStatus
+from app.schemas.deploy import DeployProgress
+from app.services.k8s.event_bus import event_bus
 
 logger = logging.getLogger(__name__)
 
@@ -439,7 +441,7 @@ async def _execute_restore(record_id: str, instance_id: str, backup_id: str) -> 
                 runtime=instance.runtime,
             )
 
-        await execute_rebuild_pipeline(ctx)
+        await execute_rebuild_pipeline(ctx, finalize_success=False)
 
         async with async_session_factory() as db:
             inst = (await db.execute(
@@ -462,6 +464,26 @@ async def _execute_restore(record_id: str, instance_id: str, backup_id: str) -> 
                     pod = await _find_pod(k8s, inst.namespace, inst.slug or inst.name)
                     await k8s.exec_in_pod(inst.namespace, pod, ["kill", "1"])
                     logger.info("恢复数据后重启 Pod: %s/%s", inst.namespace, pod)
+                rec = (await db.execute(
+                    select(DeployRecord).where(DeployRecord.id == record_id, DeployRecord.deleted_at.is_(None))
+                )).scalar_one()
+                rec.status = DeployStatus.success
+                rec.message = "恢复成功"
+                rec.finished_at = datetime.now(timezone.utc)
+                await db.commit()
+                event_bus.publish(
+                    "deploy_progress",
+                    DeployProgress(
+                        deploy_id=record_id,
+                        step=len(REBUILD_STEPS),
+                        total_steps=len(REBUILD_STEPS),
+                        current_step="完成",
+                        status="success",
+                        message="恢复成功",
+                        percent=100,
+                        step_names=list(REBUILD_STEPS),
+                    ).model_dump(),
+                )
             else:
                 logger.warning("恢复重建阶段失败，跳过数据恢复: instance=%s status=%s", inst.name, inst.status)
 
@@ -480,6 +502,19 @@ async def _execute_restore(record_id: str, instance_id: str, backup_id: str) -> 
                 )).scalar_one()
                 inst.status = InstanceStatus.failed
                 await db.commit()
+                event_bus.publish(
+                    "deploy_progress",
+                    DeployProgress(
+                        deploy_id=record_id,
+                        step=len(REBUILD_STEPS),
+                        total_steps=len(REBUILD_STEPS),
+                        current_step="失败",
+                        status="failed",
+                        message=str(e)[:200],
+                        percent=100,
+                        step_names=list(REBUILD_STEPS),
+                    ).model_dump(),
+                )
         except Exception:
             logger.exception("更新恢复失败状态时出错")
 
