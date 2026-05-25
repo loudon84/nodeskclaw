@@ -84,6 +84,7 @@ async def cancel_deploy_endpoint(
 async def deploy_progress_stream(
     deploy_id: str,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """SSE stream for deploy progress.
 
@@ -91,6 +92,11 @@ async def deploy_progress_stream(
     确保 SSE 订阅已建立。超过 5 分钟无事件自动断开防止连接泄漏。
     """
 
+    await deploy_service.require_deploy_progress_org_access(
+        deploy_id,
+        db,
+        current_user.current_org_id,
+    )
     snapshot = await deploy_service.get_deploy_progress_snapshot(deploy_id, db)
 
     async def generate():

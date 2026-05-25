@@ -100,7 +100,13 @@ async def cancel_deploy_endpoint(
 async def deploy_progress_stream(
     deploy_id: str,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
+    await deploy_service.require_deploy_progress_instance_access(
+        deploy_id,
+        db,
+        current_user,
+    )
     snapshot = await deploy_service.get_deploy_progress_snapshot(deploy_id, db)
 
     async def generate():
