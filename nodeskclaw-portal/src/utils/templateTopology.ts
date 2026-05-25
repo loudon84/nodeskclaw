@@ -80,7 +80,7 @@ export function buildTopoEdges(data: TemplateData): TopologyEdge[] {
 
 export function buildMockAgents(agentSpecs: Record<string, unknown>[]): AgentBrief[] {
   return agentSpecs.map((s, i) => ({
-    instance_id: `tpl-${i}`,
+    instance_id: agentSelectableKey(i),
     name: (s.display_name as string) || (s.label as string) || '',
     display_name: (s.display_name as string) || null,
     label: (s.label as string) || null,
@@ -91,6 +91,10 @@ export function buildMockAgents(agentSpecs: Record<string, unknown>[]): AgentBri
     sse_connected: false,
     theme_color: null,
   }))
+}
+
+export function agentSelectableKey(index: number): string {
+  return `agent:${index}`
 }
 
 export function specGeneSlugs(spec: Record<string, unknown>): string[] {
@@ -118,7 +122,7 @@ export function resourceSummary(spec: Record<string, unknown>): string {
 }
 
 export function agentKeysFromSpecs(specs: Record<string, unknown>[]): Set<string> {
-  return new Set(specs.map(s => `${s.hex_q},${s.hex_r}`))
+  return new Set(specs.map((_, i) => agentSelectableKey(i)))
 }
 
 export function corridorKeysFromTopoNodes(
@@ -145,19 +149,19 @@ export function countAgentKeysInSelection(
   agentSpecs: Record<string, unknown>[],
   selectedKeys: Set<string>,
 ): number {
-  return agentSpecs.filter(s => selectedKeys.has(`${s.hex_q},${s.hex_r}`)).length
+  return agentSpecs.filter((_, i) => selectedKeys.has(agentSelectableKey(i))).length
 }
 
 export function keysToExcludedIndices(specs: Record<string, unknown>[], selectedKeys: Set<string>): number[] {
   return specs
-    .map((s, i) => ({ key: `${s.hex_q},${s.hex_r}`, i }))
+    .map((_, i) => ({ key: agentSelectableKey(i), i }))
     .filter(x => !selectedKeys.has(x.key))
     .map(x => x.i)
 }
 
 export function keysToSelectedIndices(specs: Record<string, unknown>[], selectedKeys: Set<string>): number[] {
   return specs
-    .map((s, i) => ({ key: `${s.hex_q},${s.hex_r}`, i }))
+    .map((_, i) => ({ key: agentSelectableKey(i), i }))
     .filter(x => selectedKeys.has(x.key))
     .map(x => x.i)
 }

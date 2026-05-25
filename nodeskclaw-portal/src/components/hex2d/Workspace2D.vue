@@ -42,9 +42,16 @@ const props = withDefaults(defineProps<{
   selectable?: boolean
   selectedKeys?: Set<string>
   selectableTypes?: string[]
+  selectableKeyMode?: 'coord' | 'agent-id'
+  invalidKeys?: Set<string>
+  activeKey?: string | null
+  allowSelectableEmptyHexClick?: boolean
 }>(), {
   selectable: false,
   selectableTypes: () => ['agent'],
+  selectableKeyMode: 'coord',
+  activeKey: null,
+  allowSelectableEmptyHexClick: false,
 })
 
 function formatK(n: number): string {
@@ -179,13 +186,28 @@ function isNodeSelected(q: number, r: number): boolean {
   return props.selectedKeys.has(`${q},${r}`)
 }
 
-function isAgentSelected(agent: { hex_q: number; hex_r: number }): boolean {
-  return isNodeSelected(agent.hex_q, agent.hex_r)
+function agentSelectableKey(agent: AgentBrief): string {
+  return props.selectableKeyMode === 'agent-id'
+    ? agent.instance_id
+    : `${agent.hex_q},${agent.hex_r}`
+}
+
+function isAgentSelected(agent: AgentBrief): boolean {
+  if (!props.selectable || !props.selectedKeys) return true
+  return props.selectedKeys.has(agentSelectableKey(agent))
+}
+
+function isAgentInvalid(agent: AgentBrief): boolean {
+  return props.invalidKeys?.has(agentSelectableKey(agent)) ?? false
+}
+
+function isAgentActive(agent: AgentBrief): boolean {
+  return props.activeKey === agentSelectableKey(agent)
 }
 
 function handleAgentClick(agent: AgentBrief) {
   if (props.selectable) {
-    emit('toggle-node', `${agent.hex_q},${agent.hex_r}`)
+    emit('toggle-node', agentSelectableKey(agent))
   } else {
     emit('hex-click', { q: agent.hex_q, r: agent.hex_r, type: 'agent', agentId: agent.instance_id })
   }
@@ -452,7 +474,7 @@ const emptyHexes = computed(() => {
       <!-- Empty hex clickable areas -->
       <g
         v-for="hex in emptyHexes"
-        v-if="!selectable"
+        v-if="!selectable || allowSelectableEmptyHexClick"
         :key="`empty-${hex.q}-${hex.r}`"
         class="cursor-pointer"
         :transform="`translate(${hex.px}, ${hex.py})`"
@@ -535,7 +557,7 @@ const emptyHexes = computed(() => {
       >
         <!-- Selection highlight ring -->
         <polygon
-          v-if="!selectable && props.selectedAgentId === agent.instance_id"
+          v-if="(!selectable && props.selectedAgentId === agent.instance_id) || (selectable && isAgentActive(agent))"
           :points="hexPoints(0, 0)"
           fill="none"
           stroke="#60a5fa"
@@ -546,8 +568,8 @@ const emptyHexes = computed(() => {
         <polygon
           :points="hexPoints(0, 0)"
           :fill="selectable ? (getAgentColor(agent) + '22') : (agent.sse_connected ? getAgentColor(agent) + '22' : '#55556622')"
-          :stroke="selectable ? getAgentColor(agent) : (agent.sse_connected ? getAgentColor(agent) : '#555566')"
-          stroke-width="2"
+          :stroke="isAgentInvalid(agent) ? '#ef4444' : selectable ? getAgentColor(agent) : (agent.sse_connected ? getAgentColor(agent) : '#555566')"
+          :stroke-width="isAgentInvalid(agent) ? 3 : 2"
           :stroke-dasharray="selectable ? 'none' : (agent.sse_connected ? 'none' : '6,4')"
           :opacity="selectable ? 1 : (agent.sse_connected ? 1 : 0.6)"
           :class="{

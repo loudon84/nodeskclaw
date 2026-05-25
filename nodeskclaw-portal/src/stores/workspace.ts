@@ -8,6 +8,7 @@ import {
   stripAgentThinkingBlocks,
   visibleAgentContent,
 } from '@/utils/agentOutput'
+import type { TemplateAgentPosition, TemplateLayoutCheckResult } from '@/utils/templateDeployLayout'
 
 export interface AgentBrief {
   instance_id: string
@@ -471,13 +472,35 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     return res.data.data as WorkspaceTemplateDetail
   }
 
-  async function deployWorkspaceFromTemplate(templateId: string, workspaceName: string, clusterId: string, selectedAgentIndices?: number[], excludedCorridorCoords?: number[][]) {
+  async function checkWorkspaceTemplateDeployLayout(
+    templateId: string,
+    selectedAgentIndices?: number[],
+    excludedCorridorCoords?: number[][],
+    agentPositions?: TemplateAgentPosition[],
+  ) {
+    const body: Record<string, unknown> = {}
+    if (selectedAgentIndices) body.selected_agent_indices = selectedAgentIndices
+    if (excludedCorridorCoords?.length) body.excluded_corridor_coords = excludedCorridorCoords
+    if (agentPositions) body.agent_positions = agentPositions
+    const res = await api.post(`/workspaces/templates/${templateId}/deploy/layout-check`, body)
+    return res.data.data as TemplateLayoutCheckResult
+  }
+
+  async function deployWorkspaceFromTemplate(
+    templateId: string,
+    workspaceName: string,
+    clusterId: string,
+    selectedAgentIndices?: number[],
+    excludedCorridorCoords?: number[][],
+    agentPositions?: TemplateAgentPosition[],
+  ) {
     const body: Record<string, unknown> = {
       workspace_name: workspaceName,
       cluster_id: clusterId,
     }
     if (selectedAgentIndices) body.selected_agent_indices = selectedAgentIndices
     if (excludedCorridorCoords?.length) body.excluded_corridor_coords = excludedCorridorCoords
+    if (agentPositions) body.agent_positions = agentPositions
     const res = await api.post(`/workspaces/templates/${templateId}/deploy`, body)
     return res.data.data as { workspace_deploy_id: string; workspace_id: string }
   }
@@ -1730,6 +1753,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     activeTemplateDeploys,
     refreshActiveTemplateDeploys,
     fetchWorkspaceTemplateDetail,
+    checkWorkspaceTemplateDeployLayout,
     deployWorkspaceFromTemplate,
     fetchActiveWorkspaceDeploys,
     fetchWorkspaceDeploy,

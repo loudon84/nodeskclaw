@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
 import logging
 import time
 import uuid
@@ -34,6 +35,7 @@ from app.services.registry_service import list_image_tags
 logger = logging.getLogger(__name__)
 
 _WS_DEPLOY_CHANNEL = "workspace_deploy_progress"
+_BLACKBOARD_COORD = (0, 0)
 
 
 def _publish(deploy_id: str, event: str, data: dict[str, Any]) -> None:
@@ -91,6 +93,206 @@ async def _resolve_image_version(db: AsyncSession, runtime: str) -> str:
     return "latest"
 
 
+def _is_int_coord(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _coord_from_values(q: Any, r: Any) -> tuple[int, int] | None:
+    if not _is_int_coord(q) or not _is_int_coord(r):
+        return None
+    return q, r
+
+
+def _layout_issue(
+    code: str,
+    message: str,
+    *,
+    agent_index: int | None = None,
+    hex_q: int | None = None,
+    hex_r: int | None = None,
+    conflict_with: str | None = None,
+) -> dict[str, Any]:
+    issue: dict[str, Any] = {"code": code, "message": message}
+    if agent_index is not None:
+        issue["agent_index"] = agent_index
+    if hex_q is not None:
+        issue["hex_q"] = hex_q
+    if hex_r is not None:
+        issue["hex_r"] = hex_r
+    if conflict_with is not None:
+        issue["conflict_with"] = conflict_with
+    return issue
+
+
+def _normalize_excluded_corridor_coords(
+    excluded_corridor_coords: list[list[int]] | None,
+) -> list[list[int]]:
+    normalized: list[list[int]] = []
+    seen: set[tuple[int, int]] = set()
+    for coord in excluded_corridor_coords or []:
+        if not isinstance(coord, list | tuple) or len(coord) < 2:
+            continue
+        parsed = _coord_from_values(coord[0], coord[1])
+        if parsed is None or parsed in seen:
+            continue
+        seen.add(parsed)
+        normalized.append([parsed[0], parsed[1]])
+    return normalized
+
+
+def _selected_agent_indices(agent_specs: list[dict], selected_agent_indices: list[int] | None) -> list[int]:
+    if selected_agent_indices is None:
+        return list(range(len(agent_specs)))
+    seen: set[int] = set()
+    valid: list[int] = []
+    for idx in selected_agent_indices:
+        if not isinstance(idx, int) or isinstance(idx, bool):
+            continue
+        if 0 <= idx < len(agent_specs) and idx not in seen:
+            seen.add(idx)
+            valid.append(idx)
+    return sorted(valid)
+
+
+def prepare_template_deploy_layout(
+    template: WorkspaceTemplate,
+    *,
+    selected_agent_indices: list[int] | None = None,
+    excluded_corridor_coords: list[list[int]] | None = None,
+    agent_positions: list[dict[str, Any]] | None = None,
+    require_explicit_agent_positions: bool = False,
+) -> dict[str, Any]:
+    agent_specs: list[dict] = list(template.agent_specs or [])
+    selected_indices = _selected_agent_indices(agent_specs, selected_agent_indices)
+    selected_set = set(selected_indices)
+    excluded_corridors = _normalize_excluded_corridor_coords(excluded_corridor_coords)
+    excluded_corridor_set = {(c[0], c[1]) for c in excluded_corridors}
+
+    issues: list[dict[str, Any]] = []
+    override_by_index: dict[int, dict[str, Any]] = {}
+    for raw in agent_positions or []:
+        if not isinstance(raw, dict):
+            continue
+        idx = raw.get("agent_index")
+        if not isinstance(idx, int) or isinstance(idx, bool) or idx < 0 or idx >= len(agent_specs):
+            issues.append(_layout_issue(
+                "invalid_agent_index",
+                "位置覆盖引用了不存在的 Agent",
+            ))
+            continue
+        if idx not in selected_set:
+            issues.append(_layout_issue(
+                "unselected_position",
+                "未选中的 Agent 不允许提交位置覆盖",
+                agent_index=idx,
+            ))
+            continue
+        override_by_index[idx] = raw
+
+    reserved_coords: dict[tuple[int, int], str] = {_BLACKBOARD_COORD: "blackboard"}
+    for node in (template.topology_snapshot or {}).get("nodes") or []:
+        if node.get("node_type") != "corridor":
+            continue
+        coord = _coord_from_values(node.get("hex_q"), node.get("hex_r"))
+        if coord is None or coord in excluded_corridor_set:
+            continue
+        reserved_coords[coord] = "corridor"
+    for spec in template.human_specs or []:
+        coord = _coord_from_values(spec.get("hex_q"), spec.get("hex_r"))
+        if coord is not None:
+            reserved_coords[coord] = "human"
+
+    normalized_positions: list[dict[str, int]] = []
+    occupied_by_agent: dict[tuple[int, int], int] = {}
+    for idx in selected_indices:
+        spec = agent_specs[idx]
+        raw_pos = override_by_index.get(idx)
+        if raw_pos is None and require_explicit_agent_positions:
+            issues.append(_layout_issue(
+                "missing_position",
+                "Agent 缺少确认坐标，请先放置到空位",
+                agent_index=idx,
+            ))
+            continue
+        raw_pos = raw_pos or spec
+        has_q = "hex_q" in raw_pos and raw_pos.get("hex_q") is not None
+        has_r = "hex_r" in raw_pos and raw_pos.get("hex_r") is not None
+        if not has_q or not has_r:
+            issues.append(_layout_issue(
+                "missing_position",
+                "Agent 缺少坐标，请先放置到空位",
+                agent_index=idx,
+            ))
+            continue
+        coord = _coord_from_values(raw_pos.get("hex_q"), raw_pos.get("hex_r"))
+        if coord is None:
+            issues.append(_layout_issue(
+                "invalid_position",
+                "Agent 坐标必须是整数",
+                agent_index=idx,
+            ))
+            continue
+
+        conflict = reserved_coords.get(coord)
+        if conflict:
+            code = "blackboard_conflict" if conflict == "blackboard" else "reserved_conflict"
+            message = "Agent 不能放置在黑板位置" if conflict == "blackboard" else "Agent 不能放置在保留节点位置"
+            issues.append(_layout_issue(
+                code,
+                message,
+                agent_index=idx,
+                hex_q=coord[0],
+                hex_r=coord[1],
+                conflict_with=conflict,
+            ))
+
+        previous = occupied_by_agent.get(coord)
+        if previous is not None:
+            issues.append(_layout_issue(
+                "duplicate_position",
+                "多个选中 Agent 使用了同一坐标",
+                agent_index=idx,
+                hex_q=coord[0],
+                hex_r=coord[1],
+                conflict_with=f"agent:{previous}",
+            ))
+        else:
+            occupied_by_agent[coord] = idx
+
+        normalized_positions.append({"agent_index": idx, "hex_q": coord[0], "hex_r": coord[1]})
+
+    return {
+        "can_deploy": not issues and bool(selected_indices),
+        "selected_agent_indices": selected_indices,
+        "excluded_corridor_coords": excluded_corridors,
+        "agent_positions": normalized_positions,
+        "issues": issues,
+    }
+
+
+def _build_agent_specs_with_layout(
+    all_agent_specs: list[dict],
+    selected_indices: list[int],
+    agent_positions: list[dict[str, int]],
+) -> tuple[list[dict], dict[tuple[int, int], tuple[int, int]]]:
+    position_by_index = {
+        p["agent_index"]: (p["hex_q"], p["hex_r"])
+        for p in agent_positions
+    }
+    coord_rewrites: dict[tuple[int, int], tuple[int, int]] = {}
+    selected_specs: list[dict] = []
+    for idx in selected_indices:
+        spec = deepcopy(all_agent_specs[idx])
+        new_coord = position_by_index[idx]
+        old_coord = _coord_from_values(spec.get("hex_q"), spec.get("hex_r"))
+        if old_coord is not None and old_coord != new_coord:
+            coord_rewrites[old_coord] = new_coord
+        spec["hex_q"] = new_coord[0]
+        spec["hex_r"] = new_coord[1]
+        selected_specs.append(spec)
+    return selected_specs, coord_rewrites
+
+
 async def _wait_deploy_finished(deploy_id: str, timeout_s: float = 1200.0) -> tuple[bool, str | None]:
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
@@ -125,19 +327,19 @@ async def _run_deploy_pipeline(workspace_deploy_id: str) -> None:
 def _filter_topology_by_exclusions(
     topo_snap: dict,
     all_agent_specs: list[dict],
-    selected_agent_specs: list[dict],
+    selected_agent_indices: list[int],
     excluded_corridor_coords: list[list[int]] | None,
+    coord_rewrites: dict[tuple[int, int], tuple[int, int]] | None = None,
 ) -> dict:
     """Filter topology nodes and edges based on user selections.
 
     Removes edges touching excluded agents and excluded corridors,
     then removes excluded corridor nodes from the node list.
     """
-    selected_coords = {(s.get("hex_q"), s.get("hex_r")) for s in selected_agent_specs}
     excluded_agent_set = {
         (s.get("hex_q"), s.get("hex_r"))
-        for s in all_agent_specs
-        if (s.get("hex_q"), s.get("hex_r")) not in selected_coords
+        for i, s in enumerate(all_agent_specs)
+        if i not in set(selected_agent_indices)
     }
     excluded_corridor_set = (
         {(c[0], c[1]) for c in excluded_corridor_coords if len(c) >= 2}
@@ -145,18 +347,28 @@ def _filter_topology_by_exclusions(
         else set()
     )
     all_excluded = excluded_agent_set | excluded_corridor_set
-
-    if not all_excluded:
-        return topo_snap
+    rewrites = coord_rewrites or {}
 
     edges = [
-        e for e in (topo_snap.get("edges") or [])
+        {
+            **e,
+            "a_q": rewrites.get((e.get("a_q"), e.get("a_r")), (e.get("a_q"), e.get("a_r")))[0],
+            "a_r": rewrites.get((e.get("a_q"), e.get("a_r")), (e.get("a_q"), e.get("a_r")))[1],
+            "b_q": rewrites.get((e.get("b_q"), e.get("b_r")), (e.get("b_q"), e.get("b_r")))[0],
+            "b_r": rewrites.get((e.get("b_q"), e.get("b_r")), (e.get("b_q"), e.get("b_r")))[1],
+        }
+        for e in (topo_snap.get("edges") or [])
         if (e.get("a_q"), e.get("a_r")) not in all_excluded
         and (e.get("b_q"), e.get("b_r")) not in all_excluded
     ]
 
     nodes = [
-        n for n in (topo_snap.get("nodes") or [])
+        {
+            **n,
+            "hex_q": rewrites.get((n.get("hex_q"), n.get("hex_r")), (n.get("hex_q"), n.get("hex_r")))[0],
+            "hex_r": rewrites.get((n.get("hex_q"), n.get("hex_r")), (n.get("hex_q"), n.get("hex_r")))[1],
+        }
+        for n in (topo_snap.get("nodes") or [])
         if n.get("node_type") != "corridor"
         or (n.get("hex_q"), n.get("hex_r")) not in excluded_corridor_set
     ]
@@ -195,23 +407,30 @@ async def _run_deploy_pipeline_inner(workspace_deploy_id: str) -> None:
         cluster_id = cfg.get("cluster_id")
         org_id = wd.org_id
         all_agent_specs: list[dict] = list(tpl.agent_specs or [])
-        sel_indices = cfg.get("selected_agent_indices")
-        if sel_indices is not None:
-            valid = sorted(i for i in sel_indices if 0 <= i < len(all_agent_specs))
-            agent_specs = [all_agent_specs[i] for i in valid] if valid else all_agent_specs
-        else:
-            agent_specs = all_agent_specs
+        selected_indices = _selected_agent_indices(
+            all_agent_specs,
+            cfg.get("selected_agent_indices"),
+        )
+        agent_positions = cfg.get("agent_positions") or []
+        agent_specs, coord_rewrites = _build_agent_specs_with_layout(
+            all_agent_specs,
+            selected_indices,
+            agent_positions,
+        )
         human_specs: list[dict] = list(tpl.human_specs or [])
         topo_snap = dict(tpl.topology_snapshot or {})
         bb_snap = tpl.blackboard_snapshot or {}
         excluded_corridor_coords: list[list[int]] | None = cfg.get("excluded_corridor_coords")
 
-        has_agent_exclusions = sel_indices is not None and len(agent_specs) < len(all_agent_specs)
+        has_agent_exclusions = len(agent_specs) < len(all_agent_specs)
         has_corridor_exclusions = bool(excluded_corridor_coords)
-        if has_agent_exclusions or has_corridor_exclusions:
+        if has_agent_exclusions or has_corridor_exclusions or coord_rewrites:
             topo_snap = _filter_topology_by_exclusions(
-                topo_snap, all_agent_specs, agent_specs,
+                topo_snap,
+                all_agent_specs,
+                selected_indices,
                 excluded_corridor_coords,
+                coord_rewrites,
             )
 
         wd.status = "deploying"
@@ -468,8 +687,8 @@ async def _run_deploy_pipeline_inner(workspace_deploy_id: str) -> None:
                         instance_id=inst_id,
                         display_name=spec.get("display_name"),
                         label=spec.get("label"),
-                        hex_q=int(spec.get("hex_q", 0)),
-                        hex_r=int(spec.get("hex_r", 0)),
+                        hex_q=spec["hex_q"],
+                        hex_r=spec["hex_r"],
                         install_gene_slugs=[],
                     ),
                     user_id,
@@ -525,18 +744,17 @@ async def start_workspace_template_deploy(
     org_id: str,
     selected_agent_indices: list[int] | None = None,
     excluded_corridor_coords: list[list[int]] | None = None,
+    agent_positions: list[dict[str, Any]] | None = None,
 ) -> dict[str, str]:
-    agent_specs = list(template.agent_specs or [])
-    if not agent_specs:
+    all_agent_specs = list(template.agent_specs or [])
+    if not all_agent_specs:
         raise ValueError("该模板不支持一键部署（缺少 agent_specs）")
 
-    if selected_agent_indices is not None:
-        valid = [i for i in selected_agent_indices if 0 <= i < len(agent_specs)]
-        if not valid:
-            raise ValueError("至少选择一个 Agent 进行部署")
-        agent_specs = [agent_specs[i] for i in sorted(valid)]
-
-    providers = {s.get("compute_provider") or "k8s" for s in agent_specs}
+    selected_indices = _selected_agent_indices(all_agent_specs, selected_agent_indices)
+    if not selected_indices:
+        raise ValueError("至少选择一个 Agent 进行部署")
+    selected_specs_for_validation = [all_agent_specs[i] for i in selected_indices]
+    providers = {s.get("compute_provider") or "k8s" for s in selected_specs_for_validation}
     if len(providers) > 1:
         raise ValueError("模板包含多种计算平台（K8s/Docker 混用），无法一键部署")
 
@@ -546,6 +764,22 @@ async def start_workspace_template_deploy(
     need = next(iter(providers))
     if cluster.compute_provider != need:
         raise ValueError(f"请选择 {need} 类型的集群以匹配模板")
+
+    layout = prepare_template_deploy_layout(
+        template,
+        selected_agent_indices=selected_agent_indices,
+        excluded_corridor_coords=excluded_corridor_coords,
+        agent_positions=agent_positions,
+        require_explicit_agent_positions=True,
+    )
+    if not layout["can_deploy"]:
+        raise ValueError("模板部署布局未通过校验")
+
+    agent_specs, _coord_rewrites = _build_agent_specs_with_layout(
+        all_agent_specs,
+        selected_indices,
+        layout["agent_positions"],
+    )
 
     ws = await workspace_service.create_workspace(
         db,
@@ -583,8 +817,9 @@ async def start_workspace_template_deploy(
         config_snapshot={
             "cluster_id": cluster_id,
             "workspace_name": workspace_name,
-            "selected_agent_indices": selected_agent_indices,
-            "excluded_corridor_coords": excluded_corridor_coords,
+            "selected_agent_indices": selected_indices,
+            "excluded_corridor_coords": layout["excluded_corridor_coords"],
+            "agent_positions": layout["agent_positions"],
         },
         created_by=user.id,
         org_id=org_id,

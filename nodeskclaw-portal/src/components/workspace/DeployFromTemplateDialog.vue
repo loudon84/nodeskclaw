@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { X, Loader2, ChevronRight, CheckCircle2, XCircle, Circle } from 'lucide-vue-next'
+import { X, Loader2, ChevronRight, CheckCircle2, XCircle, Circle, ArrowLeft, AlertTriangle } from 'lucide-vue-next'
 import { fetchEventSource } from '@microsoft/fetch-event-source'
 import { useWorkspaceStore, type WorkspaceTemplateDetail } from '@/stores/workspace'
 import { useClusterStore } from '@/stores/cluster'
@@ -23,7 +23,15 @@ import {
   countAgentKeysInSelection,
   keysToSelectedIndices,
   keysToExcludedCorridorCoords,
+  agentSelectableKey,
 } from '@/utils/templateTopology'
+import {
+  agentIndicesWithIssues,
+  initialAgentPositions,
+  positionsPayload,
+  selectedLayoutAgents,
+  type TemplateLayoutCheckResult,
+} from '@/utils/templateDeployLayout'
 
 const props = defineProps<{
   open: boolean
@@ -47,7 +55,7 @@ const loadingDetail = ref(false)
 const workspaceName = ref('')
 const clusterId = ref<string | null>(null)
 const submitting = ref(false)
-const phase = ref<'form' | 'progress'>('form')
+const phase = ref<'form' | 'layout' | 'progress'>('form')
 const deployId = ref<string | null>(null)
 const workspaceIdRef = ref<string | null>(null)
 const agentRows = ref<Array<{ display_name: string; status: string; error?: string }>>([])
@@ -75,6 +83,48 @@ const filteredClusters = computed(() => {
 const deploySelectedKeys = ref<Set<string>>(new Set())
 const deploySelectedCount = computed(() =>
   countAgentKeysInSelection((templateDetail.value?.agent_specs || []) as Record<string, unknown>[], deploySelectedKeys.value)
+)
+const layoutPositions = ref<Map<number, { q: number; r: number }>>(new Map())
+const selectedLayoutAgentIndex = ref<number | null>(null)
+const layoutCheck = ref<TemplateLayoutCheckResult | null>(null)
+const layoutChecking = ref(false)
+const selectedAgentIndices = computed(() => {
+  const specs = (templateDetail.value?.agent_specs || []) as Record<string, unknown>[]
+  return keysToSelectedIndices(specs, deploySelectedKeys.value)
+})
+const selectedAgentIndexSet = computed(() => new Set(selectedAgentIndices.value))
+const excludedCorridorCoords = computed(() => {
+  const topo = templateDetail.value?.topology_snapshot as { nodes?: Record<string, unknown>[] } | undefined
+  return keysToExcludedCorridorCoords(topo, deploySelectedKeys.value)
+})
+const layoutPositionPayload = computed(() => positionsPayload(selectedAgentIndices.value, layoutPositions.value))
+const layoutInvalidAgentIndices = computed(() =>
+  layoutCheck.value ? agentIndicesWithIssues(layoutCheck.value.issues) : new Set<number>()
+)
+const layoutInvalidKeys = computed(() =>
+  new Set([...layoutInvalidAgentIndices.value].map(index => agentSelectableKey(index)))
+)
+const layoutSelectedKeys = computed(() => {
+  const keys = new Set<string>()
+  for (const index of selectedAgentIndices.value) keys.add(agentSelectableKey(index))
+  for (const key of deploySelectedKeys.value) {
+    if (!key.startsWith('agent:')) keys.add(key)
+  }
+  return keys
+})
+const layoutAgents = computed(() =>
+  selectedLayoutAgents(
+    (templateDetail.value?.agent_specs || []) as Record<string, unknown>[],
+    selectedAgentIndices.value,
+    layoutPositions.value,
+  )
+)
+const canStartDeploy = computed(() =>
+  !!workspaceName.value.trim()
+  && !!clusterId.value
+  && selectedAgentIndices.value.length > 0
+  && layoutCheck.value?.can_deploy === true
+  && layoutPositionPayload.value.length === selectedAgentIndices.value.length
 )
 
 const DONE_STATUSES = new Set(['success', 'failed', 'add_workspace_failed'])
@@ -151,6 +201,12 @@ const topoNodes = computed(() => {
   })
 })
 
+const layoutTopoNodes = computed(() =>
+  topoNodes.value.filter((node) => node.node_type !== 'agent' && (
+    node.node_type !== 'corridor' || deploySelectedKeys.value.has(`${node.hex_q},${node.hex_r}`)
+  ))
+)
+
 const topoEdges = computed(() => {
   const d = templateDetail.value
   if (!d) return []
@@ -182,6 +238,10 @@ function reset() {
   submitting.value = false
   selectedSpecIndex.value = null
   deploySelectedKeys.value = new Set()
+  layoutPositions.value = new Map()
+  selectedLayoutAgentIndex.value = null
+  layoutCheck.value = null
+  layoutChecking.value = false
 }
 
 watch(
@@ -213,6 +273,8 @@ watch(
         }))
         const topo = templateDetail.value.topology_snapshot as { nodes?: Record<string, unknown>[] } | undefined
         deploySelectedKeys.value = allSelectableKeys(specs as Record<string, unknown>[], topo)
+        layoutPositions.value = initialAgentPositions(specs as Record<string, unknown>[])
+        selectedLayoutAgentIndex.value = specs.length > 0 ? 0 : null
         const opts = filteredClusters.value.length ? filteredClusters.value : clusterOptions.value
         clusterId.value = opts[0]?.value ?? null
       } catch (e) {
@@ -310,20 +372,68 @@ function startSse(id: string) {
   }).catch(() => {})
 }
 
-async function startDeploy() {
+async function runLayoutCheck() {
+  if (!props.templateId) return
+  layoutChecking.value = true
+  try {
+    layoutCheck.value = await store.checkWorkspaceTemplateDeployLayout(
+      props.templateId,
+      selectedAgentIndices.value,
+      excludedCorridorCoords.value.length > 0 ? excludedCorridorCoords.value : undefined,
+      layoutPositionPayload.value,
+    )
+  } catch (e) {
+    layoutCheck.value = null
+    toast.error(resolveApiErrorMessage(e, t('deployFromTemplate.layoutCheckFailed')))
+  } finally {
+    layoutChecking.value = false
+  }
+}
+
+async function enterLayoutConfirm() {
   if (!props.templateId || !workspaceName.value.trim() || !clusterId.value || deploySelectedCount.value === 0) return
+  if (!selectedAgentIndexSet.value.has(selectedLayoutAgentIndex.value ?? -1)) {
+    selectedLayoutAgentIndex.value = selectedAgentIndices.value[0] ?? null
+  }
+  await runLayoutCheck()
+  phase.value = 'layout'
+}
+
+function handleLayoutAgentClick(key: string) {
+  if (!key.startsWith('agent:')) return
+  const index = Number(key.slice('agent:'.length))
+  if (Number.isInteger(index) && selectedAgentIndexSet.value.has(index)) {
+    selectedLayoutAgentIndex.value = index
+  }
+}
+
+async function handleLayoutHexClick(payload: { q: number; r: number; type: string }) {
+  if (payload.type !== 'empty' || selectedLayoutAgentIndex.value === null) return
+  const next = new Map(layoutPositions.value)
+  next.set(selectedLayoutAgentIndex.value, { q: payload.q, r: payload.r })
+  layoutPositions.value = next
+  await runLayoutCheck()
+}
+
+function issueTextForAgent(index: number): string {
+  const issue = layoutCheck.value?.issues.find(item => item.agent_index === index)
+  return issue?.message || ''
+}
+
+async function startDeploy() {
+  if (!props.templateId || !canStartDeploy.value) return
   submitting.value = true
   try {
-    const specs = (templateDetail.value?.agent_specs || []) as Record<string, unknown>[]
-    const indices = keysToSelectedIndices(specs, deploySelectedKeys.value)
-    const topo = templateDetail.value?.topology_snapshot as { nodes?: Record<string, unknown>[] } | undefined
-    const excludedCorridors = keysToExcludedCorridorCoords(topo, deploySelectedKeys.value)
+    await runLayoutCheck()
+    if (!canStartDeploy.value) return
+    const indices = selectedAgentIndices.value
     const out = await store.deployWorkspaceFromTemplate(
       props.templateId,
       workspaceName.value.trim(),
       clusterId.value,
       indices,
-      excludedCorridors.length > 0 ? excludedCorridors : undefined,
+      excludedCorridorCoords.value.length > 0 ? excludedCorridorCoords.value : undefined,
+      layoutPositionPayload.value,
     )
     deployId.value = out.workspace_deploy_id
     workspaceIdRef.value = out.workspace_id
@@ -363,7 +473,10 @@ watch(
         class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
         @click.self="close"
       >
-        <div class="bg-card rounded-xl shadow-2xl w-full max-w-md border border-border max-h-[90vh] flex flex-col">
+        <div
+          class="bg-card rounded-xl shadow-2xl w-full border border-border max-h-[90vh] flex flex-col"
+          :class="phase === 'layout' ? 'max-w-5xl' : 'max-w-md'"
+        >
           <div class="flex items-center justify-between px-5 py-4 border-b border-border shrink-0">
             <h3 class="text-sm font-semibold">{{ t('deployFromTemplate.title') }}</h3>
             <Button variant="unstyled" size="unstyled" type="button" class="p-1 rounded hover:bg-muted" @click="close">
@@ -431,6 +544,7 @@ watch(
                   :topology-nodes="topoNodes"
                   :topology-edges="topoEdges"
                   :selectable="true"
+                  selectable-key-mode="agent-id"
                   :selected-keys="deploySelectedKeys"
                   :selectable-types="['agent', 'corridor']"
                   @toggle-node="handleDeployTopoToggle"
@@ -446,9 +560,103 @@ watch(
                 type="button"
                 class="px-4 py-2 text-sm rounded-lg bg-primary text-primary-foreground disabled:opacity-50"
                 :disabled="submitting || !workspaceName.trim() || !clusterId || deploySelectedCount === 0"
-                @click="startDeploy"
+                @click="enterLayoutConfirm"
               >
                 <Loader2 v-if="submitting" class="w-4 h-4 animate-spin inline mr-1" />
+                {{ t('deployFromTemplate.confirmPositions') }}
+              </Button>
+            </div>
+          </div>
+
+          <div v-else-if="phase === 'layout' && templateDetail" class="px-5 py-4 space-y-4 overflow-y-auto">
+            <div class="flex items-center justify-between gap-3">
+              <Button variant="unstyled" size="unstyled" type="button" class="inline-flex items-center gap-1.5 px-2 py-1.5 text-xs rounded-lg hover:bg-muted" @click="phase = 'form'">
+                <ArrowLeft class="w-3.5 h-3.5" />
+                {{ t('deployFromTemplate.backToSelection') }}
+              </Button>
+              <div class="text-xs text-muted-foreground">
+                {{ t('deployFromTemplate.selectedCount', { n: selectedAgentIndices.length }) }}
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-[1fr_280px] gap-4 min-h-[480px]">
+              <div class="rounded-lg border border-border overflow-hidden bg-[#0a0a1a] min-h-[480px]">
+                <Workspace2D
+                  :agents="layoutAgents"
+                  blackboard-content=""
+                  :selected-agent-id="null"
+                  :selected-hex="null"
+                  :topology-nodes="layoutTopoNodes"
+                  :topology-edges="topoEdges"
+                  :selectable="true"
+                  selectable-key-mode="agent-id"
+                  :selected-keys="layoutSelectedKeys"
+                  :selectable-types="['agent']"
+                  :invalid-keys="layoutInvalidKeys"
+                  :active-key="selectedLayoutAgentIndex !== null ? agentSelectableKey(selectedLayoutAgentIndex) : null"
+                  :allow-selectable-empty-hex-click="true"
+                  @toggle-node="handleLayoutAgentClick"
+                  @hex-click="handleLayoutHexClick"
+                />
+              </div>
+
+              <aside class="space-y-3">
+                <div class="rounded-lg border border-border p-3 space-y-2">
+                  <p class="text-xs font-medium text-muted-foreground">{{ t('deployFromTemplate.positionList') }}</p>
+                  <div class="space-y-1.5 max-h-[300px] overflow-y-auto">
+                    <button
+                      v-for="index in selectedAgentIndices"
+                      :key="index"
+                      type="button"
+                      class="w-full text-left px-2.5 py-2 rounded-lg border text-xs transition-colors"
+                      :class="[
+                        selectedLayoutAgentIndex === index ? 'border-primary bg-primary/10' : 'border-border hover:bg-muted/50',
+                        layoutInvalidAgentIndices.has(index) ? 'border-red-400/70 bg-red-500/10' : '',
+                      ]"
+                      @click="selectedLayoutAgentIndex = index"
+                    >
+                      <div class="flex items-center justify-between gap-2">
+                        <span class="font-medium truncate">
+                          {{ (templateDetail.agent_specs?.[index]?.display_name as string) || (templateDetail.agent_specs?.[index]?.label as string) || `Agent ${index + 1}` }}
+                        </span>
+                        <span class="text-muted-foreground shrink-0">
+                          <template v-if="layoutPositions.get(index)">
+                            ({{ layoutPositions.get(index)?.q }}, {{ layoutPositions.get(index)?.r }})
+                          </template>
+                          <template v-else>{{ t('deployFromTemplate.notPlaced') }}</template>
+                        </span>
+                      </div>
+                      <p v-if="issueTextForAgent(index)" class="mt-1 text-[11px] text-red-400">
+                        {{ issueTextForAgent(index) }}
+                      </p>
+                    </button>
+                  </div>
+                </div>
+
+                <div v-if="layoutCheck && !layoutCheck.can_deploy" class="rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-xs text-red-300 space-y-1.5">
+                  <div class="flex items-center gap-1.5 font-medium">
+                    <AlertTriangle class="w-3.5 h-3.5" />
+                    {{ t('deployFromTemplate.layoutBlocked') }}
+                  </div>
+                  <p>{{ t('deployFromTemplate.layoutBlockedHint') }}</p>
+                </div>
+                <div v-else class="rounded-lg border border-border p-3 text-xs text-muted-foreground">
+                  {{ layoutChecking ? t('deployFromTemplate.layoutChecking') : t('deployFromTemplate.layoutReady') }}
+                </div>
+              </aside>
+            </div>
+
+            <div class="flex justify-end gap-2 pt-2">
+              <Button variant="unstyled" size="unstyled" type="button" class="px-4 py-2 text-sm rounded-lg hover:bg-muted" @click="close">
+                {{ t('deployFromTemplate.cancel') }}
+              </Button>
+              <Button variant="unstyled" size="unstyled"
+                type="button"
+                class="px-4 py-2 text-sm rounded-lg bg-primary text-primary-foreground disabled:opacity-50"
+                :disabled="submitting || layoutChecking || !canStartDeploy"
+                @click="startDeploy"
+              >
+                <Loader2 v-if="submitting || layoutChecking" class="w-4 h-4 animate-spin inline mr-1" />
                 {{ t('deployFromTemplate.startWithCount', { n: deploySelectedCount }) }}
               </Button>
             </div>

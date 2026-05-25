@@ -2,6 +2,7 @@
 
 import logging
 import uuid
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -25,6 +26,7 @@ from app.services.workspace_template_collect import (
     template_summary_from_specs,
 )
 from app.services.workspace_template_deploy_service import start_workspace_template_deploy
+from app.services.workspace_template_deploy_service import prepare_template_deploy_layout
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/templates", tags=["templates"])
@@ -93,6 +95,13 @@ class TemplateDeployRequest(BaseModel):
     cluster_id: str
     selected_agent_indices: list[int] | None = None
     excluded_corridor_coords: list[list[int]] | None = None
+    agent_positions: list[dict[str, Any]] | None = None
+
+
+class TemplateDeployLayoutCheckRequest(BaseModel):
+    selected_agent_indices: list[int] | None = None
+    excluded_corridor_coords: list[list[int]] | None = None
+    agent_positions: list[dict[str, Any]] | None = None
 
 
 def _apply_exclusions(
@@ -416,10 +425,31 @@ async def deploy_from_template(
             org_id=org_id,
             selected_agent_indices=body.selected_agent_indices,
             excluded_corridor_coords=body.excluded_corridor_coords,
+            agent_positions=body.agent_positions,
         )
     except ValueError as e:
         raise _error(400, 40053, "errors.template.deploy_invalid", str(e)) from e
     return _ok(out)
+
+
+@router.post("/{template_id}/deploy/layout-check")
+async def check_template_deploy_layout(
+    template_id: str,
+    body: TemplateDeployLayoutCheckRequest,
+    org_ctx=Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    _user, org = org_ctx
+    org_id = _org_id(org)
+    t = await _get_template_with_access(template_id, org_id, db)
+    return _ok(
+        prepare_template_deploy_layout(
+            t,
+            selected_agent_indices=body.selected_agent_indices,
+            excluded_corridor_coords=body.excluded_corridor_coords,
+            agent_positions=body.agent_positions,
+        )
+    )
 
 
 @router.get("/{template_id}")
