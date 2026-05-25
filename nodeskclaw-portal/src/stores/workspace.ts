@@ -845,10 +845,19 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   }
 
   async function clearChatHistory(workspaceId: string) {
-    await api.post(`/workspaces/${workspaceId}/messages/clear`)
+    const res = await api.post(`/workspaces/${workspaceId}/messages/clear`)
     chatMessages.value = []
     typingAgents.value.clear()
     unreadCount.value = 0
+    return res.data.data as {
+      cleared_count: number
+      runtime_context?: {
+        total: number
+        cleared_count: number
+        skipped_count: number
+        failed_count: number
+      }
+    }
   }
 
   const _typingTimers = new Map<string, ReturnType<typeof setTimeout>>()

@@ -23,6 +23,7 @@ import { formatTime as formatLocaleTime } from '@/utils/localeFormat'
 import { filterMessagesForConversation } from '@/utils/workspaceConversations'
 import { Button } from '@/components/ui/button'
 import { FileInput, Input } from '@/components/ui/input'
+import { useConfirm } from '@/composables/useConfirm'
 
 const props = withDefaults(defineProps<{
   workspaceId: string
@@ -37,6 +38,7 @@ const { t, te, locale } = useI18n()
 const store = useWorkspaceStore()
 const authStore = useAuthStore()
 const toast = useToast()
+const { confirm } = useConfirm()
 
 const messagesEl = ref<HTMLElement | null>(null)
 
@@ -85,6 +87,17 @@ function getAgentColor(senderId: string): string {
 
 function agentLabel(a: AgentBrief): string {
   return a.display_name || a.name
+}
+
+function findAgentByCommandArg(name: string): AgentBrief | undefined {
+  const normalized = name.trim().replace(/^@/, '')
+  return agents.value.find(a =>
+    a.instance_id === normalized ||
+    a.slug === normalized ||
+    a.name === normalized ||
+    a.display_name === normalized ||
+    agentLabel(a) === normalized,
+  )
 }
 
 function hexDistToBlackboard(q: number, r: number): number {
@@ -176,7 +189,15 @@ function handleDrop(e: DragEvent) {
 // ── Commands ────────────────────────────────────────
 const COMMANDS = computed(() => [
   { name: 'status', label: t('chat.cmdStatusLabel'), icon: Activity, needsAgent: false, immediate: true },
-  { name: 'clear', label: t('chat.cmdClearLabel'), icon: XCircle, needsAgent: false, immediate: true },
+  {
+    name: 'clear',
+    label: t('chat.cmdClearLabel'),
+    description: t('chat.cmdClearDescription'),
+    badge: t('chat.cmdClearBadge'),
+    icon: XCircle,
+    needsAgent: false,
+    immediate: true,
+  },
   { name: 'restart', label: t('chat.cmdRestartLabel'), icon: RotateCw, needsAgent: true, immediate: false },
   { name: 'remove', label: t('chat.cmdRemoveLabel'), icon: Trash2, needsAgent: true, immediate: false },
 ])
@@ -286,9 +307,28 @@ async function executeSlashCommand(name: string, arg?: string) {
         insertSystemMessage(t('chat.clearNotAllowed'))
         break
       }
+      const target = (arg || '').trim()
+      if (target) {
+        toast.info(t('chat.clearUsage'), { duration: 8000 })
+        break
+      }
+      const ok = await confirm({
+        title: t('chat.clearConfirmTitle'),
+        description: t('chat.clearConfirmDescription'),
+        confirmText: t('chat.clearConfirmAction'),
+        cancelText: t('common.cancel'),
+        variant: 'danger',
+      })
+      if (!ok) break
       try {
-        await store.clearChatHistory(props.workspaceId)
-        insertSystemMessage(t('chat.chatCleared'), false)
+        const result = await store.clearChatHistory(props.workspaceId)
+        const runtime = result.runtime_context
+        insertSystemMessage(t('chat.chatAndContextCleared', {
+          messages: result.cleared_count ?? 0,
+          total: runtime?.total ?? 0,
+          cleared: runtime?.cleared_count ?? 0,
+          failed: runtime?.failed_count ?? 0,
+        }), false)
       } catch (e: any) {
         insertSystemMessage(t('chat.clearFailed', { error: resolveApiErrorMessage(e, e?.message || '') }))
       }
@@ -308,24 +348,26 @@ async function executeSlashCommand(name: string, arg?: string) {
 }
 
 async function doRestartAgent(name: string) {
-  const agent = agents.value.find(a => agentLabel(a) === name)
+  const agent = findAgentByCommandArg(name)
   if (!agent) { insertSystemMessage(t('chat.agentNotFound', { name })); return }
-  insertSystemMessage(t('chat.restartingAgent', { name }))
+  const label = agentLabel(agent)
+  insertSystemMessage(t('chat.restartingAgent', { name: label }))
   try {
     await api.post(`/instances/${agent.instance_id}/restart`)
-    insertSystemMessage(t('chat.agentRestarted', { name }))
+    insertSystemMessage(t('chat.agentRestarted', { name: label }))
   } catch (e: any) {
     insertSystemMessage(t('chat.restartFailed', { error: resolveApiErrorMessage(e, e?.message || '') }))
   }
 }
 
 async function doRemoveAgent(name: string) {
-  const agent = agents.value.find(a => agentLabel(a) === name)
+  const agent = findAgentByCommandArg(name)
   if (!agent) { insertSystemMessage(t('chat.agentNotFound', { name })); return }
-  insertSystemMessage(t('chat.removingAgent', { name }))
+  const label = agentLabel(agent)
+  insertSystemMessage(t('chat.removingAgent', { name: label }))
   try {
     await store.removeAgent(props.workspaceId, agent.instance_id)
-    insertSystemMessage(t('chat.agentRemoved', { name }))
+    insertSystemMessage(t('chat.agentRemoved', { name: label }))
   } catch (e: any) {
     insertSystemMessage(t('chat.removeFailed', { error: resolveApiErrorMessage(e, e?.message || '') }))
   }
@@ -379,16 +421,21 @@ async function sendMessage() {
 
   if (commands.length > 0) {
     for (const cmdName of commands) {
+      if (cmdName === 'clear') {
+        void executeSlashCommand(cmdName)
+        continue
+      }
       const mentionedAgent = mentions.length > 0
         ? agents.value.find(a => a.instance_id === mentions[0])
         : undefined
-      void executeSlashCommand(cmdName, mentionedAgent ? agentLabel(mentionedAgent) : undefined)
+      const textArg = text.match(new RegExp(`^/${cmdName}\\s+(.+)$`))?.[1]?.trim()
+      void executeSlashCommand(cmdName, mentionedAgent ? agentLabel(mentionedAgent) : textArg)
     }
     return
   }
 
   const slashMatch = text.match(/^\/([a-zA-Z]\w*)(?![/])/)
-  if (slashMatch) {
+  if (slashMatch && slashMatch[1].toLowerCase() !== 'clear') {
     const cmd = slashMatch[1].toLowerCase()
     const arg = text.slice(slashMatch[0].length).trim().replace(/^@/, '')
     void executeSlashCommand(cmd, arg || undefined)
@@ -555,6 +602,8 @@ const editor = useEditor({
               id: c.name,
               label: c.name,
               displayLabel: c.label,
+              description: c.description,
+              badge: c.badge,
               icon: c.icon,
               immediate: c.immediate,
               needsAgent: c.needsAgent,
@@ -1196,13 +1245,23 @@ function updateSuggestionIndex(state: SuggestionState, idx: number) {
             >
               <component :is="item.icon" class="w-4 h-4 shrink-0 text-muted-foreground" />
               <span class="font-mono text-primary">/{{ item.id }}</span>
-              <span class="text-xs text-muted-foreground ml-1">{{ item.displayLabel }}</span>
+              <span class="min-w-0 flex-1 ml-1">
+                <span class="block text-xs text-muted-foreground">{{ item.displayLabel }}</span>
+                <span
+                  v-if="item.description"
+                  class="block text-[10px] leading-4 text-muted-foreground/80 truncate"
+                >
+                  {{ item.description }}
+                </span>
+              </span>
               <span
                 class="ml-auto text-[10px] px-1.5 py-0.5 rounded-full shrink-0"
-                :class="item.immediate
-                  ? 'bg-green-500/15 text-green-600 dark:text-green-400'
-                  : 'bg-primary/10 text-primary'"
-              >{{ item.immediate ? t('chat.immediate') : 'Tag' }}</span>
+                :class="item.badge
+                  ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
+                  : item.immediate
+                    ? 'bg-green-500/15 text-green-600 dark:text-green-400'
+                    : 'bg-primary/10 text-primary'"
+              >{{ item.badge || (item.immediate ? t('chat.immediate') : t('chat.commandTag')) }}</span>
             </Button>
           </div>
         </div>

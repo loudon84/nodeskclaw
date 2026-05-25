@@ -13,6 +13,9 @@ logger = logging.getLogger(__name__)
 
 NO_REPLY_TOKEN = "NO_REPLY"
 _NO_REPLY_VARIANTS = frozenset({"no_reply", "no reply", "noreply"})
+_NO_REPLY_PREFIX_VARIANTS = ("no_", "no_r", "no_re", "no_rep", "no_repl", "no_reply")
+_NO_REPLY_STRIP_CHARS = " \t\r\n*_~.。！？!?,，;；:：…—-()[]{}<>\"'"
+_NO_REPLY_PREFIX_STRIP_CHARS = _NO_REPLY_STRIP_CHARS.replace("_", "")
 DEFAULT_COLLABORATION_DEPTH = 3
 ABSOLUTE_MAX_COLLABORATION_DEPTH = 20
 
@@ -279,6 +282,7 @@ def build_context_prompt(
 
 ---
 你可以直接回复参与讨论。如果当前话题与你无关或你没有要补充的，回复 NO_REPLY 即可。
+如果需要静默或不参与，只能精确回复 NO_REPLY，禁止回复 NO、no、Yes/No 这类短答。
 当你回复或联系其他成员（AI 员工或人类）时，在回复中直接 @{{name}} 即可（如"@test-2 你好"），系统会自动转发。收到其他成员的消息后回复时，也请 @提及对方，这样系统才能正确路由你的回复。不要用 send 命令。
 办公室设有中央黑板，通过 nodeskclaw_blackboard 工具读写黑板内容，不要 @提及黑板。
 如需回顾更早的对话记录，使用 nodeskclaw_chat_history 工具搜索历史消息。
@@ -288,6 +292,7 @@ def build_context_prompt(
 - 禁止出现 "Let me..." "I need to..." "First I will..." 等自述式推理文本
 - 调用工具时直接调用，不要在回复中描述你正在做什么或打算做什么
 - 始终使用中文回复
+- 即使被要求简短回复，也不要只回复 NO、OK、Yes 这类英文短词
 """
 
 
@@ -296,13 +301,28 @@ def is_no_reply(text: str) -> bool:
 
     Matches exact tokens ("NO_REPLY", "no reply", "noreply") and responses where
     the agent prepends filler text before the token (e.g. "这不是给我的\\nNO_REPLY").
-    Bare "no" is intentionally excluded to avoid swallowing legitimate short replies.
+    Bare "NO" / "no" is intentionally preserved as visible content.
     """
+    def normalize_token(value: str, *, keep_underscore: bool = False) -> str:
+        strip_chars = _NO_REPLY_PREFIX_STRIP_CHARS if keep_underscore else _NO_REPLY_STRIP_CHARS
+        return value.strip().lower().strip(strip_chars)
+
     cleaned = strip_think_blocks(text)
-    normalized = cleaned.strip().lower()
-    if normalized in _NO_REPLY_VARIANTS:
+    normalized = normalize_token(cleaned)
+    normalized_prefix = normalize_token(cleaned, keep_underscore=True)
+    if normalized in _NO_REPLY_VARIANTS or normalized_prefix in _NO_REPLY_PREFIX_VARIANTS:
         return True
-    lines = [ln.strip().lower() for ln in cleaned.strip().splitlines() if ln.strip()]
-    if lines and lines[-1] in _NO_REPLY_VARIANTS:
+    lines = [
+        (
+            normalize_token(ln),
+            normalize_token(ln, keep_underscore=True),
+        )
+        for ln in cleaned.strip().splitlines()
+        if ln.strip()
+    ]
+    if lines and (
+        lines[-1][0] in _NO_REPLY_VARIANTS
+        or lines[-1][1] in _NO_REPLY_PREFIX_VARIANTS
+    ):
         return True
     return False
