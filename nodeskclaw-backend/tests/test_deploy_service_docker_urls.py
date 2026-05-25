@@ -249,9 +249,13 @@ async def test_compute_provider_deploy_runs_template_post_ready_steps(monkeypatc
         return {"healthy": True}
 
     async def fake_restore(_instance, manifest, _db):
+        assert record.status != deploy_service.DeployStatus.success
+        assert record.finished_at is None
         calls.append(("restore", manifest["slug"]))
 
     async def fake_install(_instance_id, gene_slug):
+        assert record.status != deploy_service.DeployStatus.success
+        assert record.finished_at is None
         calls.append(("install", gene_slug))
 
     async def fake_restart(_instance_id, _db):
@@ -282,6 +286,7 @@ async def test_compute_provider_deploy_runs_template_post_ready_steps(monkeypatc
     ]
     assert record.status == deploy_service.DeployStatus.success
     assert record.message == "部署成功"
+    assert record.finished_at is not None
     assert instance.status == deploy_service.InstanceStatus.running
     assert fake_session.commits == 2
     assert published[0]["step_names"] == [
@@ -299,6 +304,203 @@ async def test_compute_provider_deploy_runs_template_post_ready_steps(monkeypatc
         "安装模板技能基因",
         "安装模板技能基因",
     ]
+
+
+@pytest.mark.asyncio
+async def test_k8s_deploy_marks_success_after_post_ready_steps(monkeypatch) -> None:
+    record = SimpleNamespace(status=DeployStatus.running, finished_at=None, message="")
+    instance = SimpleNamespace(id="instance-1", status=None, available_replicas=0)
+    cluster = SimpleNamespace(id="cluster-1", ingress_class=None)
+    published: list[dict] = []
+
+    class FakeResult:
+        def __init__(self, value):
+            self.value = value
+
+        def scalar_one(self):
+            return self.value
+
+    class FakeSession:
+        def __init__(self):
+            self.results = [cluster, record, instance]
+            self.commits = 0
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def execute(self, *_args, **_kwargs):
+            return FakeResult(self.results.pop(0))
+
+        async def commit(self):
+            self.commits += 1
+
+    class FakeCore:
+        async def create_namespaced_resource_quota(self, *_args, **_kwargs):
+            return None
+
+        async def create_namespaced_config_map(self, *_args, **_kwargs):
+            return None
+
+        async def create_namespaced_persistent_volume_claim(self, *_args, **_kwargs):
+            return None
+
+        async def create_namespaced_service(self, *_args, **_kwargs):
+            return None
+
+    class FakeApps:
+        async def create_namespaced_deployment(self, *_args, **_kwargs):
+            return None
+
+        async def patch_namespaced_deployment(self, *_args, **_kwargs):
+            return None
+
+    class FakeNetworking:
+        async def create_namespaced_network_policy(self, *_args, **_kwargs):
+            return None
+
+        async def patch_namespaced_network_policy(self, *_args, **_kwargs):
+            return None
+
+    class FakeK8s:
+        core = FakeCore()
+        apps = FakeApps()
+        networking = FakeNetworking()
+
+        async def ensure_namespace(self, *_args, **_kwargs):
+            return None
+
+        async def create_or_skip(self, *_args, **_kwargs):
+            return None
+
+        async def apply(self, *_args, **_kwargs):
+            return None
+
+        async def get_deployment_status(self, *_args, **_kwargs):
+            return {"ready_replicas": 1, "available_replicas": 1, "conditions": []}
+
+    class FakeAdapter:
+        def get_namespace_labels(self, _org_id):
+            return {}
+
+        def get_network_policy_org_id(self, org_id):
+            return org_id
+
+    async def fake_sleep(_delay):
+        return None
+
+    async def fake_get_config(_key, _db):
+        return None
+
+    async def fake_require_k8s_client(_cluster):
+        return FakeK8s()
+
+    async def fake_resolve_image_registry(_db, _runtime):
+        return "example/openclaw"
+
+    async def fake_post_ready(_ctx, _instance, _db, **_kwargs):
+        assert record.status == DeployStatus.running
+        assert record.finished_at is None
+        return "部署成功"
+
+    monkeypatch.setattr(deploy_service.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(deploy_service, "get_deploy_adapter", lambda: FakeAdapter())
+    monkeypatch.setattr("app.services.runtime.registries.compute_registry.require_k8s_client", fake_require_k8s_client)
+    monkeypatch.setattr("app.services.registry_service.resolve_image_registry", fake_resolve_image_registry)
+    monkeypatch.setattr(deploy_service, "_run_post_ready_instance_steps", fake_post_ready)
+    monkeypatch.setattr(
+        deploy_service.event_bus,
+        "publish",
+        lambda _topic, payload: published.append(payload),
+    )
+
+    await deploy_service._execute_deploy_inner(
+        _deploy_context(should_sync_runtime_llm_config=False),
+        lambda: FakeSession(),
+        fake_get_config,
+        len(DEPLOY_STEPS_BASE),
+        DEPLOY_STEPS_BASE,
+    )
+
+    assert record.status == DeployStatus.success
+    assert record.message == "部署成功"
+    assert record.finished_at is not None
+    assert instance.status == deploy_service.InstanceStatus.running
+    assert published[-1]["status"] == "success"
+
+
+@pytest.mark.asyncio
+async def test_compute_provider_post_ready_failure_marks_record_failed(monkeypatch) -> None:
+    record = SimpleNamespace(status=DeployStatus.running, finished_at=None, message="")
+    instance = SimpleNamespace(id="instance-1", status=None, advanced_config=None)
+    published: list[dict] = []
+    finalized: list[str] = []
+
+    class FakeResult:
+        def __init__(self, value):
+            self.value = value
+
+        def scalar_one(self):
+            return self.value
+
+    class FakeSession:
+        def __init__(self):
+            self.results = [record, instance]
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def execute(self, *_args, **_kwargs):
+            return FakeResult(self.results.pop(0))
+
+        async def commit(self):
+            return None
+
+    class FakeProvider:
+        async def create_instance(self, _config):
+            return SimpleNamespace(endpoint="http://agent.local", extra={})
+
+    ctx = _deploy_context(should_sync_runtime_llm_config=False)
+    ctx.compute_provider = "docker"
+    ctx.env_vars = {"DOCKER_IMAGE": "example/hermes:latest"}
+
+    monkeypatch.setattr("app.core.deps.async_session_factory", lambda: FakeSession())
+    monkeypatch.setattr(
+        "app.services.runtime.registries.compute_registry.COMPUTE_REGISTRY.get",
+        lambda compute_id: SimpleNamespace(provider=FakeProvider()) if compute_id == "docker" else None,
+    )
+    async def fake_http_probe(*_args, **_kwargs):
+        return {"healthy": True}
+
+    monkeypatch.setattr("app.services.runtime.compute.base.http_probe", fake_http_probe)
+
+    async def fail_post_ready(*_args, **_kwargs):
+        raise RuntimeError("post ready failed")
+
+    monkeypatch.setattr(deploy_service, "_run_post_ready_instance_steps", fail_post_ready)
+    monkeypatch.setattr(
+        "app.services.instance_service.schedule_instance_deletion_finalizer",
+        lambda instance_id: finalized.append(instance_id),
+    )
+    monkeypatch.setattr(
+        deploy_service.event_bus,
+        "publish",
+        lambda _topic, payload: published.append(payload),
+    )
+
+    await deploy_service._execute_via_compute_provider(ctx)
+
+    assert record.status == DeployStatus.failed
+    assert record.message == "post ready failed"
+    assert record.finished_at is not None
+    assert instance.status == deploy_service.InstanceStatus.deleting
+    assert finalized == [ctx.instance_id]
+    assert published[-1]["status"] == "failed"
 
 
 @pytest.mark.asyncio

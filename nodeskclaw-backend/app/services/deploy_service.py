@@ -986,8 +986,6 @@ async def _execute_via_compute_provider(ctx: _DeployContext) -> None:
             )
         )
         record = rec_result.scalar_one()
-        record.status = DeployStatus.success
-        record.finished_at = datetime.now(timezone.utc)
 
         inst_result = await db.execute(
             select(Instance).where(
@@ -1015,14 +1013,35 @@ async def _execute_via_compute_provider(ctx: _DeployContext) -> None:
                 ).model_dump(),
             )
 
-        success_msg = await _run_post_ready_instance_steps(
-            ctx,
-            instance,
-            db,
-            start_step=len(DOCKER_DEPLOY_STEPS),
-            publish=_publish,
-        )
+        try:
+            success_msg = await _run_post_ready_instance_steps(
+                ctx,
+                instance,
+                db,
+                start_step=len(DOCKER_DEPLOY_STEPS),
+                publish=_publish,
+            )
+        except Exception as e:
+            logger.exception("ComputeProvider post-ready steps failed: %s", ctx.name)
+            record.status = DeployStatus.failed
+            record.message = str(e)[:500]
+            record.finished_at = datetime.now(timezone.utc)
+            instance.status = InstanceStatus.deleting
+            await db.commit()
+            from app.services.instance_service import schedule_instance_deletion_finalizer
+            schedule_instance_deletion_finalizer(ctx.instance_id)
+            event_bus.publish(
+                "deploy_progress",
+                DeployProgress(
+                    deploy_id=ctx.record_id, step=total, total_steps=total,
+                    current_step="失败", status="failed",
+                    message=f"{str(e)[:170]}，资源清理已开始", percent=100,
+                ).model_dump(),
+            )
+            return
+        record.status = DeployStatus.success
         record.message = success_msg
+        record.finished_at = datetime.now(timezone.utc)
         await db.commit()
 
     event_bus.publish(
@@ -1365,8 +1384,6 @@ async def _execute_deploy_inner(ctx, async_session_factory, get_config, total, s
             instance = inst_result.scalar_one()
 
             if deployment_ready:
-                record.status = DeployStatus.success
-                record.finished_at = datetime.now(timezone.utc)
                 instance.status = InstanceStatus.running
                 instance.available_replicas = dep_status.get("available_replicas", 0)
                 await db.commit()
@@ -1378,7 +1395,9 @@ async def _execute_deploy_inner(ctx, async_session_factory, get_config, total, s
                     start_step=len(DEPLOY_STEPS_BASE) + 1,
                     publish=_publish,
                 )
+                record.status = DeployStatus.success
                 record.message = success_msg
+                record.finished_at = datetime.now(timezone.utc)
                 await db.commit()
                 _publish(total, "完成", status="success", message=success_msg)
                 logger.info("部署成功: %s (namespace=%s)", ctx.name, ctx.namespace)
