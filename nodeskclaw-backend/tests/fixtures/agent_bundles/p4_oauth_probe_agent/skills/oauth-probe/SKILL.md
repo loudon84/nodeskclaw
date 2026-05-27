@@ -6,7 +6,7 @@ permissions:
   tools: ["http"]
   env: ["DESKCLAW_TRUSTED_OAUTH_EXCHANGE_URL", "OAUTH_TOKEN_REF", "OAUTH_ACCESS_TOKEN"]
 scripts:
-  probe: skills/oauth-probe/scripts/probe_oauth.py
+  probe: scripts/probe_oauth.py
 ---
 
 # OAuth Probe

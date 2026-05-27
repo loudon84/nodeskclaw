@@ -382,6 +382,104 @@ async def test_agent_bundle_secret_refs_accept_existing_secret_key() -> None:
 
 
 @pytest.mark.asyncio
+async def test_agent_bundle_secret_refs_accept_platform_secret_before_namespace_created() -> None:
+    reads = []
+
+    class MissingSecret(Exception):
+        status = 404
+
+    class FakeCore:
+        async def read_namespaced_secret(self, secret_name, namespace):
+            reads.append((namespace, secret_name))
+            if namespace == "nodeskclaw-system":
+                return SimpleNamespace(data={"access_token": "encoded"})
+            raise MissingSecret()
+
+        async def create_namespaced_secret(self, *_args, **_kwargs):
+            raise AssertionError("preflight should not create target namespace secret")
+
+    class FakeK8s:
+        core = FakeCore()
+
+        async def create_or_skip(self, *_args, **_kwargs):
+            raise AssertionError("preflight should not create target namespace secret")
+
+    await _ensure_agent_bundle_secret_refs(
+        FakeK8s(),
+        "agent-ns",
+        [{
+            "env": "OAUTH_ACCESS_TOKEN",
+            "secret_name": "mock-oauth-token",
+            "key": "access_token",
+            "required": True,
+        }],
+        {},
+        source_namespace="nodeskclaw-system",
+    )
+
+    assert reads == [
+        ("agent-ns", "mock-oauth-token"),
+        ("nodeskclaw-system", "mock-oauth-token"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_agent_bundle_secret_refs_copy_platform_secret_after_namespace_created() -> None:
+    created = []
+
+    class MissingSecret(Exception):
+        status = 404
+
+    class FakeCore:
+        async def read_namespaced_secret(self, secret_name, namespace):
+            if namespace == "nodeskclaw-system":
+                return SimpleNamespace(data={
+                    "access_token": "encoded-token",
+                    "refresh_token": "do-not-copy",
+                })
+            raise MissingSecret()
+
+        async def create_namespaced_secret(self, namespace, body):
+            created.append((namespace, body))
+
+        async def patch_namespaced_secret(self, *_args, **_kwargs):
+            raise AssertionError("target secret is missing and should be created")
+
+    class FakeK8s:
+        core = FakeCore()
+
+        async def apply(self, create_fn, _patch_fn, namespace, name, body):
+            assert name == "mock-oauth-token"
+            return await create_fn(namespace, body)
+
+        async def create_or_skip(self, create_fn, *args, **kwargs):
+            return await create_fn(*args, **kwargs)
+
+    await _ensure_agent_bundle_secret_refs(
+        FakeK8s(),
+        "agent-ns",
+        [{
+            "env": "OAUTH_ACCESS_TOKEN",
+            "secret_name": "mock-oauth-token",
+            "key": "access_token",
+            "required": True,
+        }],
+        {"app.kubernetes.io/managed-by": "nodeskclaw"},
+        source_namespace="nodeskclaw-system",
+        copy_missing=True,
+    )
+
+    assert len(created) == 1
+    namespace, body = created[0]
+    assert namespace == "agent-ns"
+    assert body.metadata.name == "mock-oauth-token"
+    assert body.metadata.namespace == "agent-ns"
+    assert body.metadata.labels == {"app.kubernetes.io/managed-by": "nodeskclaw"}
+    assert body.data == {"access_token": "encoded-token"}
+    assert body.string_data is None
+
+
+@pytest.mark.asyncio
 async def test_agent_bundle_secret_refs_skip_optional_missing_secret() -> None:
     class FakeCore:
         async def read_namespaced_secret(self, *_args, **_kwargs):

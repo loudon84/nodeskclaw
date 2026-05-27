@@ -104,6 +104,22 @@ def build_registry_secret(
     )
 
 
+def build_opaque_secret(
+    namespace: str,
+    name: str,
+    *,
+    data: dict[str, str] | None = None,
+    string_data: dict[str, str] | None = None,
+    labels: dict | None = None,
+) -> V1Secret:
+    return V1Secret(
+        metadata=V1ObjectMeta(name=name, namespace=namespace, labels=labels or {}),
+        type="Opaque",
+        data=data or None,
+        string_data=string_data or None,
+    )
+
+
 def _merge_custom_labels(base_labels: dict, custom_labels: dict | None) -> dict:
     """Merge user-provided labels into base labels; reserved prefixes are rejected."""
     if not custom_labels:

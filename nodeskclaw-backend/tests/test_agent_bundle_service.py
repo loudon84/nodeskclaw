@@ -8,6 +8,7 @@ import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 from sqlalchemy import select
@@ -312,6 +313,25 @@ def test_parse_agent_bundle_zip_rejects_secret_ref_source_env() -> None:
     assert "不允许声明 sourceEnv" in exc.value.message
 
 
+def test_parse_agent_bundle_zip_rejects_secret_ref_unknown_source() -> None:
+    data = make_agent_bundle_zip_with_config({
+        "name": "Q",
+        "slug": "q",
+        "model": "mock/q",
+        "secretRefs": [{
+            "env": "OAUTH_ACCESS_TOKEN",
+            "secretName": "mock-oauth-token",
+            "key": "access_token",
+            "source": {"value": "plain-token"},
+        }],
+    })
+
+    with pytest.raises(BadRequestError) as exc:
+        parse_agent_bundle_zip("bundle.zip", data)
+
+    assert "不支持的字段: source" in exc.value.message
+
+
 @pytest.mark.parametrize(
     "secret_refs, message",
     [
@@ -460,6 +480,13 @@ def test_bundle_env_vars_filter_secret_values_and_keep_refs() -> None:
     assert env["OAUTH_TOKEN_REF"] == "mock-oauth-token/access_token"
     assert "OAUTH_ACCESS_TOKEN" not in env
     assert "NODESKCLAW_SECRET_REFS" in env
+    assert json.loads(env["NODESKCLAW_SECRET_REFS"]) == [{
+        "env": "OAUTH_ACCESS_TOKEN",
+        "secretName": "mock-oauth-token",
+        "key": "access_token",
+        "tokenRef": "mock-oauth-token/access_token",
+        "required": True,
+    }]
 
 
 def test_oauth_probe_script_calls_mock_broker_with_injected_token() -> None:
@@ -626,13 +653,19 @@ def test_agent_bundle_placeholder_name_uses_next_expert_index() -> None:
 @pytest.mark.asyncio
 async def test_import_agent_bundle_creates_private_template_and_genes(require_test_db) -> None:
     manifest = parse_agent_bundle_dir(FIXTURES / "p1_template_import_agent")
+    suffix = uuid4().hex[:8]
+    manifest["slug"] = f"{manifest['slug']}-{suffix}"
 
     async with TestSessionLocal() as db:
-        org = Organization(id="org-agent-bundle", name="Agent Bundle Org", slug="agent-bundle-org")
+        org = Organization(
+            id=f"org-agent-bundle-{suffix}",
+            name="Agent Bundle Org",
+            slug=f"agent-bundle-org-{suffix}",
+        )
         user = User(
-            id="user-agent-bundle",
+            id=f"user-agent-bundle-{suffix}",
             name="Agent Bundle User",
-            username="agent-bundle-user",
+            username=f"agent-bundle-user-{suffix}",
             current_org_id=org.id,
         )
         db.add_all([org, user])
@@ -641,13 +674,13 @@ async def test_import_agent_bundle_creates_private_template_and_genes(require_te
         template = await import_agent_bundle_manifest(
             db,
             manifest,
-            user_id="user-agent-bundle",
-            org_id="org-agent-bundle",
+            user_id=user.id,
+            org_id=org.id,
         )
 
         assert template.template_type == "agent_bundle"
         assert template.name == "专家1"
-        assert template.slug == "p1-template-import-agent"
+        assert template.slug == f"p1-template-import-agent-{suffix}"
         assert template.agent_bundle is not None
         assert template.agent_bundle["name"] == "Template Import Agent"
         assert template.agent_bundle["files"] == ["AGENT.md", "SOUL.md", "config.json", "skills/importer/SKILL.md"]

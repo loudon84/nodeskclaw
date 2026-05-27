@@ -31,6 +31,7 @@ from app.services.deploy.factory import get_deploy_adapter
 from app.services.k8s.resource_builder import (
     build_configmap,
     build_deployment,
+    build_opaque_secret,
     build_ingress,
     build_labels,
     build_network_policy,
@@ -154,11 +155,24 @@ def _secret_has_key(secret, key: str) -> bool:
     return key in data or key in string_data
 
 
+def _secret_key_payload(secret, key: str) -> tuple[str, str] | None:
+    data = getattr(secret, "data", None) or {}
+    if key in data:
+        return "data", data[key]
+    string_data = getattr(secret, "string_data", None) or {}
+    if key in string_data:
+        return "string_data", string_data[key]
+    return None
+
+
 async def _ensure_agent_bundle_secret_refs(
     k8s,
     namespace: str,
     secret_env_refs: list[dict] | None,
     labels: dict,
+    *,
+    source_namespace: str | None = None,
+    copy_missing: bool = False,
 ) -> None:
     if not secret_env_refs:
         return
@@ -174,6 +188,9 @@ async def _ensure_agent_bundle_secret_refs(
             unresolved.append(ref)
 
     checked: dict[str, object | None] = {}
+    source_checked: dict[str, object | None] = {}
+    copy_keys: dict[str, set[str]] = {}
+    effective_source_namespace = source_namespace if source_namespace != namespace else None
     for ref in unresolved:
         secret_name = str(ref.get("secret_name"))
         secret_key = str(ref.get("key"))
@@ -181,19 +198,77 @@ async def _ensure_agent_bundle_secret_refs(
         if cache_key not in checked:
             checked[cache_key] = await _read_k8s_secret(k8s, namespace, secret_name)
         secret = checked[cache_key]
+        if secret is not None and _secret_has_key(secret, secret_key):
+            continue
+
+        source_secret = None
+        if effective_source_namespace:
+            if cache_key not in source_checked:
+                source_checked[cache_key] = await _read_k8s_secret(
+                    k8s, effective_source_namespace, secret_name,
+                )
+            source_secret = source_checked[cache_key]
+        if source_secret is not None and _secret_has_key(source_secret, secret_key):
+            if copy_missing:
+                copy_keys.setdefault(secret_name, set()).add(secret_key)
+            continue
+
         if secret is None:
+            source_hint = (
+                f"，且平台命名空间 {effective_source_namespace}/{secret_name} 中也不存在可复制的 key"
+                if effective_source_namespace else ""
+            )
             raise BadRequestError(
                 message=(
                     f"AI 员工模板缺少鉴权 Secret: {namespace}/{secret_name} "
-                    f"key={secret_key}"
+                    f"key={secret_key}{source_hint}"
                 ),
                 message_key="errors.template.missing_auth_secret",
             )
-        if not _secret_has_key(secret, secret_key):
-            raise BadRequestError(
-                message=f"AI 员工模板鉴权 Secret 缺少 key: {namespace}/{secret_name} key={secret_key}",
-                message_key="errors.template.missing_auth_secret_key",
+        source_hint = (
+            f"，且平台命名空间 {effective_source_namespace}/{secret_name} 中也缺少该 key"
+            if effective_source_namespace else ""
+        )
+        raise BadRequestError(
+            message=f"AI 员工模板鉴权 Secret 缺少 key: {namespace}/{secret_name} key={secret_key}{source_hint}",
+            message_key="errors.template.missing_auth_secret_key",
+        )
+
+    if not copy_missing:
+        return
+
+    for secret_name, keys in copy_keys.items():
+        source_secret = source_checked.get(secret_name)
+        data: dict[str, str] = {}
+        string_data: dict[str, str] = {}
+        for key in sorted(keys):
+            payload = _secret_key_payload(source_secret, key)
+            if payload is None:
+                continue
+            payload_type, value = payload
+            if payload_type == "data":
+                data[key] = value
+            else:
+                string_data[key] = value
+        if not data and not string_data:
+            continue
+        secret = build_opaque_secret(
+            namespace,
+            secret_name,
+            data=data,
+            string_data=string_data,
+            labels=labels,
+        )
+        if hasattr(k8s, "apply") and hasattr(k8s.core, "patch_namespaced_secret"):
+            await k8s.apply(
+                k8s.core.create_namespaced_secret,
+                k8s.core.patch_namespaced_secret,
+                namespace,
+                secret_name,
+                secret,
             )
+        else:
+            await k8s.create_or_skip(k8s.core.create_namespaced_secret, namespace, secret)
 
 
 def _required_secret_env_refs(secret_env_refs: list[dict] | None) -> list[dict]:
@@ -1001,7 +1076,13 @@ async def deploy_instance(
         if cluster.compute_provider == "k8s":
             from app.services.runtime.registries.compute_registry import require_k8s_client
             k8s = await require_k8s_client(cluster)
-            await _ensure_agent_bundle_secret_refs(k8s, namespace, secret_env_refs, {})
+            await _ensure_agent_bundle_secret_refs(
+                k8s,
+                namespace,
+                secret_env_refs,
+                {},
+                source_namespace=settings.PLATFORM_NAMESPACE,
+            )
 
     gateway_token = env_vars.get("GATEWAY_TOKEN") or env_vars.get("OPENCLAW_GATEWAY_TOKEN")
     if not gateway_token:
@@ -1503,7 +1584,14 @@ async def _execute_deploy_inner(ctx, async_session_factory, get_config, total, s
             # Step 3: 创建 ConfigMap
             _publish(3, steps[2])
             secret_env_refs = (ctx.advanced_config or {}).get("secret_env_refs") if ctx.advanced_config else None
-            await _ensure_agent_bundle_secret_refs(k8s, ctx.namespace, secret_env_refs, labels)
+            await _ensure_agent_bundle_secret_refs(
+                k8s,
+                ctx.namespace,
+                secret_env_refs,
+                labels,
+                source_namespace=settings.PLATFORM_NAMESPACE,
+                copy_missing=True,
+            )
             if ctx.env_vars:
                 cm = build_configmap(f"{ctx.name}-config", ctx.namespace, ctx.env_vars, labels)
                 await k8s.create_or_skip(k8s.core.create_namespaced_config_map, ctx.namespace, cm)

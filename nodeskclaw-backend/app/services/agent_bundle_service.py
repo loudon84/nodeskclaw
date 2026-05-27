@@ -187,9 +187,22 @@ def _validate_secret_refs(config: dict[str, Any]) -> list[dict[str, Any]]:
 
     normalized: list[dict[str, Any]] = []
     seen_env_names: set[str] = set()
+    allowed_keys = {
+        "env", "env_name",
+        "secretName", "secret_name",
+        "key", "secretKey", "secret_key",
+        "tokenRef", "token_ref",
+        "sourceEnv", "source_env",
+        "required",
+    }
     for index, ref in enumerate(refs):
         if not isinstance(ref, dict):
             raise BadRequestError(f"config.secretRefs[{index}] 必须是对象")
+        unknown_keys = sorted(str(key) for key in ref if str(key) not in allowed_keys)
+        if unknown_keys:
+            raise BadRequestError(
+                f"config.secretRefs[{index}] 包含不支持的字段: {', '.join(unknown_keys)}",
+            )
         forbidden = [
             key for key in ref
             if _is_secret_key(str(key)) and key not in {
@@ -235,18 +248,18 @@ def _validate_secret_refs(config: dict[str, Any]) -> list[dict[str, Any]]:
                 raise BadRequestError(
                     f"config.secretRefs[{index}].tokenRef 必须与 secretName/key 保持一致",
                 )
-        source = ref.get("source") if isinstance(ref.get("source"), dict) else {}
-        source_env = ref.get("sourceEnv") or ref.get("source_env") or source.get("env")
+        source_env = ref.get("sourceEnv") or ref.get("source_env")
         if source_env:
             raise BadRequestError(
                 f"config.secretRefs[{index}] 不允许声明 sourceEnv，请使用预先创建的 K8s Secret/tokenRef",
             )
         if "required" in ref and not isinstance(ref["required"], bool):
             raise BadRequestError(f"config.secretRefs[{index}].required 必须是布尔值")
-        item = dict(ref)
-        item["env"] = env_text
-        item["secretName"] = secret_name_text
-        item["key"] = secret_key_text
+        item = {
+            "env": env_text,
+            "secretName": secret_name_text,
+            "key": secret_key_text,
+        }
         if token_ref:
             item["tokenRef"] = f"{secret_name_text}/{secret_key_text}"
         item["required"] = ref.get("required", True) is not False
