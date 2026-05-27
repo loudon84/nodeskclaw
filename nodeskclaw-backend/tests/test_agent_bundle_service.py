@@ -17,6 +17,8 @@ from sqlalchemy.orm import sessionmaker
 from app.core.exceptions import BadRequestError
 from app.api.instance_templates import _read_upload_file_limited
 from app.models.gene import ContentVisibility, Gene, GeneSource
+from app.models.organization import Organization
+from app.models.user import User
 from app.services.agent_bundle_service import (
     MAX_FILE_BYTES,
     MAX_TOTAL_BYTES,
@@ -310,6 +312,68 @@ def test_parse_agent_bundle_zip_rejects_secret_ref_source_env() -> None:
     assert "不允许声明 sourceEnv" in exc.value.message
 
 
+@pytest.mark.parametrize(
+    "secret_refs, message",
+    [
+        ([{"env": "1TOKEN", "secretName": "mock-token", "key": "access_token"}], "环境变量名"),
+        ([{"env": "OAUTH_ACCESS_TOKEN", "secretName": "Mock_Token", "key": "access_token"}], "Secret 名称"),
+        ([{"env": "OAUTH_ACCESS_TOKEN", "secretName": "mock-token", "key": "access/token"}], "Secret key"),
+        (
+            [{
+                "env": "OAUTH_ACCESS_TOKEN",
+                "secretName": "mock-token",
+                "key": "access_token",
+                "tokenRef": "mock-token/other_key",
+            }],
+            "保持一致",
+        ),
+        (
+            [
+                {"env": "OAUTH_ACCESS_TOKEN", "secretName": "mock-token", "key": "access_token"},
+                {"env": "OAUTH_ACCESS_TOKEN", "secretName": "mock-token", "key": "refresh_token"},
+            ],
+            "重复",
+        ),
+        ([{"env": "OAUTH_ACCESS_TOKEN", "secretName": "mock-token", "key": "access_token", "required": "false"}], "布尔值"),
+    ],
+)
+def test_parse_agent_bundle_zip_rejects_invalid_secret_refs(secret_refs: list[dict], message: str) -> None:
+    data = make_agent_bundle_zip_with_config({
+        "name": "Q",
+        "slug": "q",
+        "model": "mock/q",
+        "secretRefs": secret_refs,
+    })
+
+    with pytest.raises(BadRequestError) as exc:
+        parse_agent_bundle_zip("bundle.zip", data)
+
+    assert message in exc.value.message
+
+
+def test_parse_agent_bundle_zip_normalizes_token_ref_only_secret_refs() -> None:
+    data = make_agent_bundle_zip_with_config({
+        "name": "Q",
+        "slug": "q",
+        "model": "mock/q",
+        "secretRefs": [{
+            "env": "OAUTH_ACCESS_TOKEN",
+            "tokenRef": "mock-oauth-token/access_token",
+            "required": False,
+        }],
+    })
+
+    manifest = parse_agent_bundle_zip("bundle.zip", data)
+
+    assert manifest["secret_refs"] == [{
+        "env": "OAUTH_ACCESS_TOKEN",
+        "tokenRef": "mock-oauth-token/access_token",
+        "required": False,
+        "secretName": "mock-oauth-token",
+        "key": "access_token",
+    }]
+
+
 def test_parse_agent_bundle_zip_rejects_duplicate_paths() -> None:
     with pytest.warns(UserWarning, match="Duplicate name"):
         data = make_base_agent_bundle_zip([("docs/dup.txt", "one"), ("docs/dup.txt", "two")])
@@ -510,6 +574,36 @@ def test_secret_env_refs_are_injected_as_k8s_secret_refs_not_configmap_data() ->
     assert env_by_name["OAUTH_ACCESS_TOKEN"].value_from.secret_key_ref.key == "access_token"
 
 
+def test_optional_secret_env_refs_are_injected_as_optional_k8s_refs() -> None:
+    data = make_agent_bundle_zip_with_config({
+        "name": "Q",
+        "slug": "q",
+        "model": "mock/q",
+        "secretRefs": [{
+            "env": "OPTIONAL_ACCESS_TOKEN",
+            "secretName": "mock-token",
+            "key": "access_token",
+            "required": False,
+        }],
+    })
+    manifest = parse_agent_bundle_zip("bundle.zip", data)
+    refs = _collect_secret_env_refs(manifest)
+    deployment = build_deployment(
+        name="agent",
+        namespace="ns",
+        image="example/agent:v1",
+        replicas=1,
+        labels=build_labels("agent", "inst-1", "v1"),
+        advanced_config={"secret_env_refs": refs},
+    )
+
+    env_by_name = {item.name: item for item in deployment.spec.template.spec.containers[0].env}
+    selector = env_by_name["OPTIONAL_ACCESS_TOKEN"].value_from.secret_key_ref
+    assert selector.name == "mock-token"
+    assert selector.key == "access_token"
+    assert selector.optional is True
+
+
 def test_agent_bundle_display_name_uses_only_explicit_display_name() -> None:
     video_manifest = parse_agent_bundle_dir(FIXTURES / "p5_video_clone_mock_agent")
     explicit_manifest = {
@@ -534,6 +628,16 @@ async def test_import_agent_bundle_creates_private_template_and_genes(require_te
     manifest = parse_agent_bundle_dir(FIXTURES / "p1_template_import_agent")
 
     async with TestSessionLocal() as db:
+        org = Organization(id="org-agent-bundle", name="Agent Bundle Org", slug="agent-bundle-org")
+        user = User(
+            id="user-agent-bundle",
+            name="Agent Bundle User",
+            username="agent-bundle-user",
+            current_org_id=org.id,
+        )
+        db.add_all([org, user])
+        await db.commit()
+
         template = await import_agent_bundle_manifest(
             db,
             manifest,

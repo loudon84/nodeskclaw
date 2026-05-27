@@ -125,16 +125,6 @@ def build_configmap(
     )
 
 
-def build_opaque_secret(
-    name: str, namespace: str, string_data: dict[str, str], labels: dict
-) -> V1Secret:
-    return V1Secret(
-        metadata=V1ObjectMeta(name=name, namespace=namespace, labels=labels),
-        type="Opaque",
-        string_data=string_data,
-    )
-
-
 def build_pvc(
     name: str,
     namespace: str,
@@ -276,13 +266,15 @@ def build_deployment(
             secret_name = ref.get("secret_name") or ref.get("secretName")
             secret_key = ref.get("key") or ref.get("secret_key") or ref.get("secretKey")
             if env_name and secret_name and secret_key:
+                optional = ref.get("required") is False
                 env.append(
                     V1EnvVar(
-                        name=env_name,
+                        name=str(env_name),
                         value_from=V1EnvVarSource(
                             secret_key_ref=V1SecretKeySelector(
-                                name=secret_name,
-                                key=secret_key,
+                                name=str(secret_name),
+                                key=str(secret_key),
+                                optional=optional,
                             )
                         ),
                     )

@@ -15,6 +15,8 @@ from app.services.deploy_service import (
     REBUILD_STEPS,
     _DeployContext,
     _ensure_agent_bundle_secret_refs,
+    _reject_secret_ref_env_var_collisions,
+    _reject_unsupported_secret_refs_for_provider,
     _require_supported_runtime,
     _restore_agent_bundle_with_retry,
     _rewrite_docker_callback_url,
@@ -377,6 +379,70 @@ async def test_agent_bundle_secret_refs_accept_existing_secret_key() -> None:
         }],
         {},
     )
+
+
+@pytest.mark.asyncio
+async def test_agent_bundle_secret_refs_skip_optional_missing_secret() -> None:
+    class FakeCore:
+        async def read_namespaced_secret(self, *_args, **_kwargs):
+            raise AssertionError("optional secret refs should not be preflighted")
+
+    class FakeK8s:
+        core = FakeCore()
+
+    await _ensure_agent_bundle_secret_refs(
+        FakeK8s(),
+        "agent-ns",
+        [{
+            "env": "OPTIONAL_ACCESS_TOKEN",
+            "secret_name": "mock-oauth-token",
+            "key": "access_token",
+            "required": False,
+        }],
+        {},
+    )
+
+
+def test_secret_refs_reject_required_refs_on_non_k8s_provider() -> None:
+    with pytest.raises(BadRequestError) as exc_info:
+        _reject_unsupported_secret_refs_for_provider(
+            "docker",
+            [{
+                "env": "OAUTH_ACCESS_TOKEN",
+                "secret_name": "mock-oauth-token",
+                "key": "access_token",
+                "required": True,
+            }],
+        )
+
+    assert "仅支持 K8s" in exc_info.value.message
+
+
+def test_secret_refs_allow_optional_refs_on_non_k8s_provider() -> None:
+    _reject_unsupported_secret_refs_for_provider(
+        "docker",
+        [{
+            "env": "OPTIONAL_ACCESS_TOKEN",
+            "secret_name": "mock-oauth-token",
+            "key": "access_token",
+            "required": False,
+        }],
+    )
+
+
+def test_secret_refs_reject_plain_env_var_collision() -> None:
+    with pytest.raises(BadRequestError) as exc_info:
+        _reject_secret_ref_env_var_collisions(
+            {"OAUTH_ACCESS_TOKEN": "plain-token"},
+            [{
+                "env": "OAUTH_ACCESS_TOKEN",
+                "secret_name": "mock-oauth-token",
+                "key": "access_token",
+                "required": True,
+            }],
+        )
+
+    assert "不能同时写入普通 env_vars" in exc_info.value.message
 
 
 @pytest.mark.asyncio

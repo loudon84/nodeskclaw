@@ -196,6 +196,45 @@ async def _ensure_agent_bundle_secret_refs(
             )
 
 
+def _required_secret_env_refs(secret_env_refs: list[dict] | None) -> list[dict]:
+    return [
+        ref for ref in secret_env_refs or []
+        if isinstance(ref, dict) and ref.get("required", True) is not False
+    ]
+
+
+def _reject_secret_ref_env_var_collisions(
+    env_vars: dict[str, str],
+    secret_env_refs: list[dict] | None,
+) -> None:
+    secret_env_names = {
+        str(ref.get("env") or ref.get("env_name"))
+        for ref in secret_env_refs or []
+        if isinstance(ref, dict) and (ref.get("env") or ref.get("env_name"))
+    }
+    collisions = sorted(secret_env_names.intersection(env_vars.keys()))
+    if collisions:
+        raise BadRequestError(
+            message=(
+                "AI 员工模板鉴权环境变量不能同时写入普通 env_vars: "
+                f"{', '.join(collisions)}"
+            ),
+            message_key="errors.template.secret_env_var_conflict",
+        )
+
+
+def _reject_unsupported_secret_refs_for_provider(
+    compute_provider: str,
+    secret_env_refs: list[dict] | None,
+) -> None:
+    required_refs = _required_secret_env_refs(secret_env_refs)
+    if required_refs and compute_provider != "k8s":
+        raise BadRequestError(
+            message="AI 员工模板鉴权 Secret 当前仅支持 K8s 部署",
+            message_key="errors.template.secret_refs_require_k8s",
+        )
+
+
 async def _restore_agent_bundle_with_retry(
     instance: Instance,
     manifest: dict,
@@ -955,6 +994,15 @@ async def deploy_instance(
         template_agent_bundle_manifest = await get_template_agent_bundle_manifest(db, req.template_id, org_id)
         env_vars.update(await get_template_deploy_env_vars(db, req.template_id, org_id))
 
+    secret_env_refs = _collect_secret_env_refs(template_agent_bundle_manifest)
+    if secret_env_refs:
+        _reject_secret_ref_env_var_collisions(env_vars, secret_env_refs)
+        _reject_unsupported_secret_refs_for_provider(cluster.compute_provider, secret_env_refs)
+        if cluster.compute_provider == "k8s":
+            from app.services.runtime.registries.compute_registry import require_k8s_client
+            k8s = await require_k8s_client(cluster)
+            await _ensure_agent_bundle_secret_refs(k8s, namespace, secret_env_refs, {})
+
     gateway_token = env_vars.get("GATEWAY_TOKEN") or env_vars.get("OPENCLAW_GATEWAY_TOKEN")
     if not gateway_token:
         gateway_token = _secrets.token_hex(24)
@@ -977,7 +1025,6 @@ async def deploy_instance(
         env_vars["DOCKER_HOST_PORT"] = str(docker_host_port)
 
     advanced_config = _json.loads(_json.dumps(req.advanced_config)) if req.advanced_config else {}
-    secret_env_refs = _collect_secret_env_refs(template_agent_bundle_manifest)
     if secret_env_refs:
         existing_refs = advanced_config.setdefault("secret_env_refs", [])
         existing_refs.extend(secret_env_refs)

@@ -39,6 +39,9 @@ SECRET_KEY_MARKERS = (
 )
 SECRET_REF_SUFFIXES = ("_ref", "ref", "reference")
 BUNDLE_REL_PATH_PATTERN = re.compile(r"^[A-Za-z0-9._/-]+$")
+SECRET_REF_ENV_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+SECRET_REF_SECRET_KEY_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
+DNS_LABEL_PATTERN = re.compile(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
 
 
 def normalize_bundle_slug(value: str) -> str:
@@ -146,6 +149,35 @@ def _validate_no_plaintext_secret(config: dict[str, Any]) -> None:
             )
 
 
+def _validate_secret_ref_secret_name(value: str, field: str) -> str:
+    text = value.strip()
+    labels = text.split(".") if text else []
+    if (
+        not text
+        or len(text) > 253
+        or any(len(label) > 63 or not DNS_LABEL_PATTERN.fullmatch(label) for label in labels)
+    ):
+        raise BadRequestError(f"config.secretRefs.{field} 必须是合法的 K8s Secret 名称")
+    return text
+
+
+def _validate_secret_ref_key(value: str, field: str) -> str:
+    text = value.strip()
+    if not text or len(text) > 253 or not SECRET_REF_SECRET_KEY_PATTERN.fullmatch(text):
+        raise BadRequestError(f"config.secretRefs.{field} 必须是合法的 K8s Secret key")
+    return text
+
+
+def _parse_secret_ref_token_ref(token_ref: Any, index: int) -> tuple[str, str]:
+    raw = str(token_ref).strip()
+    parts = raw.split("/")
+    if len(parts) != 2:
+        raise BadRequestError(f"config.secretRefs[{index}].tokenRef 必须使用 secretName/key 格式")
+    secret_name = _validate_secret_ref_secret_name(parts[0], f"[{index}].tokenRef")
+    secret_key = _validate_secret_ref_key(parts[1], f"[{index}].tokenRef")
+    return secret_name, secret_key
+
+
 def _validate_secret_refs(config: dict[str, Any]) -> list[dict[str, Any]]:
     refs = config.get("secretRefs") or config.get("secret_refs") or []
     if refs in (None, ""):
@@ -154,6 +186,7 @@ def _validate_secret_refs(config: dict[str, Any]) -> list[dict[str, Any]]:
         raise BadRequestError("config.secretRefs 必须是数组")
 
     normalized: list[dict[str, Any]] = []
+    seen_env_names: set[str] = set()
     for index, ref in enumerate(refs):
         if not isinstance(ref, dict):
             raise BadRequestError(f"config.secretRefs[{index}] 必须是对象")
@@ -173,27 +206,49 @@ def _validate_secret_refs(config: dict[str, Any]) -> list[dict[str, Any]]:
         secret_name = ref.get("secretName") or ref.get("secret_name")
         secret_key = ref.get("key") or ref.get("secretKey") or ref.get("secret_key")
         token_ref = ref.get("tokenRef") or ref.get("token_ref")
-        if token_ref and not (secret_name and secret_key):
-            parts = str(token_ref).split("/", 1)
-            if len(parts) == 2 and all(part.strip() for part in parts):
-                secret_name = secret_name or parts[0].strip()
-                secret_key = secret_key or parts[1].strip()
-        if not env_name or not secret_name or not secret_key:
+        if not env_name:
             raise BadRequestError(
                 f"config.secretRefs[{index}] 必须声明 env、secretName/tokenRef 和 key",
             )
+        if not secret_name or not secret_key:
+            if token_ref:
+                token_secret_name, token_secret_key = _parse_secret_ref_token_ref(token_ref, index)
+                secret_name = secret_name or token_secret_name
+                secret_key = secret_key or token_secret_key
+            else:
+                raise BadRequestError(
+                    f"config.secretRefs[{index}] 必须声明 env、secretName/tokenRef 和 key",
+                )
+
+        env_text = str(env_name).strip()
+        if not SECRET_REF_ENV_NAME_PATTERN.fullmatch(env_text):
+            raise BadRequestError(f"config.secretRefs[{index}].env 必须是合法的环境变量名")
+        if env_text in seen_env_names:
+            raise BadRequestError(f"config.secretRefs[{index}].env 重复: {env_text}")
+        seen_env_names.add(env_text)
+
+        secret_name_text = _validate_secret_ref_secret_name(str(secret_name), f"[{index}].secretName")
+        secret_key_text = _validate_secret_ref_key(str(secret_key), f"[{index}].key")
+        if token_ref:
+            token_secret_name, token_secret_key = _parse_secret_ref_token_ref(token_ref, index)
+            if token_secret_name != secret_name_text or token_secret_key != secret_key_text:
+                raise BadRequestError(
+                    f"config.secretRefs[{index}].tokenRef 必须与 secretName/key 保持一致",
+                )
         source = ref.get("source") if isinstance(ref.get("source"), dict) else {}
         source_env = ref.get("sourceEnv") or ref.get("source_env") or source.get("env")
         if source_env:
             raise BadRequestError(
                 f"config.secretRefs[{index}] 不允许声明 sourceEnv，请使用预先创建的 K8s Secret/tokenRef",
             )
+        if "required" in ref and not isinstance(ref["required"], bool):
+            raise BadRequestError(f"config.secretRefs[{index}].required 必须是布尔值")
         item = dict(ref)
-        item["env"] = str(env_name)
-        item["secretName"] = str(secret_name)
-        item["key"] = str(secret_key)
+        item["env"] = env_text
+        item["secretName"] = secret_name_text
+        item["key"] = secret_key_text
         if token_ref:
-            item["tokenRef"] = str(token_ref)
+            item["tokenRef"] = f"{secret_name_text}/{secret_key_text}"
         item["required"] = ref.get("required", True) is not False
         normalized.append(item)
     return normalized
