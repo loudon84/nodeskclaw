@@ -27,6 +27,7 @@ class Instance(Base):
     wp_api_key: Mapped[str | None] = mapped_column(String(96), unique=True, nullable=True)
     created_by: Mapped[str] = mapped_column(String(36), nullable=False)
     org_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    last_active_workspace_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 

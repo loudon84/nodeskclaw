@@ -344,6 +344,23 @@ class TunnelAdapter:
         if not conn:
             raise ConnectionError(f"Instance {instance_id} not connected via tunnel")
 
+        if workspace_id:
+            try:
+                from app.core.deps import async_session_factory
+                from sqlalchemy import update as sa_update
+
+                from app.models.instance import Instance
+
+                async with async_session_factory() as track_db:
+                    await track_db.execute(
+                        sa_update(Instance)
+                        .where(Instance.id == instance_id)
+                        .values(last_active_workspace_id=workspace_id)
+                    )
+                    await track_db.commit()
+            except Exception:
+                logger.debug("Failed to update active workspace tracking", exc_info=True)
+
         request_id = str(uuid.uuid4())
         payload: dict[str, Any] = {
             "messages": messages,

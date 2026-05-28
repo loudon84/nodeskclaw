@@ -200,6 +200,17 @@ async def _resolve_usage_attribution(request: Request, db, instance: Instance) -
 
     workspace_id = _extract_session_workspace_id(request)
     if not workspace_id:
+        tracked_wid = instance.last_active_workspace_id
+        if tracked_wid:
+            if (
+                await _workspace_belongs_to_org(db, tracked_wid, instance.org_id)
+                and await _instance_in_workspace(db, tracked_wid, instance.id)
+            ):
+                return tracked_wid, "active_tracking"
+            logger.warning(
+                "Active tracking attribution rejected: workspace=%s instance=%s",
+                tracked_wid, instance.id,
+            )
         return None, "unattributed"
     if not await _workspace_belongs_to_org(db, workspace_id, instance.org_id):
         logger.warning("Session workspace attribution rejected: workspace=%s instance=%s", workspace_id, instance.id)

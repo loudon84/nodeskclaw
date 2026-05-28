@@ -111,6 +111,10 @@ class Instance(BaseModel):
     workspace_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("workspaces.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    # LLM 用量归因追踪：最近一次 chat.request 对应的 workspace，LLM Proxy fallback 用
+    last_active_workspace_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("workspaces.id", ondelete="SET NULL"), nullable=True
+    )
     hex_position_q: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     hex_position_r: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     agent_display_name: Mapped[str | None] = mapped_column(String(64), nullable=True)

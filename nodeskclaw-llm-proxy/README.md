@@ -10,6 +10,7 @@ DeskClaw LLM 代理 -- AI 经营伙伴的智力供给中枢。负责大语言模
 - Working Plan 额度检查（仅组织 Key）
 - 流式/非流式请求转发
 - 全量 Token 用量记录（组织 Key + 个人 Key），含 latency、status_code、request_path 等元数据
+- Workspace 用量归因：按优先级 signed token → session_key header → active_tracking（后端追踪的 `last_active_workspace_id`）→ unattributed
 - `stream_options` 按 provider 白名单自动注入（OpenAI/OpenRouter/MiniMax/Gemini）
 - 可选请求体记录（`LLM_LOG_CONTENT` 环境变量控制，默认关闭）
 - 响应元数据记录（去除 content 后的结构化 JSON，始终存储）
