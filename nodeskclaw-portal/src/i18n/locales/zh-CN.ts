@@ -1738,6 +1738,17 @@ const zhCN = {
     runtime: {
       unsupported_capability: "当前运行时不支持 {capability} 能力",
     },
+    mcp: {
+      access_denied: "无权访问该实例的 MCP 能力",
+      upstream_unavailable: "上游 MCP Server 不可达",
+      no_available_upstream: "无可用上游服务器",
+      gateway_timeout: "网关请求超时",
+      rate_limit_exceeded: "请求速率超过限制",
+      connection_limit_exceeded: "连接数超过限制",
+      route_conflict: "路由规则冲突",
+      server_not_found: "MCP Server 不存在",
+      approval_timeout: "敏感工具审批超时",
+    },
     system: {
       internal_error: "服务器内部错误",
       backend_starting: "后端服务正在启动中，请稍候重试",

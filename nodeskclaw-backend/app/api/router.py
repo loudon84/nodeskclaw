@@ -25,6 +25,8 @@ from app.api.channel_configs import router as channel_config_router
 from app.api.observability import router as observability_router
 from app.api.runtime_admin import router as runtime_admin_router
 from app.api.mcp import router as mcp_router
+from app.api.gateway.gateway_router import router as gateway_router
+from app.api.gateway.proxy_router import router as gateway_proxy_router
 from app.api.trust import router as trust_router
 from app.api.webhooks import router as webhook_router
 from app.api.blackboard import router as blackboard_router
@@ -152,6 +154,8 @@ api_router.include_router(invite_public_router, prefix="/invite", tags=["邀请�
 api_router.include_router(security_ws_router, tags=["安全评估"])
 api_router.include_router(tunnel_router, tags=["Agent Tunnel"])
 api_router.include_router(task_orchestrator_router, tags=["任务编排"])
+api_router.include_router(gateway_router, prefix="/gateway", tags=["Gateway 管理"])
+api_router.include_router(gateway_proxy_router, prefix="/gateway", tags=["Gateway 代理"])
 
 # ── 管理平台 Admin API（/api/v1/admin）─────────────────────
 # Admin 使用原有路由模块，通过 dependencies 注入角色检查。

@@ -183,6 +183,18 @@ class Settings(BaseSettings):
     # ── CORS ─────────────────────────────────────────────
     CORS_ORIGINS: list[str] = ["http://localhost:4517", "http://localhost:4518"]
 
+    # ── Gateway ──────────────────────────────────────────
+    GATEWAY_HEALTH_CHECK_INTERVAL: int = 10
+    GATEWAY_HEALTH_CHECK_TIMEOUT: int = 5
+    GATEWAY_FAILURE_THRESHOLD: int = 3
+    GATEWAY_RECOVERY_THRESHOLD: int = 2
+    GATEWAY_TOOL_CACHE_TTL: int = 60
+    GATEWAY_SSE_IDLE_TIMEOUT: int = 300
+    GATEWAY_SSE_HEARTBEAT_INTERVAL: int = 30
+    GATEWAY_SSE_RECONNECT_ATTEMPTS: int = 3
+    GATEWAY_DEFAULT_TIMEOUT: int = 30
+    GATEWAY_AUDIT_RETENTION_DAYS: int = 90
+
 
 settings = Settings()
 
