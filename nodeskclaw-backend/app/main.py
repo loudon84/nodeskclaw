@@ -561,6 +561,13 @@ async def lifespan(app: FastAPI):
     instance_health_checker = InstanceHealthChecker(async_session_factory)
     instance_health_checker.start()
 
+    from app.services.gateway.health_checker import GatewayHealthChecker, gateway_health_checker as _gwh
+
+    _gw_checker = GatewayHealthChecker(async_session_factory)
+    _gw_checker.start()
+    import app.services.gateway.health_checker as _gwh_mod
+    _gwh_mod.gateway_health_checker = _gw_checker
+
     from app.services.summary_job import SummaryJob
     summary_job = SummaryJob(async_session_factory)
     summary_job.start()
@@ -838,6 +845,8 @@ async def lifespan(app: FastAPI):
     await schedule_runner.stop()
     await instance_health_checker.stop()
     await health_checker.stop()
+    if _gw_checker:
+        await _gw_checker.stop()
     await k8s_manager.close_all()
     logger.info("已关闭所有 K8s 连接")
     await registry_aggregator.close()

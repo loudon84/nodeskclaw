@@ -17,6 +17,11 @@ from app.models.delivery_log import DeliveryLog  # noqa: F401
 from app.models.deploy_record import DeployRecord  # noqa: F401
 from app.models.engine_version import EngineVersion  # noqa: F401
 from app.models.event_log import EventLog  # noqa: F401
+from app.models.gateway import (  # noqa: F401
+    McpGatewayAuditLog,
+    McpGatewayPolicy,
+    McpGatewayRoute,
+)
 from app.models.gene import (  # noqa: F401
     Gene,
     GeneEffectLog,
@@ -62,3 +67,6 @@ from app.models.workspace_objective import WorkspaceObjective  # noqa: F401
 from app.models.workspace_schedule import WorkspaceSchedule  # noqa: F401
 from app.models.workspace_task import WorkspaceTask  # noqa: F401
 from app.models.workspace_template import WorkspaceTemplate  # noqa: F401
+
+# Task Orchestrator models are registered via their own __init__.py
+# and will be discovered by Alembic through app.modules.task_orchestrator.models

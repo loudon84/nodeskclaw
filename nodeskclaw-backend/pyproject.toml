@@ -32,6 +32,8 @@ dependencies = [
     "boto3>=1.35.0",
     # Database migrations
     "alembic>=1.13.0",
+    # Task Orchestrator
+    "langgraph>=0.2.0",
 ]
 
 [dependency-groups]

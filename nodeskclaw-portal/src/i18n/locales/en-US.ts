@@ -1746,6 +1746,17 @@ const enUS = {
     runtime: {
       unsupported_capability: "This runtime does not support {capability}",
     },
+    mcp: {
+      access_denied: "Access denied to instance MCP capabilities",
+      upstream_unavailable: "Upstream MCP Server unavailable",
+      no_available_upstream: "No available upstream server",
+      gateway_timeout: "Gateway request timeout",
+      rate_limit_exceeded: "Rate limit exceeded",
+      connection_limit_exceeded: "Connection limit exceeded",
+      route_conflict: "Route rule conflict",
+      server_not_found: "MCP Server not found",
+      approval_timeout: "Sensitive tool approval timeout",
+    },
     system: {
       internal_error: "Internal server error",
       backend_starting: "Backend service is starting, please retry shortly",
