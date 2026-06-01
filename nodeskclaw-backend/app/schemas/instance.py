@@ -42,7 +42,7 @@ class InstanceInfo(BaseModel):
     my_role: str | None = None
     workspaces: list[WorkspaceBrief] = []
 
-    model_config = {"from_attributes": True}
+    model_config = {"from_attributes": True, "populate_by_name": True}
 
     @model_validator(mode="after")
     def _fill_display_status(self) -> "InstanceInfo":
