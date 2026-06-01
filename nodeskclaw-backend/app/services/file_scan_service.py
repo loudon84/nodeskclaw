@@ -9,6 +9,7 @@ import httpx
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import hooks
 from app.core.config import settings
 from app.core.exceptions import ForbiddenError, NotFoundError
 from app.models.blackboard_file import BlackboardFile
@@ -95,6 +96,13 @@ async def enqueue_scan(
         existing.leased_by = ""
         existing.leased_until = None
         await db.flush()
+        await _emit_scan_audit(
+            "file.scan_queued",
+            workspace_id=workspace_id,
+            source=source,
+            file_id=file_id,
+            details={"scanner_provider": security.get("scanner_provider")},
+        )
         return existing
 
     job = FileScanJob(
@@ -107,6 +115,13 @@ async def enqueue_scan(
     )
     db.add(job)
     await db.flush()
+    await _emit_scan_audit(
+        "file.scan_queued",
+        workspace_id=workspace_id,
+        source=source,
+        file_id=file_id,
+        details={"scanner_provider": security.get("scanner_provider")},
+    )
     return job
 
 
@@ -130,6 +145,13 @@ async def retry_scan(
     )
     if job is None:
         raise ScannerUnavailableError()
+    await _emit_scan_audit(
+        "file.scan_retried",
+        workspace_id=workspace_id,
+        source=source,
+        file_id=file_id,
+        details={},
+    )
     await db.flush()
     return job
 
@@ -212,6 +234,13 @@ async def process_scan_job(db: AsyncSession, job_id: str) -> str:
         job.status = "failed"
         job.attempt_count += 1
         job.last_error = "scanner_file_too_large"
+        await _emit_scan_audit(
+            "file.scan_failed",
+            workspace_id=job.workspace_id,
+            source=job.source,
+            file_id=job.file_id,
+            details={"scan_reason": job.last_error, "attempt_count": job.attempt_count},
+        )
         await db.commit()
         return "failed"
 
@@ -226,12 +255,26 @@ async def process_scan_job(db: AsyncSession, job_id: str) -> str:
         _set_source_scan(source_file, "clean", result.reason or "clean")
         job.status = "succeeded"
         job.last_error = ""
+        await _emit_scan_audit(
+            "file.scan_clean",
+            workspace_id=job.workspace_id,
+            source=job.source,
+            file_id=job.file_id,
+            details={"scanner_provider": result.vendor, "scan_reason": result.reason},
+        )
         await db.commit()
         return "succeeded"
     if result.status == "blocked":
         _set_source_scan(source_file, "blocked", result.reason or "blocked")
         job.status = "succeeded"
         job.last_error = result.reason or "blocked"
+        await _emit_scan_audit(
+            "file.scan_blocked",
+            workspace_id=job.workspace_id,
+            source=job.source,
+            file_id=job.file_id,
+            details={"scanner_provider": result.vendor, "scan_reason": job.last_error},
+        )
         await db.commit()
         return "succeeded"
 
@@ -243,11 +286,25 @@ async def process_scan_job(db: AsyncSession, job_id: str) -> str:
         job.leased_by = ""
         job.leased_until = None
         job.next_attempt_at = _now() + _retry_delay(job.attempt_count)
+        await _emit_scan_audit(
+            "file.scan_failed",
+            workspace_id=job.workspace_id,
+            source=job.source,
+            file_id=job.file_id,
+            details={"scan_reason": job.last_error, "attempt_count": job.attempt_count},
+        )
         await db.commit()
         return "failed"
 
     _set_source_scan(source_file, "failed", job.last_error)
     job.status = "failed"
+    await _emit_scan_audit(
+        "file.scan_failed",
+        workspace_id=job.workspace_id,
+        source=job.source,
+        file_id=job.file_id,
+        details={"scan_reason": job.last_error, "attempt_count": job.attempt_count},
+    )
     await db.commit()
     return "failed"
 
@@ -398,6 +455,26 @@ def _source_filename(source_file: Any) -> str:
 
 def _source_size(source_file: Any) -> int:
     return int(getattr(source_file, "file_size", None) or getattr(source_file, "size", 0) or 0)
+
+
+async def _emit_scan_audit(
+    action: str,
+    *,
+    workspace_id: str,
+    source: str,
+    file_id: str,
+    details: dict[str, Any],
+) -> None:
+    await hooks.emit(
+        "operation_audit",
+        action=action,
+        target_type=source,
+        target_id=file_id,
+        actor_type="system",
+        actor_id="system",
+        workspace_id=workspace_id,
+        details={"source": source, "file_id": file_id, **details},
+    )
 
 
 async def _effective_int(db: AsyncSession, key: str, default: int) -> int:

@@ -1280,6 +1280,23 @@ async def upload_workspace_file(
     db.add(wf)
     await db.commit()
     await db.refresh(wf)
+    await hooks.emit(
+        "operation_audit",
+        action="file.upload_completed",
+        target_type="chat_attachment",
+        target_id=wf.id,
+        actor_id=user.id,
+        actor_type="user",
+        actor_name=user.name,
+        org_id=user.current_org_id,
+        workspace_id=workspace_id,
+        details={
+            "surface": "chat_attachment",
+            "size": wf.file_size,
+            "content_type": wf.content_type,
+            "scan_status": wf.scan_status,
+        },
+    )
     if scan_status == "pending":
         await file_scan_service.enqueue_scan(
             db,

@@ -3,6 +3,7 @@
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import hooks
 from app.core.deps import get_db
 from app.core.security import get_auth_actor
 from app.schemas.workspace import (
@@ -42,6 +43,30 @@ def _caller_info() -> tuple[str, str, str]:
     if actor is None:
         return "human", "", ""
     return actor.actor_type, actor.actor_id, actor.actor_name
+
+
+async def _emit_file_audit(
+    *,
+    action: str,
+    target_type: str,
+    target_id: str,
+    workspace_id: str,
+    user,
+    details: dict | None = None,
+) -> None:
+    actor = get_auth_actor()
+    await hooks.emit(
+        "operation_audit",
+        action=action,
+        target_type=target_type,
+        target_id=target_id,
+        actor_type=actor.actor_type if actor else "user",
+        actor_id=actor.actor_id if actor else getattr(user, "id", ""),
+        actor_name=actor.actor_name if actor else getattr(user, "name", ""),
+        org_id=getattr(user, "current_org_id", None),
+        workspace_id=workspace_id,
+        details=details or {},
+    )
 
 
 async def _enforce_agent_blackboard_topology(
@@ -88,6 +113,14 @@ async def mkdir(
     info = await workspace_service.create_shared_directory(
         db, workspace_id, utype, uid, uname, data,
     )
+    await _emit_file_audit(
+        action="file.directory_created",
+        target_type="shared_file",
+        target_id=info.id,
+        workspace_id=workspace_id,
+        user=user,
+        details={"parent_path": info.parent_path, "name": info.name},
+    )
     _broadcast(workspace_id, "file:created", info.model_dump(mode="json"))
     return _ok(info.model_dump(mode="json"))
 
@@ -102,6 +135,14 @@ async def upload_file(
     await require_workspace_actor_access(workspace_id, user, "edit_blackboard", db)
     await _enforce_agent_blackboard_topology(workspace_id, db)
     utype, uid, uname = _caller_info()
+    await _emit_file_audit(
+        action="file.base64_upload_rejected",
+        target_type="shared_file",
+        target_id="",
+        workspace_id=workspace_id,
+        user=user,
+        details={"route": "/blackboard/files/upload", "actor_type": utype, "actor_id": uid},
+    )
     try:
         info = await workspace_service.upload_shared_file(
             db, workspace_id, utype, uid, uname, data,
@@ -167,6 +208,21 @@ async def upload_file_multipart(
             "message": "文件存储服务不可用",
             "details": {"reason_code": exc.reason_code},
         }) from exc
+    await _emit_file_audit(
+        action="file.upload_completed",
+        target_type="shared_file",
+        target_id=info.id,
+        workspace_id=workspace_id,
+        user=user,
+        details={
+            "surface": "shared_file",
+            "size": info.file_size,
+            "content_type": info.content_type,
+            "scan_status": getattr(info, "scan_status", None),
+            "actor_type": utype,
+            "actor_id": uid,
+        },
+    )
     _broadcast(workspace_id, "file:uploaded", info.model_dump(mode="json"))
     return _ok(info.model_dump(mode="json"))
 
@@ -182,12 +238,38 @@ async def copy_file(
     await require_workspace_actor_access(workspace_id, user, "edit_blackboard", db)
     await _enforce_agent_blackboard_topology(workspace_id, db)
     utype, uid, uname = _caller_info()
+    await _emit_file_audit(
+        action="file.copy_started",
+        target_type="shared_file",
+        target_id=file_id,
+        workspace_id=workspace_id,
+        user=user,
+        details={
+            "target_parent_path": data.target_parent_path,
+            "target_name": data.target_filename,
+            "actor_type": utype,
+            "actor_id": uid,
+        },
+    )
     info = await workspace_service.copy_shared_file(
         db, workspace_id, utype, uid, uname,
         file_id, data.target_parent_path, data.target_filename,
     )
     if info is None:
         return _ok(None, "source file not found")
+    await _emit_file_audit(
+        action="file.copy_completed",
+        target_type="shared_file",
+        target_id=info.id,
+        workspace_id=workspace_id,
+        user=user,
+        details={
+            "source_file_id": file_id,
+            "target_parent_path": info.parent_path,
+            "target_name": info.name,
+            "copy_mode": "storage_service",
+        },
+    )
     _broadcast(workspace_id, "file:uploaded", info.model_dump(mode="json"))
     return _ok(info.model_dump(mode="json"))
 
@@ -263,5 +345,13 @@ async def delete_file(
     await _enforce_agent_blackboard_topology(workspace_id, db)
     ok = await workspace_service.delete_shared_file(db, workspace_id, file_id)
     if ok:
+        await _emit_file_audit(
+            action="file.deleted",
+            target_type="shared_file",
+            target_id=file_id,
+            workspace_id=workspace_id,
+            user=user,
+            details={"source": "shared_file"},
+        )
         _broadcast(workspace_id, "file:deleted", {"file_id": file_id})
     return _ok({"deleted": ok})

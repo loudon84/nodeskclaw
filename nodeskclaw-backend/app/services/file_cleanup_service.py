@@ -1,5 +1,4 @@
-from __future__ import annotations
-
+import hashlib
 import socket
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -7,6 +6,7 @@ from typing import Any
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import hooks
 from app.models.agent_file_access_grant import AgentFileAccessGrant
 from app.models.storage_object_delete_job import StorageObjectDeleteJob
 from app.models.upload_part import UploadPart
@@ -94,6 +94,24 @@ async def run_storage_delete_retry_worker(
         except Exception as exc:
             job.attempt_count += 1
             job.last_error = str(exc)[:1024]
+            source = getattr(job, "source", "unknown")
+            source_id = getattr(job, "source_id", getattr(job, "id", ""))
+            await hooks.emit(
+                "operation_audit",
+                action="file.storage_delete_failed",
+                target_type=source,
+                target_id=source_id,
+                actor_type="system",
+                actor_id="system",
+                workspace_id=getattr(job, "workspace_id", None),
+                details={
+                    "source": source,
+                    "source_id": source_id,
+                    "storage_key_hash": hashlib.sha256(job.storage_key.encode()).hexdigest(),
+                    "reason": job.last_error,
+                    "attempt_count": job.attempt_count,
+                },
+            )
             if job.attempt_count >= max_attempts:
                 job.status = "failed"
                 counts["failed"] += 1

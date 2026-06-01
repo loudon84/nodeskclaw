@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import hooks
 from app.core.deps import get_db
 from app.core.security import get_auth_actor, get_current_user, get_current_user_or_agent
 from app.schemas.upload import UploadCompleteRequest, UploadSessionCreateRequest
@@ -20,6 +21,30 @@ def _caller_info(user) -> tuple[str, str, str]:
     if actor is not None:
         return actor.actor_type, actor.actor_id, actor.actor_name
     return "user", getattr(user, "id", ""), getattr(user, "name", "")
+
+
+async def _emit_upload_audit(
+    *,
+    action: str,
+    target_type: str,
+    target_id: str,
+    workspace_id: str | None,
+    user,
+    details: dict | None = None,
+) -> None:
+    actor = get_auth_actor()
+    await hooks.emit(
+        "operation_audit",
+        action=action,
+        target_type=target_type,
+        target_id=target_id,
+        actor_type=actor.actor_type if actor else "user",
+        actor_id=actor.actor_id if actor else getattr(user, "id", ""),
+        actor_name=actor.actor_name if actor else getattr(user, "name", ""),
+        org_id=getattr(user, "current_org_id", None),
+        workspace_id=workspace_id,
+        details=details or {},
+    )
 
 
 async def _enforce_agent_blackboard_topology(workspace_id: str, db: AsyncSession) -> None:
@@ -143,7 +168,37 @@ async def create_upload_session(
         upload_session_service.WorkspaceQuotaExceededError,
         upload_session_service.UploadScannerUnavailableError,
     ) as exc:
+        await _emit_upload_audit(
+            action="file.upload_failed",
+            target_type="upload_session",
+            target_id="",
+            workspace_id=workspace_id,
+            user=user,
+            details={
+                "surface": data.surface,
+                "filename": data.filename,
+                "expected_size": data.expected_size,
+                "reason": type(exc).__name__,
+                "actor_type": uploader_type,
+                "actor_id": uploader_id,
+            },
+        )
         raise _map_upload_error(exc) from exc
+    await _emit_upload_audit(
+        action="file.upload_started",
+        target_type="upload_session",
+        target_id=session.id,
+        workspace_id=workspace_id,
+        user=user,
+        details={
+            "surface": data.surface,
+            "filename": session.effective_filename,
+            "expected_size": session.expected_size,
+            "upload_mode": session.upload_mode,
+            "actor_type": uploader_type,
+            "actor_id": uploader_id,
+        },
+    )
     return _ok((await upload_session_service.format_session_info(db, session)).model_dump(mode="json"))
 
 
@@ -206,7 +261,27 @@ async def upload_session_part(
         storage_service.UploadTooLargeError,
         upload_session_service.UploadSessionStateError,
     ) as exc:
+        await _emit_upload_audit(
+            action="file.upload_failed",
+            target_type="upload_session",
+            target_id=session_id,
+            workspace_id=workspace_id,
+            user=user,
+            details={"reason": type(exc).__name__, "part_number": part_number},
+        )
         raise _map_upload_error(exc) from exc
+    await _emit_upload_audit(
+        action="file.upload_part_completed",
+        target_type="upload_session",
+        target_id=session_id,
+        workspace_id=workspace_id,
+        user=user,
+        details={
+            "part_number": result.part.part_number,
+            "size": result.part.size,
+            "upload_mode": "backend_parts",
+        },
+    )
     return _ok(result.model_dump(mode="json"))
 
 
@@ -232,7 +307,30 @@ async def complete_upload_session(
         upload_session_service.UploadSessionStateError,
         file_scan_service.ScannerUnavailableError,
     ) as exc:
+        await _emit_upload_audit(
+            action="file.upload_failed",
+            target_type="upload_session",
+            target_id=session_id,
+            workspace_id=workspace_id,
+            user=user,
+            details={"reason": type(exc).__name__},
+        )
         raise _map_upload_error(exc) from exc
+    file_info = result.get("file") or {}
+    await _emit_upload_audit(
+        action="file.upload_completed",
+        target_type=str(file_info.get("source") or "upload_session"),
+        target_id=str(file_info.get("file_id") or session_id),
+        workspace_id=workspace_id,
+        user=user,
+        details={
+            "session_id": session_id,
+            "surface": file_info.get("source"),
+            "size": file_info.get("size"),
+            "content_type": file_info.get("content_type"),
+            "scan_status": file_info.get("scan_status"),
+        },
+    )
     return _ok(result)
 
 
@@ -248,5 +346,14 @@ async def cancel_upload_session(
         db,
         workspace_id=workspace_id,
         session_id=session_id,
+    )
+    actor_type, actor_id, _actor_name = _caller_info(user)
+    await _emit_upload_audit(
+        action="file.upload_cancelled",
+        target_type="upload_session",
+        target_id=session_id,
+        workspace_id=workspace_id,
+        user=user,
+        details={"released": result.released, "actor_type": actor_type, "actor_id": actor_id},
     )
     return _ok(result.model_dump(mode="json"))

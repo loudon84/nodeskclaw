@@ -250,6 +250,7 @@ async def lifespan(app: FastAPI):
     # ── Egress 配置迁移：env vars → system_configs（幂等）──
     from app.models.system_config import SystemConfig
     from app.services import config_service
+    from app.services.upload_policy_service import default_upload_config_values
 
     egress_seeds = {
         "egress_deny_cidrs": os.environ.get("EGRESS_DENY_CIDRS", "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"),
@@ -266,6 +267,13 @@ async def lifespan(app: FastAPI):
             if _eg_row is None:
                 await config_service.set_config(_eg_key, _eg_value, db)
                 logger.info("网络策略配置种子: %s = %s", _eg_key, _eg_value)
+        for _upload_key, _upload_value in default_upload_config_values().items():
+            _upload_row = (await db.execute(
+                select(SystemConfig).where(SystemConfig.key == _upload_key, SystemConfig.deleted_at.is_(None))
+            )).scalar_one_or_none()
+            if _upload_row is None:
+                await config_service.set_config(_upload_key, _upload_value, db)
+                logger.info("上传策略配置种子: %s = %s", _upload_key, _upload_value)
 
     # ── 种子数据（幂等，每次启动执行）──
     from app.startup.seed import run_seed, backfill_cluster_org_id, seed_engine_versions

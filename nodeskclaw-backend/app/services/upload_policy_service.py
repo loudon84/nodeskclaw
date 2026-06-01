@@ -38,6 +38,31 @@ UPLOAD_CONFIG_KEYS = {
 }
 
 
+def default_upload_config_values() -> dict[str, str]:
+    return {
+        "upload_chat_attachment_max_mb": str(settings.UPLOAD_CHAT_ATTACHMENT_MAX_MB),
+        "upload_chat_attachment_max_count": str(settings.UPLOAD_CHAT_ATTACHMENT_MAX_COUNT),
+        "upload_chat_attachment_retention_days": str(settings.UPLOAD_CHAT_ATTACHMENT_RETENTION_DAYS),
+        "upload_shared_file_max_mb": str(settings.UPLOAD_SHARED_FILE_MAX_MB),
+        "upload_large_file_max_mb": str(settings.UPLOAD_LARGE_FILE_MAX_MB),
+        "upload_chunked_upload_threshold_mb": str(settings.UPLOAD_CHUNKED_UPLOAD_THRESHOLD_MB),
+        "upload_chunk_size_mb": str(settings.UPLOAD_CHUNK_SIZE_MB),
+        "upload_workspace_quota_mb": str(settings.UPLOAD_WORKSPACE_QUOTA_MB),
+        "upload_blocked_extensions": settings.UPLOAD_BLOCKED_EXTENSIONS,
+        "upload_allowed_content_types": settings.UPLOAD_ALLOWED_CONTENT_TYPES,
+        "upload_gateway_proxy_body_size_mb": str(settings.UPLOAD_GATEWAY_PROXY_BODY_SIZE_MB),
+        "upload_proxy_read_timeout_seconds": str(settings.UPLOAD_PROXY_READ_TIMEOUT_SECONDS),
+        "upload_proxy_send_timeout_seconds": str(settings.UPLOAD_PROXY_SEND_TIMEOUT_SECONDS),
+        "upload_security_scan_mode": settings.UPLOAD_SECURITY_SCAN_MODE,
+        "upload_scanner_provider": settings.UPLOAD_SCANNER_PROVIDER,
+        "upload_scanner_endpoint": settings.UPLOAD_SCANNER_ENDPOINT,
+        "upload_scanner_timeout_seconds": str(settings.UPLOAD_SCANNER_TIMEOUT_SECONDS),
+        "upload_scanner_max_retries": str(settings.UPLOAD_SCANNER_MAX_RETRIES),
+        "upload_scanner_max_file_mb": str(settings.UPLOAD_SCANNER_MAX_FILE_MB),
+        "upload_scanner_fail_closed": "true" if settings.UPLOAD_SCANNER_FAIL_CLOSED else "false",
+    }
+
+
 @dataclass(frozen=True)
 class SurfacePolicy:
     enabled: bool
@@ -133,9 +158,7 @@ def _normalize_scanner_provider(value: str) -> str:
 def _scanner_configured(provider: str, endpoint: str) -> bool:
     if provider == "none":
         return False
-    if provider == "http":
-        return bool(endpoint.strip())
-    return True
+    return bool(endpoint.strip())
 
 
 async def build_upload_policy(
