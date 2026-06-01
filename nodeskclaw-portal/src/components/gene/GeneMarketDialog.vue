@@ -33,6 +33,8 @@ import type { GeneItem, GenomeItem } from '@/stores/gene'
 import api from '@/services/api'
 import { useToast } from '@/composables/useToast'
 import CustomSelect from '@/components/shared/CustomSelect.vue'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 
 const props = defineProps<{
   modelValue: boolean
@@ -159,12 +161,12 @@ const contentViewMode = ref<'rendered' | 'source'>('rendered')
 const genomeGeneMap = ref<Record<string, GeneItem>>({})
 const activeGenomeGeneTab = ref('')
 
-async function openGeneDetail(id: string) {
+async function openGeneDetail(slug: string) {
   viewState.value = 'gene-detail'
   detailLoading.value = true
   contentViewMode.value = 'rendered'
   try {
-    const res = await api.get(`/genes/${id}`)
+    const res = await api.get(`/genes/${slug}`)
     detailGene.value = res.data.data
   } catch {
     detailGene.value = null
@@ -225,7 +227,6 @@ async function handleInstallGene(slug: string) {
   installing.value = true
   try {
     await store.installGene(props.instanceId, slug)
-    localInstalledSlugs.value.add(slug)
     toast.success(t('geneMarketDialog.learnSuccess'))
     emit('installed')
   } catch {
@@ -442,22 +443,22 @@ onUnmounted(() => {
         <!-- Header -->
         <div class="shrink-0 flex items-center justify-between px-6 py-4 border-b border-border">
           <div class="flex items-center gap-3">
-            <button
+            <Button variant="unstyled" size="unstyled"
               v-if="viewState !== 'list'"
               class="p-1.5 rounded-lg hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
               @click="goBackToList"
             >
               <ArrowLeft class="w-4 h-4" />
-            </button>
+            </Button>
             <h3 class="text-lg font-semibold">
               <template v-if="viewState === 'list'">{{ t('geneMarketDialog.title') }}</template>
               <template v-else-if="viewState === 'gene-detail'">{{ detailGene?.name ?? '' }}</template>
               <template v-else>{{ detailGenome?.name ?? '' }}</template>
             </h3>
           </div>
-          <button class="p-1.5 rounded-lg hover:bg-muted transition-colors" @click="close">
+          <Button variant="unstyled" size="unstyled" class="p-1.5 rounded-lg hover:bg-muted transition-colors" @click="close">
             <X class="w-4 h-4" />
-          </button>
+          </Button>
         </div>
 
         <!-- Content -->
@@ -469,25 +470,25 @@ onUnmounted(() => {
               <div class="flex-1 min-h-0 overflow-y-auto">
                 <!-- Tabs -->
                 <div class="flex items-center gap-2 mb-4">
-                  <button
+                  <Button variant="unstyled" size="unstyled"
                     :class="['px-4 py-2 rounded-lg text-sm font-medium transition-colors', viewMode === 'genes' ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:text-foreground hover:bg-muted']"
                     @click="viewMode = 'genes'"
                   >
                     {{ t('geneMarket.tabGenes') }}
-                  </button>
-                  <button
+                  </Button>
+                  <Button variant="unstyled" size="unstyled"
                     :class="['px-4 py-2 rounded-lg text-sm font-medium transition-colors', viewMode === 'genomes' ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:text-foreground hover:bg-muted']"
                     @click="viewMode = 'genomes'"
                   >
                     {{ t('geneMarket.tabGenomes') }}
-                  </button>
+                  </Button>
                 </div>
 
                 <!-- Filters -->
                 <div class="flex flex-wrap gap-3 mb-4">
                   <div class="relative flex-1 min-w-[180px]">
                     <Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                    <input
+                    <Input
                       v-model="keyword"
                       type="text"
                       :placeholder="t('geneMarket.searchPlaceholder')"
@@ -504,14 +505,14 @@ onUnmounted(() => {
 
                 <!-- Tags -->
                 <div v-if="viewMode === 'genes' && tagStats.length" class="flex flex-wrap gap-1.5 mb-4">
-                  <button
+                  <Button variant="unstyled" size="unstyled"
                     v-for="ts in tagStats"
                     :key="ts.tag"
                     :class="['px-2.5 py-1 rounded-lg text-xs font-medium transition-colors', selectedTag === ts.tag ? 'bg-primary/10 text-primary' : 'bg-muted/50 text-muted-foreground hover:text-foreground hover:bg-muted']"
                     @click="selectedTag = selectedTag === ts.tag ? null : ts.tag"
                   >
                     {{ localizeGeneMeta(ts.tag) }}
-                  </button>
+                  </Button>
                 </div>
 
                 <!-- Loading -->
@@ -526,7 +527,7 @@ onUnmounted(() => {
                       v-for="gene in genes"
                       :key="gene.id"
                       class="p-4 rounded-xl border border-border bg-background hover:border-primary/30 transition cursor-pointer relative overflow-hidden"
-                      @click="openGeneDetail(gene.id)"
+                      @click="openGeneDetail(gene.slug)"
                     >
                       <div
                         v-if="isInstalled(gene.slug)"
@@ -633,21 +634,21 @@ onUnmounted(() => {
                 </template>
               </div>
               <div v-if="totalPages > 1" class="shrink-0 flex items-center justify-center gap-2 mt-4 pt-4 border-t border-border">
-                <button
+                <Button variant="unstyled" size="unstyled"
                   :disabled="!canPrev"
                   :class="['px-3 py-1.5 rounded-lg text-sm transition-colors', canPrev ? 'text-foreground hover:bg-muted' : 'text-muted-foreground cursor-not-allowed']"
                   @click="page = Math.max(1, page - 1)"
                 >
                   {{ t('geneMarket.prevPage') }}
-                </button>
+                </Button>
                 <span class="text-sm text-muted-foreground">{{ page }} / {{ totalPages }}</span>
-                <button
+                <Button variant="unstyled" size="unstyled"
                   :disabled="!canNext"
                   :class="['px-3 py-1.5 rounded-lg text-sm transition-colors', canNext ? 'text-foreground hover:bg-muted' : 'text-muted-foreground cursor-not-allowed']"
                   @click="page = Math.min(totalPages, page + 1)"
                 >
                   {{ t('geneMarket.nextPage') }}
-                </button>
+                </Button>
               </div>
             </div>
           </template>
@@ -691,7 +692,7 @@ onUnmounted(() => {
                       </span>
                     </div>
                   </div>
-                  <button
+                  <Button variant="unstyled" size="unstyled"
                     v-if="!isInstalled(detailGene.slug)"
                     class="shrink-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
                     :disabled="installing"
@@ -700,7 +701,7 @@ onUnmounted(() => {
                     <Loader2 v-if="installing" class="w-4 h-4 animate-spin" />
                     <Download v-else class="w-4 h-4" />
                     {{ t('geneMarketDialog.learnForInstance') }}
-                  </button>
+                  </Button>
                   <span
                     v-else
                     class="shrink-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-green-500/10 text-green-500 text-sm"
@@ -750,20 +751,20 @@ onUnmounted(() => {
                   <div class="flex items-center justify-between mb-2">
                     <h2 class="text-base font-semibold">{{ t('gene.content') }}</h2>
                     <div class="flex items-center gap-1 rounded-lg border border-border p-0.5">
-                      <button
+                      <Button variant="unstyled" size="unstyled"
                         :class="['p-1.5 rounded-md transition-colors', contentViewMode === 'rendered' ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground']"
                         :title="t('gene.renderDocument')"
                         @click="contentViewMode = 'rendered'"
                       >
                         <FileText class="w-4 h-4" />
-                      </button>
-                      <button
+                      </Button>
+                      <Button variant="unstyled" size="unstyled"
                         :class="['p-1.5 rounded-md transition-colors', contentViewMode === 'source' ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground']"
                         :title="t('gene.viewSource')"
                         @click="contentViewMode = 'source'"
                       >
                         <Code class="w-4 h-4" />
-                      </button>
+                      </Button>
                     </div>
                   </div>
                   <div
@@ -840,7 +841,7 @@ onUnmounted(() => {
                     </span>
                   </div>
                 </div>
-                <button
+                <Button variant="unstyled" size="unstyled"
                   class="shrink-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
                   :disabled="installing"
                   @click="handleApplyGenome(detailGenome.id)"
@@ -848,7 +849,7 @@ onUnmounted(() => {
                   <Loader2 v-if="installing" class="w-4 h-4 animate-spin" />
                   <Download v-else class="w-4 h-4" />
                   {{ t('geneMarketDialog.learnForInstance') }}
-                </button>
+                </Button>
               </div>
 
               <!-- Description -->
@@ -861,7 +862,7 @@ onUnmounted(() => {
               <section v-if="detailGenome.gene_slugs?.length" class="mb-6">
                 <h2 class="text-base font-semibold mb-3">{{ t('genome.genesIncluded') }}</h2>
                 <div class="flex gap-0 border-b border-border mb-0 overflow-x-auto scrollbar-none">
-                  <button
+                  <Button variant="unstyled" size="unstyled"
                     v-for="slug in detailGenome.gene_slugs"
                     :key="slug"
                     :class="['shrink-0 px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px inline-flex items-center gap-1', activeGenomeGeneTab === slug ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border']"
@@ -872,7 +873,7 @@ onUnmounted(() => {
                       v-if="genomeGeneMap[slug]?.slug && isInstalled(genomeGeneMap[slug]!.slug)"
                       class="w-3.5 h-3.5 text-green-500"
                     />
-                  </button>
+                  </Button>
                 </div>
                 <div class="rounded-b-xl border border-t-0 border-border bg-background p-6">
                   <div v-if="genomeGeneMap[activeGenomeGeneTab]?.description" class="text-sm text-muted-foreground mb-4">
@@ -881,20 +882,20 @@ onUnmounted(() => {
                   <div v-if="activeGenomeGeneContentRaw" class="flex items-center justify-between mb-3">
                     <span class="text-xs font-medium text-muted-foreground uppercase tracking-wider">SKILL.md</span>
                     <div class="flex items-center gap-1 rounded-lg border border-border p-0.5">
-                      <button
+                      <Button variant="unstyled" size="unstyled"
                         :class="['p-1.5 rounded-md transition-colors', contentViewMode === 'rendered' ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground']"
                         :title="t('gene.renderDocument')"
                         @click="contentViewMode = 'rendered'"
                       >
                         <FileText class="w-3.5 h-3.5" />
-                      </button>
-                      <button
+                      </Button>
+                      <Button variant="unstyled" size="unstyled"
                         :class="['p-1.5 rounded-md transition-colors', contentViewMode === 'source' ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground']"
                         :title="t('gene.viewSource')"
                         @click="contentViewMode = 'source'"
                       >
                         <Code class="w-3.5 h-3.5" />
-                      </button>
+                      </Button>
                     </div>
                   </div>
                   <div

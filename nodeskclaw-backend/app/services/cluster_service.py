@@ -9,7 +9,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
-from app.core.feature_gate import feature_gate
+
 from app.core.security import decrypt_kubeconfig, encrypt_kubeconfig
 from app.models.cluster import Cluster, ClusterStatus
 from app.models.corridor import HexConnection
@@ -38,16 +38,6 @@ async def create_cluster(
     """统一集群创建入口，根据 compute_provider 分支处理 k8s / docker。"""
     compute = data.compute_provider or "k8s"
 
-    if not feature_gate.is_enabled("multi_cluster"):
-        count_result = await db.execute(
-            select(func.count(Cluster.id)).where(Cluster.deleted_at.is_(None))
-        )
-        if count_result.scalar_one() >= 1:
-            raise ConflictError(
-                message="已配置集群，当前仅支持单集群",
-                message_key="errors.cluster.single_cluster_limit",
-            )
-
     name_query = select(Cluster).where(
         Cluster.name == data.name, Cluster.deleted_at.is_(None),
     )
@@ -68,6 +58,12 @@ async def create_cluster(
 
     api_server_url, auth_type = _parse_kubeconfig_meta(data.kubeconfig)
 
+    effective_proxy = data.proxy_endpoint
+    if effective_proxy and api_server_url:
+        effective_proxy = await _adopt_existing_proxy_endpoint(
+            db, api_server_url, effective_proxy,
+        )
+
     cluster = Cluster(
         name=data.name,
         compute_provider="k8s",
@@ -78,7 +74,7 @@ async def create_cluster(
             "api_server_url": api_server_url,
             "ingress_class": data.ingress_class,
         },
-        proxy_endpoint=data.proxy_endpoint,
+        proxy_endpoint=effective_proxy,
         status=ClusterStatus.disconnected,
         created_by=user.id,
         org_id=org_id,
@@ -88,7 +84,9 @@ async def create_cluster(
     await db.refresh(cluster)
 
     if cluster.proxy_endpoint:
-        await _ensure_gateway_proxy_service(cluster.id, cluster.proxy_endpoint)
+        await _ensure_gateway_proxy_service(
+            cluster.id, cluster.proxy_endpoint, api_server_url,
+        )
 
     return ClusterInfo.model_validate(cluster)
 
@@ -116,11 +114,31 @@ async def update_cluster(
         cluster.set_provider_value("ingress_class", data.ingress_class)
     if data.proxy_endpoint is not None:
         cluster.proxy_endpoint = data.proxy_endpoint
+        api_url = cluster.api_server_url
+        if api_url and data.proxy_endpoint:
+            stale = await db.execute(
+                select(Cluster).where(
+                    Cluster.deleted_at.is_(None),
+                    Cluster.id != cluster.id,
+                    Cluster.proxy_endpoint.isnot(None),
+                    Cluster.proxy_endpoint != data.proxy_endpoint,
+                    Cluster.provider_config["api_server_url"].as_string() == api_url,
+                )
+            )
+            for other in stale.scalars():
+                logger.warning(
+                    "集群 %s (id=%s) 的 proxy_endpoint 仍为 %s，"
+                    "与同物理集群 %s 的新值 %s 不一致，请同步更新",
+                    other.name, other.id[:8], other.proxy_endpoint,
+                    cluster.name, data.proxy_endpoint,
+                )
     await db.commit()
     await db.refresh(cluster)
 
     if cluster.proxy_endpoint:
-        await _ensure_gateway_proxy_service(cluster.id, cluster.proxy_endpoint)
+        await _ensure_gateway_proxy_service(
+            cluster.id, cluster.proxy_endpoint, cluster.api_server_url,
+        )
 
     return ClusterInfo.model_validate(cluster)
 
@@ -418,8 +436,39 @@ def _parse_kubeconfig_meta(kubeconfig: str) -> tuple[str, str]:
         return "", "unknown"
 
 
-async def _ensure_gateway_proxy_service(cluster_id: str, proxy_endpoint: str) -> None:
-    """在 infra 网关集群创建/更新 ExternalName Service，指向 inst 集群 ALB。"""
+async def _adopt_existing_proxy_endpoint(
+    db: AsyncSession, api_server_url: str, proposed: str,
+) -> str:
+    """If another cluster with the same api_server_url already has a proxy_endpoint, adopt it."""
+    existing = await db.execute(
+        select(Cluster).where(
+            Cluster.deleted_at.is_(None),
+            Cluster.proxy_endpoint.isnot(None),
+            Cluster.proxy_endpoint != "",
+            Cluster.provider_config["api_server_url"].as_string() == api_server_url,
+        )
+    )
+    other = existing.scalars().first()
+    if other and other.proxy_endpoint != proposed:
+        logger.warning(
+            "同物理集群 (api_server=%s) 已有集群 %s 使用 proxy_endpoint=%s，"
+            "自动采用已有配置（忽略传入的 %s）",
+            api_server_url[:30], other.name, other.proxy_endpoint, proposed,
+        )
+        return other.proxy_endpoint
+    return proposed
+
+
+async def _ensure_gateway_proxy_service(
+    cluster_id: str,
+    proxy_endpoint: str,
+    api_server_url: str | None = None,
+) -> None:
+    """在 infra 网关集群创建/更新 ExternalName Service，指向 inst 集群 ALB。
+
+    If a service for the same physical cluster already exists (matched by api-server-hash),
+    updates that service instead of creating a new one.
+    """
     try:
         from app.services.k8s.client_manager import GATEWAY_NS, k8s_manager
         from app.services.k8s.k8s_client import K8sClient
@@ -427,15 +476,41 @@ async def _ensure_gateway_proxy_service(cluster_id: str, proxy_endpoint: str) ->
 
         gateway_api = await k8s_manager.get_gateway_client()
         gateway_k8s = K8sClient(gateway_api)
-        ext_svc = build_external_name_service(cluster_id, proxy_endpoint)
 
-        try:
-            await gateway_k8s.core.create_namespaced_service(GATEWAY_NS, ext_svc)
-            logger.info("已在网关集群创建 ExternalName Service: %s -> %s", ext_svc.metadata.name, proxy_endpoint)
-        except Exception:
-            await gateway_k8s.core.patch_namespaced_service(
-                ext_svc.metadata.name, GATEWAY_NS, ext_svc,
+        target_name: str | None = None
+        if api_server_url:
+            from app.services.k8s.proxy_helpers import (
+                compute_api_server_hash,
+                find_proxy_svc_for_cluster,
             )
-            logger.info("已在网关集群更新 ExternalName Service: %s -> %s", ext_svc.metadata.name, proxy_endpoint)
+            api_hash = compute_api_server_hash(api_server_url)
+            target_name = await find_proxy_svc_for_cluster(
+                gateway_k8s.core, GATEWAY_NS, api_hash,
+            )
+
+        ext_svc = build_external_name_service(cluster_id, proxy_endpoint, api_server_url)
+
+        if target_name:
+            await gateway_k8s.core.patch_namespaced_service(
+                target_name, GATEWAY_NS, ext_svc,
+            )
+            logger.info(
+                "已更新共享 ExternalName Service: %s -> %s", target_name, proxy_endpoint,
+            )
+        else:
+            try:
+                await gateway_k8s.core.create_namespaced_service(GATEWAY_NS, ext_svc)
+                logger.info(
+                    "已创建 ExternalName Service: %s -> %s",
+                    ext_svc.metadata.name, proxy_endpoint,
+                )
+            except Exception:
+                await gateway_k8s.core.patch_namespaced_service(
+                    ext_svc.metadata.name, GATEWAY_NS, ext_svc,
+                )
+                logger.info(
+                    "已更新 ExternalName Service: %s -> %s",
+                    ext_svc.metadata.name, proxy_endpoint,
+                )
     except Exception as e:
         logger.warning("创建网关 ExternalName Service 失败: %s", e)

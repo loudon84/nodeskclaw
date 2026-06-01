@@ -28,6 +28,9 @@ _ALLOWED_KEYS = {
     "smtp_from_email", "smtp_from_name", "smtp_use_tls",
     "verification_email_subject", "verification_email_template",
     "egress_deny_cidrs", "egress_allow_ports",
+    "network_policy_ingress_enabled", "network_policy_egress_enabled",
+    "ingress_allow_cidrs",
+    "instance_spec_presets",
 }
 
 _SENSITIVE_KEYS = {"registry_password", "smtp_password"}
@@ -72,6 +75,21 @@ async def update_setting(
     """更新指定系统配置项。"""
     if not _is_allowed_key(key):
         raise BadRequestError(f"不支持的配置项: {key}", "errors.settings.unsupported_key")
+
+    if key == "instance_spec_presets" and body.value is not None:
+        import json as _json
+        from app.schemas.spec_preset import SpecPresetInput
+        try:
+            items = _json.loads(body.value)
+            if not isinstance(items, list):
+                raise ValueError("must be a JSON array")
+            for item in items:
+                SpecPresetInput.model_validate(item)
+        except Exception as exc:
+            raise BadRequestError(
+                f"规格预设格式无效: {exc}",
+                "errors.settings.invalid_spec_presets",
+            )
 
     row = await config_service.set_config(key, body.value, db)
     display_value = "******" if key in _SENSITIVE_KEYS and row.value else row.value

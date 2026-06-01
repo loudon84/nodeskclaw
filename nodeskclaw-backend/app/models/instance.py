@@ -2,7 +2,7 @@
 
 from enum import Enum
 
-from sqlalchemy import JSON, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import JSON, Boolean, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import BaseModel
@@ -16,6 +16,8 @@ class InstanceStatus(str, Enum):
     learning = "learning"
     restarting = "restarting"
     updating = "updating"
+    rebuilding = "rebuilding"
+    restoring = "restoring"
     failed = "failed"
     deleting = "deleting"
 
@@ -84,6 +86,9 @@ class Instance(BaseModel):
     # Pending config (JSON) -- 两步操作模式: 保存到 DB 但尚未 apply 到 K8s
     pending_config: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # LLM 配置待应用标记: DB 已 commit 但 exec 写入 Pod 失败，restart 时需 force-reconfig + sync
+    llm_config_pending: Mapped[bool] = mapped_column(Boolean, server_default="false", default=False)
+
     # Runtime
     available_replicas: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
@@ -105,6 +110,10 @@ class Instance(BaseModel):
     # Workspace / Agent hex position (nullable for backward compat)
     workspace_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("workspaces.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    # LLM 用量归因追踪：最近一次 chat.request 对应的 workspace，LLM Proxy fallback 用
+    last_active_workspace_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("workspaces.id", ondelete="SET NULL"), nullable=True
     )
     hex_position_q: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     hex_position_r: Mapped[int] = mapped_column(Integer, default=0, nullable=False)

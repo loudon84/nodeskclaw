@@ -10,12 +10,6 @@ const ceRoutes: RouteRecordRaw[] = [
     meta: { requiresAuth: false },
   },
   {
-    path: '/login/callback/:provider',
-    name: 'OAuthCallback',
-    component: () => import('@/views/OAuthCallback.vue'),
-    meta: { requiresAuth: false },
-  },
-  {
     path: '/force-change-password',
     name: 'ForceChangePassword',
     component: () => import('@/views/ForceChangePassword.vue'),
@@ -39,8 +33,7 @@ const ceRoutes: RouteRecordRaw[] = [
   },
   {
     path: '/workspace/:id/settings',
-    name: 'WorkspaceSettings',
-    component: () => import('@/views/WorkspaceSettings.vue'),
+    redirect: (to) => `/workspace/${to.params.id}`,
   },
   {
     path: '/instances',
@@ -69,6 +62,7 @@ const ceRoutes: RouteRecordRaw[] = [
       { path: 'channels', name: 'InstanceChannels', component: () => import('@/views/InstanceChannels.vue') },
       { path: 'settings', name: 'InstanceSettings', component: () => import('@/views/InstanceSettings.vue') },
       { path: 'files', name: 'InstanceFiles', component: () => import('@/views/InstanceFiles.vue') },
+      { path: 'backups', name: 'InstanceBackups', component: () => import('@/views/InstanceBackups.vue') },
       { path: 'members', name: 'InstanceMembers', component: () => import('@/views/InstanceMembers.vue') },
     ],
   },
@@ -85,9 +79,12 @@ const ceRoutes: RouteRecordRaw[] = [
       { path: 'info', name: 'OrgInfo', component: () => import('@/views/OrgInfo.vue') },
       { path: 'clusters', name: 'OrgSettingsClusters', component: () => import('@/views/OrgSettingsClusters.vue'), meta: { ceOnly: true } },
       { path: 'registry', name: 'OrgSettingsRegistry', component: () => import('@/views/OrgSettingsRegistry.vue'), meta: { ceOnly: true } },
+      { path: 'engine-versions', name: 'OrgSettingsEngineVersions', component: () => import('@/views/OrgSettingsEngineVersions.vue'), meta: { ceOnly: true } },
+      { path: 'specs', name: 'OrgSettingsSpecs', component: () => import('@/views/OrgSettingsSpecs.vue'), meta: { ceOnly: true } },
       { path: 'genes', name: 'OrgSettingsGenes', component: () => import('@/views/OrgSettingsGenes.vue') },
+      { path: 'llm-keys', name: 'OrgSettingsLlmKeys', component: () => import('@/views/OrgSettingsLlmKeys.vue') },
       { path: 'smtp', name: 'OrgSettingsSmtp', component: () => import('@/views/OrgSettingsSmtp.vue'), meta: { ceOnly: true } },
-      { path: 'network', name: 'OrgSettingsNetwork', component: () => import('@/views/OrgSettingsNetwork.vue'), meta: { ceOnly: true } },
+      { path: 'network', name: 'OrgSettingsNetwork', component: () => import('@/views/OrgSettingsNetwork.vue') },
       { path: 'members', name: 'OrgMembers', component: () => import('@/views/OrgMembers.vue') },
       { path: 'audit', name: 'OrgSettingsAudit', component: () => import('@/views/OrgSettingsAudit.vue') },
       ...eeOrgSettingsChildren,
@@ -104,12 +101,18 @@ const ceRoutes: RouteRecordRaw[] = [
     redirect: '/org-settings',
   },
   {
+    path: '/agent-performance',
+    name: 'AgentPerformance',
+    component: () => import('@/views/AgentPerformance.vue'),
+    meta: { requireFeature: 'performance_analytics' },
+  },
+  {
     path: '/gene-market',
     name: 'GeneMarket',
     component: () => import('@/views/GeneMarket.vue'),
   },
   {
-    path: '/gene-market/gene/:id',
+    path: '/gene-market/gene/:slug',
     name: 'GeneDetail',
     component: () => import('@/views/GeneDetail.vue'),
   },
@@ -144,7 +147,7 @@ const router = createRouter({
 
 router.beforeEach(async (to, _from, next) => {
   const token = localStorage.getItem('portal_token')
-  const isLoginPage = to.path === '/login' || to.path.startsWith('/login/callback/')
+  const isLoginPage = to.path === '/login'
   const isInvitePage = to.path.startsWith('/invite/')
   const isSetupPage = to.path === '/setup-org'
 
@@ -166,7 +169,11 @@ router.beforeEach(async (to, _from, next) => {
       await authStore.fetchUser()
     }
 
-    if (authStore.user?.must_change_password && to.path !== '/force-change-password') {
+    if (!authStore.user) {
+      return next('/login')
+    }
+
+    if (authStore.user.must_change_password && to.path !== '/force-change-password') {
       return next('/force-change-password')
     }
 

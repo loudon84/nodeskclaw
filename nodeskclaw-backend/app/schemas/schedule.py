@@ -27,4 +27,7 @@ class ScheduleInfo(BaseModel):
     cron_expr: str
     message_template: str
     is_active: bool
+    timeout_minutes: int = 120
+    consecutive_failures: int = 0
+    last_succeeded_at: datetime | None = None
     created_at: datetime | None = None

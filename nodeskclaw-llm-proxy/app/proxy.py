@@ -1,8 +1,15 @@
 """LLM Proxy: resolves real API keys and forwards requests to upstream LLM providers."""
 
+import base64
+import binascii
+import hashlib
+import hmac
 import json
 import logging
+import re
 import time
+import uuid
+from typing import Any
 from urllib.parse import urlencode, urlparse, urlunparse, parse_qs
 
 import httpx
@@ -20,7 +27,17 @@ from app.codex_cli import (
 )
 from app.config import settings
 from app.database import get_session
-from app.models import Instance, LlmUsageLog, OrgLlmKey, UserLlmConfig, UserLlmKey, not_deleted
+from app.models import (
+    Instance,
+    InstanceProviderConfig,
+    LlmUsageLog,
+    OrgLlmKey,
+    UserLlmConfig,
+    UserLlmKey,
+    Workspace,
+    WorkspaceAgent,
+    not_deleted,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -38,13 +55,42 @@ PROVIDER_DEFAULTS: dict[str, dict] = {
 
 _OPENAI_STREAM_PROVIDERS = {"openai", "openrouter", "minimax-openai"}
 
+_API_TYPE_AUTH: dict[str, str] = {
+    "openai-completions": "bearer",
+    "anthropic-messages": "x-api-key",
+    "google-generative-ai": "query_param",
+}
+
+_GEMINI_UNSUPPORTED_SCHEMA_KEYS = {"$schema", "additionalProperties", "strict"}
+_LLM_ATTRIBUTION_HEADER = "x-nodeskclaw-llm-attribution"
+_SESSION_KEY_HEADERS = (
+    "x-nodeskclaw-session-key",
+    # Legacy runtime session headers kept for rolling upgrades.
+    "x-openclaw-session-key",
+    "x-hermes-session-id",
+    "x-nanobot-session-key",
+)
+_INTERNAL_CONTEXT_HEADERS = {
+    _LLM_ATTRIBUTION_HEADER,
+    *_SESSION_KEY_HEADERS,
+}
+
 _http_client: httpx.AsyncClient | None = None
+_http_client_no_verify: httpx.AsyncClient | None = None
 
 
-def _get_http_client() -> httpx.AsyncClient:
+def _get_http_client(skip_ssl_verify: bool = False) -> httpx.AsyncClient:
+    if skip_ssl_verify:
+        global _http_client_no_verify
+        if _http_client_no_verify is None or _http_client_no_verify.is_closed:
+            _http_client_no_verify = httpx.AsyncClient(
+                timeout=httpx.Timeout(300, connect=10), trust_env=True, verify=False,
+            )
+        return _http_client_no_verify
+
     global _http_client
     if _http_client is None or _http_client.is_closed:
-        _http_client = httpx.AsyncClient(timeout=httpx.Timeout(300, connect=10), trust_env=False)
+        _http_client = httpx.AsyncClient(timeout=httpx.Timeout(300, connect=10), trust_env=True)
     return _http_client
 
 
@@ -58,8 +104,156 @@ def _extract_proxy_token(request: Request) -> str | None:
     return None
 
 
+def _b64url_encode(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _b64url_decode(raw: str) -> bytes:
+    padding = "=" * (-len(raw) % 4)
+    return base64.urlsafe_b64decode((raw + padding).encode("ascii"))
+
+
+def _sign_attribution_payload(payload: dict, secret: str) -> str:
+    body = _b64url_encode(json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8"))
+    sig = hmac.new(secret.encode("utf-8"), body.encode("ascii"), hashlib.sha256).digest()
+    return f"{body}.{_b64url_encode(sig)}"
+
+
+def _decode_attribution_token(token: str, secret: str) -> dict | None:
+    if not token or not secret:
+        return None
+    try:
+        body, sig = token.split(".", 1)
+        expected = hmac.new(secret.encode("utf-8"), body.encode("ascii"), hashlib.sha256).digest()
+        actual = _b64url_decode(sig)
+        if not hmac.compare_digest(expected, actual):
+            return None
+        payload = json.loads(_b64url_decode(body))
+        if not isinstance(payload, dict):
+            return None
+        exp = payload.get("exp")
+        if exp is not None and float(exp) < time.time():
+            return None
+        return payload
+    except (ValueError, TypeError, binascii.Error, json.JSONDecodeError):
+        return None
+
+
+def _workspace_id_from_session_key(session_key: str | None) -> str | None:
+    if not session_key:
+        return None
+    session_key = session_key.strip()
+    if re.search(r"[\r\n\x00]", session_key):
+        return None
+    prefix = "workspace:"
+    if session_key.startswith(prefix):
+        workspace_id = session_key[len(prefix):].strip()
+        if workspace_id and not re.search(r"[\r\n\x00]", workspace_id):
+            return workspace_id
+    return None
+
+
+def _extract_session_workspace_id(request: Request) -> str | None:
+    for header in _SESSION_KEY_HEADERS:
+        workspace_id = _workspace_id_from_session_key(request.headers.get(header))
+        if workspace_id:
+            return workspace_id
+    return None
+
+
+async def _workspace_belongs_to_org(db, workspace_id: str, org_id: str | None) -> bool:
+    if not org_id:
+        return False
+    result = await db.execute(
+        select(Workspace.id).where(
+            Workspace.id == workspace_id,
+            Workspace.org_id == org_id,
+            not_deleted(Workspace),
+        )
+    )
+    return result.scalar_one_or_none() is not None
+
+
+async def _instance_in_workspace(db, workspace_id: str, instance_id: str) -> bool:
+    result = await db.execute(
+        select(WorkspaceAgent.id).where(
+            WorkspaceAgent.workspace_id == workspace_id,
+            WorkspaceAgent.instance_id == instance_id,
+            not_deleted(WorkspaceAgent),
+        )
+    )
+    return result.scalar_one_or_none() is not None
+
+
+async def _active_workspace_ids_for_instance(db, instance_id: str, org_id: str | None) -> list[str]:
+    result = await db.execute(
+        select(WorkspaceAgent.workspace_id)
+        .join(Workspace, Workspace.id == WorkspaceAgent.workspace_id)
+        .where(
+            WorkspaceAgent.instance_id == instance_id,
+            Workspace.org_id == org_id,
+            not_deleted(WorkspaceAgent),
+            not_deleted(Workspace),
+        )
+        .distinct()
+    )
+    return [str(item) for item in result.scalars().all() if item]
+
+
+async def _resolve_usage_attribution(request: Request, db, instance: Instance) -> tuple[str | None, str]:
+    token = request.headers.get(_LLM_ATTRIBUTION_HEADER, "").strip()
+    if token:
+        payload = _decode_attribution_token(token, settings.LLM_ATTRIBUTION_SECRET)
+        if not payload:
+            logger.warning("Invalid LLM attribution token for instance=%s", instance.id)
+        else:
+            workspace_id = str(payload.get("workspace_id") or "").strip()
+            token_instance_id = str(payload.get("instance_id") or "").strip()
+            token_org_id = str(payload.get("org_id") or "").strip()
+            if (
+                workspace_id
+                and token_instance_id == instance.id
+                and token_org_id == (instance.org_id or "")
+                and await _workspace_belongs_to_org(db, workspace_id, instance.org_id)
+            ):
+                source = str(payload.get("source") or "signed_context")[:16]
+                return workspace_id, f"signed:{source}"[:32]
+            logger.warning("LLM attribution token context mismatch for instance=%s", instance.id)
+
+    workspace_id = _extract_session_workspace_id(request)
+    if not workspace_id:
+        tracked_wid = str(getattr(instance, "last_active_workspace_id", "") or "").strip()
+        if tracked_wid:
+            active_workspace_ids = await _active_workspace_ids_for_instance(db, instance.id, instance.org_id)
+            if len(active_workspace_ids) > 1:
+                logger.warning(
+                    "Active tracking attribution skipped for multi-workspace instance=%s workspace=%s",
+                    instance.id, tracked_wid,
+                )
+                return None, "unattributed"
+            if (
+                await _workspace_belongs_to_org(db, tracked_wid, instance.org_id)
+                and await _instance_in_workspace(db, tracked_wid, instance.id)
+            ):
+                return tracked_wid, "active_tracking"
+            logger.warning(
+                "Active tracking attribution rejected: workspace=%s instance=%s",
+                tracked_wid, instance.id,
+            )
+        return None, "unattributed"
+    if not await _workspace_belongs_to_org(db, workspace_id, instance.org_id):
+        logger.warning("Session workspace attribution rejected: workspace=%s instance=%s", workspace_id, instance.id)
+        return None, "unattributed"
+    if not await _instance_in_workspace(db, workspace_id, instance.id):
+        logger.warning("Session workspace attribution requires WorkspaceAgent: workspace=%s instance=%s", workspace_id, instance.id)
+        return None, "unattributed"
+    return workspace_id, "session_key"
+
+
 def _build_target_url(provider: str, path: str, base_url: str | None, api_key: str | None) -> str:
     base = (base_url or PROVIDER_DEFAULTS.get(provider, {}).get("base_url", "")).rstrip("/")
+    if base_url and path.startswith("v1/"):
+        path = path[3:]
     url = f"{base}/{path}"
 
     prov_conf = PROVIDER_DEFAULTS.get(provider, {})
@@ -72,21 +266,35 @@ def _build_target_url(provider: str, path: str, base_url: str | None, api_key: s
     return url
 
 
-def _build_auth_headers(provider: str, api_key: str, original_headers: dict) -> dict:
+def _build_auth_headers(
+    provider: str, api_key: str, original_headers: dict, *, api_type: str | None = None,
+) -> dict:
     headers = {}
     for k, v in original_headers.items():
         lower = k.lower()
-        if lower in ("host", "content-length", "transfer-encoding", "authorization", "x-api-key", "accept-encoding"):
+        if lower in (
+            "host",
+            "content-length",
+            "transfer-encoding",
+            "authorization",
+            "x-api-key",
+            "accept-encoding",
+            *_INTERNAL_CONTEXT_HEADERS,
+        ):
             continue
         headers[k] = v
 
     prov_conf = PROVIDER_DEFAULTS.get(provider, {})
-    auth_type = prov_conf.get("auth_type", "bearer")
+    if prov_conf:
+        auth_type = prov_conf.get("auth_type", "bearer")
+    else:
+        auth_type = _API_TYPE_AUTH.get(api_type or "", "bearer")
 
     if auth_type == "bearer":
         headers["authorization"] = f"Bearer {api_key}"
     elif auth_type == "x-api-key":
         headers["x-api-key"] = api_key
+        headers["anthropic-version"] = "2023-06-01"
 
     return headers
 
@@ -136,6 +344,13 @@ def _parse_usage_from_response(body: bytes) -> dict:
 
 
 def _parse_usage_from_sse_chunk(line: str) -> dict | None:
+    """Extract usage from a single SSE line.
+
+    Handles both OpenAI (top-level ``usage``) and Anthropic Messages API
+    (``message_start`` with nested ``message.usage``, ``message_delta``
+    with top-level ``usage``).  Returns partial results — the caller is
+    responsible for accumulating across SSE events.
+    """
     if not line.startswith("data: "):
         return None
     payload = line[6:].strip()
@@ -144,13 +359,26 @@ def _parse_usage_from_sse_chunk(line: str) -> dict | None:
     try:
         data = json.loads(payload)
         usage = data.get("usage")
-        if usage and (usage.get("total_tokens") or usage.get("prompt_tokens")):
-            return {
-                "prompt_tokens": usage.get("prompt_tokens", 0) or usage.get("input_tokens", 0),
-                "completion_tokens": usage.get("completion_tokens", 0) or usage.get("output_tokens", 0),
-                "total_tokens": usage.get("total_tokens", 0),
-                "model": data.get("model"),
-            }
+        if not usage and isinstance(data.get("message"), dict):
+            usage = data["message"].get("usage")
+        if not usage:
+            return None
+        prompt = usage.get("prompt_tokens", 0) or usage.get("input_tokens", 0)
+        completion = usage.get("completion_tokens", 0) or usage.get("output_tokens", 0)
+        total = usage.get("total_tokens", 0)
+        if not (prompt or completion or total):
+            return None
+        result: dict = {
+            "prompt_tokens": prompt,
+            "completion_tokens": completion,
+            "total_tokens": total,
+        }
+        model = data.get("model")
+        if not model and isinstance(data.get("message"), dict):
+            model = data["message"].get("model")
+        if model:
+            result["model"] = model
+        return result
     except (json.JSONDecodeError, UnicodeDecodeError):
         pass
     return None
@@ -171,6 +399,358 @@ def _strip_content_from_response(body: bytes) -> str | None:
         return json.dumps(data, ensure_ascii=False)
     except (json.JSONDecodeError, UnicodeDecodeError):
         return None
+
+
+def _append_api_key_query(url: str, api_key: str | None) -> str:
+    if not api_key:
+        return url
+    parsed = urlparse(url)
+    qs = parse_qs(parsed.query)
+    qs["key"] = [api_key]
+    return urlunparse(parsed._replace(query=urlencode(qs, doseq=True)))
+
+
+def _normalize_gemini_base_url(base_url: str | None) -> str:
+    base = (base_url or PROVIDER_DEFAULTS["gemini"]["base_url"]).rstrip("/")
+    if base.endswith("/openai"):
+        base = base[: -len("/openai")]
+    if base.endswith("/v1") or base.endswith("/v1beta"):
+        return base
+    return f"{base}/v1beta"
+
+
+def _build_gemini_target_url(base_url: str | None, api_key: str | None, path: str) -> str:
+    url = f"{_normalize_gemini_base_url(base_url)}/{path.strip('/')}"
+    return _append_api_key_query(url, api_key)
+
+
+def _gemini_text_from_content(content: Any) -> str:
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        chunks: list[str] = []
+        for item in content:
+            if isinstance(item, str):
+                chunks.append(item)
+            elif isinstance(item, dict):
+                if isinstance(item.get("text"), str):
+                    chunks.append(item["text"])
+                elif isinstance(item.get("content"), str):
+                    chunks.append(item["content"])
+        return "\n".join(chunks)
+    return str(content)
+
+
+def _openai_content_to_gemini_parts(content: Any) -> list[dict]:
+    if content is None:
+        return []
+    if isinstance(content, str):
+        return [{"text": content}]
+    if not isinstance(content, list):
+        return [{"text": str(content)}]
+
+    parts: list[dict] = []
+    for item in content:
+        if isinstance(item, str):
+            parts.append({"text": item})
+            continue
+        if not isinstance(item, dict):
+            continue
+        item_type = item.get("type")
+        if item_type in {"text", "input_text"} and isinstance(item.get("text"), str):
+            parts.append({"text": item["text"]})
+            continue
+        if item_type == "image_url":
+            image_url = item.get("image_url")
+            url = image_url.get("url") if isinstance(image_url, dict) else image_url
+            if isinstance(url, str) and url.startswith("data:") and ";base64," in url:
+                header, data = url.split(";base64,", 1)
+                mime_type = header.removeprefix("data:") or "image/png"
+                parts.append({"inlineData": {"mimeType": mime_type, "data": data}})
+            elif isinstance(url, str) and url:
+                parts.append({"fileData": {"fileUri": url}})
+            continue
+        if isinstance(item.get("text"), str):
+            parts.append({"text": item["text"]})
+    return parts
+
+
+def _json_object_from_arguments(raw: Any) -> dict:
+    if isinstance(raw, dict):
+        return raw
+    if not isinstance(raw, str) or not raw.strip():
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return {"arguments": raw}
+    return parsed if isinstance(parsed, dict) else {"value": parsed}
+
+
+def _sanitize_gemini_schema(value: Any) -> Any:
+    if isinstance(value, list):
+        return [_sanitize_gemini_schema(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    cleaned: dict[str, Any] = {}
+    for key, item in value.items():
+        if key in _GEMINI_UNSUPPORTED_SCHEMA_KEYS:
+            continue
+        cleaned[key] = _sanitize_gemini_schema(item)
+    return cleaned
+
+
+def _openai_tools_to_gemini(tools: Any) -> list[dict]:
+    if not isinstance(tools, list):
+        return []
+    declarations: list[dict] = []
+    for tool in tools:
+        if not isinstance(tool, dict) or tool.get("type") != "function":
+            continue
+        fn = tool.get("function")
+        if not isinstance(fn, dict):
+            continue
+        name = str(fn.get("name", "") or "").strip()
+        if not name:
+            continue
+        declaration: dict[str, Any] = {"name": name}
+        if isinstance(fn.get("description"), str):
+            declaration["description"] = fn["description"]
+        parameters = fn.get("parameters")
+        if isinstance(parameters, dict):
+            declaration["parameters"] = _sanitize_gemini_schema(parameters)
+        declarations.append(declaration)
+    return [{"functionDeclarations": declarations}] if declarations else []
+
+
+def _openai_tool_choice_to_gemini(tool_choice: Any) -> dict | None:
+    if tool_choice in (None, "auto"):
+        return None
+    if tool_choice == "none":
+        return {"functionCallingConfig": {"mode": "NONE"}}
+    if tool_choice == "required":
+        return {"functionCallingConfig": {"mode": "ANY"}}
+    if isinstance(tool_choice, dict):
+        fn = tool_choice.get("function")
+        name = fn.get("name") if isinstance(fn, dict) else None
+        if isinstance(name, str) and name.strip():
+            return {"functionCallingConfig": {"mode": "ANY", "allowedFunctionNames": [name.strip()]}}
+    return None
+
+
+def _openai_chat_to_gemini_request(payload: dict) -> dict:
+    messages = payload.get("messages")
+    if not isinstance(messages, list) or not messages:
+        raise ValueError("Gemini 请求缺少 messages")
+
+    contents: list[dict] = []
+    system_parts: list[dict] = []
+    tool_call_names: dict[str, str] = {}
+
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        role = str(msg.get("role", "user") or "user")
+        if role in {"system", "developer"}:
+            text = _gemini_text_from_content(msg.get("content")).strip()
+            if text:
+                system_parts.append({"text": text})
+            continue
+
+        if role == "tool":
+            tool_call_id = str(msg.get("tool_call_id", "") or "")
+            name = str(msg.get("name", "") or tool_call_names.get(tool_call_id, "") or "tool_result")
+            contents.append({
+                "role": "user",
+                "parts": [{
+                    "functionResponse": {
+                        "name": name,
+                        "response": {"result": _gemini_text_from_content(msg.get("content"))},
+                    }
+                }],
+            })
+            continue
+
+        gemini_role = "model" if role == "assistant" else "user"
+        parts = _openai_content_to_gemini_parts(msg.get("content"))
+        if role == "assistant":
+            for tool_call in msg.get("tool_calls") or []:
+                if not isinstance(tool_call, dict):
+                    continue
+                fn = tool_call.get("function")
+                if not isinstance(fn, dict):
+                    continue
+                name = str(fn.get("name", "") or "").strip()
+                if not name:
+                    continue
+                tool_call_id = str(tool_call.get("id", "") or "")
+                if tool_call_id:
+                    tool_call_names[tool_call_id] = name
+                parts.append({
+                    "functionCall": {
+                        "name": name,
+                        "args": _json_object_from_arguments(fn.get("arguments")),
+                    }
+                })
+        if parts:
+            contents.append({"role": gemini_role, "parts": parts})
+
+    if not contents:
+        raise ValueError("Gemini 请求没有可发送内容")
+
+    request_body: dict[str, Any] = {"contents": contents}
+    if system_parts:
+        request_body["systemInstruction"] = {"parts": system_parts}
+
+    generation_config: dict[str, Any] = {}
+    if "temperature" in payload and payload.get("temperature") is not None:
+        generation_config["temperature"] = payload["temperature"]
+    if "top_p" in payload and payload.get("top_p") is not None:
+        generation_config["topP"] = payload["top_p"]
+    if "max_tokens" in payload and payload.get("max_tokens") is not None:
+        generation_config["maxOutputTokens"] = payload["max_tokens"]
+    stop = payload.get("stop")
+    if isinstance(stop, str):
+        generation_config["stopSequences"] = [stop]
+    elif isinstance(stop, list):
+        generation_config["stopSequences"] = [str(item) for item in stop if item]
+    if generation_config:
+        request_body["generationConfig"] = generation_config
+
+    tools = _openai_tools_to_gemini(payload.get("tools"))
+    if tools:
+        request_body["tools"] = tools
+    tool_config = _openai_tool_choice_to_gemini(payload.get("tool_choice"))
+    if tool_config:
+        request_body["toolConfig"] = tool_config
+
+    return request_body
+
+
+def _map_gemini_finish_reason(reason: str, has_tool_calls: bool) -> str:
+    if has_tool_calls:
+        return "tool_calls"
+    normalized = (reason or "").upper()
+    if normalized in {"STOP", ""}:
+        return "stop"
+    if normalized == "MAX_TOKENS":
+        return "length"
+    if normalized in {"SAFETY", "RECITATION", "PROHIBITED_CONTENT", "BLOCKLIST"}:
+        return "content_filter"
+    return "stop"
+
+
+def _gemini_usage_to_openai(payload: dict) -> dict:
+    usage = payload.get("usageMetadata") if isinstance(payload.get("usageMetadata"), dict) else {}
+    prompt_tokens = usage.get("promptTokenCount", 0) or 0
+    completion_tokens = usage.get("candidatesTokenCount", 0) or 0
+    total_tokens = usage.get("totalTokenCount") or (prompt_tokens + completion_tokens)
+    return {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": total_tokens,
+    }
+
+
+def _gemini_response_to_openai(payload: dict, model: str) -> dict:
+    choices: list[dict] = []
+    candidates = payload.get("candidates") if isinstance(payload.get("candidates"), list) else []
+    for index, candidate in enumerate(candidates):
+        content = candidate.get("content") if isinstance(candidate, dict) else {}
+        parts = content.get("parts") if isinstance(content, dict) and isinstance(content.get("parts"), list) else []
+        text_chunks: list[str] = []
+        tool_calls: list[dict] = []
+        for part in parts:
+            if not isinstance(part, dict):
+                continue
+            if isinstance(part.get("text"), str):
+                text_chunks.append(part["text"])
+            function_call = part.get("functionCall")
+            if isinstance(function_call, dict):
+                name = str(function_call.get("name", "") or "")
+                args = function_call.get("args")
+                tool_calls.append({
+                    "id": f"call_{uuid.uuid4().hex[:24]}",
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "arguments": json.dumps(args if isinstance(args, dict) else {}, ensure_ascii=False),
+                    },
+                })
+        message: dict[str, Any] = {
+            "role": "assistant",
+            "content": "".join(text_chunks) if text_chunks else (None if tool_calls else ""),
+        }
+        if tool_calls:
+            message["tool_calls"] = tool_calls
+        choices.append({
+            "index": index,
+            "message": message,
+            "finish_reason": _map_gemini_finish_reason(
+                str(candidate.get("finishReason", "") if isinstance(candidate, dict) else ""),
+                bool(tool_calls),
+            ),
+        })
+
+    if not choices:
+        choices.append({
+            "index": 0,
+            "message": {"role": "assistant", "content": ""},
+            "finish_reason": "stop",
+        })
+
+    return {
+        "id": f"chatcmpl-gemini-{uuid.uuid4().hex}",
+        "object": "chat.completion",
+        "created": int(time.time()),
+        "model": model,
+        "choices": choices,
+        "usage": _gemini_usage_to_openai(payload),
+    }
+
+
+def _gemini_models_to_openai(payload: dict) -> dict:
+    data: list[dict] = []
+    models = payload.get("models") if isinstance(payload.get("models"), list) else []
+    for item in models:
+        if not isinstance(item, dict):
+            continue
+        methods = item.get("supportedGenerationMethods")
+        if isinstance(methods, list) and "generateContent" not in methods:
+            continue
+        raw_name = str(item.get("name", "") or "").strip()
+        model_id = raw_name.removeprefix("models/")
+        if not model_id:
+            continue
+        data.append({
+            "id": model_id,
+            "object": "model",
+            "created": 0,
+            "owned_by": "google",
+        })
+    return {"object": "list", "data": data}
+
+
+def _gemini_error_from_response(resp: httpx.Response) -> dict:
+    message = resp.text[:512] if resp.text else f"Gemini upstream HTTP {resp.status_code}"
+    code = None
+    try:
+        payload = resp.json()
+        err = payload.get("error") if isinstance(payload, dict) else None
+        if isinstance(err, dict):
+            message = str(err.get("message") or message)
+            code = err.get("status") or err.get("code")
+    except ValueError:
+        pass
+    return {
+        "error": {
+            "message": message,
+            "type": "google_gemini_error",
+            "code": code,
+        }
+    }
 
 
 def _is_codex_path(path: str, *candidates: str) -> bool:
@@ -298,6 +878,237 @@ async def _handle_codex_proxy(
     return JSONResponse(status_code=200, content=response_data)
 
 
+async def _handle_gemini_proxy(
+    request: Request,
+    path: str,
+    ctx: "_RequestContext",
+    *,
+    client: httpx.AsyncClient,
+    base_url: str | None,
+    api_key: str | None,
+) -> JSONResponse | Response:
+    normalized_path = path.strip("/")
+
+    if not api_key:
+        return JSONResponse(
+            status_code=400,
+            content={"error": {"message": "Gemini API Key 缺失", "type": "invalid_request_error"}},
+        )
+
+    if request.method == "GET" and _is_codex_path(normalized_path, "v1/models", "models"):
+        try:
+            resp = await client.get(_build_gemini_target_url(base_url, api_key, "models"), timeout=30)
+        except httpx.RequestError as e:
+            return JSONResponse(status_code=502, content={"error": {"message": f"上游请求失败: {e}"}})
+        if resp.status_code >= 400:
+            return JSONResponse(status_code=resp.status_code, content=_gemini_error_from_response(resp))
+        try:
+            return JSONResponse(status_code=200, content=_gemini_models_to_openai(resp.json()))
+        except ValueError:
+            return JSONResponse(
+                status_code=502,
+                content={"error": {"message": "Gemini models 响应不是合法 JSON", "type": "upstream_error"}},
+            )
+
+    if request.method != "POST" or not _is_codex_path(
+        normalized_path,
+        "v1/chat/completions",
+        "chat/completions",
+    ):
+        return JSONResponse(
+            status_code=404,
+            content={"error": {"message": f"Gemini 暂不支持路径 /{normalized_path or path}"}},
+        )
+
+    start = time.monotonic()
+    raw_body = await request.body()
+    try:
+        payload = json.loads(raw_body or b"{}")
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        latency_ms = int((time.monotonic() - start) * 1000)
+        await _record_usage(
+            ctx,
+            usage={},
+            status_code=400,
+            latency_ms=latency_ms,
+            error_message="请求体不是合法 JSON",
+        )
+        return JSONResponse(
+            status_code=400,
+            content={"error": {"message": "请求体不是合法 JSON", "type": "invalid_request_error"}},
+        )
+
+    if payload.get("stream") is True:
+        latency_ms = int((time.monotonic() - start) * 1000)
+        await _record_usage(
+            ctx,
+            usage={},
+            status_code=400,
+            latency_ms=latency_ms,
+            error_message="Gemini proxy 暂不支持 stream=true",
+        )
+        return JSONResponse(
+            status_code=400,
+            content={"error": {"message": "Gemini proxy 暂不支持 stream=true", "type": "invalid_request_error"}},
+        )
+
+    model = payload.get("model")
+    if not isinstance(model, str) or not model.strip():
+        latency_ms = int((time.monotonic() - start) * 1000)
+        await _record_usage(
+            ctx,
+            usage={},
+            status_code=400,
+            latency_ms=latency_ms,
+            error_message="Gemini 请求缺少 model",
+        )
+        return JSONResponse(
+            status_code=400,
+            content={"error": {"message": "Gemini 请求缺少 model", "type": "invalid_request_error"}},
+        )
+    model = model.strip()
+
+    try:
+        req_body = _openai_chat_to_gemini_request(payload)
+    except ValueError as e:
+        latency_ms = int((time.monotonic() - start) * 1000)
+        error_message = str(e)
+        await _record_usage(
+            ctx,
+            usage={},
+            status_code=400,
+            latency_ms=latency_ms,
+            error_message=error_message,
+        )
+        return JSONResponse(
+            status_code=400,
+            content={"error": {"message": error_message, "type": "invalid_request_error"}},
+        )
+
+    target_url = _build_gemini_target_url(base_url, api_key, f"models/{model}:generateContent")
+    try:
+        resp = await client.post(target_url, json=req_body, headers={}, timeout=300)
+    except httpx.RequestError as e:
+        latency_ms = int((time.monotonic() - start) * 1000)
+        error_message = f"上游请求失败: {e}"
+        await _record_usage(
+            ctx,
+            usage={},
+            status_code=502,
+            latency_ms=latency_ms,
+            error_message=error_message[:512],
+        )
+        return JSONResponse(status_code=502, content={"error": {"message": error_message, "type": "upstream_error"}})
+
+    latency_ms = int((time.monotonic() - start) * 1000)
+    if resp.status_code >= 400:
+        error_payload = _gemini_error_from_response(resp)
+        error_message = str(error_payload.get("error", {}).get("message", ""))[:512]
+        await _record_usage(
+            ctx,
+            usage={},
+            status_code=resp.status_code,
+            latency_ms=latency_ms,
+            error_message=error_message,
+            response_body=_strip_content_from_response(resp.content),
+        )
+        return JSONResponse(status_code=resp.status_code, content=error_payload)
+
+    try:
+        response_data = _gemini_response_to_openai(resp.json(), model)
+    except ValueError:
+        await _record_usage(
+            ctx,
+            usage={},
+            status_code=502,
+            latency_ms=latency_ms,
+            error_message="Gemini 响应不是合法 JSON",
+        )
+        return JSONResponse(
+            status_code=502,
+            content={"error": {"message": "Gemini 响应不是合法 JSON", "type": "upstream_error"}},
+        )
+
+    response_body = json.dumps(response_data, ensure_ascii=False).encode("utf-8")
+    usage = _parse_usage_from_response(response_body)
+    await _record_usage(
+        ctx,
+        usage=usage,
+        status_code=200,
+        latency_ms=latency_ms,
+        response_body=_strip_content_from_response(response_body),
+    )
+    return JSONResponse(status_code=200, content=response_data)
+
+
+@router.post("/internal/test-connection")
+async def internal_test_connection(request: Request):
+    """Test upstream provider connectivity using the same URL construction as real traffic."""
+    body = await request.json()
+    provider: str = body.get("provider", "")
+    base_url: str | None = body.get("base_url")
+    api_key: str = body.get("api_key", "")
+    api_type: str = body.get("api_type") or "openai-completions"
+    model: str = body.get("model", "")
+    skip_ssl_verify: bool = body.get("skip_ssl_verify", False)
+
+    if not provider or not api_key or not model:
+        return JSONResponse(status_code=400, content={
+            "ok": False, "message": "provider, api_key, model 为必填",
+        })
+
+    t0 = time.monotonic()
+    try:
+        if api_type == "google-generative-ai":
+            target_url = _build_gemini_target_url(base_url, api_key, f"models/{model}:generateContent")
+            req_body = {
+                "contents": [{"parts": [{"text": "hi"}]}],
+                "generationConfig": {"maxOutputTokens": 1},
+            }
+            req_headers: dict = {}
+        elif api_type == "anthropic-messages":
+            path = "v1/messages"
+            target_url = _build_target_url(provider, path, base_url, api_key)
+            req_body = {"model": model, "messages": [{"role": "user", "content": "hi"}], "max_tokens": 1}
+            req_headers = _build_auth_headers(provider, api_key, {}, api_type=api_type)
+        else:
+            path = "v1/chat/completions"
+            target_url = _build_target_url(provider, path, base_url, api_key)
+            req_body = {"model": model, "messages": [{"role": "user", "content": "hi"}], "max_tokens": 1}
+            req_headers = _build_auth_headers(provider, api_key, {}, api_type=api_type)
+
+        client = _get_http_client(skip_ssl_verify)
+        resp = await client.post(target_url, json=req_body, headers=req_headers, timeout=30)
+        resp.raise_for_status()
+
+        latency_ms = int((time.monotonic() - t0) * 1000)
+        return JSONResponse(content={
+            "ok": True, "message": "连接成功", "model": model, "latency_ms": latency_ms,
+        })
+
+    except httpx.HTTPStatusError as e:
+        latency_ms = int((time.monotonic() - t0) * 1000)
+        status = e.response.status_code
+        resp_text = e.response.text[:300] if e.response.text else ""
+        if status in (401, 403):
+            msg = f"认证失败 (HTTP {status})，请检查 API Key 是否有效"
+        elif status == 404:
+            msg = "端点不存在 (HTTP 404)，请检查 Base URL 是否正确"
+        else:
+            msg = f"HTTP {status}"
+        return JSONResponse(content={
+            "ok": False, "message": msg, "model": model, "latency_ms": latency_ms,
+            "error_detail": f"URL: {e.request.url} | HTTP {status} | {resp_text}",
+        })
+    except Exception as e:
+        latency_ms = int((time.monotonic() - t0) * 1000)
+        return JSONResponse(content={
+            "ok": False, "message": f"连接失败: {type(e).__name__}",
+            "model": model, "latency_ms": latency_ms,
+            "error_detail": str(e)[:300],
+        })
+
+
 @router.api_route(
     "/{provider}/{path:path}",
     methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"],
@@ -326,25 +1137,35 @@ async def llm_proxy(provider: str, path: str, request: Request):
         if instance is None:
             return JSONResponse(status_code=401, content={"error": "Invalid proxy token"})
 
-        cfg_result = await db.execute(
-            select(UserLlmConfig).where(
-                UserLlmConfig.user_id == instance.created_by,
-                UserLlmConfig.org_id == instance.org_id,
-                UserLlmConfig.provider == provider,
-                not_deleted(UserLlmConfig),
+        ipc_result = await db.execute(
+            select(InstanceProviderConfig).where(
+                InstanceProviderConfig.instance_id == instance.id,
+                InstanceProviderConfig.provider == provider,
+                not_deleted(InstanceProviderConfig),
             )
         )
-        config = cfg_result.scalar_one_or_none()
-        if config is None:
-            return JSONResponse(status_code=404, content={
-                "error": f"未配置 {provider} 的 LLM Key，请在实例设置中配置"
-            })
+        ipc = ipc_result.scalar_one_or_none()
 
-        is_org_key = config.key_source == "org"
-        key_source = "org" if is_org_key else "personal"
+        if ipc is None:
+            fallback_result = await db.execute(
+                select(UserLlmConfig).where(
+                    UserLlmConfig.user_id == instance.created_by,
+                    UserLlmConfig.org_id == instance.org_id,
+                    UserLlmConfig.provider == provider,
+                    not_deleted(UserLlmConfig),
+                )
+            )
+            fallback_config = fallback_result.scalar_one_or_none()
+            key_source = fallback_config.key_source if fallback_config else "org"
+        else:
+            key_source = ipc.key_source
+
+        is_org_key = key_source == "org"
         real_key: str | None = None
         base_url: str | None = None
+        api_type: str | None = None
         org_key_id: str | None = None
+        skip_ssl_verify: bool = False
 
         if is_org_key:
             key_result = await db.execute(
@@ -362,7 +1183,9 @@ async def llm_proxy(provider: str, path: str, request: Request):
                 })
             real_key = org_key.api_key
             base_url = org_key.base_url
+            api_type = org_key.api_type
             org_key_id = org_key.id
+            skip_ssl_verify = org_key.skip_ssl_verify
 
             ok, msg = await _check_quota(org_key.id, org_key.org_token_limit, org_key.system_token_limit, db)
             if not ok:
@@ -382,6 +1205,10 @@ async def llm_proxy(provider: str, path: str, request: Request):
                 })
             real_key = user_key.api_key
             base_url = user_key.base_url
+            api_type = user_key.api_type
+            skip_ssl_verify = user_key.skip_ssl_verify
+
+        workspace_id, attribution_source = await _resolve_usage_attribution(request, db, instance)
 
     raw_body = await request.body()
     body = _maybe_inject_stream_options(raw_body, provider)
@@ -398,20 +1225,32 @@ async def llm_proxy(provider: str, path: str, request: Request):
         provider=provider,
         key_source=key_source,
         org_key_id=org_key_id,
+        workspace_id=workspace_id,
+        attribution_source=attribution_source,
         request_path=f"/{path}",
         is_stream=is_stream,
         raw_body=raw_body,
     )
 
     if provider == CODEX_PROVIDER:
-        if config.key_source != "personal":
+        if key_source != "personal":
             return JSONResponse(status_code=400, content={"error": "Codex 仅支持个人配置"})
         return await _handle_codex_proxy(request, path, ctx, api_key=real_key)
 
-    target_url = _build_target_url(provider, path, base_url, real_key)
-    req_headers = _build_auth_headers(provider, real_key, dict(request.headers))
+    client = _get_http_client(skip_ssl_verify=skip_ssl_verify)
 
-    client = _get_http_client()
+    if provider == "gemini" or api_type == "google-generative-ai":
+        return await _handle_gemini_proxy(
+            request,
+            path,
+            ctx,
+            client=client,
+            base_url=base_url,
+            api_key=real_key,
+        )
+
+    target_url = _build_target_url(provider, path, base_url, real_key)
+    req_headers = _build_auth_headers(provider, real_key, dict(request.headers), api_type=api_type)
 
     if is_stream:
         return await _handle_stream(client, request.method, target_url, req_headers, body, ctx)
@@ -421,15 +1260,17 @@ async def llm_proxy(provider: str, path: str, request: Request):
 
 class _RequestContext:
     __slots__ = ("instance", "provider", "key_source", "org_key_id",
-                 "request_path", "is_stream", "raw_body")
+                 "workspace_id", "attribution_source", "request_path", "is_stream", "raw_body")
 
     def __init__(self, *, instance: Instance, provider: str, key_source: str,
-                 org_key_id: str | None, request_path: str, is_stream: bool,
-                 raw_body: bytes):
+                 org_key_id: str | None, workspace_id: str | None,
+                 attribution_source: str, request_path: str, is_stream: bool, raw_body: bytes):
         self.instance = instance
         self.provider = provider
         self.key_source = key_source
         self.org_key_id = org_key_id
+        self.workspace_id = workspace_id
+        self.attribution_source = attribution_source
         self.request_path = request_path
         self.is_stream = is_stream
         self.raw_body = raw_body
@@ -539,7 +1380,11 @@ async def _handle_stream(
             async for line in resp.aiter_lines():
                 parsed = _parse_usage_from_sse_chunk(line)
                 if parsed:
-                    usage_data = parsed
+                    for k, v in parsed.items():
+                        if k == "model":
+                            usage_data[k] = v
+                        elif isinstance(v, int) and v > 0:
+                            usage_data[k] = v
                 if not stream_error:
                     stream_error = _extract_sse_error(line)
                 if line.strip() == "data: [DONE]":
@@ -553,6 +1398,10 @@ async def _handle_stream(
         finally:
             await resp.aclose()
             latency_ms = int((time.monotonic() - start) * 1000)
+            if usage_data and not usage_data.get("total_tokens"):
+                usage_data["total_tokens"] = (
+                    usage_data.get("prompt_tokens", 0) + usage_data.get("completion_tokens", 0)
+                )
             if stream_error:
                 logger.warning("SSE stream error from %s: %s", ctx.provider, stream_error[:512])
             response_meta = json.dumps(usage_data, ensure_ascii=False) if usage_data else None
@@ -599,6 +1448,8 @@ async def _record_usage(
                 org_llm_key_id=ctx.org_key_id,
                 user_id=ctx.instance.created_by,
                 instance_id=ctx.instance.id,
+                workspace_id=ctx.workspace_id,
+                attribution_source=ctx.attribution_source,
                 provider=ctx.provider,
                 model=usage.get("model"),
                 prompt_tokens=usage.get("prompt_tokens", 0),

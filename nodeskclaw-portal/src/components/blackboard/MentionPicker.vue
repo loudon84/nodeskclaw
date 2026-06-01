@@ -2,6 +2,8 @@
 import { ref, computed, watch, nextTick } from 'vue'
 import { Bot, User } from 'lucide-vue-next'
 import { useWorkspaceStore } from '@/stores/workspace'
+import { computeMentionCandidates } from '@/utils/topologyBfs'
+import { Button } from '@/components/ui/button'
 
 const props = defineProps<{
   modelValue: string
@@ -25,12 +27,28 @@ const query = ref('')
 const selectedIdx = ref(0)
 const atStartPos = ref(-1)
 
+function parseExistingMentionIds(text: string): Set<string> {
+  const ids = new Set<string>()
+  const re = /@agent:([a-f0-9-]+)/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(text)) !== null) {
+    ids.add(m[1])
+  }
+  return ids
+}
+
 const candidates = computed<MentionCandidate[]>(() => {
-  const agents: MentionCandidate[] = (store.currentWorkspace?.agents || []).map(a => ({
-    type: 'agent',
-    id: a.instance_id,
-    name: a.display_name || a.name,
-  }))
+  const mentionIds = parseExistingMentionIds(props.modelValue)
+  const bfsCandidates = computeMentionCandidates(store.topology, mentionIds)
+  const candidateIds = new Set(bfsCandidates.map(c => c.agentId))
+
+  const agents: MentionCandidate[] = (store.currentWorkspace?.agents || [])
+    .filter(a => candidateIds.has(a.instance_id))
+    .map(a => ({
+      type: 'agent',
+      id: a.instance_id,
+      name: a.display_name || a.name,
+    }))
   const humans: MentionCandidate[] = (store.members || []).map(m => ({
     type: 'human',
     id: m.user_id,
@@ -119,7 +137,7 @@ defineExpose({ onInput, onKeydown })
 
 <template>
   <div v-if="showPicker && filtered.length > 0" class="absolute z-20 bottom-full mb-1 left-0 w-64 max-h-48 overflow-y-auto bg-popover border border-border rounded-lg shadow-lg">
-    <button
+    <Button variant="unstyled" size="unstyled"
       v-for="(c, idx) in filtered"
       :key="`${c.type}-${c.id}`"
       class="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left transition-colors"
@@ -130,6 +148,6 @@ defineExpose({ onInput, onKeydown })
       <User v-else class="w-3.5 h-3.5 text-muted-foreground shrink-0" />
       <span class="truncate">{{ c.name }}</span>
       <span class="ml-auto text-xs text-muted-foreground shrink-0">{{ c.type === 'agent' ? 'AI' : '' }}</span>
-    </button>
+    </Button>
   </div>
 </template>

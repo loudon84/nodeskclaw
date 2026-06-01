@@ -5,6 +5,8 @@ import { useI18n } from 'vue-i18n'
 import { useAuthStore } from '@/stores/auth'
 import { Loader2, Building2, Eye, EyeOff } from 'lucide-vue-next'
 import axios from 'axios'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 
 const route = useRoute()
 const router = useRouter()
@@ -104,12 +106,12 @@ async function handleAccept() {
         </div>
         <h1 class="text-xl font-semibold">{{ t('acceptInvite.invalidTitle') }}</h1>
         <p class="text-sm text-muted-foreground">{{ error || t('acceptInvite.invalidLink') }}</p>
-        <button
+        <Button variant="unstyled" size="unstyled"
           class="px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors"
           @click="router.push('/login')"
         >
           {{ t('acceptInvite.goToLogin') }}
-        </button>
+        </Button>
       </div>
 
       <!-- Expired -->
@@ -119,12 +121,12 @@ async function handleAccept() {
         </div>
         <h1 class="text-xl font-semibold">{{ t('acceptInvite.expiredTitle') }}</h1>
         <p class="text-sm text-muted-foreground">{{ t('acceptInvite.expiredDesc') }}</p>
-        <button
+        <Button variant="unstyled" size="unstyled"
           class="px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors"
           @click="router.push('/login')"
         >
           {{ t('acceptInvite.goToLogin') }}
-        </button>
+        </Button>
       </div>
 
       <!-- Accept Form -->
@@ -168,7 +170,7 @@ async function handleAccept() {
             <div class="space-y-3">
               <div>
                 <label class="block text-sm text-muted-foreground mb-1.5">{{ t('acceptInvite.nameLabel') }}</label>
-                <input
+                <Input
                   v-model="form.name"
                   type="text"
                   :placeholder="t('acceptInvite.namePlaceholder')"
@@ -178,39 +180,39 @@ async function handleAccept() {
               <div>
                 <label class="block text-sm text-muted-foreground mb-1.5">{{ t('acceptInvite.passwordLabel') }}</label>
                 <div class="relative">
-                  <input
+                  <Input
                     v-model="form.password"
                     :type="showPassword ? 'text' : 'password'"
                     :placeholder="t('acceptInvite.passwordPlaceholder')"
                     class="w-full px-3 py-2 pr-10 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
                   />
-                  <button
+                  <Button variant="unstyled" size="unstyled"
                     type="button"
                     class="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                     @click="showPassword = !showPassword"
                   >
                     <EyeOff v-if="showPassword" class="w-4 h-4" />
                     <Eye v-else class="w-4 h-4" />
-                  </button>
+                  </Button>
                 </div>
               </div>
               <div>
                 <label class="block text-sm text-muted-foreground mb-1.5">{{ t('acceptInvite.confirmPasswordLabel') }}</label>
                 <div class="relative">
-                  <input
+                  <Input
                     v-model="form.confirmPassword"
                     :type="showConfirmPassword ? 'text' : 'password'"
                     :placeholder="t('acceptInvite.confirmPasswordPlaceholder')"
                     class="w-full px-3 py-2 pr-10 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
                   />
-                  <button
+                  <Button variant="unstyled" size="unstyled"
                     type="button"
                     class="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                     @click="showConfirmPassword = !showConfirmPassword"
                   >
                     <EyeOff v-if="showConfirmPassword" class="w-4 h-4" />
                     <Eye v-else class="w-4 h-4" />
-                  </button>
+                  </Button>
                 </div>
               </div>
             </div>
@@ -220,14 +222,14 @@ async function handleAccept() {
           <p v-if="error" class="text-sm text-red-400">{{ error }}</p>
 
           <!-- Submit -->
-          <button
+          <Button variant="unstyled" size="unstyled"
             class="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
             :disabled="submitting"
             @click="handleAccept"
           >
             <Loader2 v-if="submitting" class="w-4 h-4 animate-spin" />
             {{ inviteInfo.already_registered ? t('acceptInvite.joinOrg') : t('acceptInvite.registerAndJoin') }}
-          </button>
+          </Button>
         </div>
 
         <p class="text-center text-xs text-muted-foreground">

@@ -7,11 +7,43 @@ from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.workspace_message import WorkspaceMessage
+from app.services.agent_output_sanitizer import strip_think_blocks
 
 logger = logging.getLogger(__name__)
 
 NO_REPLY_TOKEN = "NO_REPLY"
-MAX_COLLABORATION_DEPTH = 3
+_NO_REPLY_VARIANTS = frozenset({"no_reply", "no reply", "noreply"})
+_NO_REPLY_PREFIX_VARIANTS = ("no_", "no_r", "no_re", "no_rep", "no_repl", "no_reply")
+_NO_REPLY_STRIP_CHARS = " \t\r\n*_~.。！？!?,，;；:：…—-()[]{}<>\"'"
+_NO_REPLY_PREFIX_STRIP_CHARS = _NO_REPLY_STRIP_CHARS.replace("_", "")
+DEFAULT_COLLABORATION_DEPTH = 3
+ABSOLUTE_MAX_COLLABORATION_DEPTH = 20
+
+
+def visible_agent_content(sender_type: str, content: str) -> str:
+    if sender_type == "agent":
+        return strip_think_blocks(content)
+    return content
+
+
+def visible_message_content(message: WorkspaceMessage) -> str:
+    return visible_agent_content(message.sender_type, message.content)
+
+
+async def get_collaboration_depth_limit(db: AsyncSession, workspace_id: str) -> int:
+    """从 workspace 所属组织读取协作深度限制，查不到则回退默认值。"""
+    from app.models.organization import Organization
+    from app.models.workspace import Workspace
+
+    result = await db.execute(
+        select(Organization.max_collaboration_depth)
+        .join(Workspace, Workspace.org_id == Organization.id)
+        .where(Workspace.id == workspace_id)
+    )
+    value = result.scalar_one_or_none()
+    if value is None:
+        return DEFAULT_COLLABORATION_DEPTH
+    return min(value, ABSOLUTE_MAX_COLLABORATION_DEPTH)
 
 
 async def record_message(
@@ -26,19 +58,35 @@ async def record_message(
     target_instance_id: str | None = None,
     depth: int = 0,
     attachments: list[dict] | None = None,
+    conversation_id: str | None = None,
 ) -> WorkspaceMessage:
+    visible_content = visible_agent_content(sender_type, content)
+
     msg = WorkspaceMessage(
         workspace_id=workspace_id,
         sender_type=sender_type,
         sender_id=sender_id,
         sender_name=sender_name,
-        content=content,
+        content=visible_content,
         message_type=message_type,
         target_instance_id=target_instance_id,
         depth=depth,
         attachments=attachments,
+        conversation_id=conversation_id,
     )
     db.add(msg)
+
+    if conversation_id:
+        from app.models.conversation import Conversation
+
+        result = await db.execute(
+            select(Conversation).where(Conversation.id == conversation_id).limit(1)
+        )
+        conv = result.scalar_one_or_none()
+        if conv:
+            conv.last_message_at = func.now()
+            conv.last_message_preview = visible_content[:100] if visible_content else None
+
     await db.commit()
     await db.refresh(msg)
     return msg
@@ -48,15 +96,27 @@ async def get_recent_messages(
     db: AsyncSession,
     workspace_id: str,
     limit: int = 50,
+    conversation_id: str | None = None,
+    include_unscoped: bool = False,
 ) -> list[WorkspaceMessage]:
-    result = await db.execute(
+    stmt = (
         select(WorkspaceMessage)
         .where(
             WorkspaceMessage.workspace_id == workspace_id,
             WorkspaceMessage.deleted_at.is_(None),
         )
-        .order_by(WorkspaceMessage.created_at.desc())
-        .limit(limit)
+    )
+    if conversation_id and include_unscoped:
+        stmt = stmt.where(
+            or_(
+                WorkspaceMessage.conversation_id == conversation_id,
+                WorkspaceMessage.conversation_id.is_(None),
+            )
+        )
+    elif conversation_id:
+        stmt = stmt.where(WorkspaceMessage.conversation_id == conversation_id)
+    result = await db.execute(
+        stmt.order_by(WorkspaceMessage.created_at.desc()).limit(limit)
     )
     messages = list(result.scalars().all())
     messages.reverse()
@@ -173,50 +233,96 @@ def build_context_prompt(
     members: list[dict],
     recent_messages: list[WorkspaceMessage],
     workspace_id: str = "",
+    *,
+    reachable_names: list[str] | None = None,
 ) -> str:
-    """Build the system prompt context injected into each Agent call.
+    """Build the system prompt context injected into each Agent call."""
+    if reachable_names is not None:
+        reachable_set = set(reachable_names)
+        members = [m for m in members if m['name'] in reachable_set or m.get('type') == 'User']
+        reachable_section = "" if reachable_names else "\n你当前无法联系任何成员。\n"
+    else:
+        reachable_section = ""
 
-    Filters out the current agent's own messages (session already has them).
-    """
     members_text = "\n".join(
         f"- [{m['type']}] {m['name']}" for m in members
     )
 
-    other_messages = [
-        m for m in recent_messages if m.sender_id != current_instance_id
-    ]
+    all_messages = recent_messages
 
-    if other_messages:
+    if all_messages:
         msg_lines = []
-        for m in other_messages[-30:]:
+        for m in all_messages[-30:]:
             ts = m.created_at.strftime("%H:%M") if isinstance(m.created_at, datetime) else ""
-            line = f"[{ts} {m.sender_name}]: {m.content}"
+            content = visible_message_content(m)
+            line = f"[{ts} {m.sender_name}]: {content}"
             if m.attachments:
-                for att in m.attachments:
-                    size_kb = att.get("size", 0) // 1024
-                    line += f"\n  [附件: {att.get('name', '?')} ({size_kb}KB)]"
+                for idx, att in enumerate(m.attachments, 1):
+                    size = att.get("size", 0)
+                    if size >= 1024 * 1024:
+                        size_str = f"{size / (1024 * 1024):.1f}MB"
+                    elif size >= 1024:
+                        size_str = f"{size / 1024:.0f}KB"
+                    else:
+                        size_str = f"{size}B"
+                    fid = att.get("id", "")
+                    line += f"\n  [附件{idx}: {att.get('name', '?')} ({size_str}), file_id: {fid}]"
             msg_lines.append(line)
         messages_text = "\n".join(msg_lines)
     else:
-        messages_text = "(no recent messages from other members)"
+        messages_text = "(no recent messages)"
 
     return f"""你是赛博办公室"{workspace_name}"中的 AI 员工"{agent_display_name}"。
 
 办公室成员:
 {members_text}
-
-近期对话（来自其他成员，你自己的历史已在对话记录中）:
+{reachable_section}
+近期对话:
 {messages_text}
 
 ---
 你可以直接回复参与讨论。如果当前话题与你无关或你没有要补充的，回复 NO_REPLY 即可。
-注意：办公室成员列表仅供了解同事身份，不代表你可以和所有人通讯。办公室使用过道系统连接工位，你只能联系通过过道与你相连的成员。
-如需确认你能联系谁，必须调用 nodeskclaw_topology 工具（action: get_reachable, my_instance_id: 你的实例 ID）。未经工具确认，不要声称可以联系任何人。
-当你需要联系其他成员（AI 员工或人类）时，在回复中直接 @{{name}} 即可（如"@test-2 你好"），系统会自动转发。不要用 send 命令。
-办公室设有中央黑板（get_reachable 中 node_type=blackboard 的节点），通过 nodeskclaw_blackboard 工具读写黑板内容，不要 @提及黑板。
+如果需要静默或不参与，只能精确回复 NO_REPLY，禁止回复 NO、no、Yes/No 这类短答。
+当你回复或联系其他成员（AI 员工或人类）时，在回复中直接 @{{name}} 即可（如"@test-2 你好"），系统会自动转发。收到其他成员的消息后回复时，也请 @提及对方，这样系统才能正确路由你的回复。不要用 send 命令。
+办公室设有中央黑板，通过 nodeskclaw_blackboard 工具读写黑板内容，不要 @提及黑板。
+如需回顾更早的对话记录，使用 nodeskclaw_chat_history 工具搜索历史消息。
+
+重要输出规则：
+- 只输出最终回复内容，禁止输出内部思考过程、推理步骤或行动计划
+- 禁止出现 "Let me..." "I need to..." "First I will..." 等自述式推理文本
+- 调用工具时直接调用，不要在回复中描述你正在做什么或打算做什么
+- 始终使用中文回复
+- 即使被要求简短回复，也不要只回复 NO、OK、Yes 这类英文短词
 """
 
 
 def is_no_reply(text: str) -> bool:
-    """Check if text matches the NO_REPLY silent token."""
-    return text.strip().upper() == NO_REPLY_TOKEN
+    """Check if text is a silent-skip response that should not be shown to users.
+
+    Matches exact tokens ("NO_REPLY", "no reply", "noreply") and responses where
+    the agent prepends filler text before the token (e.g. "这不是给我的\\nNO_REPLY").
+    Bare "NO" / "no" is intentionally preserved as visible content.
+    """
+    def normalize_token(value: str, *, keep_underscore: bool = False) -> str:
+        strip_chars = _NO_REPLY_PREFIX_STRIP_CHARS if keep_underscore else _NO_REPLY_STRIP_CHARS
+        return value.strip().lower().strip(strip_chars)
+
+    cleaned = strip_think_blocks(text)
+    normalized = normalize_token(cleaned)
+    normalized_prefix = normalize_token(cleaned, keep_underscore=True)
+    if normalized in _NO_REPLY_VARIANTS or normalized_prefix in _NO_REPLY_PREFIX_VARIANTS:
+        return True
+    lines = [
+        (
+            normalize_token(ln),
+            normalize_token(ln, keep_underscore=True),
+        )
+        for ln in cleaned.strip().splitlines()
+        if ln.strip()
+    ]
+    if lines and (
+        lines[-1][0] in _NO_REPLY_VARIANTS
+        or lines[-1][1] in _NO_REPLY_PREFIX_VARIANTS
+    ):
+        return True
+    return False

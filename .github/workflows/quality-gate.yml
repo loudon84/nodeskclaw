@@ -1,0 +1,67 @@
+name: 质量门禁
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  backend:
+    name: 后端 Ruff / Pytest
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgresql+asyncpg://nodeskclaw:nodeskclaw@127.0.0.1:5432/nodeskclaw_test
+      JWT_SECRET: ci-jwt-secret-not-for-production
+      ENCRYPTION_KEY: ci-encryption-key-not-for-prod
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install backend dependencies
+        working-directory: nodeskclaw-backend
+        run: uv sync --group dev
+
+      - name: Ruff
+        working-directory: nodeskclaw-backend
+        run: uv run ruff check app tests
+
+      - name: Pytest
+        working-directory: nodeskclaw-backend
+        run: uv run pytest
+
+  portal:
+    name: Portal Build / Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: nodeskclaw-portal/package-lock.json
+
+      - name: Install portal dependencies
+        working-directory: nodeskclaw-portal
+        run: npm ci
+
+      - name: Build portal
+        working-directory: nodeskclaw-portal
+        run: npm run build
+
+      - name: Test portal
+        working-directory: nodeskclaw-portal
+        run: npm test

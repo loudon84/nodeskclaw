@@ -12,6 +12,8 @@ const STATUS_MAP: Record<string, Omit<StatusDisplay, 'key'>> = {
   preparing:   { color: 'text-yellow-400', bgColor: 'bg-yellow-400', pulse: true },
   restarting:  { color: 'text-yellow-400', bgColor: 'bg-yellow-400', pulse: true },
   updating:    { color: 'text-blue-400',   bgColor: 'bg-blue-400',   pulse: true },
+  rebuilding:  { color: 'text-amber-400',  bgColor: 'bg-amber-400',  pulse: true },
+  restoring:   { color: 'text-amber-400',  bgColor: 'bg-amber-400',  pulse: true },
   learning:    { color: 'text-blue-400',   bgColor: 'bg-blue-400',   pulse: true },
   error:       { color: 'text-red-400',    bgColor: 'bg-red-400',    pulse: false },
   leaving:     { color: 'text-gray-400',   bgColor: 'bg-gray-400',   pulse: true },

@@ -123,8 +123,7 @@ def _local_upload(file_content: bytes, filename: str, _content_type: str, worksp
 def _local_presigned_url(key: str, expires: int = 3600) -> str:
     expires_at = int(time.time()) + expires
     sig = _sign_url(key, expires_at)
-    base_url = settings.AGENT_API_BASE_URL.rstrip("/")
-    return f"{base_url}/files/local/{key}?expires={expires_at}&sig={sig}"
+    return f"/api/v1/files/local/{key}?expires={expires_at}&sig={sig}"
 
 
 def _local_download(key: str) -> bytes:
@@ -165,3 +164,69 @@ async def delete_file(key: str) -> None:
         await asyncio.to_thread(_s3_delete, key)
     else:
         await asyncio.to_thread(_local_delete, key)
+
+
+# ── Raw key API (for backup storage) ─────────────────────
+
+def _s3_upload_raw(key: str, data: bytes) -> None:
+    client = _get_s3_client()
+    prefix = settings.S3_KEY_PREFIX.strip("/")
+    full_key = f"{prefix}/{key}" if prefix else key
+    client.put_object(Bucket=settings.S3_BUCKET, Key=full_key, Body=data)
+
+
+def _local_upload_raw(key: str, data: bytes) -> None:
+    file_path = _get_local_dir() / key
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    file_path.write_bytes(data)
+
+
+async def upload_raw(key: str, data: bytes) -> None:
+    """Upload raw bytes to a specific storage key."""
+    if _use_s3():
+        await asyncio.to_thread(_s3_upload_raw, key, data)
+    else:
+        await asyncio.to_thread(_local_upload_raw, key, data)
+
+
+def _s3_download_raw(key: str) -> bytes:
+    client = _get_s3_client()
+    prefix = settings.S3_KEY_PREFIX.strip("/")
+    full_key = f"{prefix}/{key}" if prefix else key
+    resp = client.get_object(Bucket=settings.S3_BUCKET, Key=full_key)
+    return resp["Body"].read()
+
+
+def _local_download_raw(key: str) -> bytes:
+    file_path = _get_local_dir() / key
+    return file_path.read_bytes()
+
+
+async def download_raw(key: str) -> bytes:
+    """Download raw bytes from a specific storage key."""
+    if _use_s3():
+        return await asyncio.to_thread(_s3_download_raw, key)
+    return await asyncio.to_thread(_local_download_raw, key)
+
+
+def _s3_delete_raw(key: str) -> None:
+    client = _get_s3_client()
+    prefix = settings.S3_KEY_PREFIX.strip("/")
+    full_key = f"{prefix}/{key}" if prefix else key
+    client.delete_object(Bucket=settings.S3_BUCKET, Key=full_key)
+
+
+def _local_delete_raw(key: str) -> None:
+    file_path = _get_local_dir() / key
+    try:
+        file_path.unlink()
+    except FileNotFoundError:
+        pass
+
+
+async def delete_raw(key: str) -> None:
+    """Delete an object by specific storage key."""
+    if _use_s3():
+        await asyncio.to_thread(_s3_delete_raw, key)
+    else:
+        await asyncio.to_thread(_local_delete_raw, key)

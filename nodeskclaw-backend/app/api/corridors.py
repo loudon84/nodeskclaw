@@ -33,6 +33,7 @@ from app.schemas.corridor import (
 from app.services import corridor_router
 from app.services import workspace_member_service as wm_service
 from app.services.runtime import node_card as node_card_service
+from app.services.workspace_actor_access import require_workspace_actor_member
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -154,6 +155,9 @@ async def create_corridor_hex(
 
     await corridor_router.auto_connect_hex(workspace_id, body.hex_q, body.hex_r, user.id if user else None, db)
 
+    from app.services import conversation_service
+    await conversation_service.sync_conversations_and_notify_topology(workspace_id, db)
+
     await db.commit()
     await db.refresh(ch)
     actor_type, actor_id = _actor(org_ctx)
@@ -223,7 +227,9 @@ async def update_corridor_hex(
     if not ch:
         raise _corridor_http_error(404, 40480, "errors.corridor.hex_not_found", "走廊格子不存在")
 
+    display_name_changed = False
     if body.display_name is not None:
+        display_name_changed = ch.display_name != body.display_name
         ch.display_name = body.display_name
 
     position_changed = False
@@ -255,6 +261,11 @@ async def update_corridor_hex(
         await corridor_router.auto_connect_hex(workspace_id, ch.hex_q, ch.hex_r, ch.created_by, db)
         await db.commit()
 
+    if position_changed or display_name_changed:
+        from app.services import conversation_service
+        await conversation_service.sync_conversations_and_notify_topology(workspace_id, db)
+        await db.commit()
+
     actor_type, actor_id = _actor(org_ctx)
     event_data: dict = {"hex_id": ch.id, "display_name": ch.display_name}
     if position_changed:
@@ -282,6 +293,7 @@ async def delete_corridor_hex(
     user, org = org_ctx
     await _check_workspace(workspace_id, org, db)
     await wm_service.check_workspace_access(workspace_id, user, "edit_topology", db)
+
     result = await db.execute(
         select(CorridorHex).where(
             CorridorHex.id == hex_id,
@@ -290,8 +302,15 @@ async def delete_corridor_hex(
         )
     )
     ch = result.scalar_one_or_none()
-    if not ch:
+
+    card = await node_card_service.get_node_card(db, node_id=hex_id, workspace_id=workspace_id)
+
+    if not ch and not card:
         raise _corridor_http_error(404, 40480, "errors.corridor.hex_not_found", "走廊格子不存在")
+
+    hex_q = card.hex_q if card else ch.hex_q
+    hex_r = card.hex_r if card else ch.hex_r
+    deleted_id = hex_id
 
     conns = await db.execute(
         select(HexConnection).where(
@@ -299,22 +318,28 @@ async def delete_corridor_hex(
             HexConnection.auto_created.is_(True),
             not_deleted(HexConnection),
             (
-                ((HexConnection.hex_a_q == ch.hex_q) & (HexConnection.hex_a_r == ch.hex_r))
-                | ((HexConnection.hex_b_q == ch.hex_q) & (HexConnection.hex_b_r == ch.hex_r))
+                ((HexConnection.hex_a_q == hex_q) & (HexConnection.hex_a_r == hex_r))
+                | ((HexConnection.hex_b_q == hex_q) & (HexConnection.hex_b_r == hex_r))
             ),
         )
     )
     for conn in conns.scalars().all():
         conn.soft_delete()
 
-    ch.soft_delete()
-    await node_card_service.soft_delete_node_card(db, node_id=ch.id, workspace_id=workspace_id)
+    if ch:
+        ch.soft_delete()
+    if card:
+        card.soft_delete()
+
+    from app.services import conversation_service
+    await conversation_service.sync_conversations_and_notify_topology(workspace_id, db)
+
     await db.commit()
     actor_type, actor_id = _actor(org_ctx)
-    broadcast_event(workspace_id, "corridor:hex_removed", {"hex_id": ch.id})
+    broadcast_event(workspace_id, "corridor:hex_removed", {"hex_id": deleted_id})
     await hooks.emit(
         "topology_change", db=db, workspace_id=workspace_id,
-        action="corridor_hex_deleted", target_type="corridor_hex", target_id=ch.id,
+        action="corridor_hex_deleted", target_type="corridor_hex", target_id=deleted_id,
         actor_type=actor_type, actor_id=actor_id,
     )
     return _ok(message="deleted")
@@ -357,6 +382,10 @@ async def create_connection(
         created_by=user.id if user else None,
     )
     db.add(conn)
+
+    from app.services import conversation_service
+    await conversation_service.sync_conversations_and_notify_topology(workspace_id, db)
+
     await db.commit()
     await db.refresh(conn)
     actor_type, actor_id = _actor(org_ctx)
@@ -423,6 +452,10 @@ async def delete_connection(
     if not conn:
         raise _corridor_http_error(404, 40481, "errors.corridor.connection_not_found", "连接不存在")
     conn.soft_delete()
+
+    from app.services import conversation_service
+    await conversation_service.sync_conversations_and_notify_topology(workspace_id, db)
+
     await db.commit()
     actor_type, actor_id = _actor(org_ctx)
     broadcast_event(workspace_id, "connection:removed", {"conn_id": conn.id})
@@ -485,6 +518,9 @@ async def create_human_hex(
             "channel_config": body.channel_config,
         },
     )
+
+    from app.services import conversation_service
+    await conversation_service.sync_conversations_and_notify_topology(workspace_id, db)
 
     await db.commit()
     broadcast_event(workspace_id, "human:hex_placed", {"hex_id": hh.id, "user_id": body.user_id, "hex_q": hh.hex_q, "hex_r": hh.hex_r, "display_name": hh.display_name})
@@ -572,6 +608,9 @@ async def update_human_hex(
             workspace_id, hh.hex_q, hh.hex_r, user.id if user else None, db,
         )
         await db.commit()
+    from app.services import conversation_service
+    await conversation_service.sync_conversations_and_notify_topology(workspace_id, db)
+    await db.commit()
     actor_type, actor_id = _actor(org_ctx)
     broadcast_event(workspace_id, "human:hex_updated", {"hex_id": hex_id, "hex_q": hh.hex_q, "hex_r": hh.hex_r, "display_name": hh.display_name, "display_color": hh.display_color})
     await hooks.emit(
@@ -605,10 +644,20 @@ async def delete_human_hex(
         )
     )
     hh = result.scalar_one_or_none()
-    if not hh:
+
+    card = await node_card_service.get_node_card(db, node_id=hex_id, workspace_id=workspace_id)
+
+    if not hh and not card:
         raise _corridor_http_error(404, 40483, "errors.corridor.human_hex_not_found", "人工节点不存在")
-    hh.soft_delete()
-    await node_card_service.soft_delete_node_card(db, node_id=hh.id, workspace_id=workspace_id)
+
+    if hh:
+        hh.soft_delete()
+    if card:
+        card.soft_delete()
+
+    from app.services import conversation_service
+    await conversation_service.sync_conversations_and_notify_topology(workspace_id, db)
+
     await db.commit()
     actor_type, actor_id = _actor(org_ctx)
     broadcast_event(workspace_id, "human:hex_removed", {"hex_id": hex_id})
@@ -629,7 +678,7 @@ async def get_topology(
 ):
     user, org = org_ctx
     await _check_workspace(workspace_id, org, db)
-    await wm_service.check_workspace_member(workspace_id, user, db)
+    await require_workspace_actor_member(workspace_id, user, db)
     topo = await corridor_router.get_topology(workspace_id, db)
     return _ok(TopologyInfo(
         nodes=[
@@ -658,7 +707,7 @@ async def get_reachable_from_instance(
     """Return agents/humans reachable from the given instance via corridor traversal."""
     user, org = org_ctx
     await _check_workspace(workspace_id, org, db)
-    await wm_service.check_workspace_member(workspace_id, user, db)
+    await require_workspace_actor_member(workspace_id, user, db)
     hex_pos = await corridor_router.get_agent_hex_in_workspace(instance_id, workspace_id, db)
     if hex_pos is None:
         return _ok({"reachable": []})
@@ -683,7 +732,7 @@ async def get_topology_health(
     """Return topology health: islands, single points of failure, message flow stats."""
     user, org = org_ctx
     await _check_workspace(workspace_id, org, db)
-    await wm_service.check_workspace_member(workspace_id, user, db)
+    await require_workspace_actor_member(workspace_id, user, db)
     islands = await corridor_router.detect_islands(workspace_id, db)
     spof = await corridor_router.detect_single_points_of_failure(workspace_id, db)
     flow = await corridor_router.get_message_flow_stats(workspace_id, db)
@@ -705,7 +754,7 @@ async def get_topology_message_flow(
     """Return message count per sender-receiver hex pair from workspace_messages."""
     user, org = org_ctx
     await _check_workspace(workspace_id, org, db)
-    await wm_service.check_workspace_member(workspace_id, user, db)
+    await require_workspace_actor_member(workspace_id, user, db)
     flow = await corridor_router.get_message_flow_stats(workspace_id, db)
     return _ok([
         {"sender_hex_key": p.sender_hex_key, "receiver_hex_key": p.receiver_hex_key, "count": p.count}

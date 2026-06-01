@@ -8,6 +8,7 @@ DeskClaw 部署制品 -- AI 经营伙伴的运行基础设施。包含 DeskClaw 
 nodeskclaw-artifacts/
 ├── common.sh                    # 公共构建函数（OCI 配置、日志、Docker 操作、参数解析）
 ├── build.sh                     # 统一镜像构建入口（./build.sh <engine> --version <ver>）
+├── verify.sh                    # 镜像集成验证脚本（./verify.sh <image:tag>）
 ├── openclaw-image/              # OpenClaw 工作引擎镜像
 │   ├── Dockerfile               # Base 镜像: node:22-bookworm-slim + npm 全局安装 openclaw
 │   ├── Dockerfile.security      # 安全层镜像: FROM base + COPY TypeScript 插件到 extensions/
@@ -15,13 +16,10 @@ nodeskclaw-artifacts/
 │   ├── init-container.sh        # Init Container 脚本（PVC 数据初始化 + 版本升级）
 │   ├── openclaw.json.template   # 配置模板，启动时 envsubst 替换占位符
 │   └── check-update.sh          # 版本检测脚本（查询 npm 最新稳定版、自动更新 Dockerfile）
-├── nanobot-image/               # Nanobot 轻量工作引擎镜像
-│   ├── Dockerfile               # Base 镜像: python:3.13-slim-bookworm + pip install nanobot-ai
-│   ├── Dockerfile.security      # 安全层镜像: FROM base + pip install 安全层 + startup wrapper
-│   ├── nanobot.yaml.template    # Nanobot 配置模板
-│   ├── docker-entrypoint.sh     # 容器入口脚本
-│   ├── check-update.sh          # 版本检测脚本（查询 PyPI 最新稳定版、自动更新 Dockerfile）
-│   └── README.md                # 构建说明
+├── hermes-image/                # Hermes 员工引擎镜像
+│   ├── Dockerfile               # Base 镜像: python:3.12-slim + 官方 Hermes release 构建
+│   ├── docker-entrypoint.sh     # 容器入口脚本（启动 Hermes gateway API server + tunnel bridge）
+│   └── python-constraints.txt   # Python 依赖约束
 ├── ingress-controller/          # Nginx Ingress Controller 部署清单
 │   ├── deploy.yaml              # 完整 K8s 资源（Namespace、RBAC、Deployment、Service）
 │   ├── tls-secret.yaml          # 通配符 TLS 证书 Secret 模板
@@ -63,7 +61,7 @@ cd nodeskclaw-artifacts
 
 # 单引擎（自动检测最新版）
 ./build.sh openclaw
-./build.sh nanobot
+./build.sh hermes
 
 # 指定版本
 ./build.sh openclaw --version 2026.3.13
@@ -76,7 +74,7 @@ cd nodeskclaw-artifacts
 
 ### 安全层镜像构建
 
-每个 Runtime 支持 `--with-security` 模式，在 base 镜像基础上追加安全层：
+OpenClaw 支持 `--with-security` 模式，在 base 镜像基础上追加安全层：
 
 ```bash
 cd nodeskclaw-artifacts
@@ -84,10 +82,6 @@ cd nodeskclaw-artifacts
 # OpenClaw: 先构建 base，再构建安全层
 ./build.sh openclaw --version 2026.3.13 --build-only
 ./build.sh openclaw --with-security --base-tag v2026.3.13 --build-only
-
-# Nanobot
-./build.sh nanobot --version 0.1.4 --build-only
-./build.sh nanobot --with-security --base-tag v0.1.4 --build-only
 ```
 
 安全层镜像 Tag 格式: `v{VERSION}-sec`（如 `v2026.2.26-sec`）。
@@ -107,12 +101,11 @@ cd nodeskclaw-artifacts
 
 ### 版本自动检测
 
-项目配置了 GitHub Actions 定时工作流（`.github/workflows/check-runtime-updates.yml`），每天自动检查三个工作引擎的最新版本：
+项目配置了 GitHub Actions 定时工作流（`.github/workflows/check-runtime-updates.yml`），每天自动检查 OpenClaw 的最新版本：
 
 | Runtime | 包来源 | 版本检查方式 |
 |---------|--------|-------------|
 | OpenClaw | npm `openclaw` | `npm view` 过滤 `YYYY.M.DD` 格式稳定版 |
-| Nanobot | PyPI `nanobot-ai` | PyPI JSON API 过滤 `X.Y.Z` 格式稳定版 |
 
 发现新版本时自动创建对应 PR，人工审核后合并。
 
@@ -138,9 +131,27 @@ cd nodeskclaw-artifacts
 | `OPENAI_API_KEY` | OpenAI 模型 Key，DeskClaw 原生读取 | 可选 |
 | `ANTHROPIC_API_KEY` | Anthropic 模型 Key | 可选 |
 
-### 构建产物检查清单
+### 镜像集成验证
 
-构建完成后验证：
+构建完成后使用 `verify.sh` 进行自动化集成验证：
+
+```bash
+cd nodeskclaw-artifacts
+./verify.sh <image:tag>
+```
+
+验证项：
+
+| 检查项 | 说明 |
+|--------|------|
+| 容器启动 | 容器能正常启动并保持 running |
+| 配置兼容性 | `openclaw.json` 可解析，`gateway.auth.token` 存在 |
+| 目录结构 | `/root/.openclaw` 及核心文件存在 |
+| CLI 参数 | `openclaw gateway --help` 包含 `--bind`、`--allow-unconfigured` |
+| 端口监听 | Gateway 18789 可达，SSE 9721 监听 |
+| 版本标记 | `/root/.openclaw-version` 非空 |
+
+手动快速验证：
 
 ```bash
 docker run --rm <image> node --version          # 输出 Node.js 版本

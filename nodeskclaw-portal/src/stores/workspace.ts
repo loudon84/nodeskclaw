@@ -2,6 +2,13 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import api from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
+import { resolveActiveConversationId } from '@/utils/workspaceConversations'
+import {
+  AgentThinkingStreamFilter,
+  stripAgentThinkingBlocks,
+  visibleAgentContent,
+} from '@/utils/agentOutput'
+import type { TemplateAgentPosition, TemplateLayoutCheckResult } from '@/utils/templateDeployLayout'
 
 export interface AgentBrief {
   instance_id: string
@@ -22,6 +29,7 @@ export interface WorkspaceListItem {
   description: string
   color: string
   icon: string
+  cluster_id?: string
   agent_count: number
   agents: AgentBrief[]
   created_at: string
@@ -35,6 +43,8 @@ export interface WorkspaceInfo {
   color: string
   icon: string
   created_by: string
+  cluster_id?: string
+  source_template_id?: string | null
   agent_count: number
   agents: AgentBrief[]
   created_at: string
@@ -46,16 +56,48 @@ export interface WorkspaceTemplateItem {
   name: string
   description: string
   is_preset: boolean
-  topology_snapshot?: {
-    nodes?: Array<{
-      node_type?: string
-      display_name?: string | null
-    }>
-  }
   org_id: string | null
   visibility: string
   created_by: string | null
   created_at: string | null
+  agent_count?: number
+  human_count?: number
+  agent_names?: string[]
+  can_deploy_from_template?: boolean
+  source_workspace_id?: string | null
+}
+
+export interface WorkspaceTemplateDetail extends WorkspaceTemplateItem {
+  topology_snapshot?: Record<string, unknown>
+  blackboard_snapshot?: Record<string, unknown>
+  gene_assignments?: unknown[]
+  agent_specs?: Array<Record<string, unknown>>
+  human_specs?: Array<Record<string, unknown>>
+  source_workspace_id?: string | null
+  can_deploy_from_template?: boolean
+}
+
+export interface ActiveWorkspaceDeployItem {
+  id: string
+  workspace_id: string | null
+  workspace_name: string
+  template_id: string
+  status: string
+  total_agents: number
+  completed_agents: number
+  failed_agents: number
+}
+
+export interface TemplateCollectPreview {
+  agent_specs: Array<Record<string, unknown>>
+  human_specs: Array<Record<string, unknown>>
+  collect_warnings: string[]
+  agent_count: number
+  human_count: number
+  topology_snapshot?: {
+    nodes: Array<{ hex_q: number; hex_r: number; node_type: string; display_name: string; entity_id: string | null }>
+    edges: Array<{ a_q: number; a_r: number; b_q: number; b_r: number; direction: string; auto_created: boolean }>
+  }
 }
 
 export interface TaskInfo {
@@ -71,9 +113,14 @@ export interface TaskInfo {
   estimated_value: number | null
   actual_value: number | null
   token_cost: number | null
+  prompt_token_cost: number | null
+  completion_token_cost: number | null
   blocker_reason: string | null
   completed_at: string | null
   archived_at: string | null
+  schedule_id: string | null
+  deadline: string | null
+  failure_reason: string | null
   created_at: string
   updated_at: string
 }
@@ -214,10 +261,23 @@ export interface GroupChatMessage {
   intent?: string
   priority?: string
   envelope_id?: string
+  conversation_id?: string
   error?: {
     code: string
     detail?: string
+    raw?: string
   }
+}
+
+export interface Conversation {
+  id: string
+  workspace_id: string
+  name: string
+  is_blackboard_group: boolean
+  member_node_ids: string[]
+  last_message_at: string | null
+  last_message_preview: string | null
+  created_at: string | null
 }
 
 export interface ChatHistoryQuery {
@@ -234,6 +294,9 @@ export interface ScheduleInfo {
   cron_expr: string
   message_template: string
   is_active: boolean
+  timeout_minutes: number
+  consecutive_failures: number
+  last_succeeded_at: string | null
   created_at: string | null
 }
 
@@ -359,8 +422,96 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     return res.data.data as WorkspaceTemplateItem[]
   }
 
-  async function saveAsTemplate(data: { name: string; description?: string; workspace_id: string; visibility?: string }) {
+  async function saveAsTemplate(data: { name: string; description?: string; workspace_id: string; visibility?: string; excluded_agent_indices?: number[]; excluded_corridor_coords?: number[][] }) {
     const res = await api.post('/workspaces/templates', data)
+    return res.data.data
+  }
+
+  async function deleteTemplate(templateId: string) {
+    const res = await api.delete(`/workspaces/templates/${templateId}`)
+    return res.data
+  }
+
+  async function updateTemplate(templateId: string, data: { workspace_id: string; name?: string; description?: string; excluded_agent_indices?: number[]; excluded_corridor_coords?: number[][] }) {
+    const res = await api.put(`/workspaces/templates/${templateId}`, data)
+    return res.data.data
+  }
+
+  async function findTemplateBySourceWorkspace(workspaceId: string): Promise<WorkspaceTemplateItem | null> {
+    const templates = await fetchWorkspaceTemplates('org_private')
+    const direct = templates.find(t => t.source_workspace_id === workspaceId)
+    if (direct) return direct
+    const ws = currentWorkspace.value
+    if (ws?.source_template_id) {
+      const fromTemplate = templates.find(t => t.id === ws.source_template_id)
+      if (fromTemplate) return fromTemplate
+    }
+    return null
+  }
+
+  const activeTemplateDeploys = ref<ActiveWorkspaceDeployItem[]>([])
+
+  async function refreshActiveTemplateDeploys() {
+    try {
+      activeTemplateDeploys.value = await fetchActiveWorkspaceDeploys()
+    } catch {
+      activeTemplateDeploys.value = []
+    }
+    return activeTemplateDeploys.value
+  }
+
+  async function fetchTemplateCollectPreview(workspaceId: string) {
+    const res = await api.get('/workspaces/templates/collect-preview', {
+      params: { workspace_id: workspaceId },
+    })
+    return res.data.data as TemplateCollectPreview
+  }
+
+  async function fetchWorkspaceTemplateDetail(id: string) {
+    const res = await api.get(`/workspaces/templates/${id}`)
+    return res.data.data as WorkspaceTemplateDetail
+  }
+
+  async function checkWorkspaceTemplateDeployLayout(
+    templateId: string,
+    selectedAgentIndices?: number[],
+    excludedCorridorCoords?: number[][],
+    agentPositions?: TemplateAgentPosition[],
+  ) {
+    const body: Record<string, unknown> = {}
+    if (selectedAgentIndices) body.selected_agent_indices = selectedAgentIndices
+    if (excludedCorridorCoords?.length) body.excluded_corridor_coords = excludedCorridorCoords
+    if (agentPositions) body.agent_positions = agentPositions
+    const res = await api.post(`/workspaces/templates/${templateId}/deploy/layout-check`, body)
+    return res.data.data as TemplateLayoutCheckResult
+  }
+
+  async function deployWorkspaceFromTemplate(
+    templateId: string,
+    workspaceName: string,
+    clusterId: string,
+    selectedAgentIndices?: number[],
+    excludedCorridorCoords?: number[][],
+    agentPositions?: TemplateAgentPosition[],
+  ) {
+    const body: Record<string, unknown> = {
+      workspace_name: workspaceName,
+      cluster_id: clusterId,
+    }
+    if (selectedAgentIndices) body.selected_agent_indices = selectedAgentIndices
+    if (excludedCorridorCoords?.length) body.excluded_corridor_coords = excludedCorridorCoords
+    if (agentPositions) body.agent_positions = agentPositions
+    const res = await api.post(`/workspaces/templates/${templateId}/deploy`, body)
+    return res.data.data as { workspace_deploy_id: string; workspace_id: string }
+  }
+
+  async function fetchActiveWorkspaceDeploys() {
+    const res = await api.get('/workspaces/deploys/active')
+    return res.data.data as ActiveWorkspaceDeployItem[]
+  }
+
+  async function fetchWorkspaceDeploy(deployId: string) {
+    const res = await api.get(`/workspaces/deploys/${deployId}`)
     return res.data.data
   }
 
@@ -388,27 +539,36 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     if (installGeneSlugs?.length) body.install_gene_slugs = installGeneSlugs
     const res = await api.post(`/workspaces/${workspaceId}/agents`, body)
     if (currentWorkspace.value?.id === workspaceId) {
-      await fetchWorkspace(workspaceId)
+      await refreshWorkspaceStructure(workspaceId)
     }
     return res.data.data
   }
 
   async function removeAgent(workspaceId: string, instanceId: string) {
-    await api.delete(`/workspaces/${workspaceId}/agents/${instanceId}`)
+    try {
+      await api.delete(`/workspaces/${workspaceId}/agents/${instanceId}`)
+    } catch (err: any) {
+      if (err?.response?.status !== 404) throw err
+    }
     if (currentWorkspace.value?.id === workspaceId) {
-      await fetchWorkspace(workspaceId)
+      await refreshWorkspaceStructure(workspaceId)
     }
   }
 
   async function updateAgent(workspaceId: string, instanceId: string, data: Record<string, unknown>) {
     await api.put(`/workspaces/${workspaceId}/agents/${instanceId}`, data)
     if (currentWorkspace.value?.id === workspaceId) {
-      await fetchWorkspace(workspaceId)
+      await refreshWorkspaceStructure(workspaceId)
     }
   }
 
   async function updateAgentThemeColor(workspaceId: string, instanceId: string, color: string) {
     await updateAgent(workspaceId, instanceId, { theme_color: color })
+  }
+
+  async function restartAllInstances(workspaceId: string) {
+    const res = await api.post(`/workspaces/${workspaceId}/restart-all-instances`)
+    return res.data.data as { total: number; succeeded: number; failed: number; skipped: number; details: unknown[] }
   }
 
   // ── Blackboard ────────────────────────────────────
@@ -513,14 +673,14 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   }
 
   async function createSchedule(workspaceId: string, data: {
-    name: string; cron_expr: string; message_template: string; is_active?: boolean
+    name: string; cron_expr: string; message_template: string; is_active?: boolean; timeout_minutes?: number
   }) {
     await api.post(`/workspaces/${workspaceId}/schedules`, data)
     await fetchSchedules(workspaceId)
   }
 
   async function updateSchedule(workspaceId: string, scheduleId: string, data: {
-    name?: string; cron_expr?: string; message_template?: string; is_active?: boolean
+    name?: string; cron_expr?: string; message_template?: string; is_active?: boolean; timeout_minutes?: number
   }) {
     await api.put(`/workspaces/${workspaceId}/schedules/${scheduleId}`, data)
     await fetchSchedules(workspaceId)
@@ -548,6 +708,16 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     return res.data.data as Record<string, unknown>
   }
 
+  async function fetchAgentPerformance(workspaceId: string, days = 30) {
+    const res = await api.get(`/workspaces/${workspaceId}/performance/agents`, { params: { days } })
+    return res.data.data as Record<string, unknown>
+  }
+
+  async function fetchGlobalAgentPerformance(days = 30) {
+    const res = await api.get('/users/me/agent-performance', { params: { days } })
+    return res.data.data as Record<string, unknown>
+  }
+
   // ── Members ───────────────────────────────────────
 
   async function fetchMembers(workspaceId: string) {
@@ -566,6 +736,8 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   const typingAgents = ref<Map<string, string>>(new Map())
   const unreadCount = ref(0)
   const chatVisible = ref(false)
+  const conversations = ref<Conversation[]>([])
+  const activeConversationId = ref<string>('')
 
   function setChatVisible(visible: boolean) {
     chatVisible.value = visible
@@ -576,23 +748,49 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     if (!chatVisible.value) unreadCount.value++
   }
 
-  const unreadPostCount = ref(0)
-  const postsTabVisible = ref(false)
-
-  function setPostsTabVisible(visible: boolean) {
-    postsTabVisible.value = visible
-    if (visible) unreadPostCount.value = 0
-  }
-
-  function _incrementUnreadPosts() {
-    if (!postsTabVisible.value) unreadPostCount.value++
-  }
-
-  async function fetchUnreadPostCount(workspaceId: string) {
+  async function fetchConversations(workspaceId: string) {
     try {
-      const res = await api.get(`/workspaces/${workspaceId}/blackboard/unread-count`)
-      unreadPostCount.value = res.data.data?.count ?? 0
-    } catch { /* ignore */ }
+      const res = await api.get(`/workspaces/${workspaceId}/conversations`)
+      conversations.value = ((res.data.data || []) as Conversation[]).map((conv) => ({
+        ...conv,
+        last_message_preview: conv.last_message_preview ? stripAgentThinkingBlocks(conv.last_message_preview) : conv.last_message_preview,
+      }))
+      activeConversationId.value = resolveActiveConversationId(conversations.value, activeConversationId.value)
+    } catch (e) {
+      console.error('fetchConversations error:', e)
+    }
+  }
+
+  async function refreshWorkspaceStructure(workspaceId: string) {
+    await Promise.all([
+      fetchWorkspace(workspaceId),
+      fetchTopology(workspaceId),
+      fetchConversations(workspaceId),
+    ])
+    activeConversationId.value = resolveActiveConversationId(conversations.value, activeConversationId.value)
+  }
+
+  async function fetchConversationMessages(workspaceId: string, conversationId: string, limit = 50): Promise<GroupChatMessage[]> {
+    try {
+      const res = await api.get(`/workspaces/${workspaceId}/conversations/${conversationId}/messages`, {
+        params: { limit },
+      })
+      const raw = res.data.data || []
+      return raw.map((m: Record<string, unknown>) => ({
+        id: m.id as string,
+        sender_type: m.sender_type as 'user' | 'agent' | 'system',
+        sender_id: m.sender_id as string,
+        sender_name: m.sender_name as string,
+        content: visibleAgentContent(m.sender_type as string, m.content as string),
+        message_type: m.message_type as string,
+        created_at: m.created_at as string,
+        conversation_id: m.conversation_id as string | undefined,
+        attachments: (m.attachments as FileAttachment[]) || undefined,
+      }))
+    } catch (e) {
+      console.error('fetchConversationMessages error:', e)
+      throw e
+    }
   }
 
   async function fetchChatHistory(workspaceId: string, query?: ChatHistoryQuery) {
@@ -608,9 +806,10 @@ export const useWorkspaceStore = defineStore('workspace', () => {
         sender_type: m.sender_type as 'user' | 'agent' | 'system',
         sender_id: m.sender_id as string,
         sender_name: m.sender_name as string,
-        content: m.content as string,
+        content: visibleAgentContent(m.sender_type as string, m.content as string),
         message_type: m.message_type as string,
         created_at: m.created_at as string,
+        conversation_id: m.conversation_id as string | undefined,
         attachments: (m.attachments as FileAttachment[]) || undefined,
       }))
     } catch (e) {
@@ -625,6 +824,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     mentions?: string[],
     fileIds?: string[],
     attachments?: FileAttachment[],
+    conversationId?: string,
   ) {
     if (chatLoading.value) return
     chatLoading.value = true
@@ -639,6 +839,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       message_type: 'chat',
       created_at: new Date().toISOString(),
       attachments: attachments || undefined,
+      conversation_id: conversationId || activeConversationId.value || undefined,
     }
     chatMessages.value.push(userMsg)
 
@@ -646,6 +847,8 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       const body: Record<string, unknown> = { message }
       if (mentions && mentions.length > 0) body.mentions = mentions
       if (fileIds && fileIds.length > 0) body.file_ids = fileIds
+      const convId = conversationId || activeConversationId.value
+      if (convId) body.conversation_id = convId
       await api.post(`/workspaces/${workspaceId}/chat`, body)
     } catch (e) {
       console.error('sendWorkspaceMessage error:', e)
@@ -665,13 +868,23 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   }
 
   async function clearChatHistory(workspaceId: string) {
-    await api.post(`/workspaces/${workspaceId}/messages/clear`)
+    const res = await api.post(`/workspaces/${workspaceId}/messages/clear`)
     chatMessages.value = []
     typingAgents.value.clear()
     unreadCount.value = 0
+    return res.data.data as {
+      cleared_count: number
+      runtime_context?: {
+        total: number
+        cleared_count: number
+        skipped_count: number
+        failed_count: number
+      }
+    }
   }
 
   const _typingTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  const _streamFilters = new Map<string, AgentThinkingStreamFilter>()
 
   function _handleAgentTyping(data: Record<string, unknown>) {
     const instanceId = data.instance_id as string
@@ -685,19 +898,55 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     }, 45_000))
   }
 
+  function _streamKey(data: Record<string, unknown>) {
+    return {
+      conversationId: data.conversation_id as string | undefined,
+      traceId: data.trace_id as string | undefined,
+    }
+  }
+
+  function _streamFilterKey(instanceId: string, data: Record<string, unknown>) {
+    const { conversationId, traceId } = _streamKey(data)
+    return `${instanceId}:${conversationId || ''}:${traceId || ''}`
+  }
+
+  function _getStreamFilter(instanceId: string, data: Record<string, unknown>) {
+    const key = _streamFilterKey(instanceId, data)
+    if (!_streamFilters.has(key)) _streamFilters.set(key, new AgentThinkingStreamFilter())
+    return _streamFilters.get(key)!
+  }
+
+  function _findStreamingMessage(instanceId: string, data: Record<string, unknown>) {
+    const { conversationId, traceId } = _streamKey(data)
+    return chatMessages.value.find((message) => {
+      if (message.sender_id !== instanceId || !message.streaming) return false
+      if (conversationId) return message.conversation_id === conversationId
+      if (traceId) return message.trace_id === traceId
+      return !message.conversation_id && !message.trace_id
+    })
+  }
+
+  function _applyStreamMetadata(message: GroupChatMessage, data: Record<string, unknown>) {
+    if (data.conversation_id) message.conversation_id = data.conversation_id as string
+    if (data.trace_id) message.trace_id = data.trace_id as string
+    if (data.causation_id) message.causation_id = data.causation_id as string
+    if (data.envelope_id) message.envelope_id = data.envelope_id as string
+  }
+
   function _handleAgentChunk(data: Record<string, unknown>) {
     const instanceId = data.instance_id as string
     const agentName = data.agent_name as string
-    const content = data.content as string
 
     typingAgents.value.delete(instanceId)
     _clearTypingTimer(instanceId)
 
-    const existing = chatMessages.value.find(
-      (m) => m.sender_id === instanceId && m.streaming,
-    )
+    const content = _getStreamFilter(instanceId, data).feed(data.content as string)
+    if (!content) return
+
+    const existing = _findStreamingMessage(instanceId, data)
     if (existing) {
       existing.content += content
+      _applyStreamMetadata(existing, data)
     } else {
       chatMessages.value.push({
         id: (data.envelope_id as string) || `stream-${instanceId}-${Date.now()}`,
@@ -711,6 +960,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
         trace_id: data.trace_id as string | undefined,
         causation_id: data.causation_id as string | undefined,
         envelope_id: data.envelope_id as string | undefined,
+        conversation_id: data.conversation_id as string | undefined,
       })
       _incrementUnread()
     }
@@ -726,12 +976,32 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     typingAgents.value.delete(instanceId)
     _clearTypingTimer(instanceId)
 
-    const streaming = chatMessages.value.find(
-      (m) => m.sender_id === instanceId && m.streaming,
-    )
+    const filterKey = _streamFilterKey(instanceId, data)
+    const streamTail = _streamFilters.get(filterKey)?.flush() || ''
+    _streamFilters.delete(filterKey)
+
+    const streaming = _findStreamingMessage(instanceId, data)
+    const fullContent = data.full_content as string | undefined
+    const finalContent = fullContent ? stripAgentThinkingBlocks(fullContent) : streamTail
     if (streaming) {
       streaming.streaming = false
-      streaming.content = (data.full_content as string) || streaming.content
+      streaming.content = finalContent || streaming.content
+      _applyStreamMetadata(streaming, data)
+    } else if (finalContent) {
+      chatMessages.value.push({
+        id: (data.envelope_id as string) || `done-${instanceId}-${Date.now()}`,
+        sender_type: 'agent',
+        sender_id: instanceId,
+        sender_name: (data.agent_name as string) || 'Agent',
+        content: finalContent,
+        message_type: 'chat',
+        created_at: new Date().toISOString(),
+        trace_id: data.trace_id as string | undefined,
+        causation_id: data.causation_id as string | undefined,
+        envelope_id: data.envelope_id as string | undefined,
+        conversation_id: data.conversation_id as string | undefined,
+      })
+      _incrementUnread()
     }
   }
 
@@ -740,15 +1010,22 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     const agentName = data.agent_name as string
     const errorCode = (data.error as string) || 'unknown'
     const errorDetail = (data.error_detail as string) || undefined
+    const errorRaw = (data.error_raw as string) || undefined
     typingAgents.value.delete(instanceId)
     _clearTypingTimer(instanceId)
 
-    const streaming = chatMessages.value.find(
-      (m) => m.sender_id === instanceId && m.streaming,
-    )
+    const errorObj: GroupChatMessage['error'] = {
+      code: errorCode,
+      detail: errorDetail,
+      raw: errorRaw,
+    }
+
+    const streaming = _findStreamingMessage(instanceId, data)
+    _streamFilters.delete(_streamFilterKey(instanceId, data))
     if (streaming) {
       streaming.streaming = false
-      streaming.error = { code: errorCode, detail: errorDetail }
+      streaming.error = errorObj
+      _applyStreamMetadata(streaming, data)
     } else {
       chatMessages.value.push({
         id: `error-${instanceId}-${Date.now()}`,
@@ -758,7 +1035,8 @@ export const useWorkspaceStore = defineStore('workspace', () => {
         content: '',
         message_type: 'chat',
         created_at: new Date().toISOString(),
-        error: { code: errorCode, detail: errorDetail },
+        error: errorObj,
+        conversation_id: data.conversation_id as string | undefined,
       })
     }
   }
@@ -766,7 +1044,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   function _handleAgentCollaboration(data: Record<string, unknown>) {
     const agentName = data.agent_name as string
     const instanceId = data.instance_id as string
-    const content = data.content as string
+    const content = stripAgentThinkingBlocks(data.content as string)
     const traceId = data.trace_id as string | undefined
     const intent = data.intent as string | undefined
     const priority = data.priority as string | undefined
@@ -776,17 +1054,17 @@ export const useWorkspaceStore = defineStore('workspace', () => {
 
     if (_isDuplicateMessage(msgId)) return
 
-    const existingStreaming = chatMessages.value.find(
-      (m) => m.sender_id === instanceId && m.streaming,
-    )
+    const existingStreaming = _findStreamingMessage(instanceId, data)
     if (existingStreaming) {
       existingStreaming.streaming = false
       existingStreaming.message_type = 'collaboration'
       existingStreaming.content = content
+      _streamFilters.delete(_streamFilterKey(instanceId, data))
       existingStreaming.id = msgId
       existingStreaming.intent = intent
       existingStreaming.priority = priority
       existingStreaming.envelope_id = data.envelope_id as string | undefined
+      _applyStreamMetadata(existingStreaming, data)
       return
     }
 
@@ -803,6 +1081,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       intent,
       priority,
       envelope_id: data.envelope_id as string | undefined,
+      conversation_id: data.conversation_id as string | undefined,
     })
     _incrementUnread()
   }
@@ -810,15 +1089,19 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   function _handleSystemWelcome(data: Record<string, unknown>) {
     const agentName = data.agent_name as string
     const content = data.content as string
+    const msgId = (data.id as string) || `sys-${Date.now()}`
+
+    if (chatMessages.value.some((message) => message.id === msgId)) return
 
     chatMessages.value.push({
-      id: `sys-${Date.now()}`,
+      id: msgId,
       sender_type: 'system',
-      sender_id: 'system',
-      sender_name: 'System',
+      sender_id: (data.sender_id as string) || 'system',
+      sender_name: (data.sender_name as string) || 'System',
       content: content || `${agentName} 已加入办公室`,
-      message_type: 'system',
-      created_at: new Date().toISOString(),
+      message_type: (data.message_type as string) || 'system',
+      created_at: (data.created_at as string) || new Date().toISOString(),
+      conversation_id: data.conversation_id as string | undefined,
     })
     _incrementUnread()
   }
@@ -829,6 +1112,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   let externalCallback: ChatSSECallback | null = null
   let _reconnectAttempts = 0
   let _reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  let _structureRefreshTimer: ReturnType<typeof setTimeout> | null = null
   let _lastEventId = ''
   let _connectGeneration = 0
   const _recentMessageIds = new Set<string>()
@@ -850,6 +1134,34 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     const max = 30000
     const delay = Math.min(base * Math.pow(2, _reconnectAttempts), max)
     return delay + Math.random() * 500
+  }
+
+  function scheduleWorkspaceStructureRefresh(workspaceId: string) {
+    if (_structureRefreshTimer) clearTimeout(_structureRefreshTimer)
+    _structureRefreshTimer = setTimeout(() => {
+      _structureRefreshTimer = null
+      void refreshWorkspaceStructure(workspaceId)
+    }, 150)
+  }
+
+  async function _syncActiveConversationMessages(workspaceId: string) {
+    try {
+      const convId = activeConversationId.value
+      const messages = convId
+        ? await fetchConversationMessages(workspaceId, convId)
+        : await fetchChatHistory(workspaceId, { limit: 50 })
+      const streamingMessages = chatMessages.value.filter((message) => message.streaming)
+      const streamingIds = new Set(streamingMessages.map((message) => message.id))
+      chatMessages.value = [
+        ...messages.filter((message) => !streamingIds.has(message.id)),
+        ...streamingMessages,
+      ]
+      for (const message of chatMessages.value) {
+        if (message.id && !message.streaming) _isDuplicateMessage(message.id)
+      }
+    } catch (err) {
+      console.warn('[SSE] Failed to sync missed messages after reconnect', err)
+    }
   }
 
   async function connectSSE(workspaceId: string, onEvent?: ChatSSECallback) {
@@ -982,11 +1294,18 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       })
     }
 
-    for (const evtName of ['post:created', 'post:updated', 'post:deleted', 'post:pinned', 'reply:created', 'file:created', 'file:uploaded', 'file:deleted']) {
+    eventSource.addEventListener('schedule:consecutive_failures', (e: MessageEvent) => {
+      try {
+        const data = JSON.parse(e.data)
+        externalCallback?.('schedule:consecutive_failures', data)
+        fetchSchedules(workspaceId)
+      } catch { /* ignore */ }
+    })
+
+    for (const evtName of ['file:created', 'file:uploaded', 'file:deleted']) {
       eventSource.addEventListener(evtName, (e: MessageEvent) => {
         try {
           const data = JSON.parse(e.data)
-          if (evtName === 'post:created') _incrementUnreadPosts()
           externalCallback?.(evtName, data)
         } catch { /* ignore */ }
       })
@@ -1007,8 +1326,12 @@ export const useWorkspaceStore = defineStore('workspace', () => {
               content: data.content as string,
               message_type: 'system',
               created_at: (data.created_at as string) || new Date().toISOString(),
+              conversation_id: (data.conversation_id as string) || undefined,
             })
           }
+        }
+        if (data.conversation_id) {
+          scheduleWorkspaceStructureRefresh(workspaceId)
         }
       } catch { /* ignore */ }
     })
@@ -1041,7 +1364,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     const topologyEvents = [
       'corridor:hex_placed', 'corridor:hex_updated', 'corridor:hex_removed',
       'connection:created', 'connection:removed',
-      'human:hex_placed', 'human:hex_removed', 'human:channel_updated',
+      'human:hex_placed', 'human:hex_updated', 'human:hex_removed', 'human:channel_updated',
     ]
     for (const eventName of topologyEvents) {
       eventSource.addEventListener(eventName, (e: MessageEvent) => {
@@ -1049,9 +1372,17 @@ export const useWorkspaceStore = defineStore('workspace', () => {
           const data = JSON.parse(e.data)
           externalCallback?.(eventName, data)
         } catch { /* ignore */ }
-        fetchTopology(workspaceId)
+        scheduleWorkspaceStructureRefresh(workspaceId)
       })
     }
+
+    eventSource.addEventListener('topology:changed', (e: MessageEvent) => {
+      try {
+        const data = JSON.parse(e.data)
+        externalCallback?.('topology:changed', data)
+      } catch { /* ignore */ }
+      scheduleWorkspaceStructureRefresh(workspaceId)
+    })
 
     const humanNotifyEvents = [
       'human:message_delivered', 'human:message_received',
@@ -1066,7 +1397,9 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     }
 
     eventSource.onopen = () => {
+      const shouldSyncMessages = _reconnectAttempts > 0
       _reconnectAttempts = 0
+      if (shouldSyncMessages) void _syncActiveConversationMessages(workspaceId)
     }
 
     eventSource.onerror = () => {
@@ -1091,6 +1424,10 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     if (_reconnectTimer) {
       clearTimeout(_reconnectTimer)
       _reconnectTimer = null
+    }
+    if (_structureRefreshTimer) {
+      clearTimeout(_structureRefreshTimer)
+      _structureRefreshTimer = null
     }
     eventSource?.close()
     eventSource = null
@@ -1188,7 +1525,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     })
     const ch = res.data.data
     corridorHexes.value.push(ch)
-    await fetchTopology(workspaceId)
+    await refreshWorkspaceStructure(workspaceId)
     return ch as CorridorHexInfo
   }
 
@@ -1196,20 +1533,24 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     await api.put(`/workspaces/${workspaceId}/corridor-hexes/${hexId}`, { hex_q: hexQ, hex_r: hexR })
     const idx = corridorHexes.value.findIndex(c => c.id === hexId)
     if (idx >= 0) { corridorHexes.value[idx].hex_q = hexQ; corridorHexes.value[idx].hex_r = hexR }
-    await fetchTopology(workspaceId)
+    await refreshWorkspaceStructure(workspaceId)
   }
 
   async function renameCorridorHex(workspaceId: string, hexId: string, displayName: string) {
     await api.put(`/workspaces/${workspaceId}/corridor-hexes/${hexId}`, { display_name: displayName })
     const idx = corridorHexes.value.findIndex(c => c.id === hexId)
     if (idx >= 0) corridorHexes.value[idx].display_name = displayName
-    await fetchTopology(workspaceId)
+    await refreshWorkspaceStructure(workspaceId)
   }
 
   async function deleteCorridorHex(workspaceId: string, hexId: string) {
-    await api.delete(`/workspaces/${workspaceId}/corridor-hexes/${hexId}`)
+    try {
+      await api.delete(`/workspaces/${workspaceId}/corridor-hexes/${hexId}`)
+    } catch (err: any) {
+      if (err?.response?.status !== 404) throw err
+    }
     corridorHexes.value = corridorHexes.value.filter(c => c.id !== hexId)
-    await fetchTopology(workspaceId)
+    await refreshWorkspaceStructure(workspaceId)
   }
 
   async function fetchConnections(workspaceId: string) {
@@ -1227,14 +1568,14 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     })
     const conn = res.data.data
     connections.value.push(conn)
-    await fetchTopology(workspaceId)
+    await refreshWorkspaceStructure(workspaceId)
     return conn as ConnectionInfo
   }
 
   async function deleteConnection(workspaceId: string, connId: string) {
     await api.delete(`/workspaces/${workspaceId}/connections/${connId}`)
     connections.value = connections.value.filter(c => c.id !== connId)
-    await fetchTopology(workspaceId)
+    await refreshWorkspaceStructure(workspaceId)
   }
 
   const humanHexes = ref<HumanHexInfo[]>([])
@@ -1264,34 +1605,38 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     if (displayColor) payload.display_color = displayColor
     if (displayName) payload.display_name = displayName
     await api.post(`/workspaces/${workspaceId}/human-hexes`, payload)
-    await fetchTopology(workspaceId)
+    await refreshWorkspaceStructure(workspaceId)
   }
 
   async function moveHumanHex(workspaceId: string, hexId: string, hexQ: number, hexR: number) {
     await api.put(`/workspaces/${workspaceId}/human-hexes/${hexId}`, { hex_q: hexQ, hex_r: hexR })
-    await fetchTopology(workspaceId)
+    await refreshWorkspaceStructure(workspaceId)
   }
 
   async function updateHumanHexColor(workspaceId: string, hexId: string, color: string) {
     await api.put(`/workspaces/${workspaceId}/human-hexes/${hexId}`, { display_color: color })
-    await fetchTopology(workspaceId)
+    await refreshWorkspaceStructure(workspaceId)
   }
 
   async function deleteHumanHex(workspaceId: string, hexId: string) {
-    await api.delete(`/workspaces/${workspaceId}/human-hexes/${hexId}`)
-    await fetchTopology(workspaceId)
+    try {
+      await api.delete(`/workspaces/${workspaceId}/human-hexes/${hexId}`)
+    } catch (err: any) {
+      if (err?.response?.status !== 404) throw err
+    }
+    await refreshWorkspaceStructure(workspaceId)
   }
 
   async function renameHumanHex(workspaceId: string, hexId: string, displayName: string) {
     await api.put(`/workspaces/${workspaceId}/human-hexes/${hexId}`, { display_name: displayName })
-    await fetchTopology(workspaceId)
+    await refreshWorkspaceStructure(workspaceId)
   }
 
   async function updateHumanHexChannel(workspaceId: string, hexId: string, channelType: string, channelConfig: Record<string, unknown>) {
     await api.put(`/workspaces/${workspaceId}/human-hexes/${hexId}`, {
       channel_type: channelType, channel_config: channelConfig,
     })
-    await fetchTopology(workspaceId)
+    await refreshWorkspaceStructure(workspaceId)
   }
 
   async function fetchMyPermissions(workspaceId: string) {
@@ -1342,6 +1687,10 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   }
 
   function resetCurrentState() {
+    if (_structureRefreshTimer) {
+      clearTimeout(_structureRefreshTimer)
+      _structureRefreshTimer = null
+    }
     currentWorkspace.value = null
     blackboard.value = null
     schedules.value = []
@@ -1351,6 +1700,8 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     topology.value = null
     members.value = []
     chatMessages.value = []
+    conversations.value = []
+    activeConversationId.value = ''
     corridorHexes.value = []
     connections.value = []
     heatmap.value = []
@@ -1374,7 +1725,6 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     chatLoading,
     typingAgents,
     unreadCount,
-    unreadPostCount,
     corridorHexes,
     connections,
     topology,
@@ -1387,8 +1737,6 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     isOrgAdmin,
     resetCurrentState,
     setChatVisible,
-    setPostsTabVisible,
-    fetchUnreadPostCount,
     fileUploadEnabled,
     fetchSystemCapabilities,
     uploadFile,
@@ -1398,6 +1746,17 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     createWorkspace,
     fetchWorkspaceTemplates,
     saveAsTemplate,
+    deleteTemplate,
+    updateTemplate,
+    findTemplateBySourceWorkspace,
+    fetchTemplateCollectPreview,
+    activeTemplateDeploys,
+    refreshActiveTemplateDeploys,
+    fetchWorkspaceTemplateDetail,
+    checkWorkspaceTemplateDeployLayout,
+    deployWorkspaceFromTemplate,
+    fetchActiveWorkspaceDeploys,
+    fetchWorkspaceDeploy,
     updateWorkspace,
     deleteWorkspace,
     addAgent,
@@ -1422,7 +1781,14 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     fetchPerformance,
     collectPerformance,
     attributeTokens,
+    fetchAgentPerformance,
+    fetchGlobalAgentPerformance,
     fetchMembers,
+    conversations,
+    activeConversationId,
+    fetchConversations,
+    refreshWorkspaceStructure,
+    fetchConversationMessages,
     fetchChatHistory,
     sendWorkspaceMessage,
     sendSystemMessage,
@@ -1454,5 +1820,6 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     updateMember,
     removeMember,
     searchOrgUsers,
+    restartAllInstances,
   }
 })

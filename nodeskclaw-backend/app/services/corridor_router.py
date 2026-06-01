@@ -331,6 +331,67 @@ async def can_reach(
     return False
 
 
+async def check_topology_access(
+    workspace_id: str,
+    caller_node_id: str,
+    target_hex_q: int,
+    target_hex_r: int,
+    db: AsyncSession,
+) -> tuple[bool, str]:
+    if not await has_any_connections(workspace_id, db):
+        return True, "no_topology"
+
+    card_q = await db.execute(
+        select(NodeCard.hex_q, NodeCard.hex_r).where(
+            NodeCard.node_id == caller_node_id,
+            NodeCard.workspace_id == workspace_id,
+            not_deleted(NodeCard),
+        ).limit(1)
+    )
+    row = card_q.first()
+    if row is None:
+        return False, "caller_not_on_topology"
+
+    reachable = await can_reach(
+        workspace_id, row.hex_q, row.hex_r, target_hex_q, target_hex_r, db,
+    )
+    if not reachable:
+        return False, "target_unreachable"
+    return True, "ok"
+
+
+async def check_blackboard_access(
+    workspace_id: str, caller_node_id: str, db: AsyncSession,
+) -> tuple[bool, str]:
+    allowed, reason = await check_topology_access(workspace_id, caller_node_id, 0, 0, db)
+    if not allowed and reason == "target_unreachable":
+        reason = "blackboard_unreachable"
+    return allowed, reason
+
+
+async def get_reachable_names(
+    workspace_id: str, instance_id: str, db: AsyncSession,
+) -> list[str] | None:
+    """Return display names of members reachable from *instance_id* via topology.
+
+    Returns None when there is no topology (flat workspace) or when the agent
+    has no hex coordinates, meaning all members are reachable and no prompt
+    constraint should be injected.  Returns an empty list when the agent is
+    positioned on the grid but has no reachable neighbors (isolated).
+    """
+    if not await has_any_connections(workspace_id, db):
+        return None
+
+    coords = await get_agent_hex_in_workspace(instance_id, workspace_id, db)
+    if coords is None:
+        return None
+
+    endpoints, _hooks = await get_reachable_endpoints(
+        workspace_id, coords[0], coords[1], db,
+    )
+    return [ep.display_name for ep in endpoints if ep.display_name]
+
+
 async def get_topology(workspace_id: str, db: AsyncSession) -> Topology:
     hex_map = await _build_hex_map(workspace_id, db)
 

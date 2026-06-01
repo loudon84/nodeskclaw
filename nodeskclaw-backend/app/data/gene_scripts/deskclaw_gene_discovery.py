@@ -33,7 +33,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="deskclaw_gene_discovery", description="DeskClaw Gene Discovery Tool")
     sub = p.add_subparsers(dest="action", required=True)
 
-    default_iid = os.environ.get("DESKCLAW_INSTANCE_ID", "")
+    default_iid = os.environ.get("DESKCLAW_INSTANCE_ID") or os.environ.get("NODESKCLAW_INSTANCE_ID", "")
 
     sp = sub.add_parser("search", help="Search genes")
     sp.add_argument("--keyword")
@@ -97,13 +97,13 @@ def main() -> None:
     elif action == "request_learning":
         iid = args.instance_id
         if not iid:
-            _fatal("--instance-id is required (or set DESKCLAW_INSTANCE_ID)")
+            _fatal("--instance-id is required (or set DESKCLAW_INSTANCE_ID or NODESKCLAW_INSTANCE_ID)")
         _output(api_call("POST", f"/instances/{iid}/genes/install", {"gene_slug": args.gene_slug}, ws=False))
 
     elif action == "list_installed":
         iid = args.instance_id
         if not iid:
-            _fatal("--instance-id is required (or set DESKCLAW_INSTANCE_ID)")
+            _fatal("--instance-id is required (or set DESKCLAW_INSTANCE_ID or NODESKCLAW_INSTANCE_ID)")
         _output(api_call("GET", f"/instances/{iid}/genes", ws=False))
 
     elif action == "list_genomes":

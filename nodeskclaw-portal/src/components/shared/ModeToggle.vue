@@ -1,27 +1,24 @@
 <script setup lang="ts">
 import type { ViewMode } from '@/composables/useViewTransition'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
-defineProps<{ mode: ViewMode }>()
+const props = defineProps<{ mode: ViewMode }>()
 const emit = defineEmits<{ (e: 'toggle'): void }>()
+
+function onModeChange(value: string | number) {
+  if ((value === '2d' || value === '3d') && value !== props.mode) emit('toggle')
+}
 </script>
 
 <template>
-  <div
-    class="flex items-center gap-1 bg-card/50 border border-border rounded-full p-0.5 backdrop-blur-sm"
-  >
-    <button
-      class="px-3 py-1 rounded-full text-xs font-medium transition-all"
-      :class="mode === '3d' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'"
-      @click="mode !== '3d' && emit('toggle')"
-    >
-      3D
-    </button>
-    <button
-      class="px-3 py-1 rounded-full text-xs font-medium transition-all"
-      :class="mode === '2d' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'"
-      @click="mode !== '2d' && emit('toggle')"
-    >
-      2D
-    </button>
-  </div>
+  <Tabs :model-value="mode" @update:model-value="onModeChange">
+    <TabsList class="h-8 rounded-full border border-border bg-card/70 p-0.5 backdrop-blur-sm">
+      <TabsTrigger value="3d" class="h-6 rounded-full px-3 text-xs">
+        3D
+      </TabsTrigger>
+      <TabsTrigger value="2d" class="h-6 rounded-full px-3 text-xs">
+        2D
+      </TabsTrigger>
+    </TabsList>
+  </Tabs>
 </template>

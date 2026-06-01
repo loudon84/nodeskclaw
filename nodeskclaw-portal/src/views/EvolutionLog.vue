@@ -17,8 +17,10 @@ import { useGeneStore } from '@/stores/gene'
 import type { EvolutionEventItem } from '@/stores/gene'
 import { getRuntimeCaps } from '@/utils/runtimeCapabilities'
 import { useI18n } from 'vue-i18n'
+import { formatDateTime } from '@/utils/localeFormat'
+import { Button } from '@/components/ui/button'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const instanceId = inject<ComputedRef<string>>('instanceId')!
 const instanceRuntime = inject<ComputedRef<string>>('instanceRuntime', computed(() => 'openclaw'))
 const runtimeSupported = computed(() => getRuntimeCaps(instanceRuntime.value).evolutionLog)
@@ -31,18 +33,20 @@ const hasMore = ref(true)
 const loadingMore = ref(false)
 const expandedIds = ref<Set<string>>(new Set())
 
-const eventConfig: Record<string, { icon: typeof CheckCircle; color: string; label: string }> = {
-  learned: { icon: CheckCircle, color: 'text-green-500', label: '学习成功' },
-  forgotten: { icon: Trash2, color: 'text-amber-500', label: '已遗忘' },
-  simplified: { icon: Brain, color: 'text-blue-500', label: '已简化' },
-  learn_failed: { icon: XCircle, color: 'text-red-500', label: '学习失败' },
-  forget_failed: { icon: XCircle, color: 'text-red-500', label: '遗忘失败' },
-  variant_published: { icon: Sparkles, color: 'text-purple-500', label: '变体发布' },
-  genome_applied: { icon: Layers, color: 'text-indigo-500', label: '基因组应用' },
+const eventConfig: Record<string, { icon: typeof CheckCircle; color: string; labelKey: string }> = {
+  learned: { icon: CheckCircle, color: 'text-green-500', labelKey: 'evolutionLog.eventLabels.learned' },
+  forgotten: { icon: Trash2, color: 'text-amber-500', labelKey: 'evolutionLog.eventLabels.forgotten' },
+  simplified: { icon: Brain, color: 'text-blue-500', labelKey: 'evolutionLog.eventLabels.simplified' },
+  learn_failed: { icon: XCircle, color: 'text-red-500', labelKey: 'evolutionLog.eventLabels.learn_failed' },
+  forget_failed: { icon: XCircle, color: 'text-red-500', labelKey: 'evolutionLog.eventLabels.forget_failed' },
+  variant_published: { icon: Sparkles, color: 'text-purple-500', labelKey: 'evolutionLog.eventLabels.variant_published' },
+  genome_applied: { icon: Layers, color: 'text-indigo-500', labelKey: 'evolutionLog.eventLabels.genome_applied' },
 }
 
 function getConfig(type: string) {
-  return eventConfig[type] ?? { icon: History, color: 'text-muted-foreground', label: type }
+  const config = eventConfig[type]
+  if (!config) return { icon: History, color: 'text-muted-foreground', label: type }
+  return { ...config, label: t(config.labelKey) }
 }
 
 function toggleExpand(id: string) {
@@ -60,8 +64,7 @@ function hasExpandableDetails(ev: EvolutionEventItem): boolean {
 
 function formatTime(dateStr?: string): string {
   if (!dateStr) return ''
-  const d = new Date(dateStr)
-  return d.toLocaleString('zh-CN', {
+  return formatDateTime(dateStr, String(locale.value), {
     month: '2-digit',
     day: '2-digit',
     hour: '2-digit',
@@ -105,7 +108,7 @@ onMounted(loadEvents)
     </div>
 
     <template v-else>
-    <h2 class="text-lg font-semibold">进化日志</h2>
+    <h2 class="text-lg font-semibold">{{ t('evolutionLog.title') }}</h2>
 
     <div v-if="loading" class="flex items-center justify-center py-16">
       <Loader2 class="w-8 h-8 animate-spin text-muted-foreground" />
@@ -113,7 +116,7 @@ onMounted(loadEvents)
 
     <div v-else-if="events.length === 0" class="rounded-xl border border-dashed border-border py-16 text-center text-muted-foreground">
       <History class="w-12 h-12 mx-auto mb-4 opacity-50" />
-      <p class="text-sm">暂无进化事件</p>
+      <p class="text-sm">{{ t('evolutionLog.empty') }}</p>
     </div>
 
     <div v-else class="relative">
@@ -149,13 +152,13 @@ onMounted(loadEvents)
           </div>
 
           <div v-if="hasExpandableDetails(ev)" class="mt-2">
-            <button
+            <Button variant="unstyled" size="unstyled"
               class="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
               @click="toggleExpand(ev.id)"
             >
               <component :is="expandedIds.has(ev.id) ? ChevronUp : ChevronDown" class="w-3 h-3" />
               {{ expandedIds.has(ev.id) ? '收起' : '查看详情' }}
-            </button>
+            </Button>
             <div v-if="expandedIds.has(ev.id)" class="mt-2 p-3 rounded-lg bg-muted/30 border border-border text-sm text-muted-foreground whitespace-pre-wrap">
               {{ ev.details?.forgetting_summary || ev.details?.simplified_reason || ev.details?.reason }}
             </div>
@@ -165,14 +168,14 @@ onMounted(loadEvents)
     </div>
 
     <div v-if="hasMore && !loading" class="text-center">
-      <button
+      <Button variant="unstyled" size="unstyled"
         class="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm border border-border hover:bg-muted/50 transition-colors"
         :disabled="loadingMore"
         @click="loadMore"
       >
         <Loader2 v-if="loadingMore" class="w-4 h-4 animate-spin" />
         加载更多
-      </button>
+      </Button>
     </div>
     </template>
   </div>

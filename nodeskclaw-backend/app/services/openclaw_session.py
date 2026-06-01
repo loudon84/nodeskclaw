@@ -18,7 +18,8 @@ logger = logging.getLogger(__name__)
 OPENCLAW_CONFIG_REL = ".openclaw/openclaw.json"
 SKILLS_EXTRA_DIR = "/root/.openclaw/skills"
 
-_SESSIONS_REL = ".openclaw/agents/main/sessions/sessions.json"
+_SESSIONS_DIR_REL = ".openclaw/agents/main/sessions"
+_SESSIONS_REL = f"{_SESSIONS_DIR_REL}/sessions.json"
 _MAIN_SESSION_KEY = "agent:main:main"
 _MAIN_SESSION_REL = ".openclaw/agents/main/sessions/agent_main_main.jsonl"
 _MAIN_SESSION_FILE = "/root/.openclaw/agents/main/sessions/agent_main_main.jsonl"
@@ -28,6 +29,25 @@ async def _write_sessions_json(fs: RemoteFS, path: str, store: dict) -> None:
     payload = json.dumps(store, indent=2, ensure_ascii=False)
     json.loads(payload)
     await fs.write_text(path, payload + "\n")
+
+
+def _safe_session_file_rel_path(session_file: str) -> str | None:
+    candidate = session_file.replace("\\", "/").strip()
+    if candidate.startswith("/root/"):
+        candidate = candidate[len("/root/"):]
+    elif candidate.startswith("/"):
+        return None
+    else:
+        candidate = candidate.lstrip("/")
+
+    parts = candidate.split("/")
+    if any(part in {"", ".", ".."} for part in parts):
+        return None
+    if not candidate.startswith(f"{_SESSIONS_DIR_REL}/"):
+        return None
+    if not candidate.endswith(".jsonl"):
+        return None
+    return candidate
 
 
 async def invalidate_skill_snapshots(fs: RemoteFS) -> None:
@@ -47,6 +67,56 @@ async def invalidate_skill_snapshots(fs: RemoteFS) -> None:
             logger.info("Cleared stale skillsSnapshot from %d session(s)", len(store))
     except Exception as e:
         logger.warning("Failed to invalidate skill snapshots: %s", e)
+
+
+async def clear_workspace_session(fs: RemoteFS, workspace_id: str) -> bool:
+    raw = await fs.read_text(_SESSIONS_REL)
+    if raw is None:
+        return False
+
+    try:
+        parsed = json.loads(raw)
+        store = parsed if isinstance(parsed, dict) else {}
+    except Exception as e:
+        logger.warning("Failed to parse sessions.json while clearing workspace session: %s", e)
+        return False
+
+    workspace_session_key = f"workspace:{workspace_id}"
+    agent_session_key = f"agent:main:{workspace_id}"
+    agent_session_id = f"agent_main_{workspace_id}"
+    matched_keys: list[str] = []
+    session_files: list[str] = []
+    for key, entry in store.items():
+        if not isinstance(entry, dict):
+            continue
+        session_file = entry.get("sessionFile")
+        is_workspace_session = (
+            key in {workspace_session_key, agent_session_key}
+            or entry.get("sessionId") in {workspace_session_key, agent_session_id}
+            or entry.get("workspaceId") == workspace_id
+        )
+        if is_workspace_session:
+            matched_keys.append(key)
+            if isinstance(session_file, str) and session_file:
+                rel_path = _safe_session_file_rel_path(session_file)
+                if rel_path:
+                    session_files.append(rel_path)
+                else:
+                    logger.warning(
+                        "Refusing to clear OpenClaw session file outside sessions dir: %s",
+                        session_file,
+                    )
+
+    if not matched_keys:
+        return False
+
+    for key in matched_keys:
+        store.pop(key, None)
+
+    await _write_sessions_json(fs, _SESSIONS_REL, store)
+    for rel_path in set(session_files):
+        await fs.write_text(rel_path, "")
+    return True
 
 
 async def clear_main_session(fs: RemoteFS) -> bool:

@@ -6,7 +6,9 @@ import { useClusterStore } from '@/stores/cluster'
 import { useToast } from '@/composables/useToast'
 import { useEdition, useFeature } from '@/composables/useFeature'
 import { resolveApiErrorMessage } from '@/i18n/error'
-import { Pencil, Check, X, Loader2, Box, Cpu, HardDrive, Database, Server } from 'lucide-vue-next'
+import { Pencil, Check, X, Loader2, Box, Cpu, HardDrive, Database, Server, GitBranch } from 'lucide-vue-next'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 
 const { t } = useI18n()
 const orgStore = useOrgStore()
@@ -20,6 +22,9 @@ const loading = ref(true)
 const editing = ref(false)
 const saving = ref(false)
 const editName = ref('')
+
+const editDepth = ref(3)
+const savingDepth = ref(false)
 
 function startEdit() {
   editName.value = orgStore.currentOrg?.name ?? ''
@@ -53,6 +58,20 @@ function formatDate(iso: string | undefined): string {
   return new Date(iso).toLocaleDateString(undefined, {
     year: 'numeric', month: 'long', day: 'numeric',
   })
+}
+
+async function saveCollaborationDepth() {
+  const val = editDepth.value
+  if (val < 1 || val > 10 || val === orgStore.currentOrg?.max_collaboration_depth) return
+  savingDepth.value = true
+  try {
+    await orgStore.updateCollaborationDepth(val)
+    toast.success(t('orgSettings.collaborationDepthSaved'))
+  } catch (e: unknown) {
+    toast.error(resolveApiErrorMessage(e, t('orgSettings.collaborationDepthSaveFailed')))
+  } finally {
+    savingDepth.value = false
+  }
 }
 
 // ── 用量 helpers ──
@@ -146,6 +165,7 @@ onMounted(async () => {
   if (hasBilling.value && hasCluster.value) {
     await orgStore.fetchUsage()
   }
+  editDepth.value = orgStore.currentOrg?.max_collaboration_depth ?? 3
   loading.value = false
 })
 </script>
@@ -164,37 +184,37 @@ onMounted(async () => {
         <div class="flex items-center gap-2">
           <template v-if="!editing">
             <span class="font-medium">{{ orgStore.currentOrg.name }}</span>
-            <button
+            <Button variant="unstyled" size="unstyled"
               class="p-1 rounded hover:bg-muted/60 text-muted-foreground hover:text-foreground transition-colors"
               :title="t('orgSettings.editName')"
               @click="startEdit"
             >
               <Pencil class="w-3.5 h-3.5" />
-            </button>
+            </Button>
           </template>
           <template v-else>
-            <input
+            <Input
               v-model="editName"
               type="text"
               class="h-8 px-2 rounded-md border border-border bg-background text-sm w-60 focus:outline-none focus:ring-1 focus:ring-primary"
               @keyup.enter="saveName"
               @keyup.escape="cancelEdit"
             />
-            <button
+            <Button variant="unstyled" size="unstyled"
               class="p-1 rounded hover:bg-primary/10 text-primary transition-colors"
               :disabled="saving"
               @click="saveName"
             >
               <Loader2 v-if="saving" class="w-4 h-4 animate-spin" />
               <Check v-else class="w-4 h-4" />
-            </button>
-            <button
+            </Button>
+            <Button variant="unstyled" size="unstyled"
               class="p-1 rounded hover:bg-muted/60 text-muted-foreground transition-colors"
               :disabled="saving"
               @click="cancelEdit"
             >
               <X class="w-4 h-4" />
-            </button>
+            </Button>
           </template>
         </div>
 
@@ -226,6 +246,37 @@ onMounted(async () => {
         >
           {{ orgStore.currentOrg.is_active ? t('orgSettings.active') : t('orgSettings.inactive') }}
         </span>
+      </div>
+    </section>
+
+    <!-- 协作设置 -->
+    <section class="rounded-xl border border-border bg-card p-5">
+      <div class="flex items-center gap-2 mb-4">
+        <GitBranch class="w-4 h-4 text-muted-foreground" />
+        <h2 class="text-sm font-semibold text-muted-foreground">{{ t('orgSettings.collaborationTitle') }}</h2>
+      </div>
+      <div class="space-y-3">
+        <div class="grid grid-cols-[140px_1fr] gap-y-3 items-start text-sm">
+          <span class="text-muted-foreground pt-1.5">{{ t('orgSettings.collaborationDepthLabel') }}</span>
+          <div class="flex items-center gap-3">
+            <Input
+              v-model.number="editDepth"
+              type="number"
+              min="1"
+              max="10"
+              class="h-8 w-20 px-2 rounded-md border border-border bg-background text-sm text-center focus:outline-none focus:ring-1 focus:ring-primary"
+            />
+            <Button variant="unstyled" size="unstyled"
+              class="h-8 px-4 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
+              :disabled="savingDepth || editDepth < 1 || editDepth > 10 || editDepth === orgStore.currentOrg?.max_collaboration_depth"
+              @click="saveCollaborationDepth"
+            >
+              <Loader2 v-if="savingDepth" class="w-4 h-4 animate-spin" />
+              <template v-else>{{ t('orgSettings.collaborationDepthSave') }}</template>
+            </Button>
+          </div>
+        </div>
+        <p class="text-xs text-muted-foreground/70">{{ t('orgSettings.collaborationDepthDesc') }}</p>
       </div>
     </section>
 

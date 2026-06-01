@@ -5,6 +5,8 @@ import { useToast } from '@/composables/useToast'
 import { resolveApiErrorMessage } from '@/i18n/error'
 import api from '@/services/api'
 import { Loader2, Save, Plug, Eye, EyeOff, Container, RefreshCw, AlertCircle } from 'lucide-vue-next'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 
 const { t } = useI18n()
 const toast = useToast()
@@ -148,7 +150,7 @@ onMounted(() => {
         <div v-for="eng in engines" :key="eng.runtime_id" class="space-y-1.5">
           <div class="flex items-center justify-between">
             <label class="text-sm font-medium">{{ eng.display_name }}</label>
-            <button
+            <Button variant="unstyled" size="unstyled"
               v-if="engineRegistryUrls[eng.runtime_id]?.trim()"
               :disabled="testingEngine === eng.runtime_id"
               class="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
@@ -157,9 +159,9 @@ onMounted(() => {
               <Loader2 v-if="testingEngine === eng.runtime_id" class="w-3 h-3 animate-spin" />
               <Plug v-else class="w-3 h-3" />
               {{ t('orgSettings.registryTest') }}
-            </button>
+            </Button>
           </div>
-          <input
+          <Input
             v-model="engineRegistryUrls[eng.runtime_id]"
             type="text"
             :placeholder="`cr.example.com/namespace/${eng.runtime_id}`"
@@ -178,7 +180,7 @@ onMounted(() => {
 
           <div class="space-y-1.5">
             <label class="text-sm font-medium">{{ t('orgSettings.registryUsername') }}</label>
-            <input
+            <Input
               v-model="registryUsername"
               type="text"
               placeholder="username"
@@ -194,13 +196,13 @@ onMounted(() => {
               </span>
             </label>
             <div class="relative">
-              <input
+              <Input
                 v-model="registryPassword"
                 :type="showPassword ? 'text' : 'password'"
                 :placeholder="hasPassword ? t('orgSettings.registryPasswordHint') : t('orgSettings.registryPasswordPlaceholder')"
                 class="w-full h-9 px-3 pr-10 rounded-md border border-input bg-background text-sm font-mono focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1"
               />
-              <button
+              <Button variant="unstyled" size="unstyled"
                 type="button"
                 tabindex="-1"
                 class="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
@@ -208,13 +210,13 @@ onMounted(() => {
               >
                 <EyeOff v-if="showPassword" class="w-4 h-4" />
                 <Eye v-else class="w-4 h-4" />
-              </button>
+              </Button>
             </div>
           </div>
         </div>
 
         <div class="flex items-center gap-3 pt-2">
-          <button
+          <Button variant="unstyled" size="unstyled"
             :disabled="saving"
             class="h-9 px-4 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-50 flex items-center gap-2"
             @click="handleSave"
@@ -222,7 +224,7 @@ onMounted(() => {
             <Loader2 v-if="saving" class="w-4 h-4 animate-spin" />
             <Save v-else class="w-4 h-4" />
             {{ t('orgSettings.registrySave') }}
-          </button>
+          </Button>
         </div>
       </div>
     </template>

@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 
 class OrgCreate(BaseModel):
@@ -20,6 +20,7 @@ class OrgUpdate(BaseModel):
     max_storage_total: str | None = None
     cluster_id: str | None = None  # 绑定/解绑专属集群
     is_active: bool | None = None
+    max_collaboration_depth: int | None = None
 
     @field_validator("max_cpu_total", "max_mem_total", "max_storage_total", mode="before")
     @classmethod
@@ -38,6 +39,7 @@ class OrgInfo(BaseModel):
     max_cpu_total: str
     max_mem_total: str
     max_storage_total: str
+    max_collaboration_depth: int = 3
     cluster_id: str | None = None
     cluster_name: str | None = None
     is_active: bool
@@ -50,6 +52,10 @@ class OrgInfo(BaseModel):
 
 class OrgNameUpdate(BaseModel):
     name: str
+
+
+class CollaborationDepthUpdate(BaseModel):
+    max_collaboration_depth: int = Field(ge=1, le=10)
 
 
 class MemberInfo(BaseModel):
@@ -75,16 +81,6 @@ class UpdateMemberRoleRequest(BaseModel):
     role: str
 
 
-class OAuthOrgSetupRequest(BaseModel):
-    provider: str
-    name: str
-    slug: str
-    job_title: str | None = None
-
-
-FeishuOrgSetupRequest = OAuthOrgSetupRequest
-
-
 class ResetPasswordResponse(BaseModel):
     password: str
 
@@ -108,4 +104,4 @@ class OrgRequiredGeneInfo(BaseModel):
 class CheckAgentGenesResponse(BaseModel):
     missing_genes: list[OrgRequiredGeneInfo]
     all_installed: bool
-    genehub_web_url: str
+    deskhub_web_url: str

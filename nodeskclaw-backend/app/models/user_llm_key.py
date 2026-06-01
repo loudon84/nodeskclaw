@@ -25,3 +25,4 @@ class UserLlmKey(BaseModel):
     base_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     api_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    skip_ssl_verify: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)

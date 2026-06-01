@@ -5,6 +5,7 @@ import { useToast } from '@/composables/useToast'
 import { copyToClipboard } from '@/utils/clipboard'
 import { X, Copy, User as UserIcon, Bot } from 'lucide-vue-next'
 import type { AuditLog } from '@/components/audit/AuditLogTable.vue'
+import { Button } from '@/components/ui/button'
 
 const props = defineProps<{
   log: AuditLog | null
@@ -101,9 +102,9 @@ async function copyText(text: string) {
             <h3 class="text-sm font-semibold">{{ t('auditLogs.drawerTitle') }}</h3>
             <p class="text-xs text-muted-foreground mt-0.5">{{ formatDate(log.created_at) }}</p>
           </div>
-          <button class="p-1 rounded-md hover:bg-muted/50 transition-colors" @click="close">
+          <Button variant="unstyled" size="unstyled" class="p-1 rounded-md hover:bg-muted/50 transition-colors" @click="close">
             <X class="w-4 h-4" />
-          </button>
+          </Button>
         </div>
 
         <!-- Content -->
@@ -125,9 +126,9 @@ async function copyText(text: string) {
               <span class="text-muted-foreground shrink-0">{{ t('auditLogs.drawerTargetId') }}</span>
               <div v-if="log.target_id" class="flex items-center gap-1 min-w-0">
                 <span class="font-mono text-[11px] truncate">{{ log.target_id }}</span>
-                <button class="shrink-0 p-0.5 rounded hover:bg-muted/50 transition-colors" @click.stop="copyText(log.target_id!)">
+                <Button variant="unstyled" size="unstyled" class="shrink-0 p-0.5 rounded hover:bg-muted/50 transition-colors" @click.stop="copyText(log.target_id!)">
                   <Copy class="w-3 h-3 text-muted-foreground" />
-                </button>
+                </Button>
               </div>
               <span v-else>-</span>
             </div>
@@ -147,9 +148,9 @@ async function copyText(text: string) {
               <span class="text-muted-foreground shrink-0">{{ t('auditLogs.drawerActorId') }}</span>
               <div class="flex items-center gap-1 min-w-0">
                 <span class="font-mono text-[11px] truncate">{{ log.actor_id }}</span>
-                <button class="shrink-0 p-0.5 rounded hover:bg-muted/50 transition-colors" @click.stop="copyText(log.actor_id!)">
+                <Button variant="unstyled" size="unstyled" class="shrink-0 p-0.5 rounded hover:bg-muted/50 transition-colors" @click.stop="copyText(log.actor_id!)">
                   <Copy class="w-3 h-3 text-muted-foreground" />
-                </button>
+                </Button>
               </div>
             </div>
 
@@ -157,9 +158,9 @@ async function copyText(text: string) {
               <span class="text-muted-foreground shrink-0">{{ t('auditLogs.drawerWorkspaceId') }}</span>
               <div class="flex items-center gap-1 min-w-0">
                 <span class="font-mono text-[11px] truncate">{{ log.workspace_id }}</span>
-                <button class="shrink-0 p-0.5 rounded hover:bg-muted/50 transition-colors" @click.stop="copyText(log.workspace_id!)">
+                <Button variant="unstyled" size="unstyled" class="shrink-0 p-0.5 rounded hover:bg-muted/50 transition-colors" @click.stop="copyText(log.workspace_id!)">
                   <Copy class="w-3 h-3 text-muted-foreground" />
-                </button>
+                </Button>
               </div>
             </div>
 
@@ -167,9 +168,9 @@ async function copyText(text: string) {
               <span class="text-muted-foreground shrink-0">{{ t('auditLogs.drawerOrgId') }}</span>
               <div class="flex items-center gap-1 min-w-0">
                 <span class="font-mono text-[11px] truncate">{{ log.org_id }}</span>
-                <button class="shrink-0 p-0.5 rounded hover:bg-muted/50 transition-colors" @click.stop="copyText(log.org_id!)">
+                <Button variant="unstyled" size="unstyled" class="shrink-0 p-0.5 rounded hover:bg-muted/50 transition-colors" @click.stop="copyText(log.org_id!)">
                   <Copy class="w-3 h-3 text-muted-foreground" />
-                </button>
+                </Button>
               </div>
             </div>
           </div>
@@ -178,13 +179,13 @@ async function copyText(text: string) {
           <div>
             <div class="flex items-center justify-between mb-2">
               <span class="text-xs font-medium">{{ t('auditLogs.drawerDetails') }}</span>
-              <button
+              <Button variant="unstyled" size="unstyled"
                 v-if="detailsJson"
                 class="p-0.5 rounded hover:bg-muted/50 transition-colors"
                 @click="copyText(detailsJson!)"
               >
                 <Copy class="w-3 h-3 text-muted-foreground" />
-              </button>
+              </Button>
             </div>
             <div v-if="detailsJson" class="bg-muted/30 border border-border rounded-md p-3 overflow-x-auto">
               <pre class="text-[11px] font-mono text-foreground whitespace-pre-wrap break-all">{{ detailsJson }}</pre>

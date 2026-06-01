@@ -6,6 +6,10 @@ import { useToast } from '@/composables/useToast'
 import { resolveApiErrorMessage } from '@/i18n/error'
 import api from '@/services/api'
 import { Loader2, Save, Send, Eye, EyeOff, MailPlus } from 'lucide-vue-next'
+import { Button } from '@/components/ui/button'
+import { Textarea } from '@/components/ui/textarea'
+import { Input } from '@/components/ui/input'
+import { Checkbox } from '@/components/ui/checkbox'
 
 const { t } = useI18n()
 const toast = useToast()
@@ -155,7 +159,7 @@ onMounted(() => {
         <div class="grid grid-cols-2 gap-4">
           <div class="space-y-1.5">
             <label class="text-sm font-medium">{{ t('orgSettings.smtpHost') }}</label>
-            <input
+            <Input
               v-model="form.smtp_host"
               type="text"
               placeholder="smtp.example.com"
@@ -164,7 +168,7 @@ onMounted(() => {
           </div>
           <div class="space-y-1.5">
             <label class="text-sm font-medium">{{ t('orgSettings.smtpPort') }}</label>
-            <input
+            <Input
               v-model="form.smtp_port"
               type="text"
               placeholder="587"
@@ -175,7 +179,7 @@ onMounted(() => {
 
         <div class="space-y-1.5">
           <label class="text-sm font-medium">{{ t('orgSettings.smtpUsername') }}</label>
-          <input
+          <Input
             v-model="form.smtp_username"
             type="text"
             placeholder="user@example.com"
@@ -191,13 +195,13 @@ onMounted(() => {
             </span>
           </label>
           <div class="relative">
-            <input
+            <Input
               v-model="form.smtp_password"
               :type="showPassword ? 'text' : 'password'"
               :placeholder="hasPassword ? t('orgSettings.smtpPasswordHint') : t('orgSettings.smtpPasswordPlaceholder')"
               class="w-full h-9 px-3 pr-10 rounded-md border border-input bg-background text-sm font-mono focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1"
             />
-            <button
+            <Button variant="unstyled" size="unstyled"
               type="button"
               tabindex="-1"
               class="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
@@ -205,14 +209,14 @@ onMounted(() => {
             >
               <EyeOff v-if="showPassword" class="w-4 h-4" />
               <Eye v-else class="w-4 h-4" />
-            </button>
+            </Button>
           </div>
         </div>
 
         <div class="grid grid-cols-2 gap-4">
           <div class="space-y-1.5">
             <label class="text-sm font-medium">{{ t('orgSettings.smtpFromEmail') }}</label>
-            <input
+            <Input
               v-model="form.smtp_from_email"
               type="email"
               placeholder="noreply@example.com"
@@ -221,7 +225,7 @@ onMounted(() => {
           </div>
           <div class="space-y-1.5">
             <label class="text-sm font-medium">{{ t('orgSettings.smtpFromName') }}</label>
-            <input
+            <Input
               v-model="form.smtp_from_name"
               type="text"
               :placeholder="t('orgSettings.smtpFromNamePlaceholder')"
@@ -231,18 +235,13 @@ onMounted(() => {
         </div>
 
         <div class="flex items-center gap-2">
-          <input
-            id="use-tls"
-            v-model="form.smtp_use_tls"
-            type="checkbox"
-            class="h-4 w-4 rounded border-input"
-          />
+          <Checkbox id="use-tls" v-model:checked="form.smtp_use_tls" />
           <label for="use-tls" class="text-sm font-medium">{{ t('orgSettings.smtpUseTls') }}</label>
         </div>
 
         <!-- action buttons -->
         <div class="flex items-center gap-3 pt-2">
-          <button
+          <Button variant="unstyled" size="unstyled"
             :disabled="saving"
             class="h-9 px-4 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-50 flex items-center gap-2"
             @click="handleSave"
@@ -250,16 +249,16 @@ onMounted(() => {
             <Loader2 v-if="saving" class="w-4 h-4 animate-spin" />
             <Save v-else class="w-4 h-4" />
             {{ t('orgSettings.smtpSave') }}
-          </button>
+          </Button>
 
           <template v-if="hasPassword || form.smtp_host">
-            <input
+            <Input
               v-model="testEmail"
               type="email"
               :placeholder="t('orgSettings.smtpTestEmailPlaceholder')"
               class="h-9 w-52 px-3 rounded-md border border-input bg-background text-sm font-mono focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1"
             />
-            <button
+            <Button variant="unstyled" size="unstyled"
               :disabled="testing || !form.smtp_host.trim()"
               class="h-9 px-4 rounded-md border border-input text-sm font-medium hover:bg-accent disabled:opacity-50 flex items-center gap-2"
               @click="handleTest"
@@ -267,7 +266,7 @@ onMounted(() => {
               <Loader2 v-if="testing" class="w-4 h-4 animate-spin" />
               <Send v-else class="w-4 h-4" />
               {{ t('orgSettings.smtpTest') }}
-            </button>
+            </Button>
           </template>
         </div>
       </div>
@@ -283,7 +282,7 @@ onMounted(() => {
 
         <div class="space-y-1.5">
           <label class="text-sm font-medium">{{ t('orgSettings.templateSubject') }}</label>
-          <input
+          <Input
             v-model="verificationSubject"
             type="text"
             placeholder="DeskClaw - 登录验证码"
@@ -293,7 +292,7 @@ onMounted(() => {
 
         <div class="space-y-1.5">
           <label class="text-sm font-medium">{{ t('orgSettings.templateContent') }}</label>
-          <textarea
+          <Textarea
             v-model="verificationTemplate"
             rows="8"
             :placeholder="t('orgSettings.templateContentPlaceholder')"
@@ -301,7 +300,7 @@ onMounted(() => {
           />
         </div>
 
-        <button
+        <Button variant="unstyled" size="unstyled"
           :disabled="templateSaving"
           class="h-9 px-4 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-50 flex items-center gap-2"
           @click="handleSaveTemplate"
@@ -309,7 +308,7 @@ onMounted(() => {
           <Loader2 v-if="templateSaving" class="w-4 h-4 animate-spin" />
           <Save v-else class="w-4 h-4" />
           {{ t('orgSettings.templateSave') }}
-        </button>
+        </Button>
       </div>
     </template>
   </div>

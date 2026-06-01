@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import { NodeViewWrapper } from '@tiptap/vue-3'
 import { Terminal, X } from 'lucide-vue-next'
+import { Button } from '@/components/ui/button'
 
 defineProps<{
   node: any
@@ -18,14 +19,14 @@ const hovered = ref(false)
     @mouseenter="hovered = true"
     @mouseleave="hovered = false"
   >
-    <button
+    <Button variant="unstyled" size="unstyled"
       class="tag-icon-btn"
       contenteditable="false"
       @click.stop.prevent="deleteNode"
     >
       <X class="tag-icon-x" :class="{ visible: hovered }" />
       <Terminal class="tag-icon-default" :class="{ visible: !hovered }" />
-    </button>
+    </Button>
     <span class="tag-label">/{{ node.attrs.label }}<span v-if="node.attrs.agentLabel" class="agent-part">{{ node.attrs.agentLabel }}</span></span>
   </NodeViewWrapper>
 </template>

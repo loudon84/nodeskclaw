@@ -12,7 +12,11 @@ import { useI18n } from 'vue-i18n'
 import GeneMarketDialog from '@/components/gene/GeneMarketDialog.vue'
 import api from '@/services/api'
 import { renderMarkdown } from '@/utils/markdown'
+import { resolveApiErrorMessage } from '@/i18n/error'
 import { getRuntimeCaps } from '@/utils/runtimeCapabilities'
+import { Button } from '@/components/ui/button'
+import { Textarea } from '@/components/ui/textarea'
+import { Input } from '@/components/ui/input'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -231,8 +235,8 @@ async function handleCreate() {
     createDialogOpen.value = false
     await store.fetchInstanceSkills(instanceId.value)
     toast.success(t('instanceGenes.createSubmitted'))
-  } catch {
-    toast.error(t('instanceGenes.createFailed'))
+  } catch (e) {
+    toast.error(resolveApiErrorMessage(e, t('instanceGenes.createFailed')))
   } finally {
     creating.value = false
   }
@@ -256,8 +260,8 @@ async function handleManualCreate() {
     manualSkillContent.value = ''
     await store.fetchInstanceSkills(instanceId.value)
     toast.success(t('instanceGenes.manualCreateSuccess'))
-  } catch {
-    toast.error(t('instanceGenes.manualCreateFailed'))
+  } catch (e) {
+    toast.error(resolveApiErrorMessage(e, t('instanceGenes.manualCreateFailed')))
   } finally {
     manualCreating.value = false
   }
@@ -311,35 +315,35 @@ onUnmounted(stopPolling)
     <div class="flex items-center justify-between">
       <h2 class="text-lg font-semibold">{{ t('instanceGenes.title') }}</h2>
       <div class="flex items-center gap-2">
-        <button
+        <Button variant="unstyled" size="unstyled"
           v-if="hasInstalledGenes"
           class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm border border-border hover:bg-muted/50 transition-colors"
           @click="saveTemplateOpen = true"
         >
           <Save class="w-4 h-4" />
           {{ t('template.saveAsTemplate') }}
-        </button>
-        <button
+        </Button>
+        <Button variant="unstyled" size="unstyled"
           class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
           @click="openMarketDialog"
         >
           <Download class="w-4 h-4" />
           {{ t('instanceGenes.learnGene') }}
-        </button>
-        <button
+        </Button>
+        <Button variant="unstyled" size="unstyled"
           class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm border border-border hover:bg-muted/50 transition-colors"
           @click="openCreateDialog"
         >
           <Sparkles class="w-4 h-4" />
           {{ t('instanceGenes.createGene') }}
-        </button>
-        <button
+        </Button>
+        <Button variant="unstyled" size="unstyled"
           class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm border border-border hover:bg-muted/50 transition-colors"
           @click="manualDialogOpen = true"
         >
           <FilePen class="w-4 h-4" />
           {{ t('instanceGenes.manualCreate') }}
-        </button>
+        </Button>
       </div>
     </div>
 
@@ -358,13 +362,13 @@ onUnmounted(stopPolling)
     <div v-else-if="instanceSkills.length === 0" class="rounded-xl border border-dashed border-border py-16 text-center text-muted-foreground">
       <Package class="w-12 h-12 mx-auto mb-4 opacity-50" />
       <p class="text-sm">{{ t('instanceGenes.empty') }}</p>
-      <button
+      <Button variant="unstyled" size="unstyled"
         class="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
         @click="openMarketDialog"
       >
         <Download class="w-4 h-4" />
         {{ t('instanceGenes.learnGene') }}
-      </button>
+      </Button>
     </div>
 
     <!-- Skills list -->
@@ -436,44 +440,44 @@ onUnmounted(stopPolling)
             </div>
           </div>
           <div v-if="item.instance_gene" class="flex items-center gap-2 shrink-0">
-            <button
+            <Button variant="unstyled" size="unstyled"
               v-if="canPublishToMarket(item)"
               class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs border border-primary/30 text-primary hover:bg-primary/10 transition-colors"
               @click.stop="handlePublishToMarket(item)"
             >
               <Globe class="w-3.5 h-3.5" />
               {{ t('instanceGenes.publishToMarket') }}
-            </button>
-            <button
+            </Button>
+            <Button variant="unstyled" size="unstyled"
               v-if="item.instance_gene.learning_output && !item.instance_gene.variant_published && item.instance_gene.status === 'installed'"
               class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs border border-border hover:bg-muted/50 transition-colors"
               @click.stop="handlePublishVariant(item)"
             >
               <Upload class="w-3.5 h-3.5" />
               {{ t('instanceGenes.publishVariant') }}
-            </button>
-            <button
+            </Button>
+            <Button variant="unstyled" size="unstyled"
               v-if="item.instance_gene.status === 'simplified'"
               class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs border border-border hover:bg-muted/50 transition-colors"
               @click.stop="handleRelearn(item)"
             >
               <RefreshCw class="w-3.5 h-3.5" />
               {{ t('instanceGenes.relearn') }}
-            </button>
+            </Button>
             <span
               class="px-2 py-0.5 rounded text-xs font-medium shrink-0"
               :class="getStatusClass(item.instance_gene.status)"
             >
               {{ getStatusLabel(item.instance_gene.status) }}
             </span>
-            <button
+            <Button variant="unstyled" size="unstyled"
               v-if="!busyStatuses.has(item.instance_gene.status)"
               class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs text-destructive border border-destructive/30 hover:bg-destructive/10 transition-colors"
               @click.stop="openForgetDialog(item)"
             >
               <Trash2 class="w-3.5 h-3.5" />
               {{ item.instance_gene.status === 'simplified' ? t('instanceGenes.forgetFull') : t('instanceGenes.forget') }}
-            </button>
+            </Button>
           </div>
         </div>
 
@@ -523,9 +527,9 @@ onUnmounted(stopPolling)
               </div>
               <p v-if="emergedDetail.description" class="text-sm text-muted-foreground mt-1">{{ emergedDetail.description }}</p>
             </div>
-            <button class="text-muted-foreground hover:text-foreground shrink-0" @click="emergedDetail = null">
+            <Button variant="unstyled" size="unstyled" class="text-muted-foreground hover:text-foreground shrink-0" @click="emergedDetail = null">
               <X class="w-5 h-5" />
-            </button>
+            </Button>
           </div>
           <div class="p-6 overflow-y-auto flex-1">
             <div class="flex items-center gap-4 text-sm text-muted-foreground mb-4">
@@ -560,9 +564,9 @@ onUnmounted(stopPolling)
         <div class="bg-card rounded-xl border border-border shadow-xl w-full max-w-md mx-4 p-6">
           <div class="flex items-center justify-between mb-4">
             <h3 class="text-lg font-semibold">{{ t('instanceGenes.forgetConfirmTitle') }}</h3>
-            <button class="text-muted-foreground hover:text-foreground" @click="forgetTarget = null">
+            <Button variant="unstyled" size="unstyled" class="text-muted-foreground hover:text-foreground" @click="forgetTarget = null">
               <X class="w-5 h-5" />
-            </button>
+            </Button>
           </div>
 
           <div class="rounded-lg border border-border bg-muted/30 p-3 mb-4">
@@ -592,7 +596,7 @@ onUnmounted(stopPolling)
               <span class="font-medium text-foreground">{{ forgetTarget.name }}</span>
               {{ t('instanceGenes.forgetInputSuffix') }}
             </label>
-            <input
+            <Input
               v-model="confirmInput"
               class="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-destructive/50"
               :placeholder="forgetTarget.name"
@@ -600,20 +604,20 @@ onUnmounted(stopPolling)
           </div>
 
           <div class="flex justify-end gap-2">
-            <button
+            <Button variant="unstyled" size="unstyled"
               class="px-4 py-2 rounded-lg text-sm border border-border hover:bg-muted/50"
               @click="forgetTarget = null"
             >
               {{ t('common.cancel') }}
-            </button>
-            <button
+            </Button>
+            <Button variant="unstyled" size="unstyled"
               class="px-4 py-2 rounded-lg text-sm bg-destructive text-destructive-foreground hover:bg-destructive/90 disabled:opacity-50"
               :disabled="!isConfirmed || forgetting"
               @click="confirmForget"
             >
               <Loader2 v-if="forgetting" class="w-4 h-4 animate-spin inline mr-1" />
               {{ t('instanceGenes.forgetConfirmBtn') }}
-            </button>
+            </Button>
           </div>
         </div>
       </div>
@@ -629,31 +633,31 @@ onUnmounted(stopPolling)
         <div class="bg-card rounded-xl border border-border shadow-xl w-full max-w-md mx-4 p-6">
           <div class="flex items-center justify-between mb-4">
             <h3 class="text-lg font-semibold">{{ t('instanceGenes.createGene') }}</h3>
-            <button class="text-muted-foreground hover:text-foreground" @click="createDialogOpen = false">
+            <Button variant="unstyled" size="unstyled" class="text-muted-foreground hover:text-foreground" @click="createDialogOpen = false">
               <X class="w-5 h-5" />
-            </button>
+            </Button>
           </div>
           <p class="text-sm text-muted-foreground mb-4">{{ t('instanceGenes.createDesc') }}</p>
-          <textarea
+          <Textarea
             v-model="createPrompt"
             class="w-full h-24 px-3 py-2 rounded-lg border border-border bg-background text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary"
             :placeholder="t('instanceGenes.createPlaceholder')"
           />
           <div class="flex justify-end gap-2 mt-4">
-            <button
+            <Button variant="unstyled" size="unstyled"
               class="px-4 py-2 rounded-lg text-sm border border-border hover:bg-muted/50"
               @click="createDialogOpen = false"
             >
               {{ t('common.cancel') }}
-            </button>
-            <button
+            </Button>
+            <Button variant="unstyled" size="unstyled"
               class="px-4 py-2 rounded-lg text-sm bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
               :disabled="creating"
               @click="handleCreate"
             >
               <Loader2 v-if="creating" class="w-4 h-4 animate-spin inline mr-1" />
               {{ t('common.submit') }}
-            </button>
+            </Button>
           </div>
         </div>
       </div>
@@ -672,14 +676,14 @@ onUnmounted(stopPolling)
               <h3 class="text-lg font-semibold">{{ t('instanceGenes.manualCreateTitle') }}</h3>
               <p class="text-sm text-muted-foreground mt-1">{{ t('instanceGenes.manualCreateDesc') }}</p>
             </div>
-            <button class="text-muted-foreground hover:text-foreground shrink-0" @click="manualDialogOpen = false">
+            <Button variant="unstyled" size="unstyled" class="text-muted-foreground hover:text-foreground shrink-0" @click="manualDialogOpen = false">
               <X class="w-5 h-5" />
-            </button>
+            </Button>
           </div>
           <div class="p-6 overflow-y-auto flex-1 space-y-3">
             <div>
               <label class="block text-sm font-medium mb-1">{{ t('instanceGenes.manualNameLabel') }}</label>
-              <input
+              <Input
                 v-model="manualName"
                 type="text"
                 class="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
@@ -688,7 +692,7 @@ onUnmounted(stopPolling)
             </div>
             <div>
               <label class="block text-sm font-medium mb-1">{{ t('instanceGenes.manualSlugLabel') }}</label>
-              <input
+              <Input
                 v-model="manualSlug"
                 type="text"
                 class="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary/50"
@@ -697,7 +701,7 @@ onUnmounted(stopPolling)
             </div>
             <div>
               <label class="block text-sm font-medium mb-1">{{ t('instanceGenes.manualCategoryLabel') }}</label>
-              <input
+              <Input
                 v-model="manualCategory"
                 type="text"
                 class="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
@@ -706,7 +710,7 @@ onUnmounted(stopPolling)
             </div>
             <div>
               <label class="block text-sm font-medium mb-1">{{ t('instanceGenes.manualSkillContentLabel') }}</label>
-              <textarea
+              <Textarea
                 v-model="manualSkillContent"
                 class="w-full h-48 px-3 py-2 rounded-lg border border-border bg-background text-sm font-mono resize-none focus:outline-none focus:ring-2 focus:ring-primary/50"
                 :placeholder="t('instanceGenes.manualSkillContentPlaceholder')"
@@ -714,20 +718,20 @@ onUnmounted(stopPolling)
             </div>
           </div>
           <div class="flex justify-end gap-2 p-6 pt-4 border-t border-border shrink-0">
-            <button
+            <Button variant="unstyled" size="unstyled"
               class="px-4 py-2 rounded-lg text-sm border border-border hover:bg-muted/50"
               @click="manualDialogOpen = false"
             >
               {{ t('common.cancel') }}
-            </button>
-            <button
+            </Button>
+            <Button variant="unstyled" size="unstyled"
               class="px-4 py-2 rounded-lg text-sm bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
               :disabled="manualCreating || !manualName.trim() || !manualSlug.trim() || !manualSkillContent.trim()"
               @click="handleManualCreate"
             >
               <Loader2 v-if="manualCreating" class="w-4 h-4 animate-spin inline mr-1" />
               {{ t('common.submit') }}
-            </button>
+            </Button>
           </div>
         </div>
       </div>
@@ -743,15 +747,15 @@ onUnmounted(stopPolling)
         <div class="bg-card rounded-xl border border-border shadow-xl w-full max-w-md mx-4 p-6">
           <div class="flex items-center justify-between mb-4">
             <h3 class="text-lg font-semibold">{{ t('template.saveAsTemplate') }}</h3>
-            <button class="text-muted-foreground hover:text-foreground" @click="saveTemplateOpen = false">
+            <Button variant="unstyled" size="unstyled" class="text-muted-foreground hover:text-foreground" @click="saveTemplateOpen = false">
               <X class="w-5 h-5" />
-            </button>
+            </Button>
           </div>
           <p class="text-sm text-muted-foreground mb-4">{{ t('template.saveDesc') }}</p>
           <div class="space-y-3">
             <div>
               <label class="block text-sm font-medium mb-1">{{ t('template.nameLabel') }}</label>
-              <input
+              <Input
                 v-model="templateName"
                 type="text"
                 class="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
@@ -760,7 +764,7 @@ onUnmounted(stopPolling)
             </div>
             <div>
               <label class="block text-sm font-medium mb-1">{{ t('template.slugLabel') }}</label>
-              <input
+              <Input
                 v-model="templateSlug"
                 type="text"
                 class="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary/50"
@@ -769,7 +773,7 @@ onUnmounted(stopPolling)
             </div>
             <div>
               <label class="block text-sm font-medium mb-1">{{ t('template.descLabel') }}</label>
-              <textarea
+              <Textarea
                 v-model="templateDesc"
                 class="w-full h-20 px-3 py-2 rounded-lg border border-border bg-background text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary/50"
                 :placeholder="t('template.descPlaceholder')"
@@ -777,20 +781,20 @@ onUnmounted(stopPolling)
             </div>
           </div>
           <div class="flex justify-end gap-2 mt-4">
-            <button
+            <Button variant="unstyled" size="unstyled"
               class="px-4 py-2 rounded-lg text-sm border border-border hover:bg-muted/50"
               @click="saveTemplateOpen = false"
             >
               {{ t('common.cancel') }}
-            </button>
-            <button
+            </Button>
+            <Button variant="unstyled" size="unstyled"
               class="px-4 py-2 rounded-lg text-sm bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
               :disabled="savingTemplate || !templateName.trim() || !templateSlug.trim()"
               @click="handleSaveTemplate"
             >
               <Loader2 v-if="savingTemplate" class="w-4 h-4 animate-spin inline mr-1" />
               {{ t('common.save') }}
-            </button>
+            </Button>
           </div>
         </div>
       </div>

@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
-import { AlertCircle, CheckCircle2, Clock, DollarSign, Loader2, Play } from 'lucide-vue-next'
+import { AlertCircle, CheckCircle2, Clock, DollarSign, Loader2, Play, XCircle } from 'lucide-vue-next'
 import { useWorkspaceStore, type TaskInfo } from '@/stores/workspace'
 import { useI18n } from 'vue-i18n'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 
-type ActiveTaskStatus = 'pending' | 'in_progress' | 'done' | 'blocked'
+type ActiveTaskStatus = 'pending' | 'in_progress' | 'done' | 'blocked' | 'failed'
 type TaskBucketKey = ActiveTaskStatus
 
 interface TaskBucketState {
@@ -17,7 +19,7 @@ interface TaskBucketState {
   requestSeq: number
 }
 
-const ACTIVE_BUCKET_KEYS: ActiveTaskStatus[] = ['pending', 'in_progress', 'done', 'blocked']
+const ACTIVE_BUCKET_KEYS: ActiveTaskStatus[] = ['pending', 'in_progress', 'done', 'blocked', 'failed']
 const PAGE_SIZE = 20
 const LOAD_MORE_THRESHOLD = 160
 
@@ -33,6 +35,7 @@ const columns = computed(() => [
   { key: 'in_progress' as const, label: t('blackboard.taskInProgress'), icon: Play, color: 'text-blue-500' },
   { key: 'done' as const, label: t('blackboard.taskDone'), icon: CheckCircle2, color: 'text-green-500' },
   { key: 'blocked' as const, label: t('blackboard.taskBlocked'), icon: AlertCircle, color: 'text-red-500' },
+  { key: 'failed' as const, label: t('blackboard.taskFailed'), icon: XCircle, color: 'text-orange-500' },
 ])
 
 function createBucketState(): TaskBucketState {
@@ -52,6 +55,7 @@ const taskBuckets = reactive<Record<TaskBucketKey, TaskBucketState>>({
   in_progress: createBucketState(),
   done: createBucketState(),
   blocked: createBucketState(),
+  failed: createBucketState(),
 })
 
 const scrollContainers: Record<TaskBucketKey, HTMLElement | null> = {
@@ -59,6 +63,7 @@ const scrollContainers: Record<TaskBucketKey, HTMLElement | null> = {
   in_progress: null,
   done: null,
   blocked: null,
+  failed: null,
 }
 
 const editingValueTaskId = ref<string | null>(null)
@@ -243,7 +248,7 @@ defineExpose({ refresh: refreshAllBuckets })
       <h3 class="text-sm font-medium text-muted-foreground">{{ t('blackboard.tasks') }}</h3>
     </div>
 
-    <div class="grid grid-cols-4 gap-3">
+    <div class="grid grid-cols-5 gap-3">
       <div
         v-for="col in columns"
         :key="col.key"
@@ -291,16 +296,31 @@ defineExpose({ refresh: refreshAllBuckets })
                 <div class="flex flex-wrap items-center gap-2 text-muted-foreground">
                   <span v-if="task.estimated_value != null">{{ t('blackboard.estimatedValue') }}: {{ task.estimated_value }}</span>
                   <span v-if="task.actual_value != null">{{ t('blackboard.actualValue') }}: {{ task.actual_value }}</span>
-                  <span v-if="task.token_cost != null">Token: {{ task.token_cost }}</span>
+                  <span v-if="task.token_cost != null">
+                    Token: {{ task.token_cost }}
+                    <template v-if="task.prompt_token_cost || task.completion_token_cost">
+                      ({{ t('blackboard.promptTokensShort') }}: {{ task.prompt_token_cost ?? 0 }} / {{ t('blackboard.completionTokensShort') }}: {{ task.completion_token_cost ?? 0 }})
+                    </template>
+                  </span>
                 </div>
 
                 <div v-if="task.blocker_reason && task.status === 'blocked'" class="text-[11px] text-red-400">
                   {{ task.blocker_reason }}
                 </div>
 
+                <div v-if="task.failure_reason && task.status === 'failed'" class="text-[11px] text-red-400">
+                  {{ t(`blackboard.failureReason.${task.failure_reason}`, task.failure_reason) }}
+                </div>
+
+                <div v-if="task.deadline" class="flex items-center gap-1 text-[11px]" :class="new Date(task.deadline) < new Date() ? 'text-red-400' : 'text-muted-foreground'">
+                  <Clock class="w-3 h-3" />
+                  {{ t('blackboard.taskDeadline') }}: {{ new Date(task.deadline).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }}
+                  <span v-if="new Date(task.deadline) < new Date()" class="font-medium">{{ t('blackboard.taskOverdue') }}</span>
+                </div>
+
                 <div v-if="isValueEditable(col.key, task)" class="flex items-center gap-2 pt-1">
                   <template v-if="editingValueTaskId === task.id">
-                    <input
+                    <Input
                       v-model.number="valueInput"
                       type="number"
                       step="0.1"
@@ -310,21 +330,21 @@ defineExpose({ refresh: refreshAllBuckets })
                       @keyup.enter="saveValue(task.id)"
                       @keyup.escape="editingValueTaskId = null"
                     />
-                    <button
+                    <Button variant="unstyled" size="unstyled"
                       class="text-[11px] text-green-400 transition-colors hover:text-green-300"
                       @click="saveValue(task.id)"
                     >
                       {{ t('blackboard.save') }}
-                    </button>
+                    </Button>
                   </template>
-                  <button
+                  <Button variant="unstyled" size="unstyled"
                     v-else
                     class="flex items-center gap-1 text-[11px] text-muted-foreground transition-colors hover:text-foreground"
                     @click="startValueEdit(task)"
                   >
                     <DollarSign class="h-3 w-3" />
                     {{ t('blackboard.annotateValue') }}
-                  </button>
+                  </Button>
                 </div>
               </div>
             </template>

@@ -2,6 +2,8 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { Search, X, ChevronDown, Loader2, RefreshCw, PenLine } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 
 const { t } = useI18n()
 
@@ -133,12 +135,12 @@ watch(() => props.provider, () => {
     >
       <template v-if="modelValue">
         <span class="flex-1 font-mono text-xs truncate">{{ modelValue.id }}</span>
-        <button
+        <Button variant="unstyled" size="unstyled"
           class="text-muted-foreground hover:text-destructive transition-colors shrink-0"
           @click.stop="clear"
         >
           <X class="w-3.5 h-3.5" />
-        </button>
+        </Button>
       </template>
       <span v-else class="flex-1 text-muted-foreground text-sm">{{ t('llm.selectModel') }}</span>
       <ChevronDown class="w-4 h-4 text-muted-foreground shrink-0 transition-transform" :class="open ? 'rotate-180' : ''" />
@@ -151,7 +153,7 @@ watch(() => props.provider, () => {
       <!-- Manual input mode -->
       <div v-if="manualMode" class="p-3 space-y-2">
         <div class="flex items-center gap-2">
-          <input
+          <Input
             ref="manualInputRef"
             v-model="manualInput"
             type="text"
@@ -164,18 +166,18 @@ watch(() => props.provider, () => {
         </div>
         <p v-if="manualError" class="text-[10px] text-destructive">{{ manualError }}</p>
         <div class="flex justify-end gap-2">
-          <button
+          <Button variant="unstyled" size="unstyled"
             class="px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground transition-colors rounded-md"
             @click.stop="cancelManualMode"
           >
             {{ t('common.cancel') }}
-          </button>
-          <button
+          </Button>
+          <Button variant="unstyled" size="unstyled"
             class="px-2.5 py-1 text-xs text-primary-foreground bg-primary hover:bg-primary/90 transition-colors rounded-md"
             @click.stop="confirmManualInput"
           >
             {{ t('common.confirm') }}
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -183,20 +185,20 @@ watch(() => props.provider, () => {
       <template v-else>
         <div class="flex items-center gap-2 px-3 py-2 border-b border-border">
           <Search class="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-          <input
+          <Input
             v-model="search"
             type="text"
             :placeholder="t('llm.searchModel')"
             class="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
             @click.stop
           />
-          <button
+          <Button variant="unstyled" size="unstyled"
             class="text-muted-foreground hover:text-foreground transition-colors"
             :title="t('llm.refreshModels')"
             @click.stop="loadModels"
           >
             <RefreshCw class="w-3.5 h-3.5" :class="loading ? 'animate-spin' : ''" />
-          </button>
+          </Button>
         </div>
 
         <div class="max-h-60 overflow-y-auto">
@@ -206,17 +208,17 @@ watch(() => props.provider, () => {
           <div v-else-if="filtered.length === 0" class="py-4 text-center text-xs text-muted-foreground space-y-2">
             <div>{{ search ? t('llm.noMatchingModels') : t('llm.noAvailableModels') }}</div>
             <div v-if="errorMsg && !search" class="text-destructive">{{ errorMsg }}</div>
-            <button
+            <Button variant="unstyled" size="unstyled"
               v-if="allowManualInput && !search"
               class="inline-flex items-center gap-1 text-primary hover:text-primary/80 transition-colors"
               @click.stop="enterManualMode"
             >
               <PenLine class="w-3 h-3" />
               {{ t('llm.manualInputModel') }}
-            </button>
+            </Button>
           </div>
           <template v-else>
-            <button
+            <Button variant="unstyled" size="unstyled"
               v-for="m in filtered"
               :key="m.id"
               class="w-full flex items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent transition-colors"
@@ -236,15 +238,15 @@ watch(() => props.provider, () => {
               <span v-if="m.context_window" class="text-[10px] text-muted-foreground shrink-0">
                 {{ (m.context_window / 1000).toFixed(0) }}k ctx
               </span>
-            </button>
-            <button
+            </Button>
+            <Button variant="unstyled" size="unstyled"
               v-if="allowManualInput"
               class="w-full flex items-center gap-2 px-3 py-2 text-left text-xs text-muted-foreground hover:bg-accent hover:text-foreground transition-colors border-t border-border"
               @click.stop="enterManualMode"
             >
               <PenLine class="w-3.5 h-3.5" />
               {{ t('llm.manualInputModel') }}
-            </button>
+            </Button>
           </template>
         </div>
       </template>

@@ -2,13 +2,15 @@
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from croniter import croniter
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.workspace_agent import WorkspaceAgent
 from app.models.workspace_schedule import WorkspaceSchedule
+from app.models.workspace_task import WorkspaceTask
 
 logger = logging.getLogger(__name__)
 
@@ -52,9 +54,11 @@ class ScheduleRunner:
         self._last_check = now
 
         async with self._session_factory() as db:
+            await self._check_overdue(db)
+
             result = await db.execute(
                 select(WorkspaceSchedule).where(
-                    WorkspaceSchedule.is_active == True,
+                    WorkspaceSchedule.is_active,
                     WorkspaceSchedule.deleted_at.is_(None),
                 )
             )
@@ -71,14 +75,69 @@ class ScheduleRunner:
                         "Schedule %s cron error: %s", schedule.id, e
                     )
 
+    async def _check_overdue(self, db: AsyncSession):
+        """Mark overdue scheduled tasks as failed and write task_success=0.0."""
+        from app.api.workspaces import broadcast_event, _fire_task, _notify_agents_task_failed
+        from app.models.workspace_task import FAILURE_TIMEOUT, FAILURE_UNCLAIMED_TIMEOUT
+        from app.services import gene_service
+        from app.services.workspace_service import _task_to_info, update_schedule_failure_count
+
+        now = datetime.now(timezone.utc)
+        result = await db.execute(
+            select(WorkspaceTask).where(
+                WorkspaceTask.schedule_id.isnot(None),
+                WorkspaceTask.deadline.isnot(None),
+                WorkspaceTask.deadline < now,
+                WorkspaceTask.status.in_(["pending", "in_progress"]),
+                WorkspaceTask.deleted_at.is_(None),
+            )
+        )
+        overdue = result.scalars().all()
+
+        for task in overdue:
+            old_status = task.status
+            task.status = "failed"
+            task.failure_reason = (
+                FAILURE_TIMEOUT if task.assignee_instance_id else FAILURE_UNCLAIMED_TIMEOUT
+            )
+            await update_schedule_failure_count(
+                db, task.schedule_id, success=False, workspace_id=task.workspace_id,
+            )
+            await db.commit()
+            await db.refresh(task)
+
+            task_info = _task_to_info(task)
+            broadcast_event(task.workspace_id, "task:updated", task_info.model_dump(mode="json"))
+            broadcast_event(task.workspace_id, "task:status_changed", {
+                "task_id": task.id, "title": task.title,
+                "old_status": old_status, "new_status": "failed",
+            })
+
+            if task.assignee_instance_id:
+                try:
+                    await gene_service.log_task_outcome(
+                        db, task.assignee_instance_id, task.id, task.title,
+                        success=False, failure_reason=task.failure_reason,
+                    )
+                except Exception as e:
+                    logger.warning("超时任务写入 task_success 失败: %s", e)
+
+            _fire_task(_notify_agents_task_failed(task.workspace_id, task.title))
+            logger.info(
+                "Overdue scheduled task '%s' marked failed (reason=%s, workspace %s)",
+                task.title, task.failure_reason, task.workspace_id,
+            )
+
     async def _fire(self, db, schedule: WorkspaceSchedule):
-        from app.services import corridor_router
+        from app.api.workspaces import broadcast_event
+        from app.services import corridor_router, workspace_service
         from app.services.collaboration_service import send_system_message_to_agents
+        from app.schemas.workspace import TaskCreate
         from app.models.instance import Instance
         from app.models.base import not_deleted
 
         workspace_id = schedule.workspace_id
-        message = schedule.message_template or f"[{schedule.name}]"
+        now = datetime.now(timezone.utc)
 
         has_topo = await corridor_router.has_any_connections(workspace_id, db)
         if has_topo:
@@ -97,14 +156,46 @@ class ScheduleRunner:
             )
             agent_ids = [row[0].id for row in agents_q.all()]
 
+        active_q = await db.execute(
+            select(WorkspaceTask.id).where(
+                WorkspaceTask.schedule_id == schedule.id,
+                WorkspaceTask.status.in_(["pending", "in_progress"]),
+                WorkspaceTask.deleted_at.is_(None),
+            ).limit(1)
+        )
+        has_active = active_q.scalar_one_or_none() is not None
+
+        task_created = False
+        if not has_active:
+            assignee = agent_ids[0] if len(agent_ids) == 1 else None
+            deadline = now + timedelta(minutes=schedule.timeout_minutes)
+            task_info = await workspace_service.create_task(
+                db, workspace_id,
+                TaskCreate(
+                    title=schedule.name,
+                    description=schedule.message_template,
+                    assignee_id=assignee,
+                ),
+                schedule_id=schedule.id,
+                deadline=deadline,
+            )
+            broadcast_event(workspace_id, "task:created", task_info.model_dump(mode="json"))
+            task_created = True
+
         if agent_ids:
+            if task_created:
+                message = f"定时任务「{schedule.name}」已创建，请检查黑板待办任务。\n\n{schedule.message_template}"
+            else:
+                message = schedule.message_template or f"[{schedule.name}]"
             await send_system_message_to_agents(
-                workspace_id, agent_ids, message, db
+                workspace_id, agent_ids, message, db,
+                mention_targets=agent_ids,
             )
-            logger.info(
-                "Schedule '%s' fired to %d agents in workspace %s",
-                schedule.name, len(agent_ids), workspace_id,
-            )
+
+        logger.info(
+            "Schedule '%s' fired (workspace %s, task_created=%s, agents=%d)",
+            schedule.name, workspace_id, task_created, len(agent_ids),
+        )
 
 
 PRESET_TEMPLATES = [

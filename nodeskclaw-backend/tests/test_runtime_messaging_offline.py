@@ -169,6 +169,7 @@ class TestBroadcastOfflineError:
                 "instance_id": "agent-abc",
                 "agent_name": "高级开发python",
                 "error": "instance_not_connected_locally",
+                "error_detail": None,
             })
 
     @pytest.mark.asyncio
@@ -194,6 +195,7 @@ class TestBroadcastOfflineError:
                 "instance_id": "agent-xyz",
                 "agent_name": "agent-xyz",
                 "error": "instance_not_connected_locally",
+                "error_detail": None,
             })
 
 

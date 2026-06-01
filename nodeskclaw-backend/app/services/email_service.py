@@ -121,14 +121,45 @@ async def get_smtp_config_for_email(
     return await transport.resolve_smtp_config(db, email)
 
 
-INVITATION_EMAIL_SUBJECT = "DeskClaw - {org_name}"
+_INVITATION_SUBJECTS = {
+    "zh-CN": "DeskClaw 团队版 - {org_name}",
+    "en-US": "DeskClaw Team - {org_name}",
+}
 
-INVITATION_EMAIL_HTML = """\
+_INVITATION_TEMPLATES = {
+    "zh-CN": """\
 <!DOCTYPE html>
 <html>
 <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 480px; margin: 0 auto; padding: 20px;">
   <div style="text-align: center; padding: 20px 0; border-bottom: 1px solid #e5e7eb;">
-    <h2 style="margin: 0; color: #111827;">DeskClaw</h2>
+    <h2 style="margin: 0; color: #111827;">DeskClaw 团队版</h2>
+  </div>
+  <div style="padding: 32px 0;">
+    <p style="color: #374151; font-size: 15px; line-height: 1.6;">
+      <strong>{inviter_name}</strong> 邀请你以 <strong>{role}</strong> 身份加入 <strong>{org_name}</strong>。
+    </p>
+    <div style="text-align: center; margin: 24px 0;">
+      <a href="{invite_url}"
+         style="display: inline-block; padding: 12px 32px; background: #111827; color: #ffffff; font-size: 15px; font-weight: 600; text-decoration: none; border-radius: 8px;">
+        接受邀请
+      </a>
+    </div>
+    <p style="color: #6b7280; font-size: 13px; line-height: 1.6;">
+      此邀请 7 天内有效。如果你没有预期收到此邮件，可以安全忽略。
+    </p>
+  </div>
+  <div style="border-top: 1px solid #e5e7eb; padding-top: 16px; text-align: center;">
+    <p style="color: #9ca3af; font-size: 12px;">DeskClaw 团队版 - AI 云部署平台</p>
+  </div>
+</body>
+</html>
+""",
+    "en-US": """\
+<!DOCTYPE html>
+<html>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 480px; margin: 0 auto; padding: 20px;">
+  <div style="text-align: center; padding: 20px 0; border-bottom: 1px solid #e5e7eb;">
+    <h2 style="margin: 0; color: #111827;">DeskClaw Team</h2>
   </div>
   <div style="padding: 32px 0;">
     <p style="color: #374151; font-size: 15px; line-height: 1.6;">
@@ -145,11 +176,19 @@ INVITATION_EMAIL_HTML = """\
     </p>
   </div>
   <div style="border-top: 1px solid #e5e7eb; padding-top: 16px; text-align: center;">
-    <p style="color: #9ca3af; font-size: 12px;">DeskClaw - AI Cloud Deployment Platform</p>
+    <p style="color: #9ca3af; font-size: 12px;">DeskClaw Team - AI Cloud Deployment Platform</p>
   </div>
 </body>
 </html>
-"""
+""",
+}
+
+_ROLE_DISPLAY: dict[str, dict[str, str]] = {
+    "zh-CN": {"admin": "管理员", "member": "成员"},
+    "en-US": {"admin": "Admin", "member": "Member"},
+}
+
+_DEFAULT_LANG = "zh-CN"
 
 
 async def send_invitation_email(
@@ -161,6 +200,7 @@ async def send_invitation_email(
     db: AsyncSession,
     org_id: str | None = None,
     inviter_id: str | None = None,
+    lang: str = "zh-CN",
 ) -> None:
     """Send an invitation email. If SMTP is not configured, raises an exception."""
     from app.services.email.factory import get_email_transport
@@ -184,12 +224,16 @@ async def send_invitation_email(
     if smtp_config is None:
         raise RuntimeError("SMTP not configured")
 
-    subject = INVITATION_EMAIL_SUBJECT.replace("{org_name}", org_name or "DeskClaw")
+    lang_key = lang if lang in _INVITATION_SUBJECTS else _DEFAULT_LANG
+    role_display = _ROLE_DISPLAY.get(lang_key, {}).get(role, role)
+    brand = "DeskClaw 团队版" if lang_key == "zh-CN" else "DeskClaw Team"
+
+    subject = _INVITATION_SUBJECTS[lang_key].replace("{org_name}", org_name or brand)
     html = (
-        INVITATION_EMAIL_HTML
+        _INVITATION_TEMPLATES[lang_key]
         .replace("{inviter_name}", inviter_name or "Admin")
-        .replace("{org_name}", org_name or "DeskClaw")
-        .replace("{role}", role)
+        .replace("{org_name}", org_name or brand)
+        .replace("{role}", role_display)
         .replace("{invite_url}", invite_url)
     )
     await _send_email(to_email, subject, html, smtp_config)

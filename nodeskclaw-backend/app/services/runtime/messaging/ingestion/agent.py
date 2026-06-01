@@ -21,14 +21,28 @@ def build_agent_collaboration_envelope(
     target: str,
     content: str,
     depth: int = 0,
+    conversation_id: str | None = None,
+    group_member_ids: list[str] | None = None,
 ) -> MessageEnvelope:
-    targets = []
-    mode = "broadcast"
+    mention_targets: list[str] = []
     if target and target != "broadcast":
         parts = target.split(":", 1)
         if len(parts) == 2:
-            targets = [parts[1]]
-            mode = "unicast"
+            mention_targets = [parts[1]]
+
+    if group_member_ids and len(group_member_ids) > 0:
+        targets = [mid for mid in group_member_ids if mid != source_instance_id]
+        mode = "multicast" if len(targets) > 1 else "unicast"
+    elif mention_targets:
+        targets = mention_targets
+        mode = "unicast"
+    else:
+        targets = []
+        mode = "broadcast"
+
+    extensions: dict = {"depth": depth, "mention_targets": mention_targets}
+    if conversation_id:
+        extensions["conversation_id"] = conversation_id
 
     return MessageEnvelope(
         source=f"agent/{source_instance_id}",
@@ -43,8 +57,9 @@ def build_agent_collaboration_envelope(
             ),
             intent=IntentType.COLLABORATE,
             content=content,
-            priority=Priority.NORMAL,
-            extensions={"depth": depth, "mention_targets": targets},
+            mentions=mention_targets,
+            priority=Priority.CRITICAL,
+            extensions=extensions,
             routing=MessageRouting(mode=mode, targets=targets, max_hops=5),
         ),
     )

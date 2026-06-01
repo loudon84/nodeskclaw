@@ -3,6 +3,7 @@ import { ref, onBeforeUnmount } from 'vue'
 import { FileText, Image as ImageIcon, Download, X, Loader2 } from 'lucide-vue-next'
 import { useWorkspaceStore, type FileAttachment } from '@/stores/workspace'
 import { useI18n } from 'vue-i18n'
+import { Button } from '@/components/ui/button'
 
 const props = defineProps<{
   attachments: FileAttachment[]
@@ -71,7 +72,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div v-if="attachments?.length" class="flex flex-wrap gap-1.5 mt-1.5">
-    <button
+    <Button variant="unstyled" size="unstyled"
       v-for="att in attachments"
       :key="att.id"
       class="flex items-center gap-1.5 px-2 py-1 rounded-md border text-xs transition-colors bg-background/60 border-border/60 hover:bg-background hover:border-border"
@@ -83,7 +84,7 @@ onBeforeUnmount(() => {
       <span class="truncate max-w-[120px]">{{ att.name }}</span>
       <span class="text-muted-foreground shrink-0">({{ formatFileSize(att.size) }})</span>
       <Download class="w-3 h-3 shrink-0 text-muted-foreground" />
-    </button>
+    </Button>
   </div>
 
   <Teleport to="body">
@@ -92,13 +93,13 @@ onBeforeUnmount(() => {
       class="fixed inset-0 z-9999 flex items-center justify-center bg-black/80 backdrop-blur-sm"
       @click.self="closeLightbox"
     >
-      <button
+      <Button variant="unstyled" size="unstyled"
         class="absolute top-4 right-4 p-2 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors"
         :title="t('chat.closePreview')"
         @click="closeLightbox"
       >
         <X class="w-5 h-5" />
-      </button>
+      </Button>
 
       <Loader2 v-if="lightboxLoading" class="w-8 h-8 text-white animate-spin" />
       <img

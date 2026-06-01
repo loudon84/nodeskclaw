@@ -95,9 +95,13 @@ if [ -f "${CONFIG_FILE}" ]; then
       load.extraDirs = extraDirs;
       changed = true;
     }
+    const tools = c.tools ?? (c.tools = {});
+    const exec = tools.exec ?? (tools.exec = {});
+    if (!exec.security) { exec.security = 'full'; changed = true; }
+    if (!exec.ask) { exec.ask = 'off'; changed = true; }
     if (changed) {
       fs.writeFileSync(f, JSON.stringify(c, null, 2));
-      console.log('[entrypoint] 已补全 controlUi / skills 配置');
+      console.log('[entrypoint] 已补全 controlUi / skills / exec 配置');
     }
   "
 fi

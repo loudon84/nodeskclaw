@@ -1,21 +1,67 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
+import { storeToRefs } from 'pinia'
 import { useRouter } from 'vue-router'
 import { Plus, Loader2, Bot } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
-import { useWorkspaceStore } from '@/stores/workspace'
+import { useWorkspaceStore, type WorkspaceListItem } from '@/stores/workspace'
 import WorkspaceCard from '@/components/workspace/WorkspaceCard.vue'
+import DeployFromTemplateDialog from '@/components/workspace/DeployFromTemplateDialog.vue'
+import { Button } from '@/components/ui/button'
 
 const router = useRouter()
 const store = useWorkspaceStore()
+const { activeTemplateDeploys } = storeToRefs(store)
 const { t } = useI18n()
+
+const resumeDialogOpen = ref(false)
+const resumeDeployId = ref<string | null>(null)
+const pendingWorkspaceId = ref<string | null>(null)
 
 onMounted(() => {
   store.fetchWorkspaces()
+  void store.refreshActiveTemplateDeploys()
 })
+
+type ActiveDeployItem = (typeof activeTemplateDeploys.value)[number]
+
+const deployByWorkspaceId = computed(() => {
+  const m = new Map<string, ActiveDeployItem>()
+  for (const d of activeTemplateDeploys.value) {
+    if (d.workspace_id) m.set(d.workspace_id, d)
+  }
+  return m
+})
+
+function activeDeployFor(wsId: string) {
+  return deployByWorkspaceId.value.get(wsId) ?? null
+}
 
 function openWorkspace(id: string) {
   router.push(`/workspace/${id}`)
+}
+
+function onCardClick(ws: WorkspaceListItem) {
+  const d = activeDeployFor(ws.id)
+  if (d) {
+    pendingWorkspaceId.value = ws.id
+    resumeDeployId.value = d.id
+    resumeDialogOpen.value = true
+    return
+  }
+  openWorkspace(ws.id)
+}
+
+function onResumeDeployDone(workspaceId: string) {
+  void store.refreshActiveTemplateDeploys()
+  openWorkspace(workspaceId)
+}
+
+function onResumeLoadError() {
+  if (pendingWorkspaceId.value) {
+    openWorkspace(pendingWorkspaceId.value)
+    pendingWorkspaceId.value = null
+  }
 }
 
 function createNew() {
@@ -31,13 +77,13 @@ function createNew() {
         <h1 class="text-2xl font-bold">{{ t('workspaceList.title') }}</h1>
         <p class="text-sm text-muted-foreground mt-1">{{ t('workspaceList.subtitle') }}</p>
       </div>
-      <button
+      <Button variant="unstyled" size="unstyled"
         class="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors"
         @click="createNew"
       >
         <Plus class="w-4 h-4" />
         {{ t('workspaceList.createNew') }}
-      </button>
+      </Button>
     </div>
 
     <!-- Loading -->
@@ -57,12 +103,12 @@ function createNew() {
       <p class="text-sm text-muted-foreground max-w-sm mx-auto">
         {{ t('workspaceList.emptyDescription') }}
       </p>
-      <button
+      <Button variant="unstyled" size="unstyled"
         class="mt-4 px-6 py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors"
         @click="createNew"
       >
         {{ t('workspaceList.createFirst') }}
-      </button>
+      </Button>
     </div>
 
     <!-- Grid -->
@@ -74,8 +120,15 @@ function createNew() {
         v-for="ws in store.workspaces"
         :key="ws.id"
         :workspace="ws"
-        @click="openWorkspace(ws.id)"
+        @click="onCardClick(ws)"
       />
     </div>
+
+    <DeployFromTemplateDialog
+      v-model:open="resumeDialogOpen"
+      :resume-deploy-id="resumeDeployId"
+      @done="onResumeDeployDone"
+      @load-error="onResumeLoadError"
+    />
   </div>
 </template>

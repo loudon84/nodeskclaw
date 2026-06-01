@@ -10,6 +10,12 @@ NoDeskClaw 是 DeskClaw 实例可视化管理系统，通过 Web 界面管理 K8
 | 管理前端 | Vue 3 + Vite + TypeScript + Tailwind CSS + shadcn-vue | EE-only |
 | 用户门户 | Vue 3 + Vite + TypeScript + Tailwind CSS + Three.js | CE + EE |
 
+## 产品称呼
+
+- 对外发布、群聊公告、Release Note、客户沟通和文档摘要中，首次出现必须称为“DeskClaw 团队版”。
+- 禁止写成“个人版”，也禁止省略“团队版”导致对外产品定位错误。
+- 技术上下文中可使用 DeskClaw、NoDeskClaw、CE、EE 等名称，但不得影响对外称呼的一致性。
+
 ## 构建/测试命令
 
 ### 后端（nodeskclaw-backend）
@@ -76,6 +82,14 @@ vue-tsc -b                                # 类型检查
 - 所有查询过滤：`Model.deleted_at.is_(None)`
 - 禁止 `db.delete()` 和原生 `DELETE FROM`
 - 唯一约束使用 Partial Unique Index：`Index(..., unique=True, postgresql_where=text("deleted_at IS NULL"))`
+
+### Alembic 迁移规则
+
+新增或修改数据模型后，必须通过 `alembic revision --autogenerate` 生成迁移文件，作为同一个 commit 的一部分。
+
+- 禁止手写 revision ID — 必须由命令自动生成
+- 禁止只加 Model 不加迁移 — 启动时走 `alembic upgrade head`，缺迁移 = 表不存在 = 启动崩溃
+- 生成后 Review：autogenerate 无法检测列重命名，Partial Unique Index 需确认
 
 ### Docker 镜像架构
 
@@ -234,7 +248,7 @@ fix(deploy): 修复 env_vars 存数据库未序列化的问题
 ### 目录结构
 
 - `features.yaml` — EE 功能清单定义
-- `ee/` — EE 私有仓库（`.gitignore` 排除，开发者通过 `scripts/setup-ee.sh` 拉取）
+- `ee/` — EE 私有仓库（`.gitignore` 排除，需手动 clone 到项目根目录）
   - `ee/backend/` — EE 后端（路由、Service、Model、Hook）
   - `ee/nodeskclaw-frontend/` — Admin 管理后台前端（EE-only，完整 Vue 项目）
   - `ee/frontend/portal/` — Portal 前端 EE 页面和路由

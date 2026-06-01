@@ -1,19 +1,28 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
-import { Plus, ExternalLink, Circle, Loader2, Trash2 } from 'lucide-vue-next'
+import { useI18n } from 'vue-i18n'
+import { Plus, ExternalLink, Circle, Loader2, Server } from 'lucide-vue-next'
 import api from '@/services/api'
-import { useNetworkConfig } from '@/composables/useNetworkConfig'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card'
 
 const router = useRouter()
-const { ensureLoaded, buildInstanceUrl } = useNetworkConfig()
+const { t, te } = useI18n()
 
 interface InstanceItem {
   id: string
   name: string
   status: string
   image_version: string
-  ingress_domain: string | null
+  endpoint_url: string | null
   created_at: string
 }
 
@@ -21,7 +30,6 @@ const instances = ref<InstanceItem[]>([])
 const loading = ref(true)
 
 onMounted(async () => {
-  ensureLoaded()
   try {
     const res = await api.get('/instances')
     instances.value = res.data.data ?? []
@@ -30,101 +38,101 @@ onMounted(async () => {
   }
 })
 
-const statusColors: Record<string, string> = {
-  running: 'text-green-400',
-  learning: 'text-blue-400',
-  deploying: 'text-yellow-400',
-  creating: 'text-blue-400',
-  updating: 'text-blue-400',
-  failed: 'text-red-400',
-  deleting: 'text-zinc-400',
-  pending: 'text-yellow-400',
-}
-
-const statusLabels: Record<string, string> = {
-  running: '运行中',
-  learning: '学习中',
-  deploying: '部署中',
-  creating: '创建中',
-  updating: '更新中',
-  failed: '异常',
-  deleting: '删除中',
-  pending: '等待中',
+const statusTone: Record<string, string> = {
+  running: 'border-emerald-400/20 bg-emerald-400/10 text-emerald-300',
+  learning: 'border-sky-400/20 bg-sky-400/10 text-sky-300',
+  deploying: 'border-amber-400/20 bg-amber-400/10 text-amber-300',
+  creating: 'border-sky-400/20 bg-sky-400/10 text-sky-300',
+  updating: 'border-sky-400/20 bg-sky-400/10 text-sky-300',
+  failed: 'border-destructive/30 bg-destructive/10 text-destructive',
+  deleting: 'border-zinc-400/20 bg-zinc-400/10 text-zinc-300',
+  pending: 'border-amber-400/20 bg-amber-400/10 text-amber-300',
 }
 
 const isEmpty = computed(() => !loading.value && instances.value.length === 0)
+
+function statusLabel(status: string) {
+  const key = `status.${status}`
+  return te(key) ? t(key) : status
+}
 </script>
 
 <template>
-  <div class="max-w-4xl mx-auto px-6 py-8">
-    <div class="flex items-center justify-between mb-6">
+  <div class="mx-auto max-w-5xl px-6 py-8">
+    <div class="mb-6 flex items-center justify-between gap-4">
       <div>
-        <h1 class="text-xl font-bold">我的AI 员工</h1>
-        <p class="text-sm text-muted-foreground mt-0.5">管理你部署的 DeskClaw AI 员工</p>
+        <h1 class="text-2xl font-semibold tracking-tight">{{ t('home.title') }}</h1>
+        <p class="mt-1 text-sm text-muted-foreground">{{ t('home.subtitle') }}</p>
       </div>
-      <button
-        class="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors"
-        @click="router.push('/create')"
-      >
+      <Button @click="router.push('/create')">
         <Plus class="w-4 h-4" />
-        创建AI 员工
-      </button>
+        {{ t('home.createInstance') }}
+      </Button>
     </div>
 
-    <!-- Loading -->
     <div v-if="loading" class="flex items-center justify-center py-20">
       <Loader2 class="w-6 h-6 animate-spin text-muted-foreground" />
     </div>
 
-    <!-- Empty -->
-    <div v-else-if="isEmpty" class="text-center py-20 space-y-4">
-      <div class="w-16 h-16 mx-auto rounded-full bg-primary/10 flex items-center justify-center">
-        <Plus class="w-8 h-8 text-primary" />
-      </div>
-      <div>
-        <p class="text-lg font-medium">还没有AI 员工</p>
-        <p class="text-sm text-muted-foreground mt-1">点击下方按钮创建你的第一个 AI 员工</p>
-      </div>
-      <button
-        class="px-6 py-2.5 rounded-lg bg-primary text-primary-foreground font-medium text-sm hover:bg-primary/90 transition-colors"
-        @click="router.push('/create')"
-      >
-        创建AI 员工
-      </button>
-    </div>
+    <Card v-else-if="isEmpty" class="border-dashed bg-card/60">
+      <CardContent class="flex flex-col items-center py-16 text-center">
+        <div class="mb-5 flex h-16 w-16 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10">
+          <Plus class="h-8 w-8 text-primary" />
+        </div>
+        <CardTitle class="text-lg">{{ t('home.emptyTitle') }}</CardTitle>
+        <CardDescription class="mt-2 max-w-md">
+          {{ t('home.emptyDescription') }}
+        </CardDescription>
+        <Button class="mt-6" @click="router.push('/create')">
+          <Plus class="h-4 w-4" />
+          {{ t('home.createInstance') }}
+        </Button>
+      </CardContent>
+    </Card>
 
-    <!-- Instance List -->
-    <div v-else class="space-y-3">
-      <div
+    <div v-else class="grid gap-3">
+      <Card
         v-for="inst in instances"
         :key="inst.id"
-        class="flex items-center justify-between p-4 rounded-xl border border-border bg-card hover:border-primary/30 transition-colors cursor-pointer"
+        class="cursor-pointer transition-colors hover:border-primary/35 hover:bg-card/80"
         @click="router.push(`/instances/${inst.id}`)"
       >
-        <div class="flex items-center gap-4">
-          <div class="flex items-center gap-2">
-            <Circle class="w-2.5 h-2.5 fill-current" :class="statusColors[inst.status] || 'text-zinc-500'" />
-            <span class="font-medium">{{ inst.name }}</span>
+        <CardHeader class="flex-row items-center justify-between gap-4 space-y-0">
+          <div class="flex min-w-0 items-center gap-3">
+            <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border bg-muted/50">
+              <Server class="h-5 w-5 text-muted-foreground" />
+            </div>
+            <div class="min-w-0">
+              <CardTitle class="truncate text-base">{{ inst.name }}</CardTitle>
+              <CardDescription class="mt-1 flex items-center gap-2">
+                <Badge variant="outline" class="max-w-[12rem] truncate">
+                  {{ inst.image_version }}
+                </Badge>
+              </CardDescription>
+            </div>
           </div>
-          <span class="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded">
-            {{ inst.image_version }}
-          </span>
-        </div>
-        <div class="flex items-center gap-4">
-          <span class="text-xs" :class="statusColors[inst.status] || 'text-zinc-500'">
-            {{ statusLabels[inst.status] || inst.status }}
-          </span>
-          <a
-            v-if="inst.ingress_domain && inst.status === 'running'"
-            :href="buildInstanceUrl(inst.ingress_domain)"
-            target="_blank"
-            class="text-primary hover:text-primary/80"
-            @click.stop
-          >
-            <ExternalLink class="w-4 h-4" />
-          </a>
-        </div>
-      </div>
+          <div class="flex shrink-0 items-center gap-3">
+            <Badge
+              variant="outline"
+              :class="statusTone[inst.status] || 'border-zinc-400/20 bg-zinc-400/10 text-zinc-300'"
+            >
+              <Circle class="h-2.5 w-2.5 fill-current" />
+              {{ statusLabel(inst.status) }}
+            </Badge>
+            <Button
+              v-if="inst.endpoint_url && inst.status === 'running'"
+              as="a"
+              :href="inst.endpoint_url"
+              target="_blank"
+              variant="ghost"
+              size="icon"
+              @click.stop
+            >
+              <ExternalLink class="h-4 w-4" />
+            </Button>
+          </div>
+        </CardHeader>
+      </Card>
     </div>
   </div>
 </template>

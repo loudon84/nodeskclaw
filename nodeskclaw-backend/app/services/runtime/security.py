@@ -1,9 +1,10 @@
 """Security model for the runtime messaging platform.
 
 Enforces:
-  - RBAC on messages: sender must be topology-reachable or in @mentions list
   - Workspace isolation: messages, blackboard, topology, members never cross workspaces
   - Agent sandbox integration hooks for ComputeProvider (NetworkPolicy / Docker network)
+
+Topology-based message permission is enforced in corridor_router and RoutingMiddleware.
 """
 
 from __future__ import annotations
@@ -23,58 +24,6 @@ class SecurityContext:
     source_node_id: str = ""
     is_system: bool = False
     roles: list[str] = field(default_factory=list)
-
-
-async def check_message_permission(
-    db: AsyncSession,
-    *,
-    workspace_id: str,
-    source_node_id: str,
-    target_node_ids: list[str],
-    mention_node_ids: list[str] | None = None,
-    is_system: bool = False,
-) -> tuple[bool, str]:
-    """Check if source_node is allowed to send messages to target_nodes.
-
-    Returns (allowed, reason).
-    System messages bypass RBAC checks.
-    """
-    if is_system:
-        return True, "system_message"
-
-    if not workspace_id:
-        return False, "missing_workspace_id"
-    if not source_node_id:
-        return False, "missing_source_node_id"
-
-    from app.models.node_card import NodeCard
-    from app.models.base import not_deleted
-    from sqlalchemy import select
-
-    source_q = await db.execute(
-        select(NodeCard).where(
-            NodeCard.node_id == source_node_id,
-            NodeCard.workspace_id == workspace_id,
-            not_deleted(NodeCard),
-        )
-    )
-    source_card = source_q.scalar_one_or_none()
-    if not source_card:
-        return False, f"source_node {source_node_id} not found in workspace"
-
-    for target_id in target_node_ids:
-        target_q = await db.execute(
-            select(NodeCard).where(
-                NodeCard.node_id == target_id,
-                NodeCard.workspace_id == workspace_id,
-                not_deleted(NodeCard),
-            )
-        )
-        target_card = target_q.scalar_one_or_none()
-        if not target_card:
-            return False, f"target_node {target_id} not in workspace {workspace_id}"
-
-    return True, "ok"
 
 
 async def check_workspace_isolation(

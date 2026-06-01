@@ -1,5 +1,5 @@
 ---
-description: 工作区/Agent 行为变更时，检查 Gene/Skill 是否需要同步更新并推送到 GeneHub
+description: 工作区/Agent 行为变更时，检查 Gene/Skill 是否需要同步更新并推送到 DeskHub
 alwaysApply: true
 ---
 
@@ -29,15 +29,15 @@ alwaysApply: true
 
 修改对应 JSON 模板文件，同步更新 `version` 字段。
 
-### 3. 推送到 GeneHub
+### 3. 推送到 DeskHub
 
 模板更新后，提醒用户执行推送：
 
 ```bash
-export GENEHUB_REGISTRY_URL=<GeneHub 地址>
-export GENEHUB_API_KEY=<API Key>
-python scripts/upload_seeds_to_genehub.py --dry-run  # 先预览
-python scripts/upload_seeds_to_genehub.py             # 确认后推送
+export DESKHUB_REGISTRY_URL=<DeskHub 地址>
+export DESKHUB_API_KEY=<API Key>
+python scripts/upload_seeds_to_deskhub.py --dry-run  # 先预览
+python scripts/upload_seeds_to_deskhub.py             # 确认后推送
 ```
 
 ### 4. 同步已安装实例
@@ -50,5 +50,5 @@ python scripts/upload_seeds_to_genehub.py             # 确认后推送
 ## 禁止
 
 - **禁止改了 Agent 行为不检查 Gene 模板**
-- **禁止更新了 Gene 模板不提醒推送 GeneHub**
+- **禁止更新了 Gene 模板不提醒推送 DeskHub**
 - **禁止忽略已安装实例的同步**

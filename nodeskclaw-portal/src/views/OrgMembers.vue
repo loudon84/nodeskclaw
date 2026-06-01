@@ -19,6 +19,7 @@ import {
   Mail,
   Clock,
   Plus,
+  Send,
 } from 'lucide-vue-next'
 import api from '@/services/api'
 import { resolveApiErrorMessage } from '@/i18n/error'
@@ -26,16 +27,19 @@ import { useToast } from '@/composables/useToast'
 import { useConfirm } from '@/composables/useConfirm'
 import { copyToClipboard } from '@/utils/clipboard'
 import CustomSelect from '@/components/shared/CustomSelect.vue'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 
 const orgStore = useOrgStore()
 const authStore = useAuthStore()
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const toast = useToast()
 const { confirm } = useConfirm()
 
 const loading = ref(true)
 const searchQuery = ref('')
 const actionLoading = ref<string | null>(null)
+const resendLoading = ref<string | null>(null)
 
 // invite dialog
 const showInviteDialog = ref(false)
@@ -170,6 +174,7 @@ async function handleInvite() {
     const res = await api.post(`/orgs/${orgStore.currentOrgId}/members/invite`, {
       emails: inviteEmails.value,
       role: inviteRole.value,
+      lang: locale.value,
     })
     inviteResults.value = res.data.data ?? []
     showInviteResults.value = true
@@ -213,6 +218,22 @@ async function cancelInvitation(id: string) {
     toast.error(resolveApiErrorMessage(e, t('orgMembers.cancelInviteFailed')))
   } finally {
     actionLoading.value = null
+  }
+}
+
+async function resendInvitation(id: string) {
+  if (!orgStore.currentOrgId) return
+  resendLoading.value = id
+  try {
+    await api.post(`/orgs/${orgStore.currentOrgId}/invitations/${id}/resend`, {
+      lang: locale.value,
+    })
+    toast.success(t('orgMembers.resendSuccess'))
+    await fetchPendingInvitations()
+  } catch (e) {
+    toast.error(resolveApiErrorMessage(e, t('orgMembers.resendFailed')))
+  } finally {
+    resendLoading.value = null
   }
 }
 
@@ -287,14 +308,14 @@ async function copyPassword() {
           {{ t('orgMembers.subtitle', { orgName: orgStore.currentOrg?.name || t('orgMembers.orgFallback') }) }}
         </p>
       </div>
-      <button
+      <Button variant="unstyled" size="unstyled"
         v-if="isOrgAdmin"
         class="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors"
         @click="showInviteDialog = true"
       >
         <UserPlus class="w-4 h-4" />
         {{ t('orgMembers.inviteMember') }}
-      </button>
+      </Button>
     </div>
 
     <!-- Loading -->
@@ -313,7 +334,7 @@ async function copyPassword() {
       <!-- Search -->
       <div class="relative mb-4">
         <Search class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-        <input
+        <Input
           v-model="searchQuery"
           type="text"
           :placeholder="t('orgMembers.searchPlaceholder')"
@@ -380,7 +401,7 @@ async function copyPassword() {
               :disabled="actionLoading === member.id"
               @update:model-value="(v: string | null) => handleRoleChange(member, v!)"
             />
-            <button
+            <Button variant="unstyled" size="unstyled"
               v-if="member.role !== 'admin'"
               class="p-1.5 rounded-md text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
               :disabled="actionLoading === member.id"
@@ -388,15 +409,15 @@ async function copyPassword() {
               @click="handleResetPassword(member)"
             >
               <KeyRound class="w-4 h-4" />
-            </button>
-            <button
+            </Button>
+            <Button variant="unstyled" size="unstyled"
               class="p-1.5 rounded-md text-muted-foreground hover:text-red-400 hover:bg-red-500/10 transition-colors"
               :disabled="actionLoading === member.id"
               @click="handleRemove(member)"
             >
               <Loader2 v-if="actionLoading === member.id" class="w-4 h-4 animate-spin" />
               <Trash2 v-else class="w-4 h-4" />
-            </button>
+            </Button>
           </div>
         </div>
 
@@ -424,22 +445,31 @@ async function copyPassword() {
               </div>
             </div>
             <div class="flex items-center gap-2">
-              <button
+              <Button variant="unstyled" size="unstyled"
+                class="p-1.5 rounded-md text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
+                :title="t('orgMembers.resendInvite')"
+                :disabled="resendLoading === inv.id"
+                @click="resendInvitation(inv.id)"
+              >
+                <Loader2 v-if="resendLoading === inv.id" class="w-4 h-4 animate-spin" />
+                <Send v-else class="w-4 h-4" />
+              </Button>
+              <Button variant="unstyled" size="unstyled"
                 class="p-1.5 rounded-md text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
                 :title="t('orgMembers.copyInviteLink')"
                 @click="copyInviteUrl(inv.invite_url)"
               >
                 <Check v-if="copiedUrl === inv.invite_url" class="w-4 h-4 text-green-500" />
                 <Link v-else class="w-4 h-4" />
-              </button>
-              <button
+              </Button>
+              <Button variant="unstyled" size="unstyled"
                 class="p-1.5 rounded-md text-muted-foreground hover:text-red-400 hover:bg-red-500/10 transition-colors"
                 :disabled="actionLoading === inv.id"
                 @click="cancelInvitation(inv.id)"
               >
                 <Loader2 v-if="actionLoading === inv.id" class="w-4 h-4 animate-spin" />
                 <X v-else class="w-4 h-4" />
-              </button>
+              </Button>
             </div>
           </div>
         </template>
@@ -461,9 +491,9 @@ async function copyPassword() {
           <!-- Header -->
           <div class="flex items-center justify-between">
             <h3 class="font-semibold text-base">{{ t('orgMembers.inviteDialogTitle') }}</h3>
-            <button class="text-muted-foreground hover:text-foreground" @click="closeInviteDialog">
+            <Button variant="unstyled" size="unstyled" class="text-muted-foreground hover:text-foreground" @click="closeInviteDialog">
               <X class="w-4 h-4" />
-            </button>
+            </Button>
           </div>
 
           <template v-if="!showInviteResults">
@@ -477,11 +507,11 @@ async function copyPassword() {
                   class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-primary/10 text-primary text-xs font-medium"
                 >
                   {{ email }}
-                  <button class="hover:text-red-400" @click="removeEmailTag(email)">
+                  <Button variant="unstyled" size="unstyled" class="hover:text-red-400" @click="removeEmailTag(email)">
                     <X class="w-3 h-3" />
-                  </button>
+                  </Button>
                 </span>
-                <input
+                <Input
                   v-model="inviteEmailInput"
                   type="text"
                   :placeholder="inviteEmails.length === 0 ? t('orgMembers.emailPlaceholder') : ''"
@@ -502,20 +532,20 @@ async function copyPassword() {
 
             <!-- Actions -->
             <div class="flex justify-end gap-2 pt-2">
-              <button
+              <Button variant="unstyled" size="unstyled"
                 class="px-4 py-2 rounded-lg border border-border text-sm hover:bg-accent transition-colors"
                 @click="closeInviteDialog"
               >
                 {{ t('common.cancel') }}
-              </button>
-              <button
+              </Button>
+              <Button variant="unstyled" size="unstyled"
                 class="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
                 :disabled="inviteEmails.length === 0 && !inviteEmailInput.trim() || inviteLoading"
                 @click="handleInvite"
               >
                 <Loader2 v-if="inviteLoading" class="w-4 h-4 animate-spin" />
                 {{ t('orgMembers.sendInvite') }}
-              </button>
+              </Button>
             </div>
           </template>
 
@@ -542,7 +572,7 @@ async function copyPassword() {
                     class="shrink-0 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-500/15 text-blue-400"
                   >{{ t('orgMembers.alreadyInvited') }}</span>
                 </div>
-                <button
+                <Button variant="unstyled" size="unstyled"
                   v-if="result.invite_url"
                   class="shrink-0 p-1.5 rounded-md text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
                   :title="t('orgMembers.copyInviteLink')"
@@ -550,23 +580,23 @@ async function copyPassword() {
                 >
                   <Check v-if="copiedUrl === result.invite_url" class="w-4 h-4 text-green-500" />
                   <Copy v-else class="w-4 h-4" />
-                </button>
+                </Button>
               </div>
             </div>
             <div class="flex justify-between items-center pt-2">
-              <button
+              <Button variant="unstyled" size="unstyled"
                 class="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
                 @click="inviteEmails = []; inviteResults = []; showInviteResults = false"
               >
                 <Plus class="w-4 h-4" />
                 {{ t('orgMembers.inviteMore') }}
-              </button>
-              <button
+              </Button>
+              <Button variant="unstyled" size="unstyled"
                 class="px-4 py-2 rounded-lg border border-border text-sm hover:bg-accent transition-colors"
                 @click="closeInviteDialog"
               >
                 {{ t('common.close') }}
-              </button>
+              </Button>
             </div>
           </template>
         </div>
@@ -582,9 +612,9 @@ async function copyPassword() {
         <div class="bg-card rounded-2xl border border-border shadow-xl w-full max-w-sm p-6 space-y-4">
           <div class="flex items-center justify-between">
             <h3 class="font-semibold text-base">{{ t('orgMembers.resetPasswordSuccess') }}</h3>
-            <button class="text-muted-foreground hover:text-foreground" @click="showResetResultDialog = false">
+            <Button variant="unstyled" size="unstyled" class="text-muted-foreground hover:text-foreground" @click="showResetResultDialog = false">
               <X class="w-4 h-4" />
-            </button>
+            </Button>
           </div>
 
           <p class="text-sm text-muted-foreground">
@@ -593,13 +623,13 @@ async function copyPassword() {
 
           <div class="flex items-center gap-2 px-3 py-2.5 rounded-lg border border-border bg-background font-mono text-sm">
             <span class="flex-1 select-all">{{ resetResultPassword }}</span>
-            <button
+            <Button variant="unstyled" size="unstyled"
               class="shrink-0 p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
               @click="copyPassword"
             >
               <Check v-if="resetCopied" class="w-4 h-4 text-green-500" />
               <Copy v-else class="w-4 h-4" />
-            </button>
+            </Button>
           </div>
 
           <p class="text-xs text-muted-foreground">
@@ -607,12 +637,12 @@ async function copyPassword() {
           </p>
 
           <div class="flex justify-end">
-            <button
+            <Button variant="unstyled" size="unstyled"
               class="px-4 py-2 rounded-lg border border-border text-sm hover:bg-accent transition-colors"
               @click="showResetResultDialog = false"
             >
               {{ t('common.close') }}
-            </button>
+            </Button>
           </div>
         </div>
       </div>

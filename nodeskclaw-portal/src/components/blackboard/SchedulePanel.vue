@@ -1,12 +1,15 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { Timer, Plus, Pencil, Trash2, X, Loader2 } from 'lucide-vue-next'
+import { Timer, Plus, Pencil, Trash2, X, Loader2, TriangleAlert } from 'lucide-vue-next'
 import { useWorkspaceStore, type ScheduleInfo } from '@/stores/workspace'
 import { useI18n } from 'vue-i18n'
 import { useConfirm } from '@/composables/useConfirm'
 import { useToast } from '@/composables/useToast'
 import { resolveApiErrorMessage } from '@/i18n/error'
 import CronPicker from './CronPicker.vue'
+import { Button } from '@/components/ui/button'
+import { Textarea } from '@/components/ui/textarea'
+import { Input } from '@/components/ui/input'
 
 const props = defineProps<{
   workspaceId: string
@@ -29,6 +32,7 @@ const form = ref({
   name: '',
   cron_expr: '0 */4 * * *',
   message_template: '',
+  timeout_minutes: 120,
 })
 
 const cronPickerRef = ref<InstanceType<typeof CronPicker> | null>(null)
@@ -71,7 +75,7 @@ function cronToHuman(expr: string): string {
 
 function openCreate() {
   editingId.value = null
-  form.value = { name: '', cron_expr: '0 */4 * * *', message_template: '' }
+  form.value = { name: '', cron_expr: '0 */4 * * *', message_template: '', timeout_minutes: 120 }
   dialogOpen.value = true
 }
 
@@ -81,6 +85,7 @@ function openEdit(schedule: ScheduleInfo) {
     name: schedule.name,
     cron_expr: schedule.cron_expr,
     message_template: schedule.message_template,
+    timeout_minutes: schedule.timeout_minutes ?? 120,
   }
   dialogOpen.value = true
 }
@@ -95,6 +100,7 @@ function applyPreset(preset: { name: string; label: string; cron_expr: string; m
   form.value.name = presetLabel(preset)
   form.value.cron_expr = preset.cron_expr
   form.value.message_template = preset.message_template
+  form.value.timeout_minutes = 120
 }
 
 async function handleSubmit() {
@@ -106,6 +112,7 @@ async function handleSubmit() {
         name: form.value.name.trim(),
         cron_expr: form.value.cron_expr,
         message_template: form.value.message_template.trim(),
+        timeout_minutes: form.value.timeout_minutes,
       })
       toast.success(t('blackboard.scheduleUpdated'))
     } else {
@@ -113,6 +120,7 @@ async function handleSubmit() {
         name: form.value.name.trim(),
         cron_expr: form.value.cron_expr,
         message_template: form.value.message_template.trim(),
+        timeout_minutes: form.value.timeout_minutes,
       })
       toast.success(t('blackboard.scheduleCreated'))
     }
@@ -153,7 +161,7 @@ async function toggle(schedule: ScheduleInfo) {
     <h3 class="text-sm font-medium text-muted-foreground flex items-center gap-1.5">
       <Timer class="w-4 h-4" />
       {{ t('blackboard.schedules') }}
-      <button
+      <Button variant="unstyled" size="unstyled"
         v-if="canManage"
         class="ml-auto p-1 rounded hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
         :aria-label="t('blackboard.addSchedule')"
@@ -161,7 +169,7 @@ async function toggle(schedule: ScheduleInfo) {
         @click="openCreate"
       >
         <Plus class="w-3.5 h-3.5" />
-      </button>
+      </Button>
     </h3>
 
     <div v-if="schedules.length === 0" class="text-sm text-muted-foreground px-1">
@@ -174,11 +182,19 @@ async function toggle(schedule: ScheduleInfo) {
         :key="schedule.id"
         class="group flex items-center justify-between px-3 py-2.5 rounded-lg bg-muted/50"
       >
-        <div class="flex-1 min-w-0 mr-3">
+          <div class="flex-1 min-w-0 mr-3">
           <div class="flex items-center gap-2">
             <span class="text-sm font-medium truncate">{{ schedule.name }}</span>
             <span class="text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground shrink-0">
               {{ cronToHuman(schedule.cron_expr) }}
+            </span>
+            <span
+              v-if="schedule.consecutive_failures > 0"
+              class="inline-flex items-center gap-0.5 shrink-0 rounded-full bg-red-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-red-400"
+              :title="t('blackboard.scheduleConsecutiveFailures', { count: schedule.consecutive_failures }) + ' — ' + (schedule.last_succeeded_at ? new Date(schedule.last_succeeded_at).toLocaleString() : t('blackboard.scheduleNeverSucceeded'))"
+            >
+              <TriangleAlert class="w-3 h-3" />
+              {{ schedule.consecutive_failures }}
             </span>
           </div>
           <p class="text-xs text-muted-foreground mt-0.5 line-clamp-1">{{ schedule.message_template }}</p>
@@ -186,24 +202,24 @@ async function toggle(schedule: ScheduleInfo) {
 
         <div class="flex items-center gap-1.5 shrink-0">
           <template v-if="canManage">
-            <button
+            <Button variant="unstyled" size="unstyled"
               class="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-muted transition-all text-muted-foreground hover:text-foreground"
               :aria-label="t('blackboard.editSchedule')"
               :title="t('blackboard.editSchedule')"
               @click="openEdit(schedule)"
             >
               <Pencil class="w-3.5 h-3.5" />
-            </button>
-            <button
+            </Button>
+            <Button variant="unstyled" size="unstyled"
               class="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-muted transition-all text-muted-foreground hover:text-destructive"
               :aria-label="t('blackboard.deleteSchedule')"
               :title="t('blackboard.deleteSchedule')"
               @click="handleDelete(schedule)"
             >
               <Trash2 class="w-3.5 h-3.5" />
-            </button>
+            </Button>
           </template>
-          <button
+          <Button variant="unstyled" size="unstyled"
             v-if="canManage"
             role="switch"
             :aria-checked="schedule.is_active"
@@ -215,7 +231,7 @@ async function toggle(schedule: ScheduleInfo) {
               class="pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow transform transition-transform duration-200 mt-0.5"
               :class="schedule.is_active ? 'translate-x-[18px]' : 'translate-x-0.5'"
             />
-          </button>
+          </Button>
           <span
             v-else
             class="text-xs px-1.5 py-0.5 rounded"
@@ -239,30 +255,30 @@ async function toggle(schedule: ScheduleInfo) {
             <h3 class="font-semibold text-base">
               {{ editingId ? t('blackboard.editSchedule') : t('blackboard.addSchedule') }}
             </h3>
-            <button class="text-muted-foreground hover:text-foreground" @click="dialogOpen = false">
+            <Button variant="unstyled" size="unstyled" class="text-muted-foreground hover:text-foreground" @click="dialogOpen = false">
               <X class="w-4 h-4" />
-            </button>
+            </Button>
           </div>
 
           <!-- Preset Templates -->
           <div v-if="!editingId && presets.length > 0">
             <p class="text-xs text-muted-foreground mb-2">{{ t('blackboard.presetTemplates') }}</p>
             <div class="flex flex-wrap gap-1.5">
-              <button
+              <Button variant="unstyled" size="unstyled"
                 v-for="preset in presets"
                 :key="preset.name"
                 class="px-2.5 py-1 text-xs rounded-md border border-border hover:bg-muted/50 transition-colors"
                 @click="applyPreset(preset)"
               >
                 {{ presetLabel(preset) }}
-              </button>
+              </Button>
             </div>
           </div>
 
           <!-- Name -->
           <div>
             <label class="block text-sm text-muted-foreground mb-1">{{ t('blackboard.scheduleName') }}</label>
-            <input
+            <Input
               v-model="form.name"
               class="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
               :placeholder="t('blackboard.scheduleNameRequired')"
@@ -278,7 +294,7 @@ async function toggle(schedule: ScheduleInfo) {
           <!-- Message Template -->
           <div>
             <label class="block text-sm text-muted-foreground mb-1">{{ t('blackboard.scheduleMessage') }}</label>
-            <textarea
+            <Textarea
               v-model="form.message_template"
               rows="3"
               class="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary/30"
@@ -286,22 +302,34 @@ async function toggle(schedule: ScheduleInfo) {
             />
           </div>
 
+          <!-- Timeout -->
+          <div>
+            <label class="block text-sm text-muted-foreground mb-1">{{ t('blackboard.scheduleTimeout') }}</label>
+            <Input
+              v-model.number="form.timeout_minutes"
+              type="number"
+              min="10"
+              class="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+            />
+            <p class="text-xs text-muted-foreground mt-1">{{ t('blackboard.scheduleTimeoutHint') }}</p>
+          </div>
+
           <!-- Actions -->
           <div class="flex justify-end gap-2 pt-1">
-            <button
+            <Button variant="unstyled" size="unstyled"
               class="px-4 py-2 rounded-lg border border-border text-sm hover:bg-muted/50 transition-colors"
               @click="dialogOpen = false"
             >
               {{ t('common.cancel') }}
-            </button>
-            <button
+            </Button>
+            <Button variant="unstyled" size="unstyled"
               class="px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
               :disabled="!formValid || submitting"
               @click="handleSubmit"
             >
               <Loader2 v-if="submitting" class="w-3.5 h-3.5 animate-spin" />
               {{ t('common.confirm') }}
-            </button>
+            </Button>
           </div>
         </div>
       </div>

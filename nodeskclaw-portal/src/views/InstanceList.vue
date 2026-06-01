@@ -11,6 +11,8 @@ import { useEdition } from '@/composables/useFeature'
 import { getStatusDisplay } from '@/utils/instanceStatus'
 import BaseTooltip from '@/components/shared/BaseTooltip.vue'
 import type { TemplateInfo } from '@/stores/gene'
+import { Button } from '@/components/ui/button'
+import { Table, TableHeader, TableBody, TableFooter, TableRow, TableHead, TableCell, TableCaption } from '@/components/ui/table'
 
 interface InstanceInfo {
   id: string
@@ -129,32 +131,32 @@ onMounted(() => {
         <p class="text-sm text-muted-foreground mt-1">{{ t('instanceList.subtitle') }}</p>
       </div>
       <div class="flex items-center gap-2">
-        <button
+        <Button variant="unstyled" size="unstyled"
           class="flex items-center gap-2 px-3 py-2 rounded-lg border border-border text-sm text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
           @click="fetchInstances"
         >
           <RefreshCw class="w-4 h-4" />
           {{ t('instanceList.refresh') }}
-        </button>
+        </Button>
         <BaseTooltip :text="!hasCluster ? t('instanceList.noClusterHint') : ''">
-          <button
+          <Button variant="unstyled" size="unstyled"
             class="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
             :disabled="!hasCluster"
             @click="router.push('/instances/create')"
           >
             <Plus class="w-4 h-4" />
             {{ t('instanceList.createInstance') }}
-          </button>
+          </Button>
         </BaseTooltip>
         <BaseTooltip :text="!hasCluster ? t('instanceList.noClusterHint') : ''">
-          <button
+          <Button variant="unstyled" size="unstyled"
             class="flex items-center gap-2 px-3 py-2 rounded-lg border border-border text-sm text-muted-foreground hover:text-foreground hover:bg-accent transition-colors disabled:opacity-50"
             :disabled="!hasCluster"
             @click="openTemplateSelector"
           >
             <Package class="w-4 h-4" />
             {{ t('instanceList.createFromTemplate') }}
-          </button>
+          </Button>
         </BaseTooltip>
       </div>
     </div>
@@ -164,16 +166,16 @@ onMounted(() => {
       <div class="w-[480px] max-h-[60vh] bg-card border border-border rounded-xl shadow-lg flex flex-col">
         <div class="flex items-center justify-between px-4 py-3 border-b border-border">
           <h3 class="font-semibold text-sm">{{ t('template.chooseTemplate') }}</h3>
-          <button class="p-1 rounded hover:bg-muted transition-colors" @click="templateSelectorOpen = false">
+          <Button variant="unstyled" size="unstyled" class="p-1 rounded hover:bg-muted transition-colors" @click="templateSelectorOpen = false">
             <X class="w-4 h-4" />
-          </button>
+          </Button>
         </div>
         <div class="flex-1 min-h-0 overflow-y-auto p-3 space-y-2">
           <div v-if="templateLoading" class="flex justify-center py-8">
             <Loader2 class="w-6 h-6 animate-spin text-muted-foreground" />
           </div>
           <template v-else-if="geneStore.templates.length > 0">
-            <button
+            <Button variant="unstyled" size="unstyled"
               v-for="tpl in geneStore.templates"
               :key="tpl.id"
               class="w-full flex items-center gap-3 p-3 rounded-lg border border-border hover:border-primary/30 hover:bg-primary/5 transition-colors text-left"
@@ -190,7 +192,7 @@ onMounted(() => {
                 <Dna class="w-3 h-3" />
                 {{ tpl.gene_slugs?.length ?? 0 }}
               </span>
-            </button>
+            </Button>
           </template>
           <div v-else class="text-center py-8 text-muted-foreground text-sm">
             {{ t('template.noTemplates') }}
@@ -210,12 +212,12 @@ onMounted(() => {
         <Server class="w-8 h-8 text-red-400" />
       </div>
       <p class="text-sm text-red-400">{{ error }}</p>
-      <button
+      <Button variant="unstyled" size="unstyled"
         class="mt-2 px-4 py-2 rounded-lg border border-border text-sm hover:bg-accent transition-colors"
         @click="fetchInstances"
       >
         {{ t('instanceList.retry') }}
-      </button>
+      </Button>
     </div>
 
     <!-- Empty state: no cluster + no instances -->
@@ -230,18 +232,18 @@ onMounted(() => {
       <p class="text-sm text-muted-foreground max-w-sm mx-auto">
         {{ isEE ? t('instanceList.noClusterDescEE') : t('instanceList.noClusterDesc') }}
       </p>
-      <button
+      <Button variant="unstyled" size="unstyled"
         v-if="!isEE"
         class="mt-4 px-6 py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors"
         @click="router.push('/org-settings/clusters')"
       >
         {{ t('instanceList.goSetupCluster') }}
-      </button>
+      </Button>
       <p class="text-xs text-muted-foreground pt-2">
         {{ t('instanceList.alreadySetup') }}
-        <button class="text-primary hover:underline ml-1" @click="clusterStore.fetchClusters()">
+        <Button variant="unstyled" size="unstyled" class="text-primary hover:underline ml-1" @click="clusterStore.fetchClusters()">
           {{ t('instanceList.refresh') }}
-        </button>
+        </Button>
       </p>
     </div>
 
@@ -257,33 +259,33 @@ onMounted(() => {
       <p class="text-sm text-muted-foreground max-w-sm mx-auto">
         {{ t('instanceList.emptyDescription') }}
       </p>
-      <button
+      <Button variant="unstyled" size="unstyled"
         class="mt-4 px-6 py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors"
         @click="router.push('/instances/create')"
       >
         {{ t('instanceList.createFirst') }}
-      </button>
+      </Button>
     </div>
 
     <!-- Instance table -->
     <div v-else class="rounded-xl border border-border overflow-hidden">
-      <table class="w-full text-sm">
-        <thead>
-          <tr class="border-b border-border bg-card/60">
-            <th class="text-left px-4 py-3 font-medium text-muted-foreground">{{ t('instanceList.tableName') }}</th>
-            <th class="text-left px-4 py-3 font-medium text-muted-foreground">{{ t('instanceList.tableStatus') }}</th>
-            <th class="text-left px-4 py-3 font-medium text-muted-foreground">{{ t('instanceList.tableImageVersion') }}</th>
-            <th class="text-left px-4 py-3 font-medium text-muted-foreground">{{ t('instanceList.tableCreatedAt') }}</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr
+      <Table class="w-full text-sm">
+        <TableHeader>
+          <TableRow class="border-b border-border bg-card/60">
+            <TableHead class="text-left px-4 py-3 font-medium text-muted-foreground">{{ t('instanceList.tableName') }}</TableHead>
+            <TableHead class="text-left px-4 py-3 font-medium text-muted-foreground">{{ t('instanceList.tableStatus') }}</TableHead>
+            <TableHead class="text-left px-4 py-3 font-medium text-muted-foreground">{{ t('instanceList.tableImageVersion') }}</TableHead>
+            <TableHead class="text-left px-4 py-3 font-medium text-muted-foreground">{{ t('instanceList.tableCreatedAt') }}</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          <TableRow
             v-for="inst in sortedInstances"
             :key="inst.id"
             class="border-b border-border last:border-b-0 hover:bg-accent/50 cursor-pointer transition-colors"
             @click="router.push(`/instances/${inst.id}`)"
           >
-            <td class="px-4 py-3 font-medium">
+            <TableCell class="px-4 py-3 font-medium">
               <span class="inline-flex items-center gap-1.5">
                 {{ inst.name }}
                 <span
@@ -294,8 +296,8 @@ onMounted(() => {
                   Docker
                 </span>
               </span>
-            </td>
-            <td class="px-4 py-3">
+            </TableCell>
+            <TableCell class="px-4 py-3">
               <span class="inline-flex items-center gap-1.5">
                 <span
                   class="w-2 h-2 rounded-full"
@@ -308,12 +310,12 @@ onMounted(() => {
                   {{ getStatusLabel(inst) }}
                 </span>
               </span>
-            </td>
-            <td class="px-4 py-3 text-muted-foreground font-mono text-xs">{{ inst.image_version }}</td>
-            <td class="px-4 py-3 text-muted-foreground">{{ formatTime(inst.created_at) }}</td>
-          </tr>
-        </tbody>
-      </table>
+            </TableCell>
+            <TableCell class="px-4 py-3 text-muted-foreground font-mono text-xs">{{ inst.image_version }}</TableCell>
+            <TableCell class="px-4 py-3 text-muted-foreground">{{ formatTime(inst.created_at) }}</TableCell>
+          </TableRow>
+        </TableBody>
+      </Table>
     </div>
   </div>
 </template>

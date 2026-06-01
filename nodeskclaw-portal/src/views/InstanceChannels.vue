@@ -6,11 +6,17 @@ import {
   Upload, Package, FolderGit2, AlertCircle, Check, Eye, EyeOff,
 } from 'lucide-vue-next'
 import api from '@/services/api'
+import { getRuntimeCaps } from '@/utils/runtimeCapabilities'
 import CustomSelect from '@/components/shared/CustomSelect.vue'
+import { Button } from '@/components/ui/button'
+import { Textarea } from '@/components/ui/textarea'
+import { FileInput, Input } from '@/components/ui/input'
+import { Checkbox } from '@/components/ui/checkbox'
 
 const { t } = useI18n()
 const instanceId = inject<ComputedRef<string>>('instanceId')!
 const instanceRuntime = inject<ComputedRef<string>>('instanceRuntime', computed(() => 'openclaw'))
+const runtimeCaps = computed(() => getRuntimeCaps(instanceRuntime.value))
 
 interface SchemaField {
   key: string
@@ -35,7 +41,10 @@ interface AvailableChannel {
   supported?: boolean
 }
 
-const supportsPluginInstall = computed(() => instanceRuntime.value === 'openclaw')
+const supportsPluginInstall = computed(() =>
+  runtimeCaps.value.npmChannelInstall
+  || runtimeCaps.value.uploadChannelPlugin
+)
 
 function runtimeBadgeText(ch: AvailableChannel): string | null {
   if (!ch.schema?.length) return null
@@ -50,7 +59,7 @@ function runtimeBadgeText(ch: AvailableChannel): string | null {
   if (runtimes.size === 0 || runtimes.size >= 3) return null
   const labels: Record<string, string> = {
     openclaw: 'OpenClaw',
-    nanobot: 'NanoBot',
+    hermes: 'Hermes',
   }
   return [...runtimes].map(r => labels[r] || r).join(' / ')
 }
@@ -84,7 +93,6 @@ const customInstallOpen = ref(false)
 const npmPackageName = ref('')
 const npmInstalling = ref(false)
 const uploadingFile = ref(false)
-const deployingRepo = ref(false)
 
 const SENSITIVE_KEYS = new Set([
   'appSecret', 'botToken', 'appToken', 'token', 'appPassword',
@@ -326,15 +334,15 @@ watch(() => instanceId.value, (val) => {
           <h2 class="text-sm font-medium">{{ t('channel.title') }}</h2>
         </div>
         <div class="flex items-center gap-2">
-          <button
+          <Button variant="unstyled" size="unstyled"
             class="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-border text-xs hover:bg-card transition-colors"
             :disabled="saving"
             @click="loadAll"
           >
             <RefreshCw class="w-3 h-3" />
             {{ t('channel.refresh') }}
-          </button>
-          <button
+          </Button>
+          <Button variant="unstyled" size="unstyled"
             v-if="dirty"
             :disabled="saving"
             class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
@@ -343,7 +351,7 @@ watch(() => instanceId.value, (val) => {
             <Loader2 v-if="saving" class="w-3 h-3 animate-spin" />
             <Save v-else class="w-3 h-3" />
             {{ saving ? t('channel.saving') : t('channel.saveAndRestart') }}
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -382,12 +390,12 @@ watch(() => instanceId.value, (val) => {
               </span>
             </div>
             <div class="flex items-center gap-2">
-              <button
+              <Button variant="unstyled" size="unstyled"
                 class="text-muted-foreground hover:text-destructive transition-colors p-1"
                 @click.stop="removeChannel(ch.id)"
               >
                 <Trash2 class="w-3.5 h-3.5" />
-              </button>
+              </Button>
               <ChevronUp v-if="expandedChannels.has(ch.id)" class="w-4 h-4 text-muted-foreground" />
               <ChevronDown v-else class="w-4 h-4 text-muted-foreground" />
             </div>
@@ -425,19 +433,17 @@ watch(() => instanceId.value, (val) => {
 
                 <!-- Boolean -->
                 <label v-else-if="field.type === 'boolean'" class="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
+                  <Checkbox
                     :checked="editingConfigs[ch.id]?.[field.key] ?? field.default ?? false"
-                    class="accent-primary"
                     :disabled="!isFieldApplicable(field)"
-                    @change="editingConfigs[ch.id][field.key] = ($event.target as HTMLInputElement).checked; markDirty()"
+                    @update:checked="(checked) => { editingConfigs[ch.id][field.key] = checked === true; markDirty() }"
                   />
                   <span class="text-sm">{{ editingConfigs[ch.id]?.[field.key] ? t('channel.enabled') : t('channel.disabled') }}</span>
                 </label>
 
                 <!-- Password -->
                 <div v-else-if="field.type === 'password'" class="relative">
-                  <input
+                  <Input
                     :type="visibleSecrets.has(`${ch.id}.${field.key}`) ? 'text' : 'password'"
                     :value="editingConfigs[ch.id]?.[field.key] ?? ''"
                     :placeholder="field.placeholder || ''"
@@ -445,17 +451,17 @@ watch(() => instanceId.value, (val) => {
                     class="w-full px-3 py-1.5 pr-9 rounded-md bg-background border border-border text-sm font-mono focus:outline-none focus:ring-1 focus:ring-primary/50"
                     @input="editingConfigs[ch.id][field.key] = ($event.target as HTMLInputElement).value; markDirty()"
                   />
-                  <button
+                  <Button variant="unstyled" size="unstyled"
                     class="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                     @click="toggleSecretVisibility(`${ch.id}.${field.key}`)"
                   >
                     <EyeOff v-if="visibleSecrets.has(`${ch.id}.${field.key}`)" class="w-3.5 h-3.5" />
                     <Eye v-else class="w-3.5 h-3.5" />
-                  </button>
+                  </Button>
                 </div>
 
                 <!-- String (default) -->
-                <input
+                <Input
                   v-else
                   type="text"
                   :value="editingConfigs[ch.id]?.[field.key] ?? ''"
@@ -470,12 +476,12 @@ watch(() => instanceId.value, (val) => {
             <!-- JSON editor fallback -->
             <template v-else>
               <p class="text-xs text-muted-foreground">{{ t('channel.jsonEditorHint') }}</p>
-              <textarea
+              <Textarea
                 :value="getJsonEditorValue(ch.id)"
                 rows="8"
                 class="w-full px-3 py-2 rounded-md bg-background border border-border text-sm font-mono focus:outline-none focus:ring-1 focus:ring-primary/50 resize-y"
                 @input="updateJsonEditor(ch.id, ($event.target as HTMLTextAreaElement).value)"
-              ></textarea>
+              ></Textarea>
               <p v-if="jsonEditorErrors[ch.id]" class="text-xs text-destructive flex items-center gap-1">
                 <AlertCircle class="w-3 h-3" />
                 {{ jsonEditorErrors[ch.id] }}
@@ -489,7 +495,7 @@ watch(() => instanceId.value, (val) => {
       <div v-if="unconfiguredChannels.length > 0" class="space-y-3">
         <p class="text-xs text-muted-foreground font-medium">{{ t('channel.available') }}</p>
         <div class="grid grid-cols-3 gap-2">
-          <button
+          <Button variant="unstyled" size="unstyled"
             v-for="ch in unconfiguredChannels"
             :key="ch.id"
             class="px-3 py-3 rounded-lg border text-left transition-colors"
@@ -511,37 +517,37 @@ watch(() => instanceId.value, (val) => {
             <span class="text-[10px] text-muted-foreground">
               {{ isChannelSupportedByRuntime(ch) ? ch.origin : t('channel.unsupported') }}
             </span>
-          </button>
+          </Button>
         </div>
       </div>
 
-      <!-- Custom install section (OpenClaw only) -->
+      <!-- Custom install section -->
       <div v-if="supportsPluginInstall" class="space-y-3">
-        <button
+        <Button variant="unstyled" size="unstyled"
           class="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
           @click="customInstallOpen = !customInstallOpen"
         >
           <Plus class="w-3.5 h-3.5" />
           {{ t('channel.customInstall') }}
           <ChevronDown class="w-3 h-3 transition-transform" :class="customInstallOpen ? 'rotate-180' : ''" />
-        </button>
+        </Button>
 
         <div v-if="customInstallOpen" class="space-y-4 p-4 rounded-lg border border-border bg-card">
           <!-- npm install -->
-          <div class="space-y-2">
+          <div v-if="runtimeCaps.npmChannelInstall" class="space-y-2">
             <div class="flex items-center gap-2">
               <Package class="w-3.5 h-3.5 text-muted-foreground" />
               <span class="text-xs font-medium">{{ t('channel.installNpm') }}</span>
             </div>
             <div class="flex gap-2">
-              <input
+              <Input
                 v-model="npmPackageName"
                 type="text"
                 :placeholder="t('channel.npmPlaceholder')"
                 class="flex-1 px-3 py-1.5 rounded-md bg-background border border-border text-sm font-mono focus:outline-none focus:ring-1 focus:ring-primary/50"
                 @keyup.enter="handleInstallNpm"
               />
-              <button
+              <Button variant="unstyled" size="unstyled"
                 :disabled="npmInstalling || !npmPackageName.trim()"
                 class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs transition-colors"
                 :class="npmPackageName.trim()
@@ -551,12 +557,12 @@ watch(() => instanceId.value, (val) => {
               >
                 <Loader2 v-if="npmInstalling" class="w-3 h-3 animate-spin" />
                 {{ t('channel.install') }}
-              </button>
+              </Button>
             </div>
           </div>
 
           <!-- Upload -->
-          <div class="space-y-2">
+          <div v-if="runtimeCaps.uploadChannelPlugin" class="space-y-2">
             <div class="flex items-center gap-2">
               <Upload class="w-3.5 h-3.5 text-muted-foreground" />
               <span class="text-xs font-medium">{{ t('channel.uploadPlugin') }}</span>
@@ -567,8 +573,7 @@ watch(() => instanceId.value, (val) => {
               <Loader2 v-if="uploadingFile" class="w-3.5 h-3.5 animate-spin" />
               <Upload v-else class="w-3.5 h-3.5" />
               {{ uploadingFile ? t('channel.uploading') : t('channel.uploadHint') }}
-              <input
-                type="file"
+              <FileInput
                 accept=".tgz,.tar.gz,.zip"
                 class="hidden"
                 :disabled="uploadingFile"

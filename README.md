@@ -1,7 +1,7 @@
 [中文](README.zh-CN.md)
 
-[![Discord](https://img.shields.io/discord/1483008731934359723?logo=discord&label=Discord&color=5865F2)](https://discord.gg/y5NKqcP6eY)
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[Discord](https://discord.gg/y5NKqcP6eY)
+[License](LICENSE)
 
 # DeskClaw
 
@@ -37,24 +37,67 @@ Instant expansion of operating capacity. One-click deployment of AI operating pa
 - **Gene System** -- Modular capability investment: load new business dimensions onto AI partners from a public or private marketplace
 - **One-Click Scale** -- Expand your operating capacity end-to-end, with SSE real-time progress streaming
 - **Multi-Cluster Operations** -- Cross-cluster orchestration, health checks, and elastic scaling across your business footprint
+
 ## Architecture
 
 ```mermaid
-graph TD
-    Human["Human Operators"] --> Portal["Portal"]
-    Portal --> API["Backend API Hub<br>Python 3.12 + FastAPI"]
+flowchart LR
+    subgraph ops [" Co-operators "]
+        direction TB
+        Human["Human Operators<br>Strategy · Judgment"]
+        AI["AI Partners<br>Execution · Iteration"]
+        Human <-.->|co-operate| AI
+    end
 
-    API --> DB[(PostgreSQL)]
-    API --> CW["Cyber Workspace<br>Blackboard / Topology / Delegation"]
-    API --> Gene["Gene System<br>Public Marketplace"]
-    API --> Compute["K8s"]
+    ops --> channels
 
-    Compute --> Runtime["AI Runtime<br>OpenClaw / Nanobot"]
-    Runtime <-->|"Channel Plugin (SSE)"| API
-    Runtime --> LLM["LLM Proxy"] --> Providers["OpenAI / Anthropic / Gemini / ..."]
+    subgraph channels [" Channels "]
+        direction TB
+        Portal["Web Portal"]
+        DingTalk["DingTalk"]
+        OpenAPI["Open API"]
+    end
 
-    AIPartners["AI Operating Partners"] -.->|"co-operate"| CW
+    channels --> coopCore
+
+    subgraph coopCore [" Co-operation Core "]
+        direction TB
+        subgraph cyberWS [" Cyber Workspace "]
+            direction LR
+            Topo["Hex Topology"]
+            Board["Shared Blackboard"]
+            Tasks["Task Delegation"]
+        end
+        subgraph geneSys [" Gene System "]
+            direction LR
+            Market["Marketplace"]
+            EntLib["Enterprise Library"]
+        end
+    end
+
+    coopCore --> platform
+
+    subgraph platform [" Platform Services "]
+        direction TB
+        Instance["Instance Lifecycle"]
+        Cluster["Multi-Cluster"]
+        Scale["Elastic Scale"]
+        LLMProxy["LLM Routing"]
+        ChPlugin["Channel Plugins"]
+    end
+
+    platform --> infra
+
+    subgraph infra [" Infrastructure "]
+        direction TB
+        K8s["Kubernetes"]
+        Runtime["OpenClaw / Hermes"]
+        DB["PostgreSQL"]
+        LLMs["OpenAI · Anthropic · Gemini · ..."]
+    end
 ```
+
+
 
 ### Project Layout
 
@@ -88,13 +131,15 @@ Requires a K8s cluster, a container registry, and an external PostgreSQL databas
 
 #### Prerequisites
 
-| Dependency | |
-|---|---|
-| Kubernetes cluster | 1.24+ with Ingress Controller (e.g. ingress-nginx) |
+
+| Dependency         |                                                         |
+| ------------------ | ------------------------------------------------------- |
+| Kubernetes cluster | 1.24+ with Ingress Controller (e.g. ingress-nginx)      |
 | Container registry | Any Docker V2 registry (Docker Hub, AWS ECR, GCR, etc.) |
-| PostgreSQL | External database (e.g. AWS RDS, GCP Cloud SQL) |
-| kubectl | Configured with access to your cluster |
-| Docker | For building images locally |
+| PostgreSQL         | External database (e.g. AWS RDS, GCP Cloud SQL)         |
+| kubectl            | Configured with access to your cluster                  |
+| Docker             | For building images locally                             |
+
 
 #### 1. Configure Registry & Context
 
@@ -125,16 +170,16 @@ cp nodeskclaw-backend/.env.example nodeskclaw-backend/.env
 Creates the namespace, uploads `.env` as a K8s Secret, and applies base Deployment + Service manifests:
 
 ```bash
-./deploy/cli.sh init                    # Default: staging namespace
-./deploy/cli.sh init --prod             # Production namespace
+./deploy/init.sh --staging --context <CTX>  # Default: staging namespace
+./deploy/init.sh --prod --context <CTX>     # Production namespace
 ```
 
-#### 4. Build & Deploy
+#### 4. Release & Deploy
 
 ```bash
-./deploy/cli.sh deploy                  # Build all images + rolling update (staging)
-./deploy/cli.sh deploy --prod           # Deploy to production (interactive confirm)
-./deploy/cli.sh deploy backend          # Deploy a single component
+./deploy/release.sh create v0.9.0
+./deploy/deploy.sh deploy --tag v0.9.0 --staging --context <CTX>
+./deploy/deploy.sh deploy backend --tag v0.9.0 --staging --context <CTX>
 ```
 
 #### 5. Configure Ingress
@@ -147,22 +192,26 @@ kubectl --context <CTX> -n <NS> apply -f deploy/k8s/ingress.yaml
 
 The Ingress defines two hosts (configure as needed):
 
-| Ingress | Default host | Backend service |
-|---|---|---|
-| Portal | `console.example.com` | portal (80) + backend API (8000) |
-| LLM Proxy | `llm-proxy.example.com` | llm-proxy (80) |
 
-See [deploy/README.md](deploy/README.md) for full CLI reference, image tagging, and the release/promote workflow.
+| Ingress   | Default host            | Backend service                  |
+| --------- | ----------------------- | -------------------------------- |
+| Portal    | `console.example.com`   | portal (80) + backend API (8000) |
+| LLM Proxy | `llm-proxy.example.com` | llm-proxy (80)                   |
+
+
+See [deploy/README.md](deploy/README.md) for full release and deployment workflow details.
 
 ### Local Development
 
 #### Prerequisites
 
-| Dependency | |
-|---|---|
-| Python >= 3.12 + [uv](https://docs.astral.sh/uv/) | Backend runtime & package manager |
-| Node.js >= 18 + npm | Frontend runtime |
-| PostgreSQL | Database (or use `--docker-pg` below) |
+
+| Dependency                                        |                                       |
+| ------------------------------------------------- | ------------------------------------- |
+| Python >= 3.12 + [uv](https://docs.astral.sh/uv/) | Backend runtime & package manager     |
+| Node.js >= 18 + npm                               | Frontend runtime                      |
+| PostgreSQL                                        | Database (or use `--docker-pg` below) |
+
 
 #### 1. Configure
 
@@ -184,8 +233,7 @@ The script handles dependency installation, starts all services with colored log
 
 Services: backend (4510) + llm-proxy (4511) + portal (4517)
 
-<details>
-<summary>Manual Start (alternative)</summary>
+Manual Start (alternative)
 
 **Backend:**
 
@@ -206,7 +254,7 @@ npm install && npm run dev
 
 Portal at `http://localhost:4517` | `/api` auto-proxy to backend.
 
-</details>
+
 
 #### 3. Sign In
 
@@ -227,38 +275,75 @@ Open `http://localhost:4517` and sign in with the printed credentials. You will 
 
 ### Kubernetes
 
-K8s deployments are managed by `deploy/cli.sh`. The typical workflow is **deploy to staging first, then promote to production**.
+K8s releases and deployments are managed by separate scripts. The typical workflow is **create a release artifact, deploy it to staging, then deploy the same tag to production**.
 
-**Staging** -- build images, push to registry, and rolling-update the staging namespace:
+**Create release artifacts** -- build images, push to registry, tag git, and create a GitHub Pre-release:
 
 ```bash
-./deploy/cli.sh deploy --tag v0.9.0
+./deploy/release.sh create v0.9.0
 ```
 
-**Production** -- reuse the already-pushed images and update the production namespace (no rebuild):
+**Staging** -- reuse the released images and update the staging namespace:
 
 ```bash
-./deploy/cli.sh promote v0.9.0
+./deploy/deploy.sh deploy --tag v0.9.0 --staging --context <CTX>
+```
+
+**Production** -- deploy the same images to production, then mark the release as final:
+
+```bash
+./deploy/deploy.sh deploy --tag v0.9.0 --prod --context <CTX>
+./deploy/release.sh finalize v0.9.0
 ```
 
 Database migrations run automatically when the new backend pod starts. See [deploy/README.md](deploy/README.md) for full CLI usage and options.
 
+### Docker Compose
+
+For quick self-hosted deployment without Kubernetes:
+
+```bash
+docker compose up -d                   # CE mode (default)
+docker compose up -d --build           # Rebuild images
+```
+
+### Build Mirrors
+
+If pulling dependencies (PyPI, npm, Debian/Alpine packages) is slow in your region, use a mirror preset to speed up builds:
+
+```bash
+# release.sh
+./deploy/release.sh create v0.9.0 --mirrors cn
+
+# docker compose
+docker compose --env-file deploy/mirrors/cn.env up -d --build
+
+# artifacts (DeskClaw engine images)
+./nodeskclaw-artifacts/build.sh openclaw --mirrors cn
+```
+
+Available presets are in `deploy/mirrors/`. See [deploy/mirrors/README.md](deploy/mirrors/README.md) for details and customization.
+
+> **Note:** Docker Hub base image pulls (`FROM python:3.12-slim`, etc.) cannot be accelerated this way. Configure a [registry mirror](https://docs.docker.com/docker-hub/mirror/) in your Docker daemon instead.
+
 ### Upgrade Notes
 
 - **Back up your database** before any major version upgrade.
-- Check [GitHub Releases](https://github.com/patchwork-body/nodeskclaw/releases) for release notes and breaking changes.
+- Check [GitHub Releases](https://github.com/NoDeskAI/nodeskclaw/releases) for release notes and breaking changes.
 - If your database was not previously managed by Alembic, you may need to run `alembic stamp head` once before upgrading. See [Backend README](nodeskclaw-backend/README.md) for details.
 
 ## Documentation
 
-| | |
-|---|---|
-| [Backend](nodeskclaw-backend/README.md) | API hub, directory layout, env vars |
-| [Portal](nodeskclaw-portal/README.md) | User portal frontend |
-| [Artifacts](nodeskclaw-artifacts/README.md) | DeskClaw image build & deploy manifests |
+
+|                                                         |                                              |
+| ------------------------------------------------------- | -------------------------------------------- |
+| [Backend](nodeskclaw-backend/README.md)                 | API hub, directory layout, env vars          |
+| [Portal](nodeskclaw-portal/README.md)                   | User portal frontend                         |
+| [Artifacts](nodeskclaw-artifacts/README.md)             | DeskClaw image build & deploy manifests      |
 | [Channel Plugin](openclaw-channel-nodeskclaw/README.md) | Cyber Workspace communication infrastructure |
-| [DingTalk Plugin](openclaw-channel-dingtalk/README.md) | DingTalk channel via Stream protocol |
-| [LLM Proxy](nodeskclaw-llm-proxy/README.md) | AI reasoning capability relay |
+| [DingTalk Plugin](openclaw-channel-dingtalk/README.md)  | DingTalk channel via Stream protocol         |
+| [LLM Proxy](nodeskclaw-llm-proxy/README.md)             | AI reasoning capability relay                |
+
 
 ## Community
 
@@ -266,7 +351,7 @@ Database migrations run automatically when the new backend pod starts. See [depl
 - [GitHub Issues](https://github.com/NoDeskAI/nodeskclaw/issues) -- Bug reports and feature requests
 - WeChat -- Scan the QR code below to join the developer group; if the WeChat group is full, please use Discord above
 
-<img src=".github/wechat-group-qr.jpg" alt="DeskClaw WeChat Developer Group" width="280">
+<img src="docs/assets/wechat-group-qr.png" alt="WeChat Group QR Code" width="200" />
 
 ## Contributing
 

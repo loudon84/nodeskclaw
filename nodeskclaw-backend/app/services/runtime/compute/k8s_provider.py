@@ -49,7 +49,7 @@ class K8sComputeProvider:
 
     provider_id = "k8s"
 
-    async def get_k8s_client(self, cluster) -> "K8sClient":
+    async def get_k8s_client(self, cluster) -> K8sClient:
         from app.services.k8s.client_manager import k8s_manager
         from app.services.k8s.k8s_client import K8sClient
 

@@ -2,6 +2,7 @@
 import { ref, onUnmounted } from 'vue'
 import { NodeViewWrapper } from '@tiptap/vue-3'
 import { Bot, Users, X } from 'lucide-vue-next'
+import { Button } from '@/components/ui/button'
 
 const props = defineProps<{
   node: any
@@ -42,7 +43,7 @@ onUnmounted(() => {
     @mouseenter="onEnter"
     @mouseleave="onLeave"
   >
-    <button
+    <Button variant="unstyled" size="unstyled"
       class="tag-icon-btn"
       contenteditable="false"
       @click.stop.prevent="deleteNode"
@@ -50,7 +51,7 @@ onUnmounted(() => {
       <X class="tag-icon-x" :class="{ visible: hovered }" />
       <Users v-if="node.attrs.id === '__all__'" class="tag-icon-bot" :class="{ visible: !hovered }" />
       <Bot v-else class="tag-icon-bot" :class="{ visible: !hovered }" />
-    </button>
+    </Button>
     <span class="tag-label">{{ node.attrs.label }}</span>
 
     <Teleport to="body">

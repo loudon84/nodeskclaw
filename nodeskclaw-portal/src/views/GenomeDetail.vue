@@ -32,6 +32,7 @@ import { copyToClipboard } from '@/utils/clipboard'
 import { useGeneStore } from '@/stores/gene'
 import type { GeneItem } from '@/stores/gene'
 import api from '@/services/api'
+import { Button } from '@/components/ui/button'
 
 const route = useRoute()
 const router = useRouter()
@@ -195,9 +196,8 @@ function goBack() {
 }
 
 function goToGene(slug: string) {
-  const gene = geneMap.value[slug]
-  if (gene) {
-    router.push(`/gene-market/gene/${gene.id}`)
+  if (slug) {
+    router.push(`/gene-market/gene/${slug}`)
   }
 }
 </script>
@@ -207,13 +207,13 @@ function goToGene(slug: string) {
     <!-- 固定 header -->
     <div class="shrink-0 border-b border-border">
       <div class="max-w-4xl mx-auto px-6 pt-6 pb-4">
-        <button
+        <Button variant="unstyled" size="unstyled"
           class="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors mb-4"
           @click="goBack"
         >
           <ArrowLeft class="w-4 h-4" />
           {{ t('gene.backToMarket') }}
-        </button>
+        </Button>
 
         <div v-if="store.loading" class="flex justify-center py-4">
           <Loader2 class="w-6 h-6 animate-spin text-muted-foreground" />
@@ -242,13 +242,13 @@ function goToGene(slug: string) {
               </span>
             </div>
           </div>
-          <button
+          <Button variant="unstyled" size="unstyled"
             class="shrink-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
             @click="openInstallDialog"
           >
             <Download class="w-4 h-4" />
             {{ t('genome.learn') }}
-          </button>
+          </Button>
         </div>
       </div>
     </div>
@@ -266,7 +266,7 @@ function goToGene(slug: string) {
             <h2 class="text-lg font-semibold mb-4">{{ t('genome.genesIncluded') }}</h2>
             <!-- Tab 栏 -->
             <div class="flex gap-0 border-b border-border mb-0 overflow-x-auto scrollbar-none">
-              <button
+              <Button variant="unstyled" size="unstyled"
                 v-for="slug in genome.gene_slugs"
                 :key="slug"
                 :class="[
@@ -278,7 +278,7 @@ function goToGene(slug: string) {
                 @click="activeGeneTab = slug"
               >
                 {{ geneMap[slug]?.name ?? slug }}
-              </button>
+              </Button>
             </div>
             <!-- Tab 内容 -->
             <div class="rounded-b-xl border border-t-0 border-border bg-card p-6">
@@ -288,15 +288,15 @@ function goToGene(slug: string) {
               <div v-if="activeGeneContentRaw" class="flex items-center justify-between mb-3">
                 <div class="flex items-center gap-2">
                   <span class="text-xs font-medium text-muted-foreground uppercase tracking-wider">SKILL.md</span>
-                  <button
+                  <Button variant="unstyled" size="unstyled"
                     class="text-xs text-primary hover:underline"
                     @click="goToGene(activeGeneTab)"
                   >
                     {{ t('genome.viewDetail') }}
-                  </button>
+                  </Button>
                 </div>
                 <div class="flex items-center gap-1 rounded-lg border border-border p-0.5">
-                  <button
+                  <Button variant="unstyled" size="unstyled"
                     :class="[
                       'p-1.5 rounded-md transition-colors',
                       contentViewMode === 'rendered' ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground',
@@ -305,8 +305,8 @@ function goToGene(slug: string) {
                     @click="contentViewMode = 'rendered'"
                   >
                     <FileText class="w-3.5 h-3.5" />
-                  </button>
-                  <button
+                  </Button>
+                  <Button variant="unstyled" size="unstyled"
                     :class="[
                       'p-1.5 rounded-md transition-colors',
                       contentViewMode === 'source' ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground',
@@ -315,7 +315,7 @@ function goToGene(slug: string) {
                     @click="contentViewMode = 'source'"
                   >
                     <Code class="w-3.5 h-3.5" />
-                  </button>
+                  </Button>
                 </div>
               </div>
               <div
@@ -384,12 +384,12 @@ function goToGene(slug: string) {
         >
           <div class="flex items-center justify-between mb-4">
             <h3 class="text-lg font-semibold">{{ t('genome.selectInstance') }}</h3>
-            <button
+            <Button variant="unstyled" size="unstyled"
               class="p-1.5 rounded-lg hover:bg-muted transition-colors"
               @click="closeInstallDialog"
             >
               <X class="w-4 h-4" />
-            </button>
+            </Button>
           </div>
           <p class="text-sm text-muted-foreground mb-4">
             {{ t('genome.selectInstanceHint', { name: genome?.name ?? '' }) }}
@@ -401,7 +401,7 @@ function goToGene(slug: string) {
             <div v-if="instances.length === 0" class="text-sm text-muted-foreground py-4 text-center">
               {{ t('gene.noAvailableInstances') }}
             </div>
-            <button
+            <Button variant="unstyled" size="unstyled"
               v-for="inst in instances"
               :key="inst.id"
               :disabled="inst.status !== 'running' && inst.status !== 'learning'"
@@ -420,13 +420,13 @@ function goToGene(slug: string) {
                 <span class="font-medium text-sm truncate">{{ inst.name }}</span>
                 <div v-if="inst.slug" class="group/slug relative max-w-[50%] flex items-center">
                   <span class="text-[11px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground truncate block">{{ inst.slug }}</span>
-                  <button
+                  <Button variant="unstyled" size="unstyled"
                     class="ml-0.5 p-0.5 rounded opacity-0 group-hover/slug:opacity-100 transition-opacity text-muted-foreground hover:text-foreground shrink-0"
                     @click.stop="copySlug(inst.slug)"
                   >
                     <Check v-if="copiedSlug === inst.slug" class="w-3 h-3 text-emerald-500" />
                     <Copy v-else class="w-3 h-3" />
-                  </button>
+                  </Button>
                 </div>
               </div>
               <span
@@ -438,7 +438,7 @@ function goToGene(slug: string) {
               >
                 {{ getStatusLabel(inst.status) }}
               </span>
-            </button>
+            </Button>
           </div>
         </div>
       </div>

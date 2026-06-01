@@ -107,12 +107,15 @@ async def cluster_overview(
         sc_list = await storage_api.list_storage_class()
 
         allowed_raw = await get_config("allowed_storage_classes", db)
-        allowed_names: set[str] = set()
-        if allowed_raw:
+        if allowed_raw is None:
+            all_allowed = True
+            allowed_names: set[str] = set()
+        else:
+            all_allowed = False
             try:
                 allowed_names = set(_json.loads(allowed_raw))
             except (_json.JSONDecodeError, TypeError):
-                pass
+                allowed_names = set()
 
         for sc in sc_list.items:
             ann = sc.metadata.annotations or {}
@@ -123,7 +126,7 @@ async def cluster_overview(
                 "reclaim_policy": sc.reclaim_policy,
                 "allow_volume_expansion": sc.allow_volume_expansion or False,
                 "is_default": is_default,
-                "enabled": sc.metadata.name in allowed_names,
+                "enabled": all_allowed or sc.metadata.name in allowed_names,
             })
     except Exception:
         logger.warning("Failed to list StorageClasses for cluster %s", cluster_id, exc_info=True)

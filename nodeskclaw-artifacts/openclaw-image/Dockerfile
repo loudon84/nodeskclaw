@@ -10,8 +10,15 @@ ARG NODE_VERSION=22
 FROM node:${NODE_VERSION}-bookworm-slim
 
 # ---------- 构建参数 ----------
-ARG OPENCLAW_VERSION=2026.3.28
-ARG IMAGE_VERSION=v2026.3.28
+ARG OPENCLAW_VERSION=2026.4.8
+ARG IMAGE_VERSION=v2026.4.8
+ARG PIP_INDEX_URL=""
+ARG PIP_TRUSTED_HOST=""
+ARG NPM_REGISTRY=""
+ARG APT_MIRROR=""
+
+ENV PIP_INDEX_URL=${PIP_INDEX_URL} \
+    PIP_TRUSTED_HOST=${PIP_TRUSTED_HOST}
 
 # ---------- 元数据标签 ----------
 LABEL maintainer="Xy718Labs"
@@ -22,6 +29,9 @@ LABEL org.opencontainers.image.description="OpenClaw AI Agent 平台 - NoDeskCla
 # ---------- 系统依赖（BuildKit apt 缓存，重复构建秒过）----------
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    if [ -n "$APT_MIRROR" ]; then \
+      sed -i "s|deb.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list.d/debian.sources; \
+    fi && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
         git openssh-client ca-certificates \
@@ -38,7 +48,8 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 
 # ---------- 全局安装 OpenClaw（BuildKit npm 缓存）----------
 RUN --mount=type=cache,target=/root/.npm \
-    npm install -g openclaw@${OPENCLAW_VERSION} @nodeskai/genehub
+    if [ -n "$NPM_REGISTRY" ]; then npm config set registry "$NPM_REGISTRY"; fi && \
+    npm install -g openclaw@${OPENCLAW_VERSION}
 
 # ---------- 预置用户数据目录结构 ----------
 RUN mkdir -p /root/.openclaw/agents/main/sessions \

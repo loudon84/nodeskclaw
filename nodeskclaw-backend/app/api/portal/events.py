@@ -7,10 +7,12 @@ import json
 import logging
 
 from fastapi import APIRouter, Depends, Query
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_org, get_db
+from app.schemas.common import ApiResponse
 from app.services import cluster_service
 from app.services.k8s.k8s_client import K8sClient
 from app.services.runtime.registries.compute_registry import require_k8s_client
@@ -21,6 +23,19 @@ router = APIRouter()
 
 WATCH_TIMEOUT_SECONDS = 1800
 HEARTBEAT_INTERVAL_SECONDS = 15
+
+
+class RecentEventItem(BaseModel):
+    type: str
+    event_type: str
+    reason: str | None = None
+    message: str | None = None
+    involved: str | None = None
+    involved_kind: str | None = None
+    namespace: str | None = None
+    count: int | None = None
+    last_timestamp: str | None = None
+    first_timestamp: str | None = None
 
 
 def _map_k8s_event(obj, event_type: str = "OBJECT") -> dict:
@@ -43,7 +58,7 @@ def _map_k8s_event(obj, event_type: str = "OBJECT") -> dict:
     }
 
 
-@router.get("/recent")
+@router.get("/recent", response_model=ApiResponse[list[RecentEventItem]])
 async def events_recent(
     cluster_id: str = Query(..., description="集群 ID"),
     namespace: str = Query("", description="命名空间，留空则查询所有"),
@@ -55,7 +70,7 @@ async def events_recent(
     cluster = await cluster_service.get_cluster(cluster_id, db, org.id)
 
     if not cluster.is_k8s:
-        return JSONResponse({"data": []})
+        return ApiResponse(data=[])
 
     k8s = await require_k8s_client(cluster)
 
@@ -67,7 +82,7 @@ async def events_recent(
     items = [_map_k8s_event(obj) for obj in resp.items]
     items.sort(key=lambda e: e["last_timestamp"] or "", reverse=True)
 
-    return JSONResponse({"data": items[:limit]})
+    return ApiResponse(data=items[:limit])
 
 
 @router.get("/stream")

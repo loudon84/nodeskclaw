@@ -3,12 +3,14 @@ import { ref, onMounted } from 'vue'
 import { BarChart3, RefreshCw, Loader2, TrendingUp, Zap, Target } from 'lucide-vue-next'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { useI18n } from 'vue-i18n'
+import { formatNumber as formatLocaleNumber } from '@/utils/localeFormat'
+import { Button } from '@/components/ui/button'
 
 const props = defineProps<{
   workspaceId: string
 }>()
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const store = useWorkspaceStore()
 
 const loading = ref(false)
@@ -51,7 +53,7 @@ function formatNumber(val: unknown): string {
   if (val == null) return '-'
   const n = Number(val)
   if (isNaN(n)) return '-'
-  return n.toLocaleString('zh-CN', { maximumFractionDigits: 2 })
+  return formatLocaleNumber(n, String(locale.value), { maximumFractionDigits: 2 })
 }
 
 function formatPercent(val: unknown): string {
@@ -74,7 +76,7 @@ defineExpose({ refresh: loadPerformance })
         {{ t('blackboard.teamPerformance') }}
       </h3>
       <div class="flex items-center gap-2">
-        <button
+        <Button variant="unstyled" size="unstyled"
           class="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
           :disabled="attributing"
           @click="onAttributeTokens"
@@ -82,8 +84,8 @@ defineExpose({ refresh: loadPerformance })
           <Loader2 v-if="attributing" class="w-3 h-3 animate-spin" />
           <Zap v-else class="w-3 h-3" />
           {{ t('blackboard.attributeTokens') }}
-        </button>
-        <button
+        </Button>
+        <Button variant="unstyled" size="unstyled"
           class="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
           :disabled="collecting"
           @click="onCollect"
@@ -91,7 +93,7 @@ defineExpose({ refresh: loadPerformance })
           <Loader2 v-if="collecting" class="w-3 h-3 animate-spin" />
           <RefreshCw v-else class="w-3 h-3" />
           {{ t('blackboard.collectPerformance') }}
-        </button>
+        </Button>
       </div>
     </div>
 
@@ -134,6 +136,10 @@ defineExpose({ refresh: loadPerformance })
         </div>
         <div class="text-lg font-semibold">
           {{ formatNumber(perf.total_token_cost) }}
+        </div>
+        <div v-if="perf.total_prompt_token_cost || perf.total_completion_token_cost" class="flex gap-2 text-[10px] text-muted-foreground">
+          <span>{{ t('blackboard.promptTokens') }}: {{ formatNumber(perf.total_prompt_token_cost) }}</span>
+          <span>{{ t('blackboard.completionTokens') }}: {{ formatNumber(perf.total_completion_token_cost) }}</span>
         </div>
       </div>
 

@@ -15,6 +15,8 @@ import api from '@/services/api'
 import { useToast } from '@/composables/useToast'
 import { useConfirm } from '@/composables/useConfirm'
 import { resolveApiErrorMessage } from '@/i18n/error'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 
 const { t } = useI18n()
 const orgStore = useOrgStore()
@@ -174,13 +176,13 @@ onMounted(async () => {
           <h2 class="text-base font-semibold">{{ t('orgSettings.requiredGenesTitle') }}</h2>
           <p class="text-xs text-muted-foreground mt-1">{{ t('orgSettings.requiredGenesDesc') }}</p>
         </div>
-        <button
+        <Button variant="unstyled" size="unstyled"
           class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors"
           @click="openAddDialog"
         >
           <Plus class="w-3.5 h-3.5" />
           {{ t('orgSettings.addGene') }}
-        </button>
+        </Button>
       </div>
 
       <div v-if="loading" class="flex items-center justify-center py-12">
@@ -218,14 +220,14 @@ onMounted(async () => {
               </p>
             </div>
           </div>
-          <button
+          <Button variant="unstyled" size="unstyled"
             class="shrink-0 p-1.5 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
             :disabled="actionLoading === rg.id"
             @click="removeRequiredGene(rg)"
           >
             <Loader2 v-if="actionLoading === rg.id" class="w-4 h-4 animate-spin" />
             <Trash2 v-else class="w-4 h-4" />
-          </button>
+          </Button>
         </div>
       </div>
     </section>
@@ -239,15 +241,15 @@ onMounted(async () => {
         <div class="bg-card border border-border rounded-xl shadow-lg max-w-md w-full mx-4 max-h-[80vh] flex flex-col">
           <div class="flex items-center justify-between p-4 border-b border-border">
             <h3 class="text-sm font-semibold">{{ t('orgSettings.addGeneDialogTitle') }}</h3>
-            <button class="p-1 rounded-md hover:bg-muted transition-colors" @click="closeAddDialog">
+            <Button variant="unstyled" size="unstyled" class="p-1 rounded-md hover:bg-muted transition-colors" @click="closeAddDialog">
               <X class="w-4 h-4 text-muted-foreground" />
-            </button>
+            </Button>
           </div>
 
           <div class="p-4 border-b border-border">
             <div class="relative">
               <Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <input
+              <Input
                 v-model="searchQuery"
                 class="w-full pl-9 pr-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
                 :placeholder="t('orgSettings.searchGenePlaceholder')"
@@ -283,14 +285,14 @@ onMounted(async () => {
                     {{ gene.short_description }}
                   </p>
                 </div>
-                <button
+                <Button variant="unstyled" size="unstyled"
                   class="shrink-0 ml-3 px-2.5 py-1 rounded-md bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
                   :disabled="addingGeneId === gene.id"
                   @click="addRequiredGene(gene)"
                 >
                   <Loader2 v-if="addingGeneId === gene.id" class="w-3 h-3 animate-spin" />
                   <Plus v-else class="w-3 h-3" />
-                </button>
+                </Button>
               </div>
             </div>
           </div>

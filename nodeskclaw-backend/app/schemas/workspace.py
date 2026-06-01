@@ -15,6 +15,7 @@ class WorkspaceCreate(BaseModel):
     color: str = "#a78bfa"
     icon: str = "bot"
     template_id: str | None = None
+    cluster_id: str = Field(..., min_length=1)
 
 
 class WorkspaceUpdate(BaseModel):
@@ -45,6 +46,8 @@ class WorkspaceInfo(BaseModel):
     color: str
     icon: str
     created_by: str
+    cluster_id: str | None = None
+    source_template_id: str | None = None
     agent_count: int = 0
     agents: list[AgentBrief] = []
     created_at: datetime
@@ -57,6 +60,7 @@ class WorkspaceListItem(BaseModel):
     description: str
     color: str
     icon: str
+    cluster_id: str | None = None
     agent_count: int = 0
     agents: list[AgentBrief] = []
     created_at: datetime
@@ -97,7 +101,11 @@ class TaskInfo(BaseModel):
     token_cost: int | None = None
     blocker_reason: str | None = None
     completed_at: datetime | None = None
+    started_at: datetime | None = None
     archived_at: datetime | None = None
+    schedule_id: str | None = None
+    deadline: datetime | None = None
+    failure_reason: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -201,6 +209,7 @@ class WorkspaceChatRequest(BaseModel):
     message: str
     mentions: list[str] | None = None
     file_ids: list[str] | None = None
+    conversation_id: str | None = None
 
 
 class WorkspaceMessageInfo(BaseModel):
@@ -216,67 +225,16 @@ class WorkspaceMessageInfo(BaseModel):
     created_at: datetime
 
 
-# ── Blackboard BBS Posts ──────────────────────────────
+# ── Collaboration ─────────────────────────────────────
 
-class PostCreate(BaseModel):
-    title: str = Field(min_length=1, max_length=256)
-    content: str = Field(min_length=1)
-
-
-class PostUpdate(BaseModel):
-    title: str | None = Field(None, min_length=1, max_length=256)
-    content: str | None = Field(None, min_length=1)
-
-
-class ReplyCreate(BaseModel):
-    content: str = Field(min_length=1)
-
-
-class MentionInfo(BaseModel):
-    type: str
-    id: str
-    name: str | None = None
-
-
-class ReplyInfo(BaseModel):
-    id: str
-    post_id: str
-    floor_number: int
-    content: str
-    author_type: str
-    author_id: str
-    author_name: str
-    created_at: datetime
-
-
-class PostInfo(BaseModel):
-    id: str
-    workspace_id: str
-    title: str
-    content: str
-    author_type: str
-    author_id: str
-    author_name: str
-    is_pinned: bool
-    reply_count: int
-    replies: list[ReplyInfo] = []
-    mentions: list[MentionInfo] = []
-    created_at: datetime
-    updated_at: datetime
-    last_reply_at: datetime | None = None
-
-
-class PostListItem(BaseModel):
-    id: str
-    workspace_id: str
-    title: str
-    author_type: str
-    author_id: str
-    author_name: str
-    is_pinned: bool
-    reply_count: int
-    created_at: datetime
-    last_reply_at: datetime | None = None
+class CollaborationSendRequest(BaseModel):
+    target: str = Field(
+        ...,
+        description="Target identifier, e.g. 'agent:数据分析师' or 'agent:<instance_id>'",
+    )
+    text: str = Field(..., min_length=1, max_length=4096)
+    depth: int = Field(default=0, ge=0)
+    conversation_id: str | None = None
 
 
 # ── Blackboard Shared Files ───────────────────────────
@@ -306,3 +264,76 @@ class FileWriteRequest(BaseModel):
 class MkdirRequest(BaseModel):
     parent_path: str = Field("/", max_length=1024)
     name: str = Field(..., min_length=1, max_length=255)
+
+
+class FileCopyRequest(BaseModel):
+    target_parent_path: str = Field("/", max_length=1024)
+    target_filename: str | None = Field(None, max_length=255)
+
+
+# ── Agent Performance ───────────────────────────────
+
+class ScheduleReliability(BaseModel):
+    schedule_id: str
+    schedule_name: str
+    total: int
+    completed: int
+    failed: int
+    success_rate: float | None = None
+
+class AgentTaskMetrics(BaseModel):
+    instance_id: str
+    agent_name: str
+    theme_color: str | None = None
+    total_tasks: int
+    completed_tasks: int
+    failed_tasks: int
+    pending_tasks: int
+    in_progress_tasks: int
+    success_rate: float | None = None
+    total_work_minutes: float | None = None
+    avg_duration_minutes: float | None = None
+    total_token_cost: int = 0
+    total_prompt_token_cost: int = 0
+    total_completion_token_cost: int = 0
+    total_estimated_value: float = 0
+    total_actual_value: float = 0
+    roi_per_1k_tokens: float | None = None
+    schedules: list[ScheduleReliability] = []
+    other_workspace_count: int = 0
+
+class AgentPerformanceResponse(BaseModel):
+    agents: list[AgentTaskMetrics]
+    unclaimed_failures: int = 0
+
+
+class WorkspaceBreakdown(BaseModel):
+    workspace_id: str
+    workspace_name: str
+    total_tasks: int
+    completed_tasks: int
+    success_rate: float | None = None
+    total_token_cost: int = 0
+    total_actual_value: float = 0
+
+class GlobalAgentMetrics(BaseModel):
+    instance_id: str
+    agent_name: str
+    theme_color: str | None = None
+    total_tasks: int
+    completed_tasks: int
+    failed_tasks: int
+    success_rate: float | None = None
+    total_work_minutes: float | None = None
+    avg_duration_minutes: float | None = None
+    total_token_cost: int = 0
+    total_prompt_token_cost: int = 0
+    total_completion_token_cost: int = 0
+    total_estimated_value: float = 0
+    total_actual_value: float = 0
+    roi_per_1k_tokens: float | None = None
+    workspace_count: int = 0
+    workspaces: list[WorkspaceBreakdown] = []
+
+class GlobalAgentPerformanceResponse(BaseModel):
+    agents: list[GlobalAgentMetrics]

@@ -9,7 +9,7 @@ _internal/
 openclaw/
 vibecraft/
 zeroclaw/
-nanobot/
+hermes-agent/
 
 # ========================
 # EE 模块（私有仓库，不纳入 CE 开源仓库）
@@ -62,6 +62,8 @@ pnpm-debug.log*
 # ========================
 .claude/
 !.claude/CLAUDE.md
+.codex-screenshots/
+.codex/
 
 # ========================
 # 编辑器 & 系统

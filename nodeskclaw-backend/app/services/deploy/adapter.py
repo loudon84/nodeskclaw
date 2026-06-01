@@ -3,17 +3,17 @@
 deploy_service.py 在关键分叉点调用 adapter 方法，
 CE/EE 通过不同实现提供不同行为。
 
-CE (BasicK8sAdapter):
-  - 单集群，不做组织配额检查
+BasicK8sAdapter（CE 默认）:
+  - 不做组织配额检查
   - namespace 不含 org_slug
-  - 不创建跨集群网关代理
   - NetworkPolicy 不传 org_id
+  - 跨集群网关代理按 cluster.proxy_endpoint 配置自动生效
 
-EE (FullK8sAdapter):
+FullK8sAdapter（EE）:
   - 组织配额检查 + 专属集群覆盖
   - namespace 含 org_slug（多租户隔离）
-  - 跨集群网关代理（ExternalName Service + Proxy Ingress）
   - NetworkPolicy 含 org_id（组织级隔离）
+  - 跨集群网关代理继承 BasicK8sAdapter
 """
 
 from __future__ import annotations
@@ -69,16 +69,16 @@ class DeploymentAdapter(ABC):
     ) -> None:
         """Ingress 创建后的跨集群代理设置。
 
-        CE: no-op
-        EE: 在网关集群创建 ExternalName Service + Proxy Ingress
+        按 cluster.proxy_endpoint 配置决定：有则创建 ExternalName Service +
+        Proxy Ingress，无则 no-op。CE/EE 均可用。
         """
 
     @abstractmethod
     async def cleanup_proxy(self, ctx: Any) -> None:
         """清理跨集群代理资源。
 
-        CE: no-op
-        EE: 删除网关集群上的 Proxy Ingress
+        按 cluster.proxy_endpoint 配置决定：有则删除网关集群上的 Proxy Ingress，
+        无则 no-op。CE/EE 均可用。
         """
 
     @abstractmethod
@@ -95,7 +95,6 @@ class DeploymentAdapter(ABC):
     ) -> str | None:
         """Ingress TLS secret 名称。
 
-        CE: 直接返回 tls_secret_name
-        EE: 有 proxy 时返回 None（TLS 由网关集群处理）
+        有 proxy 时返回 None（TLS 由网关集群处理），否则返回 tls_secret_name。
         """
 

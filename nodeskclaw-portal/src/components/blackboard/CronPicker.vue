@@ -2,6 +2,8 @@
 import { ref, computed, watch, onMounted } from 'vue'
 import { ChevronDown } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 
 const props = defineProps<{ modelValue: string }>()
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
@@ -228,7 +230,7 @@ function toggleMonthDay(day: number) {
 <template>
   <div class="space-y-3">
     <div class="flex flex-wrap gap-1">
-      <button
+      <Button variant="unstyled" size="unstyled"
         v-for="m in modes"
         :key="m.key"
         class="px-2.5 py-1 text-xs rounded-md transition-colors"
@@ -238,24 +240,24 @@ function toggleMonthDay(day: number) {
         @click="switchMode(m.key)"
       >
         {{ t(m.labelKey) }}
-      </button>
+      </Button>
     </div>
 
     <div v-if="mode === 'hourly'" class="flex items-center gap-2">
       <span class="text-sm text-muted-foreground">{{ t('blackboard.cronInterval') }}</span>
       <div class="relative">
-        <button
+        <Button variant="unstyled" size="unstyled"
           class="flex items-center gap-1 px-3 py-1.5 text-sm rounded-lg border border-border bg-background hover:bg-muted/50 min-w-[4rem]"
           @click="hourlyDropdownOpen = !hourlyDropdownOpen"
         >
           {{ hourlyInterval }}
           <ChevronDown class="w-3.5 h-3.5 text-muted-foreground" />
-        </button>
+        </Button>
         <div
           v-if="hourlyDropdownOpen"
           class="absolute z-10 mt-1 w-full bg-card border border-border rounded-lg shadow-lg py-1"
         >
-          <button
+          <Button variant="unstyled" size="unstyled"
             v-for="n in hourlyOptions"
             :key="n"
             class="w-full px-3 py-1.5 text-sm text-left hover:bg-muted/50"
@@ -263,14 +265,14 @@ function toggleMonthDay(day: number) {
             @click="hourlyInterval = n; hourlyDropdownOpen = false"
           >
             {{ n }}
-          </button>
+          </Button>
         </div>
       </div>
     </div>
 
     <div v-else-if="mode === 'daily'" class="flex items-center gap-2">
       <span class="text-sm text-muted-foreground">{{ t('blackboard.cronTime') }}</span>
-      <input
+      <Input
         v-model="dailyTime"
         type="time"
         class="px-3 py-1.5 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
@@ -279,18 +281,18 @@ function toggleMonthDay(day: number) {
 
     <div v-else-if="mode === 'weekly'" class="flex items-center gap-2 flex-wrap">
       <div class="relative">
-        <button
+        <Button variant="unstyled" size="unstyled"
           class="flex items-center gap-1 px-3 py-1.5 text-sm rounded-lg border border-border bg-background hover:bg-muted/50 min-w-[5rem]"
           @click="weekdayDropdownOpen = !weekdayDropdownOpen"
         >
           {{ weekDays.find(d => d.value === weeklyDay)?.label }}
           <ChevronDown class="w-3.5 h-3.5 text-muted-foreground" />
-        </button>
+        </Button>
         <div
           v-if="weekdayDropdownOpen"
           class="absolute z-10 mt-1 w-full bg-card border border-border rounded-lg shadow-lg py-1"
         >
-          <button
+          <Button variant="unstyled" size="unstyled"
             v-for="d in weekDays"
             :key="d.value"
             class="w-full px-3 py-1.5 text-sm text-left hover:bg-muted/50"
@@ -298,10 +300,10 @@ function toggleMonthDay(day: number) {
             @click="weeklyDay = d.value; weekdayDropdownOpen = false"
           >
             {{ d.label }}
-          </button>
+          </Button>
         </div>
       </div>
-      <input
+      <Input
         v-model="weeklyTime"
         type="time"
         class="px-3 py-1.5 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
@@ -312,7 +314,7 @@ function toggleMonthDay(day: number) {
       <div>
         <span class="text-sm text-muted-foreground">{{ t('blackboard.cronMonthlyDays') }}</span>
         <div class="flex flex-wrap gap-1 mt-1.5">
-          <button
+          <Button variant="unstyled" size="unstyled"
             v-for="d in 31"
             :key="d"
             class="w-7 h-7 text-xs rounded transition-colors"
@@ -322,12 +324,12 @@ function toggleMonthDay(day: number) {
             @click="toggleMonthDay(d)"
           >
             {{ d }}
-          </button>
+          </Button>
         </div>
       </div>
       <div class="flex items-center gap-2">
         <span class="text-sm text-muted-foreground">{{ t('blackboard.cronTime') }}</span>
-        <input
+        <Input
           v-model="monthlyTime"
           type="time"
           class="px-3 py-1.5 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
@@ -340,7 +342,7 @@ function toggleMonthDay(day: number) {
       <div class="grid grid-cols-2 gap-3">
         <div>
           <label class="block text-xs text-muted-foreground mb-1">{{ t('blackboard.cronMinuteField') }} <span class="text-muted-foreground/60">(0-59)</span></label>
-          <input
+          <Input
             v-model="customMinute"
             class="w-full px-3 py-1.5 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
             :placeholder="t('blackboard.cronMinutePlaceholder')"
@@ -348,7 +350,7 @@ function toggleMonthDay(day: number) {
         </div>
         <div>
           <label class="block text-xs text-muted-foreground mb-1">{{ t('blackboard.cronHourField') }} <span class="text-muted-foreground/60">(0-23)</span></label>
-          <input
+          <Input
             v-model="customHour"
             class="w-full px-3 py-1.5 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
             :placeholder="t('blackboard.cronHourPlaceholder')"
@@ -356,7 +358,7 @@ function toggleMonthDay(day: number) {
         </div>
         <div>
           <label class="block text-xs text-muted-foreground mb-1">{{ t('blackboard.cronDayField') }} <span class="text-muted-foreground/60">(1-31)</span></label>
-          <input
+          <Input
             v-model="customDom"
             class="w-full px-3 py-1.5 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
             :placeholder="t('blackboard.cronDayPlaceholder')"
@@ -364,7 +366,7 @@ function toggleMonthDay(day: number) {
         </div>
         <div>
           <label class="block text-xs text-muted-foreground mb-1">{{ t('blackboard.cronWeekdayField') }} <span class="text-muted-foreground/60">(0-7)</span></label>
-          <input
+          <Input
             v-model="customDow"
             class="w-full px-3 py-1.5 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
             :placeholder="t('blackboard.cronWeekdayPlaceholder')"

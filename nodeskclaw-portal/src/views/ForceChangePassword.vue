@@ -6,6 +6,8 @@ import { Lock } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
 import { useToast } from '@/composables/useToast'
 import api from '@/services/api'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 
 const { t } = useI18n()
 const router = useRouter()
@@ -60,7 +62,7 @@ async function handleSubmit() {
       <form class="space-y-4" @submit.prevent="handleSubmit">
         <div class="space-y-1.5">
           <label class="block text-sm text-zinc-300">{{ t('forceChangePassword.newPassword') }}</label>
-          <input
+          <Input
             v-model="newPassword"
             type="password"
             :placeholder="t('forceChangePassword.newPasswordPlaceholder')"
@@ -71,7 +73,7 @@ async function handleSubmit() {
 
         <div class="space-y-1.5">
           <label class="block text-sm text-zinc-300">{{ t('forceChangePassword.confirmPassword') }}</label>
-          <input
+          <Input
             v-model="confirmPassword"
             type="password"
             :placeholder="t('forceChangePassword.confirmPasswordPlaceholder')"
@@ -82,13 +84,13 @@ async function handleSubmit() {
 
         <p v-if="error" class="text-sm text-red-400">{{ error }}</p>
 
-        <button
+        <Button variant="unstyled" size="unstyled"
           type="submit"
           :disabled="submitting"
           class="w-full rounded-lg bg-white text-black py-2 text-sm font-medium hover:bg-zinc-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
           {{ submitting ? t('forceChangePassword.submitting') : t('forceChangePassword.submit') }}
-        </button>
+        </Button>
       </form>
     </div>
   </div>

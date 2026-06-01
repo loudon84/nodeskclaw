@@ -1,6 +1,7 @@
 import pytest
 
 from app.services.runtime.compute import docker_provider
+from app.services.runtime.registries.runtime_registry import RuntimeSpec
 
 
 def test_join_host_path_for_posix() -> None:
@@ -100,3 +101,92 @@ async def test_destroy_instance_falls_back_to_slug_cleanup(monkeypatch) -> None:
         ("docker", "rm", "-f", "demo"),
         ("docker", "network", "rm", "demo-net"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_seed_template_from_image_uses_runtime_template_rel(tmp_path, monkeypatch) -> None:
+    calls = []
+
+    class _Proc:
+        def __init__(self, returncode: int = 0, stdout: bytes = b"", stderr: bytes = b""):
+            self.returncode = returncode
+            self._stdout = stdout
+            self._stderr = stderr
+
+        async def communicate(self):
+            return self._stdout, self._stderr
+
+        async def wait(self):
+            return self.returncode
+
+    async def _fake_exec(*args, **kwargs):
+        calls.append(args)
+        if args[:2] == ("docker", "create"):
+            return _Proc(stdout=b"cid-123\n")
+        return _Proc()
+
+    monkeypatch.setattr(docker_provider.asyncio, "create_subprocess_exec", _fake_exec)
+
+    config = docker_provider.InstanceComputeConfig(
+        instance_id="instance-1",
+        name="demo",
+        namespace="default",
+        slug="demo",
+        image_version="latest",
+        runtime="openclaw",
+        gateway_port=3000,
+        env_vars={},
+        mem_limit=None,
+        cpu_limit=None,
+        companion=None,
+    )
+
+    await docker_provider._seed_template_from_image(config, tmp_path)
+
+    create_call = calls[0]
+    assert calls == [
+        ("docker", "create", "--platform", "linux/amd64", "--name", create_call[5], "deskclaw:latest"),
+        ("docker", "cp", f"cid-123:/root/.openclaw/openclaw.json.template", str(tmp_path / "openclaw.json.template")),
+        ("docker", "rm", "cid-123"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_seed_template_from_image_skips_runtime_without_template(tmp_path, monkeypatch) -> None:
+    calls = []
+
+    async def _fake_exec(*args, **kwargs):
+        calls.append(args)
+        raise AssertionError("should not invoke docker when runtime has no seed template")
+
+    monkeypatch.setattr(docker_provider.asyncio, "create_subprocess_exec", _fake_exec)
+
+    from app.services.runtime.registries.runtime_registry import RUNTIME_REGISTRY
+
+    monkeypatch.setattr(
+        RUNTIME_REGISTRY,
+        "get",
+        lambda runtime_id: RuntimeSpec(
+            runtime_id=runtime_id,
+            data_dir_container_path="/root/.custom",
+            docker_seed_template_rel=None,
+        ),
+    )
+
+    config = docker_provider.InstanceComputeConfig(
+        instance_id="instance-1",
+        name="demo",
+        namespace="default",
+        slug="demo",
+        image_version="latest",
+        runtime="custom",
+        gateway_port=3000,
+        env_vars={},
+        mem_limit=None,
+        cpu_limit=None,
+        companion=None,
+    )
+
+    await docker_provider._seed_template_from_image(config, tmp_path)
+
+    assert calls == []

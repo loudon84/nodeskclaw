@@ -9,6 +9,9 @@ services:
     image: nodesk-center-cn-beijing.cr.volces.com/base-image/nodeskclaw-admin:${DESKCLAW_VERSION}
     build:
       context: ee/nodeskclaw-frontend
+      args:
+        NPM_REGISTRY: ${NPM_REGISTRY:-}
+        ALPINE_MIRROR: ${ALPINE_MIRROR:-}
     depends_on:
       - nodeskclaw-backend
     environment:

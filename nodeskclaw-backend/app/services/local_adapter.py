@@ -24,6 +24,12 @@ from app.services.registry_adapter import (
 
 logger = logging.getLogger(__name__)
 
+_REGISTRY_DISPLAY_NAMES = {
+    "local": "本地",
+    "deskhub": "DeskHub",
+    "clawhub": "ClawHub",
+}
+
 
 def _json_loads(raw: str | None) -> list | dict | None:
     if not raw:
@@ -35,6 +41,7 @@ def _json_loads(raw: str | None) -> list | dict | None:
 
 
 def _gene_to_item(gene: Gene) -> RegistrySkillItem:
+    source_registry = gene.source_registry or "local"
     return RegistrySkillItem(
         slug=gene.slug,
         name=gene.name,
@@ -62,8 +69,8 @@ def _gene_to_item(gene: Gene) -> RegistrySkillItem:
         visibility=getattr(gene, "visibility", "public"),
         created_at=gene.created_at,
         updated_at=gene.updated_at,
-        source_registry="local",
-        source_registry_name="本地",
+        source_registry=source_registry,
+        source_registry_name=_REGISTRY_DISPLAY_NAMES.get(source_registry, source_registry),
         local_id=gene.id,
     )
 

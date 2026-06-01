@@ -17,6 +17,8 @@ class DeployAction(str, Enum):
     scale = "scale"
     restart = "restart"
     delete = "delete"
+    rebuild = "rebuild"
+    restore = "restore"
 
 
 class DeployStatus(str, Enum):

@@ -7,5 +7,6 @@ def compute_display_status(status: str, health_status: str = "unknown") -> str:
     return {
         "creating": "preparing", "pending": "preparing", "deploying": "preparing",
         "restarting": "restarting", "updating": "updating",
+        "rebuilding": "rebuilding", "restoring": "restoring",
         "learning": "learning", "failed": "error", "deleting": "leaving",
     }.get(status, status)

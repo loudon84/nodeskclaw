@@ -67,6 +67,14 @@ import { Search, Bell, Settings } from 'lucide-vue-next'
 
 **禁止在提问或说明中堆砌纯英文术语来"装专业"。**
 
+## 产品称呼
+
+对外发布、群聊公告、Release Note、客户沟通和文档摘要中，首次出现必须称为“DeskClaw 团队版”。
+
+- 禁止写成“个人版”
+- 禁止省略“团队版”导致对外产品定位错误
+- 技术上下文中可使用 DeskClaw、NoDeskClaw、CE、EE 等名称，但不得影响对外称呼的一致性
+
 ## 回答准则
 
 **三思而后行，不要一拍脑袋就回答。想当然 = 事故。**
@@ -399,6 +407,32 @@ UniqueConstraint("col_a", "col_b", name="uq_xxx")
 - **禁止遗漏过滤**：新增查询必须包含 `deleted_at.is_(None)` 条件，否则会查到已删除的数据
 - **禁止使用 `UniqueConstraint`**：所有唯一约束必须用 Partial Unique Index（见上）
 
+## Alembic 迁移规则
+
+**新增或修改数据模型后，必须通过 `alembic revision --autogenerate` 生成迁移文件。禁止手写迁移文件。**
+
+项目启动时走 `alembic upgrade head`（不走 `create_all`），缺少迁移 = 表不存在 = 启动崩溃。
+
+### 必须做
+
+- **新增/修改 Model 后立刻生成迁移**：`uv run alembic revision --autogenerate -m "描述"`，作为同一个 commit 的一部分
+- **Review 生成的迁移文件**：autogenerate 无法检测列重命名（会生成 DROP + ADD）、Partial Unique Index 可能需手动调整
+- **迁移文件必须提交到 Git**：`alembic/versions/` 下的文件是代码的一部分
+
+### 严禁
+
+- **禁止手写 revision ID**：必须由 `alembic revision` 命令自动生成。手写假 ID（如 `a1b2c3d4e5f6`）曾导致 revision 冲突，阻塞整条迁移链
+- **禁止只加 Model 不加迁移**：Model 和对应的 migration 必须在同一次改动中完成
+- **禁止复制已有迁移文件改内容**：新迁移必须通过命令生成，确保 revision ID 和 down_revision 正确
+
+### 生成失败排查
+
+| 错误 | 原因 | 修复 |
+|------|------|------|
+| `Target database is not up to date` | 数据库版本落后 | 先 `uv run alembic upgrade head` |
+| `Multiple head revisions` | 迁移链分叉 | `uv run alembic merge -m "merge" <rev1> <rev2>` |
+| `Revision xxx is present more than once` | 两个文件共用同一 revision ID | 重命名其中一个文件的 revision（由 `alembic revision` 生成新 ID） |
+
 ## 导入完整性规则
 
 **在函数/代码块内使用模型或工具类时，必须确保该作用域内有对应的 import。**
@@ -596,20 +630,23 @@ UniqueConstraint("col_a", "col_b", name="uq_xxx")
 
 ## 部署脚本执行规则
 
-**禁止 AI 助手直接运行 `deploy/cli.sh` 或任何构建/部署命令。** 构建镜像和部署到集群必须由用户手动执行。
+**AI 助手默认禁止直接运行 `deploy/release.sh`、`deploy/deploy.sh`、`deploy/init.sh` 或任何构建/部署命令。** 只有用户在同一请求中明确授权 AI 执行发版/部署时，才允许通过 Shell 工具运行这些命令。
 
 ### 必须做
 
 - 代码改完后提交 commit，然后告知用户"代码已提交，可以部署了"
-- 如果用户需要部署命令，给出完整的可复制命令，让用户自己粘贴运行
-- 部署相关的命令示例用代码块展示，不要用 Shell 工具执行
+- 如果用户未明确授权 AI 执行部署，只给出完整的可复制命令，让用户自己粘贴运行
+- 用户明确授权 AI 执行部署时，执行前必须确认目标 `context`、namespace、环境标志（`--staging` / `--prod`）和 tag，所有 K8s 命令必须显式指定 `--context`
+- 用户要求"部署当前分支"或"部署本地分支"时，只能构建/推送分支用途的镜像 tag 并执行部署，不能视为发版授权
+- 部署完成后必须验证 rollout、Pod 状态和服务健康
 
 ### 严禁
 
-- **禁止通过 Shell 工具运行 `deploy/cli.sh`**
-- **禁止通过 Shell 工具运行 `docker build`、`docker push`**
-- **禁止通过 Shell 工具运行 `kubectl set image`、`kubectl rollout`**
-- **禁止以任何方式自动触发构建或部署流程**
+- **禁止在没有用户明确授权的情况下通过 Shell 工具运行 `deploy/release.sh`、`deploy/deploy.sh`、`deploy/init.sh`**
+- **禁止在没有用户明确授权的情况下通过 Shell 工具运行 `docker build`、`docker push`**
+- **禁止在没有用户明确授权的情况下通过 Shell 工具运行 `kubectl set image`、`kubectl rollout`**
+- **禁止在没有用户明确授权的情况下以任何方式自动触发构建或部署流程**
+- **禁止把"部署当前分支/本地分支"解释为"发版"，除非用户明确要求发版、release、创建 tag 或 GitHub Release**
 
 ## 变更规模判断规则
 

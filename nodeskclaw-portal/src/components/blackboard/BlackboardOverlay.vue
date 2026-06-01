@@ -9,10 +9,11 @@ import TaskKanban from './TaskKanban.vue'
 import ObjectivePanel from './ObjectivePanel.vue'
 import SchedulePanel from './SchedulePanel.vue'
 import RoiDashboard from './RoiDashboard.vue'
-import TopologyGraph from './TopologyGraph.vue'
-import PostList from './PostList.vue'
-import PostDetail from './PostDetail.vue'
+import AgentPerformancePanel from './AgentPerformancePanel.vue'
+import TokenUsagePanel from './TokenUsagePanel.vue'
 import SharedFileBrowser from './SharedFileBrowser.vue'
+import { Button } from '@/components/ui/button'
+import { Textarea } from '@/components/ui/textarea'
 
 const props = withDefaults(defineProps<{
   open: boolean
@@ -27,22 +28,19 @@ const { t } = useI18n()
 const store = useWorkspaceStore()
 const { isEnabled: isPerformanceEnabled } = useFeature('performance_analytics')
 
-type TabKey = 'objectives-tasks' | 'status' | 'notes-perf' | 'topology' | 'posts' | 'files'
+type TabKey = 'objectives-tasks' | 'status' | 'notes-perf' | 'files'
 const activeTab = ref<TabKey>('objectives-tasks')
 
 const tabs: { key: TabKey; labelKey: string }[] = [
   { key: 'objectives-tasks', labelKey: 'blackboard.tabObjectivesTasks' },
-  { key: 'posts', labelKey: 'blackboard.tabPosts' },
   { key: 'files', labelKey: 'blackboard.tabFiles' },
   { key: 'status', labelKey: 'blackboard.tabStatus' },
   { key: 'notes-perf', labelKey: 'blackboard.tabNotesPerf' },
-  { key: 'topology', labelKey: 'blackboard.tabTopology' },
 ]
 
 const editing = ref(false)
 const draft = ref('')
 const saving = ref(false)
-const selectedPostId = ref<string | null>(null)
 const taskKanbanRef = ref<InstanceType<typeof TaskKanban> | null>(null)
 const objectivePanelRef = ref<InstanceType<typeof ObjectivePanel> | null>(null)
 const roiDashboardRef = ref<InstanceType<typeof RoiDashboard> | null>(null)
@@ -58,23 +56,12 @@ const notesHtml = computed(() => renderMd(fullContent.value))
 
 const agents = computed(() => store.currentWorkspace?.agents || [])
 const members = computed(() => store.members)
-const topoNodes = computed(() => store.topology?.nodes || [])
-const topoEdges = computed(() => store.topology?.edges || [])
 
 watch(() => props.open, (isOpen) => {
   if (isOpen) {
     editing.value = false
-    selectedPostId.value = null
     activeTab.value = 'objectives-tasks'
-    store.fetchUnreadPostCount(props.workspaceId)
-  } else {
-    store.setPostsTabVisible(false)
   }
-})
-
-watch(activeTab, (tab, oldTab) => {
-  if (tab === 'posts') store.setPostsTabVisible(true)
-  else if (oldTab === 'posts') store.setPostsTabVisible(false)
 })
 
 function enterEdit() {
@@ -115,49 +102,43 @@ const canEditTab = computed(() => activeTab.value === 'notes-perf')
         <div class="flex items-center justify-between px-5 py-3 border-b border-border shrink-0">
           <h2 :class="embedded ? 'text-sm font-semibold' : 'text-lg font-semibold'">{{ t('hexAction.centralBlackboard') }}</h2>
           <div class="flex items-center gap-1">
-            <button
+            <Button variant="unstyled" size="unstyled"
               v-if="canEditTab && !editing"
               class="p-1.5 rounded hover:bg-muted transition-colors"
               :title="t('blackboard.edit')"
               @click="enterEdit"
             >
               <Pencil class="w-4 h-4" />
-            </button>
-            <button
+            </Button>
+            <Button variant="unstyled" size="unstyled"
               v-if="editing"
               class="p-1.5 rounded hover:bg-muted transition-colors"
               :title="t('blackboard.preview')"
               @click="editing = false"
             >
               <Eye class="w-4 h-4" />
-            </button>
-            <button v-if="!embedded" class="p-1.5 rounded hover:bg-muted transition-colors" @click="emit('close')">
+            </Button>
+            <Button variant="unstyled" size="unstyled" v-if="!embedded" class="p-1.5 rounded hover:bg-muted transition-colors" @click="emit('close')">
               <X class="w-5 h-5" />
-            </button>
+            </Button>
           </div>
         </div>
 
         <div class="flex border-b border-border px-2 shrink-0">
-          <button
+          <Button variant="unstyled" size="unstyled"
             v-for="tab in tabs"
             :key="tab.key"
             class="flex items-center gap-1.5 px-3 py-2 text-sm transition-colors border-b-2"
             :class="activeTab === tab.key
               ? 'border-primary text-primary'
               : 'border-transparent text-muted-foreground hover:text-foreground'"
-            @click="activeTab = tab.key; editing = false; selectedPostId = null"
+            @click="activeTab = tab.key; editing = false"
           >
             {{ t(tab.labelKey) }}
-            <span
-              v-if="tab.key === 'posts' && store.unreadPostCount > 0 && activeTab !== 'posts'"
-              class="inline-flex items-center justify-center min-w-[1.125rem] h-[1.125rem] px-1 text-[10px] font-medium leading-none rounded-full bg-primary text-primary-foreground"
-            >
-              {{ store.unreadPostCount > 99 ? '99+' : store.unreadPostCount }}
-            </span>
-          </button>
+          </Button>
         </div>
 
-        <div :class="['flex-1 min-h-0', activeTab === 'topology' ? 'overflow-hidden' : 'overflow-y-auto px-5 py-4']">
+        <div class="flex-1 min-h-0 overflow-y-auto px-5 py-4">
 
           <template v-if="activeTab === 'objectives-tasks'">
             <div class="space-y-6">
@@ -165,6 +146,8 @@ const canEditTab = computed(() => activeTab.value === 'notes-perf')
               <TaskKanban ref="taskKanbanRef" :workspace-id="workspaceId" />
               <SchedulePanel :workspace-id="workspaceId" />
               <RoiDashboard v-if="isPerformanceEnabled" ref="roiDashboardRef" :workspace-id="workspaceId" />
+              <AgentPerformancePanel v-if="isPerformanceEnabled" :workspace-id="workspaceId" />
+              <TokenUsagePanel :workspace-id="workspaceId" />
             </div>
           </template>
 
@@ -211,7 +194,7 @@ const canEditTab = computed(() => activeTab.value === 'notes-perf')
 
           <template v-if="activeTab === 'notes-perf'">
             <div v-if="editing">
-              <textarea
+              <Textarea
                 v-model="draft"
                 rows="18"
                 class="w-full bg-muted rounded-lg p-4 text-sm font-mono resize-none outline-none focus:ring-1 focus:ring-primary/50 min-h-[300px]"
@@ -221,41 +204,20 @@ const canEditTab = computed(() => activeTab.value === 'notes-perf')
             <div v-else class="prose prose-sm prose-invert max-w-none" v-html="notesHtml" />
           </template>
 
-          <template v-if="activeTab === 'posts'">
-            <PostDetail
-              v-if="selectedPostId"
-              :workspace-id="workspaceId"
-              :post-id="selectedPostId"
-              @back="selectedPostId = null"
-            />
-            <PostList
-              v-else
-              :workspace-id="workspaceId"
-              @select="selectedPostId = $event"
-            />
-          </template>
-
           <template v-if="activeTab === 'files'">
             <SharedFileBrowser :workspace-id="workspaceId" />
-          </template>
-
-          <template v-if="activeTab === 'topology'">
-            <div v-if="topoNodes.length === 0" class="px-5 py-4 text-muted-foreground text-sm">
-              {{ t('blackboard.noTopology') }}
-            </div>
-            <TopologyGraph v-else :nodes="topoNodes" :edges="topoEdges" />
           </template>
 
         </div>
 
         <div v-if="editing" class="flex justify-end gap-2 px-5 py-3 border-t border-border shrink-0">
-          <button
+          <Button variant="unstyled" size="unstyled"
             class="px-4 py-2 text-sm rounded-lg bg-muted hover:bg-muted/80 transition-colors"
             @click="editing = false"
           >
             {{ t('blackboard.cancel') }}
-          </button>
-          <button
+          </Button>
+          <Button variant="unstyled" size="unstyled"
             class="px-4 py-2 text-sm rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors flex items-center gap-2 disabled:opacity-50"
             :disabled="saving"
             @click="save"
@@ -263,7 +225,7 @@ const canEditTab = computed(() => activeTab.value === 'notes-perf')
             <Loader2 v-if="saving" class="w-4 h-4 animate-spin" />
             <Save v-else class="w-4 h-4" />
             {{ t('blackboard.save') }}
-          </button>
+          </Button>
         </div>
       </div>
     </div>

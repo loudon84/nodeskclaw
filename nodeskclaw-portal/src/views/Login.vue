@@ -9,6 +9,8 @@ import { useConfirm } from '@/composables/useConfirm'
 import { useEdition } from '@/composables/useFeature'
 import { Loader2, Building2, BrainCircuit, Rocket, Target, KeyRound, MessageSquareCode, Eye, EyeOff, ExternalLink } from 'lucide-vue-next'
 import LocaleSelect from '@/components/shared/LocaleSelect.vue'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -263,29 +265,29 @@ watch(activeTab, () => { error.value = '' })
 
           <!-- Tab 切换 -->
           <div class="flex rounded-lg bg-muted p-1 gap-1">
-            <button
+            <Button variant="unstyled" size="unstyled"
               class="flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-md text-sm font-medium transition-all"
               :class="activeTab === 'account' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'"
               @click="activeTab = 'account'"
             >
               <KeyRound class="w-4 h-4" />
               {{ t('auth.accountPasswordLogin') }}
-            </button>
-            <button
+            </Button>
+            <Button variant="unstyled" size="unstyled"
               class="flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-md text-sm font-medium transition-all"
               :class="activeTab === 'code' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'"
               @click="activeTab = 'code'"
             >
               <MessageSquareCode class="w-4 h-4" />
               {{ t('auth.emailCodeLogin') }}
-            </button>
+            </Button>
           </div>
 
           <!-- 账号密码表单 -->
           <form v-if="activeTab === 'account'" class="space-y-4" @submit.prevent="handleAccountSubmit">
             <div class="space-y-1.5">
               <label class="text-sm font-medium text-foreground">{{ t('auth.accountLabel') }}</label>
-              <input
+              <Input
                 v-model="accountForm.account"
                 type="text"
                 :placeholder="t('auth.accountLoginPlaceholder')"
@@ -297,14 +299,14 @@ watch(activeTab, () => { error.value = '' })
             <div class="space-y-1.5">
               <label class="text-sm font-medium text-foreground">{{ t('auth.passwordLabel') }}</label>
               <div class="relative">
-                <input
+                <Input
                   v-model="accountForm.password"
                   :type="showPassword ? 'text' : 'password'"
                   :placeholder="t('auth.passwordPlaceholder')"
                   required
                   class="w-full h-10 px-3 pr-10 rounded-lg border border-input bg-background text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1 transition-shadow"
                 />
-                <button
+                <Button variant="unstyled" size="unstyled"
                   type="button"
                   tabindex="-1"
                   class="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
@@ -312,18 +314,18 @@ watch(activeTab, () => { error.value = '' })
                 >
                   <EyeOff v-if="showPassword" class="w-4 h-4" />
                   <Eye v-else class="w-4 h-4" />
-                </button>
+                </Button>
               </div>
             </div>
 
-            <button
+            <Button variant="unstyled" size="unstyled"
               type="submit"
               :disabled="!canSubmitAccount || loading"
               class="w-full h-10 rounded-lg bg-primary text-primary-foreground font-medium text-sm hover:bg-primary/90 transition-all hover:shadow-lg hover:shadow-primary/20 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
               <Loader2 v-if="loading" class="w-4 h-4 animate-spin" />
               {{ t('auth.login') }}
-            </button>
+            </Button>
 
           </form>
 
@@ -331,7 +333,7 @@ watch(activeTab, () => { error.value = '' })
           <form v-if="activeTab === 'code'" class="space-y-4" @submit.prevent="handleCodeSubmit">
             <div class="space-y-1.5">
               <label class="text-sm font-medium text-foreground">{{ t('auth.emailLabel') }}</label>
-              <input
+              <Input
                 v-model="codeForm.account"
                 type="email"
                 inputmode="email"
@@ -345,7 +347,7 @@ watch(activeTab, () => { error.value = '' })
             <div class="space-y-1.5">
               <label class="text-sm font-medium text-foreground">{{ t('auth.codeLabel') }}</label>
               <div class="flex gap-2">
-                <input
+                <Input
                   v-model="codeForm.code"
                   type="text"
                   inputmode="numeric"
@@ -354,7 +356,7 @@ watch(activeTab, () => { error.value = '' })
                   required
                   class="flex-1 h-10 px-3 rounded-lg border border-input bg-background text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1 transition-shadow"
                 />
-                <button
+                <Button variant="unstyled" size="unstyled"
                   type="button"
                   :disabled="!isEmailInput(codeForm.account) || codeSending || codeCountdown > 0"
                   class="shrink-0 h-10 px-4 rounded-lg border border-input text-sm font-medium hover:bg-accent transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
@@ -363,18 +365,18 @@ watch(activeTab, () => { error.value = '' })
                   <Loader2 v-if="codeSending" class="w-4 h-4 animate-spin" />
                   <template v-else-if="codeCountdown > 0">{{ codeCountdown }}s</template>
                   <template v-else>{{ t('auth.sendCode') }}</template>
-                </button>
+                </Button>
               </div>
             </div>
 
-            <button
+            <Button variant="unstyled" size="unstyled"
               type="submit"
               :disabled="!canSubmitCode || loading"
               class="w-full h-10 rounded-lg bg-primary text-primary-foreground font-medium text-sm hover:bg-primary/90 transition-all hover:shadow-lg hover:shadow-primary/20 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
               <Loader2 v-if="loading" class="w-4 h-4 animate-spin" />
               {{ t('auth.login') }}
-            </button>
+            </Button>
 
           </form>
 

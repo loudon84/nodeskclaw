@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import AsyncIterator
@@ -44,7 +45,7 @@ class EventBus:
     """
 
     def __init__(self):
-        self._channels: dict[str, list[asyncio.Queue]] = defaultdict(list)
+        self._channels: dict[str, list[asyncio.Queue[SSEEvent]]] = defaultdict(list)
 
     def publish(self, event_type: str, data: dict, event_id: str | None = None):
         """Publish event to all subscribers of the channel."""
@@ -56,21 +57,37 @@ class EventBus:
             except asyncio.QueueFull:
                 logger.warning("SSE queue full for %s, dropping event", event_type)
 
+    def create_subscription(self, *event_types: str) -> tuple[asyncio.Queue[SSEEvent], Callable[[], None]]:
+        """Create and register a queue subscription synchronously."""
+        queue: asyncio.Queue[SSEEvent] = asyncio.Queue(maxsize=100)
+        registered_event_types = tuple(dict.fromkeys(event_types))
+        for et in registered_event_types:
+            self._channels[et].append(queue)
+
+        cleaned = False
+
+        def cleanup() -> None:
+            nonlocal cleaned
+            if cleaned:
+                return
+            cleaned = True
+            for et in registered_event_types:
+                try:
+                    self._channels[et].remove(queue)
+                except ValueError:
+                    pass
+
+        return queue, cleanup
+
     async def subscribe(self, *event_types: str) -> AsyncIterator[SSEEvent]:
         """Subscribe to one or more event types."""
-        queue: asyncio.Queue[SSEEvent] = asyncio.Queue(maxsize=100)
-        for et in event_types:
-            self._channels[et].append(queue)
+        queue, cleanup = self.create_subscription(*event_types)
         try:
             while True:
                 event = await queue.get()
                 yield event
         finally:
-            for et in event_types:
-                try:
-                    self._channels[et].remove(queue)
-                except ValueError:
-                    pass
+            cleanup()
 
     def subscriber_count(self, event_type: str) -> int:
         return len(self._channels.get(event_type, []))

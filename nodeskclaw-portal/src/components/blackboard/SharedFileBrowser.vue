@@ -3,6 +3,8 @@ import { ref, onMounted, watch, computed } from 'vue'
 import { Folder, File, FolderPlus, Upload, Trash2, Download, Loader2, ChevronRight } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import api from '@/services/api'
+import { Button } from '@/components/ui/button'
+import { FileInput, Input } from '@/components/ui/input'
 
 const props = defineProps<{ workspaceId: string }>()
 const { t } = useI18n()
@@ -145,7 +147,7 @@ watch(() => props.workspaceId, () => { currentPath.value = '/'; fetchFiles() })
   <div class="space-y-3">
     <div class="flex items-center justify-between">
       <div class="flex items-center gap-0.5 text-sm text-muted-foreground overflow-x-auto">
-        <button
+        <Button variant="unstyled" size="unstyled"
           v-for="(crumb, idx) in breadcrumbs"
           :key="crumb.path"
           class="flex items-center gap-0.5 hover:text-foreground transition-colors shrink-0"
@@ -153,41 +155,41 @@ watch(() => props.workspaceId, () => { currentPath.value = '/'; fetchFiles() })
         >
           <ChevronRight v-if="idx > 0" class="w-3 h-3" />
           <span class="text-xs">{{ crumb.name }}</span>
-        </button>
+        </Button>
       </div>
       <div class="flex items-center gap-1 shrink-0">
-        <button
+        <Button variant="unstyled" size="unstyled"
           class="flex items-center gap-1 text-xs px-2 py-1.5 rounded-lg hover:bg-muted transition-colors"
           @click="showMkdir = !showMkdir"
         >
           <FolderPlus class="w-3.5 h-3.5" />
-        </button>
-        <button
+        </Button>
+        <Button variant="unstyled" size="unstyled"
           class="flex items-center gap-1 text-xs px-2 py-1.5 rounded-lg hover:bg-muted transition-colors"
           :disabled="uploading"
           @click="fileInputRef?.click()"
         >
           <Loader2 v-if="uploading" class="w-3.5 h-3.5 animate-spin" />
           <Upload v-else class="w-3.5 h-3.5" />
-        </button>
-        <input ref="fileInputRef" type="file" class="hidden" @change="uploadFile" />
+        </Button>
+        <FileInput ref="fileInputRef" class="hidden" @change="uploadFile" />
       </div>
     </div>
 
     <div v-if="showMkdir" class="flex items-center gap-2">
-      <input
+      <Input
         v-model="newDirName"
         class="flex-1 bg-background border border-border rounded px-2.5 py-1.5 text-sm outline-none focus:ring-1 focus:ring-primary/50"
         :placeholder="t('blackboard.dirNamePlaceholder')"
         @keydown.enter="mkdir"
       />
-      <button
+      <Button variant="unstyled" size="unstyled"
         class="px-2.5 py-1.5 text-xs rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
         :disabled="creating || !newDirName.trim()"
         @click="mkdir"
       >
         {{ t('blackboard.create') }}
-      </button>
+      </Button>
     </div>
 
     <div v-if="loading && files.length === 0" class="flex items-center justify-center py-8">
@@ -212,19 +214,19 @@ watch(() => props.workspaceId, () => { currentPath.value = '/'; fetchFiles() })
         <span class="text-xs text-muted-foreground shrink-0">{{ formatSize(item.file_size) }}</span>
         <span class="text-xs text-muted-foreground shrink-0 hidden sm:inline">{{ item.uploader_name }}</span>
         <div class="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-          <button
+          <Button variant="unstyled" size="unstyled"
             v-if="!item.is_directory"
             class="p-1 rounded hover:bg-muted transition-colors"
             @click.stop="downloadFile(item)"
           >
             <Download class="w-3.5 h-3.5" />
-          </button>
-          <button
+          </Button>
+          <Button variant="unstyled" size="unstyled"
             class="p-1 rounded hover:bg-destructive/20 text-destructive transition-colors"
             @click.stop="deleteFile(item)"
           >
             <Trash2 class="w-3.5 h-3.5" />
-          </button>
+          </Button>
         </div>
       </div>
     </div>

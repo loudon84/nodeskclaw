@@ -1,8 +1,8 @@
-"""No-op gene installation adapter for runtimes that don't yet have specific logic.
+"""No-op gene installation adapter for runtimes without gene support.
 
-Used as a fallback for NanoBot and any future runtimes that
-haven't implemented their own GeneInstallAdapter yet. Deploys skills and
-scripts to generic paths without runtime-specific config management.
+Used as a fallback for runtimes that haven't implemented their own
+GeneInstallAdapter. Deploys skills and scripts to generic paths without
+runtime-specific config management.
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from app.services.runtime.gene_install_adapter import GeneInstallAdapter
+from app.services.runtime.gene_install_adapter import GeneInstallAdapter, validate_skill_name_segment
 
 if TYPE_CHECKING:
     from app.services.nfs_mount import RemoteFS
@@ -22,20 +22,15 @@ SCRIPTS_DIR_REL = ".deskclaw/tools"
 
 
 class NoopGeneInstallAdapter(GeneInstallAdapter):
+    def __init__(self, runtime_id: str = "unknown"):
+        self.runtime_id = runtime_id
 
     async def deploy_skill(
         self, fs: RemoteFS, skill_name: str, content: str, description: str = "",
     ) -> None:
-        await fs.mkdir(f"{SKILLS_DIR_REL}/{skill_name}")
-        await fs.write_text(f"{SKILLS_DIR_REL}/{skill_name}/SKILL.md", content)
-
-    async def allow_tools(self, fs: RemoteFS, tool_names: list[str]) -> None:
-        if tool_names:
-            logger.warning(
-                "NoopGeneInstallAdapter: allow_tools(%s) called but no runtime-specific "
-                "implementation — tools may not be available to the agent",
-                tool_names,
-            )
+        safe_skill_name = validate_skill_name_segment(skill_name)
+        await fs.mkdir(f"{SKILLS_DIR_REL}/{safe_skill_name}")
+        await fs.write_text(f"{SKILLS_DIR_REL}/{safe_skill_name}/SKILL.md", content)
 
     async def deploy_scripts(self, fs: RemoteFS, scripts: dict[str, str]) -> None:
         if not scripts:
@@ -44,19 +39,12 @@ class NoopGeneInstallAdapter(GeneInstallAdapter):
         for filename, content in scripts.items():
             await fs.write_text(f"{SCRIPTS_DIR_REL}/{filename}", content)
 
-    async def apply_config(self, fs: RemoteFS, config_patch: dict) -> None:
-        if config_patch:
-            logger.warning(
-                "NoopGeneInstallAdapter: apply_config called but no runtime-specific "
-                "implementation — config patch dropped: %s",
-                list(config_patch.keys()),
-            )
-
     async def invalidate_cache(self, fs: RemoteFS, skill_name: str, event: str = "installed") -> None:
         logger.debug("NoopGeneInstallAdapter: cache invalidation not implemented for skill=%s", skill_name)
 
     async def remove_skill(self, fs: RemoteFS, skill_name: str) -> None:
-        await fs.remove(f"{SKILLS_DIR_REL}/{skill_name}")
+        safe_skill_name = validate_skill_name_segment(skill_name)
+        await fs.remove(f"{SKILLS_DIR_REL}/{safe_skill_name}")
 
     async def post_remove_cleanup(self, fs: RemoteFS, skill_name: str) -> None:
         logger.debug(

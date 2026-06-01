@@ -16,6 +16,11 @@ from app.services.member_hooks import get_role_provider
 class InviteRequest(PydanticModel):
     emails: list[str]
     role: str = "member"
+    lang: str = "zh-CN"
+
+
+class ResendRequest(PydanticModel):
+    lang: str = "zh-CN"
 
 
 class AcceptInviteRequest(PydanticModel):
@@ -45,6 +50,7 @@ async def create_invitations(
         role=body.role,
         invited_by=user.id,
         db=db,
+        lang=body.lang,
     )
     return {"code": 0, "data": results}
 
@@ -72,6 +78,27 @@ async def cancel_invitation(
 
     await svc_cancel(org_id, invitation_id, db)
     return {"code": 0, "message": "ok"}
+
+
+@invite_router.post("/{org_id}/invitations/{invitation_id}/resend")
+async def resend_invitation(
+    org_id: str,
+    invitation_id: str,
+    body: ResendRequest,
+    user_org=Depends(require_org_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.invitation_service import resend_invitation_email
+
+    user, _org = user_org
+    result = await resend_invitation_email(
+        org_id=org_id,
+        invitation_id=invitation_id,
+        resent_by=user.id,
+        lang=body.lang,
+        db=db,
+    )
+    return {"code": 0, "data": result}
 
 
 @invite_router.get("/{org_id}/roles")

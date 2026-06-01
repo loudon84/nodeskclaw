@@ -16,10 +16,15 @@ class Workspace(BaseModel):
     color: Mapped[str] = mapped_column(String(16), default="#a78bfa", nullable=False)
     icon: Mapped[str] = mapped_column(String(32), default="bot", nullable=False)
     created_by: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), nullable=False)
+    cluster_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("clusters.id"), nullable=True, index=True,
+    )
     decoration_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    source_template_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
 
     # relationships
     organization = relationship("Organization", foreign_keys=[org_id])
+    cluster = relationship("Cluster", foreign_keys=[cluster_id])
     creator = relationship("User", foreign_keys=[created_by])
     blackboard = relationship("Blackboard", back_populates="workspace", uselist=False, cascade="all, delete-orphan")
     members = relationship("WorkspaceMember", back_populates="workspace", cascade="all, delete-orphan")

@@ -30,6 +30,18 @@ def _validate_email(email: str) -> bool:
     return bool(_EMAIL_RE.match(email))
 
 
+def _require_portal_url() -> None:
+    if not settings.PORTAL_BASE_URL:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error_code": 40034,
+                "message_key": "errors.invite.portal_not_configured",
+                "message": "Invitation feature requires PORTAL_BASE_URL to be configured",
+            },
+        )
+
+
 def _build_invite_url(token: str) -> str:
     base = settings.PORTAL_BASE_URL.rstrip("/") if settings.PORTAL_BASE_URL else ""
     return f"{base}/invite/{token}"
@@ -41,8 +53,10 @@ async def create_invitations(
     role: str,
     invited_by: str,
     db: AsyncSession,
+    lang: str = "zh-CN",
 ) -> list[dict]:
     """Create invitation records for each email. Returns per-email results."""
+    _require_portal_url()
     provider = get_role_provider()
     valid_role_ids = {r["id"] for r in provider.get_roles(org_id)}
     if role not in valid_role_ids:
@@ -131,10 +145,11 @@ async def create_invitations(
                 db=db,
                 org_id=org_id,
                 inviter_id=invited_by,
+                lang=lang,
             )
             email_sent = True
-        except Exception:
-            logger.debug("SMTP not configured or send failed, invite link still returned")
+        except Exception as exc:
+            logger.warning("Failed to send invitation email: %s", exc)
 
         results.append({
             "email": email_lower,
@@ -152,6 +167,7 @@ async def list_pending_invitations(
     db: AsyncSession,
 ) -> list[dict]:
     """List all pending invitations for an organization."""
+    _require_portal_url()
     result = await db.execute(
         select(Invitation).where(
             Invitation.org_id == org_id,
@@ -176,6 +192,70 @@ async def list_pending_invitations(
             "invite_url": _build_invite_url(inv.token),
         })
     return items
+
+
+async def resend_invitation_email(
+    org_id: str,
+    invitation_id: str,
+    resent_by: str,
+    lang: str,
+    db: AsyncSession,
+) -> dict:
+    """Resend invitation email for an existing pending invitation."""
+    _require_portal_url()
+
+    result = await db.execute(
+        select(Invitation).where(
+            Invitation.id == invitation_id,
+            Invitation.org_id == org_id,
+            Invitation.status == InvitationStatus.pending,
+            not_deleted(Invitation),
+        )
+    )
+    invitation = result.scalar_one_or_none()
+    if invitation is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "error_code": 40410,
+                "message_key": "errors.invite.not_found",
+                "message": "Invitation not found",
+            },
+        )
+
+    invitation.expires_at = datetime.now(timezone.utc) + timedelta(days=INVITE_EXPIRE_DAYS)
+
+    invite_url = _build_invite_url(invitation.token)
+
+    try:
+        from app.services.email_service import send_invitation_email
+        await send_invitation_email(
+            to_email=invitation.email,
+            org_name="",
+            inviter_name="",
+            invite_url=invite_url,
+            role=invitation.role,
+            db=db,
+            org_id=org_id,
+            inviter_id=invitation.invited_by,
+            lang=lang,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={
+                "error_code": 50201,
+                "message_key": "errors.invite.email_send_failed",
+                "message": f"Failed to send invitation email: {exc}",
+            },
+        ) from exc
+
+    await db.commit()
+    return {
+        "email": invitation.email,
+        "invite_url": invite_url,
+        "email_sent": True,
+    }
 
 
 async def cancel_invitation(

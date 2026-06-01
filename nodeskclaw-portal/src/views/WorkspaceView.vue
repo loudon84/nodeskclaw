@@ -2,7 +2,7 @@
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { ArrowLeft, Settings, Maximize2, Minimize2, ZoomIn, ZoomOut, RotateCcw, MessageSquare, Plus, Keyboard, ChevronDown, X, Bot, ListChecks, AlertTriangle, Wifi, User, Users, MapPin, Focus, Minimize } from 'lucide-vue-next'
+import { ArrowLeft, Settings, Maximize2, Minimize2, ZoomIn, ZoomOut, RotateCcw, RefreshCw, MessageSquare, Plus, Keyboard, ChevronDown, X, Bot, ListChecks, AlertTriangle, Wifi, User, Users, MapPin, Focus, Minimize } from 'lucide-vue-next'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { useAuthStore } from '@/stores/auth'
 import { useViewTransition } from '@/composables/useViewTransition'
@@ -10,16 +10,20 @@ import Workspace3D from '@/components/hex3d/Workspace3D.vue'
 import Workspace2D from '@/components/hex2d/Workspace2D.vue'
 import ModeToggle from '@/components/shared/ModeToggle.vue'
 import ChatPanel from '@/components/chat/ChatPanel.vue'
+import ConversationList from '@/components/chat/ConversationList.vue'
 import LocaleSelect from '@/components/shared/LocaleSelect.vue'
 import BlackboardOverlay from '@/components/blackboard/BlackboardOverlay.vue'
 import HexActionDrawer from '@/components/workspace/HexActionDrawer.vue'
 import AgentCollaborationPanel from '@/components/workspace/AgentCollaborationPanel.vue'
 import AgentDetailDialog from '@/components/workspace/AgentDetailDialog.vue'
-import CollaborationTimeline from '@/components/workspace/CollaborationTimeline.vue'
 import AddAgentDialog from '@/components/workspace/AddAgentDialog.vue'
+import WorkspaceSettings from '@/views/WorkspaceSettings.vue'
 import { useToast } from '@/composables/useToast'
+import { useConfirm } from '@/composables/useConfirm'
 import { axialToWorld } from '@/composables/useHexLayout'
 import { getCurrentLocale, setCurrentLocale } from '@/i18n'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -28,6 +32,7 @@ const store = useWorkspaceStore()
 const authStore = useAuthStore()
 
 const locale = ref(getCurrentLocale())
+const showSettingsDialog = ref(false)
 function onLocaleChange(value: string) {
   locale.value = setCurrentLocale(value)
 }
@@ -58,8 +63,6 @@ const { activeMode, isTransitioning, transitionTo2D, transitionTo3D } = useViewT
 
 const CHAT_OPEN_KEY = 'workspace-chat-open'
 const chatOpen = ref(localStorage.getItem(CHAT_OPEN_KEY) === 'true')
-const chatSidebarTab = ref<'blackboard' | 'collab-flow'>('blackboard')
-const collabTimelineRef = ref<InstanceType<typeof CollaborationTimeline> | null>(null)
 const collabPanelOpen = ref(false)
 const collabPanelAgent = ref<{ instanceId: string; name: string } | null>(null)
 const collabPanelRef = ref<InstanceType<typeof AgentCollaborationPanel> | null>(null)
@@ -226,6 +229,7 @@ async function bootstrapWorkspaceCritical(wsId: string): Promise<number | null> 
 async function bootstrapWorkspaceDeferred(wsId: string, generation: number) {
   await Promise.allSettled([
     store.fetchMembers(wsId),
+    store.fetchConversations(wsId),
     loadPerfSummary(wsId),
   ])
   if (generation !== workspaceBootstrapGeneration) return
@@ -317,6 +321,15 @@ function onSSEEvent(event: string, data: Record<string, unknown>) {
     return
   }
 
+  if (event === 'schedule:consecutive_failures') {
+    const name = typeof data.name === 'string' ? data.name : ''
+    const count = typeof data.consecutive_failures === 'number' ? data.consecutive_failures : 0
+    if (name && count) {
+      toast.warning(t('blackboard.scheduleConsecutiveFailureAlert', { name, count }))
+    }
+    return
+  }
+
   if (event === 'agent:collaboration') {
     const instanceId = data.instance_id as string
     const target = data.target as string
@@ -329,9 +342,6 @@ function onSSEEvent(event: string, data: Record<string, unknown>) {
     }
     if (collabPanelOpen.value && collabPanelRef.value) {
       collabPanelRef.value.addLiveMessage(data)
-    }
-    if (chatSidebarTab.value === 'collab-flow' && collabTimelineRef.value) {
-      collabTimelineRef.value.addLiveMessage(data)
     }
   }
 }
@@ -398,7 +408,7 @@ function onAgentDblClick(_id: string) {
   chatOpen.value = true
 }
 
-function onHexAction(action: string) {
+async function onHexAction(action: string) {
   switch (action) {
     case 'add-agent': {
       const q = selectedHex.value?.q
@@ -432,7 +442,12 @@ function onHexAction(action: string) {
       break
     case 'remove-agent':
       if (selectedHex.value?.agentId) {
-        store.removeAgent(workspaceId.value, selectedHex.value.agentId)
+        try {
+          await store.removeAgent(workspaceId.value, selectedHex.value.agentId)
+          toast.success(t('hexAction.agentRemoved'))
+        } catch {
+          toast.error(t('hexAction.removeFailed'))
+        }
         selectedHex.value = null
         hexDrawerOpen.value = false
         selectedAgentId.value = null
@@ -476,7 +491,12 @@ function onHexAction(action: string) {
       break
     case 'remove-corridor':
       if (selectedHex.value?.entityId) {
-        store.deleteCorridorHex(workspaceId.value, selectedHex.value.entityId)
+        try {
+          await store.deleteCorridorHex(workspaceId.value, selectedHex.value.entityId)
+          toast.success(t('hexAction.corridorRemoved'))
+        } catch {
+          toast.error(t('hexAction.removeFailed'))
+        }
         selectedHex.value = null
         hexDrawerOpen.value = false
       }
@@ -497,7 +517,12 @@ function onHexAction(action: string) {
       break
     case 'remove-human':
       if (selectedHex.value?.entityId) {
-        store.deleteHumanHex(workspaceId.value, selectedHex.value.entityId)
+        try {
+          await store.deleteHumanHex(workspaceId.value, selectedHex.value.entityId)
+          toast.success(t('hexAction.humanRemoved'))
+        } catch {
+          toast.error(t('hexAction.removeFailed'))
+        }
         selectedHex.value = null
         hexDrawerOpen.value = false
       }
@@ -692,6 +717,32 @@ function panCanvas(key: string) {
 
 // ── Move Mode ────────────────────────────────────────
 const toast = useToast()
+const { confirm } = useConfirm()
+
+const restartingAll = ref(false)
+const hasRestartableAgents = computed(() => agents.value.some(a => a.status === 'running' || a.status === 'learning'))
+
+async function handleRestartAll() {
+  const ok = await confirm({
+    title: t('workspaceView.restartAll'),
+    description: t('workspaceView.restartAllConfirm'),
+    variant: 'danger',
+  })
+  if (!ok) return
+  restartingAll.value = true
+  try {
+    const result = await store.restartAllInstances(workspaceId.value)
+    if (result.failed > 0) {
+      toast.warning(t('workspaceView.restartAllPartial', { succeeded: result.succeeded, failed: result.failed }))
+    } else {
+      toast.success(t('workspaceView.restartAllSuccess', { succeeded: result.succeeded }))
+    }
+  } catch (e: any) {
+    toast.error(e?.response?.data?.detail?.message || t('workspaceView.restartAllFailed'))
+  } finally {
+    restartingAll.value = false
+  }
+}
 
 type MovingHexSource = {
   type: 'agent' | 'corridor' | 'human'
@@ -829,9 +880,9 @@ function handleKeydown(e: KeyboardEvent) {
     <!-- Toolbar -->
     <div class="flex items-center justify-between px-4 py-2 border-b border-border bg-background/80 backdrop-blur-sm shrink-0 z-10">
       <div class="flex items-center gap-3">
-        <button class="p-1.5 rounded-lg hover:bg-muted transition-colors" @click="goBack">
+        <Button variant="unstyled" size="unstyled" class="p-1.5 rounded-lg hover:bg-muted transition-colors" @click="goBack">
           <ArrowLeft class="w-4 h-4" />
-        </button>
+        </Button>
         <div
           v-if="ws"
           class="flex items-center gap-2 min-w-0"
@@ -845,7 +896,7 @@ function handleKeydown(e: KeyboardEvent) {
           </div>
           <span class="font-semibold text-sm truncate max-w-[10rem] sm:max-w-[14rem] md:max-w-[20rem]">{{ ws.name }}</span>
         </div>
-        <button
+        <Button variant="unstyled" size="unstyled"
           v-if="store.hasPermission('manage_agents')"
           class="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-dashed text-xs transition-colors"
           :class="isPickingHexForAgent
@@ -856,7 +907,7 @@ function handleKeydown(e: KeyboardEvent) {
         >
           <Plus class="w-3.5 h-3.5" />
           <span class="hidden xl:inline">{{ t('workspaceView.addAgent') }}</span>
-        </button>
+        </Button>
 
         <div class="w-px h-5 bg-border" />
 
@@ -885,27 +936,39 @@ function handleKeydown(e: KeyboardEvent) {
       </div>
 
       <div class="flex items-center gap-2">
+        <Button variant="unstyled" size="unstyled"
+          v-if="store.hasPermission('manage_agents')"
+          class="p-1.5 rounded-lg hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          :title="hasRestartableAgents ? t('workspaceView.restartAll') : t('workspaceView.restartAllNoInstances')"
+          :disabled="restartingAll || !hasRestartableAgents"
+          @click="handleRestartAll"
+        >
+          <RefreshCw class="w-4 h-4" :class="{ 'animate-spin': restartingAll }" />
+        </Button>
+
+        <div v-if="store.hasPermission('manage_agents')" class="w-px h-5 bg-border" />
+
         <div class="flex items-center gap-0.5 mr-1">
-          <button class="p-1.5 rounded-lg hover:bg-muted transition-colors" :title="t('workspaceView.zoomIn')" @click="handleZoomIn">
+          <Button variant="unstyled" size="unstyled" class="p-1.5 rounded-lg hover:bg-muted transition-colors" :title="t('workspaceView.zoomIn')" @click="handleZoomIn">
             <ZoomIn class="w-4 h-4" />
-          </button>
-          <button class="p-1.5 rounded-lg hover:bg-muted transition-colors" :title="t('workspaceView.zoomOut')" @click="handleZoomOut">
+          </Button>
+          <Button variant="unstyled" size="unstyled" class="p-1.5 rounded-lg hover:bg-muted transition-colors" :title="t('workspaceView.zoomOut')" @click="handleZoomOut">
             <ZoomOut class="w-4 h-4" />
-          </button>
-          <button class="p-1.5 rounded-lg hover:bg-muted transition-colors" :title="t('workspaceView.resetView')" @click="handleResetView">
+          </Button>
+          <Button variant="unstyled" size="unstyled" class="p-1.5 rounded-lg hover:bg-muted transition-colors" :title="t('workspaceView.resetView')" @click="handleResetView">
             <RotateCcw class="w-4 h-4" />
-          </button>
+          </Button>
         </div>
 
         <div class="w-px h-5 bg-border" />
 
         <ModeToggle :mode="activeMode" @toggle="toggleMode" />
         <LocaleSelect :model-value="locale" @update:model-value="onLocaleChange" />
-        <button class="p-1.5 rounded-lg hover:bg-muted transition-colors" @click="toggleFullscreen">
+        <Button variant="unstyled" size="unstyled" class="p-1.5 rounded-lg hover:bg-muted transition-colors" @click="toggleFullscreen">
           <Minimize2 v-if="isFullscreen" class="w-4 h-4" />
           <Maximize2 v-else class="w-4 h-4" />
-        </button>
-        <button
+        </Button>
+        <Button variant="unstyled" size="unstyled"
           class="relative p-1.5 rounded-lg hover:bg-muted transition-colors"
           :class="{ 'bg-primary/10 text-primary': chatOpen }"
           title="Group Chat"
@@ -918,14 +981,14 @@ function handleKeydown(e: KeyboardEvent) {
           >
             {{ store.unreadCount > 99 ? '99+' : store.unreadCount }}
           </span>
-        </button>
-        <button
+        </Button>
+        <Button variant="unstyled" size="unstyled"
           v-if="store.hasPermission('manage_settings')"
           class="p-1.5 rounded-lg hover:bg-muted transition-colors"
-          @click="router.push(`/workspace/${workspaceId}/settings`)"
+          @click="showSettingsDialog = true"
         >
           <Settings class="w-4 h-4" />
-        </button>
+        </Button>
       </div>
     </div>
 
@@ -936,13 +999,13 @@ function handleKeydown(e: KeyboardEvent) {
         class="flex items-center justify-center gap-3 px-4 py-1.5 bg-primary/10 border-b border-primary/30 shrink-0 z-10"
       >
         <span class="text-sm text-primary">{{ t('workspaceView.pickHexHint') }}</span>
-        <button
+        <Button variant="unstyled" size="unstyled"
           class="flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-primary/20 hover:bg-primary/30 text-primary transition-colors"
           @click="cancelPickHexMode"
         >
           <X class="w-3 h-3" />
           {{ t('hexAction.cancel') }}
-        </button>
+        </Button>
       </div>
     </Transition>
 
@@ -953,13 +1016,13 @@ function handleKeydown(e: KeyboardEvent) {
         class="flex items-center justify-center gap-3 px-4 py-1.5 bg-amber-500/10 border-b border-amber-500/30 shrink-0 z-10"
       >
         <span class="text-sm text-amber-400">{{ t('hexAction.moveModeHint') }}</span>
-        <button
+        <Button variant="unstyled" size="unstyled"
           class="flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 transition-colors"
           @click="cancelMoveMode"
         >
           <X class="w-3 h-3" />
           {{ t('hexAction.cancel') }}
-        </button>
+        </Button>
       </div>
     </Transition>
 
@@ -1021,26 +1084,26 @@ function handleKeydown(e: KeyboardEvent) {
 
         <!-- Shortcut Hints Panel -->
         <div class="absolute right-3 bottom-3 z-10">
-          <button
+          <Button variant="unstyled" size="unstyled"
             v-if="!showShortcutHints"
             class="p-2 rounded-lg bg-background/70 backdrop-blur-sm border border-border/50 text-muted-foreground hover:text-foreground transition-colors"
             :title="t('workspaceView.showShortcuts')"
             @click="toggleShortcutHints"
           >
             <Keyboard class="w-4 h-4" />
-          </button>
+          </Button>
           <div
             v-else
             class="rounded-lg bg-background/70 backdrop-blur-sm border border-border/50 text-xs"
           >
-            <button
+            <Button variant="unstyled" size="unstyled"
               class="flex items-center gap-1.5 w-full px-3 py-1.5 text-muted-foreground hover:text-foreground transition-colors"
               @click="toggleShortcutHints"
             >
               <Keyboard class="w-3.5 h-3.5" />
               <span>{{ t('workspaceView.shortcuts') }}</span>
               <ChevronDown class="w-3 h-3 ml-auto" />
-            </button>
+            </Button>
             <div class="border-t border-border/50 px-3 py-2 space-y-1 text-muted-foreground">
               <div class="flex justify-between gap-4">
                 <span>{{ t('workspaceView.arrowKeys') }}</span>
@@ -1096,53 +1159,36 @@ function handleKeydown(e: KeyboardEvent) {
           </div>
           <div class="flex flex-col flex-1 min-w-0 min-h-0">
             <div class="flex items-center justify-between px-4 py-2 border-b border-border shrink-0">
+              <span class="text-xs font-medium text-foreground">{{ t('workspaceView.conversationList') }}</span>
               <div class="flex items-center gap-1">
-                <button
-                  class="px-2.5 py-1 text-xs rounded-md transition-colors"
-                  :class="chatSidebarTab === 'blackboard' ? 'bg-primary/15 text-primary font-medium' : 'text-muted-foreground hover:text-foreground'"
-                  @click="chatSidebarTab = 'blackboard'"
-                >
-                  {{ t('workspaceView.centralBlackboardChat') }}
-                </button>
-                <button
-                  class="px-2.5 py-1 text-xs rounded-md transition-colors"
-                  :class="chatSidebarTab === 'collab-flow' ? 'bg-violet-500/15 text-violet-400 font-medium' : 'text-muted-foreground hover:text-foreground'"
-                  @click="chatSidebarTab = 'collab-flow'"
-                >
-                  {{ t('workspaceView.collabFlow') }}
-                </button>
-              </div>
-              <div class="flex items-center gap-1">
-                <button
-                  v-if="chatSidebarTab === 'blackboard'"
+                <Button variant="unstyled" size="unstyled"
                   class="p-1 rounded hover:bg-muted transition-colors"
                   :title="focusMode ? t('workspaceView.exitFocus') : t('workspaceView.enterFocus')"
                   @click="toggleFocusMode"
                 >
                   <Minimize v-if="focusMode" class="w-4 h-4" />
                   <Focus v-else class="w-4 h-4" />
-                </button>
-                <button
+                </Button>
+                <Button variant="unstyled" size="unstyled"
                   class="p-1 rounded hover:bg-muted transition-colors"
                   @click="chatOpen = false"
                 >
                   <X class="w-4 h-4" />
-                </button>
+                </Button>
               </div>
             </div>
-            <ChatPanel
-              v-if="chatSidebarTab === 'blackboard'"
+            <ConversationList
               :workspace-id="workspaceId"
+              :conversations="store.conversations"
+              :active-id="store.activeConversationId"
+              class="shrink-0"
+              @select="store.activeConversationId = $event"
+            />
+            <ChatPanel
+              :workspace-id="workspaceId"
+              :conversation-id="store.activeConversationId || undefined"
               :can-send="store.hasPermission('send_chat')"
               class="flex-1 min-h-0"
-            />
-            <CollaborationTimeline
-              v-else
-              ref="collabTimelineRef"
-              :workspace-id="workspaceId"
-              :agents="agents"
-              class="flex-1 min-h-0"
-              @replay-flow="onReplayFlow"
             />
           </div>
         </div>
@@ -1195,7 +1241,7 @@ function handleKeydown(e: KeyboardEvent) {
           <div class="absolute inset-0 bg-black/50" @click="showRenameDialog = false" />
           <div class="relative bg-card border border-border rounded-xl p-6 w-full max-w-sm shadow-lg space-y-4">
             <h3 class="text-sm font-semibold">{{ t('hexAction.renameCorridorTitle') }}</h3>
-            <input
+            <Input
               v-model="renameValue"
               type="text"
               class="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-1 focus:ring-primary"
@@ -1203,19 +1249,19 @@ function handleKeydown(e: KeyboardEvent) {
               @keydown.enter="handleRenameCorridor"
             />
             <div class="flex justify-end gap-3">
-              <button
+              <Button variant="unstyled" size="unstyled"
                 class="px-4 py-2 rounded-lg border border-border text-sm hover:bg-muted transition-colors"
                 @click="showRenameDialog = false"
               >
                 {{ t('common.cancel') }}
-              </button>
-              <button
+              </Button>
+              <Button variant="unstyled" size="unstyled"
                 class="px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm hover:bg-primary/90 transition-colors disabled:opacity-50"
                 :disabled="renameSaving"
                 @click="handleRenameCorridor"
               >
                 {{ renameSaving ? t('common.saving') : t('common.save') }}
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -1229,7 +1275,7 @@ function handleKeydown(e: KeyboardEvent) {
           <div class="absolute inset-0 bg-black/50" @click="showRenameHumanDialog = false" />
           <div class="relative bg-card border border-border rounded-xl p-6 w-full max-w-sm shadow-lg space-y-4">
             <h3 class="text-sm font-semibold">{{ t('hexAction.renameHumanTitle') }}</h3>
-            <input
+            <Input
               v-model="renameHumanValue"
               type="text"
               class="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-1 focus:ring-primary"
@@ -1237,19 +1283,19 @@ function handleKeydown(e: KeyboardEvent) {
               @keydown.enter="handleRenameHuman"
             />
             <div class="flex justify-end gap-3">
-              <button
+              <Button variant="unstyled" size="unstyled"
                 class="px-4 py-2 rounded-lg border border-border text-sm hover:bg-muted transition-colors"
                 @click="showRenameHumanDialog = false"
               >
                 {{ t('common.cancel') }}
-              </button>
-              <button
+              </Button>
+              <Button variant="unstyled" size="unstyled"
                 class="px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm hover:bg-primary/90 transition-colors disabled:opacity-50"
                 :disabled="renameHumanSaving"
                 @click="handleRenameHuman"
               >
                 {{ renameHumanSaving ? t('common.saving') : t('common.save') }}
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -1266,7 +1312,7 @@ function handleKeydown(e: KeyboardEvent) {
             <div class="space-y-3">
               <div>
                 <label class="block text-xs text-muted-foreground mb-1">{{ t('hexAction.agentDisplayNameLabel') }}</label>
-                <input
+                <Input
                   v-model="renameAgentDisplayName"
                   type="text"
                   class="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-1 focus:ring-primary"
@@ -1276,7 +1322,7 @@ function handleKeydown(e: KeyboardEvent) {
               </div>
               <div>
                 <label class="block text-xs text-muted-foreground mb-1">{{ t('hexAction.agentLabelFieldLabel') }}</label>
-                <input
+                <Input
                   v-model="renameAgentLabel"
                   type="text"
                   class="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-1 focus:ring-primary"
@@ -1286,19 +1332,19 @@ function handleKeydown(e: KeyboardEvent) {
               </div>
             </div>
             <div class="flex justify-end gap-3">
-              <button
+              <Button variant="unstyled" size="unstyled"
                 class="px-4 py-2 rounded-lg border border-border text-sm hover:bg-muted transition-colors"
                 @click="showRenameAgentDialog = false"
               >
                 {{ t('common.cancel') }}
-              </button>
-              <button
+              </Button>
+              <Button variant="unstyled" size="unstyled"
                 class="px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm hover:bg-primary/90 transition-colors disabled:opacity-50"
                 :disabled="renameAgentSaving"
                 @click="handleRenameAgent"
               >
                 {{ renameAgentSaving ? t('common.saving') : t('common.save') }}
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -1314,15 +1360,15 @@ function handleKeydown(e: KeyboardEvent) {
             <h3 class="text-sm font-semibold">{{ t('hexAction.selectMember') }}</h3>
             <div v-if="availableMembers.length === 0" class="text-center py-4 space-y-3">
               <p class="text-sm text-muted-foreground">{{ t('hexAction.noAvailableMembers') }}</p>
-              <button
+              <Button variant="unstyled" size="unstyled"
                 class="px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm hover:bg-primary/90 transition-colors"
-                @click="showMemberPicker = false; router.push(`/workspace/${workspaceId}/settings`)"
+                @click="showMemberPicker = false; showSettingsDialog = true"
               >
                 {{ t('hexAction.goToSettings') }}
-              </button>
+              </Button>
             </div>
             <div v-else class="flex flex-col gap-1 max-h-60 overflow-y-auto">
-              <button
+              <Button variant="unstyled" size="unstyled"
                 v-for="member in availableMembers"
                 :key="member.user_id"
                 class="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-muted transition-colors text-left"
@@ -1340,15 +1386,15 @@ function handleKeydown(e: KeyboardEvent) {
                   <div class="text-sm font-medium truncate">{{ member.user_name }}</div>
                   <div v-if="member.user_email" class="text-xs text-muted-foreground truncate">{{ member.user_email }}</div>
                 </div>
-              </button>
+              </Button>
             </div>
             <div class="flex justify-end pt-2">
-              <button
+              <Button variant="unstyled" size="unstyled"
                 class="px-4 py-2 rounded-lg border border-border text-sm hover:bg-muted transition-colors"
                 @click="showMemberPicker = false"
               >
                 {{ t('common.cancel') }}
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -1363,7 +1409,7 @@ function handleKeydown(e: KeyboardEvent) {
           <div class="relative bg-card border border-border rounded-xl p-6 w-full max-w-xs shadow-lg space-y-4">
             <h3 class="text-sm font-semibold">{{ t('hexAction.selectColor') }}</h3>
             <div class="grid grid-cols-4 gap-3 justify-items-center">
-              <button
+              <Button variant="unstyled" size="unstyled"
                 v-for="color in COLOR_PRESETS"
                 :key="color"
                 class="w-10 h-10 rounded-full border-2 border-transparent hover:border-foreground/40 transition-colors hover:scale-110"
@@ -1372,12 +1418,12 @@ function handleKeydown(e: KeyboardEvent) {
               />
             </div>
             <div class="flex justify-end pt-2">
-              <button
+              <Button variant="unstyled" size="unstyled"
                 class="px-4 py-2 rounded-lg border border-border text-sm hover:bg-muted transition-colors"
                 @click="showColorPicker = false"
               >
                 {{ t('common.cancel') }}
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -1392,7 +1438,7 @@ function handleKeydown(e: KeyboardEvent) {
           <div class="relative bg-card border border-border rounded-xl p-6 w-full max-w-xs shadow-lg space-y-4">
             <h3 class="text-sm font-semibold">{{ t('hexAction.changeAgentColor') }}</h3>
             <div class="grid grid-cols-4 gap-3 justify-items-center">
-              <button
+              <Button variant="unstyled" size="unstyled"
                 v-for="color in COLOR_PRESETS"
                 :key="color"
                 class="w-10 h-10 rounded-full border-2 border-transparent hover:border-foreground/40 transition-colors hover:scale-110"
@@ -1401,12 +1447,12 @@ function handleKeydown(e: KeyboardEvent) {
               />
             </div>
             <div class="flex justify-end pt-2">
-              <button
+              <Button variant="unstyled" size="unstyled"
                 class="px-4 py-2 rounded-lg border border-border text-sm hover:bg-muted transition-colors"
                 @click="showAgentColorPicker = false"
               >
                 {{ t('common.cancel') }}
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -1431,9 +1477,9 @@ function handleKeydown(e: KeyboardEvent) {
               <span class="text-sm font-semibold">{{ ws?.name }}</span>
               <span class="text-xs text-muted-foreground">{{ t('workspaceView.focusMode') }}</span>
             </div>
-            <button class="p-1.5 rounded-lg hover:bg-muted transition-colors" @click="focusMode = false">
+            <Button variant="unstyled" size="unstyled" class="p-1.5 rounded-lg hover:bg-muted transition-colors" @click="focusMode = false">
               <X class="w-4 h-4" />
-            </button>
+            </Button>
           </div>
           <div class="flex-1 flex min-h-0">
             <div class="flex-1 flex flex-col min-h-0 min-w-0 border-r border-border">
@@ -1452,7 +1498,14 @@ function handleKeydown(e: KeyboardEvent) {
       :workspace-id="workspaceId"
       :target-hex-q="addAgentHexQ"
       :target-hex-r="addAgentHexR"
+      :cluster-id="store.currentWorkspace?.cluster_id"
       @added="onAgentAdded"
+    />
+
+    <WorkspaceSettings
+      v-model:open="showSettingsDialog"
+      :workspace-id="workspaceId"
+      @deleted="router.push('/')"
     />
   </div>
 </template>

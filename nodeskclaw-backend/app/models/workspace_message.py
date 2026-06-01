@@ -25,4 +25,10 @@ class WorkspaceMessage(BaseModel):
         String(36), nullable=True,
     )
     depth: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    conversation_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("conversations.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     attachments: Mapped[list | None] = mapped_column(JSONB, nullable=True)

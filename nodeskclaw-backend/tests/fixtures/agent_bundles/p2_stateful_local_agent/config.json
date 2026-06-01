@@ -1,0 +1,8 @@
+{
+  "name": "Stateful Local Agent",
+  "slug": "p2-stateful-local-agent",
+  "model": "mock/stateful",
+  "env": {
+    "STATEFUL_MODE": "local"
+  }
+}

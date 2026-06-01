@@ -1,0 +1,28 @@
+{
+  "name": "爆款视频复刻执行专员",
+  "slug": "p5-video-clone-real-sanitized",
+  "model": "cmo-llm/MiniMax-M2.7",
+  "maxToolIterations": 30,
+  "timeout": 600,
+  "uploadContract": {
+    "maxFileSizeMb": 50,
+    "acceptedMimeTypes": ["video/mp4", "video/quicktime"],
+    "inputKeys": ["file_url", "video_id"],
+    "businessUpload": true
+  },
+  "secretRefs": [
+    {
+      "env": "VIDEO_AUTH_TOKEN",
+      "secretName": "video-clone-mock-token",
+      "key": "access_token"
+    }
+  ],
+  "env": {
+    "VIDEO_API_BASE": "http://mock-video-api.local/api/v1",
+    "DESKCLAW_OAUTH_BASE": "http://mock-oauth.local",
+    "DESKCLAW_OAUTH_CLIENT_ID": "mock-client-id",
+    "DESKCLAW_OAUTH_REDIRECT_URI": "http://localhost:9876/callback",
+    "DESKCLAW_OAUTH_SCOPE": "openid profile email points",
+    "VIDEO_AUTH_TOKEN_REF": "video-clone-mock-token/access_token"
+  }
+}

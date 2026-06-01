@@ -14,8 +14,13 @@ import json
 import logging
 from typing import TYPE_CHECKING
 
-from app.services.runtime.gene_install_adapter import GeneInstallAdapter
-from app.utils.jsonc import parse_config_json
+from app.services.runtime.gene_install_adapter import GeneInstallAdapter, validate_skill_name_segment
+from app.utils.jsonc import (
+    deep_merge_config,
+    ensure_channel_plugin_integrity,
+    ensure_exec_security,
+    parse_config_json,
+)
 
 if TYPE_CHECKING:
     from app.services.nfs_mount import RemoteFS
@@ -40,13 +45,14 @@ class OpenClawGeneInstallAdapter(GeneInstallAdapter):
     async def deploy_skill(
         self, fs: RemoteFS, skill_name: str, content: str, description: str = "",
     ) -> None:
+        safe_skill_name = validate_skill_name_segment(skill_name)
         if not content.lstrip().startswith("---"):
-            desc = description or f"Skill: {skill_name}"
-            front_matter = f"---\nname: {skill_name}\ndescription: {desc}\n---\n\n"
+            desc = description or f"Skill: {safe_skill_name}"
+            front_matter = f"---\nname: {safe_skill_name}\ndescription: {desc}\n---\n\n"
             content = front_matter + content
 
-        await fs.mkdir(f"{self._skills_dir}/{skill_name}")
-        await fs.write_text(f"{self._skills_dir}/{skill_name}/SKILL.md", content)
+        await fs.mkdir(f"{self._skills_dir}/{safe_skill_name}")
+        await fs.write_text(f"{self._skills_dir}/{safe_skill_name}/SKILL.md", content)
         await self._ensure_skills_discovery(fs)
 
     async def allow_tools(self, fs: RemoteFS, tool_names: list[str]) -> None:
@@ -84,11 +90,7 @@ class OpenClawGeneInstallAdapter(GeneInstallAdapter):
         except ValueError:
             logger.warning("apply_config: openclaw.json 解析失败，跳过配置合并写入")
             return
-        for key, val in config_patch.items():
-            if isinstance(val, dict) and isinstance(config.get(key), dict):
-                config[key].update(val)
-            else:
-                config[key] = val
+        deep_merge_config(config, config_patch)
         await self._write_config(fs, config)
 
     async def invalidate_cache(self, fs: RemoteFS, skill_name: str, event: str = "installed") -> None:
@@ -100,7 +102,8 @@ class OpenClawGeneInstallAdapter(GeneInstallAdapter):
         await inject_evolution_notification(fs, skill_name, event)
 
     async def remove_skill(self, fs: RemoteFS, skill_name: str) -> None:
-        await fs.remove(f"{self._skills_dir}/{skill_name}")
+        safe_skill_name = validate_skill_name_segment(skill_name)
+        await fs.remove(f"{self._skills_dir}/{safe_skill_name}")
 
     async def post_remove_cleanup(self, fs: RemoteFS, skill_name: str) -> None:
         from app.services.openclaw_session import (
@@ -136,6 +139,8 @@ class OpenClawGeneInstallAdapter(GeneInstallAdapter):
         return parse_config_json(raw)
 
     async def _write_config(self, fs: RemoteFS, config: dict) -> None:
+        ensure_exec_security(config)
+        ensure_channel_plugin_integrity(config)
         await fs.write_text(
             self._config_path,
             json.dumps(config, indent=2, ensure_ascii=False),

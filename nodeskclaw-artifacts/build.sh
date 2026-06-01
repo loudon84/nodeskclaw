@@ -6,13 +6,13 @@
 #   ./build.sh <engine> --with-security --base-tag <tag> [--build-only]
 #   ./build.sh all [--build-only] [--skip-verify]
 #
-# 省略 --version 时自动检测各引擎最新稳定版（openclaw→npm, nanobot→PyPI）
+# 省略 --version 时自动检测各引擎最新稳定版（openclaw→npm, hermes→GitHub）
 #
 # 示例:
 #   ./build.sh all                                    # 所有引擎最新版，构建并推送
 #   ./build.sh all --build-only                       # 所有引擎最新版，仅构建
 #   ./build.sh openclaw                               # 自动检测最新 OpenClaw
-#   ./build.sh nanobot --version 0.1.4
+#   ./build.sh hermes                                 # 使用 Hermes 官方 release tag
 #   ./build.sh openclaw --with-security --base-tag v2026.3.13
 set -e
 
@@ -30,14 +30,16 @@ detect_latest_version() {
         if (stable.length > 0) console.log(stable[stable.length - 1]);
       "
       ;;
-    nanobot)
-      curl -sS https://pypi.org/pypi/nanobot-ai/json 2>/dev/null | python3 -c "
-import json, sys, re
-data = json.load(sys.stdin)
-versions = list(data['releases'].keys())
-stable = [v for v in versions if re.match(r'^\d+\.\d+\.\d+$', v)]
-stable.sort(key=lambda v: list(map(int, v.split('.'))))
-print(stable[-1] if stable else '')"
+    hermes)
+      python3 - <<'PY'
+import json
+import urllib.request
+
+with urllib.request.urlopen("https://api.github.com/repos/NousResearch/hermes-agent/releases/latest", timeout=20) as resp:
+    payload = json.load(resp)
+
+print(payload.get("tag_name", ""))
+PY
       ;;
   esac
 }
@@ -45,14 +47,14 @@ print(stable[-1] if stable else '')"
 ENGINE="$1"; shift || true
 if [ -z "${ENGINE}" ]; then
   log_error "用法: ./build.sh <engine> [--version <ver>] [--build-only] [--skip-verify]"
-  log_info "可用引擎: openclaw, nanobot, all"
+  log_info "可用引擎: openclaw, hermes, all"
   exit 1
 fi
 
 # ── all 模式: 依次构建所有引擎 ────────────────────────
 if [ "${ENGINE}" = "all" ]; then
   FAILED=0
-  for e in openclaw nanobot; do
+  for e in openclaw hermes; do
     echo ""
     log_info "==============================="
     log_info "  构建 ${e}"
@@ -76,6 +78,7 @@ fi
 
 check_docker
 parse_common_args "$@"
+load_mirrors
 
 REGISTRY="$(registry_for "${ENGINE}")"
 
@@ -119,22 +122,28 @@ else
     log_success "openclaw@${VERSION} 存在"
   fi
 
-  if [ -d "${SCRIPT_DIR}/../nodeskclaw-tunnel-bridge" ] && [ "${ENGINE}" != "openclaw" ]; then
-    cp -r "${SCRIPT_DIR}/../nodeskclaw-tunnel-bridge" "${ENGINE_DIR}/nodeskclaw-tunnel-bridge"
-    trap "rm -rf '${ENGINE_DIR}/nodeskclaw-tunnel-bridge'" EXIT
-  fi
-
   IMAGE_TAG="v${VERSION}"
 
   BUILD_ARG_VERSION="${VERSION}"
+  if [ "${ENGINE}" = "hermes" ]; then
+    BUILD_ARG_VERSION="v${VERSION}"
+  fi
 
   print_build_summary "${ENGINE}" "${VERSION}" "${REGISTRY}" "linux/amd64" "base"
 
   ENGINE_UPPER="$(echo "${ENGINE}" | tr '[:lower:]' '[:upper:]')"
 
-  docker_build "${ENGINE_DIR}" "${REGISTRY}:${IMAGE_TAG}" \
-    --build-arg "${ENGINE_UPPER}_VERSION=${BUILD_ARG_VERSION}" \
-    --build-arg IMAGE_VERSION="${IMAGE_TAG}"
+  if [ "${ENGINE}" = "hermes" ]; then
+    HERMES_CONTEXT_DIR="${SCRIPT_DIR}/.."
+    docker_build "${HERMES_CONTEXT_DIR}" "${REGISTRY}:${IMAGE_TAG}" \
+      -f "${ENGINE_DIR}/Dockerfile" \
+      --build-arg "${ENGINE_UPPER}_VERSION=${BUILD_ARG_VERSION}" \
+      --build-arg IMAGE_VERSION="${IMAGE_TAG}"
+  else
+    docker_build "${ENGINE_DIR}" "${REGISTRY}:${IMAGE_TAG}" \
+      --build-arg "${ENGINE_UPPER}_VERSION=${BUILD_ARG_VERSION}" \
+      --build-arg IMAGE_VERSION="${IMAGE_TAG}"
+  fi
 fi
 
 # --- 验证（可选）---
@@ -146,9 +155,10 @@ if [ "${SKIP_VERIFY}" = false ] && [ "${WITH_SECURITY}" = false ]; then
       echo "  OpenClaw: $(docker run --rm --platform linux/amd64 "${REGISTRY}:${IMAGE_TAG}" openclaw --version 2>/dev/null || echo '(需启动后验证)')"
       echo "  版本标记: $(docker run --rm --platform linux/amd64 "${REGISTRY}:${IMAGE_TAG}" cat /root/.openclaw-version)"
       ;;
-    nanobot)
+    hermes)
       echo "  Python: $(docker run --rm --platform linux/amd64 "${REGISTRY}:${IMAGE_TAG}" python --version)"
-      echo "  Nanobot: $(docker run --rm --platform linux/amd64 "${REGISTRY}:${IMAGE_TAG}" pip show nanobot-ai 2>/dev/null | grep Version || echo '(需启动后验证)')"
+      echo "  Hermes: $(docker run --rm --platform linux/amd64 "${REGISTRY}:${IMAGE_TAG}" hermes --help >/dev/null 2>&1 && echo 'hermes cli ok' || echo '(需启动后验证)')"
+      echo "  Bridge: $(docker run --rm --platform linux/amd64 "${REGISTRY}:${IMAGE_TAG}" hermes-nodeskclaw-bridge --help >/dev/null 2>&1 && echo 'bridge cli ok' || echo '(需启动后验证)')"
       ;;
   esac
 fi

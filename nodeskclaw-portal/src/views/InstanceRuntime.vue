@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { Circle, FileText, X, Loader2 } from 'lucide-vue-next'
 import api from '@/services/api'
 import { useToast } from '@/composables/useToast'
+import { Button } from '@/components/ui/button'
 
 const { t } = useI18n()
 const toast = useToast()
@@ -97,22 +98,22 @@ onMounted(fetchData)
                   {{ t('instanceRuntime.restartCount', { count: pod.restart_count }) }}
                 </span>
               </div>
-              <button
+              <Button variant="unstyled" size="unstyled"
                 class="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
                 @click="viewLogs(pod.name)"
               >
                 <FileText class="w-3 h-3" />
                 {{ t('instanceRuntime.runtimeLogs') }}
-              </button>
+              </Button>
             </div>
           </div>
 
           <div v-if="logsVisible" class="mt-3 border border-border rounded-lg overflow-hidden">
             <div class="flex items-center justify-between px-3 py-1.5 bg-muted/50 border-b border-border">
               <span class="text-xs font-medium">{{ t('instanceRuntime.runtimeLogs') }}</span>
-              <button class="text-muted-foreground hover:text-foreground" @click="logsVisible = false">
+              <Button variant="unstyled" size="unstyled" class="text-muted-foreground hover:text-foreground" @click="logsVisible = false">
                 <X class="w-3.5 h-3.5" />
-              </button>
+              </Button>
             </div>
             <pre class="p-3 text-xs font-mono leading-relaxed overflow-auto max-h-64 bg-black/30 text-foreground">{{ logsContent || '...' }}</pre>
           </div>

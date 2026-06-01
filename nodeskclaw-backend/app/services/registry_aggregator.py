@@ -28,7 +28,7 @@ from app.services.registry_adapter import (
 
 logger = logging.getLogger(__name__)
 
-_PRIORITY = ["local", "deskhub", "genehub", "clawhub"]
+_PRIORITY = ["local", "deskhub", "clawhub"]
 
 _aggregator: RegistryAggregator | None = None
 

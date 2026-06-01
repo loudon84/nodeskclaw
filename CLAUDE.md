@@ -8,6 +8,12 @@ DeskClaw（曾用名 NoDeskClaw）— DeskClaw 实例可视化管理平台，通
 
 采用 CE（社区版）/ EE（企业版）双版本架构：CE 为本仓库开源部分，EE 在私有 `ee/` 目录。运行时通过 `FeatureGate` 判断版本：优先读取 `NODESKCLAW_EDITION` 环境变量（`ce`/`ee`），未设置时检测 `ee/` 目录是否存在。`./dev.sh ce` 会自动设置此环境变量以确保后端以 CE 模式运行。
 
+## 产品称呼
+
+- 对外发布、群聊公告、Release Note、客户沟通和文档摘要中，首次出现必须称为“DeskClaw 团队版”。
+- 禁止写成“个人版”，也禁止省略“团队版”导致对外产品定位错误。
+- 技术上下文中可使用 DeskClaw、NoDeskClaw、CE、EE 等名称，但不得影响对外称呼的一致性。
+
 ## 项目结构
 
 ```
@@ -120,10 +126,12 @@ kubectl get deploy -n <namespace> --context <context-name>
 - **Docker 操作必须指定 `--platform linux/amd64`**（开发机 Apple Silicon arm64，目标集群 amd64）
 - **涉及 K8s/DeskClaw 问题必须用 kubectl 实际查看集群状态**
 - **所有数据删除必须软删除**（设置 `deleted_at`），唯一约束使用 Partial Unique Index
+- **新增/修改 Model 必须同步生成 Alembic 迁移**（`uv run alembic revision --autogenerate`），禁止手写 revision ID
 - **JSONC 配置文件解析前必须剥离行注释**
 - **NFS 路径需正确转换**（容器路径 ↔ 本地挂载路径）
 - **修改代码后必须搜索同源逻辑副本并同步修改**
-- **部署脚本必须由用户手动执行**，禁止 AI 直接运行 `deploy/cli.sh`
+- **发版/部署脚本默认必须由用户手动执行**；只有用户在同一请求中明确授权 AI 执行发版/部署时，AI 才允许运行 `deploy/release.sh`、`deploy/deploy.sh`、`deploy/init.sh`，并且必须显式确认 `--context` 与目标环境（`--staging` / `--prod`）
+- **部署当前分支/本地分支不是发版授权**；除非用户明确要求“发版 / release / 创建 tag”，否则禁止调用 `deploy/release.sh create`，禁止创建或推送 git tag，禁止创建 GitHub Release
 - **变更涉及 ≥1 个独立功能点时必须提示用户进入 Plan 模式**
 - **K8s 操作必须指定 `--context <name>`**，禁止依赖 current-context 默认值
 - **破坏性操作（删除 namespace/资源、数据库 DELETE、git force push）必须逐项确认**

@@ -7,6 +7,10 @@ is a single exec call to the target Pod — no temp dirs, no tar, no bulk sync.
 import base64
 import json
 import logging
+import pathlib
+import posixpath
+import shlex
+import shutil
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -22,6 +26,30 @@ from app.services.k8s.k8s_client import K8sClient
 logger = logging.getLogger(__name__)
 
 CHUNK_SIZE = 98_000
+
+
+def _pod_root_path(path: str) -> str:
+    raw = str(path)
+    if "\0" in raw or any(ord(ch) < 32 or ord(ch) == 127 for ch in raw):
+        raise AppException(
+            code=40000,
+            message="非法远程文件路径",
+            message_key="errors.enterprise_files.invalid_path",
+            status_code=400,
+        )
+    normalized = posixpath.normpath(raw if raw.startswith("/") else posixpath.join("/root", raw))
+    if normalized != "/root" and not normalized.startswith("/root/"):
+        raise AppException(
+            code=40000,
+            message="非法远程文件路径",
+            message_key="errors.enterprise_files.invalid_path",
+            status_code=400,
+        )
+    return normalized
+
+
+def _pod_shell_path(path: str) -> str:
+    return shlex.quote(_pod_root_path(path))
 
 
 class NFSMountError(AppException):
@@ -47,48 +75,69 @@ class PodFS:
 
     async def read_text(self, path: str) -> str | None:
         """Read a file from the Pod. Returns None if the file does not exist."""
+        target = _pod_shell_path(path)
         try:
             result = await self._k8s.exec_in_pod(
                 self._ns, self._pod,
-                ["bash", "-c", f"cat '/root/{path}' 2>/dev/null || true"],
+                ["bash", "-c", f"cat {target} 2>/dev/null || true"],
                 container=self._container,
             )
             return result if result else None
         except Exception:
             return None
 
+    async def read_binary(self, path: str) -> bytes | None:
+        """Read a file as raw bytes via base64 encoding (exec channel cannot transmit raw binary)."""
+        target = _pod_shell_path(path)
+        try:
+            result = await self._k8s.exec_in_pod(
+                self._ns, self._pod,
+                ["bash", "-c", f"base64 {target} 2>/dev/null"],
+                container=self._container,
+            )
+            if not result:
+                return None
+            return base64.b64decode(result)
+        except Exception:
+            return None
+
     async def write_text(self, path: str, content: str) -> None:
         """Write content to a file in the Pod (creates parent dirs)."""
         encoded = base64.b64encode(content.encode("utf-8")).decode("ascii")
+        encoded_arg = shlex.quote(encoded)
+        target = _pod_shell_path(path)
         if len(encoded) < CHUNK_SIZE:
             await self._k8s.exec_in_pod(
                 self._ns, self._pod,
                 ["bash", "-c",
-                 f"mkdir -p \"$(dirname '/root/{path}')\" && "
-                 f"printf '%s' '{encoded}' | base64 -d > '/root/{path}'"],
+                 f"mkdir -p \"$(dirname {target})\" && "
+                 f"printf '%s' {encoded_arg} | base64 -d > {target}"],
                 container=self._container,
             )
         else:
             await self._chunked_write(path, encoded)
 
     async def _chunked_write(self, path: str, encoded: str) -> None:
+        target = _pod_shell_path(path)
         tmp = "/tmp/_ndk_upload.b64"
+        tmp_arg = shlex.quote(tmp)
         await self._k8s.exec_in_pod(
             self._ns, self._pod, ["rm", "-f", tmp],
             container=self._container,
         )
         for i in range(0, len(encoded), CHUNK_SIZE):
             chunk = encoded[i:i + CHUNK_SIZE]
+            chunk_arg = shlex.quote(chunk)
             await self._k8s.exec_in_pod(
                 self._ns, self._pod,
-                ["bash", "-c", f"printf '%s' '{chunk}' >> {tmp}"],
+                ["bash", "-c", f"printf '%s' {chunk_arg} >> {tmp_arg}"],
                 container=self._container,
             )
         await self._k8s.exec_in_pod(
             self._ns, self._pod,
             ["bash", "-c",
-             f"mkdir -p \"$(dirname '/root/{path}')\" && "
-             f"base64 -d {tmp} > '/root/{path}' && rm -f {tmp}"],
+             f"mkdir -p \"$(dirname {target})\" && "
+             f"base64 -d {tmp_arg} > {target} && rm -f {tmp_arg}"],
             container=self._container,
         )
 
@@ -96,15 +145,16 @@ class PodFS:
         """Remove a file or directory from the Pod."""
         await self._k8s.exec_in_pod(
             self._ns, self._pod,
-            ["rm", "-rf", f"/root/{path}"],
+            ["rm", "-rf", _pod_root_path(path)],
             container=self._container,
         )
 
     async def exists(self, path: str) -> bool:
+        target = _pod_root_path(path)
         try:
             await self._k8s.exec_in_pod(
                 self._ns, self._pod,
-                ["test", "-e", f"/root/{path}"],
+                ["test", "-e", target],
                 container=self._container,
             )
             return True
@@ -114,26 +164,29 @@ class PodFS:
     async def mkdir(self, path: str) -> None:
         await self._k8s.exec_in_pod(
             self._ns, self._pod,
-            ["mkdir", "-p", f"/root/{path}"],
+            ["mkdir", "-p", _pod_root_path(path)],
             container=self._container,
         )
 
     async def append_text(self, path: str, content: str) -> None:
         """Append content to a file in the Pod."""
         encoded = base64.b64encode(content.encode("utf-8")).decode("ascii")
+        encoded_arg = shlex.quote(encoded)
+        target = _pod_shell_path(path)
         await self._k8s.exec_in_pod(
             self._ns, self._pod,
             ["bash", "-c",
-             f"printf '%s' '{encoded}' | base64 -d >> '/root/{path}'"],
+             f"printf '%s' {encoded_arg} | base64 -d >> {target}"],
             container=self._container,
         )
 
     async def read_last_line(self, path: str) -> str | None:
         """Read the last line of a file from the Pod."""
+        target = _pod_shell_path(path)
         try:
             result = await self._k8s.exec_in_pod(
                 self._ns, self._pod,
-                ["bash", "-c", f"tail -1 '/root/{path}' 2>/dev/null || true"],
+                ["bash", "-c", f"tail -1 {target} 2>/dev/null || true"],
                 container=self._container,
             )
             return result if result else None
@@ -147,12 +200,13 @@ class PodFS:
         empty for an existing but empty directory) or *None* when the path
         does not exist.
         """
+        target = _pod_shell_path(path)
         try:
             result = await self._k8s.exec_in_pod(
                 self._ns, self._pod,
                 ["bash", "-c",
-                 f"if [ -d '/root/{path}' ]; then "
-                 f"find '/root/{path}' -maxdepth 1 -mindepth 1 "
+                 f"if [ -d {target} ]; then "
+                 f"find {target} -maxdepth 1 -mindepth 1 "
                  f"-printf '%y\\t%s\\t%T@\\t%f\\n' 2>/dev/null; "
                  f"echo '__DIR_OK__'; "
                  f"else echo '__NOT_FOUND__'; fi"],
@@ -183,12 +237,13 @@ class PodFS:
 
     async def file_stat(self, path: str) -> dict | None:
         """Get file metadata: size, modified_at, mime_type."""
+        target = _pod_shell_path(path)
         try:
             result = await self._k8s.exec_in_pod(
                 self._ns, self._pod,
                 ["bash", "-c",
-                 f"if stat -c '%s|%Y' '/root/{path}' 2>/dev/null; then "
-                 f"file -bi '/root/{path}' 2>/dev/null || echo 'application/octet-stream'; "
+                 f"if stat -c '%s|%Y' {target} 2>/dev/null; then "
+                 f"file -bi {target} 2>/dev/null || echo 'application/octet-stream'; "
                  f"else echo '__NOT_FOUND__'; fi"],
                 container=self._container,
             )
@@ -211,6 +266,11 @@ class PodFS:
             "mime_type": mime,
         }
 
+    async def exec_command(self, cmd: list[str]) -> str:
+        """Run a command inside the Pod via kubectl exec."""
+        return await self._k8s.exec_in_pod(
+            self._ns, self._pod, cmd, container=self._container,
+        )
 
     async def scan_skills(self, skills_dir_rel: str) -> list[dict]:
         """Batch-scan all skill directories under *skills_dir_rel*.
@@ -224,10 +284,10 @@ class PodFS:
         Raises ``SkillScanError`` on failure (never returns ``[]`` as a
         silent fallback — the caller must distinguish "empty" from "failed").
         """
-        abs_dir = f"/root/{skills_dir_rel}"
+        abs_dir = _pod_root_path(skills_dir_rel)
         js = (
             'const fs=require("fs"),path=require("path");'
-            f'const dir="{abs_dir}";'
+            f"const dir={json.dumps(abs_dir)};"
             'const r=[];'
             'if(fs.existsSync(dir)){'
             'for(const n of fs.readdirSync(dir).sort()){'
@@ -314,7 +374,7 @@ class DockerFS:
         import os
         os.makedirs(str(self._base), exist_ok=True)
 
-    def _resolve(self, remote_path: str) -> "pathlib.Path":
+    def _resolve(self, remote_path: str) -> pathlib.Path:
         abs_slash = self._abs_prefix + "/"
         if remote_path.startswith(abs_slash):
             rel = remote_path[len(abs_slash):]
@@ -340,6 +400,13 @@ class DockerFS:
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content, encoding="utf-8")
 
+    async def read_binary(self, remote_path: str) -> bytes | None:
+        """Read a file as raw bytes. Returns None if file does not exist."""
+        p = self._resolve(remote_path)
+        if not p.exists():
+            return None
+        return p.read_bytes()
+
     async def write_binary(self, remote_path: str, data: bytes) -> None:
         p = self._resolve(remote_path)
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -347,7 +414,11 @@ class DockerFS:
 
     async def remove(self, remote_path: str) -> None:
         p = self._resolve(remote_path)
-        if p.exists():
+        if not p.exists():
+            return
+        if p.is_dir():
+            shutil.rmtree(p)
+        else:
             p.unlink()
 
     async def exists(self, remote_path: str) -> bool:

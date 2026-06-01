@@ -19,8 +19,15 @@ from starlette.websockets import WebSocket, WebSocketDisconnect, WebSocketState
 
 from app.services.runtime.messaging.envelope import MessageEnvelope
 from app.services.runtime.transport.base import DeliveryResult
+from app.services.agent_output_sanitizer import (
+    ThinkBlockStreamSanitizer,
+    strip_think_blocks,
+)
 from app.services.tunnel.protocol import TunnelMessage, TunnelMessageType
-from app.services.workspace_message_service import MAX_COLLABORATION_DEPTH
+from app.services.workspace_message_service import (
+    ABSOLUTE_MAX_COLLABORATION_DEPTH,
+    get_collaboration_depth_limit,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -50,17 +57,58 @@ def _parse_delegation(response: str) -> tuple[str, str] | None:
     return None
 
 
+def _format_attachment_refs(attachments: list[dict]) -> str:
+    if not attachments:
+        return ""
+    lines = []
+    for idx, att in enumerate(attachments, 1):
+        name = att.get("name", "unnamed")
+        size = att.get("size", 0)
+        ct = att.get("content_type", "")
+        fid = att.get("id", "")
+        if size >= 1024 * 1024:
+            size_str = f"{size / (1024 * 1024):.1f}MB"
+        elif size >= 1024:
+            size_str = f"{size / 1024:.0f}KB"
+        else:
+            size_str = f"{size}B"
+        parts = [name, size_str]
+        if ct:
+            parts.append(ct)
+        lines.append(f"[附件{idx}: {', '.join(parts)}, file_id: {fid}]")
+    lines.append("(可使用 nodeskclaw_file_download 工具下载附件到工作台)")
+    return "\n".join(lines)
+
+
+def _format_user_content(sender_name: str, text: str, attachments: list[dict]) -> str:
+    content = f"[{sender_name}]: {text}"
+    ref = _format_attachment_refs(attachments)
+    if ref:
+        content += "\n" + ref
+    return content
+
+
 def _extract_mentions(
-    text: str, members: list[dict], self_name: str,
+    text: str,
+    members: list[dict],
+    self_name: str,
+    *,
+    exclude_names: list[str] | None = None,
 ) -> list[dict]:
     """Parse @name from agent response, matching all workspace members (agent + human).
 
     Uses negative lookahead to avoid prefix false positives (e.g. @test matching @test-2).
+    ``exclude_names`` suppresses mentions of the upstream sender so that
+    gratuitous acknowledgements like "@咕咕嘎嘎 收到！" don't trigger a
+    collaboration round-trip back to the original requester.
     """
+    skip = {self_name}
+    if exclude_names:
+        skip.update(exclude_names)
     results = []
     for m in members:
         name = m.get("name", "")
-        if not name or name == self_name:
+        if not name or name in skip:
             continue
         if re.search(rf"@{re.escape(name)}(?![\w-])", text):
             results.append(m)
@@ -73,10 +121,13 @@ class _InstanceConnection:
     __slots__ = (
         "ws", "instance_id", "connected_at", "last_pong",
         "msg_count_in", "msg_count_out",
-        "_pending_responses", "_stream_queues",
+        "_pending_responses", "_instance_streams",
     )
 
-    def __init__(self, ws: WebSocket, instance_id: str) -> None:
+    def __init__(
+        self, ws: WebSocket, instance_id: str,
+        instance_streams: dict[str, asyncio.Queue[TunnelMessage]],
+    ) -> None:
         self.ws = ws
         self.instance_id = instance_id
         self.connected_at = time.monotonic()
@@ -84,7 +135,7 @@ class _InstanceConnection:
         self.msg_count_in = 0
         self.msg_count_out = 0
         self._pending_responses: dict[str, asyncio.Future[TunnelMessage]] = {}
-        self._stream_queues: dict[str, asyncio.Queue[TunnelMessage]] = {}
+        self._instance_streams = instance_streams
 
     def create_response_future(self, request_id: str) -> asyncio.Future[TunnelMessage]:
         loop = asyncio.get_running_loop()
@@ -94,16 +145,21 @@ class _InstanceConnection:
 
     def register_stream(self, request_id: str) -> asyncio.Queue[TunnelMessage]:
         q: asyncio.Queue[TunnelMessage] = asyncio.Queue()
-        self._stream_queues[request_id] = q
+        self._instance_streams[request_id] = q
         return q
 
     def unregister_stream(self, request_id: str) -> None:
-        self._stream_queues.pop(request_id, None)
+        self._instance_streams.pop(request_id, None)
 
     def resolve_response(self, reply_to: str, msg: TunnelMessage) -> bool:
-        queue = self._stream_queues.get(reply_to)
+        queue = self._instance_streams.get(reply_to)
         if queue is not None:
             queue.put_nowait(msg)
+            if msg.type in (
+                TunnelMessageType.CHAT_RESPONSE_DONE,
+                TunnelMessageType.CHAT_RESPONSE_ERROR,
+            ):
+                self._instance_streams.pop(reply_to, None)
             return True
         fut = self._pending_responses.pop(reply_to, None)
         if fut and not fut.done():
@@ -116,7 +172,7 @@ class _InstanceConnection:
             if not fut.done():
                 fut.cancel()
         self._pending_responses.clear()
-        self._stream_queues.clear()
+        self._instance_streams.clear()
 
 
 class TunnelAdapter:
@@ -129,6 +185,7 @@ class TunnelAdapter:
         self._ping_tasks: dict[str, asyncio.Task] = {}
         self._stats = {"total_connections": 0, "total_messages_in": 0, "total_messages_out": 0}
         self._ws_context_cache: dict[str, _WorkspaceContext] = {}
+        self._instance_streams: dict[str, dict[str, asyncio.Queue[TunnelMessage]]] = {}
 
     @property
     def connected_instances(self) -> set[str]:
@@ -182,8 +239,10 @@ class TunnelAdapter:
             return
 
         old_conn = self._connections.get(instance_id)
+        surviving_streams: dict[str, asyncio.Queue[TunnelMessage]] = {}
         if old_conn:
             logger.info("Tunnel: kicking previous connection for %s", instance_id)
+            surviving_streams = dict(old_conn._instance_streams)
             old_conn.cancel_all()
             try:
                 await old_conn.ws.close(code=4010, reason="replaced")
@@ -191,7 +250,14 @@ class TunnelAdapter:
                 logger.warning("Tunnel: failed to close old ws for %s", instance_id, exc_info=True)
             self._cleanup_instance(instance_id)
 
-        conn = _InstanceConnection(ws, instance_id)
+        streams = self._instance_streams.setdefault(instance_id, {})
+        streams.update(surviving_streams)
+        conn = _InstanceConnection(ws, instance_id, streams)
+        if streams:
+            logger.info(
+                "Tunnel: %d in-flight stream(s) survive reconnect for %s",
+                len(streams), instance_id,
+            )
         self._connections[instance_id] = conn
         self._stats["total_connections"] += 1
 
@@ -248,7 +314,12 @@ class TunnelAdapter:
 
     def _on_chat_response(self, conn: _InstanceConnection, msg: TunnelMessage) -> None:
         if msg.reply_to:
-            conn.resolve_response(msg.reply_to, msg)
+            resolved = conn.resolve_response(msg.reply_to, msg)
+            if not resolved:
+                logger.warning(
+                    "Tunnel: chat response for request %s has no handler on conn %s (type=%s)",
+                    msg.reply_to, conn.instance_id, msg.type,
+                )
 
     async def _on_collaboration_message(self, instance_id: str, msg: TunnelMessage) -> None:
         try:
@@ -273,6 +344,23 @@ class TunnelAdapter:
         if not conn:
             raise ConnectionError(f"Instance {instance_id} not connected via tunnel")
 
+        if workspace_id:
+            try:
+                from app.core.deps import async_session_factory
+                from sqlalchemy import update as sa_update
+
+                from app.models.instance import Instance
+
+                async with async_session_factory() as track_db:
+                    await track_db.execute(
+                        sa_update(Instance)
+                        .where(Instance.id == instance_id)
+                        .values(last_active_workspace_id=workspace_id)
+                    )
+                    await track_db.commit()
+            except Exception:
+                logger.debug("Failed to update active workspace tracking", exc_info=True)
+
         request_id = str(uuid.uuid4())
         payload: dict[str, Any] = {
             "messages": messages,
@@ -289,6 +377,10 @@ class TunnelAdapter:
             payload=payload,
         )
         await self._send(conn.ws, msg)
+        logger.info(
+            "Tunnel: chat request sent to %s, request_id=%s, trace=%s",
+            instance_id, request_id, trace_id,
+        )
         return AsyncChatStream(conn, request_id, trace_id)
 
     async def send_learning_task(self, instance_id: str, task: dict) -> None:
@@ -434,8 +526,10 @@ class TunnelAdapter:
             )
 
         from app.services import workspace_message_service as msg_service
+        from app.services.corridor_router import get_reachable_names
 
         ws_ctx = await self._fetch_workspace_context(workspace_id, db)
+        reachable = await get_reachable_names(workspace_id, target_node_id, db)
 
         context_prompt = msg_service.build_context_prompt(
             workspace_name=ws_ctx.workspace_name,
@@ -444,9 +538,12 @@ class TunnelAdapter:
             members=ws_ctx.members,
             recent_messages=ws_ctx.recent_messages,
             workspace_id=workspace_id,
+            reachable_names=reachable,
         )
 
         mention_targets: list[str] = data.extensions.get("mention_targets", [])
+        agent_members = [m for m in ws_ctx.members if m.get("type") == "agent"]
+        is_single_agent_workspace = len(agent_members) == 1
         is_mention_all = MENTION_ALL_SENTINEL in mention_targets
         is_mentioned = (
             is_mention_all
@@ -456,7 +553,7 @@ class TunnelAdapter:
         has_any_mention = len(mention_targets) > 0
         no_reply = False
 
-        if not has_any_mention:
+        if not has_any_mention and not is_single_agent_workspace:
             no_reply = True
         elif has_any_mention and not is_mentioned:
             no_reply = True
@@ -465,31 +562,13 @@ class TunnelAdapter:
 
         from app.api.workspaces import broadcast_event
 
+        orig_conv_id = data.extensions.get("conversation_id")
+
         if no_reply:
             logger.info(
                 "Mention skip for %s: targets=%s, mentioned=%s",
                 agent_name, mention_targets, is_mentioned,
             )
-            user_content = f"[{data.sender.name}]: {data.content}"
-            messages = [
-                {"role": "system", "content": context_prompt},
-                {"role": "user", "content": user_content},
-            ]
-            try:
-                chat_stream = await self.send_chat_request(
-                    target_node_id, messages,
-                    workspace_id=workspace_id,
-                    trace_id=envelope.traceid,
-                    stream=True,
-                    no_reply=True,
-                )
-                async for _ in chat_stream:
-                    break
-            except Exception as e:
-                logger.debug("Context injection for %s failed: %s", agent_name, e)
-            broadcast_event(workspace_id, "agent:done", {
-                "instance_id": target_node_id, "agent_name": agent_name,
-            })
             return DeliveryResult(
                 success=True, target_node_id=target_node_id,
                 transport=self.transport_id,
@@ -502,7 +581,7 @@ class TunnelAdapter:
             "agent_name": agent_name,
         })
 
-        user_content = f"[{data.sender.name}]: {data.content}"
+        user_content = _format_user_content(data.sender.name, data.content, data.attachments)
         messages = [
             {"role": "system", "content": context_prompt},
             {"role": "user", "content": user_content},
@@ -526,12 +605,19 @@ class TunnelAdapter:
         flushed = False
         full_response = ""
         error_msg: str | None = None
+        stream_sanitizer = ThinkBlockStreamSanitizer()
+        error_type: str | None = None
+        error_raw: str | None = None
 
         try:
             async for chunk_msg in chat_stream:
                 if chunk_msg.type == TunnelMessageType.CHAT_RESPONSE_ERROR:
                     raw_error = chunk_msg.payload.get("error", "unknown_error")
                     error_msg = str(raw_error)[:256]
+                    error_type = chunk_msg.payload.get("error_type")
+                    raw_body = chunk_msg.payload.get("error_raw")
+                    if raw_body:
+                        error_raw = str(raw_body)[:2048]
                     break
                 if chunk_msg.type == TunnelMessageType.CHAT_RESPONSE_DONE:
                     break
@@ -541,8 +627,11 @@ class TunnelAdapter:
                     continue
 
                 full_response += content
+                visible_content = stream_sanitizer.feed(content)
+                if not visible_content:
+                    continue
                 if not flushed:
-                    buffer += content
+                    buffer += visible_content
                     if len(buffer) > NO_REPLY_BUFFER_SIZE:
                         if msg_service.is_no_reply(buffer.strip()):
                             logger.info("Agent %s replied NO_REPLY", agent_name)
@@ -555,52 +644,85 @@ class TunnelAdapter:
                                 latency_ms=int((time.monotonic() - start) * 1000),
                                 extra={"no_reply": True},
                             )
-                        broadcast_event(workspace_id, "agent:chunk", {
+                        chunk_evt: dict = {
                             "instance_id": target_node_id,
                             "agent_name": agent_name,
                             "content": buffer,
                             "trace_id": envelope.traceid,
-                        })
+                        }
+                        if orig_conv_id:
+                            chunk_evt["conversation_id"] = orig_conv_id
+                        broadcast_event(workspace_id, "agent:chunk", chunk_evt)
                         flushed = True
                 else:
-                    broadcast_event(workspace_id, "agent:chunk", {
+                    chunk_evt2: dict = {
                         "instance_id": target_node_id,
                         "agent_name": agent_name,
-                        "content": content,
+                        "content": visible_content,
                         "trace_id": envelope.traceid,
-                    })
+                    }
+                    if orig_conv_id:
+                        chunk_evt2["conversation_id"] = orig_conv_id
+                    broadcast_event(workspace_id, "agent:chunk", chunk_evt2)
         except Exception as e:
             error_msg = str(e)
             logger.error("Agent %s streaming failed: %s", agent_name, e)
 
         if error_msg:
-            broadcast_event(workspace_id, "agent:error", {
+            error_code = "llm_error" if error_type == "llm" else "stream_error"
+            evt: dict = {
                 "instance_id": target_node_id, "agent_name": agent_name,
-                "error": "stream_error", "error_detail": error_msg,
-            })
+                "error": error_code, "error_detail": error_msg,
+            }
+            if error_raw:
+                evt["error_raw"] = error_raw
+            if orig_conv_id:
+                evt["conversation_id"] = orig_conv_id
+            broadcast_event(workspace_id, "agent:error", evt)
             return DeliveryResult(
                 success=False, target_node_id=target_node_id,
                 transport=self.transport_id, error=error_msg,
                 latency_ms=int((time.monotonic() - start) * 1000),
             )
 
+        tail_content = stream_sanitizer.flush()
+        if tail_content:
+            if not flushed:
+                buffer += tail_content
+            else:
+                tail_visible_evt: dict = {
+                    "instance_id": target_node_id,
+                    "agent_name": agent_name,
+                    "content": tail_content,
+                    "trace_id": envelope.traceid,
+                }
+                if orig_conv_id:
+                    tail_visible_evt["conversation_id"] = orig_conv_id
+                broadcast_event(workspace_id, "agent:chunk", tail_visible_evt)
+
         if not flushed and buffer:
             if msg_service.is_no_reply(buffer.strip()):
-                broadcast_event(workspace_id, "agent:done", {
-                    "instance_id": target_node_id, "agent_name": agent_name,
-                })
+                done_evt_nr: dict = {"instance_id": target_node_id, "agent_name": agent_name}
+                if orig_conv_id:
+                    done_evt_nr["conversation_id"] = orig_conv_id
+                broadcast_event(workspace_id, "agent:done", done_evt_nr)
                 return DeliveryResult(
                     success=True, target_node_id=target_node_id,
                     transport=self.transport_id,
                     latency_ms=int((time.monotonic() - start) * 1000),
                     extra={"no_reply": True},
                 )
-            broadcast_event(workspace_id, "agent:chunk", {
+            tail_chunk_evt: dict = {
                 "instance_id": target_node_id, "agent_name": agent_name,
                 "content": buffer, "trace_id": envelope.traceid,
-            })
+            }
+            if orig_conv_id:
+                tail_chunk_evt["conversation_id"] = orig_conv_id
+            broadcast_event(workspace_id, "agent:chunk", tail_chunk_evt)
 
-        delegation = _parse_delegation(full_response)
+        visible_full_response = strip_think_blocks(full_response)
+
+        delegation = _parse_delegation(visible_full_response)
         if delegation:
             action, delegate_target = delegation
             logger.info("Agent %s issued %s to %s", agent_name, action, delegate_target)
@@ -611,32 +733,62 @@ class TunnelAdapter:
             except Exception as e:
                 logger.warning("Delegation %s->%s failed: %s", action, delegate_target, e)
 
-        elif full_response and not msg_service.is_no_reply(full_response.strip()):
-            mentions = _extract_mentions(full_response, ws_ctx.members, agent_name)
+        elif visible_full_response and not msg_service.is_no_reply(visible_full_response.strip()):
+            upstream_sender = data.sender.name if data.sender else ""
+            mentions = _extract_mentions(
+                visible_full_response, ws_ctx.members, agent_name,
+                exclude_names=[upstream_sender] if upstream_sender else None,
+            )
+            logger.info(
+                "Agent %s response mentions=%s (upstream=%s, response_len=%d)",
+                agent_name, [m["name"] for m in mentions], upstream_sender, len(visible_full_response),
+            )
             if mentions:
                 depth = (data.extensions or {}).get("depth", 0)
-                if depth < MAX_COLLABORATION_DEPTH:
-                    from app.core.deps import async_session_factory
-                    async with async_session_factory() as save_db:
+                from app.core.deps import async_session_factory
+                async with async_session_factory() as save_db:
+                    collab_limit = await get_collaboration_depth_limit(save_db, workspace_id)
+                    if depth < collab_limit:
                         saved_msg = await msg_service.record_message(
                             save_db,
                             workspace_id=workspace_id,
                             sender_type="agent",
                             sender_id=target_node_id,
                             sender_name=agent_name,
-                            content=full_response,
+                            content=visible_full_response,
                             message_type="collaboration",
                             depth=depth,
+                            conversation_id=orig_conv_id,
                         )
-                    broadcast_event(workspace_id, "agent:collaboration", {
+                if depth < collab_limit:
+                    base_collab_evt: dict = {
                         "instance_id": target_node_id,
                         "agent_name": agent_name,
-                        "content": full_response,
+                        "content": visible_full_response,
                         "envelope_id": saved_msg.id,
                         "trace_id": envelope.traceid,
-                    })
+                    }
+                    if orig_conv_id:
+                        base_collab_evt["conversation_id"] = orig_conv_id
+                    broadcast_event(workspace_id, "agent:collaboration", base_collab_evt)
+
                     for mention in mentions:
                         if mention["type"] == "agent":
+                            from app.services import conversation_service
+                            from app.services.collaboration_service import find_agent_by_name_or_id
+                            async with async_session_factory() as resolve_db:
+                                target_inst = await find_agent_by_name_or_id(
+                                    resolve_db, workspace_id, mention["name"],
+                                )
+                                mention_target_id = target_inst.id if target_inst else ""
+                                collab_conv_id = await conversation_service.resolve_conversation_for_message(
+                                    workspace_id, target_node_id, mention_target_id,
+                                    resolve_db, inherited_conversation_id=orig_conv_id,
+                                )
+                                collab_members = await conversation_service.get_conversation_members(
+                                    collab_conv_id, resolve_db,
+                                ) if collab_conv_id else []
+
                             from app.services.runtime.messaging.ingestion.agent import (
                                 build_agent_collaboration_envelope,
                             )
@@ -645,8 +797,10 @@ class TunnelAdapter:
                                 source_instance_id=target_node_id,
                                 source_name=agent_name,
                                 target=f"agent:{mention['name']}",
-                                content=full_response,
+                                content=visible_full_response,
                                 depth=depth + 1,
+                                conversation_id=collab_conv_id,
+                                group_member_ids=collab_members,
                             )
                             from app.services.runtime.messaging.bus import message_bus
                             async with async_session_factory() as route_db:
@@ -663,33 +817,40 @@ class TunnelAdapter:
                                 if hh:
                                     await _route_to_human(
                                         route_db, workspace_id,
-                                        target_node_id, agent_name, hh, full_response,
+                                        target_node_id, agent_name, hh, visible_full_response,
                                     )
                                 else:
                                     logger.warning(
                                         "Human mention target not found: %s in workspace %s",
                                         mention["name"], workspace_id,
                                     )
-                    broadcast_event(workspace_id, "agent:done", {
+                    done_evt_collab: dict = {
                         "instance_id": target_node_id, "agent_name": agent_name,
-                    })
+                    }
+                    if orig_conv_id:
+                        done_evt_collab["conversation_id"] = orig_conv_id
+                    broadcast_event(workspace_id, "agent:done", done_evt_collab)
                     return DeliveryResult(
                         success=True, target_node_id=target_node_id,
                         transport=self.transport_id,
                         latency_ms=int((time.monotonic() - start) * 1000),
                     )
-                logger.warning(
-                    "Mention routing skipped: depth %d >= %d",
-                    depth, MAX_COLLABORATION_DEPTH,
-                )
+                else:
+                    logger.warning(
+                        "Mention routing skipped: depth %d >= %d",
+                        depth, collab_limit,
+                    )
 
-        if full_response and not msg_service.is_no_reply(full_response.strip()):
-            broadcast_event(workspace_id, "agent:done", {
+        if visible_full_response and not msg_service.is_no_reply(visible_full_response.strip()):
+            final_done_evt: dict = {
                 "instance_id": target_node_id,
                 "agent_name": agent_name,
-                "full_content": full_response,
+                "full_content": visible_full_response,
                 "trace_id": envelope.traceid,
-            })
+            }
+            if orig_conv_id:
+                final_done_evt["conversation_id"] = orig_conv_id
+            broadcast_event(workspace_id, "agent:done", final_done_evt)
             from app.core.deps import async_session_factory
             async with async_session_factory() as save_db:
                 await msg_service.record_message(
@@ -698,17 +859,24 @@ class TunnelAdapter:
                     sender_type="agent",
                     sender_id=target_node_id,
                     sender_name=agent_name,
-                    content=full_response,
+                    content=visible_full_response,
+                    conversation_id=orig_conv_id,
                 )
-        elif not full_response:
-            broadcast_event(workspace_id, "agent:error", {
+        elif not visible_full_response:
+            empty_err_evt: dict = {
                 "instance_id": target_node_id, "agent_name": agent_name,
                 "error": "empty_response",
-            })
+            }
+            if orig_conv_id:
+                empty_err_evt["conversation_id"] = orig_conv_id
+            broadcast_event(workspace_id, "agent:error", empty_err_evt)
         else:
-            broadcast_event(workspace_id, "agent:done", {
+            final_done_nr: dict = {
                 "instance_id": target_node_id, "agent_name": agent_name,
-            })
+            }
+            if orig_conv_id:
+                final_done_nr["conversation_id"] = orig_conv_id
+            broadcast_event(workspace_id, "agent:done", final_done_nr)
 
         return DeliveryResult(
             success=True, target_node_id=target_node_id,
@@ -738,10 +906,11 @@ class TunnelAdapter:
         prev_visited = (
             original_envelope.data.routing.visited if original_envelope.data else []
         )
-        if len(prev_visited) >= MAX_COLLABORATION_DEPTH:
+        delegation_limit = await get_collaboration_depth_limit(db, workspace_id)
+        if len(prev_visited) >= delegation_limit:
             logger.warning(
                 "Collaboration depth limit (%d) reached, refusing %s from %s",
-                MAX_COLLABORATION_DEPTH, action, source_node_id,
+                delegation_limit, action, source_node_id,
             )
             return
 
@@ -864,7 +1033,7 @@ class TunnelAdapter:
             if inst is None:
                 return False
             env_vars = json.loads(inst.env_vars or "{}")
-            expected_token = env_vars.get("GATEWAY_TOKEN", "")
+            expected_token = env_vars.get("GATEWAY_TOKEN") or env_vars.get("OPENCLAW_GATEWAY_TOKEN", "")
             return bool(expected_token and token == expected_token)
 
     async def _send(self, ws: WebSocket, msg: TunnelMessage) -> None:
@@ -974,11 +1143,15 @@ class AsyncChatStream:
             self._conn.unregister_stream(self._request_id)
             raise StopAsyncIteration
         try:
-            msg = await asyncio.wait_for(self._queue.get(), timeout=120)
+            msg = await asyncio.wait_for(self._queue.get(), timeout=600)
             if msg.type in (TunnelMessageType.CHAT_RESPONSE_DONE, TunnelMessageType.CHAT_RESPONSE_ERROR):
                 self._done = True
                 self._conn.unregister_stream(self._request_id)
             return msg
         except asyncio.TimeoutError:
+            logger.warning(
+                "Chat stream timeout (600s) for request %s, trace=%s",
+                self._request_id, self._trace_id,
+            )
             self._conn.unregister_stream(self._request_id)
             raise StopAsyncIteration

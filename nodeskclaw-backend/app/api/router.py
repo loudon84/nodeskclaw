@@ -17,7 +17,9 @@ from app.api.organizations import router as org_router
 from app.api.org_settings import router as org_settings_router
 from app.api.registry import router as registry_router
 from app.api.settings import router as settings_router
+from app.api.spec_presets import router as spec_presets_router
 from app.api.storage import router as storage_router
+from app.api.conversations import router as conversation_router
 from app.api.corridors import router as corridor_router
 from app.api.channel_configs import router as channel_config_router
 from app.api.observability import router as observability_router
@@ -26,8 +28,10 @@ from app.api.mcp import router as mcp_router
 from app.api.trust import router as trust_router
 from app.api.webhooks import router as webhook_router
 from app.api.blackboard import router as blackboard_router
+from app.api.performance import router as performance_router
 from app.api.workspaces import router as workspace_router
 from app.api.templates import router as template_router
+from app.api.workspace_deploys import router as workspace_deploys_router
 from app.api.instance_templates import router as instance_template_router
 from app.core.deps import require_ce_edition, require_org_admin, require_org_role
 from app.core.exceptions import ForbiddenError, NotFoundError
@@ -37,6 +41,10 @@ from app.core.config import settings
 from app.api.security_ws import router as security_ws_router
 from app.api.tunnel import router as tunnel_router
 from app.api.engines import router as engine_router
+from app.api.engine_versions import (
+    engine_version_read_router,
+    engine_version_write_router,
+)
 from app.api.invitations import invite_router, invite_public_router
 from app.api.portal.instances import router as portal_instance_router
 from app.api.portal.instance_members import router as portal_instance_members_router
@@ -119,19 +127,26 @@ api_router.include_router(portal_channel_config_router, prefix="/instances", tag
 api_router.include_router(portal_mcp_router, prefix="/instances", tags=["MCP"])
 api_router.include_router(portal_instance_files_router, prefix="/instances", tags=["实例文件"])
 api_router.include_router(llm_keys_router, tags=["LLM Key 管理"])
+api_router.include_router(performance_router, tags=["绩效"])
 api_router.include_router(registry_router, prefix="/registry", tags=["镜像仓库"])
 api_router.include_router(settings_router, prefix="/settings", tags=["系统配置"],
     dependencies=[Depends(require_ce_edition), Depends(require_org_admin)])
+api_router.include_router(spec_presets_router, prefix="/spec-presets", tags=["规格预设"])
 api_router.include_router(storage_router, prefix="/storage-classes", tags=["存储"])
+api_router.include_router(template_router, prefix="/workspaces", tags=["办公室模板"])
+api_router.include_router(workspace_deploys_router, prefix="/workspaces", tags=["办公室模板部署"])
 api_router.include_router(workspace_router, prefix="/workspaces", tags=["赛博办公室"])
 api_router.include_router(blackboard_router, prefix="/workspaces", tags=["黑板讨论区"])
+api_router.include_router(conversation_router, prefix="/workspaces", tags=["群聊"])
 api_router.include_router(corridor_router, prefix="/workspaces", tags=["过道系统"])
 api_router.include_router(observability_router, prefix="/workspaces", tags=["可观测性"])
 api_router.include_router(trust_router, prefix="/workspaces", tags=["渐进式信任"])
-api_router.include_router(template_router, prefix="/workspaces", tags=["办公室模板"])
 api_router.include_router(instance_template_router, tags=["AI 员工模板"])
 api_router.include_router(gene_router, tags=["基因进化"])
 api_router.include_router(engine_router, prefix="/engines", tags=["工作引擎"])
+api_router.include_router(engine_version_read_router, prefix="/engine-versions", tags=["引擎版本"])
+api_router.include_router(engine_version_write_router, prefix="/engine-versions", tags=["引擎版本"],
+    dependencies=[Depends(require_ce_edition), Depends(require_org_admin)])
 api_router.include_router(invite_router, prefix="/orgs", tags=["邀请"])
 api_router.include_router(invite_public_router, prefix="/invite", tags=["邀请（公开）"])
 api_router.include_router(security_ws_router, tags=["安全评估"])
@@ -146,12 +161,14 @@ admin_router = APIRouter()
 # 基础路由（无额外角色限制）
 admin_router.include_router(auth_router, prefix="/auth", tags=["Admin - 认证"])
 admin_router.include_router(org_router, prefix="/orgs", tags=["Admin - 组织"])
+admin_router.include_router(template_router, prefix="/workspaces", tags=["Admin - 办公室模板"])
+admin_router.include_router(workspace_deploys_router, prefix="/workspaces", tags=["Admin - 办公室模板部署"])
 admin_router.include_router(workspace_router, prefix="/workspaces", tags=["Admin - 赛博办公室"])
 admin_router.include_router(blackboard_router, prefix="/workspaces", tags=["Admin - 黑板讨论区"])
+admin_router.include_router(conversation_router, prefix="/workspaces", tags=["Admin - 群聊"])
 admin_router.include_router(corridor_router, prefix="/workspaces", tags=["Admin - 过道系统"])
 admin_router.include_router(observability_router, prefix="/workspaces", tags=["Admin - 可观测性"])
 admin_router.include_router(trust_router, prefix="/workspaces", tags=["Admin - 渐进式信任"])
-admin_router.include_router(template_router, prefix="/workspaces", tags=["Admin - 办公室模板"])
 admin_router.include_router(channel_config_router, prefix="/instances", tags=["Admin - Channel 配置"])
 admin_router.include_router(mcp_router, prefix="/instances", tags=["Admin - MCP"])
 
@@ -181,6 +198,8 @@ admin_router.include_router(cluster_router, prefix="/clusters",
 admin_router.include_router(settings_router, prefix="/settings",
     tags=["Admin - 系统配置"],
     dependencies=[Depends(require_org_role("admin"))])
+admin_router.include_router(spec_presets_router, prefix="/spec-presets",
+    tags=["Admin - 规格预设"])
 admin_router.include_router(gene_router,
     tags=["Admin - 基因进化"],
     dependencies=[Depends(require_org_role("admin"))])
@@ -192,6 +211,12 @@ admin_router.include_router(registry_router, prefix="/registry",
     dependencies=[Depends(require_org_role("admin"))])
 admin_router.include_router(runtime_admin_router, prefix="/runtime",
     tags=["Admin - 运行时平台"],
+    dependencies=[Depends(require_org_role("admin"))])
+admin_router.include_router(engine_version_read_router, prefix="/engine-versions",
+    tags=["Admin - 引擎版本(读)"],
+    dependencies=[Depends(require_org_role("member"))])
+admin_router.include_router(engine_version_write_router, prefix="/engine-versions",
+    tags=["Admin - 引擎版本(写)"],
     dependencies=[Depends(require_org_role("admin"))])
 admin_router.include_router(tunnel_router, tags=["Admin - Agent Tunnel"],
     dependencies=[Depends(require_org_role("admin"))])

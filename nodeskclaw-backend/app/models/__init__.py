@@ -1,6 +1,7 @@
 """Import all models so SQLAlchemy can detect them."""
 
 from app.models.admin_membership import AdminMembership  # noqa: F401
+from app.models.backup import InstanceBackup  # noqa: F401
 from app.models.base import Base, BaseModel  # noqa: F401
 from app.models.blackboard import Blackboard  # noqa: F401
 from app.models.blackboard_file import BlackboardFile  # noqa: F401
@@ -8,11 +9,13 @@ from app.models.blackboard_post import BlackboardPost  # noqa: F401
 from app.models.blackboard_reply import BlackboardReply  # noqa: F401
 from app.models.circuit_state import CircuitState  # noqa: F401
 from app.models.cluster import Cluster  # noqa: F401
+from app.models.conversation import Conversation  # noqa: F401
 from app.models.corridor import CorridorHex, HexConnection  # noqa: F401
 from app.models.dead_letter import DeadLetter  # noqa: F401
 from app.models.decision_record import DecisionRecord  # noqa: F401
 from app.models.delivery_log import DeliveryLog  # noqa: F401
 from app.models.deploy_record import DeployRecord  # noqa: F401
+from app.models.engine_version import EngineVersion  # noqa: F401
 from app.models.event_log import EventLog  # noqa: F401
 from app.models.gene import (  # noqa: F401
     Gene,
@@ -28,13 +31,14 @@ from app.models.invitation import Invitation  # noqa: F401
 from app.models.instance_template import InstanceTemplate, TemplateItem  # noqa: F401
 from app.models.instance_mcp_server import InstanceMcpServer  # noqa: F401
 from app.models.instance_llm_override import InstanceLlmOverride  # noqa: F401
+from app.models.instance_provider_config import InstanceProviderConfig  # noqa: F401
 from app.models.instance_member import InstanceMember  # noqa: F401
 from app.models.llm_usage_log import LlmUsageLog  # noqa: F401
 from app.models.message_queue import MessageQueueItem  # noqa: F401
 from app.models.message_schema import MessageSchema  # noqa: F401
 from app.models.node_card import NodeCard  # noqa: F401
 from app.models.node_type import NodeTypeDefinition  # noqa: F401
-from app.models.org_llm_key import OrgLlmKey  # noqa: F401
+from app.models.org_llm_key import OrgLlmKey, OrgModelProvider  # noqa: F401
 from app.models.post_read import PostRead  # noqa: F401
 from app.models.org_required_gene import OrgRequiredGene  # noqa: F401
 from app.models.org_smtp_config import OrgSmtpConfig  # noqa: F401

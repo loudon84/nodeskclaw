@@ -1,16 +1,24 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { ArrowLeft, Plus, Loader2, Palette, Bot, ChevronLeft } from 'lucide-vue-next'
+import { ArrowLeft, Plus, Loader2, Palette, Bot, ChevronLeft, Server, Container, X } from 'lucide-vue-next'
 import { useWorkspaceStore } from '@/stores/workspace'
 import type { WorkspaceTemplateItem } from '@/stores/workspace'
+import { useClusterStore, type ClusterInfo } from '@/stores/cluster'
 import { resolveApiErrorMessage } from '@/i18n/error'
+import { useToast } from '@/composables/useToast'
 import TemplateCard from '@/components/workspace/TemplateCard.vue'
+import DeployFromTemplateDialog from '@/components/workspace/DeployFromTemplateDialog.vue'
+import { Button } from '@/components/ui/button'
+import { Textarea } from '@/components/ui/textarea'
+import { Input } from '@/components/ui/input'
 
 const { t } = useI18n()
 const router = useRouter()
 const store = useWorkspaceStore()
+const clusterStore = useClusterStore()
+const toast = useToast()
 
 const step = ref(1)
 const selectedTemplateId = ref<string | null>(null)
@@ -18,11 +26,26 @@ const selectedTemplateName = ref('')
 const templates = ref<WorkspaceTemplateItem[]>([])
 const loadingTemplates = ref(false)
 
+const deleteDialogOpen = ref(false)
+const deleteTarget = ref<WorkspaceTemplateItem | null>(null)
+const deleteConfirmInput = ref('')
+const deleting = ref(false)
+const deleteConfirmMatch = computed(() => deleteConfirmInput.value === deleteTarget.value?.name)
+
 const name = ref('')
 const description = ref('')
 const selectedColor = ref('#a78bfa')
+const selectedClusterId = ref('')
 const creating = ref(false)
 const error = ref('')
+
+const availableClusters = computed(() => clusterStore.clusters)
+const clusterDropdownOpen = ref(false)
+const selectedCluster = computed(() =>
+  availableClusters.value.find(c => c.id === selectedClusterId.value) ?? null
+)
+const deployDialogOpen = ref(false)
+const deployTemplateId = ref<string | null>(null)
 
 const colors = [
   '#a78bfa', '#60a5fa', '#34d399', '#fbbf24',
@@ -32,6 +55,10 @@ const colors = [
 onMounted(async () => {
   loadingTemplates.value = true
   try {
+    await clusterStore.fetchClusters()
+    if (availableClusters.value.length === 1) {
+      selectedClusterId.value = availableClusters.value[0].id
+    }
     templates.value = await store.fetchWorkspaceTemplates()
   } catch {
     // Silently fall back to blank-only
@@ -40,6 +67,11 @@ onMounted(async () => {
   }
 })
 
+function selectCluster(cluster: ClusterInfo) {
+  selectedClusterId.value = cluster.id
+  clusterDropdownOpen.value = false
+}
+
 function selectBlank() {
   selectedTemplateId.value = null
   selectedTemplateName.value = ''
@@ -47,13 +79,52 @@ function selectBlank() {
 }
 
 function selectTemplate(tpl: WorkspaceTemplateItem) {
+  if (tpl.can_deploy_from_template) {
+    deployTemplateId.value = tpl.id
+    deployDialogOpen.value = true
+    return
+  }
   selectedTemplateId.value = tpl.id
   selectedTemplateName.value = tpl.name
   step.value = 2
 }
 
+function onDeployFromTemplateDone(workspaceId: string) {
+  router.push(`/workspace/${workspaceId}`)
+}
+
 function goBackToTemplates() {
   step.value = 1
+}
+
+function openDeleteDialog(tpl: WorkspaceTemplateItem) {
+  deleteTarget.value = tpl
+  deleteConfirmInput.value = ''
+  deleteDialogOpen.value = true
+}
+
+async function handleDeleteTemplate() {
+  if (!deleteTarget.value || !deleteConfirmMatch.value) return
+  const deletedId = deleteTarget.value.id
+  deleting.value = true
+  try {
+    await store.deleteTemplate(deletedId)
+    templates.value = templates.value.filter(t => t.id !== deletedId)
+    if (selectedTemplateId.value === deletedId) {
+      selectedTemplateId.value = null
+      selectedTemplateName.value = ''
+      step.value = 1
+    }
+    if (deployTemplateId.value === deletedId) {
+      deployTemplateId.value = null
+    }
+    deleteDialogOpen.value = false
+    toast.success(t('deleteTemplate.success'))
+  } catch (e: any) {
+    toast.error(resolveApiErrorMessage(e, t('deleteTemplate.failed')))
+  } finally {
+    deleting.value = false
+  }
 }
 
 async function handleCreate() {
@@ -70,6 +141,7 @@ async function handleCreate() {
       name: name.value.trim(),
       description: description.value.trim(),
       color: selectedColor.value,
+      cluster_id: selectedClusterId.value,
     }
     if (selectedTemplateId.value) {
       payload.template_id = selectedTemplateId.value
@@ -88,9 +160,9 @@ async function handleCreate() {
   <div class="max-w-2xl mx-auto px-6 py-8">
     <!-- Header -->
     <div class="flex items-center gap-3 mb-8">
-      <button class="p-1.5 rounded-lg hover:bg-muted transition-colors" @click="router.push('/')">
+      <Button variant="unstyled" size="unstyled" class="p-1.5 rounded-lg hover:bg-muted transition-colors" @click="router.push('/')">
         <ArrowLeft class="w-5 h-5" />
-      </button>
+      </Button>
       <h1 class="text-xl font-bold">{{ t('createWorkspace.title') }}</h1>
     </div>
 
@@ -109,19 +181,20 @@ async function handleCreate() {
           :key="tpl.id"
           :template="tpl"
           @select="selectTemplate(tpl)"
+          @delete="openDeleteDialog(tpl)"
         />
       </div>
     </div>
 
     <!-- Step 2: Basic Info -->
     <div v-else class="space-y-6">
-      <button
+      <Button variant="unstyled" size="unstyled"
         class="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
         @click="goBackToTemplates"
       >
         <ChevronLeft class="w-4 h-4" />
         {{ t('createWorkspace.backToTemplates') }}
-      </button>
+      </Button>
 
       <div v-if="selectedTemplateName" class="text-sm text-muted-foreground">
         {{ t('createWorkspace.selectedTemplate') }}:
@@ -132,7 +205,7 @@ async function handleCreate() {
         <!-- Name -->
         <div class="space-y-2">
           <label class="text-sm font-medium">{{ t('createWorkspace.nameLabel') }}</label>
-          <input
+          <Input
             v-model="name"
             class="w-full px-3 py-2 rounded-lg bg-muted border border-border text-sm outline-none focus:ring-1 focus:ring-primary/50"
             :placeholder="t('createWorkspace.namePlaceholder')"
@@ -140,10 +213,73 @@ async function handleCreate() {
           />
         </div>
 
+        <!-- Cluster -->
+        <div class="space-y-2">
+          <label class="text-sm font-medium flex items-center gap-1.5">
+            <Server class="w-4 h-4 text-muted-foreground" />
+            {{ t('createWorkspace.clusterLabel') }}
+          </label>
+
+          <template v-if="availableClusters.length === 0">
+            <div class="px-3 py-4 rounded-lg border border-dashed border-border bg-muted/50 text-center">
+              <p class="text-sm text-muted-foreground">{{ t('createWorkspace.noCluster') }}</p>
+              <Button variant="unstyled" size="unstyled"
+                class="mt-2 text-sm text-primary hover:underline"
+                @click="router.push('/settings/clusters')"
+              >
+                {{ t('createWorkspace.goConfigCluster') }}
+              </Button>
+            </div>
+          </template>
+
+          <template v-else-if="availableClusters.length === 1">
+            <div class="flex items-center gap-2 px-3 py-2 rounded-lg bg-muted border border-border text-sm">
+              <Container v-if="availableClusters[0].compute_provider === 'docker'" class="w-4 h-4 text-blue-500 shrink-0" />
+              <Server v-else class="w-4 h-4 text-primary shrink-0" />
+              <span>{{ availableClusters[0].name }}</span>
+              <span class="text-xs text-muted-foreground">({{ availableClusters[0].compute_provider === 'docker' ? 'Docker' : 'K8s' }})</span>
+            </div>
+          </template>
+
+          <template v-else>
+            <div class="relative">
+              <Button variant="unstyled" size="unstyled"
+                class="w-full flex items-center justify-between px-3 py-2 rounded-lg bg-muted border border-border text-sm outline-none focus:ring-1 focus:ring-primary/50"
+                @click="clusterDropdownOpen = !clusterDropdownOpen"
+              >
+                <span v-if="selectedCluster" class="flex items-center gap-2">
+                  <Container v-if="selectedCluster.compute_provider === 'docker'" class="w-4 h-4 text-blue-500 shrink-0" />
+                  <Server v-else class="w-4 h-4 text-primary shrink-0" />
+                  {{ selectedCluster.name }}
+                  <span class="text-xs text-muted-foreground">({{ selectedCluster.compute_provider === 'docker' ? 'Docker' : 'K8s' }})</span>
+                </span>
+                <span v-else class="text-muted-foreground">{{ t('createWorkspace.clusterPlaceholder') }}</span>
+              </Button>
+              <div v-if="clusterDropdownOpen" class="fixed inset-0 z-0" @click="clusterDropdownOpen = false" />
+              <div
+                v-if="clusterDropdownOpen"
+                class="absolute z-10 mt-1 w-full rounded-lg border border-border bg-popover shadow-md"
+              >
+                <Button variant="unstyled" size="unstyled"
+                  v-for="c in availableClusters"
+                  :key="c.id"
+                  class="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-accent transition-colors first:rounded-t-lg last:rounded-b-lg"
+                  @click="selectCluster(c)"
+                >
+                  <Container v-if="c.compute_provider === 'docker'" class="w-4 h-4 text-blue-500 shrink-0" />
+                  <Server v-else class="w-4 h-4 text-primary shrink-0" />
+                  <span>{{ c.name }}</span>
+                  <span class="text-xs text-muted-foreground">({{ c.compute_provider === 'docker' ? 'Docker' : 'K8s' }})</span>
+                </Button>
+              </div>
+            </div>
+          </template>
+        </div>
+
         <!-- Description -->
         <div class="space-y-2">
           <label class="text-sm font-medium">{{ t('createWorkspace.descriptionLabel') }}</label>
-          <textarea
+          <Textarea
             v-model="description"
             rows="3"
             class="w-full px-3 py-2 rounded-lg bg-muted border border-border text-sm outline-none focus:ring-1 focus:ring-primary/50 resize-none"
@@ -158,7 +294,7 @@ async function handleCreate() {
             {{ t('createWorkspace.themeColor') }}
           </label>
           <div class="flex gap-2">
-            <button
+            <Button variant="unstyled" size="unstyled"
               v-for="c in colors"
               :key="c"
               class="w-8 h-8 rounded-full border-2 transition-all"
@@ -189,16 +325,68 @@ async function handleCreate() {
         <p v-if="error" class="text-sm text-red-400">{{ error }}</p>
 
         <!-- Submit -->
-        <button
+        <Button variant="unstyled" size="unstyled"
           class="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
-          :disabled="creating || !name.trim()"
+          :disabled="creating || !name.trim() || !selectedClusterId"
           @click="handleCreate"
         >
           <Loader2 v-if="creating" class="w-4 h-4 animate-spin" />
           <Plus v-else class="w-4 h-4" />
           {{ t('createWorkspace.submit') }}
-        </button>
+        </Button>
       </div>
     </div>
+
+    <DeployFromTemplateDialog
+      v-model:open="deployDialogOpen"
+      :template-id="deployTemplateId"
+      @done="onDeployFromTemplateDone"
+    />
+
+    <Teleport to="body">
+      <Transition name="fade">
+        <div v-if="deleteDialogOpen" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" @click.self="deleteDialogOpen = false">
+          <div class="bg-card rounded-xl shadow-2xl w-full max-w-sm border border-border">
+            <div class="flex items-center justify-between px-5 py-4 border-b border-border">
+              <h3 class="text-sm font-semibold">{{ t('deleteTemplate.title') }}</h3>
+              <Button variant="unstyled" size="unstyled" type="button" class="p-1 rounded hover:bg-muted" @click="deleteDialogOpen = false">
+                <X class="w-4 h-4" />
+              </Button>
+            </div>
+            <div class="px-5 py-4 space-y-4">
+              <p class="text-sm text-muted-foreground">
+                {{ t('deleteTemplate.confirmMessage', { name: deleteTarget?.name }) }}
+              </p>
+              <div class="space-y-1.5">
+                <label class="text-xs text-muted-foreground">{{ t('deleteTemplate.inputLabel') }}</label>
+                <Input
+                  v-model="deleteConfirmInput"
+                  class="w-full px-3 py-2 rounded-lg bg-muted border border-border text-sm outline-none focus:ring-1 focus:ring-destructive/50"
+                  :placeholder="deleteTarget?.name"
+                />
+              </div>
+            </div>
+            <div class="flex justify-end gap-2 px-5 py-3 border-t border-border">
+              <Button variant="unstyled" size="unstyled"
+                type="button"
+                class="px-4 py-2 text-sm rounded-lg hover:bg-muted transition-colors"
+                @click="deleteDialogOpen = false"
+              >
+                {{ t('common.cancel') }}
+              </Button>
+              <Button variant="unstyled" size="unstyled"
+                type="button"
+                class="px-4 py-2 text-sm rounded-lg bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors disabled:opacity-50"
+                :disabled="!deleteConfirmMatch || deleting"
+                @click="handleDeleteTemplate"
+              >
+                <Loader2 v-if="deleting" class="w-4 h-4 animate-spin inline mr-1" />
+                {{ t('deleteTemplate.confirmButton') }}
+              </Button>
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
   </div>
 </template>

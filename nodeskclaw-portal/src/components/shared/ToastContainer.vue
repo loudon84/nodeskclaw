@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useToast } from '@/composables/useToast'
 import { CircleCheck, CircleX, Info, TriangleAlert, X } from 'lucide-vue-next'
+import { Button } from '@/components/ui/button'
 
 const { toasts, dismiss } = useToast()
 
@@ -36,20 +37,20 @@ const colorMap: Record<string, string> = {
           <component :is="iconMap[t.type]" class="w-4 h-4 shrink-0 mt-0.5" />
           <div class="flex-1 flex flex-col gap-1">
             <span class="wrap-break-word">{{ t.message }}</span>
-            <button
+            <Button variant="unstyled" size="unstyled"
               v-if="t.action"
               class="text-xs underline opacity-70 hover:opacity-100 text-left transition-opacity"
               @click="t.action.onClick(); dismiss(t.id)"
             >
               {{ t.action.label }}
-            </button>
+            </Button>
           </div>
-          <button
+          <Button variant="unstyled" size="unstyled"
             class="shrink-0 opacity-50 hover:opacity-100 transition-opacity"
             @click="dismiss(t.id)"
           >
             <X class="w-3.5 h-3.5" />
-          </button>
+          </Button>
         </div>
       </TransitionGroup>
     </div>

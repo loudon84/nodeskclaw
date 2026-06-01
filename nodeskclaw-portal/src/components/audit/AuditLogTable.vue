@@ -7,6 +7,9 @@ import { useToast } from '@/composables/useToast'
 import { resolveApiErrorMessage } from '@/i18n/error'
 import CustomSelect, { type SelectOption } from '@/components/shared/CustomSelect.vue'
 import AuditDetailDrawer from '@/components/audit/AuditDetailDrawer.vue'
+import { Button } from '@/components/ui/button'
+import { Table, TableHeader, TableBody, TableFooter, TableRow, TableHead, TableCell, TableCaption } from '@/components/ui/table'
+import { Input } from '@/components/ui/input'
 import {
   Download, ChevronLeft, ChevronRight, FileJson, FileSpreadsheet,
   Search, User as UserIcon, Loader2, ScrollText,
@@ -193,31 +196,31 @@ onUnmounted(() => {
         <p class="text-sm text-muted-foreground mt-1">{{ t('auditLogs.description') }}</p>
       </div>
       <div class="relative export-dropdown">
-        <button
+        <Button variant="unstyled" size="unstyled"
           class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-input text-xs font-medium hover:bg-muted/50 transition-colors"
           @click="exportOpen = !exportOpen"
         >
           <Download class="w-3.5 h-3.5" />
           {{ t('auditLogs.export') }}
-        </button>
+        </Button>
         <div
           v-if="exportOpen"
           class="absolute right-0 top-full z-50 mt-1 min-w-[10rem] rounded-md border border-input bg-card shadow-lg overflow-hidden"
         >
-          <button
+          <Button variant="unstyled" size="unstyled"
             class="flex w-full items-center gap-2 px-3 py-2 text-xs text-foreground hover:bg-accent transition-colors"
             @click="handleExport('csv')"
           >
             <FileSpreadsheet class="w-3.5 h-3.5" />
             {{ t('auditLogs.exportCsv') }}
-          </button>
-          <button
+          </Button>
+          <Button variant="unstyled" size="unstyled"
             class="flex w-full items-center gap-2 px-3 py-2 text-xs text-foreground hover:bg-accent transition-colors"
             @click="handleExport('json')"
           >
             <FileJson class="w-3.5 h-3.5" />
             {{ t('auditLogs.exportJson') }}
-          </button>
+          </Button>
         </div>
       </div>
     </div>
@@ -228,7 +231,7 @@ onUnmounted(() => {
         <label class="text-xs text-muted-foreground">{{ t('auditLogs.filterAction') }}</label>
         <div class="relative">
           <Search class="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-          <input
+          <Input
             v-model="filters.action"
             :placeholder="t('auditLogs.filterActionPlaceholder')"
             class="w-48 h-8 pl-7 pr-3 rounded-md border border-input bg-background text-xs focus:outline-none focus:ring-2 focus:ring-primary/30"
@@ -251,7 +254,7 @@ onUnmounted(() => {
 
       <div class="space-y-1">
         <label class="text-xs text-muted-foreground">{{ t('auditLogs.filterFromTime') }}</label>
-        <input
+        <Input
           v-model="filters.from_time"
           type="datetime-local"
           class="w-44 h-8 px-2 rounded-md border border-input bg-background text-xs focus:outline-none focus:ring-2 focus:ring-primary/30 [color-scheme:dark]"
@@ -261,7 +264,7 @@ onUnmounted(() => {
 
       <div class="space-y-1">
         <label class="text-xs text-muted-foreground">{{ t('auditLogs.filterToTime') }}</label>
-        <input
+        <Input
           v-model="filters.to_time"
           type="datetime-local"
           class="w-44 h-8 px-2 rounded-md border border-input bg-background text-xs focus:outline-none focus:ring-2 focus:ring-primary/30 [color-scheme:dark]"
@@ -272,52 +275,52 @@ onUnmounted(() => {
 
     <!-- Table -->
     <div class="border border-border rounded-lg overflow-hidden">
-      <table class="w-full text-left text-xs">
-        <thead class="bg-muted/40 text-muted-foreground">
-          <tr>
-            <th class="px-3 py-2.5 font-medium w-[160px]">{{ t('auditLogs.colTime') }}</th>
-            <th class="px-3 py-2.5 font-medium w-[160px]">{{ t('auditLogs.colAction') }}</th>
-            <th class="px-3 py-2.5 font-medium w-[100px]">{{ t('auditLogs.colTargetType') }}</th>
-            <th class="px-3 py-2.5 font-medium w-[120px]">{{ t('auditLogs.colTargetId') }}</th>
-            <th class="px-3 py-2.5 font-medium">{{ t('auditLogs.colActor') }}</th>
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-border">
-          <tr v-if="loading">
-            <td colspan="5" class="text-center py-12 text-muted-foreground">
+      <Table class="w-full text-left text-xs">
+        <TableHeader class="bg-muted/40 text-muted-foreground">
+          <TableRow>
+            <TableHead class="px-3 py-2.5 font-medium w-[160px]">{{ t('auditLogs.colTime') }}</TableHead>
+            <TableHead class="px-3 py-2.5 font-medium w-[160px]">{{ t('auditLogs.colAction') }}</TableHead>
+            <TableHead class="px-3 py-2.5 font-medium w-[100px]">{{ t('auditLogs.colTargetType') }}</TableHead>
+            <TableHead class="px-3 py-2.5 font-medium w-[120px]">{{ t('auditLogs.colTargetId') }}</TableHead>
+            <TableHead class="px-3 py-2.5 font-medium">{{ t('auditLogs.colActor') }}</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody class="divide-y divide-border">
+          <TableRow v-if="loading">
+            <TableCell colspan="5" class="text-center py-12 text-muted-foreground">
               <Loader2 class="w-5 h-5 animate-spin mx-auto" />
-            </td>
-          </tr>
-          <tr v-else-if="logs.length === 0">
-            <td colspan="5" class="text-center py-12">
+            </TableCell>
+          </TableRow>
+          <TableRow v-else-if="logs.length === 0">
+            <TableCell colspan="5" class="text-center py-12">
               <ScrollText class="w-8 h-8 text-muted-foreground/50 mx-auto mb-2" />
               <p class="text-sm text-muted-foreground">{{ t('auditLogs.empty') }}</p>
-            </td>
-          </tr>
-          <tr
+            </TableCell>
+          </TableRow>
+          <TableRow
             v-for="log in logs"
             :key="log.id"
             v-else
             class="hover:bg-muted/30 transition-colors cursor-pointer"
             @click="openDrawer(log)"
           >
-            <td class="px-3 py-2.5 tabular-nums whitespace-nowrap">{{ formatDate(log.created_at) }}</td>
-            <td class="px-3 py-2.5">
+            <TableCell class="px-3 py-2.5 tabular-nums whitespace-nowrap">{{ formatDate(log.created_at) }}</TableCell>
+            <TableCell class="px-3 py-2.5">
               <span class="inline-block px-2 py-0.5 rounded text-[11px]" :class="actionBadgeClass(log.action)">
                 {{ localizeAction(log.action) }}
               </span>
-            </td>
-            <td class="px-3 py-2.5">{{ log.target_type ? localizeTargetType(log.target_type) : '-' }}</td>
-            <td class="px-3 py-2.5 font-mono text-muted-foreground">{{ truncate(log.target_id) }}</td>
-            <td class="px-3 py-2.5">
+            </TableCell>
+            <TableCell class="px-3 py-2.5">{{ log.target_type ? localizeTargetType(log.target_type) : '-' }}</TableCell>
+            <TableCell class="px-3 py-2.5 font-mono text-muted-foreground">{{ truncate(log.target_id) }}</TableCell>
+            <TableCell class="px-3 py-2.5">
               <span class="inline-flex items-center gap-1">
                 <UserIcon class="w-3 h-3 text-muted-foreground shrink-0" />
                 {{ log.actor_name || truncate(log.actor_id) }}
               </span>
-            </td>
-          </tr>
-        </tbody>
-      </table>
+            </TableCell>
+          </TableRow>
+        </TableBody>
+      </Table>
     </div>
 
     <!-- Pagination -->
@@ -326,22 +329,22 @@ onUnmounted(() => {
         {{ t('auditLogs.pagination', { page: page, total: totalPages }) }}
       </span>
       <div class="flex items-center gap-2">
-        <button
+        <Button variant="unstyled" size="unstyled"
           class="flex items-center gap-1 px-2.5 py-1.5 rounded-md border border-border text-xs hover:bg-muted/50 transition-colors disabled:opacity-40 disabled:pointer-events-none"
           :disabled="page <= 1"
           @click="page--"
         >
           <ChevronLeft class="w-3.5 h-3.5" />
           {{ t('auditLogs.prevPage') }}
-        </button>
-        <button
+        </Button>
+        <Button variant="unstyled" size="unstyled"
           class="flex items-center gap-1 px-2.5 py-1.5 rounded-md border border-border text-xs hover:bg-muted/50 transition-colors disabled:opacity-40 disabled:pointer-events-none"
           :disabled="page >= totalPages"
           @click="page++"
         >
           {{ t('auditLogs.nextPage') }}
           <ChevronRight class="w-3.5 h-3.5" />
-        </button>
+        </Button>
       </div>
     </div>
 

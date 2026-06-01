@@ -4,8 +4,9 @@ import { useI18n } from 'vue-i18n'
 import { ArrowRight, Filter } from 'lucide-vue-next'
 import api from '@/services/api'
 import CustomSelect from '@/components/shared/CustomSelect.vue'
+import { formatTime as formatLocaleTime } from '@/utils/localeFormat'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 
 interface TimelineMessage {
   id: string
@@ -62,8 +63,7 @@ const agentFilterOptions = computed(() => [
 
 function formatTime(iso: string): string {
   if (!iso) return ''
-  const d = new Date(iso)
-  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  return formatLocaleTime(iso, String(locale.value), { hour: '2-digit', minute: '2-digit', second: '2-digit' })
 }
 
 function truncate(text: string, maxLen: number): string {

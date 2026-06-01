@@ -2,10 +2,11 @@
 import { ref, onMounted, computed, provide } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { ArrowLeft, Circle, Loader2, LayoutDashboard, Brain, Dna, History, Radio, FolderOpen, Users, Activity } from 'lucide-vue-next'
+import { ArrowLeft, Circle, Loader2, LayoutDashboard, Brain, Dna, History, Radio, FolderOpen, Users, Activity, Archive } from 'lucide-vue-next'
 import api from '@/services/api'
-import { getRuntimeCaps } from '@/utils/runtimeCapabilities'
+import { getRuntimeCaps, setRuntimeEngines } from '@/utils/runtimeCapabilities'
 import { getStatusDisplay } from '@/utils/instanceStatus'
+import { Button } from '@/components/ui/button'
 
 const route = useRoute()
 const router = useRouter()
@@ -28,6 +29,9 @@ const myInstanceRole = computed(() => instance.value?.my_role ?? null)
 
 async function fetchBasic() {
   loading.value = true
+  void api.get('/engines')
+    .then((enginesRes) => setRuntimeEngines(enginesRes.data.data ?? []))
+    .catch(() => undefined)
   try {
     const res = await api.get(`/instances/${instanceId.value}`)
     instance.value = res.data.data
@@ -64,6 +68,7 @@ const navItems = computed(() => {
   if (caps.value.llmConfig) items.push({ name: 'InstanceSettings', label: t('common.modelConfig'), icon: Brain })
   if (myInstanceRole.value === 'admin') {
     items.push({ name: 'InstanceFiles', label: t('common.files'), icon: FolderOpen })
+    items.push({ name: 'InstanceBackups', label: t('backup.title'), icon: Archive })
     items.push({ name: 'InstanceMembers', label: t('common.members'), icon: Users })
   }
   return items
@@ -74,9 +79,9 @@ const navItems = computed(() => {
   <div class="flex flex-col h-[calc(100vh-3.5rem)] max-w-4xl mx-auto px-6">
     <!-- Header (固定) -->
     <div class="shrink-0 flex items-center gap-3 pt-8 pb-4">
-      <button class="text-muted-foreground hover:text-foreground transition-colors" @click="router.push('/instances')">
+      <Button variant="unstyled" size="unstyled" class="text-muted-foreground hover:text-foreground transition-colors" @click="router.push('/instances')">
         <ArrowLeft class="w-5 h-5" />
-      </button>
+      </Button>
       <template v-if="loading">
         <Loader2 class="w-4 h-4 animate-spin text-muted-foreground" />
       </template>
@@ -116,4 +121,3 @@ const navItems = computed(() => {
     </div>
   </div>
 </template>
-

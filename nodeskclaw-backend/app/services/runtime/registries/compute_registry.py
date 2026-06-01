@@ -49,7 +49,7 @@ class ComputeRegistry:
 COMPUTE_REGISTRY = ComputeRegistry()
 
 
-async def require_k8s_client(cluster) -> "K8sClient":
+async def require_k8s_client(cluster) -> K8sClient:
     """检查集群类型并获取 K8s 客户端。非 K8s 集群直接抛出 BadRequestError。"""
     from app.core.exceptions import BadRequestError
 

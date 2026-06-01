@@ -8,8 +8,12 @@ import { resolveApiErrorMessage } from '@/i18n/error'
 import { useToast } from '@/composables/useToast'
 import { useConfirm } from '@/composables/useConfirm'
 import CustomSelect from '@/components/shared/CustomSelect.vue'
+import { formatDate } from '@/utils/localeFormat'
+import { Button } from '@/components/ui/button'
+import { Table, TableHeader, TableBody, TableFooter, TableRow, TableHead, TableCell, TableCaption } from '@/components/ui/table'
+import { Input } from '@/components/ui/input'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const toast = useToast()
 const { confirm } = useConfirm()
 
@@ -147,7 +151,7 @@ async function removeMember(member: MemberInfo) {
 }
 
 function formatTime(iso: string) {
-  return new Date(iso).toLocaleDateString('zh-CN', {
+  return formatDate(iso, String(locale.value), {
     year: 'numeric', month: '2-digit', day: '2-digit',
   })
 }
@@ -163,14 +167,14 @@ onMounted(fetchMembers)
         <h2 class="text-lg font-semibold">{{ t('instanceMembers.title') }}</h2>
         <p class="text-sm text-muted-foreground mt-0.5">{{ t('instanceMembers.subtitle') }}</p>
       </div>
-      <button
+      <Button variant="unstyled" size="unstyled"
         v-if="isAdmin"
         class="flex items-center gap-2 px-3 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors"
         @click="showAddDialog = true"
       >
         <UserPlus class="w-4 h-4" />
         {{ t('instanceMembers.addMember') }}
-      </button>
+      </Button>
     </div>
 
     <!-- Loading -->
@@ -185,22 +189,22 @@ onMounted(fetchMembers)
 
     <!-- Members table -->
     <div v-else class="rounded-xl border border-border overflow-hidden">
-      <table class="w-full text-sm">
-        <thead>
-          <tr class="border-b border-border bg-card/60">
-            <th class="text-left px-4 py-3 font-medium text-muted-foreground">{{ t('instanceMembers.colUser') }}</th>
-            <th class="text-left px-4 py-3 font-medium text-muted-foreground">{{ t('instanceMembers.colRole') }}</th>
-            <th class="text-left px-4 py-3 font-medium text-muted-foreground">{{ t('instanceMembers.colJoined') }}</th>
-            <th v-if="isAdmin" class="text-right px-4 py-3 font-medium text-muted-foreground">{{ t('instanceMembers.colActions') }}</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr
+      <Table class="w-full text-sm">
+        <TableHeader>
+          <TableRow class="border-b border-border bg-card/60">
+            <TableHead class="text-left px-4 py-3 font-medium text-muted-foreground">{{ t('instanceMembers.colUser') }}</TableHead>
+            <TableHead class="text-left px-4 py-3 font-medium text-muted-foreground">{{ t('instanceMembers.colRole') }}</TableHead>
+            <TableHead class="text-left px-4 py-3 font-medium text-muted-foreground">{{ t('instanceMembers.colJoined') }}</TableHead>
+            <TableHead v-if="isAdmin" class="text-right px-4 py-3 font-medium text-muted-foreground">{{ t('instanceMembers.colActions') }}</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          <TableRow
             v-for="m in members"
             :key="m.id"
             class="border-b border-border last:border-b-0"
           >
-            <td class="px-4 py-3">
+            <TableCell class="px-4 py-3">
               <div class="flex items-center gap-3">
                 <div class="w-8 h-8 rounded-full bg-muted flex items-center justify-center text-xs font-medium shrink-0">
                   <img v-if="m.user_avatar_url" :src="m.user_avatar_url" class="w-8 h-8 rounded-full object-cover" />
@@ -211,8 +215,8 @@ onMounted(fetchMembers)
                   <div class="text-xs text-muted-foreground truncate">{{ m.user_email }}</div>
                 </div>
               </div>
-            </td>
-            <td class="px-4 py-3">
+            </TableCell>
+            <TableCell class="px-4 py-3">
               <CustomSelect
                 v-if="isAdmin"
                 :model-value="m.role"
@@ -220,19 +224,19 @@ onMounted(fetchMembers)
                 @update:model-value="(v: string | null) => updateRole(m, v!)"
               />
               <span v-else class="text-sm">{{ roleLabel(m.role) }}</span>
-            </td>
-            <td class="px-4 py-3 text-muted-foreground">{{ formatTime(m.created_at) }}</td>
-            <td v-if="isAdmin" class="px-4 py-3 text-right">
-              <button
+            </TableCell>
+            <TableCell class="px-4 py-3 text-muted-foreground">{{ formatTime(m.created_at) }}</TableCell>
+            <TableCell v-if="isAdmin" class="px-4 py-3 text-right">
+              <Button variant="unstyled" size="unstyled"
                 class="p-1.5 rounded-lg text-muted-foreground hover:text-red-400 hover:bg-red-400/10 transition-colors"
                 @click="removeMember(m)"
               >
                 <Trash2 class="w-4 h-4" />
-              </button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
+              </Button>
+            </TableCell>
+          </TableRow>
+        </TableBody>
+      </Table>
     </div>
 
     <!-- Add member dialog -->
@@ -248,7 +252,7 @@ onMounted(fetchMembers)
           <!-- Search -->
           <div class="relative">
             <Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-            <input
+            <Input
               v-model="searchQuery"
               type="text"
               class="w-full pl-9 pr-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
@@ -284,14 +288,14 @@ onMounted(fetchMembers)
                     <div class="text-xs text-muted-foreground truncate">{{ u.email }}</div>
                   </div>
                 </div>
-                <button
+                <Button variant="unstyled" size="unstyled"
                   class="shrink-0 px-3 py-1 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
                   :disabled="addingUserId === u.user_id"
                   @click="addMember(u.user_id)"
                 >
                   <Loader2 v-if="addingUserId === u.user_id" class="w-3 h-3 animate-spin" />
                   <span v-else>{{ t('instanceMembers.add') }}</span>
-                </button>
+                </Button>
               </div>
             </template>
             <div v-else-if="searchQuery.trim()" class="text-center py-4 text-sm text-muted-foreground">
@@ -301,12 +305,12 @@ onMounted(fetchMembers)
 
           <!-- Close -->
           <div class="flex justify-end">
-            <button
+            <Button variant="unstyled" size="unstyled"
               class="px-4 py-2 rounded-lg border border-border text-sm hover:bg-accent transition-colors"
               @click="showAddDialog = false"
             >
               {{ t('instanceMembers.close') }}
-            </button>
+            </Button>
           </div>
         </div>
       </div>

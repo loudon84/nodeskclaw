@@ -1,6 +1,7 @@
 import pytest
 
 from app.api import genes as genes_api
+from app.core.config import get_nodeskclaw_webhook_base_url
 from app.core.exceptions import BadRequestError
 from app.schemas.gene import LearningCallbackPayload
 from app.services.gene_service import (
@@ -35,6 +36,24 @@ def test_build_gene_callback_url_includes_signature_and_instance():
 
     assert "instance_id=inst-1" in url
     assert "sig=" in url
+
+
+def test_get_nodeskclaw_webhook_base_url_prefers_dedicated_setting():
+    class DummySettings:
+        NODESKCLAW_WEBHOOK_BASE_URL = "http://callback.internal/"
+        NODESKCLAW_HOST = "https://public.example.com"
+        AGENT_API_BASE_URL = "http://backend:4510/api/v1"
+
+    assert get_nodeskclaw_webhook_base_url(DummySettings()) == "http://callback.internal"
+
+
+def test_get_nodeskclaw_webhook_base_url_falls_back_to_agent_api_base():
+    class DummySettings:
+        NODESKCLAW_WEBHOOK_BASE_URL = ""
+        NODESKCLAW_HOST = ""
+        AGENT_API_BASE_URL = "http://backend:4510/api/v1/"
+
+    assert get_nodeskclaw_webhook_base_url(DummySettings()) == "http://backend:4510"
 
 
 def test_validate_gene_callback_auth_allows_legacy_unsigned_callback(monkeypatch):

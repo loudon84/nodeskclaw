@@ -18,6 +18,7 @@ class Organization(BaseModel):
     max_cpu_total: Mapped[str] = mapped_column(String(16), default="4", nullable=False)
     max_mem_total: Mapped[str] = mapped_column(String(16), default="8Gi", nullable=False)
     max_storage_total: Mapped[str] = mapped_column(String(16), default="500Gi", nullable=False)
+    max_collaboration_depth: Mapped[int] = mapped_column(Integer, default=3, nullable=False, server_default="3")
 
     # 专属集群（null = 共享集群）
     cluster_id: Mapped[str | None] = mapped_column(

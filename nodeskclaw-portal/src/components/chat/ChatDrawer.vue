@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import ChatPanel from './ChatPanel.vue'
 import { X, MessageSquare } from 'lucide-vue-next'
+import { Button } from '@/components/ui/button'
 
 const props = defineProps<{
   open: boolean
@@ -25,12 +26,12 @@ const emit = defineEmits<{ (e: 'close'): void }>()
           <span class="text-sm font-medium">{{ workspaceName }}</span>
           <span class="text-xs text-muted-foreground">Group Chat</span>
         </div>
-        <button
+        <Button variant="unstyled" size="unstyled"
           class="p-1 rounded hover:bg-muted transition-colors"
           @click="emit('close')"
         >
           <X class="w-4 h-4" />
-        </button>
+        </Button>
       </div>
 
       <!-- Chat -->

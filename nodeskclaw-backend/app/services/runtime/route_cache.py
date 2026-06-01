@@ -22,23 +22,24 @@ class VersionedRoutes:
 
 class RouteTable:
     def __init__(self, ttl_s: int = CACHE_TTL_S) -> None:
-        self._cache: dict[str, VersionedRoutes] = {}
+        self._cache: dict[tuple[str, str], VersionedRoutes] = {}
         self._versions: dict[str, int] = {}
         self._ttl_s = ttl_s
 
-    def get(self, workspace_id: str) -> list[DeliveryTarget] | None:
-        entry = self._cache.get(workspace_id)
+    def get(self, workspace_id: str, sender_id: str = "") -> list[DeliveryTarget] | None:
+        key = (workspace_id, sender_id)
+        entry = self._cache.get(key)
         if entry is None:
             return None
         if time.monotonic() - entry.created_at > self._ttl_s:
-            del self._cache[workspace_id]
+            del self._cache[key]
             return None
         return entry.targets
 
     def get_version(self, workspace_id: str) -> int:
         return self._versions.get(workspace_id, 0)
 
-    def put(self, workspace_id: str, targets: list[DeliveryTarget]) -> int:
+    def put(self, workspace_id: str, targets: list[DeliveryTarget], sender_id: str = "") -> int:
         seen: set[str] = set()
         unique: list[DeliveryTarget] = []
         for t in targets:
@@ -48,7 +49,7 @@ class RouteTable:
 
         version = self._versions.get(workspace_id, 0) + 1
         self._versions[workspace_id] = version
-        self._cache[workspace_id] = VersionedRoutes(
+        self._cache[(workspace_id, sender_id)] = VersionedRoutes(
             version=version, targets=unique,
         )
         return version
@@ -58,7 +59,9 @@ class RouteTable:
         return plan_version < current
 
     def invalidate(self, workspace_id: str) -> None:
-        self._cache.pop(workspace_id, None)
+        keys_to_remove = [k for k in self._cache if k[0] == workspace_id]
+        for k in keys_to_remove:
+            del self._cache[k]
         self._versions[workspace_id] = self._versions.get(workspace_id, 0) + 1
         logger.debug("RouteTable: invalidated cache for workspace %s (v=%d)", workspace_id, self._versions[workspace_id])
 

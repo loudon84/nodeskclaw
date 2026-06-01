@@ -40,6 +40,11 @@ docker_build() {
     --build-arg https_proxy= \
     --build-arg HTTP_PROXY= \
     --build-arg HTTPS_PROXY= \
+    --build-arg PIP_INDEX_URL="${PIP_INDEX_URL:-}" \
+    --build-arg PIP_TRUSTED_HOST="${PIP_TRUSTED_HOST:-}" \
+    --build-arg NPM_REGISTRY="${NPM_REGISTRY:-}" \
+    --build-arg APT_MIRROR="${APT_MIRROR:-}" \
+    --build-arg ALPINE_MIRROR="${ALPINE_MIRROR:-}" \
     "${build_args[@]}" \
     -t "${tag}" \
     "${context_dir}"
@@ -84,13 +89,14 @@ print_done() {
 }
 
 # ── 解析通用参数 ─────────────────────────────────
-# 调用后设置: VERSION, BUILD_ONLY, SKIP_VERIFY, WITH_SECURITY, BASE_TAG
+# 调用后设置: VERSION, BUILD_ONLY, SKIP_VERIFY, WITH_SECURITY, BASE_TAG, MIRRORS
 parse_common_args() {
   VERSION=""
   BUILD_ONLY=false
   SKIP_VERIFY=false
   WITH_SECURITY=false
   BASE_TAG=""
+  MIRRORS=""
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -114,9 +120,13 @@ parse_common_args() {
         BASE_TAG="$2"
         shift 2
         ;;
+      --mirrors)
+        MIRRORS="$2"
+        shift 2
+        ;;
       *)
         echo "未知参数: $1"
-        echo "用法: $0 [--version <ver>] [--build-only] [--skip-verify] [--with-security] [--base-tag <tag>]"
+        echo "用法: $0 [--version <ver>] [--build-only] [--skip-verify] [--with-security] [--base-tag <tag>] [--mirrors <preset>]"
         exit 1
         ;;
     esac
@@ -125,5 +135,24 @@ parse_common_args() {
   if [ "${WITH_SECURITY}" = true ] && [ -z "${BASE_TAG}" ]; then
     log_error "--with-security 需要 --base-tag 指定 base 镜像 tag"
     exit 1
+  fi
+}
+
+# ── 镜像源预设加载 ───────────────────────────────
+load_mirrors() {
+  if [ -n "${MIRRORS}" ]; then
+    local project_root
+    project_root="$(cd "${SCRIPT_DIR}/.." && pwd)"
+    local mirrors_file="${project_root}/deploy/mirrors/${MIRRORS}.env"
+    if [ ! -f "${mirrors_file}" ]; then
+      log_error "镜像预设不存在: ${mirrors_file}"
+      echo "可用预设:"
+      for f in "${project_root}/deploy/mirrors/"*.env; do
+        [ -f "$f" ] && echo "  $(basename "$f" .env)"
+      done
+      exit 1
+    fi
+    source "${mirrors_file}"
+    log_info "使用镜像预设: ${MIRRORS}"
   fi
 }

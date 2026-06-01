@@ -6,10 +6,13 @@ from app.services.runtime.messaging.envelope import (
     IntentType,
     MessageData,
     MessageEnvelope,
+    MessageRouting,
     MessageSender,
     Priority,
     SenderType,
 )
+
+MENTION_ALL_SENTINEL = "__all__"
 
 
 def build_portal_envelope(
@@ -20,7 +23,17 @@ def build_portal_envelope(
     content: str,
     mentions: list[str] | None = None,
     attachments: list[dict] | None = None,
+    conversation_id: str | None = None,
 ) -> MessageEnvelope:
+    mention_targets = mentions or []
+    routing_targets = [] if MENTION_ALL_SENTINEL in mention_targets else mention_targets
+    routing_mode = "unicast" if len(routing_targets) == 1 else "multicast"
+    extensions: dict = {}
+    if conversation_id:
+        extensions["conversation_id"] = conversation_id
+    if mention_targets:
+        extensions["mention_targets"] = mention_targets
+
     return MessageEnvelope(
         source=f"portal/user/{user_id}",
         type="deskclaw.msg.v1.chat",
@@ -33,8 +46,10 @@ def build_portal_envelope(
             ),
             intent=IntentType.CHAT,
             content=content,
-            mentions=mentions or [],
+            mentions=mention_targets,
             attachments=attachments or [],
+            routing=MessageRouting(mode=routing_mode, targets=routing_targets),
+            extensions=extensions,
             priority=Priority.NORMAL,
         ),
     )

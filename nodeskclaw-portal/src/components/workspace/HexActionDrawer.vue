@@ -3,6 +3,7 @@ import { watch, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { X, Plus, MessageSquare, ExternalLink, Trash2, Eye, Route, User, Palette, Move, PenSquare, Crosshair, GitBranch } from 'lucide-vue-next'
 import { useWorkspaceStore } from '@/stores/workspace'
+import { Button } from '@/components/ui/button'
 
 const { t } = useI18n()
 const store = useWorkspaceStore()
@@ -91,18 +92,18 @@ onUnmounted(() => {
             {{ t('hexAction.centralBlackboard') }}
           </template>
         </span>
-        <button
+        <Button variant="unstyled" size="unstyled"
           class="p-1 rounded hover:bg-muted transition-colors"
           @click="emit('close')"
         >
           <X class="w-4 h-4" />
-        </button>
+        </Button>
       </div>
 
       <div class="flex flex-col gap-0.5 px-2 py-2">
         <!-- Empty hex actions -->
         <template v-if="hexType === 'empty'">
-          <button
+          <Button variant="unstyled" size="unstyled"
             v-if="store.hasPermission('manage_agents')"
             class="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-muted transition-colors text-sm"
             @click="emit('action', 'add-agent')"
@@ -110,8 +111,8 @@ onUnmounted(() => {
             <Plus class="w-4 h-4 text-primary" />
             <span>{{ t('hexAction.addAgentHere') }}</span>
             <kbd class="kbd-hint">A</kbd>
-          </button>
-          <button
+          </Button>
+          <Button variant="unstyled" size="unstyled"
             v-if="store.hasPermission('edit_topology')"
             class="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-muted transition-colors text-sm"
             @click="emit('action', 'place-corridor')"
@@ -119,8 +120,8 @@ onUnmounted(() => {
             <Route class="w-4 h-4 text-cyan-400" />
             <span>{{ t('hexAction.placeCorridor') }}</span>
             <kbd class="kbd-hint">C</kbd>
-          </button>
-          <button
+          </Button>
+          <Button variant="unstyled" size="unstyled"
             v-if="store.hasPermission('edit_topology')"
             class="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-muted transition-colors text-sm"
             @click="emit('action', 'place-human')"
@@ -128,175 +129,175 @@ onUnmounted(() => {
             <User class="w-4 h-4 text-amber-400" />
             <span>{{ t('hexAction.placeHuman') }}</span>
             <kbd class="kbd-hint">H</kbd>
-          </button>
+          </Button>
         </template>
 
         <!-- Agent hex actions -->
         <template v-else-if="hexType === 'agent'">
-          <button
+          <Button variant="unstyled" size="unstyled"
             class="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-muted transition-colors text-sm"
             @click="emit('action', 'focus-hex')"
           >
             <Crosshair class="w-4 h-4 text-muted-foreground" />
             <span>{{ t('hexAction.focusHex') }}</span>
             <kbd class="kbd-hint">F</kbd>
-          </button>
-          <button
+          </Button>
+          <Button variant="unstyled" size="unstyled"
             class="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-muted transition-colors text-sm"
             @click="emit('action', 'open-chat')"
           >
             <MessageSquare class="w-4 h-4 text-primary" />
             <span>{{ t('hexAction.openChat') }}</span>
             <kbd class="kbd-hint">C</kbd>
-          </button>
-          <button
+          </Button>
+          <Button variant="unstyled" size="unstyled"
             class="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-muted transition-colors text-sm"
             @click="emit('action', 'view-detail')"
           >
             <ExternalLink class="w-4 h-4 text-muted-foreground" />
             <span>{{ t('hexAction.viewDetail') }}</span>
             <kbd class="kbd-hint">D</kbd>
-          </button>
-          <button
+          </Button>
+          <Button variant="unstyled" size="unstyled"
             class="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-muted transition-colors text-sm"
             @click="emit('action', 'view-collaboration')"
           >
             <GitBranch class="w-4 h-4 text-violet-400" />
             <span>{{ t('hexAction.viewCollaboration') }}</span>
             <kbd class="kbd-hint">L</kbd>
-          </button>
-          <button
+          </Button>
+          <Button variant="unstyled" size="unstyled"
             class="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-muted transition-colors text-sm"
             @click="emit('action', 'rename-agent')"
           >
             <PenSquare class="w-4 h-4 text-cyan-400" />
             <span>{{ t('hexAction.renameAgent') }}</span>
             <kbd class="kbd-hint">R</kbd>
-          </button>
-          <button
+          </Button>
+          <Button variant="unstyled" size="unstyled"
             class="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-muted transition-colors text-sm"
             @click="emit('action', 'change-agent-color')"
           >
             <Palette class="w-4 h-4 text-muted-foreground" />
             <span>{{ t('hexAction.changeAgentColor') }}</span>
             <kbd class="kbd-hint">P</kbd>
-          </button>
-          <button
+          </Button>
+          <Button variant="unstyled" size="unstyled"
             class="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-muted transition-colors text-sm"
             @click="emit('action', 'move-hex')"
           >
             <Move class="w-4 h-4 text-muted-foreground" />
             <span>{{ t('hexAction.move') }}</span>
             <kbd class="kbd-hint">M</kbd>
-          </button>
-          <button
+          </Button>
+          <Button variant="unstyled" size="unstyled"
             class="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-destructive/10 text-destructive transition-colors text-sm"
             @click="emit('action', 'remove-agent')"
           >
             <Trash2 class="w-4 h-4" />
             <span>{{ t('hexAction.remove') }}</span>
             <kbd class="kbd-hint">Del</kbd>
-          </button>
+          </Button>
         </template>
 
         <!-- Corridor hex actions -->
         <template v-else-if="hexType === 'corridor'">
-          <button
+          <Button variant="unstyled" size="unstyled"
             class="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-muted transition-colors text-sm"
             @click="emit('action', 'focus-hex')"
           >
             <Crosshair class="w-4 h-4 text-muted-foreground" />
             <span>{{ t('hexAction.focusHex') }}</span>
             <kbd class="kbd-hint">F</kbd>
-          </button>
-          <button
+          </Button>
+          <Button variant="unstyled" size="unstyled"
             class="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-muted transition-colors text-sm"
             @click="emit('action', 'rename-corridor')"
           >
             <PenSquare class="w-4 h-4 text-cyan-400" />
             <span>{{ t('hexAction.renameCorridor') }}</span>
             <kbd class="kbd-hint">R</kbd>
-          </button>
-          <button
+          </Button>
+          <Button variant="unstyled" size="unstyled"
             class="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-muted transition-colors text-sm"
             @click="emit('action', 'move-hex')"
           >
             <Move class="w-4 h-4 text-muted-foreground" />
             <span>{{ t('hexAction.move') }}</span>
             <kbd class="kbd-hint">M</kbd>
-          </button>
-          <button
+          </Button>
+          <Button variant="unstyled" size="unstyled"
             class="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-destructive/10 text-destructive transition-colors text-sm"
             @click="emit('action', 'remove-corridor')"
           >
             <Trash2 class="w-4 h-4" />
             <span>{{ t('hexAction.remove') }}</span>
             <kbd class="kbd-hint">Del</kbd>
-          </button>
+          </Button>
         </template>
 
         <!-- Human hex actions -->
         <template v-else-if="hexType === 'human'">
-          <button
+          <Button variant="unstyled" size="unstyled"
             class="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-muted transition-colors text-sm"
             @click="emit('action', 'focus-hex')"
           >
             <Crosshair class="w-4 h-4 text-muted-foreground" />
             <span>{{ t('hexAction.focusHex') }}</span>
             <kbd class="kbd-hint">F</kbd>
-          </button>
-          <button
+          </Button>
+          <Button variant="unstyled" size="unstyled"
             class="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-muted transition-colors text-sm"
             @click="emit('action', 'rename-human')"
           >
             <PenSquare class="w-4 h-4 text-amber-400" />
             <span>{{ t('hexAction.renameHuman') }}</span>
             <kbd class="kbd-hint">R</kbd>
-          </button>
-          <button
+          </Button>
+          <Button variant="unstyled" size="unstyled"
             class="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-muted transition-colors text-sm"
             @click="emit('action', 'change-color')"
           >
             <Palette class="w-4 h-4 text-muted-foreground" />
             <span>{{ t('hexAction.changeColor') }}</span>
             <kbd class="kbd-hint">P</kbd>
-          </button>
-          <button
+          </Button>
+          <Button variant="unstyled" size="unstyled"
             class="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-muted transition-colors text-sm"
             @click="emit('action', 'move-hex')"
           >
             <Move class="w-4 h-4 text-muted-foreground" />
             <span>{{ t('hexAction.move') }}</span>
             <kbd class="kbd-hint">M</kbd>
-          </button>
-          <button
+          </Button>
+          <Button variant="unstyled" size="unstyled"
             class="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-destructive/10 text-destructive transition-colors text-sm"
             @click="emit('action', 'remove-human')"
           >
             <Trash2 class="w-4 h-4" />
             <span>{{ t('hexAction.remove') }}</span>
             <kbd class="kbd-hint">Del</kbd>
-          </button>
+          </Button>
         </template>
 
         <!-- Blackboard actions -->
         <template v-else>
-          <button
+          <Button variant="unstyled" size="unstyled"
             class="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-muted transition-colors text-sm"
             @click="emit('action', 'focus-hex')"
           >
             <Crosshair class="w-4 h-4 text-muted-foreground" />
             <span>{{ t('hexAction.focusHex') }}</span>
             <kbd class="kbd-hint">F</kbd>
-          </button>
-          <button
+          </Button>
+          <Button variant="unstyled" size="unstyled"
             class="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-muted transition-colors text-sm"
             @click="emit('action', 'view-blackboard')"
           >
             <Eye class="w-4 h-4 text-primary" />
             <span>{{ t('hexAction.viewBlackboard') }}</span>
             <kbd class="kbd-hint">E</kbd>
-          </button>
+          </Button>
         </template>
       </div>
     </div>

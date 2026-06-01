@@ -1,4 +1,13 @@
+ARG NPM_REGISTRY=""
+ARG ALPINE_MIRROR=""
+
 FROM node:22-alpine AS builder
+ARG NPM_REGISTRY
+ARG ALPINE_MIRROR
+RUN if [ -n "$ALPINE_MIRROR" ]; then \
+      sed -i "s|dl-cdn.alpinelinux.org|${ALPINE_MIRROR}|g" /etc/apk/repositories; \
+    fi && \
+    if [ -n "$NPM_REGISTRY" ]; then npm config set registry "$NPM_REGISTRY"; fi
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci

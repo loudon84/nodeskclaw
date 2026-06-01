@@ -127,6 +127,8 @@ export function startTunnelClient(cfg: OpenClawConfig, callbacks?: TunnelCallbac
   return _instance;
 }
 
+const SEND_BUFFER_MAX = 64;
+
 export class TunnelClient {
   private ws: WebSocket | null = null;
   private reconnectAttempt = 0;
@@ -136,6 +138,7 @@ export class TunnelClient {
   private closed = false;
   private _protocolDowngraded = false;
   private learningHandler: LearningWebhookHandler | null = null;
+  private sendBuffer: TunnelMessage[] = [];
 
   get downgraded(): boolean {
     return this._protocolDowngraded;
@@ -230,8 +233,22 @@ export class TunnelClient {
   }
 
   send(msg: TunnelMessage): void {
+    const current = _instance;
+    if (current && current !== this && current.ws?.readyState === WebSocket.OPEN) {
+      current.send(msg);
+      return;
+    }
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      console.warn("[tunnel] Cannot send — not connected");
+      if (msg.type !== "auth" && this.sendBuffer.length < SEND_BUFFER_MAX) {
+        this.sendBuffer.push(msg);
+        console.debug(
+          "[tunnel] Buffered message (type=%s, buffered=%d)",
+          msg.type,
+          this.sendBuffer.length,
+        );
+      } else if (this.sendBuffer.length >= SEND_BUFFER_MAX) {
+        console.warn("[tunnel] Send buffer full, dropping message type=%s", msg.type);
+      }
       return;
     }
     const data: Record<string, unknown> = {
@@ -243,6 +260,15 @@ export class TunnelClient {
     if (msg.replyTo) data.replyTo = msg.replyTo;
     if (msg.traceId) data.traceId = msg.traceId;
     this.ws.send(JSON.stringify(data));
+  }
+
+  private flushSendBuffer(): void {
+    if (this.sendBuffer.length === 0) return;
+    console.log("[tunnel] Flushing %d buffered messages", this.sendBuffer.length);
+    const pending = this.sendBuffer.splice(0);
+    for (const msg of pending) {
+      this.send(msg);
+    }
   }
 
   sendCollaboration(payload: CollaborationPayload): void {
@@ -261,6 +287,7 @@ export class TunnelClient {
         this.reconnectAttempt = 0;
         this.lastPong = Date.now();
         this.startPingCheck();
+        this.flushSendBuffer();
         this.callbacks?.onAuthOk?.();
         break;
 
@@ -317,6 +344,12 @@ export class TunnelClient {
     const sessionKey = msg.payload.workspace_id
       ? `workspace:${msg.payload.workspace_id}`
       : undefined;
+    const sessionHeaders = sessionKey
+      ? {
+          "X-NoDeskClaw-Session-Key": sessionKey,
+          "X-OpenClaw-Session-Key": sessionKey,
+        }
+      : {};
 
     if (msg.payload.no_reply === true) {
       fetch(url, {
@@ -324,7 +357,7 @@ export class TunnelClient {
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${this.token}`,
-          ...(sessionKey ? { "X-OpenClaw-Session-Key": sessionKey } : {}),
+          ...sessionHeaders,
         },
         body: JSON.stringify({
           model: this.defaultChatModel,
@@ -352,9 +385,7 @@ export class TunnelClient {
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${this.token}`,
-          ...(sessionKey
-            ? { "X-OpenClaw-Session-Key": sessionKey }
-            : {}),
+          ...sessionHeaders,
         },
         body: JSON.stringify({
           model: this.defaultChatModel,
@@ -364,14 +395,32 @@ export class TunnelClient {
       });
 
       if (!resp.ok || !resp.body) {
+        let errorMsg = `OpenClaw API returned ${resp.status}`;
+        let rawBody: string | undefined;
+        try {
+          rawBody = await resp.text();
+          const body = JSON.parse(rawBody);
+          const detail =
+            typeof body?.error === "object"
+              ? body.error.message ?? JSON.stringify(body.error)
+              : typeof body?.error === "string"
+                ? body.error
+                : undefined;
+          if (detail) errorMsg = `OpenClaw API ${resp.status}: ${detail}`;
+        } catch {
+          /* body unreadable or not JSON — keep default message */
+        }
+        const payload: Record<string, string> = {
+          error: errorMsg,
+          error_type: "llm",
+        };
+        if (rawBody) payload.error_raw = rawBody;
         this.send({
           id: crypto.randomUUID(),
           type: "chat.response.error",
           replyTo: msg.id,
           traceId: msg.traceId,
-          payload: {
-            error: `Local OpenClaw API returned ${resp.status}`,
-          },
+          payload,
           ts: Date.now(),
         });
         return;
@@ -382,6 +431,7 @@ export class TunnelClient {
       let buffer = "";
       let dataAccum = "";
       let hasContent = false;
+      let lastError: string | undefined;
 
       const sendDoneOrError = () => {
         if (hasContent) {
@@ -399,7 +449,10 @@ export class TunnelClient {
             type: "chat.response.error",
             replyTo: msg.id,
             traceId: msg.traceId,
-            payload: { error: "empty_response" },
+            payload: {
+              error: lastError || "empty_response",
+              error_type: "llm",
+            },
             ts: Date.now(),
           });
         }
@@ -426,6 +479,12 @@ export class TunnelClient {
             }
             try {
               const chunk = JSON.parse(dataAccum);
+              if (chunk?.error && !lastError) {
+                lastError =
+                  typeof chunk.error === "object"
+                    ? chunk.error.message ?? JSON.stringify(chunk.error)
+                    : String(chunk.error);
+              }
               const content =
                 chunk?.choices?.[0]?.delta?.content ?? "";
               if (content) {
@@ -450,6 +509,12 @@ export class TunnelClient {
       if (dataAccum && dataAccum !== "[DONE]") {
         try {
           const chunk = JSON.parse(dataAccum);
+          if (chunk?.error && !lastError) {
+            lastError =
+              typeof chunk.error === "object"
+                ? chunk.error.message ?? JSON.stringify(chunk.error)
+                : String(chunk.error);
+          }
           const content = chunk?.choices?.[0]?.delta?.content ?? "";
           if (content) {
             hasContent = true;

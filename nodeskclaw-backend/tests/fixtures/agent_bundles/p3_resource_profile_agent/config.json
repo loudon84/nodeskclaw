@@ -1,0 +1,17 @@
+{
+  "name": "Resource Profile Agent",
+  "slug": "p3-resource-profile-agent",
+  "model": "mock/resource",
+  "resourceRecommendation": {
+    "preset": "medium",
+    "cpu_request": "1000m",
+    "cpu_limit": "4000m",
+    "mem_request": "4Gi",
+    "mem_limit": "8Gi",
+    "storage_size": "60Gi",
+    "pvc_access_mode": "ReadWriteOnce"
+  },
+  "env": {
+    "RESOURCE_PROFILE": "medium"
+  }
+}

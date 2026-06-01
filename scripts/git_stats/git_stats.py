@@ -164,11 +164,11 @@ def plot_total_lines(total_lines: dict, output_path: str, granularity: str):
     sorted_dates = sorted(total_lines.keys())
     values = [total_lines[d] for d in sorted_dates]
     
-    date_format = "%Y-%m-%d" if granularity == "daily" else "%Y-%m"
+    fmt = date_format_for_granularity(granularity)
     date_objs = []
     for d in sorted_dates:
         try:
-            date_objs.append(datetime.strptime(d, date_format))
+            date_objs.append(datetime.strptime(d, fmt))
         except ValueError:
             continue
     
@@ -187,11 +187,11 @@ def plot_total_lines(total_lines: dict, output_path: str, granularity: str):
     plt.ylabel('Total Lines', fontsize=12)
     plt.grid(True, alpha=0.3)
     
-    if granularity == "daily":
+    if granularity == "monthly":
+        plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+    else:
         plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
         plt.gca().xaxis.set_major_locator(mdates.AutoDateLocator())
-    elif granularity == "monthly":
-        plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
     
     plt.xticks(rotation=45)
     plt.tight_layout()
@@ -292,6 +292,23 @@ def plot_code_breakdown(dir_stats: dict, output_path: str):
     print(f"Code breakdown chart saved to: {output_path}")
 
 
+def date_format_for_granularity(granularity: str) -> str:
+    return "%Y-%m" if granularity == "monthly" else "%Y-%m-%d"
+
+
+def auto_granularity(since: str, until: str) -> str:
+    """根据时间跨度自动选择最佳粒度"""
+    since_dt = datetime.strptime(since, "%Y-%m-%d")
+    until_dt = datetime.strptime(until, "%Y-%m-%d")
+    span_days = (until_dt - since_dt).days
+    if span_days <= 60:
+        return "daily"
+    elif span_days <= 365:
+        return "weekly"
+    else:
+        return "monthly"
+
+
 def normalize_date(date_str: str, granularity: str) -> str:
     """根据时间粒度标准化日期"""
     try:
@@ -342,7 +359,8 @@ def plot_commit_counts(counts: dict, output_path: str, granularity: str):
     
     sorted_dates = sorted(counts.keys())
     values = [counts[d] for d in sorted_dates]
-    date_objs = [datetime.strptime(d, "%Y-%m-%d" if granularity == "daily" else "%Y-%m") for d in sorted_dates]
+    fmt = date_format_for_granularity(granularity)
+    date_objs = [datetime.strptime(d, fmt) for d in sorted_dates]
     x_dates = mdates.date2num(date_objs)
     
     plt.figure(figsize=(12, 6))
@@ -354,11 +372,11 @@ def plot_commit_counts(counts: dict, output_path: str, granularity: str):
     plt.ylabel('Commits', fontsize=12)
     plt.grid(True, alpha=0.3)
     
-    if granularity == "daily":
+    if granularity == "monthly":
+        plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+    else:
         plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
         plt.gca().xaxis.set_major_locator(mdates.AutoDateLocator())
-    elif granularity == "monthly":
-        plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
     
     plt.xticks(rotation=45)
     plt.tight_layout()
@@ -383,11 +401,11 @@ def plot_code_lines(added: dict, deleted: dict, output_path: str, granularity: s
     add_values = [added.get(d, 0) for d in sorted_dates]
     del_values = [deleted.get(d, 0) for d in sorted_dates]
     
-    date_format = "%Y-%m-%d" if granularity == "daily" else "%Y-%m"
+    fmt = date_format_for_granularity(granularity)
     date_objs = []
     for d in sorted_dates:
         try:
-            date_objs.append(datetime.strptime(d, date_format))
+            date_objs.append(datetime.strptime(d, fmt))
         except ValueError:
             continue
     
@@ -409,11 +427,11 @@ def plot_code_lines(added: dict, deleted: dict, output_path: str, granularity: s
     plt.legend(loc='upper left')
     plt.grid(True, alpha=0.3)
     
-    if granularity == "daily":
+    if granularity == "monthly":
+        plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+    else:
         plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
         plt.gca().xaxis.set_major_locator(mdates.AutoDateLocator())
-    elif granularity == "monthly":
-        plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
     
     plt.xticks(rotation=45)
     plt.tight_layout()
@@ -453,7 +471,7 @@ def main():
     parser.add_argument("--author", help="Author name")
     parser.add_argument("--since", default="auto", help="Start date (YYYY-MM-DD), or 'auto' for first commit")
     parser.add_argument("--until", default="auto", help="End date (YYYY-MM-DD), or 'auto' for last commit")
-    parser.add_argument("--granularity", choices=["daily", "weekly", "monthly"], default="monthly", help="Time granularity")
+    parser.add_argument("--granularity", choices=["daily", "weekly", "monthly", "auto"], default="auto", help="Time granularity (auto = pick based on date range)")
     parser.add_argument("--output-dir", default=".", help="Output directory for charts")
     
     args = parser.parse_args()
@@ -470,6 +488,9 @@ def main():
             args.since = first_date
         if args.until == "auto":
             args.until = last_date
+    
+    if args.granularity == "auto":
+        args.granularity = auto_granularity(args.since, args.until)
     
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)

@@ -65,6 +65,20 @@ jobs:
           echo "Dockerfile 已更新"
           grep -E 'ARG (OPENCLAW_VERSION|IMAGE_VERSION)=' nodeskclaw-artifacts/openclaw-image/Dockerfile
 
+      - name: 获取 CHANGELOG 摘要
+        if: steps.compare.outputs.needs_update == 'true'
+        id: changelog
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+        run: |
+          BODY=$(gh api repos/openclaw/openclaw/releases/tags/v${{ steps.latest.outputs.version }} --jq '.body // "无 Release Notes"' 2>/dev/null || echo "无法获取 Release Notes")
+          BODY="${BODY:0:2000}"
+          {
+            echo "body<<CHANGELOG_EOF"
+            echo "$BODY"
+            echo "CHANGELOG_EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: 创建 Pull Request
         if: steps.compare.outputs.needs_update == 'true'
         uses: peter-evans/create-pull-request@v7
@@ -82,91 +96,36 @@ jobs:
             | 最新版本 | `${{ steps.latest.outputs.version }}` |
             | Release | https://github.com/openclaw/openclaw/releases/tag/v${{ steps.latest.outputs.version }} |
 
-            ---
+            ### CHANGELOG 摘要
 
-            **此 PR 由 GitHub Actions 自动创建。**
+            <details><summary>展开查看</summary>
 
-            合并后请在云平台持续交付流水线中触发镜像构建，或本地执行 `./build.sh <engine> --version <ver>` 构建并推送新镜像。
-          labels: |
-            dependencies
+            ${{ steps.changelog.outputs.body }}
 
-  # ──────────────────────────────────────────────
-  # Nanobot — PyPI registry
-  # ──────────────────────────────────────────────
-  check-nanobot:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+            </details>
 
-      - name: 读取当前版本
-        id: current
-        run: |
-          VERSION=$(sed -n 's/^ARG NANOBOT_VERSION=//p' nodeskclaw-artifacts/nanobot-image/Dockerfile)
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "当前版本: ${VERSION}"
+            ### 集成面检查清单
 
-      - name: 查询 PyPI 最新稳定版
-        id: latest
-        run: |
-          LATEST=$(curl -sS https://pypi.org/pypi/nanobot-ai/json | python3 -c "
-          import json, sys, re
-          data = json.load(sys.stdin)
-          versions = list(data['releases'].keys())
-          stable = [v for v in versions if re.match(r'^\d+\.\d+\.\d+$', v)]
-          stable.sort(key=lambda v: list(map(int, v.split('.'))))
-          print(stable[-1] if stable else '')
-          ")
-          echo "version=${LATEST}" >> "$GITHUB_OUTPUT"
-          echo "最新稳定版: ${LATEST}"
+            对照 `ee/docs/OpenClaw集成面清单.md`，逐项确认新版本兼容性：
 
-      - name: 对比版本
-        id: compare
-        run: |
-          if [ -z "${{ steps.latest.outputs.version }}" ]; then
-            echo "needs_update=false" >> "$GITHUB_OUTPUT"
-            echo "无法获取最新版本，跳过"
-          elif [ "${{ steps.current.outputs.version }}" = "${{ steps.latest.outputs.version }}" ]; then
-            echo "needs_update=false" >> "$GITHUB_OUTPUT"
-            echo "已是最新版本，无需更新"
-          else
-            echo "needs_update=true" >> "$GITHUB_OUTPUT"
-            echo "发现新版本: ${{ steps.current.outputs.version }} -> ${{ steps.latest.outputs.version }}"
-          fi
-
-      - name: 更新 Dockerfile
-        if: steps.compare.outputs.needs_update == 'true'
-        env:
-          CURRENT: ${{ steps.current.outputs.version }}
-          LATEST: ${{ steps.latest.outputs.version }}
-        run: |
-          sed -i "s/ARG NANOBOT_VERSION=${CURRENT}/ARG NANOBOT_VERSION=${LATEST}/" nodeskclaw-artifacts/nanobot-image/Dockerfile
-          sed -i "s/ARG IMAGE_VERSION=v${CURRENT}/ARG IMAGE_VERSION=v${LATEST}/" nodeskclaw-artifacts/nanobot-image/Dockerfile
-          echo "Dockerfile 已更新"
-          grep -E 'ARG (NANOBOT_VERSION|IMAGE_VERSION)=' nodeskclaw-artifacts/nanobot-image/Dockerfile
-
-      - name: 创建 Pull Request
-        if: steps.compare.outputs.needs_update == 'true'
-        uses: peter-evans/create-pull-request@v7
-        with:
-          token: ${{ secrets.PAT_TOKEN }}
-          branch: chore/nanobot-${{ steps.latest.outputs.version }}
-          commit-message: "chore(nanobot): 升级 Nanobot 至 ${{ steps.latest.outputs.version }}"
-          title: "chore(nanobot): 升级 Nanobot 至 ${{ steps.latest.outputs.version }}"
-          body: |
-            ## Nanobot 版本更新
-
-            | 项目 | 值 |
-            |------|-----|
-            | 当前版本 | `${{ steps.current.outputs.version }}` |
-            | 最新版本 | `${{ steps.latest.outputs.version }}` |
-            | PyPI | https://pypi.org/project/nanobot-ai/${{ steps.latest.outputs.version }}/ |
+            - [ ] **配置 Schema** — `openclaw.json` Zod strict schema 是否接受我们写入的全部字段
+            - [ ] **文件系统路径** — `/root/.openclaw/` 目录结构是否变更
+            - [ ] **Session 文件格式** — `sessions.json` / `.jsonl` 结构是否变更
+            - [ ] **Channel Plugin SDK** — `openclaw/plugin-sdk` API 是否有 breaking change
+            - [ ] **Gateway 协议** — 端口 (18789/9721)、`/healthz`、认证方式是否变更
+            - [ ] **CLI 行为** — `openclaw gateway` 参数是否变更
+            - [ ] **Gene/Skill 注入** — `SKILL.md` 格式、`extraDirs` 机制是否变更
+            - [ ] **安全管道** — `tools.exec.*` 配置项、Security WebSocket 协议是否变更
+            - [ ] **镜像验证** — `./verify.sh <image:tag>` 全部 PASS
 
             ---
 
             **此 PR 由 GitHub Actions 自动创建。**
 
-            合并后请在云平台持续交付流水线中触发镜像构建，或本地执行 `./build.sh <engine> --version <ver>` 构建并推送新镜像。
+            合并后请：
+            1. 构建新镜像：`./build.sh openclaw --version ${{ steps.latest.outputs.version }}`
+            2. 运行验证：`./verify.sh <image:tag>`
+            3. 在引擎版本管理中发布新版本
           labels: |
             dependencies
 

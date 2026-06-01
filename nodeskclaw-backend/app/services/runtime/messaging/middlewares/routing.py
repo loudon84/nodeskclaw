@@ -17,18 +17,25 @@ async def _resolve_targets_by_name(
     from app.models.base import not_deleted
     from app.models.node_card import NodeCard
     from app.services.runtime.registries.node_type_registry import NODE_TYPE_REGISTRY
-    from sqlalchemy import or_, select
+    from sqlalchemy import case, or_, select
 
     targets: list[DeliveryTarget] = []
     seen_ids: set[str] = set()
     for name in names:
-        stmt = select(NodeCard).where(
-            NodeCard.workspace_id == workspace_id,
-            not_deleted(NodeCard),
-            or_(NodeCard.name == name, NodeCard.node_id == name),
+        stmt = (
+            select(NodeCard)
+            .where(
+                NodeCard.workspace_id == workspace_id,
+                not_deleted(NodeCard),
+                or_(NodeCard.name == name, NodeCard.node_id == name),
+            )
+            .order_by(
+                case((NodeCard.node_id == name, 0), else_=1),
+                NodeCard.created_at.desc(),
+            )
         )
         result = await db.execute(stmt)
-        card = result.scalar_one_or_none()
+        card = result.scalars().first()
         if card is None:
             logger.warning("Routing: target '%s' not found in workspace %s", name, workspace_id)
             continue
@@ -46,8 +53,29 @@ async def _resolve_targets_by_name(
     return targets
 
 
+def _endpoints_to_targets(endpoints) -> list[DeliveryTarget]:
+    """Convert ReachableEndpoint list to deduplicated DeliveryTarget list."""
+    from app.services.runtime.registries.node_type_registry import NODE_TYPE_REGISTRY
+
+    targets: list[DeliveryTarget] = []
+    seen: set[str] = set()
+    for ep in endpoints:
+        if ep.entity_id in seen:
+            continue
+        seen.add(ep.entity_id)
+        type_spec = NODE_TYPE_REGISTRY.get(ep.endpoint_type)
+        transport = type_spec.transport if type_spec else ""
+        targets.append(DeliveryTarget(
+            node_id=ep.entity_id,
+            node_type=ep.endpoint_type,
+            transport=transport or "",
+        ))
+    return targets
+
+
 async def _resolve_broadcast(
-    workspace_id: str, db, *, sender_id: str = "", max_hops: int = 0, visited: list[str] | None = None,
+    workspace_id: str, db, *, sender_id: str = "", sender_type: str = "",
+    max_hops: int = 0, visited: list[str] | None = None,
 ) -> list[DeliveryTarget]:
     """BFS from sender (or fallback to all addressable) to find reachable endpoints."""
     from app.services.corridor_router import (
@@ -55,6 +83,7 @@ async def _resolve_broadcast(
         get_reachable_endpoints,
         has_any_connections,
     )
+    from app.services.runtime.messaging.envelope import SenderType
     from app.services.runtime.registries.node_type_registry import NODE_TYPE_REGISTRY
 
     has_topo = await has_any_connections(workspace_id, db)
@@ -78,20 +107,21 @@ async def _resolve_broadcast(
                 workspace_id, src_row.hex_q, src_row.hex_r, db,
                 max_hops=max_hops, visited_ids=visited_set,
             )
-            targets_list: list[DeliveryTarget] = []
-            seen_ids: set[str] = set()
-            for ep in endpoints:
-                if ep.entity_id in seen_ids:
-                    continue
-                seen_ids.add(ep.entity_id)
-                type_spec = NODE_TYPE_REGISTRY.get(ep.endpoint_type)
-                transport = type_spec.transport if type_spec else ""
-                targets_list.append(DeliveryTarget(
-                    node_id=ep.entity_id,
-                    node_type=ep.endpoint_type,
-                    transport=transport or "",
-                ))
-            return targets_list
+            return _endpoints_to_targets(endpoints)
+        else:
+            if sender_type == SenderType.AGENT:
+                logger.warning(
+                    "Routing: agent %s has no hex in workspace %s, returning empty broadcast",
+                    sender_id, workspace_id,
+                )
+                return []
+            elif sender_type == SenderType.USER:
+                visited_set = set(visited) if visited else None
+                endpoints, _hooks = await get_reachable_endpoints(
+                    workspace_id, 0, 0, db,
+                    max_hops=max_hops, visited_ids=visited_set,
+                )
+                return _endpoints_to_targets(endpoints)
 
     addressable = await get_all_addressable_nodes(workspace_id, db)
     targets = []
@@ -113,14 +143,16 @@ async def _resolve_broadcast(
 
 
 async def _resolve_anycast(
-    workspace_id: str, db, *, sender_id: str = "", max_hops: int = 0,
+    workspace_id: str, db, *, sender_id: str = "", sender_type: str = "", max_hops: int = 0,
 ) -> list[DeliveryTarget]:
     """Select the single least-loaded reachable node that consumes messages."""
     import random
 
     from app.services.runtime.messaging.queue import get_queue_depth
 
-    candidates = await _resolve_broadcast(workspace_id, db, sender_id=sender_id, max_hops=max_hops)
+    candidates = await _resolve_broadcast(
+        workspace_id, db, sender_id=sender_id, sender_type=sender_type, max_hops=max_hops,
+    )
     if not candidates:
         return []
 
@@ -209,6 +241,9 @@ class RoutingMiddleware(MessageMiddleware):
                 resolved = await _resolve_targets_by_name(
                     explicit_targets, ctx.workspace_id, db,
                 )
+                resolved = await self._filter_unicast_by_topology(
+                    resolved, ctx.workspace_id, data, db,
+                )
             ctx.delivery_plan = DeliveryPlan(
                 targets=explicit_targets,
                 resolved_targets=resolved,
@@ -217,7 +252,8 @@ class RoutingMiddleware(MessageMiddleware):
             )
         elif routing_mode == "anycast" and db is not None:
             resolved = await _resolve_anycast(
-                ctx.workspace_id, db, sender_id=sender_id, max_hops=max_hops,
+                ctx.workspace_id, db, sender_id=sender_id,
+                sender_type=data.sender.type, max_hops=max_hops,
             )
             resolved = [t for t in resolved if t.node_id != sender_id]
             from app.services.runtime.route_cache import route_table
@@ -232,13 +268,14 @@ class RoutingMiddleware(MessageMiddleware):
         else:
             from app.services.runtime.route_cache import route_table
 
-            resolved = route_table.get(ctx.workspace_id)
+            resolved = route_table.get(ctx.workspace_id, sender_id)
             if resolved is None and db is not None:
                 resolved = await _resolve_broadcast(
                     ctx.workspace_id, db,
-                    sender_id=sender_id, max_hops=max_hops, visited=visited_list,
+                    sender_id=sender_id, sender_type=data.sender.type,
+                    max_hops=max_hops, visited=visited_list,
                 )
-                route_table.put(ctx.workspace_id, resolved)
+                route_table.put(ctx.workspace_id, resolved, sender_id)
             resolved = resolved or []
             resolved = [t for t in resolved if t.node_id != sender_id]
 
@@ -326,4 +363,59 @@ class RoutingMiddleware(MessageMiddleware):
             elif level == "CRITICAL_ONLY":
                 if msg_priority == Priority.CRITICAL:
                     kept.append(t)
+        return kept
+
+    @staticmethod
+    async def _filter_unicast_by_topology(
+        resolved: list[DeliveryTarget],
+        workspace_id: str,
+        data,
+        db,
+    ) -> list[DeliveryTarget]:
+        from app.services.runtime.messaging.envelope import IntentType, SenderType
+
+        if not resolved or data.sender.type != SenderType.AGENT:
+            return resolved
+
+        if data.intent == IntentType.COLLABORATE:
+            return resolved
+
+        from app.services.corridor_router import get_reachable_endpoints, has_any_connections
+        from app.models.base import not_deleted
+        from app.models.node_card import NodeCard
+        from sqlalchemy import select
+
+        if not await has_any_connections(workspace_id, db):
+            return resolved
+
+        sender_id = data.sender.instance_id or data.sender.id
+        src_q = await db.execute(
+            select(NodeCard.hex_q, NodeCard.hex_r).where(
+                NodeCard.node_id == sender_id,
+                NodeCard.workspace_id == workspace_id,
+                not_deleted(NodeCard),
+            ).limit(1)
+        )
+        src_row = src_q.first()
+        if src_row is None or src_row.hex_q is None or src_row.hex_r is None:
+            logger.warning(
+                "Routing: agent sender %s has no hex coordinates in workspace %s, skipping topology filter",
+                sender_id, workspace_id,
+            )
+            return resolved
+
+        endpoints, _hooks = await get_reachable_endpoints(
+            workspace_id, src_row.hex_q, src_row.hex_r, db,
+        )
+        reachable_ids = {ep.entity_id for ep in endpoints}
+
+        kept: list[DeliveryTarget] = []
+        for t in resolved:
+            if t.node_id in reachable_ids:
+                kept.append(t)
+            else:
+                logger.warning(
+                    "Routing: target %s unreachable from agent %s via topology, dropped",
+                    t.node_id, sender_id,
+                )
         return kept

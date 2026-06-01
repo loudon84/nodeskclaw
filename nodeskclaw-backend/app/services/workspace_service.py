@@ -2,20 +2,19 @@
 
 import asyncio
 import base64
+import binascii
 import logging
-import re
 from collections.abc import Sequence
+from datetime import datetime
 from typing import Coroutine, Literal
 
 from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.exceptions import BadRequestError
 from app.models.blackboard import Blackboard
 from app.models.blackboard_file import BlackboardFile
-from app.models.blackboard_post import BlackboardPost
-from app.models.blackboard_reply import BlackboardReply
 from app.models.instance import Instance
-from app.models.post_read import PostRead
 from app.models.workspace import Workspace
 from app.models.workspace_agent import WorkspaceAgent
 from app.models.workspace_member import WorkspaceMember, WorkspaceRole
@@ -23,6 +22,10 @@ from app.models.workspace_objective import WorkspaceObjective
 from app.models.workspace_schedule import WorkspaceSchedule
 from app.models.workspace_task import WorkspaceTask
 from app.services import storage_service
+from app.services.workspace_defaults import (
+    DEFAULT_WORKSPACE_SCHEDULE_MESSAGE,
+    DEFAULT_WORKSPACE_SCHEDULE_NAME,
+)
 from app.services.runtime import node_card as node_card_service
 from app.schemas.workspace import (
     AddAgentRequest,
@@ -32,17 +35,10 @@ from app.schemas.workspace import (
     BlackboardUpdate,
     FileInfo,
     FileWriteRequest,
-    MentionInfo,
     MkdirRequest,
     ObjectiveCreate,
     ObjectiveInfo,
     ObjectiveUpdate,
-    PostCreate,
-    PostInfo,
-    PostListItem,
-    PostUpdate,
-    ReplyCreate,
-    ReplyInfo,
     TaskCreate,
     TaskInfo,
     TaskUpdate,
@@ -94,6 +90,17 @@ def _agent_brief(inst: Instance, wa: WorkspaceAgent) -> AgentBrief:
 # ── Workspace CRUD ───────────────────────────────────
 
 async def create_workspace(db: AsyncSession, org_id: str, user_id: str, data: WorkspaceCreate) -> WorkspaceInfo:
+    from app.models.cluster import Cluster
+    cluster_result = await db.execute(
+        select(Cluster).where(
+            Cluster.id == data.cluster_id,
+            Cluster.deleted_at.is_(None),
+        )
+    )
+    cluster = cluster_result.scalar_one_or_none()
+    if cluster is None or cluster.org_id != org_id:
+        raise ValueError("集群不存在或不属于当前组织")
+
     ws = Workspace(
         org_id=org_id,
         name=data.name,
@@ -101,6 +108,7 @@ async def create_workspace(db: AsyncSession, org_id: str, user_id: str, data: Wo
         color=data.color,
         icon=data.icon,
         created_by=user_id,
+        cluster_id=data.cluster_id,
     )
     db.add(ws)
     await db.flush()
@@ -123,9 +131,9 @@ async def create_workspace(db: AsyncSession, org_id: str, user_id: str, data: Wo
 
     schedule = WorkspaceSchedule(
         workspace_id=ws.id,
-        name="定时巡检",
+        name=DEFAULT_WORKSPACE_SCHEDULE_NAME,
         cron_expr="0 */4 * * *",
-        message_template="请检查黑板待办任务队列，接取并执行优先级最高的任务。完成后汇报进展。",
+        message_template=DEFAULT_WORKSPACE_SCHEDULE_MESSAGE,
         is_active=False,
     )
     db.add(schedule)
@@ -135,10 +143,15 @@ async def create_workspace(db: AsyncSession, org_id: str, user_id: str, data: Wo
 
     if data.template_id:
         await _apply_template_to_workspace(db, ws.id, data.template_id, user_id)
+        ws.source_template_id = data.template_id
+        await db.commit()
+        await db.refresh(ws)
 
     return WorkspaceInfo(
         id=ws.id, org_id=ws.org_id, name=ws.name, description=ws.description,
         color=ws.color, icon=ws.icon, created_by=ws.created_by,
+        cluster_id=ws.cluster_id,
+        source_template_id=ws.source_template_id,
         agent_count=0, agents=[], created_at=ws.created_at, updated_at=ws.updated_at,
     )
 
@@ -151,7 +164,9 @@ async def _apply_template_to_workspace(
 
     from app.models.base import not_deleted
     from app.models.corridor import CorridorHex, HexConnection, ordered_pair
+    from app.models.node_card import NodeCard
     from app.models.workspace_template import WorkspaceTemplate
+    from app.services.runtime import node_card as node_card_service
 
     result = await db.execute(
         select(WorkspaceTemplate).where(
@@ -178,6 +193,15 @@ async def _apply_template_to_workspace(
                 created_by=user_id,
             )
             db.add(ch)
+            await node_card_service.create_node_card(
+                db,
+                node_type="corridor",
+                node_id=ch.id,
+                workspace_id=workspace_id,
+                hex_q=ch.hex_q,
+                hex_r=ch.hex_r,
+                name=ch.display_name or "",
+            )
 
     await db.flush()
 
@@ -186,7 +210,7 @@ async def _apply_template_to_workspace(
             edge.get("a_q", 0), edge.get("a_r", 0),
             edge.get("b_q", 0), edge.get("b_r", 0),
         )
-        conn = HexConnection(
+        db.add(HexConnection(
             id=str(uuid.uuid4()),
             workspace_id=workspace_id,
             hex_a_q=aq, hex_a_r=ar,
@@ -194,8 +218,7 @@ async def _apply_template_to_workspace(
             direction=edge.get("direction", "both"),
             auto_created=edge.get("auto_created", False),
             created_by=user_id,
-        )
-        db.add(conn)
+        ))
 
     if "content" in bb_snap:
         bb_result = await db.execute(
@@ -207,6 +230,106 @@ async def _apply_template_to_workspace(
         bb_row = bb_result.scalar_one_or_none()
         if bb_row:
             bb_row.content = bb_snap["content"]
+
+    await db.commit()
+
+
+async def apply_internal_deploy_topology(
+    db: AsyncSession,
+    workspace_id: str,
+    user_id: str,
+    topo_snap: dict,
+    human_specs: list[dict],
+) -> None:
+    """Apply filtered topology snapshot (corridors, connections, human hexes) during template deploy.
+
+    Dual-writes to legacy tables (corridor_hexes/human_hexes) AND node_cards so that
+    existing CRUD endpoints and _is_hex_occupied checks keep working while _build_hex_map
+    (which short-circuits on node_cards) also sees the data.
+    """
+    import uuid
+
+    from app.models.corridor import CorridorHex, HexConnection, HumanHex, ordered_pair
+    from app.services.runtime import node_card as node_card_service
+
+    for node in topo_snap.get("nodes", []):
+        if node.get("node_type") == "corridor":
+            ch = CorridorHex(
+                id=str(uuid.uuid4()),
+                workspace_id=workspace_id,
+                hex_q=node.get("hex_q", 0),
+                hex_r=node.get("hex_r", 0),
+                display_name=node.get("display_name", ""),
+                created_by=user_id,
+            )
+            db.add(ch)
+            await node_card_service.create_node_card(
+                db,
+                node_type="corridor",
+                node_id=ch.id,
+                workspace_id=workspace_id,
+                hex_q=ch.hex_q,
+                hex_r=ch.hex_r,
+                name=ch.display_name or "",
+            )
+
+    for spec in human_specs:
+        hh = HumanHex(
+            id=str(uuid.uuid4()),
+            workspace_id=workspace_id,
+            user_id=user_id,
+            hex_q=spec.get("hex_q", 0),
+            hex_r=spec.get("hex_r", 0),
+            display_name=spec.get("display_name", ""),
+            display_color=spec.get("display_color", "#f59e0b"),
+            channel_type=spec.get("channel_type"),
+            channel_config=spec.get("channel_config"),
+            created_by=user_id,
+        )
+        db.add(hh)
+        await node_card_service.create_node_card(
+            db,
+            node_type="human",
+            node_id=hh.id,
+            workspace_id=workspace_id,
+            hex_q=hh.hex_q,
+            hex_r=hh.hex_r,
+            name=spec.get("display_name", ""),
+            metadata={
+                "user_id": user_id,
+                "display_color": spec.get("display_color", "#f59e0b"),
+                "channel_type": spec.get("channel_type"),
+                "channel_config": spec.get("channel_config"),
+            },
+        )
+
+    await db.flush()
+
+    for edge in topo_snap.get("edges", []):
+        aq, ar, bq, br = ordered_pair(
+            edge.get("a_q", 0), edge.get("a_r", 0),
+            edge.get("b_q", 0), edge.get("b_r", 0),
+        )
+        existing = (await db.execute(
+            select(HexConnection.id).where(
+                HexConnection.workspace_id == workspace_id,
+                HexConnection.hex_a_q == aq,
+                HexConnection.hex_a_r == ar,
+                HexConnection.hex_b_q == bq,
+                HexConnection.hex_b_r == br,
+                HexConnection.deleted_at.is_(None),
+            ).limit(1)
+        )).scalar_one_or_none()
+        if existing is None:
+            db.add(HexConnection(
+                id=str(uuid.uuid4()),
+                workspace_id=workspace_id,
+                hex_a_q=aq, hex_a_r=ar,
+                hex_b_q=bq, hex_b_r=br,
+                direction=edge.get("direction", "both"),
+                auto_created=edge.get("auto_created", False),
+                created_by=user_id,
+            ))
 
     await db.commit()
 
@@ -255,6 +378,7 @@ async def list_workspaces(
         items.append(WorkspaceListItem(
             id=ws.id, name=ws.name, description=ws.description,
             color=ws.color, icon=ws.icon,
+            cluster_id=ws.cluster_id,
             agent_count=len(agents),
             agents=[_agent_brief(inst, wa) for inst, wa in agents],
             created_at=ws.created_at,
@@ -284,6 +408,8 @@ async def get_workspace(db: AsyncSession, workspace_id: str) -> WorkspaceInfo | 
     return WorkspaceInfo(
         id=ws.id, org_id=ws.org_id, name=ws.name, description=ws.description,
         color=ws.color, icon=ws.icon, created_by=ws.created_by,
+        cluster_id=ws.cluster_id,
+        source_template_id=ws.source_template_id,
         agent_count=len(agents),
         agents=[_agent_brief(inst, wa) for inst, wa in agents],
         created_at=ws.created_at, updated_at=ws.updated_at,
@@ -329,12 +455,22 @@ async def delete_workspace(db: AsyncSession, workspace_id: str) -> bool:
 # ── Agent management ─────────────────────────────────
 
 async def add_agent(db: AsyncSession, workspace_id: str, data: AddAgentRequest, user_id: str) -> AgentBrief:
+    ws_result = await db.execute(
+        select(Workspace.cluster_id).where(
+            Workspace.id == workspace_id, Workspace.deleted_at.is_(None),
+        )
+    )
+    ws_cluster_id = ws_result.scalar_one_or_none()
+
     result = await db.execute(
         select(Instance).where(Instance.id == data.instance_id, Instance.deleted_at.is_(None))
     )
     inst = result.scalar_one_or_none()
     if inst is None:
         raise ValueError("实例不存在")
+
+    if ws_cluster_id is not None and inst.cluster_id != ws_cluster_id:
+        raise ValueError("该员工不属于本办公室所在集群，无法加入")
 
     existing_wa = await db.execute(
         select(WorkspaceAgent).where(
@@ -346,17 +482,13 @@ async def add_agent(db: AsyncSession, workspace_id: str, data: AddAgentRequest, 
     if existing_wa.scalar_one_or_none():
         raise ValueError("该员工已在此办公室中")
 
+    occupied_positions = await _occupied_hex_positions(db, workspace_id)
     if data.hex_q is not None:
         hex_q, hex_r = data.hex_q, data.hex_r or 0
+        if (hex_q, hex_r) in occupied_positions:
+            raise ValueError("该位置已被占用，请选择其他位置")
     else:
-        existing_count = await db.execute(
-            select(func.count()).select_from(WorkspaceAgent).where(
-                WorkspaceAgent.workspace_id == workspace_id,
-                WorkspaceAgent.deleted_at.is_(None),
-            )
-        )
-        count = existing_count.scalar() or 0
-        hex_q, hex_r = _spiral_next(count)
+        hex_q, hex_r = _next_available_hex_position(occupied_positions)
 
     wa = WorkspaceAgent(
         workspace_id=workspace_id,
@@ -399,6 +531,10 @@ async def add_agent(db: AsyncSession, workspace_id: str, data: AddAgentRequest, 
                 await db.commit()
                 raise ValueError(f"基因 {slug} 安装失败: {e}") from e
 
+    from app.services import conversation_service
+    await conversation_service.sync_conversations_and_notify_topology(workspace_id, db)
+    await db.commit()
+
     try:
         await _deploy_channel_plugin(inst, db, workspace_id)
         has_topo = await corridor_router.has_any_connections(workspace_id, db)
@@ -430,6 +566,31 @@ def _spiral_next(index: int) -> tuple[int, int]:
         ring += 1
         q += 1
     return positions[index]
+
+
+async def _occupied_hex_positions(db: AsyncSession, workspace_id: str) -> set[tuple[int, int]]:
+    from app.models.corridor import CorridorHex, HumanHex
+    from app.models.node_card import NodeCard
+
+    occupied: set[tuple[int, int]] = set()
+    for model in (NodeCard, WorkspaceAgent, CorridorHex, HumanHex):
+        result = await db.execute(
+            select(model.hex_q, model.hex_r).where(
+                model.workspace_id == workspace_id,
+                model.deleted_at.is_(None),
+            )
+        )
+        occupied.update((q, r) for q, r in result.all())
+    return occupied
+
+
+def _next_available_hex_position(occupied_positions: set[tuple[int, int]]) -> tuple[int, int]:
+    index = 0
+    while True:
+        candidate = _spiral_next(index)
+        if candidate not in occupied_positions:
+            return candidate
+        index += 1
 
 
 async def remove_agent(db: AsyncSession, workspace_id: str, instance_id: str) -> bool:
@@ -469,6 +630,9 @@ async def remove_agent(db: AsyncSession, workspace_id: str, instance_id: str) ->
     await node_card_service.soft_delete_node_card(
         db, node_id=instance_id, workspace_id=workspace_id,
     )
+
+    from app.services import conversation_service
+    await conversation_service.sync_conversations_and_notify_topology(workspace_id, db)
     await db.commit()
     return True
 
@@ -491,8 +655,11 @@ async def update_agent(
         return None
     wa, inst = row
 
+    old_display_name = wa.display_name
+    display_name_changed = False
     if data.display_name is not None:
         wa.display_name = data.display_name or None
+        display_name_changed = wa.display_name != old_display_name
     if data.label is not None:
         wa.label = data.label or None
     if data.theme_color is not None:
@@ -507,9 +674,13 @@ async def update_agent(
             wa.hex_r = new_r
             position_changed = True
     elif data.hex_q is not None:
-        wa.hex_q = data.hex_q
+        if data.hex_q != old_q:
+            wa.hex_q = data.hex_q
+            position_changed = True
     elif data.hex_r is not None:
-        wa.hex_r = data.hex_r
+        if data.hex_r != old_r:
+            wa.hex_r = data.hex_r
+            position_changed = True
 
     card = await node_card_service.get_node_card(
         db, node_id=inst.id, workspace_id=workspace_id,
@@ -532,6 +703,11 @@ async def update_agent(
         await corridor_router.auto_connect_hex(
             workspace_id, wa.hex_q, wa.hex_r, inst.created_by, db,
         )
+        await db.commit()
+
+    if position_changed or display_name_changed:
+        from app.services import conversation_service
+        await conversation_service.sync_conversations_and_notify_topology(workspace_id, db)
         await db.commit()
 
     await db.refresh(wa)
@@ -666,7 +842,11 @@ async def _broadcast_join_message(workspace_id: str, inst: Instance) -> None:
 
     try:
         async with async_session_factory() as db:
-            await msg_service.record_message(
+            from app.services import conversation_service
+
+            blackboard_conv = await conversation_service.get_blackboard_conversation(workspace_id, db)
+            conversation_id = blackboard_conv.id if blackboard_conv else None
+            msg = await msg_service.record_message(
                 db,
                 workspace_id=workspace_id,
                 sender_type="system",
@@ -674,12 +854,20 @@ async def _broadcast_join_message(workspace_id: str, inst: Instance) -> None:
                 sender_name="System",
                 content=f"{agent_name} 已加入办公室",
                 message_type="system",
+                conversation_id=conversation_id,
             )
 
         broadcast_event(workspace_id, "system:welcome", {
+            "id": msg.id,
             "agent_name": agent_name,
             "instance_id": inst.id,
             "content": f"{agent_name} 已加入办公室",
+            "sender_type": msg.sender_type,
+            "sender_id": msg.sender_id,
+            "sender_name": msg.sender_name,
+            "message_type": msg.message_type,
+            "conversation_id": msg.conversation_id,
+            "created_at": msg.created_at.isoformat() if msg.created_at else None,
         })
     except Exception as e:
         logger.warning("广播加入消息失败（非致命）: instance=%s error=%s", inst.name, e)
@@ -690,15 +878,17 @@ async def _broadcast_leave_message(workspace_id: str, inst: Instance) -> None:
     from app.api.workspaces import broadcast_event
     from app.core.deps import async_session_factory
     from app.services import workspace_message_service as msg_service
-    from datetime import datetime, timezone
 
     agent_name = inst.agent_display_name or inst.name
-    msg_id = f"sys-leave-{inst.id[:8]}-{int(datetime.now(timezone.utc).timestamp())}"
     content = f"{agent_name} 已退出办公室"
 
     try:
         async with async_session_factory() as db:
-            await msg_service.record_message(
+            from app.services import conversation_service
+
+            blackboard_conv = await conversation_service.get_blackboard_conversation(workspace_id, db)
+            conversation_id = blackboard_conv.id if blackboard_conv else None
+            msg = await msg_service.record_message(
                 db,
                 workspace_id=workspace_id,
                 sender_type="system",
@@ -706,15 +896,18 @@ async def _broadcast_leave_message(workspace_id: str, inst: Instance) -> None:
                 sender_name="System",
                 content=content,
                 message_type="system",
+                conversation_id=conversation_id,
             )
 
         broadcast_event(workspace_id, "system:info", {
-            "id": msg_id,
-            "sender_type": "system",
-            "sender_id": "system",
-            "sender_name": "System",
+            "id": msg.id,
+            "sender_type": msg.sender_type,
+            "sender_id": msg.sender_id,
+            "sender_name": msg.sender_name,
             "content": content,
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "message_type": msg.message_type,
+            "conversation_id": msg.conversation_id,
+            "created_at": msg.created_at.isoformat() if msg.created_at else None,
         })
     except Exception as e:
         logger.warning("广播退出消息失败（非致命）: instance=%s error=%s", inst.name, e)
@@ -742,6 +935,13 @@ async def _send_welcome_message(workspace_id: str, inst: Instance) -> None:
 
     try:
         from app.services.collaboration_service import _invoke_target_agent
+        from app.core.deps import async_session_factory
+        from app.services import conversation_service
+
+        async with async_session_factory() as db:
+            blackboard_conv = await conversation_service.get_blackboard_conversation(workspace_id, db)
+            conversation_id = blackboard_conv.id if blackboard_conv else None
+
         await _invoke_target_agent(
             workspace_id=workspace_id,
             target_instance=inst,
@@ -749,6 +949,8 @@ async def _send_welcome_message(workspace_id: str, inst: Instance) -> None:
             source_instance_id="system",
             message=WELCOME_MESSAGE,
             depth=0,
+            conversation_id=conversation_id,
+            persist_message_type="chat",
         )
     except Exception as e:
         logger.warning("发送欢迎消息失败（非致命）: instance=%s error=%s", inst.name, e)
@@ -775,8 +977,46 @@ def _task_to_info(
         estimated_value=t.estimated_value, actual_value=t.actual_value,
         token_cost=t.token_cost, blocker_reason=t.blocker_reason,
         completed_at=completed_at, archived_at=t.archived_at,
+        started_at=t.started_at,
+        schedule_id=t.schedule_id, deadline=t.deadline,
+        failure_reason=t.failure_reason,
         created_at=t.created_at, updated_at=t.updated_at,
     )
+
+CONSECUTIVE_FAILURE_THRESHOLD = 3
+
+
+async def update_schedule_failure_count(
+    db: AsyncSession, schedule_id: str | None, *, success: bool, workspace_id: str,
+) -> None:
+    """Update schedule consecutive_failures / last_succeeded_at.
+
+    Does NOT commit — caller controls the transaction boundary.
+    """
+    if not schedule_id:
+        return
+    schedule = await db.get(WorkspaceSchedule, schedule_id)
+    if schedule is None or schedule.deleted_at is not None:
+        return
+
+    if success:
+        schedule.consecutive_failures = 0
+        from datetime import datetime, timezone as _tz
+        schedule.last_succeeded_at = datetime.now(_tz.utc)
+    else:
+        old = schedule.consecutive_failures
+        schedule.consecutive_failures = old + 1
+        new = schedule.consecutive_failures
+        if (old < CONSECUTIVE_FAILURE_THRESHOLD <= new) or (
+            new >= CONSECUTIVE_FAILURE_THRESHOLD and new % CONSECUTIVE_FAILURE_THRESHOLD == 0
+        ):
+            from app.api.workspaces import broadcast_event
+            broadcast_event(workspace_id, "schedule:consecutive_failures", {
+                "schedule_id": schedule.id,
+                "name": schedule.name,
+                "consecutive_failures": new,
+            })
+
 
 def _obj_to_info(o: WorkspaceObjective, children: list[ObjectiveInfo] | None = None) -> ObjectiveInfo:
     return ObjectiveInfo(
@@ -899,7 +1139,7 @@ async def patch_blackboard_section(
 
 # ── Tasks ────────────────────────────────────────────
 
-VALID_TASK_STATUSES = {"pending", "in_progress", "done", "blocked"}
+VALID_TASK_STATUSES = {"pending", "in_progress", "done", "blocked", "failed"}
 VALID_TASK_PRIORITIES = {"low", "medium", "high", "urgent"}
 VALID_TASK_BUCKETS = {"active", "inactive", "column"}
 
@@ -1044,18 +1284,36 @@ async def list_tasks_paginated(
     ], total
 
 
+async def _resolve_assignee_id(
+    db: AsyncSession, workspace_id: str, raw_id: str | None,
+) -> str | None:
+    """Resolve assignee_id that may be a display name into an instance UUID."""
+    if not raw_id:
+        return None
+    from app.services.collaboration_service import looks_like_uuid, find_agent_by_name_or_id
+    if looks_like_uuid(raw_id):
+        return raw_id
+    inst = await find_agent_by_name_or_id(db, workspace_id, raw_id)
+    return inst.id if inst else None
+
+
 async def create_task(
     db: AsyncSession, workspace_id: str, data: TaskCreate,
     created_by_instance_id: str | None = None,
+    schedule_id: str | None = None,
+    deadline: datetime | None = None,
 ) -> TaskInfo:
+    resolved_assignee = await _resolve_assignee_id(db, workspace_id, data.assignee_id)
     task = WorkspaceTask(
         workspace_id=workspace_id,
         title=data.title,
         description=data.description,
         priority=data.priority if data.priority in VALID_TASK_PRIORITIES else "medium",
-        assignee_instance_id=data.assignee_id,
+        assignee_instance_id=resolved_assignee,
         created_by_instance_id=created_by_instance_id,
         estimated_value=data.estimated_value,
+        schedule_id=schedule_id,
+        deadline=deadline,
     )
     db.add(task)
     await db.commit()
@@ -1098,6 +1356,8 @@ async def update_task(
     normalized_status = "done" if data.status == "archived" else data.status
     if normalized_status is not None and normalized_status in VALID_TASK_STATUSES:
         task.status = normalized_status
+        if normalized_status == "in_progress" and task.started_at is None:
+            task.started_at = datetime.now(tz.utc)
         if normalized_status == "done" and task.completed_at is None:
             task.completed_at = datetime.now(tz.utc)
         if normalized_status != "done":
@@ -1105,7 +1365,9 @@ async def update_task(
     if data.priority is not None and data.priority in VALID_TASK_PRIORITIES:
         task.priority = data.priority
     if data.assignee_id is not None:
-        task.assignee_instance_id = data.assignee_id
+        task.assignee_instance_id = await _resolve_assignee_id(
+            db, workspace_id, data.assignee_id,
+        ) or data.assignee_id
     if data.estimated_value is not None:
         task.estimated_value = data.estimated_value
     if data.actual_value is not None:
@@ -1114,6 +1376,9 @@ async def update_task(
         task.token_cost = data.token_cost
     if data.blocker_reason is not None:
         task.blocker_reason = data.blocker_reason
+    if normalized_status == "failed" and task.schedule_id and not task.failure_reason:
+        from app.models.workspace_task import FAILURE_AGENT_REPORTED
+        task.failure_reason = FAILURE_AGENT_REPORTED
 
     await db.commit()
     await db.refresh(task)
@@ -1363,271 +1628,6 @@ async def remove_workspace_member(
     return True
 
 
-# ── Blackboard Posts (BBS) ────────────────────────────
-
-MENTION_PATTERN = re.compile(r"@(agent|human):([a-f0-9\-]{36})")
-
-
-def _parse_mentions(content: str) -> list[MentionInfo]:
-    return [
-        MentionInfo(type=m.group(1), id=m.group(2))
-        for m in MENTION_PATTERN.finditer(content)
-    ]
-
-
-def _reply_to_info(r: BlackboardReply) -> ReplyInfo:
-    return ReplyInfo(
-        id=r.id,
-        post_id=r.post_id,
-        floor_number=r.floor_number,
-        content=r.content,
-        author_type=r.author_type,
-        author_id=r.author_id,
-        author_name=r.author_name,
-        created_at=r.created_at,
-    )
-
-
-def _post_to_info(p: BlackboardPost, *, include_replies: bool = False) -> PostInfo:
-    replies = []
-    if include_replies and p.replies:
-        replies = [
-            _reply_to_info(r) for r in p.replies if r.deleted_at is None
-        ]
-    return PostInfo(
-        id=p.id,
-        workspace_id=p.workspace_id,
-        title=p.title,
-        content=p.content,
-        author_type=p.author_type,
-        author_id=p.author_id,
-        author_name=p.author_name,
-        is_pinned=p.is_pinned,
-        reply_count=p.reply_count,
-        replies=replies,
-        mentions=_parse_mentions(p.content),
-        created_at=p.created_at,
-        updated_at=p.updated_at,
-        last_reply_at=p.last_reply_at,
-    )
-
-
-def _post_to_list_item(p: BlackboardPost) -> PostListItem:
-    return PostListItem(
-        id=p.id,
-        workspace_id=p.workspace_id,
-        title=p.title,
-        author_type=p.author_type,
-        author_id=p.author_id,
-        author_name=p.author_name,
-        is_pinned=p.is_pinned,
-        reply_count=p.reply_count,
-        created_at=p.created_at,
-        last_reply_at=p.last_reply_at,
-    )
-
-
-async def list_posts(
-    db: AsyncSession,
-    workspace_id: str,
-    page: int = 1,
-    size: int = 20,
-) -> tuple[list[PostListItem], int]:
-    base = select(BlackboardPost).where(
-        BlackboardPost.workspace_id == workspace_id,
-        BlackboardPost.deleted_at.is_(None),
-    )
-    total = (await db.execute(select(func.count()).select_from(base.subquery()))).scalar() or 0
-
-    q = base.order_by(
-        BlackboardPost.is_pinned.desc(),
-        BlackboardPost.last_reply_at.desc().nullslast(),
-        BlackboardPost.created_at.desc(),
-    ).offset((page - 1) * size).limit(size)
-    rows = (await db.execute(q)).scalars().all()
-    return [_post_to_list_item(p) for p in rows], total
-
-
-async def get_post(
-    db: AsyncSession, workspace_id: str, post_id: str,
-) -> PostInfo | None:
-    result = await db.execute(
-        select(BlackboardPost).where(
-            BlackboardPost.id == post_id,
-            BlackboardPost.workspace_id == workspace_id,
-            BlackboardPost.deleted_at.is_(None),
-        )
-    )
-    post = result.scalar_one_or_none()
-    if post is None:
-        return None
-    return _post_to_info(post, include_replies=True)
-
-
-async def create_post(
-    db: AsyncSession,
-    workspace_id: str,
-    author_type: str,
-    author_id: str,
-    author_name: str,
-    data: PostCreate,
-) -> tuple[PostInfo, list[MentionInfo]]:
-    post = BlackboardPost(
-        workspace_id=workspace_id,
-        title=data.title,
-        content=data.content,
-        author_type=author_type,
-        author_id=author_id,
-        author_name=author_name,
-    )
-    db.add(post)
-    await db.commit()
-    await db.refresh(post)
-    mentions = _parse_mentions(data.content)
-    return _post_to_info(post), mentions
-
-
-async def update_post(
-    db: AsyncSession,
-    workspace_id: str,
-    post_id: str,
-    author_id: str,
-    data: PostUpdate,
-) -> PostInfo | None:
-    result = await db.execute(
-        select(BlackboardPost).where(
-            BlackboardPost.id == post_id,
-            BlackboardPost.workspace_id == workspace_id,
-            BlackboardPost.deleted_at.is_(None),
-        )
-    )
-    post = result.scalar_one_or_none()
-    if post is None or post.author_id != author_id:
-        return None
-    if data.title is not None:
-        post.title = data.title
-    if data.content is not None:
-        post.content = data.content
-    await db.commit()
-    await db.refresh(post)
-    return _post_to_info(post, include_replies=True)
-
-
-async def delete_post(
-    db: AsyncSession, workspace_id: str, post_id: str,
-) -> bool:
-    result = await db.execute(
-        select(BlackboardPost).where(
-            BlackboardPost.id == post_id,
-            BlackboardPost.workspace_id == workspace_id,
-            BlackboardPost.deleted_at.is_(None),
-        )
-    )
-    post = result.scalar_one_or_none()
-    if post is None:
-        return False
-    post.soft_delete()
-    await db.commit()
-    return True
-
-
-async def pin_post(
-    db: AsyncSession, workspace_id: str, post_id: str, pinned: bool,
-) -> PostInfo | None:
-    result = await db.execute(
-        select(BlackboardPost).where(
-            BlackboardPost.id == post_id,
-            BlackboardPost.workspace_id == workspace_id,
-            BlackboardPost.deleted_at.is_(None),
-        )
-    )
-    post = result.scalar_one_or_none()
-    if post is None:
-        return None
-    post.is_pinned = pinned
-    await db.commit()
-    await db.refresh(post)
-    return _post_to_info(post)
-
-
-async def create_reply(
-    db: AsyncSession,
-    post_id: str,
-    author_type: str,
-    author_id: str,
-    author_name: str,
-    data: ReplyCreate,
-) -> tuple[ReplyInfo, BlackboardPost, list[MentionInfo]] | None:
-    result = await db.execute(
-        select(BlackboardPost).where(
-            BlackboardPost.id == post_id,
-            BlackboardPost.deleted_at.is_(None),
-        )
-    )
-    post = result.scalar_one_or_none()
-    if post is None:
-        return None
-
-    floor_result = await db.execute(
-        select(func.max(BlackboardReply.floor_number)).where(
-            BlackboardReply.post_id == post_id,
-            BlackboardReply.deleted_at.is_(None),
-        )
-    )
-    next_floor_number = (floor_result.scalar_one_or_none() or 0) + 1
-
-    reply = BlackboardReply(
-        post_id=post_id,
-        floor_number=next_floor_number,
-        content=data.content,
-        author_type=author_type,
-        author_id=author_id,
-        author_name=author_name,
-    )
-    db.add(reply)
-    post.reply_count = (post.reply_count or 0) + 1
-    post.last_reply_at = func.now()
-    await db.commit()
-    await db.refresh(reply)
-    await db.refresh(post)
-
-    mentions = _parse_mentions(data.content)
-    return _reply_to_info(reply), post, mentions
-
-
-async def mark_post_read(
-    db: AsyncSession, post_id: str, reader_type: str, reader_id: str,
-) -> None:
-    existing = await db.execute(
-        select(PostRead).where(
-            PostRead.post_id == post_id,
-            PostRead.reader_id == reader_id,
-            PostRead.deleted_at.is_(None),
-        )
-    )
-    if existing.scalar_one_or_none() is not None:
-        return
-    db.add(PostRead(post_id=post_id, reader_type=reader_type, reader_id=reader_id))
-    await db.commit()
-
-
-async def get_unread_count(
-    db: AsyncSession, workspace_id: str, reader_type: str, reader_id: str,
-) -> int:
-    total_posts = select(BlackboardPost.id).where(
-        BlackboardPost.workspace_id == workspace_id,
-        BlackboardPost.deleted_at.is_(None),
-    )
-    read_posts = select(PostRead.post_id).where(
-        PostRead.reader_id == reader_id,
-        PostRead.deleted_at.is_(None),
-    )
-    unread = select(func.count()).select_from(
-        total_posts.except_(read_posts).subquery()
-    )
-    return (await db.execute(unread)).scalar() or 0
-
-
 # ── Blackboard Shared Files (TOS-backed) ─────────────
 
 def _validate_path(path: str) -> str:
@@ -1748,25 +1748,28 @@ async def create_shared_directory(
     return _file_to_info(d)
 
 
-async def upload_shared_file(
+async def upload_shared_file_bytes(
     db: AsyncSession,
     workspace_id: str,
     uploader_type: str,
     uploader_id: str,
     uploader_name: str,
-    data: FileWriteRequest,
+    *,
+    filename: str,
+    file_bytes: bytes,
+    content_type: str,
+    parent_path: str = "/",
 ) -> FileInfo:
-    parent_path = _validate_path(data.parent_path)
-    file_bytes = base64.b64decode(data.content)
+    parent_path = _validate_path(parent_path)
     storage_key = await storage_service.upload_file(
-        file_bytes, data.filename, data.content_type,
+        file_bytes, filename, content_type,
         workspace_id,
     )
     existing = (await db.execute(
         select(BlackboardFile).where(
             BlackboardFile.workspace_id == workspace_id,
             BlackboardFile.parent_path == parent_path,
-            BlackboardFile.name == data.filename,
+            BlackboardFile.name == filename,
             BlackboardFile.deleted_at.is_(None),
         )
     )).scalar_one_or_none()
@@ -1776,7 +1779,7 @@ async def upload_shared_file(
             await storage_service.delete_file(existing.storage_key)
         existing.storage_key = storage_key
         existing.file_size = len(file_bytes)
-        existing.content_type = data.content_type
+        existing.content_type = content_type
         existing.uploader_type = uploader_type
         existing.uploader_id = uploader_id
         existing.uploader_name = uploader_name
@@ -1787,10 +1790,10 @@ async def upload_shared_file(
     f = BlackboardFile(
         workspace_id=workspace_id,
         parent_path=parent_path,
-        name=data.filename,
+        name=filename,
         is_directory=False,
         file_size=len(file_bytes),
-        content_type=data.content_type,
+        content_type=content_type,
         storage_key=storage_key,
         uploader_type=uploader_type,
         uploader_id=uploader_id,
@@ -1800,6 +1803,58 @@ async def upload_shared_file(
     await db.commit()
     await db.refresh(f)
     return _file_to_info(f)
+
+
+async def upload_shared_file(
+    db: AsyncSession,
+    workspace_id: str,
+    uploader_type: str,
+    uploader_id: str,
+    uploader_name: str,
+    data: FileWriteRequest,
+) -> FileInfo:
+    try:
+        file_bytes = base64.b64decode(data.content, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise BadRequestError(
+            "文件内容不是有效的 Base64 编码",
+            message_key="errors.file.invalid_base64",
+        ) from exc
+    return await upload_shared_file_bytes(
+        db, workspace_id, uploader_type, uploader_id, uploader_name,
+        filename=data.filename, file_bytes=file_bytes,
+        content_type=data.content_type, parent_path=data.parent_path,
+    )
+
+
+async def copy_shared_file(
+    db: AsyncSession,
+    workspace_id: str,
+    uploader_type: str,
+    uploader_id: str,
+    uploader_name: str,
+    file_id: str,
+    target_parent_path: str,
+    target_filename: str | None = None,
+) -> FileInfo | None:
+    source = (await db.execute(
+        select(BlackboardFile).where(
+            BlackboardFile.id == file_id,
+            BlackboardFile.workspace_id == workspace_id,
+            BlackboardFile.is_directory.is_(False),
+            BlackboardFile.deleted_at.is_(None),
+        )
+    )).scalar_one_or_none()
+    if source is None or not source.storage_key:
+        return None
+    content = await storage_service.download_file(source.storage_key)
+    return await upload_shared_file_bytes(
+        db, workspace_id, uploader_type, uploader_id, uploader_name,
+        filename=target_filename or source.name,
+        file_bytes=content,
+        content_type=source.content_type,
+        parent_path=target_parent_path,
+    )
 
 
 async def get_shared_file_url(
@@ -1870,3 +1925,47 @@ async def delete_shared_file(
     f.soft_delete()
     await db.commit()
     return True
+
+
+async def restart_all_instances(workspace_id: str, db: AsyncSession) -> dict:
+    from app.services import instance_service
+
+    agents_result = await db.execute(
+        select(Instance, WorkspaceAgent).join(
+            WorkspaceAgent,
+            (WorkspaceAgent.instance_id == Instance.id) & (WorkspaceAgent.deleted_at.is_(None)),
+        ).where(
+            WorkspaceAgent.workspace_id == workspace_id,
+            Instance.deleted_at.is_(None),
+        )
+    )
+    agents = agents_result.all()
+
+    restartable = [
+        (inst, wa) for inst, wa in agents
+        if inst.status in ("running", "learning")
+    ]
+
+    if not restartable:
+        return {"total": len(agents), "succeeded": 0, "failed": 0, "skipped": len(agents), "details": []}
+
+    details = []
+    succeeded = 0
+    failed = 0
+    for inst, _wa in restartable:
+        try:
+            await instance_service.restart_instance(inst.id, db)
+            succeeded += 1
+            details.append({"instance_id": inst.id, "name": inst.name, "status": "ok"})
+        except Exception as exc:
+            failed += 1
+            details.append({"instance_id": inst.id, "name": inst.name, "status": "failed", "error": str(exc)[:200]})
+            logger.warning("批量重启: 实例 %s 失败: %s", inst.name, exc)
+
+    return {
+        "total": len(agents),
+        "succeeded": succeeded,
+        "failed": failed,
+        "skipped": len(agents) - len(restartable),
+        "details": details,
+    }

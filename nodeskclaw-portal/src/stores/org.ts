@@ -12,6 +12,7 @@ export interface OrgInfo {
   max_cpu_total: string
   max_mem_total: string
   max_storage_total: string
+  max_collaboration_depth: number
   cluster_id: string | null
   cluster_name?: string | null
   is_active: boolean
@@ -83,6 +84,12 @@ export const useOrgStore = defineStore('org', () => {
     return res.data.data
   }
 
+  async function updateCollaborationDepth(depth: number) {
+    const res = await api.put('/orgs/current/collaboration-depth', { max_collaboration_depth: depth })
+    currentOrg.value = res.data.data
+    return res.data.data
+  }
+
   // ── 成员管理 ──
 
   async function fetchMembers() {
@@ -138,6 +145,7 @@ export const useOrgStore = defineStore('org', () => {
     fetchMyOrg,
     fetchCurrentOrg,
     updateOrgName,
+    updateCollaborationDepth,
     fetchMembers,
     addMember,
     updateMemberRole,

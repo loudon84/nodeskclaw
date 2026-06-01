@@ -3,10 +3,12 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { useClusterStore, type ClusterInfo } from '@/stores/cluster'
-import { useFeature } from '@/composables/useFeature'
 import { useToast } from '@/composables/useToast'
 import { useConfirm } from '@/composables/useConfirm'
 import { resolveApiErrorMessage } from '@/i18n/error'
+import { Button } from '@/components/ui/button'
+import { Textarea } from '@/components/ui/textarea'
+import { Input } from '@/components/ui/input'
 import {
   Server,
   Container,
@@ -24,7 +26,6 @@ const router = useRouter()
 const clusterStore = useClusterStore()
 const toast = useToast()
 const { confirm } = useConfirm()
-const { isEnabled: isMultiCluster } = useFeature('multi_cluster')
 
 const loading = ref(true)
 const testingId = ref<string | null>(null)
@@ -42,18 +43,15 @@ const showKubeconfigDialog = ref(false)
 const kubeconfigForm = ref({ id: '', kubeconfig: '' })
 const updatingKubeconfig = ref(false)
 
-type DisplayMode = 'setup' | 'single' | 'list'
+type DisplayMode = 'setup' | 'list'
 
 const displayMode = computed<DisplayMode>(() => {
-  if (isMultiCluster.value) return 'list'
-  if (clusterStore.clusters.length > 1) return 'list'
-  if (clusterStore.clusters.length === 1) return 'single'
-  return 'setup'
+  return clusterStore.clusters.length === 0 ? 'setup' : 'list'
 })
 
-const canAddCluster = computed(() => isMultiCluster.value || clusterStore.clusters.length === 0)
+const canAddCluster = computed(() => true)
 
-const singleCluster = computed(() => clusterStore.clusters[0] ?? null)
+
 
 const addFormValid = computed(() => {
   if (!addForm.value.name.trim()) return false
@@ -215,14 +213,14 @@ function statusDotClass(status: string) {
         <h2 class="text-base font-semibold">{{ t('clusters.title') }}</h2>
         <p class="text-sm text-muted-foreground mt-0.5">{{ t('clusters.subtitle') }}</p>
       </div>
-      <button
+      <Button variant="unstyled" size="unstyled"
         v-if="canAddCluster && displayMode !== 'setup'"
         class="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors"
         @click="openAddDialog"
       >
         <Plus class="w-4 h-4" />
         {{ t('clusters.addCluster') }}
-      </button>
+      </Button>
     </div>
 
     <!-- Loading -->
@@ -240,82 +238,17 @@ function statusDotClass(status: string) {
           <h3 class="font-semibold">{{ t('clusters.setupTitle') }}</h3>
           <p class="text-sm text-muted-foreground">{{ t('clusters.setupDesc') }}</p>
         </div>
-        <button
+        <Button variant="unstyled" size="unstyled"
           class="flex items-center gap-1.5 px-5 py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors"
           @click="openAddDialog"
         >
           <Plus class="w-4 h-4" />
           {{ t('clusters.addCluster') }}
-        </button>
+        </Button>
       </div>
     </template>
 
-    <!-- Single Cluster Card -->
-    <template v-else-if="displayMode === 'single' && singleCluster">
-      <div class="p-5 rounded-xl border border-border bg-card space-y-4">
-        <div class="flex items-center justify-between">
-          <div class="flex items-center gap-3">
-            <div class="w-10 h-10 rounded-lg flex items-center justify-center" :class="isDockerCluster(singleCluster) ? 'bg-blue-500/10' : 'bg-primary/10'">
-              <Container v-if="isDockerCluster(singleCluster)" class="w-5 h-5 text-blue-500" />
-              <Server v-else class="w-5 h-5 text-primary" />
-            </div>
-            <div>
-              <div class="flex items-center gap-2">
-                <span class="font-semibold">{{ singleCluster.name }}</span>
-                <span class="w-2 h-2 rounded-full" :class="statusDotClass(singleCluster.status)" />
-                <span class="text-xs text-muted-foreground">{{ t(`clusters.status.${singleCluster.status}`) }}</span>
-              </div>
-              <p v-if="isDockerCluster(singleCluster)" class="text-xs text-muted-foreground mt-0.5">{{ t('clusters.dockerLabel') }}</p>
-              <p v-else class="text-xs text-muted-foreground mt-0.5">{{ singleCluster.api_server_url || '-' }}</p>
-            </div>
-          </div>
-        </div>
-
-        <div v-if="!isDockerCluster(singleCluster)" class="flex items-center gap-4 text-xs text-muted-foreground">
-          <span v-if="singleCluster.k8s_version">K8s {{ singleCluster.k8s_version }}</span>
-          <span>{{ t(`clusters.provider.${singleCluster.provider}`) }}</span>
-          <span>{{ t(`clusters.authType.${singleCluster.auth_type}`) }}</span>
-        </div>
-
-        <div class="flex items-center gap-2 pt-1">
-          <button
-            class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-sm hover:bg-accent transition-colors disabled:opacity-50"
-            :disabled="testingId === singleCluster.id"
-            @click="handleTest(singleCluster.id)"
-          >
-            <Loader2 v-if="testingId === singleCluster.id" class="w-3.5 h-3.5 animate-spin" />
-            <Plug v-else class="w-3.5 h-3.5" />
-            {{ t('clusters.testConnection') }}
-          </button>
-          <template v-if="!isDockerCluster(singleCluster)">
-            <button
-              class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-sm hover:bg-accent transition-colors"
-              @click="openKubeconfigUpdate(singleCluster)"
-            >
-              {{ t('clusters.updateKubeconfig') }}
-            </button>
-          </template>
-          <button
-            class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-sm text-red-400 hover:bg-red-500/10 transition-colors"
-            @click="handleDelete(singleCluster)"
-          >
-            <Trash2 class="w-3.5 h-3.5" />
-            {{ t('common.delete') }}
-          </button>
-          <div class="flex-1" />
-          <button
-            v-if="!isDockerCluster(singleCluster)"
-            class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors"
-            @click="goToDetail(singleCluster.id)"
-          >
-            {{ t('clusters.viewDetail') }}
-            <ChevronRight class="w-3.5 h-3.5" />
-          </button>
-        </div>
-      </div>
-    </template>
-
-    <!-- Multi-cluster List -->
+    <!-- Cluster List -->
     <template v-else-if="displayMode === 'list'">
       <div v-if="clusterStore.clusters.length === 0" class="text-center py-20 space-y-3">
         <Server class="w-12 h-12 mx-auto text-muted-foreground/40" />
@@ -353,7 +286,7 @@ function statusDotClass(status: string) {
           </div>
 
           <div class="flex items-center gap-1.5 shrink-0 ml-3" @click.stop>
-            <button
+            <Button variant="unstyled" size="unstyled"
               class="p-1.5 rounded-md text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors disabled:opacity-50"
               :disabled="testingId === cluster.id"
               :title="t('clusters.testConnection')"
@@ -361,22 +294,22 @@ function statusDotClass(status: string) {
             >
               <Loader2 v-if="testingId === cluster.id" class="w-4 h-4 animate-spin" />
               <Plug v-else class="w-4 h-4" />
-            </button>
-            <button
+            </Button>
+            <Button variant="unstyled" size="unstyled"
               v-if="!isDockerCluster(cluster)"
               class="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
               :title="t('clusters.rename')"
               @click="openRename(cluster)"
             >
               <Pencil class="w-4 h-4" />
-            </button>
-            <button
+            </Button>
+            <Button variant="unstyled" size="unstyled"
               class="p-1.5 rounded-md text-muted-foreground hover:text-red-400 hover:bg-red-500/10 transition-colors"
               :title="t('common.delete')"
               @click="handleDelete(cluster)"
             >
               <Trash2 class="w-4 h-4" />
-            </button>
+            </Button>
           </div>
         </div>
       </div>
@@ -392,16 +325,16 @@ function statusDotClass(status: string) {
         <div class="bg-card rounded-2xl border border-border shadow-xl w-full max-w-lg p-6 space-y-5">
           <div class="flex items-center justify-between">
             <h3 class="font-semibold text-base">{{ t('clusters.addCluster') }}</h3>
-            <button class="text-muted-foreground hover:text-foreground" @click="showAddDialog = false">
+            <Button variant="unstyled" size="unstyled" class="text-muted-foreground hover:text-foreground" @click="showAddDialog = false">
               <X class="w-4 h-4" />
-            </button>
+            </Button>
           </div>
 
           <!-- Type Selector -->
           <div>
             <label class="block text-sm text-muted-foreground mb-2">{{ t('clusters.clusterType') }}</label>
             <div class="grid grid-cols-2 gap-3">
-              <button
+              <Button variant="unstyled" size="unstyled"
                 class="flex items-center gap-3 p-3.5 rounded-xl border-2 transition-all text-left"
                 :class="addForm.computeProvider === 'k8s' ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/30'"
                 @click="selectType('k8s')"
@@ -413,8 +346,8 @@ function statusDotClass(status: string) {
                   <div class="text-sm font-medium">{{ t('clusters.typeK8s') }}</div>
                   <div class="text-xs text-muted-foreground">{{ t('clusters.k8sDesc') }}</div>
                 </div>
-              </button>
-              <button
+              </Button>
+              <Button variant="unstyled" size="unstyled"
                 class="flex items-center gap-3 p-3.5 rounded-xl border-2 transition-all text-left"
                 :class="addForm.computeProvider === 'docker' ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/30'"
                 @click="selectType('docker')"
@@ -429,7 +362,7 @@ function statusDotClass(status: string) {
                   </div>
                   <div class="text-xs text-muted-foreground">{{ t('clusters.dockerDesc') }}</div>
                 </div>
-              </button>
+              </Button>
             </div>
           </div>
 
@@ -437,7 +370,7 @@ function statusDotClass(status: string) {
           <div v-if="addForm.computeProvider === 'k8s'" class="space-y-3">
             <div>
               <label class="block text-sm text-muted-foreground mb-1">KubeConfig</label>
-              <textarea
+              <Textarea
                 v-model="addForm.kubeconfig"
                 rows="8"
                 class="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none"
@@ -449,7 +382,7 @@ function statusDotClass(status: string) {
           <!-- Cluster Name -->
           <div>
             <label class="block text-sm text-muted-foreground mb-1">{{ t('clusters.clusterName') }}</label>
-            <input
+            <Input
               v-model="addForm.name"
               type="text"
               class="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
@@ -459,18 +392,18 @@ function statusDotClass(status: string) {
           </div>
 
           <div class="flex justify-end gap-2 pt-1">
-            <button
+            <Button variant="unstyled" size="unstyled"
               class="px-4 py-2 rounded-lg border border-border text-sm hover:bg-accent transition-colors"
               @click="showAddDialog = false"
-            >{{ t('common.cancel') }}</button>
-            <button
+            >{{ t('common.cancel') }}</Button>
+            <Button variant="unstyled" size="unstyled"
               class="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
               :disabled="!addFormValid || adding"
               @click="handleAdd"
             >
               <Loader2 v-if="adding" class="w-4 h-4 animate-spin" />
               {{ t('clusters.addCluster') }}
-            </button>
+            </Button>
           </div>
         </div>
       </div>
@@ -486,29 +419,29 @@ function statusDotClass(status: string) {
         <div class="bg-card rounded-2xl border border-border shadow-xl w-full max-w-sm p-6 space-y-4">
           <div class="flex items-center justify-between">
             <h3 class="font-semibold text-base">{{ t('clusters.rename') }}</h3>
-            <button class="text-muted-foreground hover:text-foreground" @click="showRenameDialog = false">
+            <Button variant="unstyled" size="unstyled" class="text-muted-foreground hover:text-foreground" @click="showRenameDialog = false">
               <X class="w-4 h-4" />
-            </button>
+            </Button>
           </div>
-          <input
+          <Input
             v-model="renameForm.name"
             type="text"
             class="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
             @keyup.enter="handleRename"
           />
           <div class="flex justify-end gap-2">
-            <button
+            <Button variant="unstyled" size="unstyled"
               class="px-4 py-2 rounded-lg border border-border text-sm hover:bg-accent transition-colors"
               @click="showRenameDialog = false"
-            >{{ t('common.cancel') }}</button>
-            <button
+            >{{ t('common.cancel') }}</Button>
+            <Button variant="unstyled" size="unstyled"
               class="px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
               :disabled="!renameForm.name.trim() || renaming"
               @click="handleRename"
             >
               <Loader2 v-if="renaming" class="w-4 h-4 animate-spin" />
               <template v-else>{{ t('common.confirm') }}</template>
-            </button>
+            </Button>
           </div>
         </div>
       </div>
@@ -524,29 +457,29 @@ function statusDotClass(status: string) {
         <div class="bg-card rounded-2xl border border-border shadow-xl w-full max-w-lg p-6 space-y-4">
           <div class="flex items-center justify-between">
             <h3 class="font-semibold text-base">{{ t('clusters.updateKubeconfig') }}</h3>
-            <button class="text-muted-foreground hover:text-foreground" @click="showKubeconfigDialog = false">
+            <Button variant="unstyled" size="unstyled" class="text-muted-foreground hover:text-foreground" @click="showKubeconfigDialog = false">
               <X class="w-4 h-4" />
-            </button>
+            </Button>
           </div>
-          <textarea
+          <Textarea
             v-model="kubeconfigForm.kubeconfig"
             rows="10"
             class="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none"
             :placeholder="t('clusters.kubeconfigPlaceholder')"
           />
           <div class="flex justify-end gap-2">
-            <button
+            <Button variant="unstyled" size="unstyled"
               class="px-4 py-2 rounded-lg border border-border text-sm hover:bg-accent transition-colors"
               @click="showKubeconfigDialog = false"
-            >{{ t('common.cancel') }}</button>
-            <button
+            >{{ t('common.cancel') }}</Button>
+            <Button variant="unstyled" size="unstyled"
               class="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
               :disabled="!kubeconfigForm.kubeconfig.trim() || updatingKubeconfig"
               @click="handleKubeconfigUpdate"
             >
               <Loader2 v-if="updatingKubeconfig" class="w-4 h-4 animate-spin" />
               {{ t('clusters.updateKubeconfig') }}
-            </button>
+            </Button>
           </div>
         </div>
       </div>

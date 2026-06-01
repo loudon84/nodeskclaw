@@ -16,7 +16,7 @@ from app.models.user import User
 from app.schemas.common import ApiResponse
 from app.schemas.deploy import DeployProgress, DeployRequest, PrecheckResult
 from app.services import deploy_service
-from app.services.k8s.event_bus import event_bus
+from app.services.k8s.event_bus import SSEEvent, event_bus
 
 logger = logging.getLogger(__name__)
 
@@ -71,29 +71,66 @@ async def deploy(
 @router.post("/{deploy_id}/cancel", response_model=ApiResponse[dict])
 async def cancel_deploy_endpoint(
     deploy_id: str,
-    _current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """立即取消部署：杀掉后台协程 + 删除 namespace + 更新 DB。"""
+    await deploy_service.require_deploy_cancel_org_access(
+        deploy_id,
+        db,
+        current_user.current_org_id,
+    )
     result = await deploy_service.cancel_deploy(deploy_id)
-    await hooks.emit("operation_audit", action="deploy.cancelled", target_type="instance", target_id=deploy_id, actor_id=_current_user.id, details={"deploy_id": deploy_id, "source": "admin"})
+    await hooks.emit("operation_audit", action="deploy.cancelled", target_type="instance", target_id=deploy_id, actor_id=current_user.id, org_id=current_user.current_org_id, details={"deploy_id": deploy_id, "source": "admin"})
     logger.info("取消部署: deploy_id=%s, result=%s", deploy_id, result)
     return ApiResponse(data={"deploy_id": deploy_id, "message": result})
 
 
 @router.get("/progress/{deploy_id}")
-async def deploy_progress_stream(deploy_id: str):
+async def deploy_progress_stream(
+    deploy_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """SSE stream for deploy progress.
 
     前端拿到 deploy_id 后立即连接此端点；后台管道延迟 0.3 秒后开始推送事件，
     确保 SSE 订阅已建立。超过 5 分钟无事件自动断开防止连接泄漏。
     """
 
+    await deploy_service.require_deploy_progress_org_access(
+        deploy_id,
+        db,
+        current_user.current_org_id,
+    )
+    queue, cleanup = event_bus.create_subscription("deploy_progress")
+    try:
+        snapshot = await deploy_service.get_deploy_progress_snapshot(deploy_id, db)
+    except Exception:
+        cleanup()
+        raise
+
+    if snapshot:
+        cleanup()
+
     async def generate():
-        timeout = 300  # 5 分钟超时
-        async for event in event_bus.subscribe("deploy_progress"):
-            if event.data.get("deploy_id") == deploy_id:
-                yield event.format()
-                if event.data.get("status") in ("success", "failed"):
-                    break
+        if snapshot:
+            yield SSEEvent(
+                event="deploy_progress",
+                data=snapshot.model_dump(),
+            ).format()
+            return
+
+        try:
+            while True:
+                event = await queue.get()
+                if event.data.get("deploy_id") == deploy_id:
+                    yield event.format()
+                    step = event.data.get("step") or 0
+                    total_steps = event.data.get("total_steps") or 0
+                    if event.data.get("status") in ("success", "failed") and step >= total_steps:
+                        break
+        finally:
+            cleanup()
 
     return StreamingResponse(generate(), media_type="text/event-stream")

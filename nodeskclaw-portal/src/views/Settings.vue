@@ -7,6 +7,8 @@ import { useToast } from '@/composables/useToast'
 import { resolveApiErrorMessage } from '@/i18n/error'
 import api from '@/services/api'
 import { User, LogOut, Eye, EyeOff, KeyRound } from 'lucide-vue-next'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 
 const authStore = useAuthStore()
 const router = useRouter()
@@ -107,12 +109,12 @@ async function handleSubmit() {
         <div v-if="hasPassword">
           <label class="block text-sm text-muted-foreground mb-1">{{ t('settings.currentPassword') }}</label>
           <div class="relative">
-            <input
+            <Input
               v-model="oldPassword"
               :type="showOldPassword ? 'text' : 'password'"
               class="w-full px-3 py-2 pr-10 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-1 focus:ring-ring"
             />
-            <button
+            <Button variant="unstyled" size="unstyled"
               type="button"
               tabindex="-1"
               class="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
@@ -120,7 +122,7 @@ async function handleSubmit() {
             >
               <EyeOff v-if="showOldPassword" class="w-4 h-4" />
               <Eye v-else class="w-4 h-4" />
-            </button>
+            </Button>
           </div>
         </div>
 
@@ -128,12 +130,12 @@ async function handleSubmit() {
         <div>
           <label class="block text-sm text-muted-foreground mb-1">{{ t('settings.newPassword') }}</label>
           <div class="relative">
-            <input
+            <Input
               v-model="newPassword"
               :type="showNewPassword ? 'text' : 'password'"
               class="w-full px-3 py-2 pr-10 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-1 focus:ring-ring"
             />
-            <button
+            <Button variant="unstyled" size="unstyled"
               type="button"
               tabindex="-1"
               class="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
@@ -141,7 +143,7 @@ async function handleSubmit() {
             >
               <EyeOff v-if="showNewPassword" class="w-4 h-4" />
               <Eye v-else class="w-4 h-4" />
-            </button>
+            </Button>
           </div>
           <p v-if="passwordTooShort" class="mt-1 text-xs text-red-500">
             {{ t('settings.passwordTooShort') }}
@@ -152,12 +154,12 @@ async function handleSubmit() {
         <div>
           <label class="block text-sm text-muted-foreground mb-1">{{ t('settings.confirmPassword') }}</label>
           <div class="relative">
-            <input
+            <Input
               v-model="confirmPassword"
               :type="showConfirmPassword ? 'text' : 'password'"
               class="w-full px-3 py-2 pr-10 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-1 focus:ring-ring"
             />
-            <button
+            <Button variant="unstyled" size="unstyled"
               type="button"
               tabindex="-1"
               class="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
@@ -165,7 +167,7 @@ async function handleSubmit() {
             >
               <EyeOff v-if="showConfirmPassword" class="w-4 h-4" />
               <Eye v-else class="w-4 h-4" />
-            </button>
+            </Button>
           </div>
           <p v-if="passwordMismatch" class="mt-1 text-xs text-red-500">
             {{ t('settings.passwordMismatch') }}
@@ -173,26 +175,26 @@ async function handleSubmit() {
         </div>
 
         <div class="flex justify-end pt-1">
-          <button
+          <Button variant="unstyled" size="unstyled"
             type="submit"
             :disabled="!canSubmit"
             class="px-4 py-2 text-sm rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {{ saving ? t('settings.saving') : (hasPassword ? t('settings.changePassword') : t('settings.setPassword')) }}
-          </button>
+          </Button>
         </div>
       </form>
     </div>
 
     <!-- 操作 -->
     <div class="mt-6 space-y-3">
-      <button
+      <Button variant="unstyled" size="unstyled"
         class="w-full flex items-center gap-3 px-4 py-3 rounded-xl border border-border bg-card text-sm hover:bg-card/80 transition-colors text-red-400"
         @click="handleLogout"
       >
         <LogOut class="w-4 h-4" />
         {{ t('common.logout') }}
-      </button>
+      </Button>
     </div>
   </div>
 </template>

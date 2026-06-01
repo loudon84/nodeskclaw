@@ -40,6 +40,7 @@ def build_system_envelope(
             intent=IntentType.NOTIFY,
             content=content,
             priority=Priority.NORMAL,
+            mentions=resolved_mention_targets,
             extensions={"mention_targets": resolved_mention_targets},
             routing=MessageRouting(mode=mode, targets=routing_targets),
         ),

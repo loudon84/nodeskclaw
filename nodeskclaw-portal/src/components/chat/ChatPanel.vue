@@ -18,22 +18,33 @@ import { renderMarkdown as renderMd } from '@/utils/markdown'
 import { copyToClipboard } from '@/utils/clipboard'
 import { AgentMention } from './extensions/agentMention'
 import { SlashCommand } from './extensions/slashCommand'
+import { computeMentionCandidates } from '@/utils/topologyBfs'
+import { formatTime as formatLocaleTime } from '@/utils/localeFormat'
+import { filterMessagesForConversation } from '@/utils/workspaceConversations'
+import { Button } from '@/components/ui/button'
+import { FileInput, Input } from '@/components/ui/input'
+import { useConfirm } from '@/composables/useConfirm'
 
 const props = withDefaults(defineProps<{
   workspaceId: string
   canSend?: boolean
+  conversationId?: string
 }>(), {
   canSend: true,
+  conversationId: undefined,
 })
 
-const { t, te } = useI18n()
+const { t, te, locale } = useI18n()
 const store = useWorkspaceStore()
 const authStore = useAuthStore()
 const toast = useToast()
+const { confirm } = useConfirm()
 
 const messagesEl = ref<HTMLElement | null>(null)
 
-const messages = computed(() => store.chatMessages)
+const messages = computed(() => {
+  return filterMessagesForConversation(store.chatMessages, props.conversationId, store.conversations)
+})
 const chatSearch = ref('')
 const searchFrom = ref('')
 const searchTo = ref('')
@@ -44,7 +55,10 @@ let searchRequestId = 0
 let searchTimer: ReturnType<typeof setTimeout> | null = null
 const normalizedSearch = computed(() => chatSearch.value.trim().toLowerCase())
 const searchActive = computed(() => Boolean(normalizedSearch.value || searchFrom.value || searchTo.value))
-const displayedMessages = computed(() => searchActive.value ? searchedMessages.value : messages.value)
+const displayedMessages = computed(() => {
+  if (!searchActive.value) return messages.value
+  return filterMessagesForConversation(searchedMessages.value, props.conversationId, store.conversations)
+})
 const searchResultCount = computed(() => displayedMessages.value.length)
 const sending = computed(() => store.chatLoading)
 const typingAgents = computed(() => store.typingAgents)
@@ -73,6 +87,17 @@ function getAgentColor(senderId: string): string {
 
 function agentLabel(a: AgentBrief): string {
   return a.display_name || a.name
+}
+
+function findAgentByCommandArg(name: string): AgentBrief | undefined {
+  const normalized = name.trim().replace(/^@/, '')
+  return agents.value.find(a =>
+    a.instance_id === normalized ||
+    a.slug === normalized ||
+    a.name === normalized ||
+    a.display_name === normalized ||
+    agentLabel(a) === normalized,
+  )
 }
 
 function hexDistToBlackboard(q: number, r: number): number {
@@ -164,7 +189,15 @@ function handleDrop(e: DragEvent) {
 // ── Commands ────────────────────────────────────────
 const COMMANDS = computed(() => [
   { name: 'status', label: t('chat.cmdStatusLabel'), icon: Activity, needsAgent: false, immediate: true },
-  { name: 'clear', label: t('chat.cmdClearLabel'), icon: XCircle, needsAgent: false, immediate: true },
+  {
+    name: 'clear',
+    label: t('chat.cmdClearLabel'),
+    description: t('chat.cmdClearDescription'),
+    badge: t('chat.cmdClearBadge'),
+    icon: XCircle,
+    needsAgent: false,
+    immediate: true,
+  },
   { name: 'restart', label: t('chat.cmdRestartLabel'), icon: RotateCw, needsAgent: true, immediate: false },
   { name: 'remove', label: t('chat.cmdRemoveLabel'), icon: Trash2, needsAgent: true, immediate: false },
 ])
@@ -185,20 +218,31 @@ interface SuggestionState {
 const mentionState = ref<SuggestionState | null>(null)
 const commandState = ref<SuggestionState | null>(null)
 const pendingCommand = ref<{ id: string; label: string } | null>(null)
+const mentionSuggestionListRef = ref<HTMLElement | null>(null)
+const commandSuggestionListRef = ref<HTMLElement | null>(null)
 
-function createSuggestionRenderer(stateRef: Ref<SuggestionState | null>) {
+function scrollSuggestionIntoView(containerRef: Ref<HTMLElement | null>, idx: number) {
+  nextTick(() => {
+    const item = containerRef.value?.querySelector<HTMLElement>(`[data-suggestion-index="${idx}"]`)
+    item?.scrollIntoView({ block: 'nearest' })
+  })
+}
+
+function createSuggestionRenderer(stateRef: Ref<SuggestionState | null>, containerRef: Ref<HTMLElement | null>) {
   return () => {
     let idx = 0
     return {
       onStart(p: any) {
         idx = 0
         stateRef.value = { items: p.items, selectedIndex: 0, command: p.command }
+        scrollSuggestionIntoView(containerRef, idx)
       },
       onUpdate(p: any) {
         idx = 0
         stateRef.value = p.items.length
           ? { items: p.items, selectedIndex: 0, command: p.command }
           : null
+        if (stateRef.value) scrollSuggestionIntoView(containerRef, idx)
       },
       onKeyDown({ event }: { event: KeyboardEvent }): boolean {
         if (!stateRef.value || !stateRef.value.items.length) return false
@@ -206,11 +250,13 @@ function createSuggestionRenderer(stateRef: Ref<SuggestionState | null>) {
         if (event.key === 'ArrowUp') {
           idx = (idx - 1 + len) % len
           stateRef.value = { ...stateRef.value, selectedIndex: idx }
+          scrollSuggestionIntoView(containerRef, idx)
           return true
         }
         if (event.key === 'ArrowDown') {
           idx = (idx + 1) % len
           stateRef.value = { ...stateRef.value, selectedIndex: idx }
+          scrollSuggestionIntoView(containerRef, idx)
           return true
         }
         if (event.key === 'Enter' || event.key === 'Tab') {
@@ -261,9 +307,28 @@ async function executeSlashCommand(name: string, arg?: string) {
         insertSystemMessage(t('chat.clearNotAllowed'))
         break
       }
+      const target = (arg || '').trim()
+      if (target) {
+        toast.info(t('chat.clearUsage'), { duration: 8000 })
+        break
+      }
+      const ok = await confirm({
+        title: t('chat.clearConfirmTitle'),
+        description: t('chat.clearConfirmDescription'),
+        confirmText: t('chat.clearConfirmAction'),
+        cancelText: t('common.cancel'),
+        variant: 'danger',
+      })
+      if (!ok) break
       try {
-        await store.clearChatHistory(props.workspaceId)
-        insertSystemMessage(t('chat.chatCleared'), false)
+        const result = await store.clearChatHistory(props.workspaceId)
+        const runtime = result.runtime_context
+        insertSystemMessage(t('chat.chatAndContextCleared', {
+          messages: result.cleared_count ?? 0,
+          total: runtime?.total ?? 0,
+          cleared: runtime?.cleared_count ?? 0,
+          failed: runtime?.failed_count ?? 0,
+        }), false)
       } catch (e: any) {
         insertSystemMessage(t('chat.clearFailed', { error: resolveApiErrorMessage(e, e?.message || '') }))
       }
@@ -283,24 +348,26 @@ async function executeSlashCommand(name: string, arg?: string) {
 }
 
 async function doRestartAgent(name: string) {
-  const agent = agents.value.find(a => agentLabel(a) === name)
+  const agent = findAgentByCommandArg(name)
   if (!agent) { insertSystemMessage(t('chat.agentNotFound', { name })); return }
-  insertSystemMessage(t('chat.restartingAgent', { name }))
+  const label = agentLabel(agent)
+  insertSystemMessage(t('chat.restartingAgent', { name: label }))
   try {
     await api.post(`/instances/${agent.instance_id}/restart`)
-    insertSystemMessage(t('chat.agentRestarted', { name }))
+    insertSystemMessage(t('chat.agentRestarted', { name: label }))
   } catch (e: any) {
     insertSystemMessage(t('chat.restartFailed', { error: resolveApiErrorMessage(e, e?.message || '') }))
   }
 }
 
 async function doRemoveAgent(name: string) {
-  const agent = agents.value.find(a => agentLabel(a) === name)
+  const agent = findAgentByCommandArg(name)
   if (!agent) { insertSystemMessage(t('chat.agentNotFound', { name })); return }
-  insertSystemMessage(t('chat.removingAgent', { name }))
+  const label = agentLabel(agent)
+  insertSystemMessage(t('chat.removingAgent', { name: label }))
   try {
     await store.removeAgent(props.workspaceId, agent.instance_id)
-    insertSystemMessage(t('chat.agentRemoved', { name }))
+    insertSystemMessage(t('chat.agentRemoved', { name: label }))
   } catch (e: any) {
     insertSystemMessage(t('chat.removeFailed', { error: resolveApiErrorMessage(e, e?.message || '') }))
   }
@@ -354,16 +421,21 @@ async function sendMessage() {
 
   if (commands.length > 0) {
     for (const cmdName of commands) {
+      if (cmdName === 'clear') {
+        void executeSlashCommand(cmdName)
+        continue
+      }
       const mentionedAgent = mentions.length > 0
         ? agents.value.find(a => a.instance_id === mentions[0])
         : undefined
-      void executeSlashCommand(cmdName, mentionedAgent ? agentLabel(mentionedAgent) : undefined)
+      const textArg = text.match(new RegExp(`^/${cmdName}\\s+(.+)$`))?.[1]?.trim()
+      void executeSlashCommand(cmdName, mentionedAgent ? agentLabel(mentionedAgent) : textArg)
     }
     return
   }
 
   const slashMatch = text.match(/^\/([a-zA-Z]\w*)(?![/])/)
-  if (slashMatch) {
+  if (slashMatch && slashMatch[1].toLowerCase() !== 'clear') {
     const cmd = slashMatch[1].toLowerCase()
     const arg = text.slice(slashMatch[0].length).trim().replace(/^@/, '')
     void executeSlashCommand(cmd, arg || undefined)
@@ -405,6 +477,7 @@ async function sendMessage() {
     mentions.length > 0 ? mentions : undefined,
     fileIds,
     attachments,
+    props.conversationId,
   )
   scrollToBottom()
 }
@@ -461,7 +534,25 @@ const editor = useEditor({
             status: '',
             slug: '',
           }
+          let candidateSet: Set<string>
+          const conv = props.conversationId
+            ? store.conversations.find(c => c.id === props.conversationId)
+            : undefined
+          const convMembers = conv?.member_node_ids ?? []
+
+          if (props.conversationId && convMembers.length > 0) {
+            candidateSet = new Set(convMembers)
+          } else {
+            const mentionIdsForBfs = new Set<string>()
+            for (const id of existingMentions) {
+              if (id !== '__all__') mentionIdsForBfs.add(id)
+            }
+            candidateSet = new Set(
+              computeMentionCandidates(store.topology, mentionIdsForBfs).map(c => c.agentId),
+            )
+          }
           const agentItems = agents.value
+            .filter(a => candidateSet.has(a.instance_id))
             .filter(a => agentLabel(a).toLowerCase().includes(q))
             .filter(a => !existingMentions.has(a.instance_id))
             .sort((a, b) => hexDistToBlackboard(a.hex_q, a.hex_r) - hexDistToBlackboard(b.hex_q, b.hex_r))
@@ -476,7 +567,7 @@ const editor = useEditor({
           const showAll = allItem.label.toLowerCase().includes(q) || 'all'.includes(q)
           return showAll ? [allItem, ...agentItems] : agentItems
         },
-        render: createSuggestionRenderer(mentionState),
+        render: createSuggestionRenderer(mentionState, mentionSuggestionListRef),
         command: ({ editor: ed, range, props: p }: any) => {
           const pending = pendingCommand.value
           if (pending) {
@@ -511,12 +602,14 @@ const editor = useEditor({
               id: c.name,
               label: c.name,
               displayLabel: c.label,
+              description: c.description,
+              badge: c.badge,
               icon: c.icon,
               immediate: c.immediate,
               needsAgent: c.needsAgent,
             }))
         },
-        render: createSuggestionRenderer(commandState),
+        render: createSuggestionRenderer(commandState, commandSuggestionListRef),
         command: ({ editor: ed, range, props: p }: any) => {
           if (p.immediate) {
             ed.chain().focus().deleteRange(range).run()
@@ -682,6 +775,7 @@ function renderMarkdownHighlighted(content: string): string {
 
 const feedbackGiven = ref<Record<string, 'up' | 'down'>>({})
 const expandedErrors = ref<Set<string>>(new Set())
+const expandedRawErrors = ref<Set<string>>(new Set())
 
 function toggleErrorDetail(msgId: string) {
   if (expandedErrors.value.has(msgId)) {
@@ -691,9 +785,30 @@ function toggleErrorDetail(msgId: string) {
   }
 }
 
+function toggleRawError(msgId: string) {
+  if (expandedRawErrors.value.has(msgId)) {
+    expandedRawErrors.value.delete(msgId)
+  } else {
+    expandedRawErrors.value.add(msgId)
+  }
+}
+
+function formatRawError(raw: string): string {
+  try {
+    return JSON.stringify(JSON.parse(raw), null, 2)
+  } catch {
+    return raw
+  }
+}
+
 function agentErrorText(code: string): string {
   const key = `errors.agent.${code}`
   return te(key) ? t(key) : code
+}
+
+const UNHELPFUL_DETAILS = new Set(['empty_response', 'unknown', 'unknown_error'])
+function isHelpfulDetail(detail: string | undefined): detail is string {
+  return !!detail && !UNHELPFUL_DETAILS.has(detail)
 }
 
 async function handleFeedback(msg: GroupChatMessage, type: 'up' | 'down') {
@@ -728,8 +843,13 @@ function scrollToBottom() {
 }
 
 async function loadDefaultChatHistory() {
-  const raw = await store.fetchChatHistory(props.workspaceId)
-  store.chatMessages = raw
+  if (props.conversationId) {
+    const raw = await store.fetchConversationMessages(props.workspaceId, props.conversationId)
+    store.chatMessages = raw
+  } else {
+    const raw = await store.fetchChatHistory(props.workspaceId)
+    store.chatMessages = raw
+  }
 }
 
 function toIsoDateTime(value: string): string | undefined {
@@ -791,6 +911,14 @@ watch(
 )
 
 watch(
+  () => props.conversationId,
+  async () => {
+    clearSearchFilters()
+    await loadDefaultChatHistory()
+  },
+)
+
+watch(
   [chatSearch, searchFrom, searchTo],
   () => {
     if (searchTimer) clearTimeout(searchTimer)
@@ -807,7 +935,7 @@ onMounted(async () => {
 
 function formatTime(dateStr: string): string {
   try {
-    return new Date(dateStr).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    return formatLocaleTime(dateStr, String(locale.value), { hour: '2-digit', minute: '2-digit' })
   } catch {
     return ''
   }
@@ -827,24 +955,24 @@ function updateSuggestionIndex(state: SuggestionState, idx: number) {
     <div class="px-4 py-2 border-b border-border shrink-0 space-y-2">
       <div class="relative">
         <Search class="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-        <input
+        <Input
           v-model="chatSearch"
           class="w-full rounded-lg border border-border bg-muted pl-9 pr-9 py-2 text-sm outline-none focus:ring-1 focus:ring-primary/50"
           :placeholder="t('chat.searchPlaceholder')"
         />
-        <button
+        <Button variant="unstyled" size="unstyled"
           v-if="searchActive"
           class="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
           :title="t('chat.clearSearch')"
           @click="clearSearchFilters"
         >
           <X class="w-3.5 h-3.5" />
-        </button>
+        </Button>
       </div>
       <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
         <label class="flex flex-col gap-1 text-xs text-muted-foreground">
           <span>{{ t('chat.searchFrom') }}</span>
-          <input
+          <Input
             v-model="searchFrom"
             type="datetime-local"
             class="w-full rounded-lg border border-border bg-muted px-3 py-2 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary/50"
@@ -853,7 +981,7 @@ function updateSuggestionIndex(state: SuggestionState, idx: number) {
         </label>
         <label class="flex flex-col gap-1 text-xs text-muted-foreground">
           <span>{{ t('chat.searchTo') }}</span>
-          <input
+          <Input
             v-model="searchTo"
             type="datetime-local"
             class="w-full rounded-lg border border-border bg-muted px-3 py-2 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary/50"
@@ -951,7 +1079,7 @@ function updateSuggestionIndex(state: SuggestionState, idx: number) {
                 v-if="msg.message_type === 'collaboration'"
                 class="text-[10px] px-1 py-0.5 rounded bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300 shrink-0"
               >
-                collaboration
+                {{ t('chat.collaborationTag') }}
               </span>
               <span
                 v-if="msg.intent"
@@ -980,40 +1108,59 @@ function updateSuggestionIndex(state: SuggestionState, idx: number) {
               <div class="flex items-center gap-1.5 text-orange-700 dark:text-orange-300">
                 <AlertTriangle class="w-3.5 h-3.5 shrink-0" />
                 <span>{{ agentErrorText(msg.error.code) }}</span>
-                <button
-                  v-if="msg.error.detail"
+                <Button variant="unstyled" size="unstyled"
+                  v-if="msg.error.detail && !isHelpfulDetail(msg.error.detail)"
                   class="ml-1 flex items-center gap-0.5 text-xs text-orange-500 hover:text-orange-700 dark:hover:text-orange-200 transition-colors"
                   @click="toggleErrorDetail(msg.id)"
                 >
                   <component :is="expandedErrors.has(msg.id) ? ChevronDown : ChevronRight" class="w-3 h-3" />
                   {{ expandedErrors.has(msg.id) ? t('errors.agent.hide_detail') : t('errors.agent.view_detail') }}
-                </button>
+                </Button>
               </div>
               <div
-                v-if="msg.error.detail && expandedErrors.has(msg.id)"
+                v-if="isHelpfulDetail(msg.error.detail)"
+                class="mt-1 text-xs text-orange-600 dark:text-orange-300/80 break-all"
+              >
+                {{ msg.error.detail }}
+              </div>
+              <div
+                v-else-if="msg.error.detail && expandedErrors.has(msg.id)"
                 class="mt-1.5 rounded bg-orange-100/50 dark:bg-orange-900/20 px-2 py-1 text-xs font-mono text-orange-800 dark:text-orange-200 break-all"
               >
                 {{ msg.error.detail }}
+              </div>
+              <div v-if="msg.error.raw" class="mt-1.5">
+                <Button variant="unstyled" size="unstyled"
+                  class="flex items-center gap-0.5 text-xs text-orange-500 hover:text-orange-700 dark:hover:text-orange-200 transition-colors"
+                  @click="toggleRawError(msg.id)"
+                >
+                  <component :is="expandedRawErrors.has(msg.id) ? ChevronDown : ChevronRight" class="w-3 h-3" />
+                  {{ t('errors.agent.raw_error') }}
+                </Button>
+                <pre
+                  v-if="expandedRawErrors.has(msg.id)"
+                  class="mt-1 max-h-[200px] overflow-y-auto rounded bg-orange-100/50 dark:bg-orange-900/20 px-2 py-1.5 text-xs font-mono text-orange-800 dark:text-orange-200 whitespace-pre-wrap break-all"
+                >{{ formatRawError(msg.error.raw) }}</pre>
               </div>
             </div>
             <div
               v-if="msg.sender_type === 'agent' && !msg.streaming && msg.content && !msg.error"
               class="flex items-center gap-1 mt-1"
             >
-              <button
+              <Button variant="unstyled" size="unstyled"
                 class="p-1 rounded hover:bg-muted/80 transition-colors"
                 :class="feedbackGiven[msg.id] === 'up' ? 'text-green-500' : 'text-muted-foreground/50 hover:text-green-500'"
                 @click="handleFeedback(msg, 'up')"
               >
                 <ThumbsUp class="w-3 h-3" />
-              </button>
-              <button
+              </Button>
+              <Button variant="unstyled" size="unstyled"
                 class="p-1 rounded hover:bg-muted/80 transition-colors"
                 :class="feedbackGiven[msg.id] === 'down' ? 'text-red-500' : 'text-muted-foreground/50 hover:text-red-500'"
                 @click="handleFeedback(msg, 'down')"
               >
                 <ThumbsDown class="w-3 h-3" />
-              </button>
+              </Button>
             </div>
             <div
               v-else-if="msg.sender_type !== 'agent'"
@@ -1055,10 +1202,11 @@ function updateSuggestionIndex(state: SuggestionState, idx: number) {
           <div class="px-3 py-1.5 text-[10px] text-muted-foreground font-medium uppercase tracking-wide border-b border-border">
             {{ t('chat.mentionTitle') }}
           </div>
-          <div class="max-h-40 overflow-y-auto">
-            <button
+          <div ref="mentionSuggestionListRef" class="max-h-40 overflow-y-auto">
+            <Button variant="unstyled" size="unstyled"
               v-for="(item, idx) in mentionState.items"
               :key="item.id"
+              :data-suggestion-index="idx"
               class="w-full flex items-center gap-2 px-3 py-2 text-sm transition-colors text-left"
               :class="idx === mentionState.selectedIndex ? 'bg-white/[0.07]' : 'hover:bg-white/[0.04]'"
               @mousedown.prevent="selectSuggestionItem(mentionState!, item)"
@@ -1071,7 +1219,7 @@ function updateSuggestionIndex(state: SuggestionState, idx: number) {
                 <span v-if="item.sublabel" class="text-[10px] text-muted-foreground truncate">{{ item.sublabel }}</span>
               </div>
               <span class="text-xs text-muted-foreground ml-auto shrink-0">{{ item.slug || item.status }}</span>
-            </button>
+            </Button>
           </div>
         </div>
       </Transition>
@@ -1085,10 +1233,11 @@ function updateSuggestionIndex(state: SuggestionState, idx: number) {
           <div class="px-3 py-1.5 text-[10px] text-muted-foreground font-medium uppercase tracking-wide border-b border-border">
             Commands
           </div>
-          <div class="max-h-40 overflow-y-auto">
-            <button
+          <div ref="commandSuggestionListRef" class="max-h-40 overflow-y-auto">
+            <Button variant="unstyled" size="unstyled"
               v-for="(item, idx) in commandState.items"
               :key="item.id"
+              :data-suggestion-index="idx"
               class="w-full flex items-center gap-2 px-3 py-2 text-sm transition-colors text-left"
               :class="idx === commandState.selectedIndex ? 'bg-white/[0.07]' : 'hover:bg-white/[0.04]'"
               @mousedown.prevent="selectSuggestionItem(commandState!, item)"
@@ -1096,14 +1245,24 @@ function updateSuggestionIndex(state: SuggestionState, idx: number) {
             >
               <component :is="item.icon" class="w-4 h-4 shrink-0 text-muted-foreground" />
               <span class="font-mono text-primary">/{{ item.id }}</span>
-              <span class="text-xs text-muted-foreground ml-1">{{ item.displayLabel }}</span>
+              <span class="min-w-0 flex-1 ml-1">
+                <span class="block text-xs text-muted-foreground">{{ item.displayLabel }}</span>
+                <span
+                  v-if="item.description"
+                  class="block text-[10px] leading-4 text-muted-foreground/80 truncate"
+                >
+                  {{ item.description }}
+                </span>
+              </span>
               <span
                 class="ml-auto text-[10px] px-1.5 py-0.5 rounded-full shrink-0"
-                :class="item.immediate
-                  ? 'bg-green-500/15 text-green-600 dark:text-green-400'
-                  : 'bg-primary/10 text-primary'"
-              >{{ item.immediate ? t('chat.immediate') : 'Tag' }}</span>
-            </button>
+                :class="item.badge
+                  ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
+                  : item.immediate
+                    ? 'bg-green-500/15 text-green-600 dark:text-green-400'
+                    : 'bg-primary/10 text-primary'"
+              >{{ item.badge || (item.immediate ? t('chat.immediate') : t('chat.commandTag')) }}</span>
+            </Button>
           </div>
         </div>
       </Transition>
@@ -1125,12 +1284,12 @@ function updateSuggestionIndex(state: SuggestionState, idx: number) {
             <FileText class="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
             <span class="truncate">{{ file.name }}</span>
             <span class="text-muted-foreground shrink-0">({{ formatFileSize(file.size) }})</span>
-            <button
+            <Button variant="unstyled" size="unstyled"
               class="absolute -top-1.5 -right-1.5 p-0.5 rounded-full bg-destructive text-destructive-foreground opacity-0 group-hover:opacity-100 transition-opacity"
               @click.stop="removePendingFile(idx)"
             >
               <X class="w-2.5 h-2.5" />
-            </button>
+            </Button>
           </div>
         </div>
 
@@ -1145,15 +1304,14 @@ function updateSuggestionIndex(state: SuggestionState, idx: number) {
 
         <div class="flex items-center justify-between px-2 pb-1.5">
           <div class="flex items-center gap-0.5">
-            <input
+            <FileInput
               ref="fileInputRef"
-              type="file"
               multiple
               class="hidden"
               @change="handleFileSelect"
             />
             <BaseTooltip :text="!store.fileUploadEnabled ? t('chat.fileUploadDisabled') : ''">
-              <button
+              <Button variant="unstyled" size="unstyled"
                 class="p-1.5 rounded-md transition-colors"
                 :class="store.fileUploadEnabled
                   ? 'text-muted-foreground hover:text-foreground hover:bg-accent'
@@ -1162,31 +1320,31 @@ function updateSuggestionIndex(state: SuggestionState, idx: number) {
                 @click="triggerFileInput"
               >
                 <Paperclip class="w-3.5 h-3.5" />
-              </button>
+              </Button>
             </BaseTooltip>
-            <button
+            <Button variant="unstyled" size="unstyled"
               class="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
               :title="t('chat.mentionAgent')"
               @click="triggerMention"
             >
               <AtSign class="w-3.5 h-3.5" />
-            </button>
-            <button
+            </Button>
+            <Button variant="unstyled" size="unstyled"
               class="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
               :title="t('chat.slashCommand')"
               @click="triggerSlash"
             >
               <Slash class="w-3.5 h-3.5" />
-            </button>
+            </Button>
           </div>
-          <button
+          <Button variant="unstyled" size="unstyled"
             class="p-1.5 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-40"
             :disabled="(editorEmpty && pendingFiles.length === 0) || sending || fileUploading"
             @click="sendMessage"
           >
             <Loader2 v-if="sending || fileUploading" class="w-3.5 h-3.5 animate-spin" />
             <Send v-else class="w-3.5 h-3.5" />
-          </button>
+          </Button>
         </div>
       </div>
     </div>

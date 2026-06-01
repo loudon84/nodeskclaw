@@ -32,6 +32,7 @@ async def setup_db():
             await conn.run_sync(Base.metadata.create_all)
     except Exception:
         # CI / local 环境未提供测试库时，跳过数据库初始化，允许无 DB 的基础测试继续执行
+        await engine.dispose()
         yield
         return
 
@@ -41,6 +42,7 @@ async def setup_db():
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.drop_all)
     except Exception:
+        await engine.dispose()
         pass
 
 

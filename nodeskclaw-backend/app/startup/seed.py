@@ -29,8 +29,29 @@ async def run_seed(
 
 DEFAULT_REGISTRY_CONFIGS: dict[str, str] = {
     "image_registry": "nodesk-center-cn-beijing.cr.volces.com/public/deskclaw-openclaw",
-    "image_registry_nanobot": "nodesk-center-cn-beijing.cr.volces.com/public/deskclaw-nanobot",
+    "image_registry_hermes": "nodesk-center-cn-beijing.cr.volces.com/public/deskclaw-hermes",
 }
+
+LEGACY_REGISTRY_CONFIGS: dict[str, tuple[str, ...]] = {
+    "image_registry_hermes": (
+        "nousresearch/hermes-agent",
+        "ghcr.io/routin/deskclaw-hermes",
+    ),
+}
+
+DEFAULT_ENGINE_VERSION_SEEDS: tuple[dict[str, str | bool | None], ...] = (
+    {
+        "runtime": "hermes",
+        "version": "2026.4.23-20260514",
+        "image_tag": "v2026.4.23-20260514",
+        "status": "published",
+        "is_default": True,
+        "release_notes": (
+            "Hermes 官方 v2026.4.23 基线，NoDeskClaw 于 2026-05-14 打包；"
+            "构建 constraints 显式排除 mistralai==2.4.6。"
+        ),
+    },
+)
 
 
 async def _seed_default_registry_configs(
@@ -39,12 +60,14 @@ async def _seed_default_registry_configs(
     """Seed default image registry URLs so tag listing works out-of-the-box.
 
     Only inserts when a key does NOT exist at all.  If the admin deliberately
-    cleared a value (row exists, value=None), we leave it untouched.
+    cleared a value (row exists, value=None), we leave it untouched. Legacy
+    placeholder values are upgraded to the current runtime-specific defaults.
     """
     from app.models.system_config import SystemConfig
 
     async with session_factory() as db:
         seeded = 0
+        upgraded = 0
         for key, default_value in DEFAULT_REGISTRY_CONFIGS.items():
             row = (await db.execute(
                 select(SystemConfig).where(
@@ -55,9 +78,19 @@ async def _seed_default_registry_configs(
             if row is None:
                 db.add(SystemConfig(key=key, value=default_value))
                 seeded += 1
-        if seeded:
+                continue
+
+            legacy_values = LEGACY_REGISTRY_CONFIGS.get(key, ())
+            if row.value in legacy_values:
+                row.value = default_value
+                upgraded += 1
+        if seeded or upgraded:
             await db.commit()
-            logger.info("种子数据：已内置 %d 条默认镜像仓库配置", seeded)
+            logger.info(
+                "种子数据：已内置 %d 条默认镜像仓库配置，升级 %d 条遗留镜像仓库配置",
+                seeded,
+                upgraded,
+            )
 
 
 async def _seed_initial_admin(
@@ -194,8 +227,8 @@ async def _seed_default_org_and_templates(
                 pass
 
         from app.models.workspace_template import WorkspaceTemplate
-        preset_names = ["软件研发团队", "内容工作室", "研究实验室"]
-        preset_files = ["software_team.json", "content_studio.json", "research_lab.json"]
+        preset_names = ["软件研发团队", "内容工作室", "研究实验室", "自媒体内容工作室"]
+        preset_files = ["software_team.json", "content_studio.json", "research_lab.json", "content_media_studio.json"]
         for pname, pfile in zip(preset_names, preset_files):
             exists = await db.execute(
                 select(WorkspaceTemplate).where(
@@ -218,6 +251,8 @@ async def _seed_default_org_and_templates(
                     topology_snapshot=data.get("topology_snapshot", {}),
                     blackboard_snapshot=data.get("blackboard_snapshot", {}),
                     gene_assignments=data.get("gene_assignments", []),
+                    agent_specs=data.get("agent_specs", []),
+                    human_specs=data.get("human_specs", []),
                     created_by=None,
                 )
                 db.add(t)
@@ -340,26 +375,6 @@ async def _seed_ee_platform_admin(
                 await db.commit()
                 logger.info("\u79cd\u5b50\u6570\u636e\uff1a\u4e3a EE \u5e73\u53f0\u7ba1\u7406\u5458\u8865\u5efa AdminMembership")
 
-        stale = await db.execute(
-            select(AdminMembership).where(
-                AdminMembership.user_id != admin.id,
-                AdminMembership.deleted_at.is_(None),
-            )
-        )
-        stale_records = stale.scalars().all()
-        if stale_records:
-            stale_ids = [r.id for r in stale_records]
-            await db.execute(
-                update(AdminMembership)
-                .where(AdminMembership.id.in_(stale_ids))
-                .values(deleted_at=func.now())
-            )
-            await db.commit()
-            logger.info(
-                "种子数据：已清理 %d 条不属于 EE 平台管理员的 AdminMembership 残留记录",
-                len(stale_ids),
-            )
-
         if plain_password:
             return {"account": account, "password": plain_password}
         return None
@@ -437,6 +452,12 @@ async def seed_default_required_genes(
 
 
 async def _ensure_workspace_schedules(session_factory: async_sessionmaker[AsyncSession]) -> None:
+    from app.services.workspace_defaults import (
+        DEFAULT_WORKSPACE_SCHEDULE_MESSAGE,
+        DEFAULT_WORKSPACE_SCHEDULE_NAME,
+        LEGACY_WORKSPACE_SCHEDULE_NAMES,
+    )
+
     async with session_factory() as db:
         from app.models.workspace import Workspace
         from app.models.workspace_schedule import WorkspaceSchedule
@@ -449,20 +470,97 @@ async def _ensure_workspace_schedules(session_factory: async_sessionmaker[AsyncS
             existing = (await db.execute(
                 select(WorkspaceSchedule).where(
                     WorkspaceSchedule.workspace_id == ws.id,
-                    WorkspaceSchedule.name.in_(["任务巡检", "定时巡检"]),
+                    WorkspaceSchedule.name.in_(LEGACY_WORKSPACE_SCHEDULE_NAMES),
                     WorkspaceSchedule.deleted_at.is_(None),
                 ).order_by(WorkspaceSchedule.created_at.desc())
             )).scalars().first()
             if existing is None:
                 db.add(WorkspaceSchedule(
                     workspace_id=ws.id,
-                    name="定时巡检",
+                    name=DEFAULT_WORKSPACE_SCHEDULE_NAME,
                     cron_expr="0 */4 * * *",
-                    message_template="请检查黑板待办任务队列，接取并执行优先级最高的任务。完成后汇报进展。",
+                    message_template=DEFAULT_WORKSPACE_SCHEDULE_MESSAGE,
                     is_active=False,
                 ))
         await db.commit()
         logger.info("种子数据：已为 %d 个工作区检查/补建定时巡检定时器", len(all_ws))
+
+
+async def seed_engine_versions(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Populate EngineVersion from built-ins and existing Instance records on first run.
+
+    Only runs when the table is empty — does not overwrite admin choices.
+    """
+    from app.models.engine_version import EngineVersion
+    from app.models.instance import Instance
+
+    async with session_factory() as db:
+        count = (await db.execute(
+            select(func.count()).select_from(EngineVersion).where(
+                EngineVersion.deleted_at.is_(None),
+            )
+        )).scalar_one()
+        if count > 0:
+            return
+
+        seeded = 0
+        imported = 0
+        rows = (await db.execute(
+            select(Instance.runtime, Instance.image_version)
+            .where(
+                Instance.image_version.isnot(None),
+                Instance.image_version != "",
+                Instance.deleted_at.is_(None),
+            )
+            .distinct()
+        )).all()
+
+        def _version_key(v: str) -> tuple[int, ...]:
+            try:
+                return tuple(int(x) for x in v.lstrip("v").split("."))
+            except ValueError:
+                return (0,)
+
+        by_runtime: dict[str, list[tuple[str, str]]] = {}
+        for runtime, image_version in rows:
+            rt = runtime or "openclaw"
+            by_runtime.setdefault(rt, []).append((image_version, image_version))
+
+        for rt, versions in by_runtime.items():
+            versions.sort(key=lambda x: _version_key(x[0]), reverse=True)
+            for idx, (image_tag, _) in enumerate(versions):
+                stripped = image_tag.lstrip("v") if image_tag.startswith("v") else image_tag
+                db.add(EngineVersion(
+                    runtime=rt,
+                    version=stripped,
+                    image_tag=image_tag,
+                    status="published",
+                    is_default=(idx == 0),
+                ))
+                imported += 1
+
+        for seed in DEFAULT_ENGINE_VERSION_SEEDS:
+            runtime = str(seed["runtime"])
+            runtime_count = (await db.execute(
+                select(func.count()).select_from(EngineVersion).where(
+                    EngineVersion.runtime == runtime,
+                    EngineVersion.deleted_at.is_(None),
+                )
+            )).scalar_one()
+            if runtime_count > 0:
+                continue
+            db.add(EngineVersion(**seed))
+            seeded += 1
+
+        if imported or seeded:
+            await db.commit()
+            logger.info(
+                "种子数据：导入 %d 个已有实例引擎版本，内置 %d 个默认引擎版本",
+                imported,
+                seeded,
+            )
 
 
 async def backfill_cluster_org_id(

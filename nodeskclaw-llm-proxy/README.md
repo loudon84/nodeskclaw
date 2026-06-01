@@ -10,6 +10,7 @@ DeskClaw LLM 代理 -- AI 经营伙伴的智力供给中枢。负责大语言模
 - Working Plan 额度检查（仅组织 Key）
 - 流式/非流式请求转发
 - 全量 Token 用量记录（组织 Key + 个人 Key），含 latency、status_code、request_path 等元数据
+- Workspace 用量归因：按优先级 signed token → `X-NoDeskClaw-Session-Key: workspace:<id>` → 旧 runtime session header 兼容 → active_tracking（仅单办公室实例的兼容兜底）→ unattributed
 - `stream_options` 按 provider 白名单自动注入（OpenAI/OpenRouter/MiniMax/Gemini）
 - 可选请求体记录（`LLM_LOG_CONTENT` 环境变量控制，默认关闭）
 - 响应元数据记录（去除 content 后的结构化 JSON，始终存储）
@@ -63,23 +64,20 @@ uv run uvicorn app.main:app --port 8080 --reload
 
 ## 构建部署
 
-### 使用统一 CLI（推荐）
+### 使用发版/部署脚本（推荐）
 
 ```bash
-# 构建 + 推送 + 部署到 staging
-./deploy/cli.sh deploy proxy
+# 构建 + 推送版本镜像
+./deploy/release.sh create v0.1.0-beta.1
 
-# 仅构建推送，不更新 K8s
-./deploy/cli.sh deploy proxy --build-only
-
-# 使用指定 tag 更新 K8s（不重新构建）
-./deploy/cli.sh deploy proxy --deploy-only --tag v0.1.0-beta.1
+# 使用指定 tag 更新 staging K8s（不重新构建）
+./deploy/deploy.sh deploy proxy --tag v0.1.0-beta.1 --staging --context <CTX>
 
 # 部署到生产
-./deploy/cli.sh deploy proxy --prod
+./deploy/deploy.sh deploy proxy --tag v0.1.0-beta.1 --prod --context <CTX>
 ```
 
-`cli.sh` 从 `deploy/.env.local` 读取 REGISTRY 和 KUBE_CONTEXT 配置。
+脚本从 `deploy/.env.local` 读取 REGISTRY 和 KUBE_CONTEXT 配置，也可以用 `--context` 覆盖。
 
 ### 手动部署
 

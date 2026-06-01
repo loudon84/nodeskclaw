@@ -28,6 +28,12 @@ spec:
                 secretKeyRef:
                   name: nodeskclaw-llm-proxy-secret
                   key: DATABASE_URL
+            - name: LLM_ATTRIBUTION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: nodeskclaw-llm-proxy-secret
+                  key: LLM_ATTRIBUTION_SECRET
+                  optional: true
             - name: HTTPS_PROXY
               value: "http://localhost:7890"
             - name: HTTP_PROXY

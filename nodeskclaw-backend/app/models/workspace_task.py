@@ -7,6 +7,10 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import BaseModel
 
+FAILURE_TIMEOUT = "timeout"
+FAILURE_UNCLAIMED_TIMEOUT = "unclaimed_timeout"
+FAILURE_AGENT_REPORTED = "agent_reported"
+
 
 class WorkspaceTask(BaseModel):
     __tablename__ = "workspace_tasks"
@@ -27,10 +31,19 @@ class WorkspaceTask(BaseModel):
     estimated_value: Mapped[float | None] = mapped_column(Float, nullable=True)
     actual_value: Mapped[float | None] = mapped_column(Float, nullable=True)
     token_cost: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    prompt_token_cost: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    completion_token_cost: Mapped[int | None] = mapped_column(Integer, nullable=True)
     blocker_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     archived_from_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    schedule_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("workspace_schedules.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    failure_reason: Mapped[str | None] = mapped_column(String(30), nullable=True)
 
     workspace = relationship("Workspace", foreign_keys=[workspace_id])
     assignee = relationship("Instance", foreign_keys=[assignee_instance_id])
+    schedule = relationship("WorkspaceSchedule", foreign_keys=[schedule_id])
