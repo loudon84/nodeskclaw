@@ -1,3 +1,6 @@
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/loudon84/nodeskclaw)
+
+
 [中文](README.zh-CN.md)
 
 [Discord](https://discord.gg/y5NKqcP6eY)
