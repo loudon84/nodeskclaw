@@ -1,6 +1,7 @@
 """Import all models so SQLAlchemy can detect them."""
 
 from app.models.admin_membership import AdminMembership  # noqa: F401
+from app.models.agent_file_access_grant import AgentFileAccessGrant  # noqa: F401
 from app.models.backup import InstanceBackup  # noqa: F401
 from app.models.base import Base, BaseModel  # noqa: F401
 from app.models.blackboard import Blackboard  # noqa: F401
@@ -57,6 +58,7 @@ from app.models.workspace import Workspace  # noqa: F401
 from app.models.workspace_agent import WorkspaceAgent  # noqa: F401
 from app.models.workspace_file import WorkspaceFile  # noqa: F401
 from app.models.workspace_member import WorkspaceMember  # noqa: F401
+from app.models.workspace_message_file_reference import WorkspaceMessageFileReference  # noqa: F401
 from app.models.workspace_message import WorkspaceMessage  # noqa: F401
 from app.models.workspace_objective import WorkspaceObjective  # noqa: F401
 from app.models.workspace_schedule import WorkspaceSchedule  # noqa: F401

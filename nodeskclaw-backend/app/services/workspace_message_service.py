@@ -58,6 +58,7 @@ async def record_message(
     target_instance_id: str | None = None,
     depth: int = 0,
     attachments: list[dict] | None = None,
+    file_references: list[dict] | None = None,
     conversation_id: str | None = None,
 ) -> WorkspaceMessage:
     visible_content = visible_agent_content(sender_type, content)
@@ -75,6 +76,17 @@ async def record_message(
         conversation_id=conversation_id,
     )
     db.add(msg)
+    await db.flush()
+
+    if file_references:
+        from app.services.file_reference_service import create_message_file_references
+
+        await create_message_file_references(
+            db,
+            message_id=msg.id,
+            workspace_id=workspace_id,
+            file_references=file_references,
+        )
 
     if conversation_id:
         from app.models.conversation import Conversation

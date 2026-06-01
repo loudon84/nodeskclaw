@@ -23,7 +23,9 @@ def build_portal_envelope(
     content: str,
     mentions: list[str] | None = None,
     attachments: list[dict] | None = None,
+    file_references: list[dict] | None = None,
     conversation_id: str | None = None,
+    message_id: str | None = None,
 ) -> MessageEnvelope:
     mention_targets = mentions or []
     routing_targets = [] if MENTION_ALL_SENTINEL in mention_targets else mention_targets
@@ -31,6 +33,8 @@ def build_portal_envelope(
     extensions: dict = {}
     if conversation_id:
         extensions["conversation_id"] = conversation_id
+    if message_id:
+        extensions["message_id"] = message_id
     if mention_targets:
         extensions["mention_targets"] = mention_targets
 
@@ -48,6 +52,7 @@ def build_portal_envelope(
             content=content,
             mentions=mention_targets,
             attachments=attachments or [],
+            file_references=file_references or [],
             routing=MessageRouting(mode=routing_mode, targets=routing_targets),
             extensions=extensions,
             priority=Priority.NORMAL,

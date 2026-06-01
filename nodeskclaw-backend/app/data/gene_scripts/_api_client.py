@@ -19,6 +19,7 @@ import urllib.request
 import uuid
 from typing import Any
 
+
 def _discover_from_openclaw_config() -> tuple[str, str, str]:
     """Fall back to openclaw.json channel config when env vars are missing."""
     cfg_path = os.path.expanduser("~/.openclaw/openclaw.json")
@@ -132,34 +133,19 @@ def upload_file(
 ) -> Any:
     """Upload a local file via multipart/form-data POST."""
     boundary = uuid.uuid4().hex
-    with open(file_path, "rb") as f:
-        file_data = f.read()
-
-    parts: list[bytes] = []
-    parts.append(
-        f"--{boundary}\r\n"
-        f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
-        f"Content-Type: {content_type}\r\n\r\n".encode()
-        + file_data
-        + b"\r\n"
+    body = _MultipartUploadBody(
+        file_path=file_path,
+        boundary=boundary,
+        filename=filename,
+        parent_path=parent_path,
+        content_type=content_type,
     )
-    for name, value in [
-        ("parent_path", parent_path),
-        ("filename", filename),
-        ("content_type", content_type),
-    ]:
-        parts.append(
-            f"--{boundary}\r\n"
-            f'Content-Disposition: form-data; name="{name}"\r\n\r\n'
-            f"{value}\r\n".encode()
-        )
-    parts.append(f"--{boundary}--\r\n".encode())
-    body = b"".join(parts)
 
     base = _ws_base()
     url = f"{base}{endpoint}"
     headers: dict[str, str] = {
         "Content-Type": f"multipart/form-data; boundary={boundary}",
+        "Content-Length": str(len(body)),
     }
     if TOKEN:
         headers["Authorization"] = f"Bearer {TOKEN}"
@@ -178,6 +164,86 @@ def upload_file(
     except (urllib.error.URLError, OSError) as e:
         _output({"error": True, "detail": str(e)})
         sys.exit(1)
+    finally:
+        body.close()
+
+
+class _MultipartUploadBody:
+    def __init__(
+        self,
+        *,
+        file_path: str,
+        boundary: str,
+        filename: str,
+        parent_path: str,
+        content_type: str,
+    ) -> None:
+        safe_filename = filename.replace('"', '\\"')
+        self._file_path = file_path
+        self._segments: list[bytes | str] = [
+            (
+                f"--{boundary}\r\n"
+                f'Content-Disposition: form-data; name="file"; filename="{safe_filename}"\r\n'
+                f"Content-Type: {content_type}\r\n\r\n"
+            ).encode(),
+            file_path,
+            b"\r\n",
+        ]
+        for name, value in [
+            ("parent_path", parent_path),
+            ("filename", filename),
+            ("content_type", content_type),
+        ]:
+            self._segments.append(
+                (
+                    f"--{boundary}\r\n"
+                    f'Content-Disposition: form-data; name="{name}"\r\n\r\n'
+                    f"{value}\r\n"
+                ).encode()
+            )
+        self._segments.append(f"--{boundary}--\r\n".encode())
+        self._length = sum(
+            os.path.getsize(segment) if isinstance(segment, str) else len(segment)
+            for segment in self._segments
+        )
+        self._index = 0
+        self._offset = 0
+        self._file = None
+
+    def __len__(self) -> int:
+        return self._length
+
+    def read(self, size: int = -1) -> bytes:
+        if size is None or size < 0:
+            size = 64 * 1024
+        out = bytearray()
+        while len(out) < size and self._index < len(self._segments):
+            segment = self._segments[self._index]
+            if isinstance(segment, bytes):
+                chunk = segment[self._offset:self._offset + (size - len(out))]
+                out.extend(chunk)
+                self._offset += len(chunk)
+                if self._offset >= len(segment):
+                    self._index += 1
+                    self._offset = 0
+                continue
+
+            if self._file is None:
+                self._file = open(self._file_path, "rb")
+            chunk = self._file.read(size - len(out))
+            if chunk:
+                out.extend(chunk)
+                continue
+            self._file.close()
+            self._file = None
+            self._index += 1
+            self._offset = 0
+        return bytes(out)
+
+    def close(self) -> None:
+        if self._file is not None:
+            self._file.close()
+            self._file = None
 
 
 def _output(data: Any) -> None:

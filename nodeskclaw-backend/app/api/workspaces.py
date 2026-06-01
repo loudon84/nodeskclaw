@@ -1360,27 +1360,15 @@ async def workspace_chat(
     if ws_info is None:
         raise _error(404, 40430, "errors.workspace.not_found", "办公室不存在")
 
-    attachments_meta: list[dict] | None = None
-    attachment_files: list = []
-    if data.file_ids:
-        from app.models.workspace_file import WorkspaceFile
+    from app.services import file_reference_service
 
-        result = await db.execute(
-            sa_select(WorkspaceFile).where(
-                WorkspaceFile.id.in_(data.file_ids),
-                WorkspaceFile.workspace_id == workspace_id,
-                WorkspaceFile.deleted_at.is_(None),
-            )
-        )
-        attachment_files = list(result.scalars().all())
-        if attachment_files:
-            attachments_meta = [
-                {
-                    "id": f.id, "name": f.original_name,
-                    "size": f.file_size, "content_type": f.content_type,
-                }
-                for f in attachment_files
-            ]
+    file_references = await file_reference_service.resolve_message_file_references(
+        db,
+        workspace_id,
+        file_references=data.file_references,
+        legacy_file_ids=data.file_ids,
+    )
+    attachments_meta = file_reference_service.legacy_attachments_from_references(file_references)
 
     from app.services import conversation_service
 
@@ -1389,7 +1377,7 @@ async def workspace_chat(
         bb_conv = await conversation_service.get_blackboard_conversation(workspace_id, db)
         conv_id = bb_conv.id if bb_conv else None
 
-    await msg_service.record_message(
+    msg = await msg_service.record_message(
         db,
         workspace_id=workspace_id,
         sender_type="user",
@@ -1397,13 +1385,23 @@ async def workspace_chat(
         sender_name=user.name,
         content=data.message,
         attachments=attachments_meta,
+        file_references=file_references,
         conversation_id=conv_id,
     )
 
     attachments_with_urls: list[dict] = []
-    if attachment_files:
+    if attachments_meta:
         from app.services import storage_service
-        for f in attachment_files:
+        from app.models.workspace_file import WorkspaceFile
+
+        result = await db.execute(
+            sa_select(WorkspaceFile).where(
+                WorkspaceFile.id.in_([item["id"] for item in attachments_meta]),
+                WorkspaceFile.workspace_id == workspace_id,
+                WorkspaceFile.deleted_at.is_(None),
+            )
+        )
+        for f in result.scalars().all():
             try:
                 url = await storage_service.get_presigned_url(f.storage_key, expires=3600)
                 attachments_with_urls.append({
@@ -1427,7 +1425,9 @@ async def workspace_chat(
         content=data.message,
         mentions=data.mentions,
         attachments=attachments_with_urls or None,
+        file_references=file_references,
         conversation_id=conv_id,
+        message_id=msg.id,
     )
 
     async def _publish_via_bus():
@@ -1622,6 +1622,12 @@ async def list_workspace_messages(
         )
     else:
         messages = await msg_service.get_recent_messages(db, workspace_id, limit)
+    from app.services.file_reference_service import get_message_file_references
+
+    file_refs_by_message = await get_message_file_references(
+        db,
+        [m.id for m in messages],
+    )
     return _ok([
         {
             "id": m.id,
@@ -1633,6 +1639,7 @@ async def list_workspace_messages(
             "message_type": m.message_type,
             "conversation_id": getattr(m, "conversation_id", None),
             "attachments": m.attachments,
+            "file_references": file_refs_by_message.get(m.id, []),
             "created_at": m.created_at.isoformat() if m.created_at else None,
         }
         for m in messages

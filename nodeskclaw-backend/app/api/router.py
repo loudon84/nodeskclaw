@@ -3,6 +3,7 @@
 from fastapi import APIRouter, Depends, Request
 
 from app.api.audit import router as audit_router
+from app.api.agent_file_grants import router as agent_file_grants_router
 from app.api.auth import router as auth_router
 from app.api.genes import router as gene_router
 from app.api.clusters import router as cluster_router
@@ -118,6 +119,7 @@ async def serve_local_file(file_key: str, request: Request, expires: str = "", s
 
 
 api_router.include_router(auth_router, prefix="/auth", tags=["认证"])
+api_router.include_router(agent_file_grants_router, tags=["文件授权"])
 api_router.include_router(org_router, prefix="/orgs", tags=["组织"])
 api_router.include_router(org_settings_router, prefix="/orgs", tags=["组织设置"])
 api_router.include_router(audit_router, prefix="/orgs", tags=["操作审计"])

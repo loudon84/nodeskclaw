@@ -80,11 +80,40 @@ def _format_attachment_refs(attachments: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def _format_user_content(sender_name: str, text: str, attachments: list[dict]) -> str:
+def _format_file_references(file_references: list[dict]) -> str:
+    if not file_references:
+        return ""
+    lines = ["文件引用:"]
+    for idx, ref in enumerate(file_references, 1):
+        parts = [
+            f"source={ref.get('source', '')}",
+            f"file_id={ref.get('file_id', '')}",
+            f"name={ref.get('display_name') or ref.get('name') or ''}",
+            f"size={ref.get('size', 0)}",
+        ]
+        content_type = ref.get("content_type")
+        if content_type:
+            parts.append(f"content_type={content_type}")
+        download_url = ref.get("download_url")
+        if download_url:
+            parts.append(f"download_url={download_url}")
+        lines.append(f"- 文件{idx}: " + ", ".join(parts))
+    return "\n".join(lines)
+
+
+def _format_user_content(
+    sender_name: str,
+    text: str,
+    attachments: list[dict],
+    file_references: list[dict] | None = None,
+) -> str:
     content = f"[{sender_name}]: {text}"
     ref = _format_attachment_refs(attachments)
     if ref:
         content += "\n" + ref
+    file_ref_text = _format_file_references(file_references or [])
+    if file_ref_text:
+        content += "\n" + file_ref_text
     return content
 
 
@@ -581,7 +610,24 @@ class TunnelAdapter:
             "agent_name": agent_name,
         })
 
-        user_content = _format_user_content(data.sender.name, data.content, data.attachments)
+        agent_file_references = data.file_references or []
+        message_id = (data.extensions or {}).get("message_id")
+        if agent_file_references and message_id:
+            from app.services.file_reference_service import create_agent_grants_for_message
+
+            agent_file_references = await create_agent_grants_for_message(
+                db,
+                workspace_id=workspace_id,
+                message_id=message_id,
+                recipient_agent_id=target_node_id,
+            )
+
+        user_content = _format_user_content(
+            data.sender.name,
+            data.content,
+            data.attachments,
+            agent_file_references,
+        )
         messages = [
             {"role": "system", "content": context_prompt},
             {"role": "user", "content": user_content},
