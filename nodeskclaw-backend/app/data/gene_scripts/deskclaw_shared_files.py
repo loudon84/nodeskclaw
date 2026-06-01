@@ -8,7 +8,7 @@ Actions:
   list_files [--path /]              List files in a directory
   read_file --file-id ID             Read file content (returns base64)
   write_file --file PATH [--filename NAME] [--parent-path /] [--content-type TYPE]
-                                     Upload a local file
+                                     Upload a local file with multipart or upload session
   copy_file --file-id ID [--target-parent-path /] [--target-filename NAME]
                                      Copy a file to another location
   delete_file --file-id ID           Delete a file
@@ -28,7 +28,7 @@ import mimetypes
 import os
 import sys
 
-from _api_client import _output, api_call, upload_file
+from _api_client import _output, api_call, upload_shared_file
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -80,7 +80,7 @@ def main() -> None:
     elif action == "write_file":
         fname = args.filename or os.path.basename(args.file)
         ct = args.content_type or mimetypes.guess_type(args.file)[0] or "application/octet-stream"
-        _output(upload_file(args.file, f"{base}/upload-multipart", fname, args.parent_path, ct))
+        _output(upload_shared_file(args.file, fname, args.parent_path, ct))
 
     elif action == "copy_file":
         body = {

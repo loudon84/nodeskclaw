@@ -124,6 +124,36 @@ def api_call(method: str, path: str, body: dict | None = None, *, ws: bool = Tru
         sys.exit(1)
 
 
+def _api_call_raw(
+    method: str,
+    path: str,
+    *,
+    data: Any,
+    headers: dict[str, str],
+    ws: bool = True,
+) -> Any:
+    base = _ws_base() if ws else API_URL
+    url = f"{base}{path}"
+    merged_headers = dict(headers)
+    if TOKEN:
+        merged_headers["Authorization"] = f"Bearer {TOKEN}"
+    req = urllib.request.Request(url, data=data, headers=merged_headers, method=method)
+    try:
+        with urllib.request.urlopen(req) as resp:
+            return json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode() if e.fp else ""
+        try:
+            err = json.loads(error_body)
+        except (json.JSONDecodeError, ValueError):
+            err = {"status": e.code, "detail": error_body}
+        _output({"error": True, **err})
+        sys.exit(1)
+    except (urllib.error.URLError, OSError) as e:
+        _output({"error": True, "detail": str(e)})
+        sys.exit(1)
+
+
 def upload_file(
     file_path: str,
     endpoint: str,
@@ -166,6 +196,94 @@ def upload_file(
         sys.exit(1)
     finally:
         body.close()
+
+
+def upload_shared_file(
+    file_path: str,
+    filename: str,
+    parent_path: str = "/",
+    content_type: str = "application/octet-stream",
+) -> Any:
+    policy = api_call("GET", "/upload/policy", ws=False).get("data") or {}
+    shared_policy = (policy.get("surfaces") or {}).get("shared_file") or {}
+    threshold = int(shared_policy.get("chunked_upload_threshold_bytes") or 50 * 1024 * 1024)
+    if os.path.getsize(file_path) >= threshold:
+        return upload_shared_file_session(file_path, filename, parent_path, content_type)
+    return upload_file(file_path, "/blackboard/files/upload-multipart", filename, parent_path, content_type)
+
+
+def upload_shared_file_session(
+    file_path: str,
+    filename: str,
+    parent_path: str = "/",
+    content_type: str = "application/octet-stream",
+) -> Any:
+    size = os.path.getsize(file_path)
+    mtime_ns = os.stat(file_path).st_mtime_ns
+    create = api_call("POST", "/uploads/sessions", {
+        "surface": "shared_file",
+        "filename": filename,
+        "content_type": content_type,
+        "expected_size": size,
+        "parent_path": parent_path,
+        "purpose": "workspace_shared_file",
+        "conflict_strategy": "keep_both",
+        "client_request_id": f"agent:{filename}:{size}:{mtime_ns}",
+    })
+    session = create.get("data") or {}
+    session_id = session["session_id"]
+    part_size = int(session["part_size_bytes"])
+    part_count = int(session["part_count"])
+    parts: list[dict[str, Any]] = []
+
+    for part_number in range(1, part_count + 1):
+        offset = (part_number - 1) * part_size
+        length = min(part_size, size - offset)
+        body = _FileSliceBody(file_path, offset, length)
+        try:
+            result = _api_call_raw(
+                "PUT",
+                f"/uploads/sessions/{session_id}/parts/{part_number}",
+                data=body,
+                headers={
+                    "Content-Type": "application/octet-stream",
+                    "Content-Length": str(len(body)),
+                },
+            )
+        finally:
+            body.close()
+        part = (result.get("data") or {}).get("part") or {}
+        parts.append({
+            "part_number": part["part_number"],
+            "size": part["size"],
+            "checksum": part["checksum"],
+            "etag": part["etag"],
+        })
+
+    return api_call("POST", f"/uploads/sessions/{session_id}/complete", {"parts": parts})
+
+
+class _FileSliceBody:
+    def __init__(self, file_path: str, offset: int, length: int) -> None:
+        self._file = open(file_path, "rb")
+        self._file.seek(offset)
+        self._remaining = length
+        self._length = length
+
+    def __len__(self) -> int:
+        return self._length
+
+    def read(self, size: int = -1) -> bytes:
+        if self._remaining <= 0:
+            return b""
+        if size is None or size < 0 or size > self._remaining:
+            size = self._remaining
+        chunk = self._file.read(size)
+        self._remaining -= len(chunk)
+        return chunk
+
+    def close(self) -> None:
+        self._file.close()
 
 
 class _MultipartUploadBody:

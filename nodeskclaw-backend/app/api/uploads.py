@@ -101,7 +101,7 @@ def _map_upload_error(exc: Exception) -> HTTPException:
 @router.get("/upload/policy")
 async def get_upload_policy(
     db: AsyncSession = Depends(get_db),
-    _user=Depends(get_current_user),
+    _user=Depends(get_current_user_or_agent),
 ):
     return _ok(await build_upload_policy(db))
 
