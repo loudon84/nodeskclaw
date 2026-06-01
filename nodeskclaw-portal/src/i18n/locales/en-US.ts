@@ -889,6 +889,14 @@ const enUS = {
       bundleDocsLoadFailed: "Failed to load template bundle docs",
     },
   },
+  instanceRename: {
+    edit: "Rename instance",
+    placeholder: "Enter instance name",
+    restore: "Restore original name",
+    empty: "Instance name is required",
+    success: "Instance name updated",
+    failed: "Failed to update instance name",
+  },
   runtimeDefaultCapabilities: {
     sharedFiles: "Blackboard Files",
     sharedFilesDesc: "Upload files to the office blackboard for other members to read",
@@ -1830,6 +1838,12 @@ const enUS = {
       slug_conflict: "Instance slug already exists. Please choose another one",
       in_transitional_state: "Instance is in a transitional state, please wait for the current operation to complete",
       delete_k8s_required: "Deleting an instance must also clean up runtime resources",
+      display_name_empty: "Instance name is required",
+      display_name_too_long: "Instance name must be at most {max} characters",
+      display_name_invalid: "Instance name cannot contain control characters",
+      display_name_conflict_in_workspace: "This name conflicts with a node name in office \"{workspace}\"",
+      no_access: "You do not have access to this instance",
+      insufficient_role: "Insufficient permission",
     },
     backup: {
       instance_not_running: "Instance must be running to create a backup",

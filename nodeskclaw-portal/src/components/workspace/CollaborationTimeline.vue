@@ -24,7 +24,7 @@ interface TimelineMessage {
 
 const props = defineProps<{
   workspaceId: string
-  agents: { instance_id: string; display_name?: string; name: string }[]
+  agents: { instance_id: string; display_name?: string; global_effective_name?: string | null; name: string }[]
 }>()
 
 const emit = defineEmits<{
@@ -58,7 +58,7 @@ const filteredMessages = computed(() => {
 
 const agentFilterOptions = computed(() => [
   { value: '', label: t('workspaceView.allAgents') },
-  ...props.agents.map(a => ({ value: a.instance_id, label: a.display_name || a.name })),
+  ...props.agents.map(a => ({ value: a.instance_id, label: a.display_name || a.global_effective_name || a.name })),
 ])
 
 function formatTime(iso: string): string {
@@ -73,7 +73,7 @@ function truncate(text: string, maxLen: number): string {
 function getAgentName(instanceId: string | null): string {
   if (!instanceId) return '...'
   const agent = props.agents.find(a => a.instance_id === instanceId)
-  return agent?.display_name || agent?.name || instanceId.slice(0, 8)
+  return agent?.display_name || agent?.global_effective_name || agent?.name || instanceId.slice(0, 8)
 }
 
 function onClickMessage(msg: TimelineMessage) {

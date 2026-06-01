@@ -459,7 +459,7 @@ function syncScene() {
 
   for (const agent of props.agents) {
     const group = createHexMesh(agent)
-    const agentName = agent.display_name || agent.name
+    const agentName = agent.display_name || agent.global_effective_name || agent.name
     const agentLabel = createAgentLabelSprite(agentName, agent.label)
     agentLabel.position.set(0, 0.65, 0)
     group.add(agentLabel)

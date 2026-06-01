@@ -47,7 +47,7 @@ const candidates = computed<MentionCandidate[]>(() => {
     .map(a => ({
       type: 'agent',
       id: a.instance_id,
-      name: a.display_name || a.name,
+      name: a.display_name || a.global_effective_name || a.name,
     }))
   const humans: MentionCandidate[] = (store.members || []).map(m => ({
     type: 'human',

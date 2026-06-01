@@ -17,6 +17,8 @@ import { Table, TableHeader, TableBody, TableFooter, TableRow, TableHead, TableC
 interface InstanceInfo {
   id: string
   name: string
+  display_name?: string | null
+  effective_name?: string
   cluster_id: string
   namespace: string
   image_version: string
@@ -83,6 +85,10 @@ function getStatus(inst: InstanceInfo) {
 function getStatusLabel(inst: InstanceInfo) {
   const d = getStatusDisplay(inst.display_status ?? '')
   return t(`displayStatus.${d.key}`)
+}
+
+function getInstanceDisplayName(inst: InstanceInfo): string {
+  return inst.effective_name || inst.display_name || inst.name
 }
 
 const sortedInstances = computed(() =>
@@ -287,7 +293,7 @@ onMounted(() => {
           >
             <TableCell class="px-4 py-3 font-medium">
               <span class="inline-flex items-center gap-1.5">
-                {{ inst.name }}
+                {{ getInstanceDisplayName(inst) }}
                 <span
                   v-if="inst.compute_provider === 'docker'"
                   class="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-sky-500/15 text-sky-400"

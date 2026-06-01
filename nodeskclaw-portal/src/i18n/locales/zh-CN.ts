@@ -889,6 +889,14 @@ const zhCN = {
       bundleDocsLoadFailed: "加载模板包文档失败",
     },
   },
+  instanceRename: {
+    edit: "修改实例名称",
+    placeholder: "输入实例名称",
+    restore: "恢复原名称",
+    empty: "实例名称不能为空",
+    success: "实例名称已更新",
+    failed: "实例名称更新失败",
+  },
   runtimeDefaultCapabilities: {
     sharedFiles: "黑板 Files",
     sharedFilesDesc: "可把文件上传到办公室黑板，供其他成员读取",
@@ -1830,6 +1838,12 @@ const zhCN = {
       slug_conflict: "实例标识已存在，请更换标识",
       in_transitional_state: "实例正在执行其他操作，请等待完成后再试",
       delete_k8s_required: "删除实例必须同步清理运行资源",
+      display_name_empty: "实例名称不能为空",
+      display_name_too_long: "实例名称不能超过 {max} 个字符",
+      display_name_invalid: "实例名称不能包含控制字符",
+      display_name_conflict_in_workspace: "该名称会与办公室「{workspace}」中的节点名称冲突",
+      no_access: "您没有该实例的访问权限",
+      insufficient_role: "权限不足",
     },
     backup: {
       instance_not_running: "实例必须处于运行中才能创建备份",

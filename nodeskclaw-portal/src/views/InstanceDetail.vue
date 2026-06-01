@@ -25,9 +25,15 @@ const { t, locale } = useI18n()
 function joinNames(names: string[]): string {
   return names.join(String(locale.value).startsWith('zh') ? '、' : ', ')
 }
+
+function getInstanceBasicDisplayName(): string {
+  const basic = instanceBasic.value
+  return basic?.effective_name || basic?.display_name || basic?.name || ''
+}
+
 const { confirm } = useConfirm()
 const instanceId = inject<ComputedRef<string>>('instanceId')!
-const instanceBasic = inject<Ref<{ name: string } | null>>('instanceBasic')!
+const instanceBasic = inject<Ref<{ name: string; display_name?: string | null; effective_name?: string } | null>>('instanceBasic')!
 const refreshInstanceBasic = inject<() => Promise<void>>('refreshInstanceBasic')!
 const myInstanceRole = inject<Ref<string | null>>('myInstanceRole', ref(null))
 const ROLE_LEVEL: Record<string, number> = { viewer: 10, user: 20, editor: 30, admin: 40 }
@@ -936,7 +942,7 @@ function toggleSkillEditor() {
               </div>
             </div>
             <div v-else class="text-sm text-muted-foreground space-y-2">
-              <p>{{ t('instanceDetail.deleteConfirmQuestion', { name: instanceBasic?.name }) }}</p>
+              <p>{{ t('instanceDetail.deleteConfirmQuestion', { name: getInstanceBasicDisplayName() }) }}</p>
               <ul class="list-disc list-inside space-y-1 text-xs">
                 <li>{{ t(isDocker ? 'instanceDetail.deleteImpactDocker' : 'instanceDetail.deleteImpactK8s') }}</li>
                 <li>{{ t('instanceDetail.deleteImpactData') }}</li>

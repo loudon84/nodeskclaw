@@ -7,6 +7,7 @@ import json
 import logging
 import re as _re
 import secrets
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Coroutine
 
@@ -18,6 +19,7 @@ from app.models.workspace import Workspace
 from app.models.workspace_agent import WorkspaceAgent
 from app.models.deploy_record import DeployAction, DeployRecord, DeployStatus
 from app.models.instance import Instance, InstanceStatus
+from app.models.node_card import NodeCard
 from app.schemas.deploy import DeployRecordInfo
 from app.schemas.instance import InstanceDetail, InstanceInfo, UpdateConfigRequest, WorkspaceBrief
 from app.services.runtime.compute.base import ComputeHandle
@@ -29,6 +31,17 @@ from app.services.k8s.resource_builder import build_configmap, build_labels
 logger = logging.getLogger(__name__)
 
 _background_tasks: set[asyncio.Task] = set()
+
+
+@dataclass(slots=True)
+class DisplayNameUpdateResult:
+    info: InstanceInfo
+    changed: bool
+    old_display_name: str | None
+    new_display_name: str | None
+    old_effective_name: str
+    new_effective_name: str
+    synced_workspace_ids: list[str]
 
 
 async def _get_instance_workspace_ids(db: AsyncSession, instance_id: str) -> list[str]:
@@ -85,6 +98,27 @@ def _sanitize_name(name: str) -> str:
     """将实例名称清洗为 RFC 1123 格式（与 deploy_service 逻辑保持一致）。"""
     safe = _re.sub(r"[^a-z0-9-]", "-", name.lower()).strip("-")
     return _re.sub(r"-{2,}", "-", safe)
+
+
+def _effective_instance_name(instance: Instance) -> str:
+    return instance.agent_display_name or instance.name
+
+
+def _normalize_instance_display_name(display_name: str | None, original_name: str) -> str | None:
+    if display_name is None:
+        return None
+    trimmed = display_name.strip()
+    if not trimmed:
+        raise BadRequestError("显示名称不能为空", "errors.instance.display_name_empty")
+    if len(trimmed) > 64:
+        raise BadRequestError(
+            "显示名称不能超过 64 个字符",
+            "errors.instance.display_name_too_long",
+            message_params={"max": "64"},
+        )
+    if _re.search(r"[\x00-\x1f\x7f]", trimmed):
+        raise BadRequestError("显示名称不能包含控制字符", "errors.instance.display_name_invalid")
+    return None if trimmed == original_name else trimmed
 
 
 def _k8s_name(instance: Instance) -> str:
@@ -495,6 +529,121 @@ async def get_instance(instance_id: str, db: AsyncSession, org_id: str | None = 
     if not instance:
         raise NotFoundError("实例不存在")
     return instance
+
+
+async def _global_display_sync_targets(
+    instance_id: str,
+    db: AsyncSession,
+) -> list[tuple[WorkspaceAgent, Workspace]]:
+    result = await db.execute(
+        select(WorkspaceAgent, Workspace)
+        .join(
+            Workspace,
+            (Workspace.id == WorkspaceAgent.workspace_id) & (Workspace.deleted_at.is_(None)),
+        )
+        .where(
+            WorkspaceAgent.instance_id == instance_id,
+            WorkspaceAgent.display_name.is_(None),
+            WorkspaceAgent.deleted_at.is_(None),
+        )
+    )
+    return list(result.all())
+
+
+async def _ensure_node_card_name_available(
+    db: AsyncSession,
+    *,
+    instance_id: str,
+    workspace: Workspace,
+    display_name: str,
+) -> None:
+    result = await db.execute(
+        select(NodeCard).where(
+            NodeCard.workspace_id == workspace.id,
+            NodeCard.node_id != instance_id,
+            NodeCard.name == display_name,
+            NodeCard.deleted_at.is_(None),
+        )
+    )
+    if result.scalar_one_or_none() is not None:
+        raise ConflictError(
+            f"显示名称在办公室「{workspace.name}」中已被使用",
+            "errors.instance.display_name_conflict_in_workspace",
+            message_params={"workspace": workspace.name, "name": display_name},
+        )
+
+
+async def update_display_name(
+    instance_id: str,
+    display_name: str | None,
+    db: AsyncSession,
+    org_id: str | None = None,
+) -> DisplayNameUpdateResult:
+    instance = await get_instance(instance_id, db, org_id)
+    old_display_name = instance.agent_display_name
+    old_effective_name = _effective_instance_name(instance)
+    new_display_name = _normalize_instance_display_name(display_name, instance.name)
+    new_effective_name = new_display_name or instance.name
+    stored_changed = instance.agent_display_name != new_display_name
+    effective_changed = old_effective_name != new_effective_name
+
+    if not stored_changed:
+        return DisplayNameUpdateResult(
+            info=InstanceInfo.model_validate(instance),
+            changed=False,
+            old_display_name=old_display_name,
+            new_display_name=new_display_name,
+            old_effective_name=old_effective_name,
+            new_effective_name=new_effective_name,
+            synced_workspace_ids=[],
+        )
+
+    sync_targets: list[tuple[WorkspaceAgent, Workspace]] = []
+    synced_workspace_ids: list[str] = []
+    if effective_changed:
+        sync_targets = await _global_display_sync_targets(instance_id, db)
+        for _wa, workspace in sync_targets:
+            await _ensure_node_card_name_available(
+                db,
+                instance_id=instance_id,
+                workspace=workspace,
+                display_name=new_effective_name,
+            )
+
+    instance.agent_display_name = new_display_name
+
+    if effective_changed:
+        for wa, _workspace in sync_targets:
+            card_result = await db.execute(
+                select(NodeCard).where(
+                    NodeCard.workspace_id == wa.workspace_id,
+                    NodeCard.node_id == instance_id,
+                    NodeCard.deleted_at.is_(None),
+                )
+            )
+            card = card_result.scalar_one_or_none()
+            if card is not None and card.name != new_effective_name:
+                card.name = new_effective_name
+                synced_workspace_ids.append(wa.workspace_id)
+
+    await db.commit()
+
+    if synced_workspace_ids:
+        from app.services import conversation_service
+        for workspace_id in dict.fromkeys(synced_workspace_ids):
+            await conversation_service.sync_conversations_and_notify_topology(workspace_id, db)
+        await db.commit()
+
+    await db.refresh(instance)
+    return DisplayNameUpdateResult(
+        info=InstanceInfo.model_validate(instance),
+        changed=effective_changed,
+        old_display_name=old_display_name,
+        new_display_name=instance.agent_display_name,
+        old_effective_name=old_effective_name,
+        new_effective_name=_effective_instance_name(instance),
+        synced_workspace_ids=list(dict.fromkeys(synced_workspace_ids)),
+    )
 
 
 async def get_instance_detail(instance_id: str, db: AsyncSession, org_id: str | None = None) -> InstanceDetail:

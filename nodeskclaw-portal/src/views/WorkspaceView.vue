@@ -143,7 +143,7 @@ const selectedHexPos = computed(() =>
 const hexAgentInfo = computed(() => {
   if (selectedHex.value?.type !== 'agent' || !selectedHex.value.agentId) return undefined
   const agent = agents.value.find((a) => a.instance_id === selectedHex.value!.agentId)
-  return agent ? { id: agent.instance_id, name: agent.display_name || agent.name } : undefined
+  return agent ? { id: agent.instance_id, name: agent.display_name || agent.global_effective_name || agent.name } : undefined
 })
 
 const hexEntityName = computed(() => {
@@ -426,7 +426,7 @@ async function onHexAction(action: string) {
       if (selectedHex.value?.agentId) {
         const agent = agents.value.find(a => a.instance_id === selectedHex.value!.agentId)
         if (agent) {
-          collabPanelAgent.value = { instanceId: agent.instance_id, name: agent.display_name || agent.name }
+          collabPanelAgent.value = { instanceId: agent.instance_id, name: agent.display_name || agent.global_effective_name || agent.name }
           chatOpen.value = false
           collabPanelOpen.value = true
         }

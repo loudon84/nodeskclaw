@@ -35,6 +35,8 @@ const { confirm } = useConfirm()
 interface InstanceDetail {
   id: string
   name: string
+  display_name?: string | null
+  effective_name?: string
   status: string
   runtime?: string
   image_version: string
@@ -54,6 +56,7 @@ interface InstanceDetail {
 const ROLE_LEVEL: Record<string, number> = { viewer: 10, user: 20, editor: 30, admin: 40 }
 
 const instance = ref<InstanceDetail | null>(null)
+const instanceDisplayName = computed(() => instance.value?.effective_name || instance.value?.display_name || instance.value?.name || '')
 const loading = ref(false)
 const error = ref('')
 const gatewayToken = ref('')
@@ -364,7 +367,7 @@ onUnmounted(stopPolling)
           <div class="flex items-center justify-between px-5 py-4 border-b border-border shrink-0">
             <div class="flex items-center gap-2 min-w-0">
               <template v-if="instance">
-                <h3 class="font-semibold text-base truncate">{{ instance.name }}</h3>
+                <h3 class="font-semibold text-base truncate">{{ instanceDisplayName }}</h3>
                 <span class="flex items-center gap-1 text-xs" :class="statusColors[instance.status] || 'text-zinc-400'">
                   <Circle class="w-2 h-2 fill-current" />
                   {{ instance.status }}

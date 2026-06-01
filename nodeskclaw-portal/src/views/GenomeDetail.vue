@@ -45,7 +45,7 @@ const geneMap = ref<Record<string, GeneItem>>({})
 const activeGeneTab = ref<string>('')
 
 const installDialogOpen = ref(false)
-const instances = ref<{ id: string; name: string; slug: string; status: string }[]>([])
+const instances = ref<{ id: string; name: string; display_name?: string | null; effective_name?: string; slug: string; status: string }[]>([])
 const instancesLoading = ref(false)
 
 const statusConfig: Record<string, { dot: string; text: string; bg: string }> = {
@@ -82,8 +82,13 @@ function openInstallDialog() {
   installDialogOpen.value = true
   instancesLoading.value = true
   api.get('/instances').then((res) => {
-    instances.value = (res.data.data || []).map((i: { id: string; name: string; slug: string; status: string }) => ({
-      id: i.id, name: i.name, slug: i.slug, status: i.status,
+    instances.value = (res.data.data || []).map((i: { id: string; name: string; display_name?: string | null; effective_name?: string; slug: string; status: string }) => ({
+      id: i.id,
+      name: i.effective_name || i.display_name || i.name,
+      display_name: i.display_name,
+      effective_name: i.effective_name,
+      slug: i.slug,
+      status: i.status,
     }))
   }).catch(() => {
     instances.value = []

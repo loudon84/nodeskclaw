@@ -166,7 +166,7 @@ const canEditTab = computed(() => activeTab.value === 'notes-perf')
                   >
                     <div class="flex items-center gap-2">
                       <Circle class="w-2.5 h-2.5" :class="agent.status === 'running' ? 'text-green-500 fill-green-500' : 'text-muted-foreground fill-muted-foreground'" />
-                      <span class="text-sm">{{ agent.display_name || agent.name }}</span>
+                      <span class="text-sm">{{ agent.display_name || agent.global_effective_name || agent.name }}</span>
                     </div>
                     <div class="flex items-center gap-2 text-xs text-muted-foreground">
                       <span>{{ agent.status }}</span>

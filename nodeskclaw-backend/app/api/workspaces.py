@@ -828,7 +828,7 @@ async def get_agent_performance(
     name_q = (
         sa_select(
             WorkspaceAgent.instance_id,
-            func.coalesce(WorkspaceAgent.display_name, Instance.name).label("name"),
+            func.coalesce(WorkspaceAgent.display_name, Instance.agent_display_name, Instance.name).label("name"),
             WorkspaceAgent.theme_color,
         )
         .join(Instance, Instance.id == WorkspaceAgent.instance_id)

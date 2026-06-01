@@ -2,20 +2,26 @@
 import { ref, onMounted, computed, provide } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { ArrowLeft, Circle, Loader2, LayoutDashboard, Brain, Dna, History, Radio, FolderOpen, Users, Activity, Archive } from 'lucide-vue-next'
+import { ArrowLeft, Circle, Loader2, LayoutDashboard, Brain, Dna, History, Radio, FolderOpen, Users, Activity, Archive, Pencil, Check, X, RotateCcw } from 'lucide-vue-next'
 import api from '@/services/api'
+import { resolveApiErrorMessage } from '@/i18n/error'
+import { useToast } from '@/composables/useToast'
 import { getRuntimeCaps, setRuntimeEngines } from '@/utils/runtimeCapabilities'
 import { getStatusDisplay } from '@/utils/instanceStatus'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 
 const route = useRoute()
 const router = useRouter()
 const { t } = useI18n()
+const toast = useToast()
 const instanceId = computed(() => route.params.id as string)
 
 interface InstanceBasic {
   id: string
   name: string
+  display_name: string | null
+  effective_name: string
   status: string
   display_status?: string
   runtime?: string
@@ -26,6 +32,41 @@ interface InstanceBasic {
 const instance = ref<InstanceBasic | null>(null)
 const loading = ref(true)
 const myInstanceRole = computed(() => instance.value?.my_role ?? null)
+const displayName = computed(() => instance.value?.effective_name || instance.value?.display_name || instance.value?.name || '')
+const canRename = computed(() => myInstanceRole.value === 'admin')
+const renaming = ref(false)
+const renameEditing = ref(false)
+const renameValue = ref('')
+
+function openRename() {
+  renameValue.value = displayName.value
+  renameEditing.value = true
+}
+
+function closeRename() {
+  if (renaming.value) return
+  renameEditing.value = false
+  renameValue.value = ''
+}
+
+async function submitRename(nextName: string | null) {
+  const normalized = nextName === null ? null : nextName.trim()
+  if (nextName !== null && !normalized) {
+    toast.error(t('instanceRename.empty'))
+    return
+  }
+  renaming.value = true
+  try {
+    const res = await api.patch(`/instances/${instanceId.value}/display-name`, { display_name: normalized })
+    instance.value = res.data.data
+    renameEditing.value = false
+    toast.success(t('instanceRename.success'))
+  } catch (e: unknown) {
+    toast.error(resolveApiErrorMessage(e, t('instanceRename.failed')))
+  } finally {
+    renaming.value = false
+  }
+}
 
 async function fetchBasic() {
   loading.value = true
@@ -86,7 +127,40 @@ const navItems = computed(() => {
         <Loader2 class="w-4 h-4 animate-spin text-muted-foreground" />
       </template>
       <template v-else-if="instance">
-        <h1 class="text-xl font-bold">{{ instance.name }}</h1>
+        <div v-if="renameEditing" class="flex min-w-0 items-center gap-2">
+          <Input
+            v-model="renameValue"
+            class="h-8 w-56"
+            :maxlength="64"
+            :placeholder="t('instanceRename.placeholder')"
+            :disabled="renaming"
+            @keydown.enter="submitRename(renameValue)"
+            @keydown.esc="closeRename"
+          />
+          <Button variant="unstyled" size="unstyled" class="p-1.5 rounded-md hover:bg-muted transition-colors" :title="t('common.save')" :disabled="renaming" @click="submitRename(renameValue)">
+            <Loader2 v-if="renaming" class="w-4 h-4 animate-spin" />
+            <Check v-else class="w-4 h-4" />
+          </Button>
+          <Button variant="unstyled" size="unstyled" class="p-1.5 rounded-md hover:bg-muted transition-colors" :title="t('instanceRename.restore')" :disabled="renaming || !instance.display_name" @click="submitRename(null)">
+            <RotateCcw class="w-4 h-4" />
+          </Button>
+          <Button variant="unstyled" size="unstyled" class="p-1.5 rounded-md hover:bg-muted transition-colors" :title="t('common.cancel')" :disabled="renaming" @click="closeRename">
+            <X class="w-4 h-4" />
+          </Button>
+        </div>
+        <div v-else class="flex min-w-0 items-center gap-2">
+          <h1 class="truncate text-xl font-bold">{{ displayName }}</h1>
+          <Button
+            v-if="canRename"
+            variant="unstyled"
+            size="unstyled"
+            class="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+            :title="t('instanceRename.edit')"
+            @click="openRename"
+          >
+            <Pencil class="w-4 h-4" />
+          </Button>
+        </div>
         <span class="flex items-center gap-1 text-xs" :class="getStatusDisplay(instance.display_status ?? '').color">
           <Circle class="w-2 h-2 fill-current" :class="getStatusDisplay(instance.display_status ?? '').pulse ? 'animate-pulse' : ''" />
           {{ t('displayStatus.' + getStatusDisplay(instance.display_status ?? '').key) }}

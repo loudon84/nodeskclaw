@@ -416,7 +416,7 @@ async def find_agent_by_name_or_id(
                 return inst
     id_lower = identifier.lower()
     for inst, wa in rows:
-        display = (wa.display_name or inst.name) if wa else (inst.agent_display_name or inst.name)
+        display = (wa.display_name or inst.agent_display_name or inst.name) if wa else (inst.agent_display_name or inst.name)
         if display.lower() == id_lower or inst.name.lower() == id_lower:
             return inst
     return None

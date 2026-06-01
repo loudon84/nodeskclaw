@@ -110,7 +110,7 @@ async def _build_hex_map(workspace_id: str, db: AsyncSession) -> dict[tuple[int,
         if q is not None and r is not None:
             hex_map[(q, r)] = TopologyNode(
                 q, r, "agent", entity_id=agent.id,
-                display_name=wa.display_name or agent.name,
+                display_name=wa.display_name or agent.agent_display_name or agent.name,
             )
 
     human_hexes_q = await db.execute(

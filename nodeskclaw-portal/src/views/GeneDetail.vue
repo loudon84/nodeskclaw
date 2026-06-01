@@ -48,7 +48,7 @@ const synergies = ref<GeneItem[]>([])
 const variants = ref<GeneItem[]>([])
 const parentGenomes = ref<GenomeItem[]>([])
 const installDialogOpen = ref(false)
-const instances = ref<{ id: string; name: string; slug: string; status: string; runtime: string }[]>([])
+const instances = ref<{ id: string; name: string; display_name?: string | null; effective_name?: string; slug: string; status: string; runtime: string }[]>([])
 const instancesLoading = ref(false)
 const installedInstanceIds = ref<Set<string>>(new Set())
 
@@ -195,9 +195,11 @@ function openInstallDialog() {
   installedInstanceIds.value = new Set()
 
   const fetchInstances = api.get('/instances').then((res) => {
-    instances.value = (res.data.data || []).map((i: { id: string; name: string; slug: string; status: string; runtime?: string }) => ({
+    instances.value = (res.data.data || []).map((i: { id: string; name: string; display_name?: string | null; effective_name?: string; slug: string; status: string; runtime?: string }) => ({
       id: i.id,
-      name: i.name,
+      name: i.effective_name || i.display_name || i.name,
+      display_name: i.display_name,
+      effective_name: i.effective_name,
       slug: i.slug,
       status: i.status,
       runtime: i.runtime || 'openclaw',

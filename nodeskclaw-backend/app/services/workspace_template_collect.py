@@ -81,7 +81,7 @@ async def collect_internal_template_payload(
         agent_specs.append({
             "hex_q": wa.hex_q,
             "hex_r": wa.hex_r,
-            "display_name": wa.display_name or inst.name,
+            "display_name": wa.display_name or inst.agent_display_name or inst.name,
             "label": wa.label,
             "runtime": inst.runtime,
             "compute_provider": inst.compute_provider,

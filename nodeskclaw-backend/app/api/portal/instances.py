@@ -20,7 +20,7 @@ from app.models.user import User
 from app.schemas.backup import CloneRequest, RestoreRequest
 from app.schemas.common import ApiResponse
 from app.schemas.deploy import DeployRecordInfo
-from app.schemas.instance import InstanceDetail, InstanceInfo, UpdateConfigRequest
+from app.schemas.instance import InstanceDetail, InstanceInfo, UpdateConfigRequest, UpdateDisplayNameRequest
 from app.services import instance_service
 from app.services import instance_member_service
 from app.services.runtime.registries.compute_registry import require_k8s_client
@@ -199,6 +199,37 @@ async def save_config(
     data = await instance_service.save_config(instance_id, body, db)
     await hooks.emit("operation_audit", action="instance.config_saved", target_type="instance", target_id=instance_id, actor_id=current_user.id, org_id=current_user.current_org_id, details={"source": "portal"})
     return ApiResponse(data=data)
+
+
+@router.patch("/{instance_id}/display-name", response_model=ApiResponse[InstanceInfo])
+async def update_display_name(
+    instance_id: str,
+    body: UpdateDisplayNameRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    await instance_member_service.check_instance_access(
+        instance_id, current_user, InstanceRole.admin, db
+    )
+    result = await instance_service.update_display_name(instance_id, body.display_name, db)
+    if result.changed:
+        await hooks.emit(
+            "operation_audit",
+            action="instance.display_name_updated",
+            target_type="instance",
+            target_id=instance_id,
+            actor_id=current_user.id,
+            org_id=current_user.current_org_id,
+            details={
+                "source": "portal",
+                "old_display_name": result.old_display_name,
+                "new_display_name": result.new_display_name,
+                "old_effective_name": result.old_effective_name,
+                "new_effective_name": result.new_effective_name,
+                "synced_workspace_ids": result.synced_workspace_ids,
+            },
+        )
+    return ApiResponse(data=result.info)
 
 
 @router.post("/{instance_id}/apply", response_model=ApiResponse[InstanceInfo])

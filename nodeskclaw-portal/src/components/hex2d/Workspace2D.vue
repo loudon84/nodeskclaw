@@ -614,7 +614,7 @@ const emptyHexes = computed(() => {
           font-size="11"
           font-weight="500"
         >
-          {{ agent.display_name || agent.name }}
+          {{ agent.display_name || agent.global_effective_name || agent.name }}
         </text>
         <text
           v-if="agent.label && !selectable"

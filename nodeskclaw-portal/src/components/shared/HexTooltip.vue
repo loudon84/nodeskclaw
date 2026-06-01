@@ -22,7 +22,7 @@ const statusLabels: Record<string, string> = {
       :style="{ left: `${(x ?? 0) + 16}px`, top: `${(y ?? 0) - 10}px` }"
     >
       <div class="font-semibold text-foreground">
-        {{ agent.display_name || agent.name }}
+        {{ agent.display_name || agent.global_effective_name || agent.name }}
       </div>
       <div class="text-muted-foreground mt-0.5">
         状态: {{ statusLabels[agent.status] || agent.status }}

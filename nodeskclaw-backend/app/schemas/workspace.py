@@ -29,6 +29,8 @@ class AgentBrief(BaseModel):
     instance_id: str
     name: str
     display_name: str | None = None
+    global_display_name: str | None = None
+    global_effective_name: str | None = None
     label: str | None = None
     slug: str | None = None
     status: str

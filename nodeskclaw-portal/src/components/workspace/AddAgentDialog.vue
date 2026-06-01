@@ -41,6 +41,8 @@ const toast = useToast()
 interface InstanceItem {
   id: string
   name: string
+  display_name?: string | null
+  effective_name?: string
   slug?: string
   status: string
   workspaces?: { id: string; name: string }[]
@@ -120,7 +122,9 @@ async function fetchInstances() {
     const res = await api.get('/instances', { params })
     instances.value = (res.data.data || []).map((i: any) => ({
       id: i.id,
-      name: i.name,
+      name: i.effective_name || i.display_name || i.name,
+      display_name: i.display_name,
+      effective_name: i.effective_name,
       slug: i.slug,
       status: i.status,
       workspaces: i.workspaces ?? (i.workspace_id ? [{ id: i.workspace_id, name: i.workspace_name ?? '' }] : []),

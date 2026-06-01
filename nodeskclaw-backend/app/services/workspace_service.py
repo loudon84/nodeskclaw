@@ -67,7 +67,7 @@ def _agent_for_broadcast(inst: Instance, wa: WorkspaceAgent):
     return type("_AgentDisplay", (), {
         "id": inst.id,
         "name": inst.name,
-        "agent_display_name": wa.display_name,
+        "agent_display_name": wa.display_name or inst.agent_display_name,
     })()
 
 
@@ -75,8 +75,10 @@ def _agent_brief(inst: Instance, wa: WorkspaceAgent) -> AgentBrief:
     from app.services.tunnel import tunnel_adapter
     return AgentBrief(
         instance_id=inst.id,
-        name=inst.name,
+        name=inst.agent_display_name or inst.name,
         display_name=wa.display_name,
+        global_display_name=inst.agent_display_name,
+        global_effective_name=inst.agent_display_name or inst.name,
         label=wa.label,
         slug=inst.slug,
         status=inst.status,
@@ -507,7 +509,7 @@ async def add_agent(db: AsyncSession, workspace_id: str, data: AddAgentRequest, 
         workspace_id=workspace_id,
         hex_q=hex_q,
         hex_r=hex_r,
-        name=data.display_name or inst.name,
+        name=data.display_name or inst.agent_display_name or inst.name,
         metadata={"runtime": inst.runtime, "instance_id": inst.id},
     )
 
@@ -691,7 +693,7 @@ async def update_agent(
             card_updates["hex_q"] = wa.hex_q
             card_updates["hex_r"] = wa.hex_r
         if data.display_name is not None:
-            card_updates["name"] = wa.display_name or inst.name
+            card_updates["name"] = wa.display_name or inst.agent_display_name or inst.name
         if card_updates:
             await node_card_service.update_node_card(db, card, **card_updates)
 

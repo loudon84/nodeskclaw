@@ -20,6 +20,8 @@ const { t, te } = useI18n()
 interface InstanceItem {
   id: string
   name: string
+  display_name?: string | null
+  effective_name?: string
   status: string
   image_version: string
   endpoint_url: string | null
@@ -54,6 +56,10 @@ const isEmpty = computed(() => !loading.value && instances.value.length === 0)
 function statusLabel(status: string) {
   const key = `status.${status}`
   return te(key) ? t(key) : status
+}
+
+function getInstanceDisplayName(inst: InstanceItem): string {
+  return inst.effective_name || inst.display_name || inst.name
 }
 </script>
 
@@ -103,7 +109,7 @@ function statusLabel(status: string) {
               <Server class="h-5 w-5 text-muted-foreground" />
             </div>
             <div class="min-w-0">
-              <CardTitle class="truncate text-base">{{ inst.name }}</CardTitle>
+              <CardTitle class="truncate text-base">{{ getInstanceDisplayName(inst) }}</CardTitle>
               <CardDescription class="mt-1 flex items-center gap-2">
                 <Badge variant="outline" class="max-w-[12rem] truncate">
                   {{ inst.image_version }}

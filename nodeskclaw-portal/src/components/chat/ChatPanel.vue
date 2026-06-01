@@ -86,7 +86,7 @@ function getAgentColor(senderId: string): string {
 }
 
 function agentLabel(a: AgentBrief): string {
-  return a.display_name || a.name
+  return a.display_name || a.global_effective_name || a.name
 }
 
 function findAgentByCommandArg(name: string): AgentBrief | undefined {
@@ -96,6 +96,7 @@ function findAgentByCommandArg(name: string): AgentBrief | undefined {
     a.slug === normalized ||
     a.name === normalized ||
     a.display_name === normalized ||
+    a.global_effective_name === normalized ||
     agentLabel(a) === normalized,
   )
 }
