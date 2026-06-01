@@ -1,6 +1,6 @@
 """Central router that aggregates all API sub-routers."""
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
 from app.api.audit import router as audit_router
 from app.api.auth import router as auth_router
@@ -89,9 +89,11 @@ async def system_capabilities(db=Depends(get_db)):
 
 
 @api_router.get("/files/local/{file_key:path}", tags=["文件"])
-async def serve_local_file(file_key: str, expires: str = "", sig: str = ""):
+async def serve_local_file(file_key: str, request: Request, expires: str = "", sig: str = ""):
     """Serve a local file using HMAC-signed URL (no Bearer token required)."""
-    from fastapi.responses import FileResponse
+    from pathlib import Path
+
+    from app.api.file_downloads import build_storage_download_response
     from app.services import storage_service
 
     if storage_service._use_s3():
@@ -107,7 +109,12 @@ async def serve_local_file(file_key: str, expires: str = "", sig: str = ""):
     if not file_path.is_file():
         raise NotFoundError("文件不存在", "errors.storage.file_not_found")
 
-    return FileResponse(file_path)
+    return await build_storage_download_response(
+        storage_key=file_key,
+        filename=Path(file_key).name,
+        content_type="application/octet-stream",
+        range_header=request.headers.get("range"),
+    )
 
 
 api_router.include_router(auth_router, prefix="/auth", tags=["认证"])

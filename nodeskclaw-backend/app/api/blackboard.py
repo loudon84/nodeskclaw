@@ -1,6 +1,6 @@
 """Blackboard shared-file API endpoints."""
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_db
@@ -198,6 +198,34 @@ async def get_file_url(
     if url is None:
         return _ok(None, "not found")
     return _ok({"url": url})
+
+
+@router.get("/{workspace_id}/blackboard/files/{file_id}/download")
+async def download_file(
+    workspace_id: str,
+    file_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(_get_current_user_or_agent_dep()),
+):
+    await require_workspace_actor_member(workspace_id, user, db)
+    await _enforce_agent_blackboard_topology(workspace_id, db)
+    file_record = await workspace_service.get_shared_file_record(db, workspace_id, file_id)
+    if file_record is None or not file_record.storage_key:
+        raise HTTPException(status_code=404, detail={
+            "error_code": 40431,
+            "message_key": "errors.file.not_found",
+            "message": "文件不存在",
+        })
+
+    from app.api.file_downloads import build_storage_download_response
+
+    return await build_storage_download_response(
+        storage_key=file_record.storage_key,
+        filename=file_record.name,
+        content_type=file_record.content_type,
+        range_header=request.headers.get("range"),
+    )
 
 
 @router.get("/{workspace_id}/blackboard/files/{file_id}/content")

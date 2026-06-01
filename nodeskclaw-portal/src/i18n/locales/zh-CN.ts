@@ -1778,6 +1778,7 @@ const zhCN = {
       storage_unavailable: "文件存储服务不可用",
       base64_upload_disabled: "base64 上传已禁用，请使用文件上传",
       invalid_download_range: "下载范围无效",
+      content_too_large: "文件过大，不能以内联内容读取，请使用下载链接",
     },
     managed_files: {
       resource_not_found: "受控文件资源不存在",

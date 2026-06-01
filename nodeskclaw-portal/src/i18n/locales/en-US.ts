@@ -1778,6 +1778,7 @@ const enUS = {
       storage_unavailable: "File storage service is unavailable",
       base64_upload_disabled: "Base64 upload is disabled. Please upload a file instead.",
       invalid_download_range: "Download range is invalid",
+      content_too_large: "File is too large to read inline. Use a download link instead.",
     },
     managed_files: {
       resource_not_found: "Managed file resource does not exist",

@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Coroutine, Literal
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select as sa_select
@@ -1307,6 +1307,7 @@ async def get_file_presigned_url(
 async def download_workspace_file(
     workspace_id: str,
     file_id: str,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     user=Depends(_get_current_user_or_agent_dep()),
 ):
@@ -1331,23 +1332,19 @@ async def download_workspace_file(
         raise _error(404, 40431, "errors.file.not_found", "文件不存在")
 
     try:
-        content = await storage_service.download_file(wf.storage_key)
+        from app.api.file_downloads import build_storage_download_response
+
+        return await build_storage_download_response(
+            storage_key=wf.storage_key,
+            filename=wf.original_name,
+            content_type=wf.content_type,
+            range_header=request.headers.get("range"),
+        )
+    except storage_service.DownloadRangeNotSatisfiableError:
+        raise
     except Exception:
         logger.warning("下载文件 %s 失败", wf.original_name, exc_info=True)
         raise _error(502, 50202, "errors.storage.download_failed", "文件下载失败，请稍后重试")
-
-    from fastapi.responses import Response
-    from urllib.parse import quote
-
-    filename_encoded = quote(wf.original_name, safe="")
-    return Response(
-        content=content,
-        media_type=wf.content_type,
-        headers={
-            "Content-Disposition": f"attachment; filename*=UTF-8''{filename_encoded}",
-            "Content-Length": str(len(content)),
-        },
-    )
 
 
 @router.post("/{workspace_id}/chat")

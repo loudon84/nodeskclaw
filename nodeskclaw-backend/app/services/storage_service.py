@@ -5,10 +5,12 @@ import hashlib
 import hmac
 import logging
 import os
+import shutil
 import tempfile
 import time
 import uuid
-from collections.abc import AsyncIterable
+from collections.abc import AsyncIterable, AsyncIterator
+from dataclasses import dataclass
 from pathlib import Path
 
 import boto3
@@ -32,6 +34,36 @@ class UploadTooLargeError(ValueError):
         super().__init__("upload too large")
         self.limit_bytes = limit_bytes
         self.actual_bytes = actual_bytes
+
+
+class DownloadRangeNotSatisfiableError(ValueError):
+    def __init__(self, size: int) -> None:
+        super().__init__("download range not satisfiable")
+        self.size = size
+
+
+@dataclass(frozen=True)
+class DownloadRange:
+    start: int
+    end: int
+    size: int
+    is_partial: bool
+
+    @property
+    def length(self) -> int:
+        if self.size <= 0:
+            return 0
+        return max(0, self.end - self.start + 1)
+
+    @property
+    def content_range(self) -> str:
+        return f"bytes {self.start}-{self.end}/{self.size}"
+
+
+@dataclass(frozen=True)
+class DownloadStream:
+    range: DownloadRange
+    chunks: AsyncIterator[bytes]
 
 
 def _storage_intent() -> str:
@@ -199,6 +231,23 @@ def _s3_download(key: str) -> bytes:
     return resp["Body"].read()
 
 
+def _s3_size(key: str) -> int:
+    client = _get_s3_client()
+    resp = client.head_object(Bucket=settings.S3_BUCKET, Key=key)
+    return int(resp["ContentLength"])
+
+
+def _s3_copy(source_key: str, target_key: str, content_type: str) -> None:
+    client = _get_s3_client()
+    client.copy_object(
+        Bucket=settings.S3_BUCKET,
+        Key=target_key,
+        CopySource={"Bucket": settings.S3_BUCKET, "Key": source_key},
+        ContentType=content_type,
+        MetadataDirective="REPLACE",
+    )
+
+
 def _s3_delete(key: str) -> None:
     client = _get_s3_client()
     client.delete_object(Bucket=settings.S3_BUCKET, Key=key)
@@ -224,6 +273,26 @@ def _local_presigned_url(key: str, expires: int = 3600) -> str:
 def _local_download(key: str) -> bytes:
     file_path = _get_local_dir() / key
     return file_path.read_bytes()
+
+
+def _local_size(key: str) -> int:
+    file_path = _get_local_dir() / key
+    return file_path.stat().st_size
+
+
+def _local_copy(source_key: str, target_key: str) -> None:
+    source_path = _get_local_dir() / source_key
+    target_path = _get_local_dir() / target_key
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with source_path.open("rb") as src, target_path.open("wb") as dst:
+            shutil.copyfileobj(src, dst, length=1024 * 1024)
+    except Exception:
+        try:
+            target_path.unlink()
+        except FileNotFoundError:
+            pass
+        raise
 
 
 def _local_delete(key: str) -> None:
@@ -352,11 +421,143 @@ async def get_presigned_url(key: str, expires: int = 3600) -> str:
     return _local_presigned_url(key, expires)
 
 
+async def get_file_size(key: str) -> int:
+    _ensure_storage_available()
+    if _use_s3():
+        return await asyncio.to_thread(_s3_size, key)
+    return await asyncio.to_thread(_local_size, key)
+
+
+def resolve_download_range(range_header: str | None, size: int) -> DownloadRange:
+    if not range_header:
+        end = max(0, size - 1)
+        return DownloadRange(0, end, size, False)
+
+    value = range_header.strip()
+    if not value.startswith("bytes=") or "," in value:
+        raise DownloadRangeNotSatisfiableError(size)
+
+    spec = value.removeprefix("bytes=").strip()
+    if "-" not in spec:
+        raise DownloadRangeNotSatisfiableError(size)
+
+    start_text, end_text = spec.split("-", 1)
+    try:
+        if start_text == "":
+            suffix_length = int(end_text)
+            if suffix_length <= 0 or size <= 0:
+                raise DownloadRangeNotSatisfiableError(size)
+            start = max(size - suffix_length, 0)
+            end = size - 1
+        else:
+            start = int(start_text)
+            end = int(end_text) if end_text else size - 1
+    except ValueError as exc:
+        raise DownloadRangeNotSatisfiableError(size) from exc
+
+    if size <= 0 or start < 0 or end < start or start >= size:
+        raise DownloadRangeNotSatisfiableError(size)
+
+    return DownloadRange(start, min(end, size - 1), size, True)
+
+
+async def _empty_chunks() -> AsyncIterator[bytes]:
+    if False:
+        yield b""
+
+
+async def _local_iter_range(
+    key: str,
+    start: int,
+    end: int,
+    *,
+    chunk_size: int,
+) -> AsyncIterator[bytes]:
+    remaining = max(0, end - start + 1)
+    if remaining == 0:
+        async for chunk in _empty_chunks():
+            yield chunk
+        return
+
+    file_path = _get_local_dir() / key
+    with file_path.open("rb") as fh:
+        fh.seek(start)
+        while remaining > 0:
+            chunk = await asyncio.to_thread(fh.read, min(chunk_size, remaining))
+            if not chunk:
+                break
+            remaining -= len(chunk)
+            yield chunk
+
+
+def _s3_range_body(key: str, start: int, end: int):
+    client = _get_s3_client()
+    range_header = f"bytes={start}-{end}"
+    resp = client.get_object(
+        Bucket=settings.S3_BUCKET,
+        Key=key,
+        Range=range_header,
+    )
+    return resp["Body"]
+
+
+async def _s3_iter_range(
+    key: str,
+    start: int,
+    end: int,
+    *,
+    chunk_size: int,
+) -> AsyncIterator[bytes]:
+    if end < start:
+        async for chunk in _empty_chunks():
+            yield chunk
+        return
+
+    body = await asyncio.to_thread(_s3_range_body, key, start, end)
+    try:
+        while True:
+            chunk = await asyncio.to_thread(body.read, chunk_size)
+            if not chunk:
+                break
+            yield chunk
+    finally:
+        body.close()
+
+
+async def get_download_stream(
+    key: str,
+    range_header: str | None = None,
+    *,
+    chunk_size: int = 1024 * 1024,
+) -> DownloadStream:
+    size = await get_file_size(key)
+    resolved = resolve_download_range(range_header, size)
+    if resolved.length == 0:
+        chunks = _empty_chunks()
+    elif _use_s3():
+        chunks = _s3_iter_range(key, resolved.start, resolved.end, chunk_size=chunk_size)
+    else:
+        chunks = _local_iter_range(key, resolved.start, resolved.end, chunk_size=chunk_size)
+    return DownloadStream(resolved, chunks)
+
+
 async def download_file(key: str) -> bytes:
     _ensure_storage_available()
     if _use_s3():
         return await asyncio.to_thread(_s3_download, key)
     return await asyncio.to_thread(_local_download, key)
+
+
+async def copy_file(source_key: str, filename: str, content_type: str, workspace_id: str) -> str:
+    _ensure_storage_available()
+    if _use_s3():
+        target_key = _build_object_key(workspace_id, filename, include_prefix=True)
+        await asyncio.to_thread(_s3_copy, source_key, target_key, content_type)
+        return target_key
+
+    target_key = _build_object_key(workspace_id, filename, include_prefix=False)
+    await asyncio.to_thread(_local_copy, source_key, target_key)
+    return target_key
 
 
 async def delete_file(key: str) -> None:

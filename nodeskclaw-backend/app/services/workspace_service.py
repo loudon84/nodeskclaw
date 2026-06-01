@@ -50,6 +50,7 @@ from app.schemas.workspace import (
 )
 
 logger = logging.getLogger(__name__)
+SHARED_FILE_INLINE_READ_MAX_BYTES = 1024 * 1024
 
 _background_tasks: set[asyncio.Task] = set()
 
@@ -1901,19 +1902,26 @@ async def copy_shared_file(
     )).scalar_one_or_none()
     if source is None or not source.storage_key:
         return None
-    content = await storage_service.download_file(source.storage_key)
-    return await upload_shared_file_bytes(
+    filename = target_filename or source.name
+    storage_key = await storage_service.copy_file(
+        source.storage_key,
+        filename,
+        source.content_type,
+        workspace_id,
+    )
+    return await _upsert_shared_file_metadata(
         db, workspace_id, uploader_type, uploader_id, uploader_name,
-        filename=target_filename or source.name,
-        file_bytes=content,
+        filename=filename,
+        file_size=source.file_size,
         content_type=source.content_type,
+        storage_key=storage_key,
         parent_path=target_parent_path,
     )
 
 
-async def get_shared_file_url(
+async def get_shared_file_record(
     db: AsyncSession, workspace_id: str, file_id: str,
-) -> str | None:
+) -> BlackboardFile | None:
     result = await db.execute(
         select(BlackboardFile).where(
             BlackboardFile.id == file_id,
@@ -1922,7 +1930,13 @@ async def get_shared_file_url(
             BlackboardFile.deleted_at.is_(None),
         )
     )
-    f = result.scalar_one_or_none()
+    return result.scalar_one_or_none()
+
+
+async def get_shared_file_url(
+    db: AsyncSession, workspace_id: str, file_id: str,
+) -> str | None:
+    f = await get_shared_file_record(db, workspace_id, file_id)
     if f is None or not f.storage_key:
         return None
     return await storage_service.get_presigned_url(f.storage_key)
@@ -1932,17 +1946,14 @@ async def read_shared_file(
     db: AsyncSession, workspace_id: str, file_id: str,
 ) -> tuple[str, str] | None:
     """Return (base64_content, content_type) for agent tool read_file."""
-    result = await db.execute(
-        select(BlackboardFile).where(
-            BlackboardFile.id == file_id,
-            BlackboardFile.workspace_id == workspace_id,
-            BlackboardFile.is_directory.is_(False),
-            BlackboardFile.deleted_at.is_(None),
-        )
-    )
-    f = result.scalar_one_or_none()
+    f = await get_shared_file_record(db, workspace_id, file_id)
     if f is None or not f.storage_key:
         return None
+    if f.file_size > SHARED_FILE_INLINE_READ_MAX_BYTES:
+        raise BadRequestError(
+            "文件过大，不能以内联 base64 内容读取，请使用下载 URL",
+            message_key="errors.upload.content_too_large",
+        )
 
     content = await storage_service.download_file(f.storage_key)
     return base64.b64encode(content).decode(), f.content_type
