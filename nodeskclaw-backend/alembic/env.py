@@ -18,6 +18,9 @@ from app.core.config import settings  # noqa: E402
 from app.models import Base  # noqa: E402  — triggers all model imports
 from app.utils.alembic_url import escape_for_alembic_config  # noqa: E402
 
+# Import task_orchestrator models to register them with SQLAlchemy metadata
+import app.modules.task_orchestrator.models  # noqa: F401, E402
+
 try:
     import ee.backend.models  # noqa: F401, E402
 except ImportError:

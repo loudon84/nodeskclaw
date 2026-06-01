@@ -47,6 +47,10 @@ from app.api.portal.instance_files import router as portal_instance_files_router
 from app.api.portal.clusters import router as portal_cluster_router, write_router as portal_cluster_write_router
 from app.api.portal.events import router as portal_events_router
 
+# Task Orchestrator
+from app.api.task_orchestrator import router as task_orchestrator_router
+from app.api.task_orchestrator_admin import router as task_orchestrator_admin_router
+
 # ── Portal 公共 API（/api/v1）──────────────────────────────
 # Portal 使用 portal/ 下的独立路由，内置实例级权限检查。
 
@@ -132,6 +136,7 @@ api_router.include_router(invite_router, prefix="/orgs", tags=["邀请"])
 api_router.include_router(invite_public_router, prefix="/invite", tags=["邀请（公开）"])
 api_router.include_router(security_ws_router, tags=["安全评估"])
 api_router.include_router(tunnel_router, tags=["Agent Tunnel"])
+api_router.include_router(task_orchestrator_router, tags=["任务编排"])
 
 # ── 管理平台 Admin API（/api/v1/admin）─────────────────────
 # Admin 使用原有路由模块，通过 dependencies 注入角色检查。
@@ -189,4 +194,6 @@ admin_router.include_router(runtime_admin_router, prefix="/runtime",
     tags=["Admin - 运行时平台"],
     dependencies=[Depends(require_org_role("admin"))])
 admin_router.include_router(tunnel_router, tags=["Admin - Agent Tunnel"],
+    dependencies=[Depends(require_org_role("admin"))])
+admin_router.include_router(task_orchestrator_admin_router, tags=["Admin - 任务编排"],
     dependencies=[Depends(require_org_role("admin"))])
