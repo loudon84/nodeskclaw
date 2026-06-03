@@ -86,6 +86,17 @@ async function listNoDeskClawPeers(params: {
   }
 }
 
+async function listNoDeskClawGroups(params: {
+  query?: string | null;
+  limit?: number | null;
+}): Promise<Array<{ kind: "group"; id: string; name: string }>> {
+  const q = (params.query ?? "").toLowerCase();
+  let entries = [{ kind: "group" as const, id: "broadcast", name: "办公室群聊" }];
+  if (q) entries = entries.filter((e) => e.id.includes(q) || e.name.toLowerCase().includes(q));
+  if (params.limit && params.limit > 0) entries = entries.slice(0, params.limit);
+  return entries;
+}
+
 export const nodeskclawPlugin: ChannelPlugin<ResolvedNoDeskClawAccount> = {
   id: CHANNEL_KEY,
   meta: {
@@ -97,7 +108,7 @@ export const nodeskclawPlugin: ChannelPlugin<ResolvedNoDeskClawAccount> = {
     aliases: ["cb"],
   },
   capabilities: {
-    chatTypes: ["direct"],
+    chatTypes: ["direct", "group"],
   },
   config: {
     listAccountIds: (cfg) => {
@@ -164,8 +175,11 @@ export const nodeskclawPlugin: ChannelPlugin<ResolvedNoDeskClawAccount> = {
   directory: {
     listPeers: (params) => listNoDeskClawPeers(params),
     listPeersLive: (params) => listNoDeskClawPeers(params),
+    listGroups: (params) => listNoDeskClawGroups(params),
+    listGroupsLive: (params) => listNoDeskClawGroups(params),
   },
   messaging: {
+    inferTargetChatType: ({ to }) => (to.trim() === "broadcast" ? "group" : undefined),
     normalizeTarget: (raw: string) => {
       const trimmed = raw.trim();
       if (!trimmed) return undefined;
