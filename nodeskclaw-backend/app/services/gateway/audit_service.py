@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.gateway.gateway_audit_log import McpGatewayAuditLog
+from app.services.gateway.security.param_masker import ParamMasker
 
 logger = logging.getLogger(__name__)
 
@@ -28,11 +29,18 @@ class AuditService:
         error_code: int | None = None,
         policy_id: str | None = None,
         is_default_policy: bool = False,
+        caller_ip: str | None = None,
+        auth_type: str | None = None,
+        auth_key_id: str | None = None,
+        security_event: str | None = None,
+        sensitive_param_names: list[str] | None = None,
     ) -> None:
         params_hash = None
+        params_masked = None
         if request_params:
             raw = str(sorted(request_params.items()))
             params_hash = hashlib.sha256(raw.encode()).hexdigest()
+            params_masked = ParamMasker.mask_params(request_params, sensitive_param_names)
 
         log_entry = McpGatewayAuditLog(
             id=str(uuid.uuid4()),
@@ -49,6 +57,11 @@ class AuditService:
             error_code=error_code,
             policy_id=policy_id,
             is_default_policy=is_default_policy,
+            caller_ip=caller_ip,
+            auth_type=auth_type,
+            auth_key_id=auth_key_id,
+            params_masked=params_masked,
+            security_event=security_event,
         )
         try:
             db.add(log_entry)

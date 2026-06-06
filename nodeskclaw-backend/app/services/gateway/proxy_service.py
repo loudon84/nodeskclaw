@@ -15,6 +15,8 @@ from app.services.gateway.policy_engine import PolicyEngine
 from app.services.gateway.route_matcher import RouteMatcher
 from app.services.gateway.tool_cache import ToolCache
 from app.services.gateway.types import PolicyDenyReason, UpstreamTarget
+from app.services.gateway.security.ssrf_guard import SSRFGuard
+from app.core.exceptions import AppException
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +42,9 @@ class ProxyService:
         org_id: str,
         user_id: str | None = None,
         tool_name: str | None = None,
+        caller_ip: str | None = None,
+        auth_type: str | None = None,
+        auth_key_id: str | None = None,
     ) -> McpProxyResponse:
         request_id = str(uuid.uuid4())
         start_time = time.time()
@@ -63,6 +68,9 @@ class ProxyService:
                 error_code=self._deny_to_error_code(policy_result.deny_reason),
                 policy_id=policy_result.policy_id,
                 is_default_policy=policy_result.is_default_policy,
+                caller_ip=caller_ip,
+                auth_type=auth_type,
+                auth_key_id=auth_key_id,
             )
             return McpProxyResponse(
                 id=None,
@@ -159,8 +167,10 @@ class ProxyService:
     async def _fetch_server_tools(self, server: InstanceMcpServer) -> list[AggregatedTool]:
         if not server.url:
             return []
+        if not SSRFGuard.check_url(server.url):
+            raise AppException(code=40310, message="上游地址 SSRF 拦截", status_code=403)
         try:
-            async with httpx.AsyncClient(timeout=10) as client:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(connect=5.0, read=10.0)) as client:
                 resp = await client.post(
                     server.url,
                     json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
@@ -239,8 +249,14 @@ class ProxyService:
         params: dict | None,
         timeout_seconds: int,
     ) -> McpProxyResponse:
+        if server.url and not SSRFGuard.check_url(server.url):
+            return McpProxyResponse(
+                error={"code": 40310, "message": "上游地址 SSRF 拦截"},
+            )
+        connect_timeout = 5.0
+        read_timeout = max(timeout_seconds - 5, 5)
         try:
-            async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(connect=connect_timeout, read=read_timeout)) as client:
                 resp = await client.post(
                     server.url,
                     json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params or {}},

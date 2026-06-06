@@ -397,3 +397,57 @@ def require_feature(feature_id: str):
                 },
             )
     return _check_feature
+
+
+# ── Gateway Auth Dependencies ──────────────────────────────
+
+
+async def get_api_key_or_jwt(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """JWT 优先，其次 API Key（X-API-Key Header），返回 (user, org, auth_type, auth_key_id)。"""
+    from app.core.security import get_current_user
+    from app.models.organization import Organization
+
+    auth_header = request.headers.get("authorization", "")
+    api_key_value = request.headers.get("x-api-key", "")
+
+    if auth_header and auth_header.startswith("Bearer "):
+        try:
+            user = await get_current_user(request=request, db=db)
+            from app.services.org.factory import get_org_provider
+            provider = get_org_provider()
+            org = await provider.resolve_org_for_user(user, db)
+            if org is None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={"error_code": 40010, "message_key": "errors.org.user_has_no_org", "message": "用户未加入任何组织"},
+                )
+            return user, org, "jwt", None
+        except HTTPException:
+            raise
+
+    if api_key_value:
+        from app.services.gateway.security.api_key_auth import ApiKeyAuth
+        result = await ApiKeyAuth.authenticate(db, api_key_value)
+        if not result.is_valid:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={"error_code": result.error_code, "message": result.error_message or "认证失败"},
+            )
+        org_result = await db.execute(
+            select(Organization).where(Organization.id == result.org_id, Organization.deleted_at.is_(None))
+        )
+        org = org_result.scalar_one_or_none()
+        if org is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error_code": 40010, "message_key": "errors.org.user_has_no_org", "message": "组织不存在"},
+            )
+        return None, org, "api_key", result.api_key_id
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail={"error_code": 40100, "message_key": "errors.auth.token_invalid", "message": "缺少认证凭证"},
+    )

@@ -19,8 +19,10 @@ from app.models.engine_version import EngineVersion  # noqa: F401
 from app.models.event_log import EventLog  # noqa: F401
 from app.models.gateway import (  # noqa: F401
     McpGatewayAuditLog,
+    McpGatewayApiKey,
     McpGatewayPolicy,
     McpGatewayRoute,
+    McpGatewaySecurityPolicy,
 )
 from app.models.gene import (  # noqa: F401
     Gene,
@@ -67,6 +69,15 @@ from app.models.workspace_objective import WorkspaceObjective  # noqa: F401
 from app.models.workspace_schedule import WorkspaceSchedule  # noqa: F401
 from app.models.workspace_task import WorkspaceTask  # noqa: F401
 from app.models.workspace_template import WorkspaceTemplate  # noqa: F401
+
+from app.models.hermes_skill import (  # noqa: F401
+    HermesSkill,
+    HermesSkillInstallation,
+    HermesSkillCollection,
+    HermesCollectionSkill,
+    HermesSkillRegistry,
+    HermesSkillImport,
+)
 
 # Task Orchestrator models are registered via their own __init__.py
 # and will be discovered by Alembic through app.modules.task_orchestrator.models

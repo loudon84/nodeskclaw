@@ -194,6 +194,20 @@ class Settings(BaseSettings):
     GATEWAY_SSE_RECONNECT_ATTEMPTS: int = 3
     GATEWAY_DEFAULT_TIMEOUT: int = 30
     GATEWAY_AUDIT_RETENTION_DAYS: int = 90
+    GATEWAY_MAX_REQUEST_BODY_BYTES: int = 1048576
+    GATEWAY_GLOBAL_RATE_LIMIT_RPM: int = 500
+    GATEWAY_SSE_MAX_CONNECTIONS: int = 500
+    GATEWAY_SSE_MAX_CONNECTIONS_PER_INSTANCE: int = 100
+    GATEWAY_ORIGIN_CHECK_MODE: str = "relaxed"
+    GATEWAY_UPSTREAM_HOST_WHITELIST: str = ""
+    GATEWAY_API_KEY_PREFIX: str = "mcp_"
+
+    # ── Hermes Skill Hub ─────────────────────────────────
+    HERMES_SKILL_HUB_ROOT: str = "/data/nodeskclaw/skills"
+    HERMES_SKILL_SCAN_MAX_DEPTH: int = 4
+    HERMES_SKILL_SCAN_TIMEOUT_SECONDS: int = 30
+    HERMES_SKILL_IMPORT_MAX_SIZE_MB: int = 50
+    HERMES_SKILL_REGISTRY_SYNC_TIMEOUT_SECONDS: int = 60
 
 
 settings = Settings()

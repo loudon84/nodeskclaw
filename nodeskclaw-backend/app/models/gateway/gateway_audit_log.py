@@ -1,7 +1,8 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, func
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from app.models.base import Base
@@ -13,6 +14,8 @@ class McpGatewayAuditLog(Base):
         Index("ix_mcp_gateway_audit_logs_instance_created", "instance_id", "created_at"),
         Index("ix_mcp_gateway_audit_logs_user_created", "caller_user_id", "created_at"),
         Index("ix_mcp_gateway_audit_logs_method_created", "method", "created_at"),
+        Index("ix_mcp_gateway_audit_logs_security_event", "security_event"),
+        Index("ix_mcp_gateway_audit_logs_auth_type", "auth_type"),
     )
 
     id: Mapped[str] = mapped_column(
@@ -33,6 +36,11 @@ class McpGatewayAuditLog(Base):
     error_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
     policy_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     is_default_policy: Mapped[bool] = mapped_column(default=False, nullable=False)
+    caller_ip: Mapped[str | None] = mapped_column(String(45), nullable=True)
+    auth_type: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    auth_key_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    params_masked: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    security_event: Mapped[str | None] = mapped_column(String(50), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
