@@ -73,15 +73,23 @@ class SkillAuditAction(str, Enum):
     DELETED = "hermes.skill.deleted"
     ENABLED = "hermes.skill.enabled"
     DISABLED = "hermes.skill.disabled"
+    IMPORT_PREVIEWED = "hermes.skill.import.previewed"
     IMPORTED = "hermes.skill.imported"
     REGISTRY_SYNCED = "hermes.skill.registry.synced"
     INSTALLED = "hermes.skill.installed"
     UNINSTALLED = "hermes.skill.uninstalled"
     COLLECTION_CREATED = "hermes.skill.collection.created"
+    COLLECTION_UPDATED = "hermes.skill.collection.updated"
     COLLECTION_INSTALLED = "hermes.skill.collection.installed"
     CONFLICT_DETECTED = "hermes.skill.conflict.detected"
     CONFLICT_RESOLVED = "hermes.skill.conflict.resolved"
     INVOKED = "hermes.skill.invoked"
+    TASK_CREATED = "hermes.task.created"
+    TASK_STARTED = "hermes.task.started"
+    TASK_COMPLETED = "hermes.task.completed"
+    TASK_FAILED = "hermes.task.failed"
+    ARTIFACT_CREATED = "hermes.artifact.created"
+    ARTIFACT_DOWNLOADED = "hermes.artifact.downloaded"
 
 
 READ_ONLY_SOURCE_TYPES = frozenset({

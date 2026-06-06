@@ -2,6 +2,7 @@ import uuid
 from typing import Any
 
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -110,5 +111,51 @@ async def delete_collection(
     _, org = user_org
     manager = CollectionManager(db)
     await manager.delete_collection(collection_id, org.id)
+    await db.commit()
+    return _ok()
+
+
+class CollectionSkillAdd(BaseModel):
+    skill_id: str
+    version_constraint: str | None = None
+    sort_order: int = 0
+    is_required: bool = True
+
+
+@router.post("/skill-collections/{collection_id}/skills")
+async def add_skill_to_collection(
+    collection_id: str,
+    body: CollectionSkillAdd,
+    user_org=Depends(require_org_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    _, org = user_org
+    manager = CollectionManager(db)
+    link = await manager.add_skill(
+        collection_id=collection_id,
+        skill_id=body.skill_id,
+        org_id=org.id,
+        version_constraint=body.version_constraint,
+        sort_order=body.sort_order,
+        is_required=body.is_required,
+    )
+    await db.commit()
+    return _ok({
+        "collection_id": link.collection_id,
+        "skill_id": link.skill_id,
+        "is_required": link.is_required,
+    })
+
+
+@router.delete("/skill-collections/{collection_id}/skills/{skill_id}")
+async def remove_skill_from_collection(
+    collection_id: str,
+    skill_id: str,
+    user_org=Depends(require_org_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    _, org = user_org
+    manager = CollectionManager(db)
+    await manager.remove_skill(collection_id, skill_id, org.id)
     await db.commit()
     return _ok()

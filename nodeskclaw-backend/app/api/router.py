@@ -27,6 +27,7 @@ from app.api.runtime_admin import router as runtime_admin_router
 from app.api.mcp import router as mcp_router
 from app.api.gateway.gateway_router import router as gateway_router
 from app.api.gateway.proxy_router import router as gateway_proxy_router
+from app.api.gateway.sse_router import router as gateway_sse_router
 from app.api.hermes_skill.router import router as hermes_skill_router
 from app.api.trust import router as trust_router
 from app.api.webhooks import router as webhook_router
@@ -157,6 +158,7 @@ api_router.include_router(tunnel_router, tags=["Agent Tunnel"])
 api_router.include_router(task_orchestrator_router, tags=["任务编排"])
 api_router.include_router(gateway_router, prefix="/gateway", tags=["Gateway 管理"])
 api_router.include_router(gateway_proxy_router, prefix="/gateway", tags=["Gateway 代理"])
+api_router.include_router(gateway_sse_router, prefix="/gateway", tags=["Gateway SSE"])
 api_router.include_router(hermes_skill_router, prefix="/hermes", tags=["Hermes Skill"])
 
 # ── 管理平台 Admin API（/api/v1/admin）─────────────────────

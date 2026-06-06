@@ -22,5 +22,6 @@ class InstanceMcpServer(BaseModel):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     source: Mapped[str] = mapped_column(String(20), default="manual", nullable=False)
     source_gene_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    health_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
 
     instance = relationship("Instance")

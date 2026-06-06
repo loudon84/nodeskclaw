@@ -119,6 +119,7 @@ async def proxy_mcp_request(
         caller_ip=request.client.host if request.client else None,
         auth_type=auth_type,
         auth_key_id=auth_key_id,
+        jsonrpc_id=body.id,
     )
 
     return _ok(response.model_dump(exclude_none=True))

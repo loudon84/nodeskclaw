@@ -1,0 +1,297 @@
+import hashlib
+import logging
+import uuid
+from pathlib import Path
+
+from sqlalchemy import or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.exceptions import (
+    NotFoundError,
+    ForbiddenError,
+    ArtifactNotFoundError,
+    ArtifactFileNotFoundError,
+    ArtifactPreviewUnsupportedError,
+    ArtifactBatchSizeExceededError,
+)
+from app.core.feature_gate import feature_gate
+from app.models.base import not_deleted
+from app.models.hermes_skill.hermes_artifact import HermesArtifact, PermissionScope
+from app.models.hermes_skill.hermes_task import HermesTask
+from app.services.hermes_skill.path_guard import PathGuard
+from app.services.hermes_skill.permission_checker import PermissionChecker
+from app.services.hermes_skill.artifact_audit_service import ArtifactAuditService
+from app.services.hermes_skill.download_token_service import DownloadTokenService
+from app.services.hermes_skill.artifact_permission_service import ArtifactPermissionService
+
+logger = logging.getLogger(__name__)
+
+MAX_ARTIFACT_SIZE_BYTES = 500 * 1024 * 1024
+PREVIEWABLE_PREFIXES = ("text/", "image/", "application/json")
+MAX_BATCH_DOWNLOAD_BYTES = 1024 * 1024 * 1024
+
+
+class ArtifactService:
+    def __init__(self, db: AsyncSession):
+        self.db = db
+        self.audit = ArtifactAuditService(db)
+
+    async def scan_and_register(
+        self,
+        task_id: str,
+        org_id: str,
+        outputs_dir: Path | None = None,
+    ) -> list[HermesArtifact]:
+        task = await self.db.get(HermesTask, task_id)
+        if not task or task.deleted_at is not None or task.org_id != org_id:
+            raise NotFoundError("Task 不存在", "errors.task.not_found")
+
+        if outputs_dir is None:
+            if task.artifact_url:
+                outputs_dir = Path(f"/tmp/hermes_tasks/{task_id}/outputs")
+            else:
+                return []
+
+        if not outputs_dir.is_dir():
+            return []
+
+        hub_root = Path("/tmp/hermes_tasks")
+        artifacts: list[HermesArtifact] = []
+
+        for file_path in outputs_dir.rglob("*"):
+            if not file_path.is_file():
+                continue
+
+            try:
+                stat = file_path.stat()
+                if stat.st_size == 0 or stat.st_size > MAX_ARTIFACT_SIZE_BYTES:
+                    continue
+            except OSError:
+                continue
+
+            try:
+                PathGuard.validate_within_root(file_path, hub_root)
+                PathGuard.reject_system_dirs(file_path)
+                PathGuard.reject_forbidden_extensions(file_path)
+            except ForbiddenError:
+                continue
+
+            sha256_hash = None
+            try:
+                sha256_hash = hashlib.sha256(file_path.read_bytes()).hexdigest()
+            except Exception:
+                logger.warning("sha256 计算失败: %s", file_path)
+
+            relative_path = str(file_path.relative_to(outputs_dir))
+            content_type = self._guess_content_type(file_path)
+            size_bytes = file_path.stat().st_size
+
+            existing = await self.db.execute(
+                select(HermesArtifact).where(
+                    not_deleted(HermesArtifact),
+                    HermesArtifact.task_id == task_id,
+                    HermesArtifact.org_id == org_id,
+                    HermesArtifact.file_path == str(file_path),
+                    HermesArtifact.sha256 == sha256_hash if sha256_hash else HermesArtifact.file_name == file_path.name,
+                )
+            )
+            if existing.scalar_one_or_none():
+                continue
+
+            permission_scope = "org" if not feature_gate.is_ee else "workspace"
+
+            artifact = HermesArtifact(
+                id=str(uuid.uuid4()),
+                org_id=org_id,
+                task_id=task_id,
+                skill_id=task.skill_id,
+                agent_id=task.agent_id,
+                workspace_id=task.workspace_id,
+                file_name=file_path.name,
+                file_path=str(file_path),
+                relative_path=relative_path,
+                content_type=content_type,
+                size_bytes=size_bytes,
+                sha256=sha256_hash,
+                permission_scope=permission_scope,
+            )
+            self.db.add(artifact)
+            artifacts.append(artifact)
+
+        await self.db.flush()
+        return artifacts
+
+    async def list_artifacts(
+        self,
+        org_id: str,
+        user_id: str | None = None,
+        task_id: str | None = None,
+        workspace_id: str | None = None,
+        skill_id: str | None = None,
+        content_type: str | None = None,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> tuple[list[HermesArtifact], int]:
+        from sqlalchemy import func
+
+        base = select(HermesArtifact).where(
+            not_deleted(HermesArtifact),
+            HermesArtifact.org_id == org_id,
+        )
+
+        if task_id:
+            base = base.where(HermesArtifact.task_id == task_id)
+        if workspace_id:
+            base = base.where(HermesArtifact.workspace_id == workspace_id)
+        if skill_id:
+            base = base.where(HermesArtifact.skill_id == skill_id)
+        if content_type:
+            base = base.where(HermesArtifact.content_type == content_type)
+
+        if user_id:
+            explicit_ids = await PermissionChecker.get_visible_artifact_ids(self.db, user_id, org_id)
+            scope_filter = or_(
+                HermesArtifact.permission_scope == "org",
+                HermesArtifact.permission_scope == "task_creator",
+                HermesArtifact.created_by == user_id,
+                *([HermesArtifact.id.in_(explicit_ids)] if explicit_ids else []),
+            )
+            base = base.where(scope_filter)
+
+        count_stmt = select(func.count()).select_from(base.subquery())
+        total = (await self.db.execute(count_stmt)).scalar_one()
+
+        offset = (page - 1) * page_size
+        result = await self.db.execute(
+            base.order_by(HermesArtifact.created_at.desc()).offset(offset).limit(page_size)
+        )
+        return result.scalars().all(), total
+
+    async def get_artifact(
+        self,
+        artifact_id: str,
+        org_id: str,
+    ) -> HermesArtifact:
+        artifact = await self.db.get(HermesArtifact, artifact_id)
+        if not artifact or artifact.deleted_at is not None or artifact.org_id != org_id:
+            raise ArtifactNotFoundError()
+        return artifact
+
+    async def preview(
+        self,
+        artifact_id: str,
+        org_id: str,
+    ) -> tuple[HermesArtifact, str]:
+        artifact = await self.get_artifact(artifact_id, org_id)
+
+        if not artifact.content_type or not any(
+            artifact.content_type.startswith(p) for p in PREVIEWABLE_PREFIXES
+        ):
+            raise ArtifactPreviewUnsupportedError()
+
+        file_path = Path(artifact.file_path)
+        PathGuard.validate_within_root(file_path, Path("/tmp/hermes_tasks"))
+
+        if not file_path.is_file():
+            raise ArtifactFileNotFoundError()
+
+        content = file_path.read_text(encoding="utf-8", errors="replace")
+
+        await self.audit.log_artifact_action(
+            action="artifact.previewed",
+            artifact_id=artifact_id,
+            org_id=org_id,
+        )
+        return artifact, content
+
+    async def download(
+        self,
+        artifact_id: str,
+        org_id: str,
+        actor_id: str = "",
+        actor_name: str | None = None,
+    ) -> Path:
+        artifact = await self.db.get(HermesArtifact, artifact_id)
+        if not artifact or artifact.deleted_at is not None or artifact.org_id != org_id:
+            raise ArtifactNotFoundError()
+
+        file_path = Path(artifact.file_path)
+        PathGuard.validate_within_root(file_path, Path("/tmp/hermes_tasks"))
+        PathGuard.reject_system_dirs(file_path)
+        PathGuard.reject_forbidden_extensions(file_path)
+
+        if not file_path.is_file():
+            raise ArtifactFileNotFoundError()
+
+        stmt = select(HermesArtifact).where(
+            HermesArtifact.id == artifact_id,
+        ).with_for_update()
+        locked = (await self.db.execute(stmt)).scalar_one()
+        locked.download_count += 1
+        await self.db.flush()
+
+        await self.audit.log_artifact_action(
+            action="artifact.downloaded",
+            artifact_id=artifact_id,
+            org_id=org_id,
+            actor_id=actor_id,
+            actor_name=actor_name,
+        )
+        return file_path
+
+    async def soft_delete(
+        self,
+        artifact_id: str,
+        org_id: str,
+        actor_id: str = "",
+        actor_name: str | None = None,
+    ) -> None:
+        artifact = await self.get_artifact(artifact_id, org_id)
+        artifact.soft_delete()
+        await self.db.flush()
+
+        token_svc = DownloadTokenService(self.db)
+        await token_svc.deactivate_tokens_for_artifact(artifact_id)
+
+        perm_svc = ArtifactPermissionService(self.db)
+        await perm_svc.cascade_revoke_for_artifact(artifact_id)
+
+        await self.audit.log_artifact_action(
+            action="artifact.deleted",
+            artifact_id=artifact_id,
+            org_id=org_id,
+            actor_id=actor_id,
+            actor_name=actor_name,
+        )
+
+    async def batch_delete(
+        self,
+        artifact_ids: list[str],
+        org_id: str,
+        actor_id: str = "",
+        actor_name: str | None = None,
+    ) -> tuple[int, int]:
+        success_count = 0
+        skip_count = 0
+        for aid in artifact_ids:
+            try:
+                await self.soft_delete(aid, org_id, actor_id, actor_name)
+                success_count += 1
+            except (ArtifactNotFoundError, ForbiddenError):
+                skip_count += 1
+        return success_count, skip_count
+
+    @staticmethod
+    def _guess_content_type(path: Path) -> str:
+        suffix_map = {
+            ".json": "application/json",
+            ".txt": "text/plain",
+            ".csv": "text/csv",
+            ".html": "text/html",
+            ".md": "text/markdown",
+            ".png": "image/png",
+            ".jpg": "image/jpeg",
+            ".pdf": "application/pdf",
+            ".zip": "application/zip",
+        }
+        return suffix_map.get(path.suffix.lower(), "application/octet-stream")

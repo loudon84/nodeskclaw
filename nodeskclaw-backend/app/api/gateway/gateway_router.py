@@ -60,7 +60,7 @@ async def create_route(
         org_id=org.id,
     )
     db.add(route)
-    await db.flush()
+    await db.commit()
     await db.refresh(route)
     return _ok(RouteRead.model_validate(route).model_dump())
 
@@ -129,7 +129,7 @@ async def update_route(
     update_data = body.model_dump(exclude_unset=True)
     for k, v in update_data.items():
         setattr(route, k, v)
-    await db.flush()
+    await db.commit()
     await db.refresh(route)
     return _ok(RouteRead.model_validate(route).model_dump())
 
@@ -152,7 +152,7 @@ async def delete_route(
     if not route:
         raise HTTPException(status_code=404, detail={"error_code": 40400, "message": "路由规则不存在"})
     route.soft_delete()
-    await db.flush()
+    await db.commit()
     return _ok(message="已删除")
 
 
@@ -193,7 +193,7 @@ async def create_policy(
         org_id=org.id,
     )
     db.add(policy)
-    await db.flush()
+    await db.commit()
     await db.refresh(policy)
     return _ok(PolicyRead.model_validate(policy).model_dump())
 
@@ -262,7 +262,7 @@ async def update_policy(
     update_data = body.model_dump(exclude_unset=True)
     for k, v in update_data.items():
         setattr(policy, k, v)
-    await db.flush()
+    await db.commit()
     await db.refresh(policy)
     return _ok(PolicyRead.model_validate(policy).model_dump())
 
@@ -285,7 +285,7 @@ async def delete_policy(
     if not policy:
         raise HTTPException(status_code=404, detail={"error_code": 40400, "message": "策略不存在"})
     policy.soft_delete()
-    await db.flush()
+    await db.commit()
     return _ok(message="已删除")
 
 

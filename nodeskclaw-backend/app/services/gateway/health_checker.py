@@ -110,7 +110,7 @@ class GatewayHealthChecker:
         if not server.url:
             return True
 
-        health_url = server.url.rstrip("/") + "/health"
+        health_url = server.health_url or (server.url.rstrip("/") + "/health")
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
                 resp = await client.get(health_url)

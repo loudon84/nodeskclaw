@@ -31,6 +31,7 @@ class ProxyService:
         self._route_matcher = route_matcher
         self._policy_engine = policy_engine
         self._tool_cache = tool_cache
+        self._concurrency_semaphores: dict[str, asyncio.Semaphore] = {}
 
     async def handle_mcp_request(
         self,
@@ -45,6 +46,7 @@ class ProxyService:
         caller_ip: str | None = None,
         auth_type: str | None = None,
         auth_key_id: str | None = None,
+        jsonrpc_id: int | str | None = 1,
     ) -> McpProxyResponse:
         request_id = str(uuid.uuid4())
         start_time = time.time()
@@ -84,11 +86,15 @@ class ProxyService:
             result = await self._handle_tools_list(db, instance_id, org_id)
         elif method == "tools/call":
             result = await self._handle_tools_call(
-                db, instance_id, org_id, params, policy_result.timeout_seconds
+                db, instance_id, org_id, params, policy_result.timeout_seconds,
+                jsonrpc_id=jsonrpc_id,
+                max_connections=policy_result.max_connections or 0,
+                retry_count=policy_result.retry_count,
             )
         else:
             result = await self._handle_generic(
-                db, instance_id, org_id, method, params, policy_result.timeout_seconds
+                db, instance_id, org_id, method, params, policy_result.timeout_seconds,
+                jsonrpc_id=jsonrpc_id,
             )
 
         duration_ms = int((time.time() - start_time) * 1000)
@@ -196,8 +202,15 @@ class ProxyService:
         org_id: str,
         params: dict | None,
         timeout_seconds: int,
+        jsonrpc_id: int | str | None = 1,
+        max_connections: int = 0,
+        retry_count: int = 0,
     ) -> McpProxyResponse:
-        targets = self._route_matcher.match(instance_id, org_id=org_id)
+        targets = self._route_matcher.match(
+            instance_id,
+            tool_name=params.get("name") if params else None,
+            org_id=org_id,
+        )
         if not targets:
             targets = await self._default_targets(db, instance_id)
 
@@ -213,7 +226,32 @@ class ProxyService:
                 error={"code": 50301, "message": "Upstream server unavailable"},
             )
 
-        return await self._forward_to_server(server, "tools/call", params, timeout_seconds)
+        async def _do_forward():
+            return await self._forward_to_server(
+                server, "tools/call", params, timeout_seconds,
+                retry_count=retry_count, jsonrpc_id=jsonrpc_id,
+            )
+
+        if max_connections and max_connections > 0:
+            key = f"{instance_id}:{target.mcp_server_id}"
+            sem = self._concurrency_semaphores.get(key)
+            if sem is None:
+                sem = asyncio.Semaphore(max_connections)
+                self._concurrency_semaphores[key] = sem
+            acquired = False
+            try:
+                if sem._value <= 0:
+                    return McpProxyResponse(
+                        error={"code": -32029, "message": "Concurrent connection limit exceeded"},
+                    )
+                await sem.acquire()
+                acquired = True
+                return await _do_forward()
+            finally:
+                if acquired:
+                    sem.release()
+        else:
+            return await _do_forward()
 
     async def _handle_generic(
         self,
@@ -223,8 +261,13 @@ class ProxyService:
         method: str,
         params: dict | None,
         timeout_seconds: int,
+        jsonrpc_id: int | str | None = 1,
     ) -> McpProxyResponse:
-        targets = self._route_matcher.match(instance_id, org_id=org_id)
+        targets = self._route_matcher.match(
+            instance_id,
+            tool_name=params.get("name") if params else None,
+            org_id=org_id,
+        )
         if not targets:
             targets = await self._default_targets(db, instance_id)
 
@@ -240,7 +283,7 @@ class ProxyService:
                 error={"code": 50301, "message": "Upstream server unavailable"},
             )
 
-        return await self._forward_to_server(server, method, params, timeout_seconds)
+        return await self._forward_to_server(server, method, params, timeout_seconds, jsonrpc_id=jsonrpc_id)
 
     async def _forward_to_server(
         self,
@@ -248,6 +291,8 @@ class ProxyService:
         method: str,
         params: dict | None,
         timeout_seconds: int,
+        retry_count: int = 0,
+        jsonrpc_id: int | str | None = 1,
     ) -> McpProxyResponse:
         if server.url and not SSRFGuard.check_url(server.url):
             return McpProxyResponse(
@@ -255,26 +300,47 @@ class ProxyService:
             )
         connect_timeout = 5.0
         read_timeout = max(timeout_seconds - 5, 5)
-        try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(connect=connect_timeout, read=read_timeout)) as client:
-                resp = await client.post(
-                    server.url,
-                    json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params or {}},
-                )
-                data = resp.json()
+
+        last_error: Exception | None = None
+        for attempt in range(retry_count + 1):
+            try:
+                async with httpx.AsyncClient(timeout=httpx.Timeout(connect=connect_timeout, read=read_timeout)) as client:
+                    resp = await client.post(
+                        server.url,
+                        json={"jsonrpc": "2.0", "id": jsonrpc_id, "method": method, "params": params or {}},
+                    )
+                    data = resp.json()
+                    if resp.status_code >= 500 and attempt < retry_count:
+                        backoff = min(2 ** attempt, 30)
+                        logger.warning("上游 %d 错误，%d 秒后重试（第 %d 次）", resp.status_code, backoff, attempt + 1)
+                        await asyncio.sleep(backoff)
+                        continue
+                    return McpProxyResponse(
+                        id=data.get("id") or jsonrpc_id,
+                        result=data.get("result"),
+                        error=data.get("error"),
+                    )
+            except (asyncio.TimeoutError, httpx.ConnectError, httpx.ReadError) as e:
+                last_error = e
+                if attempt < retry_count:
+                    backoff = min(2 ** attempt, 30)
+                    logger.warning("上游连接/超时错误，%d 秒后重试（第 %d 次）: %s", backoff, attempt + 1, e)
+                    await asyncio.sleep(backoff)
+                    continue
+                if isinstance(e, asyncio.TimeoutError):
+                    return McpProxyResponse(
+                        error={"code": 50401, "message": "Gateway timeout"},
+                    )
                 return McpProxyResponse(
-                    id=data.get("id"),
-                    result=data.get("result"),
-                    error=data.get("error"),
+                    error={"code": 50301, "message": f"Upstream error: {e}"},
                 )
-        except asyncio.TimeoutError:
-            return McpProxyResponse(
-                error={"code": 50401, "message": "Gateway timeout"},
-            )
-        except Exception as e:
-            return McpProxyResponse(
-                error={"code": 50301, "message": f"Upstream error: {e}"},
-            )
+            except Exception as e:
+                return McpProxyResponse(
+                    error={"code": 50301, "message": f"Upstream error: {e}"},
+                )
+        return McpProxyResponse(
+            error={"code": 50301, "message": f"Upstream error after {retry_count} retries: {last_error}"},
+        )
 
     async def _default_targets(
         self,

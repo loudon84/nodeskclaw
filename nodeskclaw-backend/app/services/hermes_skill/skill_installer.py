@@ -14,6 +14,7 @@ from app.models.hermes_skill.skill import HermesSkill
 from app.models.hermes_skill.skill_installation import HermesSkillInstallation
 from app.schemas.hermes_skill.common import InstallMode, InstallStatus
 from app.services.hermes_skill.conflict_detector import ConflictDetector
+from app.services.hermes_skill.path_guard import PathGuard
 
 logger = logging.getLogger(__name__)
 
@@ -33,13 +34,32 @@ class SkillInstaller:
         install_mode: str = InstallMode.COPY,
         conflict_strategy: str = "install_as_new_version",
         installed_by: str | None = None,
+        target_agent_type: str | None = None,
+        allowed_modes: list[str] | None = None,
     ) -> HermesSkillInstallation:
         skill = await self._get_active_skill(skill_id, org_id)
         if not skill:
             raise NotFoundError("Skill 不存在或未启用", "errors.skill.not_found")
 
+        if target_agent_type and skill.agent_type and target_agent_type != skill.agent_type:
+            raise BadRequestError(
+                f"agent_type 不匹配: skill={skill.agent_type}, target={target_agent_type}",
+                "errors.skill.agent_type_mismatch",
+            )
+
         mode = self._auto_select_mode(skill, install_mode)
+
+        if allowed_modes and mode not in allowed_modes:
+            raise BadRequestError(
+                f"install_mode={mode} 不在 allowed_modes={allowed_modes} 中",
+                "errors.skill.install_mode_not_allowed",
+            )
+
         target_path = self._build_target_path(skill, agent_id, profile_id, mode)
+
+        hub_root = Path(settings.HERMES_SKILL_HUB_ROOT)
+        PathGuard.validate_within_root(target_path, hub_root)
+        PathGuard.reject_system_dirs(target_path)
 
         report = await self.conflict_detector.detect(
             skill_id=skill.skill_id,

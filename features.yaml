@@ -61,3 +61,11 @@ edition_features:
     - id: advanced_rbac
       name: Advanced RBAC
       description: 细粒度角色权限控制
+
+    - id: artifact_permission_control
+      name: Artifact Permission Control
+      description: Artifact 权限范围配置与显式授权管理
+
+    - id: artifact_sharing
+      name: Artifact Sharing
+      description: Artifact 下载 Token 分享机制

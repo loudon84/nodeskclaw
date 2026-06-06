@@ -8,6 +8,7 @@ from app.core.deps import get_db, require_org_admin
 from app.core.exceptions import NotFoundError
 from app.models.hermes_skill.skill_import import HermesSkillImport
 from app.services.hermes_skill.git_importer import GitImporter
+from app.services.hermes_skill.permission_checker import PermissionChecker
 
 router = APIRouter()
 
@@ -26,6 +27,8 @@ async def preview_import(
     db: AsyncSession = Depends(get_db),
 ):
     user, org = user_org
+    if user:
+        await PermissionChecker.require_permission(db, user.id, org.id, "skill:import")
     importer = GitImporter(db)
     import_record = await importer.preview(
         org_id=org.id,
@@ -45,7 +48,9 @@ async def execute_import(
     user_org=Depends(require_org_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    _, org = user_org
+    user, org = user_org
+    if user:
+        await PermissionChecker.require_permission(db, user.id, org.id, "skill:import")
     importer = GitImporter(db)
     import_record = await importer.execute_import(import_id, org.id)
     await db.commit()

@@ -108,6 +108,51 @@ class UnsupportedCapabilityError(AppException):
         )
 
 
+class ArtifactNotFoundError(AppException):
+    def __init__(self, message: str = "Artifact 不存在", message_key: str = "errors.artifact.not_found"):
+        super().__init__(code=40472, message=message, status_code=404, message_key=message_key)
+
+
+class ArtifactFileNotFoundError(AppException):
+    def __init__(self, message: str = "文件不存在", message_key: str = "errors.artifact.file_not_found"):
+        super().__init__(code=40473, message=message, status_code=404, message_key=message_key)
+
+
+class ArtifactForbiddenError(AppException):
+    def __init__(self, message: str = "无权限访问该 Artifact", message_key: str = "errors.artifact.forbidden"):
+        super().__init__(code=40301, message=message, status_code=403, message_key=message_key)
+
+
+class ArtifactScopeInvalidError(AppException):
+    def __init__(self, message: str = "无效的权限范围", message_key: str = "errors.artifact.scope_invalid"):
+        super().__init__(code=40001, message=message, status_code=400, message_key=message_key)
+
+
+class ArtifactTokenExpiredError(AppException):
+    def __init__(self, message: str = "下载链接已失效", message_key: str = "errors.artifact.token_expired"):
+        super().__init__(code=41001, message=message, status_code=410, message_key=message_key)
+
+
+class ArtifactPreviewUnsupportedError(AppException):
+    def __init__(self, message: str = "该文件类型不支持预览", message_key: str = "errors.artifact.preview_unsupported"):
+        super().__init__(code=41501, message=message, status_code=415, message_key=message_key)
+
+
+class ArtifactBatchSizeExceededError(AppException):
+    def __init__(self, message: str = "批量下载总大小超过 1GB 限制", message_key: str = "errors.artifact.batch_size_exceeded"):
+        super().__init__(code=41301, message=message, status_code=413, message_key=message_key)
+
+
+class ArtifactAlreadyGrantedError(AppException):
+    def __init__(self, message: str = "该用户已被授权", message_key: str = "errors.artifact.already_granted"):
+        super().__init__(code=40002, message=message, status_code=400, message_key=message_key)
+
+
+class ArtifactShareDisabledError(AppException):
+    def __init__(self, message: str = "分享功能未启用", message_key: str = "errors.artifact.share_disabled"):
+        super().__init__(code=40302, message=message, status_code=403, message_key=message_key)
+
+
 HTTP_STATUS_DEFAULT_CODES: dict[int, int] = {
     400: 40000,
     401: 40100,

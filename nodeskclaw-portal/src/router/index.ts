@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import { i18n } from '@/i18n'
 import { eePortalRoutes, eeOrgSettingsChildren } from '@/router/ee-stub'
+import hermesRoutes from '@/router/hermes'
 
 const ceRoutes: RouteRecordRaw[] = [
   {
@@ -138,7 +139,7 @@ const ceRoutes: RouteRecordRaw[] = [
   },
 ]
 
-const routes: RouteRecordRaw[] = [...ceRoutes, ...eePortalRoutes]
+const routes: RouteRecordRaw[] = [...ceRoutes, ...hermesRoutes, ...eePortalRoutes]
 
 const router = createRouter({
   history: createWebHistory(),

@@ -3,6 +3,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import BaseModel
+from datetime import datetime
 
 
 class HermesSkillInstallation(BaseModel):
@@ -34,3 +35,7 @@ class HermesSkillInstallation(BaseModel):
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
     error_message: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     installed_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    target_agent_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    conflict_strategy: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    last_synced_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    install_metadata: Mapped[dict | None] = mapped_column(JSONB, nullable=True)

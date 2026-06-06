@@ -16,6 +16,7 @@ from app.schemas.hermes_skill.skill_installation import (
     InstallationListResult,
 )
 from app.services.hermes_skill.skill_installer import SkillInstaller
+from app.services.hermes_skill.permission_checker import PermissionChecker
 
 router = APIRouter()
 
@@ -71,6 +72,8 @@ async def create_installation(
     db: AsyncSession = Depends(get_db),
 ):
     user, org = user_org
+    if user:
+        await PermissionChecker.require_permission(db, user.id, org.id, "skill:install")
     installer = SkillInstaller(db)
     installation = await installer.install(
         skill_id=body.skill_id,
@@ -105,7 +108,9 @@ async def sync_installation(
     user_org=Depends(require_org_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    _, org = user_org
+    user, org = user_org
+    if user:
+        await PermissionChecker.require_permission(db, user.id, org.id, "skill:install")
     installer = SkillInstaller(db)
     installation = await installer.sync_installation(installation_id, org.id)
     await db.commit()

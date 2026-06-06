@@ -41,6 +41,16 @@ class McpGatewayAuditLog(Base):
     auth_key_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     params_masked: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     security_event: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    request_summary: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    request_params_redacted: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    artifact_ids: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    upstream_request_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    client_ip: Mapped[str | None] = mapped_column(String(45), nullable=True)
+    user_agent: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    source_client: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    retry_count_used: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    final_upstream_server_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    final_error_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

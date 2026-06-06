@@ -23,6 +23,20 @@ class ManifestParseError(AppException):
         )
 
 
+def _validate_json_schema(schema: dict, path: str, label: str) -> None:
+    try:
+        import jsonschema
+        jsonschema.Draft7Validator.check_schema(schema)
+    except ImportError:
+        pass
+    except jsonschema.SchemaError as exc:
+        raise ManifestParseError(
+            message=f"{label} JSON Schema 不合法: {exc.message} ({path})",
+            message_key="errors.skill.json_schema_invalid",
+            error_code=50204,
+        ) from exc
+
+
 @dataclass
 class ParsedSkillMeta:
     skill_id: str = ""
@@ -58,6 +72,9 @@ class ParsedManifest:
 
 
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---", re.DOTALL)
+
+_SKILL_ID_RE = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$")
+_TOOL_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 
 _VALID_ALLOWED_MODES = {"copy", "symlink", "docker_mount", "registry_bind", "api_deploy"}
 
@@ -102,6 +119,13 @@ class ManifestParser:
                 error_code=50202,
             )
 
+        if not _SKILL_ID_RE.match(str(data["id"])):
+            raise ManifestParseError(
+                message=f"SKILL.md id 格式不合法，需匹配 ^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$ : {path}",
+                message_key="errors.skill.skill_id_format_invalid",
+                error_code=50202,
+            )
+
         return ParsedSkillMeta(
             skill_id=str(data["id"]),
             name=str(data["name"]),
@@ -135,16 +159,46 @@ class ManifestParser:
                 error_code=50203,
             )
 
+        expose_as_mcp = bool(data.get("expose_as_mcp", False))
+        tool_name = str(data.get("tool_name", ""))
+        input_schema = data.get("input_schema", {}) or {}
+
+        if expose_as_mcp and not tool_name:
+            raise ManifestParseError(
+                message=f"gateway.yaml expose_as_mcp=true 但缺少 tool_name: {path}",
+                message_key="errors.skill.gateway_mcp_no_tool_name",
+                error_code=50203,
+            )
+        if expose_as_mcp and not input_schema:
+            raise ManifestParseError(
+                message=f"gateway.yaml expose_as_mcp=true 但缺少 input_schema: {path}",
+                message_key="errors.skill.gateway_mcp_no_input_schema",
+                error_code=50203,
+            )
+        if tool_name and not _TOOL_NAME_RE.match(tool_name):
+            raise ManifestParseError(
+                message=f"gateway.yaml tool_name 格式不合法，需匹配 ^[a-z][a-z0-9_]*$ : {path}",
+                message_key="errors.skill.tool_name_format_invalid",
+                error_code=50203,
+            )
+
+        input_schema_val = data.get("input_schema", {}) or {}
+        output_schema_val = data.get("output_schema", {}) or {}
+        if input_schema_val:
+            _validate_json_schema(input_schema_val, path, "input_schema")
+        if output_schema_val:
+            _validate_json_schema(output_schema_val, path, "output_schema")
+
         return ParsedGatewayConfig(
-            expose_as_mcp=bool(data.get("expose_as_mcp", False)),
+            expose_as_mcp=expose_as_mcp,
             skill_id=str(data.get("skill_id", "")),
             tool_name=str(data.get("tool_name", "")),
             title=str(data.get("title", "")),
             description=str(data.get("description", "")),
             version=str(data.get("version", "1.0.0")),
             category=str(data.get("category", "")),
-            input_schema=data.get("input_schema", {}) or {},
-            output_schema=data.get("output_schema", {}) or {},
+            input_schema=input_schema_val,
+            output_schema=output_schema_val,
             gateway_runtime=data.get("runtime", {}) or {},
             permissions=data.get("permissions", {}) or {},
             install_config=data.get("install", {}) or {},
@@ -173,6 +227,13 @@ class ManifestParser:
             gateway = ManifestParser.parse_gateway_yaml(
                 gateway_yaml_path.read_text(encoding="utf-8"),
                 path=str(gateway_yaml_path),
+            )
+
+        if gateway.skill_id and gateway.skill_id != meta.skill_id:
+            raise ManifestParseError(
+                message=f"gateway.yaml skill_id={gateway.skill_id} 与 SKILL.md id={meta.skill_id} 不一致",
+                message_key="errors.skill.skill_id_mismatch",
+                error_code=50205,
             )
 
         return ParsedManifest(meta=meta, gateway=gateway)

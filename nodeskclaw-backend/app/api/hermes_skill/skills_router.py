@@ -1,7 +1,7 @@
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,7 +17,8 @@ from app.schemas.hermes_skill.skill import (
     ScanTriggerResult,
 )
 from app.schemas.hermes_skill.common import READ_ONLY_SOURCE_TYPES
-from app.services.hermes_skill.skill_scanner import SkillScanner
+from app.services.hermes_skill.skill_scanner import SkillScanner, ScanError
+from app.services.hermes_skill.permission_checker import PermissionChecker
 
 router = APIRouter()
 
@@ -95,21 +96,27 @@ async def get_skill(
 
 @router.post("/skills/scan")
 async def trigger_scan(
+    source_types: list[str] = Query(None),
     user_org=Depends(require_org_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    _, org = user_org
+    user, org = user_org
+    if user:
+        await PermissionChecker.require_permission(db, user.id, org.id, "skill:scan")
     scanner = SkillScanner(db)
-    result = await scanner.scan_all()
-    await db.commit()
-    return _ok(ScanTriggerResult(
+    result = await scanner.scan_all(org_id=org.id, source_types=source_types or None)
+    scan_data = ScanTriggerResult(
         scanned_count=result.scanned_count,
         added_count=result.added_count,
         updated_count=result.updated_count,
         deleted_count=result.deleted_count,
         failed_count=result.failed_count,
         is_partial=result.is_partial,
-    ).model_dump())
+    ).model_dump()
+    scan_data["errors"] = [
+        {"path": e.path, "message": e.message} for e in result.errors
+    ]
+    return _ok(scan_data)
 
 
 @router.post("/skills/{skill_db_id}/enable")
@@ -123,7 +130,8 @@ async def enable_skill(
     if not skill or skill.deleted_at is not None or skill.org_id != org.id:
         raise NotFoundError("Skill 不存在", "errors.skill.not_found")
     skill.is_active = True
-    await db.flush()
+    await db.commit()
+    await db.refresh(skill)
     return _ok(SkillRead.model_validate(skill).model_dump())
 
 
@@ -138,7 +146,8 @@ async def disable_skill(
     if not skill or skill.deleted_at is not None or skill.org_id != org.id:
         raise NotFoundError("Skill 不存在", "errors.skill.not_found")
     skill.is_active = False
-    await db.flush()
+    await db.commit()
+    await db.refresh(skill)
     return _ok(SkillRead.model_validate(skill).model_dump())
 
 
@@ -164,5 +173,5 @@ async def delete_skill(
         raise ConflictError("存在活跃安装，无法删除", "errors.skill.has_active_installations")
 
     skill.soft_delete()
-    await db.flush()
+    await db.commit()
     return _ok()

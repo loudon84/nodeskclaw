@@ -125,7 +125,8 @@ class CollectionManager:
         )
         skill_links = result.scalars().all()
 
-        results = {"success": [], "failed": [], "skipped": []}
+        results: dict[str, list] = {"success": [], "failed": [], "skipped": [], "partial_failed": []}
+        has_required_failure = False
 
         for agent_id in agent_ids:
             for link in skill_links:
@@ -144,11 +145,21 @@ class CollectionManager:
                         "installation_id": installation.id,
                     })
                 except Exception as exc:
-                    results["failed"].append({
+                    entry = {
                         "skill_id": link.skill_id,
                         "agent_id": agent_id,
                         "error": str(exc),
-                    })
+                    }
+                    if link.is_required:
+                        has_required_failure = True
+                        results["failed"].append(entry)
+                    else:
+                        results["partial_failed"].append(entry)
+
+        if has_required_failure:
+            results["status"] = "partial_failed"
+        else:
+            results["status"] = "completed"
 
         return results
 
