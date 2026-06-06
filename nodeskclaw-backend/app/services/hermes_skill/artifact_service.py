@@ -66,7 +66,7 @@ class ArtifactService:
         )
 
         if outputs_dir is None:
-            outputs_dir = self._compute_outputs_dir(task)
+            outputs_dir = await self.compute_outputs_dir(task)
 
         if outputs_dir is None or not outputs_dir.is_dir():
             await event_service.write_event(
@@ -241,6 +241,12 @@ class ArtifactService:
         if not await PermissionChecker.can_delete_artifact(self.db, artifact, user_id, org_id):
             raise ArtifactForbiddenError()
 
+    async def ensure_artifact_permission_manageable(
+        self, artifact: HermesArtifact, user_id: str, org_id: str,
+    ) -> None:
+        if not await PermissionChecker.can_manage_artifact_permission(self.db, artifact, user_id, org_id):
+            raise ArtifactForbiddenError()
+
     async def preview(
         self,
         artifact_id: str,
@@ -388,18 +394,44 @@ class ArtifactService:
         }
         return suffix_map.get(path.suffix.lower(), "application/octet-stream")
 
-    @staticmethod
-    def _compute_outputs_dir(task: HermesTask) -> Path | None:
-        workspace_root = ArtifactService._resolve_workspace_root_for_task(task)
-        if workspace_root:
-            return Path(workspace_root) / settings.HERMES_OUTPUT_BASE_DIR_NAME / "runs" / task.id / "outputs"
-        return Path(f"/tmp/nodeskclaw-workspaces/{task.workspace_id or 'default'}") / settings.HERMES_OUTPUT_BASE_DIR_NAME / "runs" / task.id / "outputs"
+    async def compute_outputs_dir(self, task: HermesTask) -> Path:
+        workspace_root = await self._resolve_workspace_root_for_task(task)
+        return workspace_root / settings.HERMES_OUTPUT_BASE_DIR_NAME / "runs" / task.id / "outputs"
+
+    async def _resolve_workspace_root_for_task(self, task: HermesTask) -> Path:
+        if task.workspace_id:
+            try:
+                from app.models.workspace import Workspace
+                from app.models.base import not_deleted as _nd
+                ws = await self.db.get(Workspace, task.workspace_id)
+                if ws and ws.deleted_at is None:
+                    for attr in ("storage_root", "root_path", "local_root_path"):
+                        val = getattr(ws, attr, None)
+                        if val:
+                            return Path(val)
+            except Exception as exc:
+                logger.warning("Workspace root lookup failed: %s", exc)
+
+        if task.agent_id:
+            try:
+                from app.models.instance import Instance
+                instance = await self.db.get(Instance, task.agent_id)
+                if instance and instance.deleted_at is None:
+                    advanced = instance.advanced_config or {}
+                    wrp = advanced.get("workspace_root_path")
+                    if wrp:
+                        return Path(wrp)
+            except Exception as exc:
+                logger.warning("Instance workspace_root_path lookup failed: %s", exc)
+
+        if settings.HERMES_WORKSPACE_ROOT:
+            return Path(settings.HERMES_WORKSPACE_ROOT)
+
+        return Path(f"/tmp/nodeskclaw-workspaces/{task.workspace_id or 'default'}")
 
     @staticmethod
-    def _resolve_workspace_root_for_task(task: HermesTask) -> str | None:
-        if task.workspace_id:
-            return None
-        return None
+    def _compute_outputs_dir(task: HermesTask) -> Path | None:
+        return Path(f"/tmp/nodeskclaw-workspaces/{task.workspace_id or 'default'}") / settings.HERMES_OUTPUT_BASE_DIR_NAME / "runs" / task.id / "outputs"
 
     @staticmethod
     def _get_workspace_root(artifact: HermesArtifact) -> Path | None:

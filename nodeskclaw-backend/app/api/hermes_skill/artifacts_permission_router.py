@@ -35,11 +35,11 @@ async def change_artifact_scope(
     user, org = user_org
     if user:
         await PermissionChecker.require_permission(db, user.id, org.id, "hermes_artifact:manage_permission")
-    service = ArtifactPermissionService(db)
     artifact_svc = ArtifactService(db)
     artifact = await artifact_svc.get_artifact(artifact_id, org.id)
     if user:
-        await artifact_svc.ensure_artifact_mutable(artifact, user.id, org.id)
+        await artifact_svc.ensure_artifact_permission_manageable(artifact, user.id, org.id)
+    service = ArtifactPermissionService(db)
     artifact = await service.change_scope(
         artifact_id=artifact_id,
         org_id=org.id,
@@ -65,7 +65,7 @@ async def grant_artifact_permission(
     artifact_svc = ArtifactService(db)
     artifact = await artifact_svc.get_artifact(artifact_id, org.id)
     if user:
-        await artifact_svc.ensure_artifact_mutable(artifact, user.id, org.id)
+        await artifact_svc.ensure_artifact_permission_manageable(artifact, user.id, org.id)
     service = ArtifactPermissionService(db)
     perm = await service.grant_permission(
         artifact_id=artifact_id,
@@ -93,7 +93,7 @@ async def revoke_artifact_permission(
     artifact_svc = ArtifactService(db)
     artifact = await artifact_svc.get_artifact(artifact_id, org.id)
     if user:
-        await artifact_svc.ensure_artifact_mutable(artifact, user.id, org.id)
+        await artifact_svc.ensure_artifact_permission_manageable(artifact, user.id, org.id)
     service = ArtifactPermissionService(db)
     await service.revoke_permission(
         artifact_id=artifact_id,
@@ -116,6 +116,10 @@ async def list_artifact_permissions(
     user, org = user_org
     if user:
         await PermissionChecker.require_permission(db, user.id, org.id, "hermes_artifact:view")
+    artifact_svc = ArtifactService(db)
+    artifact = await artifact_svc.get_artifact(artifact_id, org.id)
+    if user:
+        await artifact_svc.ensure_artifact_permission_manageable(artifact, user.id, org.id)
     service = ArtifactPermissionService(db)
     perms = await service.list_permissions(artifact_id, org.id)
     items = [ArtifactPermissionDetail.model_validate(p).model_dump() for p in perms]

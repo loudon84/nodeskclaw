@@ -50,7 +50,7 @@ class DownloadTokenService:
         await self.db.flush()
         return record
 
-    async def validate_and_consume(
+    async def get_valid_token(
         self,
         token: str,
     ) -> ArtifactDownloadToken:
@@ -58,7 +58,7 @@ class DownloadTokenService:
             ArtifactDownloadToken.token == token,
             ArtifactDownloadToken.is_active.is_(True),
             not_deleted(ArtifactDownloadToken),
-        ).with_for_update()
+        )
 
         result = await self.db.execute(stmt)
         record = result.scalar_one_or_none()
@@ -68,19 +68,37 @@ class DownloadTokenService:
 
         now = datetime.now(timezone.utc)
         if record.expires_at <= now:
-            record.is_active = False
-            await self.db.flush()
             raise ArtifactTokenExpiredError()
 
         if record.uses_remaining <= 0:
-            record.is_active = False
-            await self.db.flush()
             raise ArtifactTokenExpiredError()
 
-        record.uses_remaining -= 1
-        if record.uses_remaining <= 0:
-            record.is_active = False
+        return record
+
+    async def consume_token(
+        self,
+        token_record: ArtifactDownloadToken,
+    ) -> None:
+        stmt = select(ArtifactDownloadToken).where(
+            ArtifactDownloadToken.id == token_record.id,
+        ).with_for_update()
+        locked = (await self.db.execute(stmt)).scalar_one()
+
+        now = datetime.now(timezone.utc)
+        if locked.expires_at <= now or locked.uses_remaining <= 0 or not locked.is_active:
+            raise ArtifactTokenExpiredError()
+
+        locked.uses_remaining -= 1
+        if locked.uses_remaining <= 0:
+            locked.is_active = False
         await self.db.flush()
+
+    async def validate_and_consume(
+        self,
+        token: str,
+    ) -> ArtifactDownloadToken:
+        record = await self.get_valid_token(token)
+        await self.consume_token(record)
         return record
 
     async def deactivate_tokens_for_artifact(

@@ -248,6 +248,7 @@ class Settings(BaseSettings):
 
     # ── Hermes Artifact ───────────────────────────────────
     HERMES_OUTPUT_BASE_DIR_NAME: str = ".nodeskclaw"
+    HERMES_WORKSPACE_ROOT: str = ""
     HERMES_ARTIFACT_MAX_SIZE_MB: int = 500
     HERMES_ARTIFACT_BATCH_DOWNLOAD_MAX_SIZE_MB: int = 1024
 

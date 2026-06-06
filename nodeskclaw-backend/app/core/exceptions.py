@@ -168,6 +168,11 @@ class TaskAgentRunIdMissingError(AppException):
         super().__init__(code=40003, message=message, status_code=400, message_key=message_key)
 
 
+class ArtifactBatchEmptyError(AppException):
+    def __init__(self, message: str = "无可下载的产物", message_key: str = "errors.artifact.batch_empty"):
+        super().__init__(code=40004, message=message, status_code=400, message_key=message_key)
+
+
 HTTP_STATUS_DEFAULT_CODES: dict[int, int] = {
     400: 40000,
     401: 40100,

@@ -195,6 +195,19 @@ class HermesAgentAdapter:
     def _compute_output_dir(task: HermesTask) -> str | None:
         return f".{settings.HERMES_OUTPUT_BASE_DIR_NAME.lstrip('.')}/runs/{task.id}/outputs"
 
+    async def compute_output_dir_for_task(self, task: HermesTask) -> str:
+        instance = await self._get_instance(task.agent_id)
+        advanced = instance.advanced_config if hasattr(instance, "advanced_config") and instance.advanced_config else {}
+        output_dir_mode = advanced.get("output_dir_mode", "relative")
+
+        if output_dir_mode == "absolute":
+            from app.services.hermes_skill.artifact_service import ArtifactService
+            artifact_service = ArtifactService(self.db)
+            outputs_dir = await artifact_service.compute_outputs_dir(task)
+            return str(outputs_dir)
+
+        return f".{settings.HERMES_OUTPUT_BASE_DIR_NAME.lstrip('.')}/runs/{task.id}/outputs"
+
     async def _get_instance(self, agent_id: str) -> Instance:
         stmt = select(Instance).where(
             not_deleted(Instance),

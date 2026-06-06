@@ -7,11 +7,17 @@ from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_db, require_org_member
-from app.core.exceptions import ArtifactBatchSizeExceededError, ArtifactForbiddenError
+from app.core.exceptions import (
+    ArtifactBatchSizeExceededError,
+    ArtifactBatchEmptyError,
+    ArtifactForbiddenError,
+    NotFoundError,
+)
 from app.schemas.hermes_skill.artifact_schema import ArtifactDetail, ArtifactSummary, ArtifactPreviewResponse
 from app.services.hermes_skill.artifact_service import ArtifactService, _max_batch_download_bytes
 from app.services.hermes_skill.path_guard import PathGuard
 from app.services.hermes_skill.permission_checker import PermissionChecker
+from app.services.hermes_skill.artifact_audit_service import ArtifactAuditService
 
 router = APIRouter()
 
@@ -137,17 +143,30 @@ async def batch_download_artifacts(
     db: AsyncSession = Depends(get_db),
 ):
     from pathlib import Path
+    from app.models.hermes_skill.hermes_task import HermesTask
+    from app.models.base import not_deleted
+    from sqlalchemy import select
 
     user, org = user_org
     if user:
         await PermissionChecker.require_permission(db, user.id, org.id, "hermes_artifact:download")
+
+    task = await db.get(HermesTask, task_id)
+    if not task or task.deleted_at is not None or task.org_id != org.id:
+        raise NotFoundError("Task 不存在", "errors.task.not_found")
+
     service = ArtifactService(db)
+    audit = ArtifactAuditService(db)
 
     max_batch = _max_batch_download_bytes()
     total_size = 0
     paths = []
     for aid in artifact_ids:
         artifact = await service.get_artifact(aid, org.id)
+
+        if artifact.task_id != task_id:
+            raise ArtifactForbiddenError()
+
         if user:
             await service.ensure_artifact_downloadable(artifact, user.id, org.id)
         size = artifact.size_bytes or 0
@@ -156,9 +175,9 @@ async def batch_download_artifacts(
             raise ArtifactBatchSizeExceededError()
 
         p = Path(artifact.file_path)
-        outputs_root = service._get_workspace_root(artifact)
-        if outputs_root:
-            PathGuard.validate_file_for_download(p, outputs_root)
+        workspace_root = service._get_workspace_root(artifact)
+        if workspace_root:
+            PathGuard.validate_file_for_download(p, workspace_root)
         else:
             PathGuard.validate_file_for_download(p, Path("/tmp"))
 
@@ -166,6 +185,18 @@ async def batch_download_artifacts(
             rel = artifact.relative_path or artifact.file_name
             PathGuard.validate_zip_entry_name(rel)
             paths.append((rel, p))
+
+            await audit.log_artifact_action(
+                action="artifact.downloaded",
+                artifact_id=aid,
+                org_id=org.id,
+                actor_id=user.id if user else "",
+                actor_name=user.display_name if user else None,
+                details={"download_mode": "batch", "task_id": task_id, "zip_name": "artifacts.zip"},
+            )
+
+    if not paths:
+        raise ArtifactBatchEmptyError()
 
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:

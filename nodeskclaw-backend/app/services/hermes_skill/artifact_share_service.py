@@ -2,7 +2,7 @@ import logging
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import ArtifactShareDisabledError, ArtifactNotFoundError
+from app.core.exceptions import ArtifactShareDisabledError, ArtifactNotFoundError, BadRequestError
 from app.core.feature_gate import feature_gate
 from app.models.base import not_deleted
 from app.models.hermes_skill.hermes_artifact import HermesArtifact
@@ -31,6 +31,18 @@ class ArtifactShareService:
         if not feature_gate.is_ee:
             raise ArtifactShareDisabledError()
 
+        if max_uses < 1 or max_uses > 10:
+            raise BadRequestError(
+                "max_uses 必须在 1~10 之间",
+                "errors.artifact.share_max_uses_invalid",
+            )
+
+        if expires_hours < 1 or expires_hours > 24:
+            raise BadRequestError(
+                "expires_hours 必须在 1~24 之间",
+                "errors.artifact.share_expires_invalid",
+            )
+
         artifact = await self.db.get(HermesArtifact, artifact_id)
         if not artifact or artifact.deleted_at is not None or artifact.org_id != org_id:
             raise ArtifactNotFoundError()
@@ -38,6 +50,10 @@ class ArtifactShareService:
         await PermissionChecker.require_permission(
             self.db, actor_id, org_id, "hermes_artifact:share"
         )
+
+        if not await PermissionChecker.can_download_artifact(self.db, artifact, actor_id, org_id):
+            from app.core.exceptions import ArtifactForbiddenError
+            raise ArtifactForbiddenError()
 
         token_record = await self.token_service.generate_token(
             artifact_id=artifact_id,

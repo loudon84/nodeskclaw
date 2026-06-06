@@ -1,4 +1,6 @@
-from sqlalchemy import or_, select
+import logging
+
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ForbiddenError
@@ -6,6 +8,7 @@ from app.models.hermes_skill.artifact_permission import ArtifactPermission
 from app.models.hermes_skill.hermes_artifact import HermesArtifact
 from app.models.org_membership import OrgMembership
 
+logger = logging.getLogger(__name__)
 
 _ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
     "admin": frozenset({
@@ -24,6 +27,7 @@ _ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
         "hermes_task:view", "hermes_task:create", "hermes_task:cancel",
         "hermes_artifact:view", "hermes_artifact:download",
         "hermes_artifact:delete", "hermes_artifact:share",
+        "hermes_artifact:manage_permission",
     }),
     "workspace_manager": frozenset({
         "skill:view", "skill:install", "skill:invoke",
@@ -92,13 +96,11 @@ class PermissionChecker:
         if scope == "org":
             return True
         if scope == "workspace":
-            if artifact.workspace_id:
-                return await PermissionChecker._is_workspace_member(db, user_id, org_id, artifact.workspace_id)
-            return True
+            if not artifact.workspace_id:
+                return False
+            return await PermissionChecker._is_workspace_member(db, user_id, org_id, artifact.workspace_id)
         if scope == "task_creator":
-            if artifact.created_by == user_id:
-                return True
-            return False
+            return artifact.created_by == user_id
         if scope == "explicit":
             return await PermissionChecker._has_explicit_permission(db, artifact.id, user_id, org_id, "viewer")
         return False
@@ -148,24 +150,28 @@ class PermissionChecker:
     ):
         role = await PermissionChecker.get_user_role(db, user_id, org_id)
         if role is None:
-            return HermesArtifact.org_id != org_id
+            return HermesArtifact.id == "__never_match__"
 
         if role in _ADMIN_OPERATOR_ROLES:
             return HermesArtifact.org_id == org_id
 
         explicit_ids = await PermissionChecker.get_visible_artifact_ids(db, user_id, org_id)
-
         workspace_ids = await PermissionChecker._get_user_workspace_ids(db, user_id, org_id)
 
         conditions = [
             HermesArtifact.permission_scope == "org",
-            HermesArtifact.created_by == user_id,
-            HermesArtifact.permission_scope == "task_creator",
+            and_(
+                HermesArtifact.permission_scope == "task_creator",
+                HermesArtifact.created_by == user_id,
+            ),
         ]
 
         if workspace_ids:
             conditions.append(
-                (HermesArtifact.permission_scope == "workspace") & (HermesArtifact.workspace_id.in_(workspace_ids))
+                and_(
+                    HermesArtifact.permission_scope == "workspace",
+                    HermesArtifact.workspace_id.in_(workspace_ids),
+                )
             )
 
         if explicit_ids:
@@ -178,28 +184,42 @@ class PermissionChecker:
         db: AsyncSession, user_id: str, org_id: str, workspace_id: str,
     ) -> bool:
         try:
-            from app.models.workspace import WorkspaceMember
+            from app.models.workspace_member import WorkspaceMember
+            from app.models.base import not_deleted
             stmt = select(WorkspaceMember).where(
                 WorkspaceMember.workspace_id == workspace_id,
                 WorkspaceMember.user_id == user_id,
+                not_deleted(WorkspaceMember),
             )
             result = await db.execute(stmt)
             return result.scalar_one_or_none() is not None
-        except ImportError:
-            return True
+        except Exception as exc:
+            logger.warning("_is_workspace_member fallback deny: %s", exc)
+            return False
 
     @staticmethod
     async def _get_user_workspace_ids(
         db: AsyncSession, user_id: str, org_id: str,
     ) -> set[str]:
         try:
-            from app.models.workspace import WorkspaceMember
+            from app.models.workspace_member import WorkspaceMember
+            from app.models.workspace import Workspace
+            from app.models.base import not_deleted
             stmt = select(WorkspaceMember.workspace_id).where(
                 WorkspaceMember.user_id == user_id,
+                not_deleted(WorkspaceMember),
+            ).join(
+                Workspace,
+                and_(
+                    Workspace.id == WorkspaceMember.workspace_id,
+                    Workspace.org_id == org_id,
+                    not_deleted(Workspace),
+                ),
             )
             result = await db.execute(stmt)
             return {row[0] for row in result.all()}
-        except ImportError:
+        except Exception as exc:
+            logger.warning("_get_user_workspace_ids fallback empty: %s", exc)
             return set()
 
     @staticmethod
@@ -221,26 +241,6 @@ class PermissionChecker:
         if level is None:
             return False
         return level_order.get(level, 0) >= min_rank
-
-    @staticmethod
-    def filter_by_scope(
-        user_id: str,
-        org_id: str,
-        explicit_artifact_ids: set[str] | None = None,
-    ) -> list:
-        conditions = [
-            or_(
-                HermesArtifact.permission_scope == "org",
-                HermesArtifact.created_by == user_id,
-                HermesArtifact.permission_scope == "task_creator",
-                *(
-                    [HermesArtifact.id.in_(explicit_artifact_ids)]
-                    if explicit_artifact_ids
-                    else []
-                ),
-            ),
-        ]
-        return conditions
 
     @staticmethod
     async def get_visible_artifact_ids(

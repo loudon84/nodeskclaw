@@ -9,16 +9,19 @@ from app.core.exceptions import (
     ArtifactNotFoundError,
     ArtifactScopeInvalidError,
     ArtifactAlreadyGrantedError,
+    BadRequestError,
     ForbiddenError,
 )
 from app.models.base import not_deleted, BaseModel
 from app.models.hermes_skill.hermes_artifact import HermesArtifact, PermissionScope
 from app.models.hermes_skill.artifact_permission import ArtifactPermission
+from app.models.org_membership import OrgMembership
 from app.services.hermes_skill.artifact_audit_service import ArtifactAuditService
 
 logger = logging.getLogger(__name__)
 
 _VALID_SCOPES = {s.value for s in PermissionScope}
+_VALID_PERMISSION_LEVELS = frozenset({"viewer", "downloader", "editor"})
 
 
 class ArtifactPermissionService:
@@ -65,9 +68,27 @@ class ArtifactPermissionService:
         granted_by: str = "",
         granted_by_name: str | None = None,
     ) -> ArtifactPermission:
+        if permission_level not in _VALID_PERMISSION_LEVELS:
+            raise BadRequestError(
+                f"permission_level 非法: {permission_level}",
+                "errors.artifact.permission_level_invalid",
+            )
+
         artifact = await self.db.get(HermesArtifact, artifact_id)
         if not artifact or artifact.deleted_at is not None or artifact.org_id != org_id:
             raise ArtifactNotFoundError()
+
+        membership = await self.db.execute(
+            select(OrgMembership).where(
+                OrgMembership.user_id == user_id,
+                OrgMembership.org_id == org_id,
+            )
+        )
+        if membership.scalar_one_or_none() is None:
+            raise BadRequestError(
+                "被授权用户不属于该组织",
+                "errors.artifact.permission_user_not_in_org",
+            )
 
         if artifact.created_by == user_id:
             raise ArtifactAlreadyGrantedError()
