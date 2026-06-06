@@ -60,8 +60,8 @@ class HermesTaskWorker:
             await db.commit()
 
     async def _fetch_and_lock(self, db: AsyncSession) -> list[HermesTask]:
-        lock_timeout = datetime.now(timezone.utc).timestamp() - settings.HERMES_TASK_LOCK_TIMEOUT_SECONDS
-        lock_cutoff = datetime.fromtimestamp(lock_timeout, tz=timezone.utc)
+        from datetime import timedelta
+        lock_cutoff = datetime.now(timezone.utc) - timedelta(seconds=settings.HERMES_TASK_LOCK_TIMEOUT_SECONDS)
 
         stmt = (
             select(HermesTask)
