@@ -248,6 +248,33 @@ export interface FileAttachment {
   content_type: string
 }
 
+export interface FileReference {
+  source: 'chat_attachment' | 'shared_file' | 'large_input'
+  file_id: string
+  display_name: string
+  size: number
+  content_type: string
+  status?: string
+  scan_status?: string
+  download_url_available?: boolean
+}
+
+interface UploadSessionInfo {
+  session_id: string
+  part_size_bytes: number
+  part_count: number
+}
+
+interface UploadSessionFileResult {
+  source: 'shared_file' | 'large_input'
+  file_id: string
+  display_name: string
+  size: number
+  content_type: string
+  scan_status?: string
+  download_url_available?: boolean
+}
+
 export interface GroupChatMessage {
   id: string
   sender_type: 'user' | 'agent' | 'system'
@@ -258,6 +285,7 @@ export interface GroupChatMessage {
   created_at: string
   streaming?: boolean
   attachments?: FileAttachment[]
+  file_references?: FileReference[]
   trace_id?: string
   causation_id?: string
   intent?: string
@@ -350,6 +378,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   const isWorkspaceAdmin = ref(false)
   const isOrgAdmin = ref(false)
   const fileUploadEnabled = ref(false)
+  const uploadPolicy = ref<Record<string, any> | null>(null)
 
   // ── Workspace CRUD ────────────────────────────────
 
@@ -369,8 +398,10 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     try {
       const res = await api.get('/system/capabilities')
       fileUploadEnabled.value = !!res.data?.file_upload_enabled
+      uploadPolicy.value = res.data?.upload_policy || null
     } catch {
       fileUploadEnabled.value = false
+      uploadPolicy.value = null
     }
   }
 
@@ -394,6 +425,111 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       return res.data.data?.url || null
     } catch (e) {
       console.error('getFileUrl error:', e)
+      return null
+    }
+  }
+
+  async function uploadSharedFile(workspaceId: string, file: File, parentPath = '/', conflictStrategy = 'fail'): Promise<FileReference | null> {
+    const threshold = Number(uploadPolicy.value?.surfaces?.shared_file?.chunked_upload_threshold_bytes || 50 * 1024 * 1024)
+    if (file.size >= threshold) {
+      return await uploadSharedFileBySession(workspaceId, file, parentPath, conflictStrategy)
+    }
+
+    const formData = new FormData()
+    formData.append('file', file)
+    formData.append('parent_path', parentPath)
+    formData.append('filename', file.name)
+    formData.append('content_type', file.type || 'application/octet-stream')
+    formData.append('conflict_strategy', conflictStrategy)
+    try {
+      const res = await api.post(`/workspaces/${workspaceId}/blackboard/files/upload-multipart`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      })
+      const data = res.data.data
+      return {
+        source: 'shared_file',
+        file_id: data.id,
+        display_name: data.name,
+        size: data.file_size,
+        content_type: data.content_type,
+        status: 'available',
+        scan_status: 'skipped',
+        download_url_available: true,
+      }
+    } catch (e) {
+      console.error('uploadSharedFile error:', e)
+      throw e
+    }
+  }
+
+  async function uploadSharedFileBySession(workspaceId: string, file: File, parentPath = '/', conflictStrategy = 'fail'): Promise<FileReference | null> {
+    let sessionId = ''
+    try {
+      const createRes = await api.post(`/workspaces/${workspaceId}/uploads/sessions`, {
+        surface: 'shared_file',
+        filename: file.name,
+        content_type: file.type || 'application/octet-stream',
+        expected_size: file.size,
+        parent_path: parentPath,
+        purpose: 'workspace_shared_file',
+        conflict_strategy: conflictStrategy,
+        client_request_id: `${file.name}:${file.size}:${file.lastModified}`,
+      })
+      const session = createRes.data.data as UploadSessionInfo
+      sessionId = session.session_id
+      const uploadedParts: Array<{ part_number: number; size: number; checksum: string; etag: string }> = []
+
+      for (let partNumber = 1; partNumber <= session.part_count; partNumber += 1) {
+        const start = (partNumber - 1) * session.part_size_bytes
+        const end = Math.min(start + session.part_size_bytes, file.size)
+        const blob = file.slice(start, end)
+        const partRes = await api.put(
+          `/workspaces/${workspaceId}/uploads/sessions/${session.session_id}/parts/${partNumber}`,
+          blob,
+          { headers: { 'Content-Type': 'application/octet-stream' } },
+        )
+        const part = partRes.data.data.part
+        uploadedParts.push({
+          part_number: part.part_number,
+          size: part.size,
+          checksum: part.checksum,
+          etag: part.etag,
+        })
+      }
+
+      const completeRes = await api.post(`/workspaces/${workspaceId}/uploads/sessions/${session.session_id}/complete`, {
+        parts: uploadedParts,
+      })
+      const fileResult = completeRes.data.data.file as UploadSessionFileResult
+      return {
+        source: fileResult.source,
+        file_id: fileResult.file_id,
+        display_name: fileResult.display_name,
+        size: fileResult.size,
+        content_type: fileResult.content_type,
+        status: 'available',
+        scan_status: fileResult.scan_status || 'skipped',
+        download_url_available: fileResult.download_url_available !== false,
+      }
+    } catch (e) {
+      if (sessionId) {
+        try {
+          await api.post(`/workspaces/${workspaceId}/uploads/sessions/${sessionId}/cancel`)
+        } catch (cancelError) {
+          console.warn('cancelUploadSession error:', cancelError)
+        }
+      }
+      console.error('uploadSharedFileBySession error:', e)
+      throw e
+    }
+  }
+
+  async function getSharedFileUrl(workspaceId: string, fileId: string): Promise<string | null> {
+    try {
+      const res = await api.get(`/workspaces/${workspaceId}/blackboard/files/${fileId}/url`)
+      return res.data.data?.url || null
+    } catch (e) {
+      console.error('getSharedFileUrl error:', e)
       return null
     }
   }
@@ -788,6 +924,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
         created_at: m.created_at as string,
         conversation_id: m.conversation_id as string | undefined,
         attachments: (m.attachments as FileAttachment[]) || undefined,
+        file_references: (m.file_references as FileReference[]) || undefined,
       }))
     } catch (e) {
       console.error('fetchConversationMessages error:', e)
@@ -813,6 +950,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
         created_at: m.created_at as string,
         conversation_id: m.conversation_id as string | undefined,
         attachments: (m.attachments as FileAttachment[]) || undefined,
+        file_references: (m.file_references as FileReference[]) || undefined,
       }))
     } catch (e) {
       console.error('fetchChatHistory error:', e)
@@ -826,6 +964,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     mentions?: string[],
     fileIds?: string[],
     attachments?: FileAttachment[],
+    fileReferences?: FileReference[],
     conversationId?: string,
   ) {
     if (chatLoading.value) return
@@ -841,6 +980,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       message_type: 'chat',
       created_at: new Date().toISOString(),
       attachments: attachments || undefined,
+      file_references: fileReferences || undefined,
       conversation_id: conversationId || activeConversationId.value || undefined,
     }
     chatMessages.value.push(userMsg)
@@ -849,6 +989,12 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       const body: Record<string, unknown> = { message }
       if (mentions && mentions.length > 0) body.mentions = mentions
       if (fileIds && fileIds.length > 0) body.file_ids = fileIds
+      if (fileReferences && fileReferences.length > 0) {
+        body.file_references = fileReferences.map(ref => ({
+          source: ref.source,
+          file_id: ref.file_id,
+        }))
+      }
       const convId = conversationId || activeConversationId.value
       if (convId) body.conversation_id = convId
       await api.post(`/workspaces/${workspaceId}/chat`, body)
@@ -1740,9 +1886,12 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     resetCurrentState,
     setChatVisible,
     fileUploadEnabled,
+    uploadPolicy,
     fetchSystemCapabilities,
     uploadFile,
     getFileUrl,
+    uploadSharedFile,
+    getSharedFileUrl,
     fetchWorkspaces,
     fetchWorkspace,
     createWorkspace,

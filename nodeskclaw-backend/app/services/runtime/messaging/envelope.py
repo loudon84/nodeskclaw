@@ -85,6 +85,7 @@ class MessageData:
     content: str = ""
     mentions: list[str] = field(default_factory=list)
     attachments: list[dict] = field(default_factory=list)
+    file_references: list[dict] = field(default_factory=list)
     extensions: dict = field(default_factory=dict)
     routing: MessageRouting = field(default_factory=MessageRouting)
     scheduling: MessageScheduling = field(default_factory=MessageScheduling)
@@ -136,6 +137,7 @@ class MessageEnvelope:
                 "content": self.data.content,
                 "mentions": self.data.mentions,
                 "attachments": self.data.attachments,
+                "file_references": self.data.file_references,
                 "extensions": self.data.extensions,
                 "priority": self.data.priority.value,
                 "routing": {
@@ -174,6 +176,7 @@ class MessageEnvelope:
                 content=data_dict.get("content", ""),
                 mentions=data_dict.get("mentions", []),
                 attachments=data_dict.get("attachments", []),
+                file_references=data_dict.get("file_references", []),
                 extensions=data_dict.get("extensions", {}),
                 priority=Priority(data_dict.get("priority", "normal")),
             )

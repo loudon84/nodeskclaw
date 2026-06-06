@@ -68,6 +68,8 @@ async def handle_collaboration_message(
         )
         return
 
+    target = target.strip()
+
     async with async_session_factory() as db:
         limit = await msg_service.get_collaboration_depth_limit(db, workspace_id)
 
@@ -92,6 +94,7 @@ async def handle_collaboration_message(
 
         from app.services import conversation_service
 
+        is_broadcast = target == "broadcast"
         resolved_target_id: str | None = None
         if target.startswith("agent:"):
             target_inst = await _find_agent_by_name_or_id(db, workspace_id, target[6:])
@@ -150,14 +153,21 @@ async def handle_collaboration_message(
             else:
                 logger.warning("Human target not found: %s in workspace %s", human_name, workspace_id)
 
-        resolved_conv_id = await conversation_service.resolve_conversation_for_message(
-            workspace_id, source_instance_id, resolved_target_id or "",
-            db, inherited_conversation_id=conversation_id,
-        )
+        if is_broadcast:
+            resolved_conv_id = await _resolve_broadcast_conversation_id(
+                db, workspace_id,
+            )
+        else:
+            resolved_conv_id = await conversation_service.resolve_conversation_for_message(
+                workspace_id, source_instance_id, resolved_target_id or "",
+                db, inherited_conversation_id=conversation_id,
+            )
 
-        group_member_ids = await conversation_service.get_conversation_members(
-            resolved_conv_id, db,
-        ) if resolved_conv_id else []
+        group_member_ids = [] if is_broadcast else (
+            await conversation_service.get_conversation_members(
+                resolved_conv_id, db,
+            ) if resolved_conv_id else []
+        )
 
         await msg_service.record_message(
             db,
@@ -199,6 +209,26 @@ async def handle_collaboration_message(
         await db.commit()
         if result.error:
             logger.error("MessageBus error in collaboration: %s", result.error)
+
+
+async def _resolve_broadcast_conversation_id(
+    db: AsyncSession, workspace_id: str,
+) -> str | None:
+    from app.services import conversation_service
+
+    blackboard = await conversation_service.get_blackboard_conversation(workspace_id, db)
+    if blackboard is None:
+        await conversation_service.sync_conversations_from_topology(workspace_id, db)
+        blackboard = await conversation_service.get_blackboard_conversation(workspace_id, db)
+
+    if blackboard is None:
+        logger.warning(
+            "Broadcast collaboration has no blackboard conversation in workspace %s",
+            workspace_id,
+        )
+        return None
+
+    return blackboard.id
 
 
 async def _infer_chain_depth(

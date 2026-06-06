@@ -17,8 +17,8 @@ from app.services.corridor_router import _build_hex_map, _get_adjacency, Topolog
 logger = logging.getLogger(__name__)
 
 
-def _compute_member_hash(member_ids: list[str]) -> str:
-    joined = ",".join(sorted(member_ids))
+def _compute_member_hash(member_ids: list[str], group_key: str = "") -> str:
+    joined = group_key + "|" + ",".join(sorted(member_ids))
     return hashlib.sha256(joined.encode()).hexdigest()[:16]
 
 
@@ -101,13 +101,18 @@ async def sync_conversations_from_topology(
                 if hub_pos in set(adj.get(agent_pos, [])):
                     adjacent_agents.add(agent_pos)
 
-        if len(adjacent_agents) < 2:
+        is_blackboard = any(hex_map[p].node_type == "blackboard" for p in chain_members)
+        if not is_blackboard and len(adjacent_agents) < 1:
             continue
 
-        is_blackboard = any(hex_map[p].node_type == "blackboard" for p in chain_members)
         hub_nodes = [hex_map[p] for p in chain_members]
         agent_nodes = [hex_map[p] for p in adjacent_agents]
         member_ids = sorted(hex_map[p].entity_id for p in adjacent_agents if hex_map[p].entity_id)
+        group_key = (
+            "blackboard"
+            if is_blackboard
+            else "hub:" + ";".join(f"{q},{r}" for q, r in sorted(chain_set))
+        )
 
         group_idx = len(computed_groups)
         for ap in adjacent_agents:
@@ -115,6 +120,7 @@ async def sync_conversations_from_topology(
 
         computed_groups.append({
             "member_ids": member_ids,
+            "group_key": group_key,
             "is_blackboard_group": is_blackboard,
             "name": _generate_group_name(hub_nodes, agent_nodes, is_blackboard),
         })
@@ -163,6 +169,7 @@ async def sync_conversations_from_topology(
             member_ids = sorted(hex_map[p].entity_id for p in members if hex_map[p].entity_id)
             computed_groups.append({
                 "member_ids": member_ids,
+                "group_key": "direct:" + ",".join(member_ids),
                 "is_blackboard_group": False,
                 "name": _generate_group_name([], agent_nodes, False),
             })
@@ -208,7 +215,7 @@ async def sync_conversations_from_topology(
 
     for group in computed_groups:
         member_ids = group["member_ids"]
-        member_hash = _compute_member_hash(member_ids)
+        member_hash = _compute_member_hash(member_ids, group["group_key"])
         is_bb = group["is_blackboard_group"]
         name = group["name"]
 

@@ -1,8 +1,9 @@
 """Central router that aggregates all API sub-routers."""
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
 from app.api.audit import router as audit_router
+from app.api.agent_file_grants import router as agent_file_grants_router
 from app.api.auth import router as auth_router
 from app.api.genes import router as gene_router
 from app.api.clusters import router as cluster_router
@@ -30,6 +31,7 @@ from app.api.gateway.proxy_router import router as gateway_proxy_router
 from app.api.gateway.sse_router import router as gateway_sse_router
 from app.api.hermes_skill.router import router as hermes_skill_router
 from app.api.trust import router as trust_router
+from app.api.uploads import router as uploads_router
 from app.api.webhooks import router as webhook_router
 from app.api.blackboard import router as blackboard_router
 from app.api.performance import router as performance_router
@@ -37,7 +39,7 @@ from app.api.workspaces import router as workspace_router
 from app.api.templates import router as template_router
 from app.api.workspace_deploys import router as workspace_deploys_router
 from app.api.instance_templates import router as instance_template_router
-from app.core.deps import require_ce_edition, require_org_admin, require_org_role
+from app.core.deps import get_db, require_ce_edition, require_org_admin, require_org_role
 from app.core.exceptions import ForbiddenError, NotFoundError
 from app.core.feature_gate import feature_gate
 from app.core.config import settings
@@ -86,18 +88,22 @@ async def system_info():
 
 
 @api_router.get("/system/capabilities", tags=["系统"])
-async def system_capabilities():
+async def system_capabilities(db=Depends(get_db)):
     """暴露系统能力状态（如文件上传是否可用），供前端控制 UI 状态。"""
-    from app.services import storage_service
+    from app.services.upload_policy_service import build_upload_policy
+    upload_policy = await build_upload_policy(db)
     return {
-        "file_upload_enabled": storage_service.is_configured(),
+        "file_upload_enabled": upload_policy["storage_status"] == "available",
+        "upload_policy": upload_policy,
     }
 
 
 @api_router.get("/files/local/{file_key:path}", tags=["文件"])
-async def serve_local_file(file_key: str, expires: str = "", sig: str = ""):
+async def serve_local_file(file_key: str, request: Request, expires: str = "", sig: str = ""):
     """Serve a local file using HMAC-signed URL (no Bearer token required)."""
-    from fastapi.responses import FileResponse
+    from pathlib import Path
+
+    from app.api.file_downloads import build_storage_download_response
     from app.services import storage_service
 
     if storage_service._use_s3():
@@ -113,10 +119,16 @@ async def serve_local_file(file_key: str, expires: str = "", sig: str = ""):
     if not file_path.is_file():
         raise NotFoundError("文件不存在", "errors.storage.file_not_found")
 
-    return FileResponse(file_path)
+    return await build_storage_download_response(
+        storage_key=file_key,
+        filename=Path(file_key).name,
+        content_type="application/octet-stream",
+        range_header=request.headers.get("range"),
+    )
 
 
 api_router.include_router(auth_router, prefix="/auth", tags=["认证"])
+api_router.include_router(agent_file_grants_router, tags=["文件授权"])
 api_router.include_router(org_router, prefix="/orgs", tags=["组织"])
 api_router.include_router(org_settings_router, prefix="/orgs", tags=["组织设置"])
 api_router.include_router(audit_router, prefix="/orgs", tags=["操作审计"])
@@ -135,6 +147,7 @@ api_router.include_router(performance_router, tags=["绩效"])
 api_router.include_router(registry_router, prefix="/registry", tags=["镜像仓库"])
 api_router.include_router(settings_router, prefix="/settings", tags=["系统配置"],
     dependencies=[Depends(require_ce_edition), Depends(require_org_admin)])
+api_router.include_router(uploads_router, tags=["文件上传"])
 api_router.include_router(spec_presets_router, prefix="/spec-presets", tags=["规格预设"])
 api_router.include_router(storage_router, prefix="/storage-classes", tags=["存储"])
 api_router.include_router(template_router, prefix="/workspaces", tags=["办公室模板"])
@@ -206,6 +219,8 @@ admin_router.include_router(cluster_router, prefix="/clusters",
 admin_router.include_router(settings_router, prefix="/settings",
     tags=["Admin - 系统配置"],
     dependencies=[Depends(require_org_role("admin"))])
+admin_router.include_router(uploads_router,
+    tags=["Admin - 文件上传"])
 admin_router.include_router(spec_presets_router, prefix="/spec-presets",
     tags=["Admin - 规格预设"])
 admin_router.include_router(gene_router,

@@ -2,10 +2,9 @@
 
 import asyncio
 import base64
-import binascii
 import logging
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Coroutine, Literal
 
 from sqlalchemy import and_, case, func, or_, select
@@ -21,7 +20,7 @@ from app.models.workspace_member import WorkspaceMember, WorkspaceRole
 from app.models.workspace_objective import WorkspaceObjective
 from app.models.workspace_schedule import WorkspaceSchedule
 from app.models.workspace_task import WorkspaceTask
-from app.services import storage_service
+from app.services import file_cleanup_service, file_scan_service, storage_service
 from app.services.workspace_defaults import (
     DEFAULT_WORKSPACE_SCHEDULE_MESSAGE,
     DEFAULT_WORKSPACE_SCHEDULE_NAME,
@@ -51,6 +50,7 @@ from app.schemas.workspace import (
 )
 
 logger = logging.getLogger(__name__)
+SHARED_FILE_INLINE_READ_MAX_BYTES = 1024 * 1024
 
 _background_tasks: set[asyncio.Task] = set()
 
@@ -140,6 +140,8 @@ async def create_workspace(db: AsyncSession, org_id: str, user_id: str, data: Wo
     )
     db.add(schedule)
 
+    from app.services import conversation_service
+    await conversation_service.sync_conversations_and_notify_topology(ws.id, db)
     await db.commit()
     await db.refresh(ws)
 
@@ -233,6 +235,8 @@ async def _apply_template_to_workspace(
         if bb_row:
             bb_row.content = bb_snap["content"]
 
+    from app.services import conversation_service
+    await conversation_service.sync_conversations_and_notify_topology(workspace_id, db)
     await db.commit()
 
 
@@ -333,6 +337,8 @@ async def apply_internal_deploy_topology(
                 created_by=user_id,
             ))
 
+    from app.services import conversation_service
+    await conversation_service.sync_conversations_and_notify_topology(workspace_id, db)
     await db.commit()
 
 
@@ -1762,11 +1768,79 @@ async def upload_shared_file_bytes(
     content_type: str,
     parent_path: str = "/",
 ) -> FileInfo:
-    parent_path = _validate_path(parent_path)
     storage_key = await storage_service.upload_file(
         file_bytes, filename, content_type,
         workspace_id,
     )
+    return await _upsert_shared_file_metadata(
+        db,
+        workspace_id,
+        uploader_type,
+        uploader_id,
+        uploader_name,
+        filename=filename,
+        file_size=len(file_bytes),
+        content_type=content_type,
+        storage_key=storage_key,
+        parent_path=parent_path,
+    )
+
+
+async def upload_shared_file_object(
+    db: AsyncSession,
+    workspace_id: str,
+    uploader_type: str,
+    uploader_id: str,
+    uploader_name: str,
+    *,
+    file_obj,
+    filename: str,
+    content_type: str,
+    parent_path: str = "/",
+    max_bytes: int | None = None,
+) -> FileInfo:
+    scan_status, scan_reason = await file_scan_service.get_initial_scan_state(db)
+    storage_key, file_size, checksum = await storage_service.upload_file_object(
+        file_obj,
+        filename,
+        content_type,
+        workspace_id,
+        max_bytes=max_bytes,
+    )
+    return await _upsert_shared_file_metadata(
+        db,
+        workspace_id,
+        uploader_type,
+        uploader_id,
+        uploader_name,
+        filename=filename,
+        file_size=file_size,
+        content_type=content_type,
+        storage_key=storage_key,
+        parent_path=parent_path,
+        checksum=f"sha256:{checksum}",
+        scan_status=scan_status,
+        scan_reason=scan_reason,
+    )
+
+
+async def _upsert_shared_file_metadata(
+    db: AsyncSession,
+    workspace_id: str,
+    uploader_type: str,
+    uploader_id: str,
+    uploader_name: str,
+    *,
+    filename: str,
+    file_size: int,
+    content_type: str,
+    storage_key: str,
+    parent_path: str = "/",
+    checksum: str = "",
+    scan_status: str = "skipped",
+    scan_reason: str = "metadata_only",
+) -> FileInfo:
+    parent_path = _validate_path(parent_path)
     existing = (await db.execute(
         select(BlackboardFile).where(
             BlackboardFile.workspace_id == workspace_id,
@@ -1777,15 +1851,36 @@ async def upload_shared_file_bytes(
     )).scalar_one_or_none()
 
     if existing is not None:
+        old_storage_key = existing.storage_key
         if existing.storage_key:
-            await storage_service.delete_file(existing.storage_key)
+            await file_cleanup_service.enqueue_storage_delete(
+                db,
+                workspace_id=workspace_id,
+                source=file_cleanup_service.SOURCE_SHARED_FILE,
+                source_id=existing.id,
+                storage_key=existing.storage_key,
+            )
         existing.storage_key = storage_key
-        existing.file_size = len(file_bytes)
+        existing.file_size = file_size
         existing.content_type = content_type
         existing.uploader_type = uploader_type
         existing.uploader_id = uploader_id
         existing.uploader_name = uploader_name
+        existing.checksum = checksum
+        existing.scan_status = scan_status
+        existing.scan_reason = scan_reason
+        existing.scanned_at = datetime.now(timezone.utc) if scan_status == "skipped" else None
+        if scan_status == "pending":
+            await file_scan_service.enqueue_scan(
+                db,
+                workspace_id=workspace_id,
+                source=file_scan_service.SOURCE_SHARED_FILE,
+                file_id=existing.id,
+                storage_key=storage_key,
+            )
         await db.commit()
+        if old_storage_key == storage_key:
+            logger.warning("shared file overwrite reused the same storage key: file=%s", existing.id)
         await db.refresh(existing)
         return _file_to_info(existing)
 
@@ -1794,14 +1889,27 @@ async def upload_shared_file_bytes(
         parent_path=parent_path,
         name=filename,
         is_directory=False,
-        file_size=len(file_bytes),
+        file_size=file_size,
         content_type=content_type,
         storage_key=storage_key,
         uploader_type=uploader_type,
         uploader_id=uploader_id,
         uploader_name=uploader_name,
+        checksum=checksum,
+        scan_status=scan_status,
+        scan_reason=scan_reason,
+        scanned_at=datetime.now(timezone.utc) if scan_status == "skipped" else None,
     )
     db.add(f)
+    await db.flush()
+    if scan_status == "pending":
+        await file_scan_service.enqueue_scan(
+            db,
+            workspace_id=workspace_id,
+            source=file_scan_service.SOURCE_SHARED_FILE,
+            file_id=f.id,
+            storage_key=storage_key,
+        )
     await db.commit()
     await db.refresh(f)
     return _file_to_info(f)
@@ -1815,17 +1923,9 @@ async def upload_shared_file(
     uploader_name: str,
     data: FileWriteRequest,
 ) -> FileInfo:
-    try:
-        file_bytes = base64.b64decode(data.content, validate=True)
-    except (binascii.Error, ValueError) as exc:
-        raise BadRequestError(
-            "文件内容不是有效的 Base64 编码",
-            message_key="errors.file.invalid_base64",
-        ) from exc
-    return await upload_shared_file_bytes(
-        db, workspace_id, uploader_type, uploader_id, uploader_name,
-        filename=data.filename, file_bytes=file_bytes,
-        content_type=data.content_type, parent_path=data.parent_path,
+    raise BadRequestError(
+        "base64 上传已禁用，请使用 multipart/form-data 上传",
+        message_key="errors.upload.base64_upload_disabled",
     )
 
 
@@ -1849,19 +1949,29 @@ async def copy_shared_file(
     )).scalar_one_or_none()
     if source is None or not source.storage_key:
         return None
-    content = await storage_service.download_file(source.storage_key)
-    return await upload_shared_file_bytes(
+    filename = target_filename or source.name
+    storage_key = await storage_service.copy_file(
+        source.storage_key,
+        filename,
+        source.content_type,
+        workspace_id,
+    )
+    return await _upsert_shared_file_metadata(
         db, workspace_id, uploader_type, uploader_id, uploader_name,
-        filename=target_filename or source.name,
-        file_bytes=content,
+        filename=filename,
+        file_size=source.file_size,
         content_type=source.content_type,
+        storage_key=storage_key,
         parent_path=target_parent_path,
+        checksum=source.checksum,
+        scan_status=getattr(source, "scan_status", "skipped"),
+        scan_reason=getattr(source, "scan_reason", "copied"),
     )
 
 
-async def get_shared_file_url(
+async def get_shared_file_record(
     db: AsyncSession, workspace_id: str, file_id: str,
-) -> str | None:
+) -> BlackboardFile | None:
     result = await db.execute(
         select(BlackboardFile).where(
             BlackboardFile.id == file_id,
@@ -1870,9 +1980,16 @@ async def get_shared_file_url(
             BlackboardFile.deleted_at.is_(None),
         )
     )
-    f = result.scalar_one_or_none()
+    return result.scalar_one_or_none()
+
+
+async def get_shared_file_url(
+    db: AsyncSession, workspace_id: str, file_id: str,
+) -> str | None:
+    f = await get_shared_file_record(db, workspace_id, file_id)
     if f is None or not f.storage_key:
         return None
+    file_scan_service.assert_download_allowed(getattr(f, "scan_status", "skipped"))
     return await storage_service.get_presigned_url(f.storage_key)
 
 
@@ -1880,17 +1997,15 @@ async def read_shared_file(
     db: AsyncSession, workspace_id: str, file_id: str,
 ) -> tuple[str, str] | None:
     """Return (base64_content, content_type) for agent tool read_file."""
-    result = await db.execute(
-        select(BlackboardFile).where(
-            BlackboardFile.id == file_id,
-            BlackboardFile.workspace_id == workspace_id,
-            BlackboardFile.is_directory.is_(False),
-            BlackboardFile.deleted_at.is_(None),
-        )
-    )
-    f = result.scalar_one_or_none()
+    f = await get_shared_file_record(db, workspace_id, file_id)
     if f is None or not f.storage_key:
         return None
+    file_scan_service.assert_download_allowed(getattr(f, "scan_status", "skipped"))
+    if f.file_size > SHARED_FILE_INLINE_READ_MAX_BYTES:
+        raise BadRequestError(
+            "文件过大，不能以内联 base64 内容读取，请使用下载 URL",
+            message_key="errors.upload.content_too_large",
+        )
 
     content = await storage_service.download_file(f.storage_key)
     return base64.b64encode(content).decode(), f.content_type
@@ -1919,11 +2034,23 @@ async def delete_shared_file(
         )).scalars().all()
         for child in children:
             if child.storage_key:
-                await storage_service.delete_file(child.storage_key)
+                await file_cleanup_service.enqueue_storage_delete(
+                    db,
+                    workspace_id=workspace_id,
+                    source=file_cleanup_service.SOURCE_SHARED_FILE,
+                    source_id=child.id,
+                    storage_key=child.storage_key,
+                )
             child.soft_delete()
     else:
         if f.storage_key:
-            await storage_service.delete_file(f.storage_key)
+            await file_cleanup_service.enqueue_storage_delete(
+                db,
+                workspace_id=workspace_id,
+                source=file_cleanup_service.SOURCE_SHARED_FILE,
+                source_id=f.id,
+                storage_key=f.storage_key,
+            )
     f.soft_delete()
     await db.commit()
     return True

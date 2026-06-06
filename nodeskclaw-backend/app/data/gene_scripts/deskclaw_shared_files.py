@@ -8,9 +8,7 @@ Actions:
   list_files [--path /]              List files in a directory
   read_file --file-id ID             Read file content (returns base64)
   write_file --file PATH [--filename NAME] [--parent-path /] [--content-type TYPE]
-                                     Upload a local file (recommended)
-  write_file --content-b64 DATA --filename NAME [--parent-path /] [--content-type TYPE]
-                                     Upload base64 content (legacy)
+                                     Upload a local file with multipart or upload session
   copy_file --file-id ID [--target-parent-path /] [--target-filename NAME]
                                      Copy a file to another location
   delete_file --file-id ID           Delete a file
@@ -26,9 +24,11 @@ Environment:
 from __future__ import annotations
 
 import argparse
+import mimetypes
+import os
 import sys
 
-from _api_client import api_call, upload_file, _output
+from _api_client import _output, api_call, upload_shared_file
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -42,9 +42,7 @@ def _build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--file-id", required=True)
 
     sp = sub.add_parser("write_file", help="Upload a file")
-    group = sp.add_mutually_exclusive_group(required=True)
-    group.add_argument("--file", help="Local file path to upload (recommended)")
-    group.add_argument("--content-b64", help="File content in base64 encoding (legacy)")
+    sp.add_argument("--file", required=True, help="Local file path to upload")
     sp.add_argument("--filename", default=None, help="Target filename (defaults to basename of --file)")
     sp.add_argument("--parent-path", default="/")
     sp.add_argument("--content-type", default=None)
@@ -80,21 +78,9 @@ def main() -> None:
         _output(api_call("GET", f"{base}/{args.file_id}/content"))
 
     elif action == "write_file":
-        if args.file:
-            import mimetypes
-            import os
-            fname = args.filename or os.path.basename(args.file)
-            ct = args.content_type or mimetypes.guess_type(args.file)[0] or "application/octet-stream"
-            _output(upload_file(args.file, f"{base}/upload-multipart", fname, args.parent_path, ct))
-        else:
-            fname = args.filename or "untitled"
-            body = {
-                "filename": fname,
-                "content": args.content_b64,
-                "parent_path": args.parent_path,
-                "content_type": args.content_type or "application/octet-stream",
-            }
-            _output(api_call("POST", f"{base}/upload", body))
+        fname = args.filename or os.path.basename(args.file)
+        ct = args.content_type or mimetypes.guess_type(args.file)[0] or "application/octet-stream"
+        _output(upload_shared_file(args.file, fname, args.parent_path, ct))
 
     elif action == "copy_file":
         body = {

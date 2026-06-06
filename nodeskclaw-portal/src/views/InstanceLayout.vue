@@ -2,7 +2,7 @@
 import { ref, onMounted, computed, provide } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { ArrowLeft, Circle, Loader2, LayoutDashboard, Brain, Dna, History, Radio, FolderOpen, Users, Activity, Archive, Pencil, Check, X, RotateCcw } from 'lucide-vue-next'
+import { ArrowLeft, Circle, Loader2, LayoutDashboard, Brain, Dna, History, FolderOpen, Users, Activity, Archive, Pencil, Check, X, RotateCcw } from 'lucide-vue-next'
 import api from '@/services/api'
 import { resolveApiErrorMessage } from '@/i18n/error'
 import { useToast } from '@/composables/useToast'
@@ -105,7 +105,6 @@ const navItems = computed(() => {
   items.push({ name: 'InstanceRuntime', label: t('common.runtimeStatus'), icon: Activity })
   if (caps.value.genes) items.push({ name: 'InstanceGenes', label: t('common.genes'), icon: Dna })
   if (caps.value.evolutionLog) items.push({ name: 'EvolutionLog', label: t('common.evolutionLog'), icon: History })
-  items.push({ name: 'InstanceChannels', label: t('common.channels'), icon: Radio })
   if (caps.value.llmConfig) items.push({ name: 'InstanceSettings', label: t('common.modelConfig'), icon: Brain })
   if (myInstanceRole.value === 'admin') {
     items.push({ name: 'InstanceFiles', label: t('common.files'), icon: FolderOpen })

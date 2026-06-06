@@ -1,6 +1,7 @@
 """Import all models so SQLAlchemy can detect them."""
 
 from app.models.admin_membership import AdminMembership  # noqa: F401
+from app.models.agent_file_access_grant import AgentFileAccessGrant  # noqa: F401
 from app.models.backup import InstanceBackup  # noqa: F401
 from app.models.base import Base, BaseModel  # noqa: F401
 from app.models.blackboard import Blackboard  # noqa: F401
@@ -17,6 +18,7 @@ from app.models.delivery_log import DeliveryLog  # noqa: F401
 from app.models.deploy_record import DeployRecord  # noqa: F401
 from app.models.engine_version import EngineVersion  # noqa: F401
 from app.models.event_log import EventLog  # noqa: F401
+from app.models.file_scan_job import FileScanJob  # noqa: F401
 from app.models.gateway import (  # noqa: F401
     McpGatewayAuditLog,
     McpGatewayApiKey,
@@ -55,8 +57,12 @@ from app.models.org_membership import OrgMembership  # noqa: F401
 from app.models.org_oauth_binding import OrgOAuthBinding  # noqa: F401
 from app.models.organization import Organization  # noqa: F401
 from app.models.sse_connection import SSEConnection  # noqa: F401
+from app.models.storage_object_delete_job import StorageObjectDeleteJob  # noqa: F401
 from app.models.system_config import SystemConfig  # noqa: F401
 from app.models.trust_policy import TrustPolicy  # noqa: F401
+from app.models.upload_part import UploadPart  # noqa: F401
+from app.models.upload_quota_reservation import UploadQuotaReservation  # noqa: F401
+from app.models.upload_session import UploadSession  # noqa: F401
 from app.models.user import User  # noqa: F401
 from app.models.user_llm_config import UserLlmConfig  # noqa: F401
 from app.models.user_llm_key import UserLlmKey  # noqa: F401
@@ -64,6 +70,8 @@ from app.models.workspace import Workspace  # noqa: F401
 from app.models.workspace_agent import WorkspaceAgent  # noqa: F401
 from app.models.workspace_file import WorkspaceFile  # noqa: F401
 from app.models.workspace_member import WorkspaceMember  # noqa: F401
+from app.models.workspace_message_file_reference import WorkspaceMessageFileReference  # noqa: F401
+from app.models.workspace_large_input_file import WorkspaceLargeInputFile  # noqa: F401
 from app.models.workspace_message import WorkspaceMessage  # noqa: F401
 from app.models.workspace_objective import WorkspaceObjective  # noqa: F401
 from app.models.workspace_schedule import WorkspaceSchedule  # noqa: F401

@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Coroutine, Literal
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select as sa_select
@@ -1207,9 +1207,6 @@ async def search_users(
 
 # ── Group Chat (Broadcast) ───────────────────────────
 
-MAX_UPLOAD_SIZE = 20 * 1024 * 1024
-
-
 @router.post("/{workspace_id}/files/upload")
 async def upload_workspace_file(
     workspace_id: str,
@@ -1218,42 +1215,106 @@ async def upload_workspace_file(
     user=Depends(_get_current_user_dep()),
 ):
     """Upload a file to a workspace (multipart/form-data)."""
-    from app.services import storage_service
+    from app.services import file_scan_service, storage_service
+    from app.services.upload_policy_service import get_surface_max_bytes, validate_upload_request
     from app.models.workspace_file import WorkspaceFile
 
     if not storage_service.is_configured():
-        raise _error(503, 50301, "errors.storage.not_configured", "对象存储未配置")
+        raise _error(503, 50301, "errors.upload.storage_unavailable", "文件存储服务不可用")
 
     await wm_service.check_workspace_access(workspace_id, user, "send_chat", db)
 
-    content = await file.read()
-    if len(content) > MAX_UPLOAD_SIZE:
-        raise _error(400, 40002, "errors.file.too_large", "文件大小超过限制（最大 20MB）")
-
-    storage_key = await storage_service.upload_file(
-        file_content=content,
-        filename=file.filename or "unnamed",
-        content_type=file.content_type or "application/octet-stream",
-        workspace_id=workspace_id,
+    filename = file.filename or "unnamed"
+    content_type = file.content_type or "application/octet-stream"
+    await validate_upload_request(
+        "chat_attachment",
+        filename=filename,
+        content_type=content_type,
+        size=0,
+        db=db,
     )
+    max_bytes = await get_surface_max_bytes("chat_attachment", db)
+    try:
+        scan_status, scan_reason = await file_scan_service.get_initial_scan_state(db)
+    except file_scan_service.ScannerUnavailableError as exc:
+        raise _error(
+            503,
+            50312,
+            "errors.upload.scanner_unavailable",
+            "文件扫描服务不可用",
+        ) from exc
+    try:
+        storage_key, file_size, _checksum = await storage_service.upload_file_object(
+            file,
+            filename,
+            content_type,
+            workspace_id,
+            max_bytes=max_bytes,
+        )
+    except storage_service.UploadTooLargeError as exc:
+        raise _error(
+            413,
+            41302,
+            "errors.upload.file_too_large",
+            f"文件大小超过限制（最大 {exc.limit_bytes // 1024 // 1024}MB）",
+        ) from exc
+    except storage_service.StorageUnavailableError as exc:
+        raise _error(
+            503,
+            50301,
+            "errors.upload.storage_unavailable",
+            f"文件存储服务不可用：{exc.reason_code}",
+        ) from exc
 
     wf = WorkspaceFile(
         workspace_id=workspace_id,
         uploader_id=user.id,
-        original_name=file.filename or "unnamed",
-        file_size=len(content),
-        content_type=file.content_type or "application/octet-stream",
+        original_name=filename,
+        file_size=file_size,
+        content_type=content_type,
         storage_key=storage_key,
+        checksum=f"sha256:{_checksum}",
+        scan_status=scan_status,
+        scan_reason=scan_reason,
     )
     db.add(wf)
     await db.commit()
     await db.refresh(wf)
+    await hooks.emit(
+        "operation_audit",
+        action="file.upload_completed",
+        target_type="chat_attachment",
+        target_id=wf.id,
+        actor_id=user.id,
+        actor_type="user",
+        actor_name=user.name,
+        org_id=user.current_org_id,
+        workspace_id=workspace_id,
+        details={
+            "surface": "chat_attachment",
+            "size": wf.file_size,
+            "content_type": wf.content_type,
+            "scan_status": wf.scan_status,
+        },
+    )
+    if scan_status == "pending":
+        await file_scan_service.enqueue_scan(
+            db,
+            workspace_id=workspace_id,
+            source=file_scan_service.SOURCE_CHAT_ATTACHMENT,
+            file_id=wf.id,
+            storage_key=wf.storage_key,
+        )
+        await db.commit()
 
     return _ok({
         "id": wf.id,
         "name": wf.original_name,
         "size": wf.file_size,
         "content_type": wf.content_type,
+        "surface": "chat_attachment",
+        "scan_status": wf.scan_status,
+        "download_url_available": wf.scan_status not in {"pending", "blocked", "failed"},
     })
 
 
@@ -1283,6 +1344,8 @@ async def get_file_presigned_url(
     wf = result.scalar_one_or_none()
     if wf is None:
         raise _error(404, 40431, "errors.file.not_found", "文件不存在")
+    from app.services.file_reference_service import ensure_scan_allows_download
+    ensure_scan_allows_download(getattr(wf, "scan_status", "skipped"))
 
     try:
         url = await storage_service.get_presigned_url(wf.storage_key, expires=900)
@@ -1296,6 +1359,7 @@ async def get_file_presigned_url(
 async def download_workspace_file(
     workspace_id: str,
     file_id: str,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     user=Depends(_get_current_user_or_agent_dep()),
 ):
@@ -1318,25 +1382,23 @@ async def download_workspace_file(
     wf = result.scalar_one_or_none()
     if wf is None:
         raise _error(404, 40431, "errors.file.not_found", "文件不存在")
+    from app.services.file_reference_service import ensure_scan_allows_download
+    ensure_scan_allows_download(getattr(wf, "scan_status", "skipped"))
 
     try:
-        content = await storage_service.download_file(wf.storage_key)
+        from app.api.file_downloads import build_storage_download_response
+
+        return await build_storage_download_response(
+            storage_key=wf.storage_key,
+            filename=wf.original_name,
+            content_type=wf.content_type,
+            range_header=request.headers.get("range"),
+        )
+    except storage_service.DownloadRangeNotSatisfiableError:
+        raise
     except Exception:
         logger.warning("下载文件 %s 失败", wf.original_name, exc_info=True)
         raise _error(502, 50202, "errors.storage.download_failed", "文件下载失败，请稍后重试")
-
-    from fastapi.responses import Response
-    from urllib.parse import quote
-
-    filename_encoded = quote(wf.original_name, safe="")
-    return Response(
-        content=content,
-        media_type=wf.content_type,
-        headers={
-            "Content-Disposition": f"attachment; filename*=UTF-8''{filename_encoded}",
-            "Content-Length": str(len(content)),
-        },
-    )
 
 
 @router.post("/{workspace_id}/chat")
@@ -1352,27 +1414,15 @@ async def workspace_chat(
     if ws_info is None:
         raise _error(404, 40430, "errors.workspace.not_found", "办公室不存在")
 
-    attachments_meta: list[dict] | None = None
-    attachment_files: list = []
-    if data.file_ids:
-        from app.models.workspace_file import WorkspaceFile
+    from app.services import file_reference_service
 
-        result = await db.execute(
-            sa_select(WorkspaceFile).where(
-                WorkspaceFile.id.in_(data.file_ids),
-                WorkspaceFile.workspace_id == workspace_id,
-                WorkspaceFile.deleted_at.is_(None),
-            )
-        )
-        attachment_files = list(result.scalars().all())
-        if attachment_files:
-            attachments_meta = [
-                {
-                    "id": f.id, "name": f.original_name,
-                    "size": f.file_size, "content_type": f.content_type,
-                }
-                for f in attachment_files
-            ]
+    file_references = await file_reference_service.resolve_message_file_references(
+        db,
+        workspace_id,
+        file_references=data.file_references,
+        legacy_file_ids=data.file_ids,
+    )
+    attachments_meta = file_reference_service.legacy_attachments_from_references(file_references)
 
     from app.services import conversation_service
 
@@ -1381,7 +1431,7 @@ async def workspace_chat(
         bb_conv = await conversation_service.get_blackboard_conversation(workspace_id, db)
         conv_id = bb_conv.id if bb_conv else None
 
-    await msg_service.record_message(
+    msg = await msg_service.record_message(
         db,
         workspace_id=workspace_id,
         sender_type="user",
@@ -1389,13 +1439,23 @@ async def workspace_chat(
         sender_name=user.name,
         content=data.message,
         attachments=attachments_meta,
+        file_references=file_references,
         conversation_id=conv_id,
     )
 
     attachments_with_urls: list[dict] = []
-    if attachment_files:
+    if attachments_meta:
         from app.services import storage_service
-        for f in attachment_files:
+        from app.models.workspace_file import WorkspaceFile
+
+        result = await db.execute(
+            sa_select(WorkspaceFile).where(
+                WorkspaceFile.id.in_([item["id"] for item in attachments_meta]),
+                WorkspaceFile.workspace_id == workspace_id,
+                WorkspaceFile.deleted_at.is_(None),
+            )
+        )
+        for f in result.scalars().all():
             try:
                 url = await storage_service.get_presigned_url(f.storage_key, expires=3600)
                 attachments_with_urls.append({
@@ -1419,7 +1479,9 @@ async def workspace_chat(
         content=data.message,
         mentions=data.mentions,
         attachments=attachments_with_urls or None,
+        file_references=file_references,
         conversation_id=conv_id,
+        message_id=msg.id,
     )
 
     async def _publish_via_bus():
@@ -1614,6 +1676,12 @@ async def list_workspace_messages(
         )
     else:
         messages = await msg_service.get_recent_messages(db, workspace_id, limit)
+    from app.services.file_reference_service import get_message_file_references
+
+    file_refs_by_message = await get_message_file_references(
+        db,
+        [m.id for m in messages],
+    )
     return _ok([
         {
             "id": m.id,
@@ -1625,6 +1693,7 @@ async def list_workspace_messages(
             "message_type": m.message_type,
             "conversation_id": getattr(m, "conversation_id", None),
             "attachments": m.attachments,
+            "file_references": file_refs_by_message.get(m.id, []),
             "created_at": m.created_at.isoformat() if m.created_at else None,
         }
         for m in messages

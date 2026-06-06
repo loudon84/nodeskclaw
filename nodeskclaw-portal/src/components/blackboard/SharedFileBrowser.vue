@@ -1,13 +1,18 @@
 <script setup lang="ts">
 import { ref, onMounted, watch, computed } from 'vue'
-import { Folder, File, FolderPlus, Upload, Trash2, Download, Loader2, ChevronRight } from 'lucide-vue-next'
+import { Folder, File, FolderPlus, Upload, Trash2, Download, Loader2, ChevronRight, LoaderCircle, ShieldAlert, AlertTriangle } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import api from '@/services/api'
 import { Button } from '@/components/ui/button'
 import { FileInput, Input } from '@/components/ui/input'
+import { useWorkspaceStore } from '@/stores/workspace'
+import { useToast } from '@/composables/useToast'
+import FileConflictDialog from './FileConflictDialog.vue'
 
 const props = defineProps<{ workspaceId: string }>()
 const { t } = useI18n()
+const store = useWorkspaceStore()
+const toast = useToast()
 
 interface FileItem {
   id: string
@@ -17,6 +22,7 @@ interface FileItem {
   content_type: string
   uploader_name: string
   created_at: string
+  scan_status?: string
 }
 
 const currentPath = ref('/')
@@ -27,6 +33,25 @@ const newDirName = ref('')
 const creating = ref(false)
 const uploading = ref(false)
 const fileInputRef = ref<HTMLInputElement | null>(null)
+const DEFAULT_SHARED_FILE_MAX_BYTES = 200 * 1024 * 1024
+const sharedFileMaxBytes = computed(() => (
+  store.uploadPolicy?.surfaces?.shared_file?.max_file_size_bytes as number | undefined
+) || DEFAULT_SHARED_FILE_MAX_BYTES)
+
+const conflictDialogOpen = ref(false)
+const conflictFile = ref<File | null>(null)
+const conflictExistingInfo = ref<{ size?: number; date?: string }>({})
+
+function isFileConflictError(e: unknown): boolean {
+  const resp = (e as { response?: { data?: { error_code?: string } } })?.response
+  return resp?.data?.error_code === 'file_conflict'
+}
+
+function getConflictExistingInfo(e: unknown): { size?: number; date?: string } {
+  const resp = (e as { response?: { data?: { data?: { existing_file?: { file_size?: number; updated_at?: string } } } } })?.response
+  const existing = resp?.data?.data?.existing_file
+  return { size: existing?.file_size, date: existing?.updated_at?.slice(0, 10) }
+}
 
 const breadcrumbs = computed(() => {
   const parts = currentPath.value.split('/').filter(Boolean)
@@ -87,29 +112,58 @@ async function uploadFile(event: Event) {
   const input = event.target as HTMLInputElement
   const file = input.files?.[0]
   if (!file) return
+  if (!store.fileUploadEnabled) {
+    toast.error(t('upload.hints.storage_unavailable'))
+    input.value = ''
+    return
+  }
+  if (file.size > sharedFileMaxBytes.value) {
+    toast.error(t('chat.fileTooLarge', { size: Math.floor(sharedFileMaxBytes.value / (1024 * 1024)) }))
+    input.value = ''
+    return
+  }
 
   uploading.value = true
   try {
-    const reader = new FileReader()
-    const b64 = await new Promise<string>((resolve) => {
-      reader.onload = () => {
-        const result = reader.result as string
-        resolve(result.split(',')[1] || '')
-      }
-      reader.readAsDataURL(file)
-    })
-    await api.post(`/workspaces/${props.workspaceId}/blackboard/files/upload`, {
-      parent_path: currentPath.value,
-      filename: file.name,
-      content: b64,
-      content_type: file.type || 'application/octet-stream',
-    })
-    await fetchFiles()
+    const result = await store.uploadSharedFile(props.workspaceId, file, currentPath.value, 'fail')
+    if (result) {
+      await fetchFiles()
+    } else {
+      toast.error(t('chat.fileUploadFailed'))
+    }
   } catch (e) {
-    console.error('upload error:', e)
+    if (isFileConflictError(e)) {
+      conflictFile.value = file
+      conflictExistingInfo.value = getConflictExistingInfo(e)
+      conflictDialogOpen.value = true
+    } else {
+      toast.error(t('chat.fileUploadFailed'))
+    }
   } finally {
     uploading.value = false
     input.value = ''
+  }
+}
+
+async function handleConflictResolve(strategy: 'keep_both' | 'overwrite' | 'cancel') {
+  conflictDialogOpen.value = false
+  if (strategy === 'cancel' || !conflictFile.value) {
+    conflictFile.value = null
+    return
+  }
+  uploading.value = true
+  try {
+    const result = await store.uploadSharedFile(props.workspaceId, conflictFile.value, currentPath.value, strategy)
+    if (result) {
+      await fetchFiles()
+    } else {
+      toast.error(t('chat.fileUploadFailed'))
+    }
+  } catch {
+    toast.error(t('chat.fileUploadFailed'))
+  } finally {
+    uploading.value = false
+    conflictFile.value = null
   }
 }
 
@@ -139,8 +193,15 @@ function formatSize(bytes: number) {
   return `${(bytes / 1048576).toFixed(1)} MB`
 }
 
-onMounted(fetchFiles)
-watch(() => props.workspaceId, () => { currentPath.value = '/'; fetchFiles() })
+onMounted(() => {
+  store.fetchSystemCapabilities()
+  fetchFiles()
+})
+watch(() => props.workspaceId, () => {
+  currentPath.value = '/'
+  store.fetchSystemCapabilities()
+  fetchFiles()
+})
 </script>
 
 <template>
@@ -166,7 +227,8 @@ watch(() => props.workspaceId, () => { currentPath.value = '/'; fetchFiles() })
         </Button>
         <Button variant="unstyled" size="unstyled"
           class="flex items-center gap-1 text-xs px-2 py-1.5 rounded-lg hover:bg-muted transition-colors"
-          :disabled="uploading"
+          :disabled="uploading || !store.fileUploadEnabled"
+          :title="store.fileUploadEnabled ? t('upload.actions.upload_to_shared_file') : t('upload.hints.storage_unavailable')"
           @click="fileInputRef?.click()"
         >
           <Loader2 v-if="uploading" class="w-3.5 h-3.5 animate-spin" />
@@ -211,12 +273,17 @@ watch(() => props.workspaceId, () => { currentPath.value = '/'; fetchFiles() })
         <Folder v-if="item.is_directory" class="w-4 h-4 text-primary shrink-0" />
         <File v-else class="w-4 h-4 text-muted-foreground shrink-0" />
         <span class="text-sm flex-1 truncate">{{ item.name }}</span>
+        <LoaderCircle v-if="!item.is_directory && item.scan_status === 'pending'" class="w-3.5 h-3.5 text-yellow-500 animate-spin shrink-0" :title="t('upload.status.pending_scan')" />
+        <ShieldAlert v-else-if="!item.is_directory && item.scan_status === 'blocked'" class="w-3.5 h-3.5 text-red-500 shrink-0" :title="t('upload.status.blocked')" />
+        <AlertTriangle v-else-if="!item.is_directory && item.scan_status === 'failed'" class="w-3.5 h-3.5 text-orange-500 shrink-0" :title="t('upload.status.scan_failed')" />
         <span class="text-xs text-muted-foreground shrink-0">{{ formatSize(item.file_size) }}</span>
         <span class="text-xs text-muted-foreground shrink-0 hidden sm:inline">{{ item.uploader_name }}</span>
         <div class="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
           <Button variant="unstyled" size="unstyled"
             v-if="!item.is_directory"
             class="p-1 rounded hover:bg-muted transition-colors"
+            :class="item.scan_status === 'pending' || item.scan_status === 'blocked' || item.scan_status === 'failed' ? 'opacity-40 cursor-not-allowed' : ''"
+            :disabled="item.scan_status === 'pending' || item.scan_status === 'blocked' || item.scan_status === 'failed'"
             @click.stop="downloadFile(item)"
           >
             <Download class="w-3.5 h-3.5" />
@@ -230,5 +297,14 @@ watch(() => props.workspaceId, () => { currentPath.value = '/'; fetchFiles() })
         </div>
       </div>
     </div>
+
+    <FileConflictDialog
+      :open="conflictDialogOpen"
+      :file-name="conflictFile?.name || ''"
+      :existing-size="conflictExistingInfo.size"
+      :existing-date="conflictExistingInfo.date"
+      :new-size="conflictFile?.size"
+      @resolve="handleConflictResolve"
+    />
   </div>
 </template>

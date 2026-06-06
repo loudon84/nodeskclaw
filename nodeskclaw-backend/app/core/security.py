@@ -284,6 +284,42 @@ async def get_current_user_or_agent(
     return user
 
 
+async def get_current_agent_instance(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+    db: AsyncSession = Depends(get_db),
+):
+    if credentials is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "error_code": 40100,
+                "message_key": "errors.upload.agent_proxy_token_required",
+                "message": "Agent 下载文件必须使用实例 proxy_token",
+            },
+        )
+
+    from app.models.instance import Instance
+
+    result = await db.execute(
+        select(Instance).where(
+            Instance.proxy_token == credentials.credentials,
+            Instance.deleted_at.is_(None),
+        )
+    )
+    instance = result.scalar_one_or_none()
+    if instance is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "error_code": 40101,
+                "message_key": "errors.auth.token_invalid",
+                "message": "Token 无效",
+            },
+        )
+    _auth_actor.set(AuthActor("agent", instance.id, instance.name))
+    return instance
+
+
 # ── KubeConfig AES-256-GCM Encryption ────────────────────
 
 def _get_aes_key() -> bytes:

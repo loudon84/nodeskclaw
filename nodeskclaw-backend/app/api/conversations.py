@@ -49,6 +49,8 @@ async def list_conversations(
     user, org = org_ctx
     await _check_workspace(workspace_id, org, db)
     await wm_service.check_workspace_member(workspace_id, user, db)
+    await conversation_service.sync_conversations_from_topology(workspace_id, db)
+    await db.commit()
     convs = await conversation_service.list_conversations(workspace_id, db)
     return _ok([
         {
@@ -95,6 +97,9 @@ async def get_conversation_messages(
         conversation_id=conv_id,
         include_unscoped=conv.is_blackboard_group,
     )
+    from app.services.file_reference_service import get_message_file_references
+
+    file_refs_by_message = await get_message_file_references(db, [m.id for m in messages])
     return _ok([
         {
             "id": m.id,
@@ -107,6 +112,7 @@ async def get_conversation_messages(
             "depth": m.depth,
             "conversation_id": m.conversation_id,
             "attachments": m.attachments,
+            "file_references": file_refs_by_message.get(m.id, []),
             "created_at": m.created_at.isoformat() if m.created_at else None,
         }
         for m in messages

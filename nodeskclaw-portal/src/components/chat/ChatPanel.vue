@@ -6,7 +6,7 @@ import StarterKit from '@tiptap/starter-kit'
 import Placeholder from '@tiptap/extension-placeholder'
 import { Extension } from '@tiptap/core'
 import { PluginKey } from '@tiptap/pm/state'
-import { useWorkspaceStore, type GroupChatMessage, type AgentBrief, type FileAttachment } from '@/stores/workspace'
+import { useWorkspaceStore, type GroupChatMessage, type AgentBrief, type FileAttachment, type FileReference } from '@/stores/workspace'
 import FileAttachmentList from './FileAttachmentList.vue'
 import BaseTooltip from '@/components/shared/BaseTooltip.vue'
 import { useAuthStore } from '@/stores/auth'
@@ -140,7 +140,18 @@ const fileInputRef = ref<HTMLInputElement | null>(null)
 const pendingFiles = ref<File[]>([])
 const fileUploading = ref(false)
 
-const MAX_FILE_SIZE = 20 * 1024 * 1024
+const DEFAULT_CHAT_ATTACHMENT_MAX_BYTES = 20 * 1024 * 1024
+const DEFAULT_SHARED_FILE_MAX_BYTES = 200 * 1024 * 1024
+const DEFAULT_CHAT_ATTACHMENT_MAX_COUNT = 5
+const chatAttachmentMaxBytes = computed(() => (
+  store.uploadPolicy?.surfaces?.chat_attachment?.max_file_size_bytes as number | undefined
+) || DEFAULT_CHAT_ATTACHMENT_MAX_BYTES)
+const sharedFileMaxBytes = computed(() => (
+  store.uploadPolicy?.surfaces?.shared_file?.max_file_size_bytes as number | undefined
+) || DEFAULT_SHARED_FILE_MAX_BYTES)
+const chatAttachmentMaxCount = computed(() => (
+  store.uploadPolicy?.surfaces?.chat_attachment?.max_files_per_message as number | undefined
+) || DEFAULT_CHAT_ATTACHMENT_MAX_COUNT)
 
 function triggerFileInput() {
   if (!store.fileUploadEnabled) return
@@ -156,9 +167,16 @@ function handleFileSelect(e: Event) {
 
 function addFiles(files: File[]) {
   for (const f of files) {
-    if (f.size > MAX_FILE_SIZE) {
-      toast.error(t('chat.fileTooLarge', { size: 20 }))
+    if (pendingFiles.value.length >= chatAttachmentMaxCount.value) {
+      toast.error(t('chat.fileCountExceeded', { count: chatAttachmentMaxCount.value }))
+      break
+    }
+    if (f.size > sharedFileMaxBytes.value) {
+      toast.error(t('chat.fileTooLarge', { size: Math.floor(sharedFileMaxBytes.value / (1024 * 1024)) }))
       continue
+    }
+    if (f.size > chatAttachmentMaxBytes.value) {
+      toast.info(t('upload.hints.chat_limit_exceeded'))
     }
     pendingFiles.value.push(f)
   }
@@ -172,6 +190,12 @@ function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes}B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`
   return `${(bytes / (1024 * 1024)).toFixed(1)}MB`
+}
+
+function pendingFileReferenceLabel(file: File): string {
+  return file.size > chatAttachmentMaxBytes.value
+    ? t('upload.references.shared_file')
+    : t('upload.references.chat_attachment')
 }
 
 function handleDragOver(e: DragEvent) {
@@ -447,6 +471,7 @@ async function sendMessage() {
 
   let fileIds: string[] | undefined
   let attachments: FileAttachment[] | undefined
+  let fileReferences: FileReference[] | undefined
 
   if (hasFiles) {
     fileUploading.value = true
@@ -454,13 +479,22 @@ async function sendMessage() {
     pendingFiles.value = []
     try {
       const uploaded: FileAttachment[] = []
+      const sharedRefs: FileReference[] = []
       for (const f of filesToUpload) {
-        const result = await store.uploadFile(props.workspaceId, f)
-        if (result) uploaded.push(result)
+        if (f.size > chatAttachmentMaxBytes.value) {
+          const result = await store.uploadSharedFile(props.workspaceId, f)
+          if (result) sharedRefs.push(result)
+        } else {
+          const result = await store.uploadFile(props.workspaceId, f)
+          if (result) uploaded.push(result)
+        }
       }
       if (uploaded.length > 0) {
         fileIds = uploaded.map(u => u.id)
         attachments = uploaded
+      }
+      if (sharedRefs.length > 0) {
+        fileReferences = sharedRefs
       }
     } catch (e) {
       toast.error(t('chat.fileUploadFailed'))
@@ -470,7 +504,7 @@ async function sendMessage() {
     }
   }
 
-  if (!text.trim() && !fileIds?.length) return
+  if (!text.trim() && !fileIds?.length && !fileReferences?.length) return
 
   await store.sendWorkspaceMessage(
     props.workspaceId,
@@ -478,6 +512,7 @@ async function sendMessage() {
     mentions.length > 0 ? mentions : undefined,
     fileIds,
     attachments,
+    fileReferences,
     props.conversationId,
   )
   scrollToBottom()
@@ -1177,8 +1212,9 @@ function updateSuggestionIndex(state: SuggestionState, idx: number) {
               </template>
             </div>
             <FileAttachmentList
-              v-if="msg.attachments?.length"
+              v-if="msg.attachments?.length || msg.file_references?.length"
               :attachments="msg.attachments"
+              :file-references="msg.file_references"
               :workspace-id="workspaceId"
             />
             <span v-if="msg.streaming" class="inline-block w-1.5 h-4 bg-current animate-pulse ml-0.5 align-text-bottom" />
@@ -1285,6 +1321,7 @@ function updateSuggestionIndex(state: SuggestionState, idx: number) {
             <FileText class="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
             <span class="truncate">{{ file.name }}</span>
             <span class="text-muted-foreground shrink-0">({{ formatFileSize(file.size) }})</span>
+            <span class="text-muted-foreground shrink-0">{{ pendingFileReferenceLabel(file) }}</span>
             <Button variant="unstyled" size="unstyled"
               class="absolute -top-1.5 -right-1.5 p-0.5 rounded-full bg-destructive text-destructive-foreground opacity-0 group-hover:opacity-100 transition-opacity"
               @click.stop="removePendingFile(idx)"

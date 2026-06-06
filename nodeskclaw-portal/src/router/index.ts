@@ -59,8 +59,6 @@ const ceRoutes: RouteRecordRaw[] = [
       { path: 'runtime', name: 'InstanceRuntime', component: () => import('@/views/InstanceRuntime.vue') },
       { path: 'genes', name: 'InstanceGenes', component: () => import('@/views/InstanceGenes.vue') },
       { path: 'evolution', name: 'EvolutionLog', component: () => import('@/views/EvolutionLog.vue') },
-
-      { path: 'channels', name: 'InstanceChannels', component: () => import('@/views/InstanceChannels.vue') },
       { path: 'settings', name: 'InstanceSettings', component: () => import('@/views/InstanceSettings.vue') },
       { path: 'files', name: 'InstanceFiles', component: () => import('@/views/InstanceFiles.vue') },
       { path: 'backups', name: 'InstanceBackups', component: () => import('@/views/InstanceBackups.vue') },
@@ -86,6 +84,7 @@ const ceRoutes: RouteRecordRaw[] = [
       { path: 'llm-keys', name: 'OrgSettingsLlmKeys', component: () => import('@/views/OrgSettingsLlmKeys.vue') },
       { path: 'smtp', name: 'OrgSettingsSmtp', component: () => import('@/views/OrgSettingsSmtp.vue'), meta: { ceOnly: true } },
       { path: 'network', name: 'OrgSettingsNetwork', component: () => import('@/views/OrgSettingsNetwork.vue') },
+      { path: 'upload', name: 'OrgSettingsUpload', component: () => import('@/views/OrgSettingsUpload.vue'), meta: { ceOnly: true } },
       { path: 'members', name: 'OrgMembers', component: () => import('@/views/OrgMembers.vue') },
       { path: 'audit', name: 'OrgSettingsAudit', component: () => import('@/views/OrgSettingsAudit.vue') },
       ...eeOrgSettingsChildren,

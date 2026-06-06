@@ -250,6 +250,7 @@ async def lifespan(app: FastAPI):
     # ── Egress 配置迁移：env vars → system_configs（幂等）──
     from app.models.system_config import SystemConfig
     from app.services import config_service
+    from app.services.upload_policy_service import default_upload_config_values
 
     egress_seeds = {
         "egress_deny_cidrs": os.environ.get("EGRESS_DENY_CIDRS", "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"),
@@ -266,6 +267,13 @@ async def lifespan(app: FastAPI):
             if _eg_row is None:
                 await config_service.set_config(_eg_key, _eg_value, db)
                 logger.info("网络策略配置种子: %s = %s", _eg_key, _eg_value)
+        for _upload_key, _upload_value in default_upload_config_values().items():
+            _upload_row = (await db.execute(
+                select(SystemConfig).where(SystemConfig.key == _upload_key, SystemConfig.deleted_at.is_(None))
+            )).scalar_one_or_none()
+            if _upload_row is None:
+                await config_service.set_config(_upload_key, _upload_value, db)
+                logger.info("上传策略配置种子: %s = %s", _upload_key, _upload_value)
 
     # ── 种子数据（幂等，每次启动执行）──
     from app.startup.seed import run_seed, backfill_cluster_org_id, seed_engine_versions
@@ -632,6 +640,8 @@ async def lifespan(app: FastAPI):
     # ── Runtime Platform v2 Startup ──────────────────
     _pg_notify_service = None
     _heartbeat_task = None
+    _file_scan_task = None
+    _file_cleanup_task = None
     _pg_notify_channels: list[str] = []
     _queue_consumer_task = None
     try:
@@ -806,6 +816,37 @@ async def lifespan(app: FastAPI):
         logger.info("遥测启用，将在后台上报匿名安装信息")
         _telemetry_task = asyncio.create_task(_run_telemetry())
 
+    async def _run_file_scan_loop():
+        from app.services import file_scan_service
+        while True:
+            try:
+                async with async_session_factory() as db:
+                    await file_scan_service.run_pending_scan_jobs(db)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.warning("文件扫描后台任务失败（非致命）: %s", e)
+            await asyncio.sleep(60)
+
+    async def _run_file_cleanup_loop():
+        from app.services import file_cleanup_service
+        while True:
+            try:
+                async with async_session_factory() as db:
+                    await file_cleanup_service.expire_upload_sessions(db)
+                    await file_cleanup_service.clean_expired_chat_attachments(db)
+                    await file_cleanup_service.clean_orphan_large_inputs(db)
+                    await file_cleanup_service.run_storage_delete_retry_worker(db)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.warning("文件清理后台任务失败（非致命）: %s", e)
+            await asyncio.sleep(300)
+
+    _file_scan_task = asyncio.create_task(_run_file_scan_loop())
+    _file_cleanup_task = asyncio.create_task(_run_file_cleanup_loop())
+    logger.info("文件上传后台任务已启动")
+
     yield
 
     # ── Security Pipeline 销毁 ────────────────────────
@@ -819,6 +860,10 @@ async def lifespan(app: FastAPI):
 
         if _heartbeat_task and not _heartbeat_task.done():
             _heartbeat_task.cancel()
+        if _file_scan_task and not _file_scan_task.done():
+            _file_scan_task.cancel()
+        if _file_cleanup_task and not _file_cleanup_task.done():
+            _file_cleanup_task.cancel()
         if _pg_notify_service:
             try:
                 await _pg_notify_service.shutdown()

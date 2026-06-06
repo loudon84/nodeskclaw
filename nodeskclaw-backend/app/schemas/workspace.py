@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -207,10 +208,16 @@ class ChatMessageRequest(BaseModel):
     history: list[dict] = []
 
 
+class FileReferenceInput(BaseModel):
+    source: Literal["chat_attachment", "shared_file", "large_input"]
+    file_id: str = Field(min_length=1, max_length=36)
+
+
 class WorkspaceChatRequest(BaseModel):
     message: str
     mentions: list[str] | None = None
     file_ids: list[str] | None = None
+    file_references: list[FileReferenceInput] | None = None
     conversation_id: str | None = None
 
 
