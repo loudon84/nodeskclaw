@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import (
-    Enum, ForeignKey, Index, Integer, String, Text,
+    DateTime, Enum, ForeignKey, Index, Integer, String, Text,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -71,16 +71,16 @@ class HermesTask(BaseModel):
     hermes_run_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     event_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     artifact_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
-    started_at: Mapped[datetime | None] = mapped_column(nullable=True)
-    completed_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     dispatch_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
     dispatch_attempts: Mapped[int] = mapped_column(Integer, default=0)
     last_dispatch_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     worker_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    locked_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     timeout_seconds: Mapped[int] = mapped_column(Integer, default=900)
-    run_started_at: Mapped[datetime | None] = mapped_column(nullable=True)
-    run_finished_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    run_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    run_finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
         Index("ix_hermes_tasks_org_status", "org_id", "status"),
@@ -105,7 +105,7 @@ class HermesTaskEvent(Base):
     event_type: Mapped[EventType] = mapped_column(Enum(EventType), nullable=False)
     event_seq: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     __table_args__ = (
         Index("ix_hermes_task_events_task_seq", "task_id", "event_seq"),
