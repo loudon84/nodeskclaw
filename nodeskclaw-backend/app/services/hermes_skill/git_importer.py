@@ -57,11 +57,17 @@ class GitImporter:
             for skill_dir in self._walk_skill_dirs(clone_dir):
                 try:
                     manifest = ManifestParser.parse_skill_package(skill_dir)
+                    gateway = manifest.gateway
                     skill_dirs.append({
                         "path": str(skill_dir),
                         "skill_id": manifest.meta.skill_id,
                         "name": manifest.meta.name,
                         "version": manifest.meta.version,
+                        "tool_name": gateway.tool_name if gateway else None,
+                        "agent_type": manifest.meta.agent_type,
+                        "is_mcp_exposed": gateway.is_mcp_exposed if gateway else False,
+                        "conflict": False,
+                        "description": manifest.meta.description,
                     })
                 except ManifestParseError:
                     pass
@@ -85,6 +91,7 @@ class GitImporter:
         import_id: str,
         org_id: str,
         skill_dirs: list[Path] | None = None,
+        selected_skill_ids: list[str] | None = None,
     ) -> HermesSkillImport:
         import_record = await self.db.get(HermesSkillImport, import_id)
         if not import_record or import_record.org_id != org_id:
@@ -109,6 +116,17 @@ class GitImporter:
             source_dirs = skill_dirs
             if not source_dirs and clone_dir_str:
                 source_dirs = list(self._walk_skill_dirs(Path(clone_dir_str)))
+
+            if selected_skill_ids and source_dirs:
+                filtered = []
+                for sd in source_dirs:
+                    try:
+                        manifest = ManifestParser.parse_skill_package(sd)
+                        if manifest.meta.skill_id in selected_skill_ids:
+                            filtered.append(sd)
+                    except ManifestParseError:
+                        pass
+                source_dirs = filtered
 
             if source_dirs:
                 for skill_dir in source_dirs:

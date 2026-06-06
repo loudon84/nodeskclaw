@@ -21,24 +21,31 @@ class TaskEventService:
         org_id: str,
         event_type: EventType,
         payload: dict | None = None,
+        event_seq: int | None = None,
     ) -> HermesTaskEvent:
-        max_seq_result = await self.db.execute(
-            select(HermesTaskEvent.event_seq).where(
-                HermesTaskEvent.task_id == task_id,
-            ).order_by(HermesTaskEvent.event_seq.desc()).limit(1)
-        )
-        max_seq = max_seq_result.scalar_one_or_none() or 0
+        if event_seq is None:
+            max_seq_result = await self.db.execute(
+                select(HermesTaskEvent.event_seq).where(
+                    HermesTaskEvent.task_id == task_id,
+                ).order_by(HermesTaskEvent.event_seq.desc()).limit(1)
+            )
+            max_seq = max_seq_result.scalar_one_or_none() or 0
+            event_seq = max_seq + 1
 
         event = HermesTaskEvent(
             id=str(uuid.uuid4()),
             org_id=org_id,
             task_id=task_id,
             event_type=event_type,
-            event_seq=max_seq + 1,
+            event_seq=event_seq,
             payload=payload,
         )
         self.db.add(event)
         await self.db.flush()
+
+        from app.services.hermes_skill.event_bus import EventBus
+        EventBus.get_instance().notify(task_id, {"event_type": event_type.value, "event_seq": event_seq})
+
         return event
 
     async def get_events(

@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, ForeignKey, Index, String, text
+from sqlalchemy import Boolean, ForeignKey, Index, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -39,3 +39,4 @@ class HermesSkillInstallation(BaseModel):
     conflict_strategy: Mapped[str | None] = mapped_column(String(32), nullable=True)
     last_synced_at: Mapped[datetime | None] = mapped_column(nullable=True)
     install_metadata: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    profile_root_path: Mapped[str | None] = mapped_column(Text, nullable=True)

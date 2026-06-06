@@ -35,6 +35,10 @@ class HermesArtifact(BaseModel):
     download_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
     permission_scope: Mapped[str] = mapped_column(String(32), nullable=False, default="workspace")
+    download_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    preview_supported: Mapped[bool] = mapped_column(default=False)
+    source_run_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    metadata_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
     __table_args__ = (
         Index("ix_hermes_artifacts_org_task", "org_id", "task_id"),

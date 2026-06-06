@@ -135,6 +135,11 @@ class TaskService:
         org_id: str,
         skill_id: str | None = None,
         status: str | None = None,
+        tool_name: str | None = None,
+        agent_id: str | None = None,
+        profile_id: str | None = None,
+        workspace_id: str | None = None,
+        user_id: str | None = None,
         page: int = 1,
         page_size: int = 20,
     ) -> tuple[list[HermesTask], int]:
@@ -153,6 +158,21 @@ class TaskService:
         if status:
             stmt = stmt.where(HermesTask.status == status)
             count_stmt = count_stmt.where(HermesTask.status == status)
+        if tool_name:
+            stmt = stmt.where(HermesTask.tool_name == tool_name)
+            count_stmt = count_stmt.where(HermesTask.tool_name == tool_name)
+        if agent_id:
+            stmt = stmt.where(HermesTask.agent_id == agent_id)
+            count_stmt = count_stmt.where(HermesTask.agent_id == agent_id)
+        if profile_id:
+            stmt = stmt.where(HermesTask.profile_id == profile_id)
+            count_stmt = count_stmt.where(HermesTask.profile_id == profile_id)
+        if workspace_id:
+            stmt = stmt.where(HermesTask.workspace_id == workspace_id)
+            count_stmt = count_stmt.where(HermesTask.workspace_id == workspace_id)
+        if user_id:
+            stmt = stmt.where(HermesTask.user_id == user_id)
+            count_stmt = count_stmt.where(HermesTask.user_id == user_id)
 
         total = (await self.db.execute(count_stmt)).scalar() or 0
         offset = (page - 1) * page_size

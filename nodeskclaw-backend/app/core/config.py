@@ -233,6 +233,24 @@ class Settings(BaseSettings):
     HERMES_SKILL_IMPORT_MAX_SIZE_MB: int = 50
     HERMES_SKILL_REGISTRY_SYNC_TIMEOUT_SECONDS: int = 60
 
+    # ── Hermes Agent Adapter ──────────────────────────────
+    HERMES_AGENT_DEFAULT_TIMEOUT_SECONDS: int = 900
+    HERMES_AGENT_CONNECT_TIMEOUT_SECONDS: int = 10
+    HERMES_AGENT_READ_TIMEOUT_SECONDS: int = 60
+
+    # ── Hermes Task Worker ────────────────────────────────
+    HERMES_TASK_WORKER_ENABLED: bool = True
+    HERMES_TASK_WORKER_INTERVAL_SECONDS: int = 2
+    HERMES_TASK_WORKER_BATCH_SIZE: int = 5
+    HERMES_TASK_DEFAULT_TIMEOUT_SECONDS: int = 900
+    HERMES_TASK_LOCK_TIMEOUT_SECONDS: int = 300
+    HERMES_TASK_SSE_HEARTBEAT_SECONDS: int = 30
+
+    # ── Hermes Artifact ───────────────────────────────────
+    HERMES_OUTPUT_BASE_DIR_NAME: str = ".nodeskclaw"
+    HERMES_ARTIFACT_MAX_SIZE_MB: int = 500
+    HERMES_ARTIFACT_BATCH_DOWNLOAD_MAX_SIZE_MB: int = 1024
+
 
 settings = Settings()
 

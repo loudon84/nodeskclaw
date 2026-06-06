@@ -9,7 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.deps import get_db, require_org_member
 from app.core.exceptions import ArtifactBatchSizeExceededError
 from app.schemas.hermes_skill.artifact_schema import ArtifactDetail, ArtifactSummary, ArtifactPreviewResponse
-from app.services.hermes_skill.artifact_service import ArtifactService, MAX_BATCH_DOWNLOAD_BYTES
+from app.services.hermes_skill.artifact_service import ArtifactService, _max_batch_download_bytes
+from app.services.hermes_skill.path_guard import PathGuard
 from app.services.hermes_skill.permission_checker import PermissionChecker
 
 router = APIRouter()
@@ -128,23 +129,35 @@ async def batch_download_artifacts(
     user_org=Depends(require_org_member),
     db: AsyncSession = Depends(get_db),
 ):
+    from pathlib import Path
+    from app.core.config import settings as _settings
+
     user, org = user_org
     if user:
         await PermissionChecker.require_permission(db, user.id, org.id, "hermes_artifact:download")
     service = ArtifactService(db)
 
+    max_batch = _max_batch_download_bytes()
     total_size = 0
     paths = []
     for aid in artifact_ids:
         artifact = await service.get_artifact(aid, org.id)
         size = artifact.size_bytes or 0
         total_size += size
-        if total_size > MAX_BATCH_DOWNLOAD_BYTES:
+        if total_size > max_batch:
             raise ArtifactBatchSizeExceededError()
-        from pathlib import Path
+
         p = Path(artifact.file_path)
+        outputs_root = service._get_workspace_root(artifact)
+        if outputs_root:
+            PathGuard.validate_file_for_download(p, outputs_root)
+        else:
+            PathGuard.validate_file_for_download(p, Path("/tmp"))
+
         if p.is_file():
-            paths.append((artifact.file_name, p))
+            rel = artifact.relative_path or artifact.file_name
+            if not rel.startswith("/"):
+                paths.append((rel, p))
 
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:

@@ -847,7 +847,20 @@ async def lifespan(app: FastAPI):
     _file_cleanup_task = asyncio.create_task(_run_file_cleanup_loop())
     logger.info("文件上传后台任务已启动")
 
+    # ── Hermes Task Worker ─────────────────────────────────
+    _worker_task = None
+    if settings.HERMES_TASK_WORKER_ENABLED:
+        from app.services.hermes_skill.hermes_task_worker import HermesTaskWorker
+        _worker = HermesTaskWorker()
+        _worker_task = asyncio.create_task(_worker.start())
+        logger.info("Hermes Task Worker 已启动")
+
     yield
+
+    # ── Hermes Task Worker shutdown ────────────────────────
+    if _worker_task and not _worker_task.done():
+        _worker.stop()
+        _worker_task.cancel()
 
     # ── Security Pipeline 销毁 ────────────────────────
     await _security_pipeline.destroy()

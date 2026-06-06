@@ -55,7 +55,7 @@ class SkillInstaller:
                 "errors.skill.install_mode_not_allowed",
             )
 
-        target_path = self._build_target_path(skill, agent_id, profile_id, mode)
+        target_path = await self._build_target_path(skill, agent_id, profile_id, mode)
 
         hub_root = Path(settings.HERMES_SKILL_HUB_ROOT)
         PathGuard.validate_within_root(target_path, hub_root)
@@ -101,6 +101,24 @@ class SkillInstaller:
             await self._execute_file_operation(installation, skill, target_path, mode)
             installation.status = InstallStatus.INSTALLED
             installation.installed_path = str(target_path)
+
+            profile_root_path = await self._get_profile_root_path(agent_id)
+            if profile_root_path:
+                installation.profile_root_path = profile_root_path
+
+            from app.services.hermes_skill.skill_scanner import SkillScanner
+            from app.services.hermes_skill.skill_audit_logger import SkillAuditLogger
+            scanner = SkillScanner(self.db)
+            await scanner.scan_agent_profiles(org_id, agent_ids=[agent_id])
+
+            audit_logger = SkillAuditLogger(self.db)
+            await audit_logger.log(
+                action="hermes.skill.installed",
+                target_id=skill.id,
+                org_id=org_id,
+                actor_id=installed_by or "",
+                details={"skill_id": skill.skill_id, "agent_id": agent_id, "install_mode": mode},
+            )
         except Exception as exc:
             installation.status = InstallStatus.FAILED
             installation.error_message = str(exc)
@@ -153,7 +171,7 @@ class SkillInstaller:
             return InstallMode.REGISTRY_BIND
         return InstallMode.COPY
 
-    def _build_target_path(
+    async def _build_target_path(
         self,
         skill: HermesSkill,
         agent_id: str,
@@ -162,10 +180,32 @@ class SkillInstaller:
     ) -> Path:
         if mode == InstallMode.REGISTRY_BIND:
             return Path("")
-        hub_root = Path(settings.HERMES_SKILL_HUB_ROOT)
+
         safe_skill_id = skill.skill_id.replace(".", "-")
+
+        profile_root_path = await self._get_profile_root_path(agent_id)
+        if profile_root_path:
+            return Path(profile_root_path) / "skills" / safe_skill_id
+
+        hub_root = Path(settings.HERMES_SKILL_HUB_ROOT)
         profile_part = profile_id or "default"
         return hub_root / "agents" / agent_id / profile_part / "skills" / safe_skill_id
+
+    async def _get_profile_root_path(self, agent_id: str) -> str | None:
+        from app.models.instance import Instance
+        stmt = select(Instance).where(
+            not_deleted(Instance),
+            Instance.id == agent_id,
+        )
+        result = await self.db.execute(stmt)
+        instance = result.scalar_one_or_none()
+        if not instance:
+            return None
+
+        advanced_config = getattr(instance, "advanced_config", None)
+        if advanced_config and isinstance(advanced_config, dict):
+            return advanced_config.get("profile_root_path")
+        return None
 
     async def _execute_file_operation(
         self,

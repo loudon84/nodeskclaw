@@ -6,6 +6,7 @@ from pathlib import Path
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.exceptions import (
     NotFoundError,
     ForbiddenError,
@@ -26,9 +27,15 @@ from app.services.hermes_skill.artifact_permission_service import ArtifactPermis
 
 logger = logging.getLogger(__name__)
 
-MAX_ARTIFACT_SIZE_BYTES = 500 * 1024 * 1024
 PREVIEWABLE_PREFIXES = ("text/", "image/", "application/json")
-MAX_BATCH_DOWNLOAD_BYTES = 1024 * 1024 * 1024
+
+
+def _max_artifact_size_bytes() -> int:
+    return settings.HERMES_ARTIFACT_MAX_SIZE_MB * 1024 * 1024
+
+
+def _max_batch_download_bytes() -> int:
+    return settings.HERMES_ARTIFACT_BATCH_DOWNLOAD_MAX_SIZE_MB * 1024 * 1024
 
 
 class ArtifactService:
@@ -47,16 +54,13 @@ class ArtifactService:
             raise NotFoundError("Task 不存在", "errors.task.not_found")
 
         if outputs_dir is None:
-            if task.artifact_url:
-                outputs_dir = Path(f"/tmp/hermes_tasks/{task_id}/outputs")
-            else:
-                return []
+            outputs_dir = self._compute_outputs_dir(task)
 
-        if not outputs_dir.is_dir():
+        if outputs_dir is None or not outputs_dir.is_dir():
             return []
 
-        hub_root = Path("/tmp/hermes_tasks")
         artifacts: list[HermesArtifact] = []
+        max_size = _max_artifact_size_bytes()
 
         for file_path in outputs_dir.rglob("*"):
             if not file_path.is_file():
@@ -64,15 +68,13 @@ class ArtifactService:
 
             try:
                 stat = file_path.stat()
-                if stat.st_size == 0 or stat.st_size > MAX_ARTIFACT_SIZE_BYTES:
+                if stat.st_size == 0 or stat.st_size > max_size:
                     continue
             except OSError:
                 continue
 
             try:
-                PathGuard.validate_within_root(file_path, hub_root)
-                PathGuard.reject_system_dirs(file_path)
-                PathGuard.reject_forbidden_extensions(file_path)
+                PathGuard.validate_output_file(file_path, outputs_dir)
             except ForbiddenError:
                 continue
 
@@ -190,7 +192,11 @@ class ArtifactService:
             raise ArtifactPreviewUnsupportedError()
 
         file_path = Path(artifact.file_path)
-        PathGuard.validate_within_root(file_path, Path("/tmp/hermes_tasks"))
+        outputs_root = self._get_workspace_root(artifact)
+        if outputs_root:
+            PathGuard.validate_within_root(file_path, outputs_root)
+        else:
+            PathGuard.validate_within_root(file_path, Path("/tmp"))
 
         if not file_path.is_file():
             raise ArtifactFileNotFoundError()
@@ -216,9 +222,11 @@ class ArtifactService:
             raise ArtifactNotFoundError()
 
         file_path = Path(artifact.file_path)
-        PathGuard.validate_within_root(file_path, Path("/tmp/hermes_tasks"))
-        PathGuard.reject_system_dirs(file_path)
-        PathGuard.reject_forbidden_extensions(file_path)
+        outputs_root = self._get_workspace_root(artifact)
+        if outputs_root:
+            PathGuard.validate_file_for_download(file_path, outputs_root)
+        else:
+            PathGuard.validate_file_for_download(file_path, Path("/tmp"))
 
         if not file_path.is_file():
             raise ArtifactFileNotFoundError()
@@ -295,3 +303,21 @@ class ArtifactService:
             ".zip": "application/zip",
         }
         return suffix_map.get(path.suffix.lower(), "application/octet-stream")
+
+    @staticmethod
+    def _compute_outputs_dir(task: HermesTask) -> Path | None:
+        from app.models.instance import Instance
+        from app.models.base import not_deleted as _nd
+        from sqlalchemy import select
+
+        if not task.agent_id:
+            return None
+
+        return Path(f"{settings.HERMES_OUTPUT_BASE_DIR_NAME}/runs/{task.id}/outputs")
+
+    @staticmethod
+    def _get_workspace_root(artifact: HermesArtifact) -> Path | None:
+        if artifact.file_path and settings.HERMES_OUTPUT_BASE_DIR_NAME in artifact.file_path:
+            idx = artifact.file_path.index(settings.HERMES_OUTPUT_BASE_DIR_NAME)
+            return Path(artifact.file_path[:idx]).resolve()
+        return None

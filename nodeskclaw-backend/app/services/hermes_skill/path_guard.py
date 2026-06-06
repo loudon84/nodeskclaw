@@ -12,7 +12,52 @@ class PathGuard:
     def validate_within_root(path: Path, root: Path) -> Path:
         resolved = path.resolve()
         root_resolved = root.resolve()
-        if not str(resolved).startswith(str(root_resolved)):
+        if resolved.is_symlink():
+            raise ForbiddenError(
+                "禁止软链接",
+                "errors.skill.symlink_forbidden",
+            )
+        try:
+            resolved.relative_to(root_resolved)
+        except ValueError:
+            raise ForbiddenError(
+                "路径越界",
+                "errors.skill.path_outside_root",
+            )
+        return resolved
+
+    @staticmethod
+    def validate_file_for_download(path: Path, root: Path) -> Path:
+        resolved = path.resolve()
+        root_resolved = root.resolve()
+        if resolved.is_symlink():
+            raise ForbiddenError(
+                "禁止软链接",
+                "errors.skill.symlink_forbidden",
+            )
+        try:
+            resolved.relative_to(root_resolved)
+        except ValueError:
+            raise ForbiddenError(
+                "路径越界",
+                "errors.skill.path_outside_root",
+            )
+        PathGuard.reject_system_dirs(resolved)
+        PathGuard.reject_forbidden_extensions(resolved)
+        return resolved
+
+    @staticmethod
+    def validate_output_file(path: Path, outputs_dir: Path) -> Path:
+        resolved = path.resolve()
+        outputs_resolved = outputs_dir.resolve()
+        if resolved.is_symlink():
+            raise ForbiddenError(
+                "禁止软链接",
+                "errors.skill.symlink_forbidden",
+            )
+        try:
+            resolved.relative_to(outputs_resolved)
+        except ValueError:
             raise ForbiddenError(
                 "路径越界",
                 "errors.skill.path_outside_root",

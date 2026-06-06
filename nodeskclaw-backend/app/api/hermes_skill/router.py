@@ -10,6 +10,7 @@ from app.api.hermes_skill.mcp_router import router as mcp_router
 from app.api.hermes_skill.audit_router import router as audit_router
 from app.api.hermes_skill.tasks_router import router as tasks_router
 from app.api.hermes_skill.artifacts_router import router as artifacts_router
+from app.api.hermes_skill.compat_router import router as compat_router
 
 router = APIRouter()
 
@@ -22,6 +23,7 @@ router.include_router(mcp_router)
 router.include_router(audit_router)
 router.include_router(tasks_router)
 router.include_router(artifacts_router)
+router.include_router(compat_router)
 
 if feature_gate.is_ee:
     from app.api.hermes_skill.artifacts_permission_router import router as artifacts_permission_router
