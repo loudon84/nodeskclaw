@@ -3,7 +3,7 @@ from pathlib import Path
 from app.core.exceptions import ForbiddenError
 
 
-_FORBIDDEN_DIRS = frozenset({"/etc", "/root", "/boot", "/proc", "/sys"})
+_FORBIDDEN_DIRS = frozenset({"/etc", "/root", "/boot", "/proc", "/sys", "/var/run", "/dev"})
 _FORBIDDEN_EXTENSIONS = frozenset({".env", ".pem", ".key", ".secret"})
 
 
@@ -27,7 +27,7 @@ class PathGuard:
         return resolved
 
     @staticmethod
-    def validate_file_for_download(path: Path, root: Path) -> Path:
+    def validate_file_for_download(path: Path, root: Path, max_size: int | None = None) -> Path:
         resolved = path.resolve()
         root_resolved = root.resolve()
         if resolved.is_symlink():
@@ -44,6 +44,20 @@ class PathGuard:
             )
         PathGuard.reject_system_dirs(resolved)
         PathGuard.reject_forbidden_extensions(resolved)
+        if resolved.is_dir():
+            raise ForbiddenError(
+                "禁止下载目录",
+                "errors.skill.directory_download_forbidden",
+            )
+        if max_size is not None:
+            try:
+                if resolved.stat().st_size > max_size:
+                    raise ForbiddenError(
+                        "文件大小超过限制",
+                        "errors.skill.file_size_exceeded",
+                    )
+            except OSError:
+                pass
         return resolved
 
     @staticmethod
@@ -73,6 +87,14 @@ class PathGuard:
                     "禁止访问系统目录",
                     "errors.skill.system_dir_forbidden",
                 )
+
+    @staticmethod
+    def validate_zip_entry_name(name: str) -> None:
+        if name.startswith("/") or ".." in name.split("/"):
+            raise ForbiddenError(
+                "禁止绝对路径或路径穿越",
+                "errors.skill.path_traversal_in_zip",
+            )
 
     @staticmethod
     def reject_forbidden_extensions(path: Path) -> None:

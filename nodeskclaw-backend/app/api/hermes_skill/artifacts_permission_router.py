@@ -4,6 +4,8 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_db, require_org_member
+from app.core.feature_gate import feature_gate
+from app.core.exceptions import EERequiredError
 from app.schemas.hermes_skill.artifact_permission_schema import (
     ArtifactPermissionDetail,
     ArtifactPermissionGrantRequest,
@@ -11,6 +13,7 @@ from app.schemas.hermes_skill.artifact_permission_schema import (
     ArtifactScopeChangeRequest,
 )
 from app.services.hermes_skill.artifact_permission_service import ArtifactPermissionService
+from app.services.hermes_skill.artifact_service import ArtifactService
 from app.services.hermes_skill.permission_checker import PermissionChecker
 
 router = APIRouter()
@@ -27,10 +30,16 @@ async def change_artifact_scope(
     user_org=Depends(require_org_member),
     db: AsyncSession = Depends(get_db),
 ):
+    if not feature_gate.is_ee:
+        raise EERequiredError()
     user, org = user_org
     if user:
         await PermissionChecker.require_permission(db, user.id, org.id, "hermes_artifact:manage_permission")
     service = ArtifactPermissionService(db)
+    artifact_svc = ArtifactService(db)
+    artifact = await artifact_svc.get_artifact(artifact_id, org.id)
+    if user:
+        await artifact_svc.ensure_artifact_mutable(artifact, user.id, org.id)
     artifact = await service.change_scope(
         artifact_id=artifact_id,
         org_id=org.id,
@@ -48,9 +57,15 @@ async def grant_artifact_permission(
     user_org=Depends(require_org_member),
     db: AsyncSession = Depends(get_db),
 ):
+    if not feature_gate.is_ee:
+        raise EERequiredError()
     user, org = user_org
     if user:
         await PermissionChecker.require_permission(db, user.id, org.id, "hermes_artifact:manage_permission")
+    artifact_svc = ArtifactService(db)
+    artifact = await artifact_svc.get_artifact(artifact_id, org.id)
+    if user:
+        await artifact_svc.ensure_artifact_mutable(artifact, user.id, org.id)
     service = ArtifactPermissionService(db)
     perm = await service.grant_permission(
         artifact_id=artifact_id,
@@ -70,9 +85,15 @@ async def revoke_artifact_permission(
     user_org=Depends(require_org_member),
     db: AsyncSession = Depends(get_db),
 ):
+    if not feature_gate.is_ee:
+        raise EERequiredError()
     user, org = user_org
     if user:
         await PermissionChecker.require_permission(db, user.id, org.id, "hermes_artifact:manage_permission")
+    artifact_svc = ArtifactService(db)
+    artifact = await artifact_svc.get_artifact(artifact_id, org.id)
+    if user:
+        await artifact_svc.ensure_artifact_mutable(artifact, user.id, org.id)
     service = ArtifactPermissionService(db)
     await service.revoke_permission(
         artifact_id=artifact_id,
@@ -90,6 +111,8 @@ async def list_artifact_permissions(
     user_org=Depends(require_org_member),
     db: AsyncSession = Depends(get_db),
 ):
+    if not feature_gate.is_ee:
+        raise EERequiredError()
     user, org = user_org
     if user:
         await PermissionChecker.require_permission(db, user.id, org.id, "hermes_artifact:view")

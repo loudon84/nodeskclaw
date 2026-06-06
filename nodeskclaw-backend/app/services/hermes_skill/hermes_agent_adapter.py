@@ -57,7 +57,11 @@ class HermesAgentAdapter:
             )
 
         run_data = response.json()
-        task.hermes_run_id = run_data.get("run_id", task.hermes_run_id)
+        run_id = run_data.get("run_id") or run_data.get("id") or (run_data.get("data", {}) if isinstance(run_data.get("data"), dict) else {}).get("id")
+        if not run_id:
+            from app.core.exceptions import TaskAgentRunIdMissingError
+            raise TaskAgentRunIdMissingError()
+        task.hermes_run_id = run_id
         await self.db.flush()
 
         return run_data
@@ -128,6 +132,11 @@ class HermesAgentAdapter:
                 "errors.task.agent_get_run_error",
             )
         return response.json()
+
+    async def get_run_status(self, task: HermesTask) -> dict:
+        run_data = await self.get_run(task)
+        status = run_data.get("status", "unknown")
+        return {"status": status}
 
     @staticmethod
     def convert_events(hermes_events: list[dict]) -> list[dict]:

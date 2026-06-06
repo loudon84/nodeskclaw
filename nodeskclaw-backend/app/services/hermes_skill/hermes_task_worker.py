@@ -50,10 +50,31 @@ class HermesTaskWorker:
                 except Exception as exc:
                     logger.error("Execute task %s error: %s", task.id, exc)
                     task.status = TaskStatus.FAILED
-                    task.last_dispatch_error = str(exc)[:1024]
+                    task.error_code = "TASK_EXECUTION_ERROR"
+                    task.error_message = str(exc)[:1024]
                     task.completed_at = datetime.now(timezone.utc)
+
+                    event_service = TaskEventService(db)
+                    await event_service.write_event(
+                        task_id=task.id,
+                        org_id=task.org_id,
+                        event_type=EventType.TASK_FAILED,
+                        payload={"error_code": "TASK_EXECUTION_ERROR", "error_message": str(exc)[:1024]},
+                    )
+
+                    audit_logger = SkillAuditLogger(db)
+                    await audit_logger.log(
+                        action="hermes.task.failed",
+                        target_id=task.id,
+                        org_id=task.org_id,
+                        actor_type="system",
+                        actor_id=self._worker_id,
+                        details={"task_no": task.task_no, "error": str(exc)[:512]},
+                    )
+
                     task.worker_id = None
                     task.locked_at = None
+                    task.dispatch_status = "failed"
                     await db.commit()
 
             await self._check_timeouts(db)
@@ -78,11 +99,20 @@ class HermesTaskWorker:
         tasks = list(result.scalars().all())
 
         now = datetime.now(timezone.utc)
+        event_service = TaskEventService(db)
         for task in tasks:
             task.worker_id = self._worker_id
             task.locked_at = now
             task.status = TaskStatus.ACCEPTED
             task.dispatch_status = "accepted"
+            task.dispatch_attempts = (task.dispatch_attempts or 0) + 1
+
+            await event_service.write_event(
+                task_id=task.id,
+                org_id=task.org_id,
+                event_type=EventType.TASK_ACCEPTED,
+                payload={"worker_id": self._worker_id, "dispatch_attempts": task.dispatch_attempts},
+            )
 
         await db.flush()
         return tasks
@@ -114,7 +144,26 @@ class HermesTaskWorker:
         await db.flush()
 
         adapter = HermesAgentAdapter(db)
-        run_data = await adapter.submit_run(task, task.arguments or {})
+        try:
+            run_data = await adapter.submit_run(task, task.arguments or {})
+        except Exception as exc:
+            task.status = TaskStatus.FAILED
+            task.error_code = "AGENT_UNREACHABLE"
+            task.error_message = str(exc)[:1024]
+            task.completed_at = datetime.now(timezone.utc)
+
+            await event_service.write_event(
+                task_id=task.id,
+                org_id=task.org_id,
+                event_type=EventType.TASK_FAILED,
+                payload={"error_code": "AGENT_UNREACHABLE", "error_message": str(exc)[:1024]},
+            )
+
+            task.worker_id = None
+            task.locked_at = None
+            task.dispatch_status = "failed"
+            await db.flush()
+            return
 
         await event_service.write_event(
             task_id=task.id,
@@ -124,6 +173,7 @@ class HermesTaskWorker:
         )
         await db.flush()
 
+        stream_interrupted = False
         try:
             async for event_data in adapter.read_run_events(task):
                 converted = HermesAgentAdapter.convert_events([event_data])
@@ -138,40 +188,79 @@ class HermesTaskWorker:
                 await db.flush()
         except Exception as exc:
             logger.warning("read_run_events stream error for task %s: %s", task.id, exc)
+            stream_interrupted = True
 
         await db.refresh(task)
 
         if task.status == TaskStatus.RUNNING:
-            task.status = TaskStatus.COMPLETED
-            task.run_finished_at = datetime.now(timezone.utc)
-            task.completed_at = datetime.now(timezone.utc)
+            if stream_interrupted:
+                try:
+                    run_status = await adapter.get_run_status(task)
+                    run_state = run_status.get("status", "")
+                except Exception as exc:
+                    logger.error("get_run_status failed for task %s: %s", task.id, exc)
+                    run_state = "unknown"
 
-            await event_service.write_event(
-                task_id=task.id,
-                org_id=task.org_id,
-                event_type=EventType.TASK_COMPLETED,
-                payload={"status": "completed"},
-            )
+                if run_state == "completed":
+                    task.status = TaskStatus.COMPLETED
+                    task.run_finished_at = datetime.now(timezone.utc)
+                    task.completed_at = datetime.now(timezone.utc)
+                elif run_state == "failed":
+                    task.status = TaskStatus.FAILED
+                    task.error_code = "RUN_FAILED"
+                    task.error_message = "Run failed after stream interrupt"
+                    task.completed_at = datetime.now(timezone.utc)
+                elif run_state == "running":
+                    task.worker_id = None
+                    task.locked_at = None
+                    task.dispatch_status = "running"
+                    await db.flush()
+                    return
+                else:
+                    task.status = TaskStatus.FAILED
+                    task.error_code = "RUN_STATUS_UNKNOWN"
+                    task.error_message = f"Unknown run status: {run_state}"
+                    task.completed_at = datetime.now(timezone.utc)
+            else:
+                task.status = TaskStatus.COMPLETED
+                task.run_finished_at = datetime.now(timezone.utc)
+                task.completed_at = datetime.now(timezone.utc)
 
-            await audit_logger.log(
-                action="hermes.task.completed",
-                target_id=task.id,
-                org_id=task.org_id,
-                actor_type="system",
-                actor_id=self._worker_id,
-                details={
-                    "task_no": task.task_no,
-                    "skill_id": task.skill_id,
-                    "hermes_run_id": task.hermes_run_id,
-                },
-            )
+            if task.status == TaskStatus.COMPLETED:
+                await event_service.write_event(
+                    task_id=task.id,
+                    org_id=task.org_id,
+                    event_type=EventType.TASK_COMPLETED,
+                    payload={"status": "completed"},
+                )
 
-            try:
-                from app.services.hermes_skill.artifact_service import ArtifactService
-                artifact_service = ArtifactService(db)
-                await artifact_service.scan_and_register(task.id, task.org_id)
-            except Exception as exc:
-                logger.error("Artifact scan failed for task %s: %s", task.id, exc)
+                await audit_logger.log(
+                    action="hermes.task.completed",
+                    target_id=task.id,
+                    org_id=task.org_id,
+                    actor_type="system",
+                    actor_id=self._worker_id,
+                    details={
+                        "task_no": task.task_no,
+                        "skill_id": task.skill_id,
+                        "hermes_run_id": task.hermes_run_id,
+                    },
+                )
+
+                try:
+                    from app.services.hermes_skill.artifact_service import ArtifactService
+                    artifact_service = ArtifactService(db)
+                    await artifact_service.scan_and_register(task.id, task.org_id)
+                except Exception as exc:
+                    logger.error("Artifact scan failed for task %s: %s", task.id, exc)
+
+            elif task.status == TaskStatus.FAILED:
+                await event_service.write_event(
+                    task_id=task.id,
+                    org_id=task.org_id,
+                    event_type=EventType.TASK_FAILED,
+                    payload={"error_code": task.error_code, "error_message": task.error_message},
+                )
 
         task.worker_id = None
         task.locked_at = None

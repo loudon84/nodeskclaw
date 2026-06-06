@@ -10,6 +10,7 @@ from app.services.hermes_skill.download_token_service import DownloadTokenServic
 from app.services.hermes_skill.artifact_service import ArtifactService
 from app.services.hermes_skill.permission_checker import PermissionChecker
 from app.schemas.hermes_skill.artifact_share_schema import ArtifactShareRequest, ArtifactShareResponse
+from app.core.exceptions import ArtifactFileNotFoundError
 from pathlib import Path
 
 router = APIRouter()
@@ -53,17 +54,23 @@ async def download_by_token(
     db: AsyncSession = Depends(get_db),
 ):
     token_service = DownloadTokenService(db)
-    token_record = await token_service.validate_and_consume(token)
-
     artifact_service = ArtifactService(db)
-    artifact = await artifact_service.get_artifact(token_record.artifact_id, token_record.org_id)
+
+    artifact = await artifact_service.get_artifact_by_token(token, token_service)
+    if not artifact:
+        from app.core.exceptions import ArtifactTokenExpiredError
+        raise ArtifactTokenExpiredError()
 
     file_path = Path(artifact.file_path)
-    from app.services.hermes_skill.path_guard import PathGuard
-    PathGuard.validate_within_root(file_path, Path("/tmp/hermes_tasks"))
+    workspace_root = artifact_service._get_workspace_root(artifact)
+    if workspace_root:
+        from app.services.hermes_skill.path_guard import PathGuard
+        PathGuard.validate_file_for_download(file_path, workspace_root)
+    else:
+        from app.services.hermes_skill.path_guard import PathGuard
+        PathGuard.validate_file_for_download(file_path, Path("/tmp"))
 
     if not file_path.is_file():
-        from app.core.exceptions import ArtifactFileNotFoundError
         raise ArtifactFileNotFoundError()
 
     return FileResponse(

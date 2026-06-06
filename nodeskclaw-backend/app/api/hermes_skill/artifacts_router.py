@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_db, require_org_member
-from app.core.exceptions import ArtifactBatchSizeExceededError
+from app.core.exceptions import ArtifactBatchSizeExceededError, ArtifactForbiddenError
 from app.schemas.hermes_skill.artifact_schema import ArtifactDetail, ArtifactSummary, ArtifactPreviewResponse
 from app.services.hermes_skill.artifact_service import ArtifactService, _max_batch_download_bytes
 from app.services.hermes_skill.path_guard import PathGuard
@@ -60,6 +60,8 @@ async def get_artifact(
         await PermissionChecker.require_permission(db, user.id, org.id, "hermes_artifact:view")
     service = ArtifactService(db)
     artifact = await service.get_artifact(artifact_id, org.id)
+    if user:
+        await service.ensure_artifact_visible(artifact, user.id, org.id)
     return _ok(ArtifactDetail.model_validate(artifact).model_dump())
 
 
@@ -73,11 +75,16 @@ async def preview_artifact(
     if user:
         await PermissionChecker.require_permission(db, user.id, org.id, "hermes_artifact:view")
     service = ArtifactService(db)
-    artifact, content = await service.preview(artifact_id, org.id)
+    artifact, content = await service.preview(artifact_id, org.id, user_id=user.id if user else None)
+    truncated = len(content) >= 512 * 1024
     resp = ArtifactPreviewResponse(
         artifact_id=artifact_id,
+        file_name=artifact.file_name,
         content_type=artifact.content_type or "text/plain",
+        preview_type="text",
         content=content,
+        truncated=truncated,
+        size_bytes=artifact.size_bytes,
     )
     return _ok(resp.model_dump())
 
@@ -94,7 +101,7 @@ async def download_artifact(
     service = ArtifactService(db)
     file_path = await service.download(
         artifact_id, org.id,
-        actor_id=user.id if user else "",
+        user_id=user.id if user else None,
         actor_name=user.display_name if user else None,
     )
     return FileResponse(
@@ -116,7 +123,7 @@ async def delete_artifact(
     service = ArtifactService(db)
     await service.soft_delete(
         artifact_id, org.id,
-        actor_id=user.id if user else "",
+        user_id=user.id if user else None,
         actor_name=user.display_name if user else None,
     )
     return _ok(message="已删除")
@@ -130,7 +137,6 @@ async def batch_download_artifacts(
     db: AsyncSession = Depends(get_db),
 ):
     from pathlib import Path
-    from app.core.config import settings as _settings
 
     user, org = user_org
     if user:
@@ -142,6 +148,8 @@ async def batch_download_artifacts(
     paths = []
     for aid in artifact_ids:
         artifact = await service.get_artifact(aid, org.id)
+        if user:
+            await service.ensure_artifact_downloadable(artifact, user.id, org.id)
         size = artifact.size_bytes or 0
         total_size += size
         if total_size > max_batch:
@@ -156,8 +164,8 @@ async def batch_download_artifacts(
 
         if p.is_file():
             rel = artifact.relative_path or artifact.file_name
-            if not rel.startswith("/"):
-                paths.append((rel, p))
+            PathGuard.validate_zip_entry_name(rel)
+            paths.append((rel, p))
 
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:

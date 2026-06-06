@@ -153,6 +153,21 @@ class ArtifactShareDisabledError(AppException):
         super().__init__(code=40302, message=message, status_code=403, message_key=message_key)
 
 
+class ArtifactPathTraversalError(AppException):
+    def __init__(self, message: str = "路径穿越被拦截", message_key: str = "errors.artifact.path_traversal"):
+        super().__init__(code=40302, message=message, status_code=403, message_key=message_key)
+
+
+class EERequiredError(AppException):
+    def __init__(self, message: str = "该功能需要企业版", message_key: str = "errors.feature.ee_required"):
+        super().__init__(code=40303, message=message, status_code=403, message_key=message_key)
+
+
+class TaskAgentRunIdMissingError(AppException):
+    def __init__(self, message: str = "Agent 返回值缺少 run_id", message_key: str = "errors.task.agent_run_id_missing"):
+        super().__init__(code=40003, message=message, status_code=400, message_key=message_key)
+
+
 HTTP_STATUS_DEFAULT_CODES: dict[int, int] = {
     400: 40000,
     401: 40100,

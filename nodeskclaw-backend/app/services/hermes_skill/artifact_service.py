@@ -12,6 +12,7 @@ from app.core.exceptions import (
     ForbiddenError,
     ArtifactNotFoundError,
     ArtifactFileNotFoundError,
+    ArtifactForbiddenError,
     ArtifactPreviewUnsupportedError,
     ArtifactBatchSizeExceededError,
 )
@@ -24,10 +25,13 @@ from app.services.hermes_skill.permission_checker import PermissionChecker
 from app.services.hermes_skill.artifact_audit_service import ArtifactAuditService
 from app.services.hermes_skill.download_token_service import DownloadTokenService
 from app.services.hermes_skill.artifact_permission_service import ArtifactPermissionService
+from app.services.hermes_skill.task_event_service import TaskEventService
+from app.models.hermes_skill.hermes_task import EventType
 
 logger = logging.getLogger(__name__)
 
 PREVIEWABLE_PREFIXES = ("text/", "image/", "application/json")
+PREVIEW_MAX_SIZE_BYTES = 512 * 1024
 
 
 def _max_artifact_size_bytes() -> int:
@@ -53,74 +57,120 @@ class ArtifactService:
         if not task or task.deleted_at is not None or task.org_id != org_id:
             raise NotFoundError("Task 不存在", "errors.task.not_found")
 
+        event_service = TaskEventService(self.db)
+        await event_service.write_event(
+            task_id=task_id,
+            org_id=org_id,
+            event_type=EventType.ARTIFACT_SCAN_STARTED,
+            payload={"status": "started"},
+        )
+
         if outputs_dir is None:
             outputs_dir = self._compute_outputs_dir(task)
 
         if outputs_dir is None or not outputs_dir.is_dir():
+            await event_service.write_event(
+                task_id=task_id,
+                org_id=org_id,
+                event_type=EventType.ARTIFACT_SCAN_COMPLETED,
+                payload={"status": "completed", "count": 0},
+            )
             return []
 
         artifacts: list[HermesArtifact] = []
         max_size = _max_artifact_size_bytes()
 
-        for file_path in outputs_dir.rglob("*"):
-            if not file_path.is_file():
-                continue
-
-            try:
-                stat = file_path.stat()
-                if stat.st_size == 0 or stat.st_size > max_size:
+        try:
+            for file_path in outputs_dir.rglob("*"):
+                if not file_path.is_file():
                     continue
-            except OSError:
-                continue
 
-            try:
-                PathGuard.validate_output_file(file_path, outputs_dir)
-            except ForbiddenError:
-                continue
+                try:
+                    stat = file_path.stat()
+                    if stat.st_size == 0 or stat.st_size > max_size:
+                        continue
+                except OSError:
+                    continue
 
-            sha256_hash = None
-            try:
-                sha256_hash = hashlib.sha256(file_path.read_bytes()).hexdigest()
-            except Exception:
-                logger.warning("sha256 计算失败: %s", file_path)
+                try:
+                    PathGuard.validate_output_file(file_path, outputs_dir)
+                except ForbiddenError:
+                    continue
 
-            relative_path = str(file_path.relative_to(outputs_dir))
-            content_type = self._guess_content_type(file_path)
-            size_bytes = file_path.stat().st_size
+                sha256_hash = None
+                try:
+                    sha256_hash = hashlib.sha256(file_path.read_bytes()).hexdigest()
+                except Exception:
+                    logger.warning("sha256 计算失败: %s", file_path)
 
-            existing = await self.db.execute(
-                select(HermesArtifact).where(
-                    not_deleted(HermesArtifact),
-                    HermesArtifact.task_id == task_id,
-                    HermesArtifact.org_id == org_id,
-                    HermesArtifact.file_path == str(file_path),
-                    HermesArtifact.sha256 == sha256_hash if sha256_hash else HermesArtifact.file_name == file_path.name,
+                relative_path = str(file_path.relative_to(outputs_dir))
+                content_type = self._guess_content_type(file_path)
+                size_bytes = file_path.stat().st_size
+
+                existing = await self.db.execute(
+                    select(HermesArtifact).where(
+                        not_deleted(HermesArtifact),
+                        HermesArtifact.task_id == task_id,
+                        HermesArtifact.org_id == org_id,
+                        HermesArtifact.file_path == str(file_path),
+                        HermesArtifact.sha256 == sha256_hash if sha256_hash else HermesArtifact.file_name == file_path.name,
+                    )
                 )
-            )
-            if existing.scalar_one_or_none():
-                continue
+                if existing.scalar_one_or_none():
+                    continue
 
-            permission_scope = "org" if not feature_gate.is_ee else "workspace"
+                permission_scope = "org" if not feature_gate.is_ee else "workspace"
+                if feature_gate.is_ee and not task.workspace_id:
+                    permission_scope = "task_creator"
 
-            artifact = HermesArtifact(
-                id=str(uuid.uuid4()),
-                org_id=org_id,
+                preview_supported = content_type.startswith(PREVIEWABLE_PREFIXES) if content_type else False
+
+                artifact = HermesArtifact(
+                    id=str(uuid.uuid4()),
+                    org_id=org_id,
+                    task_id=task_id,
+                    skill_id=task.skill_id,
+                    agent_id=task.agent_id,
+                    workspace_id=task.workspace_id,
+                    file_name=file_path.name,
+                    file_path=str(file_path),
+                    relative_path=relative_path,
+                    content_type=content_type,
+                    size_bytes=size_bytes,
+                    sha256=sha256_hash,
+                    permission_scope=permission_scope,
+                    source_run_id=task.hermes_run_id,
+                    preview_supported=preview_supported,
+                    metadata_json=None,
+                    created_by=task.user_id,
+                )
+                self.db.add(artifact)
+                artifacts.append(artifact)
+
+                await self.db.flush()
+                await event_service.write_event(
+                    task_id=task_id,
+                    org_id=org_id,
+                    event_type=EventType.ARTIFACT_CREATED,
+                    payload={"artifact_id": artifact.id, "file_name": file_path.name},
+                )
+
+            await self.db.flush()
+            await event_service.write_event(
                 task_id=task_id,
-                skill_id=task.skill_id,
-                agent_id=task.agent_id,
-                workspace_id=task.workspace_id,
-                file_name=file_path.name,
-                file_path=str(file_path),
-                relative_path=relative_path,
-                content_type=content_type,
-                size_bytes=size_bytes,
-                sha256=sha256_hash,
-                permission_scope=permission_scope,
+                org_id=org_id,
+                event_type=EventType.ARTIFACT_SCAN_COMPLETED,
+                payload={"status": "completed", "count": len(artifacts)},
             )
-            self.db.add(artifact)
-            artifacts.append(artifact)
+        except Exception as exc:
+            logger.error("Artifact scan failed for task %s: %s", task_id, exc)
+            await event_service.write_event(
+                task_id=task_id,
+                org_id=org_id,
+                event_type=EventType.ARTIFACT_SCAN_FAILED,
+                payload={"status": "failed", "error": str(exc)[:1024]},
+            )
 
-        await self.db.flush()
         return artifacts
 
     async def list_artifacts(
@@ -151,13 +201,7 @@ class ArtifactService:
             base = base.where(HermesArtifact.content_type == content_type)
 
         if user_id:
-            explicit_ids = await PermissionChecker.get_visible_artifact_ids(self.db, user_id, org_id)
-            scope_filter = or_(
-                HermesArtifact.permission_scope == "org",
-                HermesArtifact.permission_scope == "task_creator",
-                HermesArtifact.created_by == user_id,
-                *([HermesArtifact.id.in_(explicit_ids)] if explicit_ids else []),
-            )
+            scope_filter = await PermissionChecker.build_scope_filter(self.db, user_id, org_id)
             base = base.where(scope_filter)
 
         count_stmt = select(func.count()).select_from(base.subquery())
@@ -179,12 +223,34 @@ class ArtifactService:
             raise ArtifactNotFoundError()
         return artifact
 
+    async def ensure_artifact_visible(
+        self, artifact: HermesArtifact, user_id: str, org_id: str,
+    ) -> None:
+        if not await PermissionChecker.can_view_artifact(self.db, artifact, user_id, org_id):
+            raise ArtifactForbiddenError()
+
+    async def ensure_artifact_downloadable(
+        self, artifact: HermesArtifact, user_id: str, org_id: str,
+    ) -> None:
+        if not await PermissionChecker.can_download_artifact(self.db, artifact, user_id, org_id):
+            raise ArtifactForbiddenError()
+
+    async def ensure_artifact_mutable(
+        self, artifact: HermesArtifact, user_id: str, org_id: str,
+    ) -> None:
+        if not await PermissionChecker.can_delete_artifact(self.db, artifact, user_id, org_id):
+            raise ArtifactForbiddenError()
+
     async def preview(
         self,
         artifact_id: str,
         org_id: str,
+        user_id: str | None = None,
     ) -> tuple[HermesArtifact, str]:
         artifact = await self.get_artifact(artifact_id, org_id)
+
+        if user_id:
+            await self.ensure_artifact_visible(artifact, user_id, org_id)
 
         if not artifact.content_type or not any(
             artifact.content_type.startswith(p) for p in PREVIEWABLE_PREFIXES
@@ -201,12 +267,23 @@ class ArtifactService:
         if not file_path.is_file():
             raise ArtifactFileNotFoundError()
 
+        try:
+            stat = file_path.stat()
+            if stat.st_size > PREVIEW_MAX_SIZE_BYTES:
+                raise ArtifactPreviewUnsupportedError()
+        except OSError:
+            raise ArtifactFileNotFoundError()
+
+        if artifact.content_type == "application/octet-stream":
+            raise ArtifactPreviewUnsupportedError()
+
         content = file_path.read_text(encoding="utf-8", errors="replace")
 
         await self.audit.log_artifact_action(
             action="artifact.previewed",
             artifact_id=artifact_id,
             org_id=org_id,
+            actor_id=user_id,
         )
         return artifact, content
 
@@ -214,12 +291,15 @@ class ArtifactService:
         self,
         artifact_id: str,
         org_id: str,
-        actor_id: str = "",
+        user_id: str | None = None,
         actor_name: str | None = None,
     ) -> Path:
         artifact = await self.db.get(HermesArtifact, artifact_id)
         if not artifact or artifact.deleted_at is not None or artifact.org_id != org_id:
             raise ArtifactNotFoundError()
+
+        if user_id:
+            await self.ensure_artifact_downloadable(artifact, user_id, org_id)
 
         file_path = Path(artifact.file_path)
         outputs_root = self._get_workspace_root(artifact)
@@ -242,7 +322,7 @@ class ArtifactService:
             action="artifact.downloaded",
             artifact_id=artifact_id,
             org_id=org_id,
-            actor_id=actor_id,
+            actor_id=user_id or "",
             actor_name=actor_name,
         )
         return file_path
@@ -251,10 +331,14 @@ class ArtifactService:
         self,
         artifact_id: str,
         org_id: str,
-        actor_id: str = "",
+        user_id: str | None = None,
         actor_name: str | None = None,
     ) -> None:
         artifact = await self.get_artifact(artifact_id, org_id)
+
+        if user_id:
+            await self.ensure_artifact_mutable(artifact, user_id, org_id)
+
         artifact.soft_delete()
         await self.db.flush()
 
@@ -268,7 +352,7 @@ class ArtifactService:
             action="artifact.deleted",
             artifact_id=artifact_id,
             org_id=org_id,
-            actor_id=actor_id,
+            actor_id=user_id or "",
             actor_name=actor_name,
         )
 
@@ -276,14 +360,14 @@ class ArtifactService:
         self,
         artifact_ids: list[str],
         org_id: str,
-        actor_id: str = "",
+        user_id: str | None = None,
         actor_name: str | None = None,
     ) -> tuple[int, int]:
         success_count = 0
         skip_count = 0
         for aid in artifact_ids:
             try:
-                await self.soft_delete(aid, org_id, actor_id, actor_name)
+                await self.soft_delete(aid, org_id, user_id, actor_name)
                 success_count += 1
             except (ArtifactNotFoundError, ForbiddenError):
                 skip_count += 1
@@ -306,14 +390,16 @@ class ArtifactService:
 
     @staticmethod
     def _compute_outputs_dir(task: HermesTask) -> Path | None:
-        from app.models.instance import Instance
-        from app.models.base import not_deleted as _nd
-        from sqlalchemy import select
+        workspace_root = ArtifactService._resolve_workspace_root_for_task(task)
+        if workspace_root:
+            return Path(workspace_root) / settings.HERMES_OUTPUT_BASE_DIR_NAME / "runs" / task.id / "outputs"
+        return Path(f"/tmp/nodeskclaw-workspaces/{task.workspace_id or 'default'}") / settings.HERMES_OUTPUT_BASE_DIR_NAME / "runs" / task.id / "outputs"
 
-        if not task.agent_id:
+    @staticmethod
+    def _resolve_workspace_root_for_task(task: HermesTask) -> str | None:
+        if task.workspace_id:
             return None
-
-        return Path(f"{settings.HERMES_OUTPUT_BASE_DIR_NAME}/runs/{task.id}/outputs")
+        return None
 
     @staticmethod
     def _get_workspace_root(artifact: HermesArtifact) -> Path | None:
@@ -321,3 +407,42 @@ class ArtifactService:
             idx = artifact.file_path.index(settings.HERMES_OUTPUT_BASE_DIR_NAME)
             return Path(artifact.file_path[:idx]).resolve()
         return None
+
+    @staticmethod
+    def resolve_artifact_file_path(artifact: HermesArtifact) -> Path | None:
+        if not artifact.file_path:
+            return None
+        return Path(artifact.file_path)
+
+    @staticmethod
+    def validate_artifact_file_path(file_path: Path, artifact: HermesArtifact) -> None:
+        workspace_root = ArtifactService._get_workspace_root(artifact)
+        if workspace_root:
+            PathGuard.validate_file_for_download(file_path, workspace_root)
+        else:
+            PathGuard.validate_file_for_download(file_path, Path("/tmp"))
+
+    async def get_artifact_by_token(
+        self,
+        token: str,
+        token_service,
+    ) -> HermesArtifact | None:
+        from app.core.exceptions import ArtifactTokenExpiredError
+        try:
+            token_record = await token_service.validate_and_consume(token)
+        except ArtifactTokenExpiredError:
+            return None
+
+        artifact = await self.db.get(HermesArtifact, token_record.artifact_id)
+        if not artifact or artifact.deleted_at is not None:
+            return None
+
+        file_path = Path(artifact.file_path)
+        if not file_path.is_file():
+            token_record.uses_remaining += 1
+            if token_record.uses_remaining > 0:
+                token_record.is_active = True
+            await self.db.flush()
+            return None
+
+        return artifact
