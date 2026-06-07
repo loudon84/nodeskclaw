@@ -2,7 +2,7 @@
 import { ref, onMounted, computed, provide } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { ArrowLeft, Circle, Loader2, LayoutDashboard, Brain, Dna, History, FolderOpen, Users, Activity, Archive, Pencil, Check, X, RotateCcw } from 'lucide-vue-next'
+import { ArrowLeft, Circle, Loader2, LayoutDashboard, Brain, Dna, History, FolderOpen, Users, Activity, Archive, Pencil, Check, X, RotateCcw, Wrench } from 'lucide-vue-next'
 import api from '@/services/api'
 import { resolveApiErrorMessage } from '@/i18n/error'
 import { useToast } from '@/composables/useToast'
@@ -106,6 +106,9 @@ const navItems = computed(() => {
   if (caps.value.genes) items.push({ name: 'InstanceGenes', label: t('common.genes'), icon: Dna })
   if (caps.value.evolutionLog) items.push({ name: 'EvolutionLog', label: t('common.evolutionLog'), icon: History })
   if (caps.value.llmConfig) items.push({ name: 'InstanceSettings', label: t('common.modelConfig'), icon: Brain })
+  if (caps.value.expertSkills) {
+    items.push({ name: 'ExpertInstanceSkills', label: t('hermes.experts.skillsTitle'), icon: Wrench })
+  }
   if (myInstanceRole.value === 'admin') {
     items.push({ name: 'InstanceFiles', label: t('common.files'), icon: FolderOpen })
     items.push({ name: 'InstanceBackups', label: t('backup.title'), icon: Archive })

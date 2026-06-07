@@ -63,6 +63,7 @@ const ceRoutes: RouteRecordRaw[] = [
       { path: 'files', name: 'InstanceFiles', component: () => import('@/views/InstanceFiles.vue') },
       { path: 'backups', name: 'InstanceBackups', component: () => import('@/views/InstanceBackups.vue') },
       { path: 'members', name: 'InstanceMembers', component: () => import('@/views/InstanceMembers.vue') },
+      { path: 'expert-skills', name: 'ExpertInstanceSkills', component: () => import('@/views/hermes/ExpertInstanceSkillsView.vue') },
     ],
   },
   {

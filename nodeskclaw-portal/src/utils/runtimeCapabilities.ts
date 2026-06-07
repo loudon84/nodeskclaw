@@ -16,6 +16,7 @@ export interface RuntimeCapabilities {
   backup: boolean
   runtimeConfigPatch: boolean
   toolAllow: boolean
+  expertSkills: boolean
   dataRoot: string
 }
 
@@ -48,6 +49,7 @@ const MINIMAL_CAPS: RuntimeCapabilities = {
   backup: false,
   runtimeConfigPatch: false,
   toolAllow: false,
+  expertSkills: false,
   dataRoot: '',
 }
 
@@ -68,6 +70,7 @@ const LEGACY_CAPS: Record<string, RuntimeCapabilities> = {
     backup: true,
     runtimeConfigPatch: true,
     toolAllow: true,
+    expertSkills: false,
     dataRoot: '.openclaw',
   },
   hermes: {
@@ -86,7 +89,27 @@ const LEGACY_CAPS: Record<string, RuntimeCapabilities> = {
     backup: true,
     runtimeConfigPatch: false,
     toolAllow: false,
+    expertSkills: false,
     dataRoot: '.hermes',
+  },
+  'hermes-webui-expert': {
+    genes: false,
+    evolutionLog: false,
+    llmConfig: true,
+    channelConfig: false,
+    channelPluginDiscovery: false,
+    repoChannelSync: false,
+    npmChannelInstall: false,
+    uploadChannelPlugin: false,
+    gateway: false,
+    healthEndpoint: true,
+    configEndpoint: true,
+    webUi: true,
+    backup: true,
+    runtimeConfigPatch: false,
+    toolAllow: false,
+    expertSkills: true,
+    dataRoot: 'hermes',
   },
 }
 
@@ -154,6 +177,7 @@ function normalizeEngineCapabilities(engine: RuntimeEnginePayload): RuntimeCapab
     backup: boolFromBackend(raw, 'backup', fallback.backup),
     runtimeConfigPatch: boolFromBackend(raw, 'runtime_config_patch', fallback.runtimeConfigPatch),
     toolAllow: boolFromBackend(raw, 'tool_allow', fallback.toolAllow),
+    expertSkills: boolFromBackend(raw, 'expert_skills', fallback.expertSkills),
     dataRoot: dataRootFromEngine(engine, fallback.dataRoot),
   }
 }

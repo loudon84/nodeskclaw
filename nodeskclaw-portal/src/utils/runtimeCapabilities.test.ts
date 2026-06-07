@@ -70,7 +70,16 @@ describe('runtimeCapabilities', () => {
 
     expect(caps.genes).toBe(true)
     expect(caps.evolutionLog).toBe(false)
+    expect(caps.expertSkills).toBe(false)
     expect(caps.dataRoot).toBe('.hermes')
+  })
+
+  it('enables expert skills for hermes-webui-expert fallback', () => {
+    const caps = getRuntimeCaps('hermes-webui-expert')
+
+    expect(caps.expertSkills).toBe(true)
+    expect(caps.webUi).toBe(true)
+    expect(caps.dataRoot).toBe('hermes')
   })
 
   it('derives file browsing root from config path before container path', () => {
