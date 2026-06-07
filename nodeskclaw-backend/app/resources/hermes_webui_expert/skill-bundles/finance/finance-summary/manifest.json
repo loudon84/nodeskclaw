@@ -1,0 +1,10 @@
+{
+  "slug": "finance-summary",
+  "name": "Finance Summary",
+  "version": "0.1.0",
+  "description": "Summarize financial metrics and cashflow highlights",
+  "runtime": "hermes",
+  "expert": ["finance"],
+  "enabled": true,
+  "requires_restart": true
+}

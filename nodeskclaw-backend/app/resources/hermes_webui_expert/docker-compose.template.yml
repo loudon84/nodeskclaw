@@ -1,0 +1,18 @@
+services:
+  hermes-webui:
+    image: ${HERMES_EXPERT_IMAGE}
+    container_name: hermes-${HERMES_PROFILE}
+    restart: unless-stopped
+    ports:
+      - "${HERMES_WEBUI_PORT}:8787"
+    environment:
+      HERMES_PROFILE: ${HERMES_PROFILE}
+      HERMES_EXPERT: ${HERMES_EXPERT}
+      HERMES_HOME: /data/hermes
+      HINDSIGHT_API_URL: ${HINDSIGHT_API_URL}
+      HINDSIGHT_BANK_ID: ${HINDSIGHT_BANK_ID}
+    volumes:
+      - type: bind
+        source: ${HOST_DATA_DIR}
+        target: /data/hermes
+    platform: linux/amd64

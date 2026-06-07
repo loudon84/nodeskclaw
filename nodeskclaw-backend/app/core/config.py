@@ -252,6 +252,26 @@ class Settings(BaseSettings):
     HERMES_ARTIFACT_MAX_SIZE_MB: int = 500
     HERMES_ARTIFACT_BATCH_DOWNLOAD_MAX_SIZE_MB: int = 1024
 
+    # ── Hermes WebUI Expert ───────────────────────────────
+    HERMES_EXPERT_DEFAULT_IMAGE: str = ""
+    HERMES_AGENT_REPO: str = ""
+    HERMES_AGENT_REF: str = "main"
+    HERMES_WEBUI_REPO: str = ""
+    HERMES_WEBUI_REF: str = "main"
+    HERMES_WEBUI_BASE_IMAGE: str = ""
+    HERMES_EXPERT_IMAGE: str = ""
+    HERMES_EXPERT_IMAGE_REGISTRY: str = ""
+    HERMES_EXPERT_DEFAULT_HINDSIGHT_API_URL: str = ""
+    HERMES_EXPERT_DEFAULT_BIND_HOST: str = "0.0.0.0"
+    HERMES_EXPERT_PORT_START: int = 8787
+    HERMES_EXPERT_PORT_END: int = 8899
+    HERMES_EXPERT_DATA_ROOT: str = ""
+    PRIVATE_GIT_USERNAME: str = ""
+    PRIVATE_GIT_TOKEN_SECRET: str = ""
+    PRIVATE_REGISTRY_URL: str = ""
+    PRIVATE_REGISTRY_USERNAME: str = ""
+    PRIVATE_REGISTRY_PASSWORD_SECRET: str = ""
+
 
 settings = Settings()
 

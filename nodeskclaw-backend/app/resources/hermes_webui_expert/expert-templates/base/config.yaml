@@ -1,0 +1,12 @@
+profile: __PROFILE__
+expert: __EXPERT__
+instance_id: __INSTANCE_ID__
+instance_name: __INSTANCE_NAME__
+created_at: __CREATED_AT__
+hindsight:
+  mode: local_external
+  api_url: __HINDSIGHT_API_URL__
+  bank_id: __HINDSIGHT_BANK_ID__
+workspace:
+  name: __WORKSPACE_NAME__
+  root: workspace

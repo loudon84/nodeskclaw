@@ -205,8 +205,26 @@ API 路由同时挂载在两个前缀下：
 | 配置键 | 引擎 | 说明 |
 |--------|------|------|
 | `image_registry` | OpenClaw | 全局默认，向后兼容 |
+| `image_registry_hermes_webui_expert` | Hermes 专家服务 | Hermes WebUI Expert 镜像仓库 |
 
-- **启动时自动内置默认值**：`seed.py` 中 `_seed_default_registry_configs()` 在每次启动时幂等写入上述三个 key 的默认公共仓库地址（仅在 key 不存在时写入，不覆盖管理员修改）
+### Hermes WebUI Expert（专家服务）
+
+Portal「AI 专家中心」使用 `runtime=hermes-webui-expert`，通过 Docker Compose 部署独立专家容器。相关环境变量（`.env`）：
+
+| 变量 | 说明 |
+|------|------|
+| `HERMES_EXPERT_PORT_START` / `HERMES_EXPERT_PORT_END` | 专家 WebUI 宿主机端口池，默认 `8787-8899` |
+| `HERMES_EXPERT_IMAGE` / `HERMES_EXPERT_IMAGE_REGISTRY` | 专家镜像名或仓库前缀 |
+| `HERMES_EXPERT_DEFAULT_HINDSIGHT_API_URL` | 默认 Hindsight API URL（外部记忆接口地址） |
+| `HERMES_AGENT_REPO` / `HERMES_WEBUI_REPO` | 私有构建源（Dockerfile build args，不含 Token） |
+| `PRIVATE_GIT_USERNAME` / `PRIVATE_GIT_TOKEN_SECRET` | 实例级技能从私有 Git 安装时使用，仅后端读取 |
+| `HERMES_SKILL_IMPORT_MAX_SIZE_MB` | 技能 zip 上传大小上限 |
+
+API 前缀：`/api/v1/hermes-experts/*`（模板、实例生命周期、实例级技能管理）。
+
+本地前置条件：已注册 `compute_provider=docker` 集群，且后端进程可执行 `docker compose`。
+
+- **启动时自动内置默认值**：`seed.py` 中 `_seed_default_registry_configs()` 在每次启动时幂等写入 registry 相关 key 的默认值（仅在 key 不存在时写入，不覆盖管理员修改）
 - 部署和配置更新时通过 `resolve_image_registry(db, runtime)` 自动解析
 - 未配置引擎专属仓库时回退到全局 `image_registry`
 - `GET /registry/tags?runtime=hermes` 按引擎查询对应仓库的 Tag 列表

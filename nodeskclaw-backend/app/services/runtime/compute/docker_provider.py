@@ -90,6 +90,18 @@ def _compose_path_for_slug(slug: str) -> str:
     return str(DOCKER_DATA_DIR / slug / "docker-compose.yml")
 
 
+def _container_name_for_config(config: InstanceComputeConfig) -> str:
+    if config.runtime == "hermes-webui-expert":
+        expert = (config.advanced_config or {}).get("expert") or {}
+        profile = str(expert.get("profile") or config.slug)
+        return f"hermes-{profile}"
+    return config.slug
+
+
+def _resolve_container_name(handle: ComputeHandle) -> str:
+    return str(handle.extra.get("container_name") or handle.extra.get("slug") or handle.instance_id)
+
+
 def _remap_legacy_compose_path(stored_path: str) -> str:
     if not stored_path:
         return ""
@@ -184,6 +196,10 @@ async def _seed_template_from_image(config: InstanceComputeConfig, data_dir: Pat
 
 def _build_compose_yaml(config: InstanceComputeConfig) -> dict:
     """Generate a docker-compose service definition with full resource config."""
+    if config.runtime == "hermes-webui-expert":
+        from app.services.hermes_expert.expert_compose_builder import ExpertComposeBuilder
+        return ExpertComposeBuilder().build_compose(config)
+
     env = {
         k: _LOCALHOST_RE.sub(r"\1host.docker.internal\3", str(v))
         for k, v in config.env_vars.items()
@@ -268,19 +284,24 @@ class DockerComputeProvider:
         data_dir = DOCKER_DATA_DIR / config.slug / "data"
         os.makedirs(str(data_dir), exist_ok=True)
 
-        # 从镜像中提取模板文件到宿主机 data 目录，确保 entrypoint 首次启动能生成配置
-        await _seed_template_from_image(config, data_dir)
+        if config.runtime != "hermes-webui-expert":
+            await _seed_template_from_image(config, data_dir)
 
-        compose = _build_compose_yaml(config)
         compose_path = _compose_path_for_slug(config.slug)
+        container_name = _container_name_for_config(config)
 
-        try:
-            import yaml
-            with open(compose_path, "w") as f:
-                yaml.dump(compose, f, default_flow_style=False)
-        except ImportError:
-            with open(compose_path, "w") as f:
-                json.dump(compose, f, indent=2)
+        if config.runtime == "hermes-webui-expert":
+            from app.services.hermes_expert.expert_compose_builder import ExpertComposeBuilder
+            compose_path, _, container_name = ExpertComposeBuilder().write_files(config)
+        else:
+            compose = _build_compose_yaml(config)
+            try:
+                import yaml
+                with open(compose_path, "w") as f:
+                    yaml.dump(compose, f, default_flow_style=False)
+            except ImportError:
+                with open(compose_path, "w") as f:
+                    json.dump(compose, f, indent=2)
 
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -304,7 +325,12 @@ class DockerComputeProvider:
             namespace=config.namespace,
             endpoint=f"http://{host}:{host_port}",
             status="running",
-            extra={"compose_path": compose_path, "slug": config.slug, "runtime": config.runtime},
+            extra={
+                "compose_path": compose_path,
+                "slug": config.slug,
+                "runtime": config.runtime,
+                "container_name": container_name,
+            },
         )
 
     async def destroy_instance(self, handle: ComputeHandle, **kwargs) -> None:
@@ -325,7 +351,7 @@ class DockerComputeProvider:
             except Exception as e:
                 logger.warning("docker compose down failed: %s", e)
 
-        for container_name in (f"{slug}-companion", slug):
+        for container_name in dict.fromkeys((f"{slug}-companion", _resolve_container_name(handle), slug)):
             try:
                 proc = await asyncio.create_subprocess_exec(
                     "docker", "rm", "-f", container_name,
@@ -351,10 +377,10 @@ class DockerComputeProvider:
             logger.warning("docker network rm failed for %s-net: %s", slug, e)
 
     async def get_status(self, handle: ComputeHandle) -> str:
-        slug = handle.extra.get("slug", handle.instance_id)
+        container_name = _resolve_container_name(handle)
         try:
             proc = await asyncio.create_subprocess_exec(
-                "docker", "inspect", "--format", "{{.State.Status}}", slug,
+                "docker", "inspect", "--format", "{{.State.Status}}", container_name,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -364,17 +390,17 @@ class DockerComputeProvider:
                 status_map = {"running": "running", "exited": "stopped", "paused": "stopped"}
                 return status_map.get(status, status)
         except Exception:
-            logger.warning("docker inspect failed for slug=%s", slug, exc_info=True)
+            logger.warning("docker inspect failed for slug=%s", container_name, exc_info=True)
         return "unknown"
 
     async def get_endpoint(self, handle: ComputeHandle) -> str:
         return handle.endpoint
 
     async def get_logs(self, handle: ComputeHandle, *, tail: int = 50) -> str:
-        slug = handle.extra.get("slug", handle.instance_id)
+        container_name = _resolve_container_name(handle)
         try:
             proc = await asyncio.create_subprocess_exec(
-                "docker", "logs", "--tail", str(tail), slug,
+                "docker", "logs", "--tail", str(tail), container_name,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
             )
@@ -403,8 +429,9 @@ class DockerComputeProvider:
             if proc.returncode != 0:
                 raise RuntimeError(f"docker compose restart 失败: {_extract_docker_error(stderr.decode())}")
         else:
+            container_name = _resolve_container_name(handle)
             proc = await asyncio.create_subprocess_exec(
-                "docker", "restart", slug,
+                "docker", "restart", container_name,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )

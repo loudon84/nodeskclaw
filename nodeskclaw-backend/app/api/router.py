@@ -29,6 +29,7 @@ from app.api.mcp import router as mcp_router
 from app.api.gateway.gateway_router import router as gateway_router
 from app.api.gateway.proxy_router import router as gateway_proxy_router
 from app.api.gateway.sse_router import router as gateway_sse_router
+from app.api.hermes_experts import router as hermes_experts_router
 from app.api.hermes_skill.router import router as hermes_skill_router
 from app.api.trust import router as trust_router
 from app.api.uploads import router as uploads_router
@@ -173,6 +174,7 @@ api_router.include_router(gateway_router, prefix="/gateway", tags=["Gateway 管�
 api_router.include_router(gateway_proxy_router, prefix="/gateway", tags=["Gateway 代理"])
 api_router.include_router(gateway_sse_router, prefix="/gateway", tags=["Gateway SSE"])
 api_router.include_router(hermes_skill_router, prefix="/hermes", tags=["Hermes Skill"])
+api_router.include_router(hermes_experts_router, prefix="/hermes-experts", tags=["Hermes Expert"])
 
 # ── 管理平台 Admin API（/api/v1/admin）─────────────────────
 # Admin 使用原有路由模块，通过 dependencies 注入角色检查。

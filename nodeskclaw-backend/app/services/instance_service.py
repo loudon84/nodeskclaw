@@ -128,11 +128,24 @@ def _k8s_name(instance: Instance) -> str:
 
 def _build_docker_handle(instance: Instance) -> ComputeHandle:
     advanced = json.loads(instance.advanced_config) if instance.advanced_config else {}
+    compose = advanced.get("compose") or {}
+    expert = advanced.get("expert") or {}
+    container_name = compose.get("container_name")
+    if not container_name and instance.runtime == "hermes-webui-expert":
+        profile = str(expert.get("profile") or instance.slug)
+        container_name = f"hermes-{profile}"
+    extra = {
+        "compose_path": advanced.get("compose_path", compose.get("compose_path", "")),
+        "slug": instance.slug,
+        "runtime": instance.runtime,
+    }
+    if container_name:
+        extra["container_name"] = container_name
     return ComputeHandle(
         provider="docker", instance_id=instance.id,
         namespace=instance.namespace, endpoint=instance.ingress_domain or "",
         status=instance.status,
-        extra={"compose_path": advanced.get("compose_path", ""), "slug": instance.slug, "runtime": instance.runtime},
+        extra=extra,
     )
 
 

@@ -1,0 +1,10 @@
+{
+  "slug": "writer-outline",
+  "name": "Writer Outline",
+  "version": "0.1.0",
+  "description": "Generate structured article outlines",
+  "runtime": "hermes",
+  "expert": ["writer"],
+  "enabled": true,
+  "requires_restart": false
+}

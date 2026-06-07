@@ -30,6 +30,7 @@ async def run_seed(
 DEFAULT_REGISTRY_CONFIGS: dict[str, str] = {
     "image_registry": "nodesk-center-cn-beijing.cr.volces.com/public/deskclaw-openclaw",
     "image_registry_hermes": "nodesk-center-cn-beijing.cr.volces.com/public/deskclaw-hermes",
+    "image_registry_hermes_webui_expert": "",
 }
 
 LEGACY_REGISTRY_CONFIGS: dict[str, tuple[str, ...]] = {

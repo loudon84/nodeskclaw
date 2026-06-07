@@ -28,6 +28,7 @@ class RuntimeProductCapabilities:
     backup: bool
     runtime_config_patch: bool
     tool_allow: bool
+    expert_skills: bool
 
     def to_dict(self) -> dict[str, bool]:
         return asdict(self)
@@ -163,6 +164,7 @@ def _register_builtins() -> None:
             backup=True,
             runtime_config_patch=True,
             tool_allow=True,
+            expert_skills=False,
         ),
         gateway_port=18789,
         health_probe_path="/healthz",
@@ -207,6 +209,7 @@ def _register_builtins() -> None:
             backup=True,
             runtime_config_patch=False,
             tool_allow=False,
+            expert_skills=False,
         ),
         gateway_port=8642,
         health_probe_path="/health",
@@ -224,6 +227,62 @@ def _register_builtins() -> None:
         has_init_script=False,
         available=True,
         backup_dirs=(".hermes",),
+    ))
+    RUNTIME_REGISTRY.register(RuntimeSpec(
+        runtime_id="hermes-webui-expert",
+        adapter=None,
+        gene_install_adapter=_hermes_gene_adapter,
+        description="Hermes WebUI expert runtime -- all-in-one expert service container.",
+        requires_companion=False,
+        display_name="Hermes 专家服务",
+        display_description="Hermes WebUI + Hermes Agent + 专家模板 + 技能包",
+        display_tags=("专家",),
+        display_powered_by="Hermes Agent",
+        capabilities=RuntimeProductCapabilities(
+            genes=False,
+            evolution_log=False,
+            llm_config=True,
+            channel_config=False,
+            channel_plugin_discovery=False,
+            repo_channel_sync=False,
+            npm_channel_install=False,
+            upload_channel_plugin=False,
+            gateway=False,
+            health_endpoint=True,
+            config_endpoint=True,
+            web_ui=True,
+            backup=True,
+            runtime_config_patch=False,
+            tool_allow=False,
+            expert_skills=True,
+        ),
+        gateway_port=8787,
+        health_probe_path="/health",
+        readiness_probe_path="/health",
+        order=2,
+        image_registry_key="image_registry_hermes_webui_expert",
+        config_rel_path="config.yaml",
+        config_format="yaml",
+        channels_section_key="platforms",
+        field_naming="snake_case",
+        supports_channel_plugins=False,
+        data_dir_container_path="/data/hermes",
+        skills_dir_rel="skills",
+        scripts_dir_rel="scripts",
+        has_web_ui=True,
+        has_init_script=False,
+        available=True,
+        backup_dirs=(
+            "config.yaml",
+            "SOUL.md",
+            "memories",
+            "hindsight",
+            "skills",
+            "workspace",
+            "obsidian-vault",
+            "sessions",
+            "webui",
+        ),
     ))
 
 

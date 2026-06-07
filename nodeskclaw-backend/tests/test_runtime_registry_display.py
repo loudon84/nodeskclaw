@@ -11,6 +11,7 @@ def test_runtime_registry_display_order_and_names():
     assert [(spec.runtime_id, spec.display_name, spec.order) for spec in specs] == [
         ("openclaw", "全能员工引擎", 0),
         ("hermes", "自进化员工引擎", 1),
+        ("hermes-webui-expert", "Hermes 专家服务", 2),
     ]
 
 
@@ -50,6 +51,12 @@ def test_builtin_runtime_capability_matrix_matches_first_stage_contract():
     assert hermes.capability_map()["repo_channel_sync"] is False
     assert hermes.capability_map()["web_ui"] is False
 
+    expert = RUNTIME_REGISTRY.get("hermes-webui-expert")
+    assert expert is not None
+    assert expert.capability_map()["expert_skills"] is True
+    assert expert.capability_map()["web_ui"] is True
+    assert expert.gateway_port == 8787
+
 
 def test_runtime_registry_rejects_specs_missing_required_product_metadata():
     registry = RuntimeRegistry()
@@ -70,3 +77,5 @@ async def test_engine_listing_returns_runtime_capabilities():
     assert engines["hermes"]["capabilities"]["evolution_log"] is False
     assert engines["hermes"]["capabilities"]["tool_allow"] is False
     assert engines["hermes"]["config_rel_path"] == ".hermes/config.yaml"
+    assert engines["hermes-webui-expert"]["capabilities"]["expert_skills"] is True
+    assert engines["hermes-webui-expert"]["capabilities"]["web_ui"] is True

@@ -103,6 +103,36 @@ async def test_destroy_instance_falls_back_to_slug_cleanup(monkeypatch) -> None:
     ]
 
 
+def test_build_compose_yaml_for_expert_uses_hermes_data_dir(monkeypatch) -> None:
+    monkeypatch.setattr(docker_provider, "DOCKER_HOST_DATA_DIR", "/tmp/docker-data")
+
+    config = docker_provider.InstanceComputeConfig(
+        instance_id="instance-1",
+        name="writer",
+        namespace="default",
+        slug="writer",
+        image_version="latest",
+        runtime="hermes-webui-expert",
+        gateway_port=8787,
+        env_vars={"DOCKER_HOST_PORT": "8787", "HERMES_WEBUI_PASSWORD": "secret"},
+        advanced_config={
+            "expert": {"profile": "writer", "template": "writer"},
+            "hindsight": {"api_url": "http://hindsight.example.com", "bank_id": "hermes-writer"},
+        },
+        mem_limit=None,
+        cpu_limit=None,
+        companion=None,
+    )
+
+    compose = docker_provider._build_compose_yaml(config)
+    service = compose["services"]["hermes-webui"]
+    assert service["platform"] == "linux/amd64"
+    assert service["container_name"] == "hermes-writer"
+    assert service["ports"] == ["8787:8787"]
+    assert service["volumes"][0]["target"] == "/data/hermes"
+    assert "host.docker.internal" not in str(service)
+
+
 @pytest.mark.asyncio
 async def test_seed_template_from_image_uses_runtime_template_rel(tmp_path, monkeypatch) -> None:
     calls = []

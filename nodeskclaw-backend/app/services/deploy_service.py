@@ -94,9 +94,7 @@ def _should_sync_runtime_llm_config(
     has_llm_configs: bool,
     org_active_providers: list[str] | None,
 ) -> bool:
-    if runtime == "hermes":
-        return bool(has_llm_configs or org_active_providers)
-    if runtime == "openclaw":
+    if runtime in {"hermes", "openclaw", EXPERT_RUNTIME}:
         return bool(has_llm_configs or org_active_providers)
     return False
 
@@ -419,7 +417,7 @@ async def _run_post_ready_instance_steps(
 ) -> str:
     llm_sync_warning = ""
     current_step = start_step
-    if ctx.runtime in {"openclaw", "hermes"}:
+    if ctx.runtime in {"openclaw", "hermes", EXPERT_RUNTIME}:
         from app.services.llm_config_service import (
             ensure_openclaw_gateway_config,
             sync_runtime_llm_config,
@@ -657,6 +655,16 @@ DEPLOY_STEPS_BASE = [
 
 
 DOCKER_DEPLOY_STEPS = ["环境预检查", "启动容器", "等待容器就绪", "部署完成"]
+EXPERT_DOCKER_DEPLOY_STEPS = [
+    "环境预检查",
+    "注入专家模板",
+    "安装默认技能",
+    "生成 Compose 配置",
+    "启动容器",
+    "等待容器就绪",
+    "部署完成",
+]
+EXPERT_RUNTIME = "hermes-webui-expert"
 
 PROGRESS_STEP_NAMES_KEY = "progress_step_names"
 
@@ -693,12 +701,21 @@ def _set_progress_step_names(record: DeployRecord, step_names: list[str]) -> Non
     record.config_snapshot = _dump_deploy_config_snapshot(snapshot)
 
 
+def _docker_deploy_base_steps(runtime: str) -> list[str]:
+    if runtime == EXPERT_RUNTIME:
+        return EXPERT_DOCKER_DEPLOY_STEPS
+    return DOCKER_DEPLOY_STEPS
+
+
 def _deploy_progress_step_names_for_provider(
     compute_provider: str | None,
     post_ready_steps: list[str],
+    *,
+    runtime: str = "openclaw",
 ) -> list[str]:
     if compute_provider and compute_provider != "k8s":
-        return [*DOCKER_DEPLOY_STEPS[:-1], *post_ready_steps, DOCKER_DEPLOY_STEPS[-1]]
+        base_steps = _docker_deploy_base_steps(runtime)
+        return [*base_steps[:-1], *post_ready_steps, base_steps[-1]]
     return [*DEPLOY_STEPS_BASE, *post_ready_steps]
 
 
@@ -706,6 +723,7 @@ def _deploy_progress_step_names_for_context(ctx: "_DeployContext") -> list[str]:
     return _deploy_progress_step_names_for_provider(
         ctx.compute_provider,
         _post_ready_step_names(ctx),
+        runtime=ctx.runtime,
     )
 
 
@@ -1053,8 +1071,18 @@ async def deploy_instance(
 
     # Docker: 分配宿主机端口
     docker_host_port: int | None = None
+    prefilled_port: int | None = None
+    if req.env_vars and req.env_vars.get("DOCKER_HOST_PORT"):
+        try:
+            prefilled_port = int(req.env_vars["DOCKER_HOST_PORT"])
+        except (ValueError, TypeError):
+            prefilled_port = None
     if is_docker:
-        from app.services.docker_constants import DOCKER_BASE_PORT
+        from app.services.docker_constants import (
+            DOCKER_BASE_PORT,
+            HERMES_EXPERT_PORT_END,
+            HERMES_EXPERT_PORT_START,
+        )
         used_ports: set[int] = set()
         port_result = await db.execute(
             select(Instance.env_vars).where(
@@ -1071,9 +1099,39 @@ async def deploy_instance(
                         used_ports.add(int(p))
                 except (ValueError, TypeError):
                     pass
-        docker_host_port = DOCKER_BASE_PORT
-        while docker_host_port in used_ports:
-            docker_host_port += 1
+        if req.runtime == EXPERT_RUNTIME:
+            if prefilled_port is not None:
+                if (
+                    prefilled_port < HERMES_EXPERT_PORT_START
+                    or prefilled_port > HERMES_EXPERT_PORT_END
+                ):
+                    raise BadRequestError(
+                        message=(
+                            f"WebUI 端口必须在 {HERMES_EXPERT_PORT_START}-"
+                            f"{HERMES_EXPERT_PORT_END} 范围内"
+                        ),
+                        message_key="errors.hermes_expert.invalid_port",
+                    )
+                if prefilled_port in used_ports:
+                    raise BadRequestError(
+                        message=f"WebUI 端口 {prefilled_port} 已被占用",
+                        message_key="errors.hermes_expert.port_in_use",
+                    )
+                docker_host_port = prefilled_port
+            else:
+                docker_host_port = HERMES_EXPERT_PORT_START
+                while docker_host_port in used_ports:
+                    docker_host_port += 1
+                if docker_host_port > HERMES_EXPERT_PORT_END:
+                    raise BadRequestError(
+                        message="Hermes 专家 WebUI 端口池已耗尽",
+                        message_key="errors.hermes_expert.port_pool_exhausted",
+                    )
+                advanced_config.setdefault("webui", {})["port"] = docker_host_port
+        else:
+            docker_host_port = DOCKER_BASE_PORT
+            while docker_host_port in used_ports:
+                docker_host_port += 1
         namespace = f"docker-{slug}"
 
     if not is_docker:
@@ -1260,6 +1318,7 @@ async def deploy_instance(
                     template_agent_bundle_manifest=template_agent_bundle_manifest,
                     template_gene_slugs=template_gene_slugs,
                 ),
+                runtime=instance.runtime,
             )
         }),
         status=DeployStatus.running,
@@ -1328,6 +1387,58 @@ async def execute_deploy_pipeline(ctx: _DeployContext) -> None:
         _unregister_deploy_task(ctx.record_id)
 
 
+async def _prepare_expert_before_compose(ctx: _DeployContext) -> None:
+    """Inject expert templates and default skill bundles before compose up."""
+    from app.core.deps import async_session_factory
+    from app.services.hermes_expert.expert_skill_service import ExpertSkillService
+    from app.services.hermes_expert.expert_template_service import ExpertTemplateService
+
+    advanced = ctx.advanced_config or {}
+    expert_cfg = advanced.get("expert") or {}
+    webui = advanced.get("webui") or {}
+    hindsight = advanced.get("hindsight") or {}
+    obsidian = advanced.get("obsidian") or {}
+    skills_cfg = advanced.get("skills") or {}
+
+    async with async_session_factory() as db:
+        inst_result = await db.execute(
+            select(Instance).where(
+                Instance.id == ctx.instance_id,
+                Instance.deleted_at.is_(None),
+            )
+        )
+        instance = inst_result.scalar_one()
+
+        ExpertTemplateService().inject_template(
+            instance_slug=ctx.name,
+            profile=str(expert_cfg.get("profile") or ctx.name),
+            expert_template=str(expert_cfg.get("template") or expert_cfg.get("profile") or ctx.name),
+            instance_id=ctx.instance_id,
+            instance_name=instance.name,
+            hindsight_api_url=str(hindsight.get("api_url") or ""),
+            hindsight_bank_id=str(hindsight.get("bank_id") or f"hermes-{ctx.name}"),
+            init_obsidian_vault=bool(obsidian.get("enabled", True)),
+        )
+
+        if skills_cfg.get("install_default", True):
+            bundle = str(
+                skills_cfg.get("default_bundle")
+                or expert_cfg.get("template")
+                or "default"
+            )
+            skill_service = ExpertSkillService()
+            try:
+                skill_service.install_builtin_bundle(instance, bundle)
+            except NotFoundError:
+                skill_service.install_builtin_bundle(instance, "default")
+
+        if webui.get("port") is None and ctx.env_vars.get("DOCKER_HOST_PORT"):
+            advanced.setdefault("webui", {})["port"] = int(ctx.env_vars["DOCKER_HOST_PORT"])
+            ctx.advanced_config = advanced
+            instance.advanced_config = _json.dumps(advanced)
+            await db.commit()
+
+
 async def _execute_via_compute_provider(ctx: _DeployContext) -> None:
     """非 K8s 环境：通过 COMPUTE_REGISTRY 查找对应 provider 并委托部署。"""
     from app.core.deps import async_session_factory
@@ -1386,12 +1497,74 @@ async def _execute_via_compute_provider(ctx: _DeployContext) -> None:
         ).model_dump(),
     )
 
+    launch_step = 1
+    if ctx.runtime == EXPERT_RUNTIME:
+        try:
+            event_bus.publish(
+                "deploy_progress",
+                DeployProgress(
+                    deploy_id=ctx.record_id, step=2, total_steps=total,
+                    current_step=step_names[1], status="in_progress",
+                    message=None, percent=20,
+                    step_names=step_names,
+                ).model_dump(),
+            )
+            await _prepare_expert_before_compose(ctx)
+            config.advanced_config = dict(ctx.advanced_config or {})
+
+            event_bus.publish(
+                "deploy_progress",
+                DeployProgress(
+                    deploy_id=ctx.record_id, step=3, total_steps=total,
+                    current_step=step_names[2], status="completed",
+                    message=None, percent=35,
+                    step_names=step_names,
+                ).model_dump(),
+            )
+
+            event_bus.publish(
+                "deploy_progress",
+                DeployProgress(
+                    deploy_id=ctx.record_id, step=4, total_steps=total,
+                    current_step=step_names[3], status="in_progress",
+                    message=None, percent=45,
+                    step_names=step_names,
+                ).model_dump(),
+            )
+            from app.services.hermes_expert.expert_compose_builder import ExpertComposeBuilder
+            ExpertComposeBuilder().write_files(config)
+            launch_step = 5
+        except Exception as e:
+            logger.exception("Expert pre-deploy failed")
+            await _mark_deploy_failed(ctx, str(e)[:500])
+            event_bus.publish(
+                "deploy_progress",
+                DeployProgress(
+                    deploy_id=ctx.record_id, step=total, total_steps=total,
+                    current_step="失败", status="failed",
+                    message=str(e)[:200], percent=100,
+                    step_names=step_names,
+                ).model_dump(),
+            )
+            return
+    else:
+        event_bus.publish(
+            "deploy_progress",
+            DeployProgress(
+                deploy_id=ctx.record_id, step=2, total_steps=total,
+                current_step=step_names[1], status="in_progress",
+                message=None, percent=30,
+                step_names=step_names,
+            ).model_dump(),
+        )
+        launch_step = 2
+
     event_bus.publish(
         "deploy_progress",
         DeployProgress(
-            deploy_id=ctx.record_id, step=2, total_steps=total,
-            current_step=step_names[1], status="in_progress",
-            message=None, percent=30,
+            deploy_id=ctx.record_id, step=launch_step, total_steps=total,
+            current_step=step_names[launch_step - 1], status="in_progress",
+            message=None, percent=50 if ctx.runtime == EXPERT_RUNTIME else 30,
             step_names=step_names,
         ).model_dump(),
     )
@@ -1416,13 +1589,14 @@ async def _execute_via_compute_provider(ctx: _DeployContext) -> None:
     # ── 等待容器就绪（对齐 K8s Step 9 的 readiness 门控） ──
     probe_path = rt_spec.health_probe_path if rt_spec else "/healthz"
     container_ready = False
+    wait_step = launch_step + 1
 
     event_bus.publish(
         "deploy_progress",
         DeployProgress(
-            deploy_id=ctx.record_id, step=3, total_steps=total,
-            current_step=step_names[2], status="in_progress",
-            message=None, percent=50,
+            deploy_id=ctx.record_id, step=wait_step, total_steps=total,
+            current_step=step_names[wait_step - 1], status="in_progress",
+            message=None, percent=60 if ctx.runtime == EXPERT_RUNTIME else 50,
             step_names=step_names,
         ).model_dump(),
     )
@@ -1435,12 +1609,12 @@ async def _execute_via_compute_provider(ctx: _DeployContext) -> None:
             if probe_result.get("healthy"):
                 container_ready = True
                 break
-            pct = 50 + min(tick, 15)  # 50 → 65, 不超过 65
+            pct = (60 if ctx.runtime == EXPERT_RUNTIME else 50) + min(tick, 15)
             event_bus.publish(
                 "deploy_progress",
                 DeployProgress(
-                    deploy_id=ctx.record_id, step=3, total_steps=total,
-                    current_step=step_names[2], status="in_progress",
+                    deploy_id=ctx.record_id, step=wait_step, total_steps=total,
+                    current_step=step_names[wait_step - 1], status="in_progress",
                     message=f"等待容器健康检查通过... ({(tick + 1) * 2}s/60s)",
                     percent=pct,
                     step_names=step_names,
@@ -1490,7 +1664,16 @@ async def _execute_via_compute_provider(ctx: _DeployContext) -> None:
 
         if hasattr(result, "extra") and result.extra.get("compose_path"):
             adv = _json.loads(instance.advanced_config) if instance.advanced_config else {}
-            adv["compose_path"] = result.extra["compose_path"]
+            compose_path = result.extra["compose_path"]
+            adv["compose_path"] = compose_path
+            adv.setdefault("compose", {})["compose_path"] = compose_path
+            if result.extra.get("container_name"):
+                adv.setdefault("compose", {})["container_name"] = result.extra["container_name"]
+            if result.endpoint:
+                adv.setdefault("webui", {})["url"] = result.endpoint
+                if ctx.env_vars.get("DOCKER_HOST_PORT"):
+                    adv.setdefault("webui", {})["port"] = int(ctx.env_vars["DOCKER_HOST_PORT"])
+                instance.ingress_domain = str(result.endpoint).replace("http://", "").replace("https://", "")
             instance.advanced_config = _json.dumps(adv)
 
         await db.commit()
@@ -1511,7 +1694,7 @@ async def _execute_via_compute_provider(ctx: _DeployContext) -> None:
                 ctx,
                 instance,
                 db,
-                start_step=len(DOCKER_DEPLOY_STEPS),
+                start_step=len(_docker_deploy_base_steps(ctx.runtime)),
                 publish=_publish,
             )
         except Exception as e:
