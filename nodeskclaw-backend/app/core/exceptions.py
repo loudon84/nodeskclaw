@@ -173,6 +173,11 @@ class ArtifactBatchEmptyError(AppException):
         super().__init__(code=40004, message=message, status_code=400, message_key=message_key)
 
 
+class ArtifactWorkspaceRootUnresolvedError(AppException):
+    def __init__(self, message: str = "无法解析 Artifact workspace root", message_key: str = "errors.artifact.workspace_root_unresolved"):
+        super().__init__(code=40304, message=message, status_code=403, message_key=message_key)
+
+
 HTTP_STATUS_DEFAULT_CODES: dict[int, int] = {
     400: 40000,
     401: 40100,

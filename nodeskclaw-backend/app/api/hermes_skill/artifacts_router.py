@@ -142,7 +142,6 @@ async def batch_download_artifacts(
     user_org=Depends(require_org_member),
     db: AsyncSession = Depends(get_db),
 ):
-    from pathlib import Path
     from app.models.hermes_skill.hermes_task import HermesTask
     from app.models.base import not_deleted
     from sqlalchemy import select
@@ -174,8 +173,7 @@ async def batch_download_artifacts(
         if total_size > max_batch:
             raise ArtifactBatchSizeExceededError()
 
-        p = Path(artifact.file_path)
-        service.validate_artifact_file_path(p, artifact)
+        p = await service.resolve_and_validate(artifact, task)
 
         if p.is_file():
             rel = artifact.relative_path or artifact.file_name

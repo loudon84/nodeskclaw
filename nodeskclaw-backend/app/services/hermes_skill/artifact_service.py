@@ -15,6 +15,7 @@ from app.core.exceptions import (
     ArtifactForbiddenError,
     ArtifactPreviewUnsupportedError,
     ArtifactBatchSizeExceededError,
+    ArtifactWorkspaceRootUnresolvedError,
 )
 from app.core.feature_gate import feature_gate
 from app.models.base import not_deleted
@@ -263,8 +264,11 @@ class ArtifactService:
         ):
             raise ArtifactPreviewUnsupportedError()
 
-        file_path = Path(artifact.file_path)
-        self.validate_artifact_file_path(file_path, artifact)
+        task = await self.db.get(HermesTask, artifact.task_id)
+        if not task or task.deleted_at is not None:
+            raise NotFoundError("Task 不存在", "errors.task.not_found")
+
+        file_path = await self.resolve_and_validate(artifact, task)
 
         if not file_path.is_file():
             raise ArtifactFileNotFoundError()
@@ -303,8 +307,11 @@ class ArtifactService:
         if user_id:
             await self.ensure_artifact_downloadable(artifact, user_id, org_id)
 
-        file_path = Path(artifact.file_path)
-        self.validate_artifact_file_path(file_path, artifact)
+        task = await self.db.get(HermesTask, artifact.task_id)
+        if not task or task.deleted_at is not None:
+            raise NotFoundError("Task 不存在", "errors.task.not_found")
+
+        file_path = await self.resolve_and_validate(artifact, task)
 
         if not file_path.is_file():
             raise ArtifactFileNotFoundError()
@@ -419,18 +426,7 @@ class ArtifactService:
         if settings.HERMES_WORKSPACE_ROOT:
             return Path(settings.HERMES_WORKSPACE_ROOT)
 
-        return Path(f"/tmp/nodeskclaw-workspaces/{task.workspace_id or 'default'}")
-
-    @staticmethod
-    def _compute_outputs_dir(task: HermesTask) -> Path | None:
-        return Path(f"/tmp/nodeskclaw-workspaces/{task.workspace_id or 'default'}") / settings.HERMES_OUTPUT_BASE_DIR_NAME / "runs" / task.id / "outputs"
-
-    @staticmethod
-    def _get_workspace_root(artifact: HermesArtifact) -> Path | None:
-        if artifact.file_path and settings.HERMES_OUTPUT_BASE_DIR_NAME in artifact.file_path:
-            idx = artifact.file_path.index(settings.HERMES_OUTPUT_BASE_DIR_NAME)
-            return Path(artifact.file_path[:idx]).resolve()
-        return None
+        raise ArtifactWorkspaceRootUnresolvedError()
 
     @staticmethod
     def resolve_artifact_file_path(artifact: HermesArtifact) -> Path | None:
@@ -439,9 +435,18 @@ class ArtifactService:
         return Path(artifact.file_path)
 
     @staticmethod
-    def validate_artifact_file_path(file_path: Path, artifact: HermesArtifact) -> None:
-        workspace_root = ArtifactService._get_workspace_root(artifact)
-        if workspace_root:
-            PathGuard.validate_file_for_download(file_path, workspace_root)
-        else:
-            PathGuard.validate_file_for_download(file_path, Path("/tmp"))
+    def validate_artifact_file_path(file_path: Path, workspace_root: Path, task_id: str) -> None:
+        resolved_file = file_path.resolve()
+        resolved_root = workspace_root.resolve()
+
+        PathGuard.validate_file_for_download(resolved_file, resolved_root)
+        PathGuard.validate_within_outputs_dir(resolved_file, resolved_root, task_id)
+
+    async def resolve_and_validate(self, artifact: HermesArtifact, task: HermesTask) -> Path:
+        file_path = self.resolve_artifact_file_path(artifact)
+        if file_path is None:
+            raise ArtifactFileNotFoundError()
+
+        workspace_root = await self._resolve_workspace_root_for_task(task)
+        self.validate_artifact_file_path(file_path, workspace_root, task.id)
+        return file_path

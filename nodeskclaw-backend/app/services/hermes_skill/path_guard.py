@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from app.core.config import settings
 from app.core.exceptions import ForbiddenError
 
 
@@ -59,6 +60,17 @@ class PathGuard:
             except OSError:
                 pass
         return resolved
+
+    @staticmethod
+    def validate_within_outputs_dir(path: Path, workspace_root: Path, task_id: str) -> None:
+        outputs_dir = workspace_root.resolve() / settings.HERMES_OUTPUT_BASE_DIR_NAME / "runs" / task_id / "outputs"
+        try:
+            path.resolve().relative_to(outputs_dir.resolve())
+        except ValueError:
+            raise ForbiddenError(
+                "Artifact 文件不在任务 outputs 目录内",
+                "errors.skill.path_outside_root",
+            )
 
     @staticmethod
     def validate_output_file(path: Path, outputs_dir: Path) -> Path:

@@ -4,10 +4,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.services.hermes_skill.artifact_service import ArtifactService
 from app.core.config import settings
+from app.core.exceptions import ArtifactWorkspaceRootUnresolvedError
 
 
 @pytest.mark.asyncio
-async def test_compute_outputs_dir_uses_tmp_fallback():
+async def test_compute_outputs_dir_raises_when_root_unresolved():
     db = AsyncMock()
     service = ArtifactService(db)
 
@@ -20,10 +21,8 @@ async def test_compute_outputs_dir_uses_tmp_fallback():
     db.get.return_value = ws_result
 
     with patch.object(settings, "HERMES_WORKSPACE_ROOT", ""):
-        result = await service.compute_outputs_dir(task)
-    assert "/tmp/nodeskclaw-workspaces/default" in str(result)
-    assert "task-1" in str(result)
-    assert "outputs" in str(result)
+        with pytest.raises(ArtifactWorkspaceRootUnresolvedError):
+            await service.compute_outputs_dir(task)
 
 
 @pytest.mark.asyncio

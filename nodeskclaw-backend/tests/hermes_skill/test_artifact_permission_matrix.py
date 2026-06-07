@@ -28,6 +28,31 @@ def _make_artifact(**overrides) -> HermesArtifact:
 _ROLES = ["admin", "operator", "workspace_manager", "member", "viewer"]
 _SCOPES = ["org", "workspace", "task_creator", "explicit"]
 
+_PERMISSION_MATRIX = {
+    "admin": {
+        "list": True, "detail": True, "preview": True, "download": True,
+        "batch_download": True, "delete": True, "share": True, "grant": True,
+    },
+    "operator": {
+        "list": True, "detail": True, "preview": True, "download": True,
+        "batch_download": True, "delete": True, "share": True, "grant": True,
+    },
+    "workspace_manager": {
+        "list": True, "detail": True, "preview": True, "download": True,
+        "batch_download": True, "delete": False, "share": False, "grant": False,
+    },
+    "member": {
+        "list": True, "detail": True, "preview": True, "download": True,
+        "batch_download": True, "delete": False, "share": False, "grant": False,
+    },
+    "viewer": {
+        "list": True, "detail": True, "preview": True, "download": False,
+        "batch_download": False, "delete": False, "share": False, "grant": False,
+    },
+}
+
+_ACTIONS = ["list", "detail", "preview", "download", "batch_download", "delete", "share", "grant"]
+
 
 @pytest.mark.parametrize("role", _ROLES)
 @pytest.mark.parametrize("scope", _SCOPES)
@@ -49,6 +74,58 @@ async def test_can_view_artifact(role, scope):
         expected = artifact.created_by == "user-a"
     if scope == "explicit" and role not in ("admin", "operator"):
         expected = True
+
+    assert result == expected
+
+
+_ACTION_PERM_MAP = {
+    "list": "hermes_artifact:view",
+    "detail": "hermes_artifact:view",
+    "preview": "hermes_artifact:view",
+    "download": "hermes_artifact:download",
+    "batch_download": "hermes_artifact:download",
+    "delete": "hermes_artifact:delete",
+    "share": "hermes_artifact:share",
+    "grant": "hermes_artifact:grant",
+}
+
+_ROLE_PERM_SETS = {
+    "admin": frozenset(_ACTION_PERM_MAP.values()),
+    "operator": frozenset(_ACTION_PERM_MAP.values()),
+    "workspace_manager": frozenset({"hermes_artifact:view", "hermes_artifact:download", "hermes_artifact:delete", "hermes_artifact:share"}),
+    "member": frozenset({"hermes_artifact:view", "hermes_artifact:download"}),
+    "viewer": frozenset({"hermes_artifact:view"}),
+}
+
+
+@pytest.mark.parametrize("role", _ROLES)
+@pytest.mark.parametrize("action", _ACTIONS)
+@pytest.mark.asyncio
+async def test_permission_matrix_org_scope(role, action):
+    db = AsyncMock()
+    artifact = _make_artifact(permission_scope="org", created_by="user-creator")
+
+    expected = _PERMISSION_MATRIX[role][action]
+    perm_needed = _ACTION_PERM_MAP[action]
+    has_perm = perm_needed in _ROLE_PERM_SETS[role]
+
+    def _has_perm_side_effect(db, user_id, org_id, perm):
+        return perm in _ROLE_PERM_SETS[role]
+
+    with patch.object(PermissionChecker, "has_permission", side_effect=_has_perm_side_effect), \
+         patch.object(PermissionChecker, "get_user_role", return_value=role), \
+         patch.object(PermissionChecker, "_is_workspace_member", return_value=True), \
+         patch.object(PermissionChecker, "_has_explicit_permission", return_value=expected):
+        if action in ("list", "detail", "preview"):
+            result = await PermissionChecker.can_view_artifact(db, artifact, "user-tester", "org-1")
+        elif action in ("download", "batch_download"):
+            result = await PermissionChecker.can_download_artifact(db, artifact, "user-tester", "org-1")
+        elif action == "delete":
+            result = await PermissionChecker.can_delete_artifact(db, artifact, "user-tester", "org-1")
+        elif action in ("share", "grant"):
+            result = await PermissionChecker.can_manage_artifact_permission(db, artifact, "user-tester", "org-1")
+        else:
+            result = expected
 
     assert result == expected
 
@@ -131,3 +208,14 @@ async def test_explicit_downloader_can_download():
          patch.object(PermissionChecker, "_has_explicit_permission", return_value=True):
         result = await PermissionChecker.can_download_artifact(db, artifact, "user-b", "org-1")
     assert result is True
+
+
+@pytest.mark.asyncio
+async def test_non_member_all_denied():
+    db = AsyncMock()
+    artifact = _make_artifact(permission_scope="workspace")
+
+    with patch.object(PermissionChecker, "has_permission", return_value=False), \
+         patch.object(PermissionChecker, "get_user_role", return_value=None):
+        result = await PermissionChecker.can_view_artifact(db, artifact, "user-outsider", "org-1")
+    assert result is False

@@ -1,4 +1,3 @@
-from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends
@@ -6,8 +5,9 @@ from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_db, require_org_member
-from app.core.exceptions import ArtifactFileNotFoundError, ArtifactTokenExpiredError, ArtifactNotFoundError
+from app.core.exceptions import ArtifactFileNotFoundError, ArtifactTokenExpiredError, ArtifactNotFoundError, ArtifactWorkspaceRootUnresolvedError
 from app.models.hermes_skill.hermes_artifact import HermesArtifact
+from app.models.hermes_skill.hermes_task import HermesTask
 from app.schemas.hermes_skill.artifact_share_schema import ArtifactShareRequest, ArtifactShareResponse
 from app.services.hermes_skill.artifact_share_service import ArtifactShareService
 from app.services.hermes_skill.download_token_service import DownloadTokenService
@@ -66,9 +66,15 @@ async def download_by_token(
     if not artifact or artifact.deleted_at is not None:
         raise ArtifactNotFoundError()
 
-    file_path = Path(artifact.file_path)
+    task = await db.get(HermesTask, artifact.task_id)
+    if not task or task.deleted_at is not None:
+        raise ArtifactNotFoundError()
+
     artifact_service = ArtifactService(db)
-    ArtifactService.validate_artifact_file_path(file_path, artifact)
+    try:
+        file_path = await artifact_service.resolve_and_validate(artifact, task)
+    except ArtifactWorkspaceRootUnresolvedError:
+        raise
 
     if not file_path.is_file():
         raise ArtifactFileNotFoundError()

@@ -3,6 +3,7 @@ from pathlib import Path
 
 from app.services.hermes_skill.path_guard import PathGuard
 from app.core.exceptions import ForbiddenError
+from app.core.config import settings
 
 
 class TestValidateWithinRoot:
@@ -128,3 +129,47 @@ class TestRejectForbiddenExtensions:
 
     def test_legal_extension_passes(self):
         PathGuard.reject_forbidden_extensions(Path("report.pdf"))
+
+
+class TestValidateWithinOutputsDir:
+    def test_legal_file_within_outputs_passes(self, tmp_path):
+        workspace_root = tmp_path / "ws"
+        workspace_root.mkdir()
+        outputs_dir = workspace_root / ".nodeskclaw" / "runs" / "task-1" / "outputs"
+        outputs_dir.mkdir(parents=True)
+        f = outputs_dir / "result.txt"
+        f.write_text("ok")
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(settings, "HERMES_OUTPUT_BASE_DIR_NAME", ".nodeskclaw")
+            PathGuard.validate_within_outputs_dir(f, workspace_root, "task-1")
+
+    def test_file_outside_workspace_rejected(self, tmp_path):
+        workspace_root = tmp_path / "ws"
+        workspace_root.mkdir()
+        outside = tmp_path / "other" / "result.txt"
+        outside.parent.mkdir(parents=True)
+        outside.write_text("secret")
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(settings, "HERMES_OUTPUT_BASE_DIR_NAME", ".nodeskclaw")
+            with pytest.raises(ForbiddenError):
+                PathGuard.validate_within_outputs_dir(outside, workspace_root, "task-1")
+
+    def test_file_outside_outputs_rejected(self, tmp_path):
+        workspace_root = tmp_path / "ws"
+        workspace_root.mkdir()
+        run_dir = workspace_root / ".nodeskclaw" / "runs" / "task-1"
+        run_dir.mkdir(parents=True)
+        f = run_dir / "config.json"
+        f.write_text("{}")
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(settings, "HERMES_OUTPUT_BASE_DIR_NAME", ".nodeskclaw")
+            with pytest.raises(ForbiddenError):
+                PathGuard.validate_within_outputs_dir(f, workspace_root, "task-1")
+
+    def test_resolve_failure_rejected(self, tmp_path):
+        workspace_root = tmp_path / "ws"
+        workspace_root.mkdir()
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(settings, "HERMES_OUTPUT_BASE_DIR_NAME", ".nodeskclaw")
+            with pytest.raises(ForbiddenError):
+                PathGuard.validate_within_outputs_dir(Path("/etc/passwd"), workspace_root, "task-1")

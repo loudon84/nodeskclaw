@@ -39,14 +39,18 @@ def test_resolve_artifact_file_path_empty():
 
 
 def test_validate_artifact_file_path_legal(tmp_path):
-    root = tmp_path / "outputs"
-    root.mkdir()
-    f = root / "result.txt"
+    from app.core.config import settings
+
+    workspace_root = tmp_path / "ws"
+    workspace_root.mkdir()
+    outputs_dir = workspace_root / ".nodeskclaw" / "runs" / "task-1" / "outputs"
+    outputs_dir.mkdir(parents=True)
+    f = outputs_dir / "result.txt"
     f.write_text("ok")
 
-    artifact = MagicMock()
-    artifact.file_path = str(f)
-    ArtifactService.validate_artifact_file_path(f, artifact)
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(settings, "HERMES_OUTPUT_BASE_DIR_NAME", ".nodeskclaw")
+        ArtifactService.validate_artifact_file_path(f, workspace_root, "task-1")
 
 
 def test_guess_content_type():

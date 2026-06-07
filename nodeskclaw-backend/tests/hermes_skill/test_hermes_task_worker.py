@@ -116,3 +116,119 @@ async def test_execute_task_agent_unreachable():
 
     assert task.status == TaskStatus.FAILED
     assert task.error_code == "AGENT_UNREACHABLE"
+
+
+@pytest.mark.asyncio
+async def test_execute_task_full_lifecycle():
+    worker = HermesTaskWorker()
+    db = AsyncMock()
+
+    task = MagicMock()
+    task.id = "task-lifecycle"
+    task.org_id = "org-1"
+    task.skill_id = "skill-1"
+    task.tool_name = "lifecycle_tool"
+    task.agent_id = "agent-1"
+    task.status = TaskStatus.ACCEPTED
+    task.arguments = {}
+    task.deleted_at = None
+    task.user_id = "user-1"
+
+    with patch("app.services.hermes_skill.hermes_task_worker.HermesAgentAdapter") as mock_adapter_cls, \
+         patch("app.services.hermes_skill.hermes_task_worker.TaskEventService") as mock_event_svc, \
+         patch("app.services.hermes_skill.hermes_task_worker.SkillAuditLogger") as mock_audit, \
+         patch("app.services.hermes_skill.hermes_task_worker.ArtifactService") as mock_artifact_svc:
+        mock_adapter = AsyncMock()
+        mock_adapter.submit_run.return_value = MagicMock(run_id="run-1")
+        mock_adapter_cls.return_value = mock_adapter
+        mock_event_svc_inst = AsyncMock()
+        mock_event_svc.return_value = mock_event_svc_inst
+        mock_audit.return_value = AsyncMock()
+        mock_artifact_svc_inst = AsyncMock()
+        mock_artifact_svc.return_value = mock_artifact_svc_inst
+
+        await worker._execute_task(db, task)
+
+    assert task.status == TaskStatus.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_execute_task_stream_interrupted_marks_failed():
+    worker = HermesTaskWorker()
+    db = AsyncMock()
+
+    task = MagicMock()
+    task.id = "task-stream-int"
+    task.org_id = "org-1"
+    task.skill_id = "skill-1"
+    task.tool_name = "stream_tool"
+    task.agent_id = "agent-1"
+    task.status = TaskStatus.ACCEPTED
+    task.arguments = {}
+    task.deleted_at = None
+    task.user_id = "user-1"
+
+    with patch("app.services.hermes_skill.hermes_task_worker.HermesAgentAdapter") as mock_adapter_cls, \
+         patch("app.services.hermes_skill.hermes_task_worker.TaskEventService") as mock_event_svc, \
+         patch("app.services.hermes_skill.hermes_task_worker.SkillAuditLogger") as mock_audit:
+        mock_adapter = AsyncMock()
+        mock_adapter.submit_run.side_effect = ConnectionError("Stream interrupted")
+        mock_adapter_cls.return_value = mock_adapter
+        mock_event_svc.return_value = AsyncMock()
+        mock_audit.return_value = AsyncMock()
+
+        await worker._execute_task(db, task)
+
+    assert task.status == TaskStatus.FAILED
+
+
+@pytest.mark.asyncio
+async def test_scan_failed_does_not_override_completed():
+    worker = HermesTaskWorker()
+    db = AsyncMock()
+
+    task = MagicMock()
+    task.id = "task-scan-fail"
+    task.org_id = "org-1"
+    task.skill_id = "skill-1"
+    task.tool_name = "scan_fail_tool"
+    task.agent_id = "agent-1"
+    task.status = TaskStatus.ACCEPTED
+    task.arguments = {}
+    task.deleted_at = None
+    task.user_id = "user-1"
+
+    with patch("app.services.hermes_skill.hermes_task_worker.HermesAgentAdapter") as mock_adapter_cls, \
+         patch("app.services.hermes_skill.hermes_task_worker.TaskEventService") as mock_event_svc, \
+         patch("app.services.hermes_skill.hermes_task_worker.SkillAuditLogger") as mock_audit, \
+         patch("app.services.hermes_skill.hermes_task_worker.ArtifactService") as mock_artifact_svc:
+        mock_adapter = AsyncMock()
+        mock_adapter.submit_run.return_value = MagicMock(run_id="run-scan")
+        mock_adapter_cls.return_value = mock_adapter
+        mock_event_svc.return_value = AsyncMock()
+        mock_audit.return_value = AsyncMock()
+        mock_artifact_svc_inst = AsyncMock()
+        mock_artifact_svc_inst.scan_and_register.side_effect = Exception("Scan failed")
+        mock_artifact_svc.return_value = mock_artifact_svc_inst
+
+        await worker._execute_task(db, task)
+
+    assert task.status == TaskStatus.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_output_dir_not_exist_scan_empty():
+    from app.services.hermes_skill.artifact_service import ArtifactService
+    from app.core.config import settings
+
+    db = AsyncMock()
+    service = ArtifactService(db)
+
+    task = MagicMock()
+    task.id = "task-no-outputs"
+    task.workspace_id = None
+    task.agent_id = None
+
+    with patch.object(settings, "HERMES_WORKSPACE_ROOT", "/nonexistent/path"):
+        with pytest.raises(Exception):
+            await service.scan_and_register("task-no-outputs", "org-1")
