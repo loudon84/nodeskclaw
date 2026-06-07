@@ -93,14 +93,6 @@ class DownloadTokenService:
             locked.is_active = False
         await self.db.flush()
 
-    async def validate_and_consume(
-        self,
-        token: str,
-    ) -> ArtifactDownloadToken:
-        record = await self.get_valid_token(token)
-        await self.consume_token(record)
-        return record
-
     async def deactivate_tokens_for_artifact(
         self,
         artifact_id: str,

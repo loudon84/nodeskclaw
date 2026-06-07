@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import Column, ForeignKey, Index, Integer, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -45,4 +45,14 @@ class HermesArtifact(BaseModel):
         Index("ix_hermes_artifacts_org_scope", "org_id", "permission_scope"),
         Index("ix_hermes_artifacts_workspace", "workspace_id"),
         Index("ix_hermes_artifacts_content_type", "content_type"),
+        Index(
+            "ix_hermes_artifacts_scope_creator",
+            "org_id", "permission_scope", "created_by",
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+        Index(
+            "ix_hermes_artifacts_task_scope",
+            "task_id", "permission_scope",
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
     )

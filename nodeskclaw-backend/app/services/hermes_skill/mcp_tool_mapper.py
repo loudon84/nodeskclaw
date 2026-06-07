@@ -70,6 +70,7 @@ class McpToolMapper:
         jsonrpc_id: Any = None,
     ) -> dict[str, Any]:
         if user_id:
+            await PermissionChecker.require_permission(self.db, user_id, org_id, "skill:view")
             await PermissionChecker.require_permission(self.db, user_id, org_id, "skill:invoke")
 
         result = await self.db.execute(
@@ -150,6 +151,16 @@ class McpToolMapper:
             payload={"tool_name": tool_name, "skill_id": skill.skill_id},
         )
         self.db.add(task_event)
+
+        queued_event = HermesTaskEvent(
+            id=str(uuid.uuid4()),
+            org_id=org_id,
+            task_id=task.id,
+            event_type=EventType.TASK_QUEUED,
+            event_seq=1,
+            payload={"status": "queued"},
+        )
+        self.db.add(queued_event)
 
         await self.db.commit()
 

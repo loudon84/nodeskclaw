@@ -29,7 +29,7 @@ class HermesAgentAdapter:
         if not base_url:
             raise BadRequestError("Hermes Agent 地址未配置", "errors.task.agent_no_base_url")
 
-        output_dir = self._compute_output_dir(task)
+        output_dir = await self.compute_output_dir_for_task(task)
 
         payload = {
             "task_id": task.id,
@@ -190,10 +190,6 @@ class HermesAgentAdapter:
                 domain = f"https://{domain}"
             return domain.rstrip("/")
         return None
-
-    @staticmethod
-    def _compute_output_dir(task: HermesTask) -> str | None:
-        return f".{settings.HERMES_OUTPUT_BASE_DIR_NAME.lstrip('.')}/runs/{task.id}/outputs"
 
     async def compute_output_dir_for_task(self, task: HermesTask) -> str:
         instance = await self._get_instance(task.agent_id)

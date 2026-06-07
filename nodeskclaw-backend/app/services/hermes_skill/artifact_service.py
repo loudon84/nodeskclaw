@@ -264,11 +264,7 @@ class ArtifactService:
             raise ArtifactPreviewUnsupportedError()
 
         file_path = Path(artifact.file_path)
-        outputs_root = self._get_workspace_root(artifact)
-        if outputs_root:
-            PathGuard.validate_within_root(file_path, outputs_root)
-        else:
-            PathGuard.validate_within_root(file_path, Path("/tmp"))
+        self.validate_artifact_file_path(file_path, artifact)
 
         if not file_path.is_file():
             raise ArtifactFileNotFoundError()
@@ -308,11 +304,7 @@ class ArtifactService:
             await self.ensure_artifact_downloadable(artifact, user_id, org_id)
 
         file_path = Path(artifact.file_path)
-        outputs_root = self._get_workspace_root(artifact)
-        if outputs_root:
-            PathGuard.validate_file_for_download(file_path, outputs_root)
-        else:
-            PathGuard.validate_file_for_download(file_path, Path("/tmp"))
+        self.validate_artifact_file_path(file_path, artifact)
 
         if not file_path.is_file():
             raise ArtifactFileNotFoundError()
@@ -453,28 +445,3 @@ class ArtifactService:
             PathGuard.validate_file_for_download(file_path, workspace_root)
         else:
             PathGuard.validate_file_for_download(file_path, Path("/tmp"))
-
-    async def get_artifact_by_token(
-        self,
-        token: str,
-        token_service,
-    ) -> HermesArtifact | None:
-        from app.core.exceptions import ArtifactTokenExpiredError
-        try:
-            token_record = await token_service.validate_and_consume(token)
-        except ArtifactTokenExpiredError:
-            return None
-
-        artifact = await self.db.get(HermesArtifact, token_record.artifact_id)
-        if not artifact or artifact.deleted_at is not None:
-            return None
-
-        file_path = Path(artifact.file_path)
-        if not file_path.is_file():
-            token_record.uses_remaining += 1
-            if token_record.uses_remaining > 0:
-                token_record.is_active = True
-            await self.db.flush()
-            return None
-
-        return artifact

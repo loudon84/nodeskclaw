@@ -175,11 +175,7 @@ async def batch_download_artifacts(
             raise ArtifactBatchSizeExceededError()
 
         p = Path(artifact.file_path)
-        workspace_root = service._get_workspace_root(artifact)
-        if workspace_root:
-            PathGuard.validate_file_for_download(p, workspace_root)
-        else:
-            PathGuard.validate_file_for_download(p, Path("/tmp"))
+        service.validate_artifact_file_path(p, artifact)
 
         if p.is_file():
             rel = artifact.relative_path or artifact.file_name

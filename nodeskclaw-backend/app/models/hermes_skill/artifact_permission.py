@@ -27,4 +27,9 @@ class ArtifactPermission(BaseModel):
             unique=True,
             postgresql_where=text("deleted_at IS NULL"),
         ),
+        Index(
+            "ix_artifact_permissions_org_user",
+            "org_id", "user_id",
+            postgresql_where=text("deleted_at IS NULL AND revoked_at IS NULL"),
+        ),
     )

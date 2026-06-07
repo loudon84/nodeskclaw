@@ -14,7 +14,6 @@ from app.services.hermes_skill.download_token_service import DownloadTokenServic
 from app.services.hermes_skill.artifact_service import ArtifactService
 from app.services.hermes_skill.permission_checker import PermissionChecker
 from app.services.hermes_skill.artifact_audit_service import ArtifactAuditService
-from app.services.hermes_skill.path_guard import PathGuard
 
 router = APIRouter()
 
@@ -69,11 +68,7 @@ async def download_by_token(
 
     file_path = Path(artifact.file_path)
     artifact_service = ArtifactService(db)
-    workspace_root = artifact_service._get_workspace_root(artifact)
-    if workspace_root:
-        PathGuard.validate_file_for_download(file_path, workspace_root)
-    else:
-        PathGuard.validate_file_for_download(file_path, Path("/tmp"))
+    ArtifactService.validate_artifact_file_path(file_path, artifact)
 
     if not file_path.is_file():
         raise ArtifactFileNotFoundError()
