@@ -14,6 +14,7 @@ _JSONRPC_ERROR_MAP = {
     "errors.skill.tool_not_installed": -32002,
     "errors.skill.permission_denied": -32003,
     "errors.skill.input_schema_validation_failed": -32004,
+    "errors.member.skill_not_granted": -32003,
 }
 
 

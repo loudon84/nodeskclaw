@@ -66,7 +66,18 @@ class MemberInfo(BaseModel):
     is_super_admin: bool = False
     user_name: str | None = None
     user_email: str | None = None
+    username: str | None = None
     user_avatar_url: str | None = None
+    is_active: bool | None = None
+    must_change_password: bool | None = None
+    department: str | None = None
+    job_title: str | None = None
+    employee_no: str | None = None
+    supervisor_membership_id: str | None = None
+    supervisor_name: str | None = None
+    direct_report_count: int = 0
+    skill_grant_count: int = 0
+    mcp_skill_grant_count: int = 0
     created_at: datetime
 
     model_config = {"from_attributes": True}

@@ -21,6 +21,14 @@ from app.models.org_membership import OrgMembership
 from app.models.organization import Organization
 from app.models.user import User
 from app.schemas.common import ApiResponse
+from app.schemas.member import (
+    CreateHumanMemberRequest,
+    CreateHumanMemberResponse,
+    MemberSkillGrantListResponse,
+    MemberSkillGrantSaveResult,
+    ReplaceMemberSkillGrantsRequest,
+    UpdateMemberProfileRequest,
+)
 from app.schemas.organization import (
     AddMemberRequest,
     CollaborationDepthUpdate,
@@ -32,7 +40,7 @@ from app.schemas.organization import (
     ResetPasswordResponse,
     UpdateMemberRoleRequest,
 )
-from app.services import auth_service, org_service
+from app.services import auth_service, member_skill_service, org_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -320,8 +328,112 @@ async def reset_member_password(
         )
 
     plain = await auth_service.admin_reset_password(user_id, db)
+    target_user = (await db.execute(
+        select(User).where(User.id == user_id, User.deleted_at.is_(None))
+    )).scalar_one_or_none()
+    if target_user:
+        target_user.must_change_password = True
+        await db.commit()
     await hooks.emit("operation_audit", action="org.member_password_reset", target_type="org_membership", target_id=user_id, actor_id=current_user.id, org_id=org_id)
     return ApiResponse(data=ResetPasswordResponse(password=plain))
+
+
+@router.post("/{org_id}/members/create-human", response_model=ApiResponse[CreateHumanMemberResponse])
+async def create_human_member(
+    org_id: str,
+    body: CreateHumanMemberRequest,
+    db: AsyncSession = Depends(get_db),
+    org_ctx: tuple = Depends(require_org_admin),
+):
+    actor, _org = org_ctx
+    member = await org_service.create_human_member(org_id, body, actor, db)
+    await hooks.emit(
+        "operation_audit",
+        action="org.human_member_created",
+        target_type="org_membership",
+        target_id=member.id,
+        actor_id=actor.id,
+        org_id=org_id,
+        details={"user_id": member.user_id, "email": member.user_email},
+    )
+    return ApiResponse(data=CreateHumanMemberResponse(member=member))
+
+
+@router.patch("/{org_id}/members/{membership_id}/profile", response_model=ApiResponse[MemberInfo])
+async def update_member_profile(
+    org_id: str,
+    membership_id: str,
+    body: UpdateMemberProfileRequest,
+    db: AsyncSession = Depends(get_db),
+    org_ctx: tuple = Depends(require_org_admin),
+):
+    actor, _org = org_ctx
+    member = await org_service.update_member_profile(org_id, membership_id, body, db)
+    await hooks.emit(
+        "operation_audit",
+        action="org.member_profile_updated",
+        target_type="org_membership",
+        target_id=membership_id,
+        actor_id=actor.id,
+        org_id=org_id,
+        details={"user_id": member.user_id},
+    )
+    if body.supervisor_membership_id is not None:
+        await hooks.emit(
+            "operation_audit",
+            action="org.member_supervisor_updated",
+            target_type="org_membership",
+            target_id=membership_id,
+            actor_id=actor.id,
+            org_id=org_id,
+            details={"supervisor_membership_id": body.supervisor_membership_id},
+        )
+    return ApiResponse(data=member)
+
+
+@router.get("/{org_id}/members/{membership_id}/skills", response_model=ApiResponse[MemberSkillGrantListResponse])
+async def get_member_skill_grants(
+    org_id: str,
+    membership_id: str,
+    db: AsyncSession = Depends(get_db),
+    org_ctx: tuple = Depends(require_org_admin),
+):
+    data = await member_skill_service.list_member_skill_grants(org_id, membership_id, db)
+    return ApiResponse(data=data)
+
+
+@router.put("/{org_id}/members/{membership_id}/skills", response_model=ApiResponse[MemberSkillGrantSaveResult])
+async def replace_member_skill_grants(
+    org_id: str,
+    membership_id: str,
+    body: ReplaceMemberSkillGrantsRequest,
+    db: AsyncSession = Depends(get_db),
+    org_ctx: tuple = Depends(require_org_admin),
+):
+    actor, _org = org_ctx
+    data = await member_skill_service.replace_member_skill_grants(
+        org_id, membership_id, body, actor, db,
+    )
+    await hooks.emit(
+        "operation_audit",
+        action="org.member_skill_grants_replaced",
+        target_type="org_membership",
+        target_id=membership_id,
+        actor_id=actor.id,
+        org_id=org_id,
+        details={"skill_grant_count": data.skill_grant_count},
+    )
+    return ApiResponse(data=data)
+
+
+@router.get("/{org_id}/mcp-skills", response_model=ApiResponse[list])
+async def list_mcp_skills(
+    org_id: str,
+    db: AsyncSession = Depends(get_db),
+    _org_ctx: tuple = Depends(require_org_admin),
+):
+    items = await member_skill_service.list_available_mcp_skills(org_id, db)
+    return ApiResponse(data=items)
 
 
 # ── 组织级 AKR 汇总 ────────────────────────────────────

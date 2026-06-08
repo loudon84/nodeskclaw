@@ -12,6 +12,7 @@ from app.models.base import not_deleted
 from app.models.org_membership import OrgMembership, OrgRole
 from app.models.organization import Organization
 from app.models.user import User
+from app.schemas.member import CreateHumanMemberRequest, UpdateMemberProfileRequest
 from app.schemas.organization import MemberInfo, OrgCreate, OrgInfo, OrgUpdate
 
 logger = logging.getLogger(__name__)
@@ -151,6 +152,135 @@ async def delete_org(org_id: str, db: AsyncSession) -> None:
 
 # ── 成员管理 ─────────────────────────────────────────────
 
+_MAX_SUPERVISOR_DEPTH = 50
+
+
+async def validate_supervisor(
+    org_id: str,
+    target_membership_id: str | None,
+    supervisor_membership_id: str | None,
+    db: AsyncSession,
+) -> None:
+    if not supervisor_membership_id:
+        return
+
+    if target_membership_id and supervisor_membership_id == target_membership_id:
+        raise BadRequestError(
+            "不能将自己设为主管",
+            message_key="errors.member.supervisor_self",
+        )
+
+    sup_result = await db.execute(
+        select(OrgMembership).where(
+            OrgMembership.id == supervisor_membership_id,
+            OrgMembership.org_id == org_id,
+            not_deleted(OrgMembership),
+        )
+    )
+    if sup_result.scalar_one_or_none() is None:
+        raise BadRequestError(
+            "主管不属于当前组织",
+            message_key="errors.member.supervisor_not_in_org",
+        )
+
+    if not target_membership_id:
+        return
+
+    current_id: str | None = supervisor_membership_id
+    depth = 0
+    while current_id and depth < _MAX_SUPERVISOR_DEPTH:
+        if current_id == target_membership_id:
+            raise BadRequestError(
+                "主管关系形成循环",
+                message_key="errors.member.supervisor_cycle",
+            )
+        row = await db.execute(
+            select(OrgMembership.supervisor_membership_id).where(
+                OrgMembership.id == current_id,
+                not_deleted(OrgMembership),
+            )
+        )
+        current_id = row.scalar_one_or_none()
+        depth += 1
+
+
+def _build_member_info(
+    membership: OrgMembership,
+    user: User,
+    *,
+    supervisor_name: str | None = None,
+    direct_report_count: int = 0,
+    skill_grant_count: int = 0,
+    mcp_skill_grant_count: int = 0,
+) -> MemberInfo:
+    return MemberInfo(
+        id=membership.id,
+        user_id=membership.user_id,
+        org_id=membership.org_id,
+        role=membership.role,
+        is_super_admin=user.is_super_admin,
+        user_name=user.name,
+        user_email=user.email,
+        username=user.username,
+        user_avatar_url=user.avatar_url,
+        is_active=user.is_active,
+        must_change_password=user.must_change_password,
+        department=membership.department,
+        job_title=membership.job_title,
+        employee_no=membership.employee_no,
+        supervisor_membership_id=membership.supervisor_membership_id,
+        supervisor_name=supervisor_name,
+        direct_report_count=direct_report_count,
+        skill_grant_count=skill_grant_count,
+        mcp_skill_grant_count=mcp_skill_grant_count,
+        created_at=membership.created_at,
+    )
+
+
+async def _enrich_members(
+    rows: list[tuple[OrgMembership, User]], db: AsyncSession,
+) -> list[MemberInfo]:
+    if not rows:
+        return []
+
+    from app.services.member_skill_service import count_member_grants
+
+    membership_ids = [m.id for m, _ in rows]
+    supervisor_ids = {m.supervisor_membership_id for m, _ in rows if m.supervisor_membership_id}
+
+    supervisor_names: dict[str, str] = {}
+    if supervisor_ids:
+        sup_result = await db.execute(
+            select(OrgMembership.id, User.name)
+            .join(User, OrgMembership.user_id == User.id)
+            .where(OrgMembership.id.in_(supervisor_ids), not_deleted(OrgMembership))
+        )
+        supervisor_names = {sid: name for sid, name in sup_result.all()}
+
+    report_result = await db.execute(
+        select(OrgMembership.supervisor_membership_id, func.count())
+        .where(
+            OrgMembership.supervisor_membership_id.in_(membership_ids),
+            not_deleted(OrgMembership),
+        )
+        .group_by(OrgMembership.supervisor_membership_id)
+    )
+    report_counts = {sid: cnt for sid, cnt in report_result.all()}
+
+    grant_counts = await count_member_grants(membership_ids, db)
+
+    members = []
+    for membership, user in rows:
+        total, mcp = grant_counts.get(membership.id, (0, 0))
+        members.append(_build_member_info(
+            membership, user,
+            supervisor_name=supervisor_names.get(membership.supervisor_membership_id or ""),
+            direct_report_count=report_counts.get(membership.id, 0),
+            skill_grant_count=total,
+            mcp_skill_grant_count=mcp,
+        ))
+    return members
+
 async def list_members(
     org_id: str, db: AsyncSession, *, current_user_id: str | None = None,
 ) -> list[MemberInfo]:
@@ -176,20 +306,7 @@ async def list_members(
             admin_filter,
         )
     )
-    members = []
-    for membership, user in result.all():
-        members.append(MemberInfo(
-            id=membership.id,
-            user_id=membership.user_id,
-            org_id=membership.org_id,
-            role=membership.role,
-            is_super_admin=user.is_super_admin,
-            user_name=user.name,
-            user_email=user.email,
-            user_avatar_url=user.avatar_url,
-            created_at=membership.created_at,
-        ))
-    return members
+    return await _enrich_members(list(result.all()), db)
 
 
 async def add_member(org_id: str, user_id: str, role: str, db: AsyncSession) -> MemberInfo:
@@ -253,20 +370,23 @@ async def update_member_role(org_id: str, membership_id: str, role: str, db: Asy
         raise NotFoundError("成员记录不存在")
 
     membership, user = row
+
+    if membership.role == OrgRole.admin and role != OrgRole.admin:
+        admin_count = await db.execute(
+            select(func.count()).where(
+                OrgMembership.org_id == org_id,
+                OrgMembership.role == OrgRole.admin,
+                not_deleted(OrgMembership),
+            )
+        )
+        if admin_count.scalar_one() <= 1:
+            raise ForbiddenError("组织至少需要一个管理员")
+
     membership.role = role
     await db.commit()
 
-    return MemberInfo(
-        id=membership.id,
-        user_id=membership.user_id,
-        org_id=membership.org_id,
-        role=membership.role,
-        is_super_admin=user.is_super_admin,
-        user_name=user.name,
-        user_email=user.email,
-        user_avatar_url=user.avatar_url,
-        created_at=membership.created_at,
-    )
+    enriched = await _enrich_members([(membership, user)], db)
+    return enriched[0]
 
 
 async def remove_member(org_id: str, membership_id: str, db: AsyncSession) -> None:
@@ -292,6 +412,16 @@ async def remove_member(org_id: str, membership_id: str, db: AsyncSession) -> No
     )
     if membership.role == OrgRole.admin and admin_count.scalar_one() <= 1:
         raise ForbiddenError("组织至少需要一个管理员")
+
+    subordinates = await db.execute(
+        select(OrgMembership).where(
+            OrgMembership.supervisor_membership_id == membership_id,
+            OrgMembership.org_id == org_id,
+            not_deleted(OrgMembership),
+        )
+    )
+    for sub in subordinates.scalars().all():
+        sub.supervisor_membership_id = None
 
     membership.soft_delete()
     await db.commit()
@@ -354,3 +484,165 @@ async def list_user_orgs(user: User, db: AsyncSession) -> list[OrgInfo]:
         info.member_count = count or 0
         orgs.append(info)
     return orgs
+
+
+async def create_human_member(
+    org_id: str,
+    body: CreateHumanMemberRequest,
+    actor: User,
+    db: AsyncSession,
+) -> MemberInfo:
+    await get_org(org_id, db)
+
+    if body.role not in (OrgRole.member, OrgRole.operator, OrgRole.admin):
+        raise BadRequestError("角色不合法", message_key="errors.member.invalid_role")
+
+    email = str(body.email).strip().lower()
+    username = (body.username or email.split("@")[0]).strip().lower()
+
+    if body.supervisor_membership_id:
+        await validate_supervisor(org_id, None, body.supervisor_membership_id, db)
+
+    username_exists = await db.execute(
+        select(User).where(
+            User.username == username,
+            not_deleted(User),
+        )
+    )
+    existing_username_user = username_exists.scalar_one_or_none()
+
+    user_result = await db.execute(
+        select(User).where(User.email == email, not_deleted(User))
+    )
+    user = user_result.scalar_one_or_none()
+
+    if user is None:
+        if existing_username_user:
+            raise ConflictError(
+                "用户名已被占用",
+                message_key="errors.member.username_taken",
+            )
+        from app.services.auth_service import _hash_password
+        user = User(
+            name=body.name.strip(),
+            email=email,
+            username=username,
+            password_hash=_hash_password(body.default_password),
+            must_change_password=body.must_change_password,
+            current_org_id=org_id,
+        )
+        db.add(user)
+        await db.flush()
+    else:
+        member_exists = await db.execute(
+            select(OrgMembership).where(
+                OrgMembership.user_id == user.id,
+                OrgMembership.org_id == org_id,
+                not_deleted(OrgMembership),
+            )
+        )
+        if member_exists.scalar_one_or_none():
+            raise ConflictError(
+                "用户已是当前组织成员",
+                message_key="errors.member.already_in_org",
+            )
+        if existing_username_user and existing_username_user.id != user.id:
+            raise ConflictError(
+                "用户名已被占用",
+                message_key="errors.member.username_taken",
+            )
+
+    membership = OrgMembership(
+        user_id=user.id,
+        org_id=org_id,
+        role=body.role,
+        department=body.department,
+        job_title=body.job_title,
+        employee_no=body.employee_no,
+        supervisor_membership_id=body.supervisor_membership_id,
+    )
+    db.add(membership)
+    await db.flush()
+
+    await validate_supervisor(org_id, membership.id, body.supervisor_membership_id, db)
+
+    if user.current_org_id is None:
+        user.current_org_id = org_id
+    if body.must_change_password:
+        user.must_change_password = True
+
+    await db.commit()
+    await db.refresh(membership)
+    await db.refresh(user)
+
+    if body.skill_ids:
+        from app.services.member_skill_service import create_initial_skill_grants
+        await create_initial_skill_grants(
+            org_id, membership.id, user.id, body.skill_ids, actor, db,
+        )
+
+    enriched = await _enrich_members([(membership, user)], db)
+    return enriched[0]
+
+
+async def update_member_profile(
+    org_id: str,
+    membership_id: str,
+    body: UpdateMemberProfileRequest,
+    db: AsyncSession,
+) -> MemberInfo:
+    result = await db.execute(
+        select(OrgMembership, User)
+        .join(User, OrgMembership.user_id == User.id)
+        .where(
+            OrgMembership.id == membership_id,
+            OrgMembership.org_id == org_id,
+            not_deleted(OrgMembership),
+            not_deleted(User),
+        )
+    )
+    row = result.first()
+    if row is None:
+        raise NotFoundError("成员记录不存在")
+
+    membership, user = row
+    data = body.model_dump(exclude_unset=True)
+
+    if "supervisor_membership_id" in data:
+        await validate_supervisor(
+            org_id, membership_id, data["supervisor_membership_id"], db,
+        )
+        membership.supervisor_membership_id = data["supervisor_membership_id"]
+
+    if "name" in data and data["name"] is not None:
+        user.name = data["name"].strip()
+    if "username" in data and data["username"] is not None:
+        new_username = data["username"].strip().lower()
+        dup = await db.execute(
+            select(User).where(
+                User.username == new_username,
+                User.id != user.id,
+                not_deleted(User),
+            )
+        )
+        if dup.scalar_one_or_none():
+            raise ConflictError(
+                "用户名已被占用",
+                message_key="errors.member.username_taken",
+            )
+        user.username = new_username
+    if "is_active" in data and data["is_active"] is not None:
+        user.is_active = data["is_active"]
+    if "department" in data:
+        membership.department = data["department"]
+    if "job_title" in data:
+        membership.job_title = data["job_title"]
+    if "employee_no" in data:
+        membership.employee_no = data["employee_no"]
+
+    await db.commit()
+    await db.refresh(membership)
+    await db.refresh(user)
+
+    enriched = await _enrich_members([(membership, user)], db)
+    return enriched[0]
