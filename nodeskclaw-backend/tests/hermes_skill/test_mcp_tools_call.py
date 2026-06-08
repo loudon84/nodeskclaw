@@ -42,9 +42,9 @@ async def test_tools_call_viewer_no_invoke():
 @pytest.mark.asyncio
 async def test_tools_call_tool_not_found():
     db = AsyncMock()
-    mock_result = AsyncMock()
+    mock_result = MagicMock()
     mock_result.scalar_one_or_none.return_value = None
-    db.execute.return_value = mock_result
+    db.execute = AsyncMock(return_value=mock_result)
 
     mapper = McpToolMapper(db)
     with patch.object(PermissionChecker, "require_permission", return_value=None):
@@ -63,15 +63,15 @@ async def test_tools_call_skill_not_installed():
     skill.is_mcp_exposed = True
     skill.is_active = True
 
-    mock_skill_result = AsyncMock()
+    mock_skill_result = MagicMock()
     mock_skill_result.scalar_one_or_none.return_value = skill
 
-    mock_install_result = AsyncMock()
+    mock_install_result = MagicMock()
     mock_install_result.scalar_one_or_none.return_value = None
 
     call_count = 0
 
-    def mock_execute(stmt):
+    async def mock_execute(stmt):
         nonlocal call_count
         call_count += 1
         if call_count <= 1:
@@ -108,15 +108,15 @@ async def test_tools_call_invalid_params():
     installation.workspace_id = "ws-1"
     installation.id = "inst-1"
 
-    mock_skill_result = AsyncMock()
+    mock_skill_result = MagicMock()
     mock_skill_result.scalar_one_or_none.return_value = skill
 
-    mock_install_result = AsyncMock()
+    mock_install_result = MagicMock()
     mock_install_result.scalar_one_or_none.return_value = installation
 
     call_count = 0
 
-    def mock_execute(stmt):
+    async def mock_execute(stmt):
         nonlocal call_count
         call_count += 1
         if call_count <= 1:
@@ -126,11 +126,18 @@ async def test_tools_call_invalid_params():
     db.execute.side_effect = mock_execute
 
     mapper = McpToolMapper(db)
-    with patch.object(PermissionChecker, "require_permission", return_value=None), \
-         patch("app.services.hermes_skill.mcp_tool_mapper.jsonschema") as mock_jsonschema:
-        mock_jsonschema.validate.side_effect = Exception("Validation failed")
-        mock_jsonschema.ValidationError = Exception
+    class _ValidationError(Exception):
+        def __init__(self, message: str):
+            self.message = message
+            super().__init__(message)
 
+    mock_jsonschema = MagicMock()
+    mock_jsonschema.ValidationError = _ValidationError
+    mock_jsonschema.validate.side_effect = _ValidationError("Validation failed")
+
+    with patch.object(PermissionChecker, "require_permission", return_value=None), \
+         patch("app.services.member_skill_service.require_invoke_skill", new_callable=AsyncMock), \
+         patch.dict("sys.modules", {"jsonschema": mock_jsonschema}):
         with pytest.raises(BadRequestError) as exc_info:
             await mapper.call_tool("test_tool", {"invalid": 123}, "org-1", "user-1")
     assert exc_info.value.message_key == "errors.skill.input_schema_validation_failed"
@@ -162,29 +169,34 @@ async def test_tools_call_creates_task_and_events():
     installation.workspace_id = "ws-1"
     installation.id = "inst-1"
 
-    mock_skill_result = AsyncMock()
+    mock_skill_result = MagicMock()
     mock_skill_result.scalar_one_or_none.return_value = skill
 
-    mock_install_result = AsyncMock()
+    mock_install_result = MagicMock()
     mock_install_result.scalar_one_or_none.return_value = installation
 
     call_count = 0
 
-    def mock_execute(stmt):
+    async def mock_execute(stmt):
         nonlocal call_count
         call_count += 1
         if call_count == 1:
             return mock_skill_result
         if call_count == 2:
             return mock_install_result
-        return AsyncMock()
+        return MagicMock()
 
     db.execute.side_effect = mock_execute
     db.flush = AsyncMock()
     db.commit = AsyncMock()
+    db.refresh = AsyncMock()
+    db.add = MagicMock()
+
+    skill.skill_id = "skill-ext-1"
 
     mapper = McpToolMapper(db)
-    with patch.object(PermissionChecker, "require_permission", return_value=None):
+    with patch.object(PermissionChecker, "require_permission", return_value=None), \
+         patch("app.services.member_skill_service.require_invoke_skill", new_callable=AsyncMock):
         result = await mapper.call_tool("test_tool", {}, "org-1", "user-1")
 
     assert result["tool_name"] == "test_tool"
@@ -222,9 +234,7 @@ async def test_mcp_router_tools_call_success():
         "params": {"name": "test_tool", "arguments": {}},
     }
 
-    with patch("app.api.hermes_skill.mcp_router.McpToolMapper") as mock_mapper_cls, \
-         patch("app.api.hermes_skill.mcp_router.require_org_member", return_value=(user, org)), \
-         patch("app.api.hermes_skill.mcp_router.get_db", return_value=db):
+    with patch("app.services.mcp_skill_gateway.handler.McpToolMapper") as mock_mapper_cls:
         mock_mapper = AsyncMock()
         mock_mapper.call_tool.return_value = mapper_result
         mock_mapper_cls.return_value = mock_mapper
@@ -254,7 +264,7 @@ async def test_mcp_router_tools_call_error_format():
     }
 
     db = AsyncMock()
-    with patch("app.api.hermes_skill.mcp_router.McpToolMapper") as mock_mapper_cls:
+    with patch("app.services.mcp_skill_gateway.handler.McpToolMapper") as mock_mapper_cls:
         mock_mapper = AsyncMock()
         mock_mapper.call_tool.side_effect = NotFoundError("MCP Tool nonexistent 不存在", "errors.skill.tool_not_found")
         mock_mapper_cls.return_value = mock_mapper
@@ -264,7 +274,8 @@ async def test_mcp_router_tools_call_error_format():
     assert result["jsonrpc"] == "2.0"
     assert result["id"] == 99
     assert "error" in result
-    assert result["error"]["code"] == -32001
+    assert result["error"]["code"] == -32011
+    assert result["error"]["data"]["errorCode"] == "MCP_GATEWAY_REQUEST_FAILED"
 
 
 @pytest.mark.asyncio
@@ -312,4 +323,5 @@ async def test_mcp_router_missing_params_name():
     db = AsyncMock()
 
     result = await mcp_jsonrpc(body, user_org=(user, org), db=db)
-    assert result["error"]["code"] == -32602
+    assert result["error"]["code"] == -32600
+    assert result["error"]["data"]["errorCode"] == "MCP_INVALID_REQUEST"

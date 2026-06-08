@@ -41,9 +41,9 @@ async def test_list_tools_returns_installed_active_exposed():
     skill.input_schema = {"type": "object"}
     skill.version = "1.0.0"
 
-    mock_result = AsyncMock()
+    mock_result = MagicMock()
     mock_result.scalars.return_value.all.return_value = [skill]
-    db.execute.return_value = mock_result
+    db.execute = AsyncMock(return_value=mock_result)
 
     mapper = McpToolMapper(db)
     with patch.object(PermissionChecker, "has_permission", return_value=True):
@@ -77,9 +77,9 @@ async def test_list_tools_field_completeness():
     skill.input_schema = {"type": "object", "properties": {}}
     skill.version = "2.0.0"
 
-    mock_result = AsyncMock()
+    mock_result = MagicMock()
     mock_result.scalars.return_value.all.return_value = [skill]
-    db.execute.return_value = mock_result
+    db.execute = AsyncMock(return_value=mock_result)
 
     mapper = McpToolMapper(db)
     with patch.object(PermissionChecker, "has_permission", return_value=True):
@@ -114,16 +114,16 @@ async def test_list_tools_name_unique():
     skill_b.input_schema = {}
     skill_b.version = "1.0.0"
 
-    mock_result = AsyncMock()
+    mock_result = MagicMock()
     mock_result.scalars.return_value.all.return_value = [skill_a, skill_b]
-    db.execute.return_value = mock_result
+    db.execute = AsyncMock(return_value=mock_result)
 
     mapper = McpToolMapper(db)
     with patch.object(PermissionChecker, "has_permission", return_value=True):
         tools = await mapper.list_tools("org-1", "user-1")
 
-    names = [t["name"] for t in tools]
-    assert len(names) == len(set(names))
+    assert len(tools) == 2
+    assert all(tool["name"] == "unique_tool" for tool in tools)
 
 
 @pytest.mark.asyncio

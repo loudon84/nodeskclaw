@@ -26,6 +26,7 @@ from app.api.channel_configs import router as channel_config_router
 from app.api.observability import router as observability_router
 from app.api.runtime_admin import router as runtime_admin_router
 from app.api.mcp import router as mcp_router
+from app.api.mcp_skill_gateway.router import router as mcp_skill_gateway_router
 from app.api.gateway.gateway_router import router as gateway_router
 from app.api.gateway.proxy_router import router as gateway_proxy_router
 from app.api.gateway.sse_router import router as gateway_sse_router
@@ -81,10 +82,13 @@ async def health_check():
 @api_router.get("/system/info", tags=["系统"])
 async def system_info():
     """暴露 edition 和启用的 feature 列表，供前端初始化使用。"""
+    from app.services.mcp_skill_gateway.constants import build_mcp_descriptor
+
     return {
         "edition": feature_gate.edition,
         "version": settings.APP_VERSION,
         "features": feature_gate.all_features(),
+        "mcp": build_mcp_descriptor(),
     }
 
 
@@ -170,6 +174,7 @@ api_router.include_router(invite_public_router, prefix="/invite", tags=["邀请�
 api_router.include_router(security_ws_router, tags=["安全评估"])
 api_router.include_router(tunnel_router, tags=["Agent Tunnel"])
 api_router.include_router(task_orchestrator_router, tags=["任务编排"])
+api_router.include_router(mcp_skill_gateway_router, tags=["MCP Skill Gateway"])
 api_router.include_router(gateway_router, prefix="/gateway", tags=["Gateway 管理"])
 api_router.include_router(gateway_proxy_router, prefix="/gateway", tags=["Gateway 代理"])
 api_router.include_router(gateway_sse_router, prefix="/gateway", tags=["Gateway SSE"])

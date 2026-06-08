@@ -151,6 +151,10 @@ API 路由同时挂载在两个前缀下：
 | 前缀 | 模块 | 说明 |
 |------|------|------|
 | `/api/v1/health` | 系统 | 健康检查 |
+| `GET /api/v1/system/info` | 系统 | edition、features、MCP descriptor |
+| `GET /api/v1/mcp/health` | MCP Skill Gateway | Desktop 联调健康检查 |
+| `POST /api/v1/mcp` | MCP Skill Gateway | JSON-RPC（`initialize`、`tools/list`、`tools/call`） |
+| `POST /api/v1/hermes/mcp` | Hermes Skill | 与 `/api/v1/mcp` 行为一致的兼容入口 |
 | `/api/v1/auth` | 认证 | 统一账号/验证码登录、token 刷新、密码管理 |
 | `PUT /api/v1/auth/me/password` | 认证 | 修改/设置密码 |
 | `/api/v1/orgs` | 组织 | 组织 CRUD、成员管理、管理员重置成员密码 |
@@ -702,3 +706,71 @@ Admin 后台权限**仅依赖 AdminMembership**，`is_super_admin` 不作为 Adm
 - `deleted_at = 时间戳`：已删除记录
 
 唯一约束使用 Partial Unique Index：`Index(..., unique=True, postgresql_where=text("deleted_at IS NULL"))`。
+
+## MCP Skill Gateway（Desktop 联调）
+
+Desktop 通过 `GET /api/v1/system/info` 读取 `mcp` descriptor，再对 `POST /api/v1/mcp` 发起 JSON-RPC 调用。认证使用 `Authorization: Bearer <access_token>`，响应为裸 JSON-RPC 2.0（非 `{code, message, data}` 包装）。
+
+### 错误码
+
+| errorCode | JSON-RPC code | 说明 |
+|-----------|---------------|------|
+| MCP_UNAUTHORIZED | -32001 | 未登录或 token 无效 |
+| MCP_FORBIDDEN | -32003 | 无组织权限 |
+| MCP_TOOLS_LIST_FAILED | -32011 | tools/list 失败 |
+| MCP_METHOD_NOT_FOUND | -32601 | 方法不存在 |
+| MCP_INVALID_REQUEST | -32600 | 请求非法 |
+
+`tools/list` 按用户 Skill 授权过滤；无授权时返回 `tools: []`。
+
+### 验收命令
+
+将 `BASE_URL` 和 `ACCESS_TOKEN` 替换为实际值。
+
+**system/info（bash）**
+
+```bash
+curl "${BASE_URL}/api/v1/system/info"
+```
+
+**initialize（bash）**
+
+```bash
+curl -i -X POST "${BASE_URL}/api/v1/mcp" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+  -d '{"jsonrpc":"2.0","id":"init-1","method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smc-copilot-desktop","version":"v6.4.1"}}}'
+```
+
+**tools/list（bash）**
+
+```bash
+curl -i -X POST "${BASE_URL}/api/v1/mcp" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+  -d '{"jsonrpc":"2.0","id":"tools-1","method":"tools/list","params":{}}'
+```
+
+**initialize（Windows cmd）**
+
+```bat
+curl -i -X POST http://localhost:4510/api/v1/mcp ^
+  -H "Content-Type: application/json" ^
+  -H "Accept: application/json, text/event-stream" ^
+  -H "Authorization: Bearer <ACCESS_TOKEN>" ^
+  -d "{\"jsonrpc\":\"2.0\",\"id\":\"init-1\",\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-06-18\",\"capabilities\":{},\"clientInfo\":{\"name\":\"smc-copilot-desktop\",\"version\":\"v6.4.1\"}}}"
+```
+
+**tools/list（Windows cmd）**
+
+```bat
+curl -i -X POST http://localhost:4510/api/v1/mcp ^
+  -H "Content-Type: application/json" ^
+  -H "Accept: application/json, text/event-stream" ^
+  -H "Authorization: Bearer <ACCESS_TOKEN>" ^
+  -d "{\"jsonrpc\":\"2.0\",\"id\":\"tools-1\",\"method\":\"tools/list\",\"params\":{}}"
+```
+
+> EE 设计文档（`ee/docs/后端架构设计.md`）需在私有仓库中同步补充 MCP Skill Gateway 章节。
