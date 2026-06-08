@@ -13,6 +13,8 @@ from app.models.cluster import Cluster  # noqa: F401
 from app.models.conversation import Conversation  # noqa: F401
 from app.models.corridor import CorridorHex, HexConnection  # noqa: F401
 from app.models.dead_letter import DeadLetter  # noqa: F401
+from app.models.desktop_device import DesktopDevice  # noqa: F401
+from app.models.desktop_hermes_profile import DesktopHermesProfile  # noqa: F401
 from app.models.decision_record import DecisionRecord  # noqa: F401
 from app.models.delivery_log import DeliveryLog  # noqa: F401
 from app.models.deploy_record import DeployRecord  # noqa: F401
@@ -34,6 +36,7 @@ from app.models.gene import (  # noqa: F401
     GenomeRating,
     InstanceGene,
 )
+from app.models.genehub_entitlement import GeneHubEntitlement  # noqa: F401
 from app.models.idempotency_cache import IdempotencyCache  # noqa: F401
 from app.models.instance import Instance  # noqa: F401
 from app.models.invitation import Invitation  # noqa: F401
@@ -79,6 +82,8 @@ from app.models.workspace_schedule import WorkspaceSchedule  # noqa: F401
 from app.models.workspace_task import WorkspaceTask  # noqa: F401
 from app.models.workspace_template import WorkspaceTemplate  # noqa: F401
 
+from app.models.hermes_installed_skill import HermesInstalledSkill  # noqa: F401
+from app.models.hermes_skill_install_job import HermesSkillInstallJob  # noqa: F401
 from app.models.hermes_skill import (  # noqa: F401
     HermesSkill,
     HermesSkillInstallation,
