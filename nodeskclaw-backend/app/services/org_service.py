@@ -505,14 +505,14 @@ async def create_human_member(
 
     username_exists = await db.execute(
         select(User).where(
-            User.username == username,
+            func.lower(User.username) == username,
             not_deleted(User),
         )
     )
     existing_username_user = username_exists.scalar_one_or_none()
 
     user_result = await db.execute(
-        select(User).where(User.email == email, not_deleted(User))
+        select(User).where(func.lower(User.email) == email, not_deleted(User))
     )
     user = user_result.scalar_one_or_none()
 
@@ -620,7 +620,7 @@ async def update_member_profile(
         new_username = data["username"].strip().lower()
         dup = await db.execute(
             select(User).where(
-                User.username == new_username,
+                func.lower(User.username) == new_username,
                 User.id != user.id,
                 not_deleted(User),
             )

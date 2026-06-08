@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from typing import Literal
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -115,6 +115,16 @@ async def _issue_tokens(user: User, db: AsyncSession) -> LoginResponse:
     )
 
 
+# ── 账号规范化 ────────────────────────────────────────────
+
+def _normalize_email(email: str) -> str:
+    return email.strip().lower()
+
+
+def _normalize_account(account: str) -> str:
+    return account.strip()
+
+
 # ── 邮箱域名白名单 ────────────────────────────────────────
 
 def _check_email_domain_allowed(email: str) -> None:
@@ -140,9 +150,12 @@ def _check_email_domain_allowed(email: str) -> None:
 
 async def login_with_email(email: str, password: str, db: AsyncSession) -> LoginResponse:
     """邮箱密码登录。"""
+    email = _normalize_email(email)
     _check_email_domain_allowed(email)
     result = await db.execute(
-        select(User).options(selectinload(User.oauth_connections)).where(User.email == email, User.deleted_at.is_(None))
+        select(User)
+        .options(selectinload(User.oauth_connections))
+        .where(func.lower(User.email) == email, User.deleted_at.is_(None))
     )
     user = result.scalar_one_or_none()
     if user is None or not user.password_hash:
@@ -310,6 +323,7 @@ async def login_with_account(
     account: str, password: str, db: AsyncSession
 ) -> LoginResponse:
     """Unified account+password login. Auto-detects email vs phone vs username."""
+    account = _normalize_account(account)
     account_type = _detect_account_type(account)
 
     if account_type == "email":
@@ -318,11 +332,18 @@ async def login_with_account(
     if account_type == "phone":
         return await _login_by_field(account, password, db, where_clause=User.phone == account)
 
-    return await _login_by_field(account, password, db, where_clause=User.username == account)
+    username = account.lower()
+    return await _login_by_field(
+        username,
+        password,
+        db,
+        where_clause=func.lower(User.username) == username,
+    )
 
 
 async def send_verification_code(account: str, db: AsyncSession) -> dict:
     """Send verification code. Email -> SMTP; phone -> SMS mock."""
+    account = _normalize_account(account)
     account_type = _detect_account_type(account)
 
     if account_type == "username":
@@ -338,6 +359,7 @@ async def send_verification_code(account: str, db: AsyncSession) -> dict:
     if account_type == "phone":
         return await send_sms_code(account)
 
+    account = _normalize_email(account)
     _check_email_domain_allowed(account)
 
     from app.services.email_service import get_smtp_config_for_email, send_verification_email
@@ -390,6 +412,7 @@ async def login_with_verification_code(
     account: str, code: str, db: AsyncSession
 ) -> LoginResponse:
     """Unified verification-code login. Phone auto-registers; email requires existing account."""
+    account = _normalize_account(account)
     account_type = _detect_account_type(account)
 
     if account_type == "username":
@@ -405,6 +428,7 @@ async def login_with_verification_code(
     if account_type == "phone":
         return await login_with_phone(account, code, db)
 
+    account = _normalize_email(account)
     _check_email_domain_allowed(account)
 
     stored = _verification_codes.get(account)
@@ -444,7 +468,7 @@ async def login_with_verification_code(
     result = await db.execute(
         select(User)
         .options(selectinload(User.oauth_connections))
-        .where(User.email == account, User.deleted_at.is_(None))
+        .where(func.lower(User.email) == account, User.deleted_at.is_(None))
     )
     user = result.scalar_one_or_none()
     if user is None:
