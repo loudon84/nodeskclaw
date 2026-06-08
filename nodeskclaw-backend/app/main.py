@@ -155,6 +155,11 @@ async def lifespan(app: FastAPI):
     logger = logging.getLogger(__name__)
     logger.info("NoDeskClaw %s starting (Python %s)", settings.APP_VERSION, sys.version.split()[0])
 
+    if settings.GENEHUB_BUNDLE_SIGNATURE_ENABLED and not settings.GENEHUB_BUNDLE_SIGNING_SECRET:
+        logger.warning(
+            "GENEHUB_BUNDLE_SIGNATURE_ENABLED=true 但未配置 GENEHUB_BUNDLE_SIGNING_SECRET，Bundle 签名将失败"
+        )
+
     if not settings.LLM_PROXY_URL:
         logger.fatal("LLM_PROXY_URL 未配置，服务无法启动。LLM Proxy 为必需组件。")
         sys.exit(1)

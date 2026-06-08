@@ -165,6 +165,11 @@ class Settings(BaseSettings):
     DESKHUB_API_KEY: str = ""
     DESKHUB_WEB_URL: str = ""
 
+    # ── GeneHub Desktop ──────────────────────────────────
+    GENEHUB_BUNDLE_SIGNING_SECRET: str = ""
+    GENEHUB_BUNDLE_SIGNATURE_ENABLED: bool = True
+    GENEHUB_DESKTOP_SYNC_ENABLED: bool = True
+
     # ── S3 兼容对象存储 ─────────────────────────────────
     S3_ENDPOINT: str = ""
     S3_REGION: str = ""
