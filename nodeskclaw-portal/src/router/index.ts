@@ -86,7 +86,7 @@ const ceRoutes: RouteRecordRaw[] = [
       { path: 'smtp', name: 'OrgSettingsSmtp', component: () => import('@/views/OrgSettingsSmtp.vue'), meta: { ceOnly: true } },
       { path: 'network', name: 'OrgSettingsNetwork', component: () => import('@/views/OrgSettingsNetwork.vue') },
       { path: 'upload', name: 'OrgSettingsUpload', component: () => import('@/views/OrgSettingsUpload.vue'), meta: { ceOnly: true } },
-      { path: 'members', name: 'OrgMembers', component: () => import('@/views/OrgMembers.vue') },
+      { path: 'members', redirect: { name: 'MemberManagement' } },
       { path: 'audit', name: 'OrgSettingsAudit', component: () => import('@/views/OrgSettingsAudit.vue') },
       ...eeOrgSettingsChildren,
     ],
@@ -99,7 +99,8 @@ const ceRoutes: RouteRecordRaw[] = [
   },
   {
     path: '/members',
-    redirect: '/org-settings',
+    name: 'MemberManagement',
+    component: () => import('@/views/MemberManagement.vue'),
   },
   {
     path: '/agent-performance',

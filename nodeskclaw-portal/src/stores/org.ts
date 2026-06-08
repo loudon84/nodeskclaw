@@ -29,7 +29,18 @@ export interface MemberInfo {
   is_super_admin: boolean
   user_name: string | null
   user_email: string | null
+  username?: string | null
   user_avatar_url: string | null
+  is_active?: boolean
+  must_change_password?: boolean
+  department?: string | null
+  job_title?: string | null
+  employee_no?: string | null
+  supervisor_membership_id?: string | null
+  supervisor_name?: string | null
+  direct_report_count?: number
+  skill_grant_count?: number
+  mcp_skill_grant_count?: number
   created_at: string
 }
 
