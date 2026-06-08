@@ -18,13 +18,21 @@ class User(BaseModel):
     __tablename__ = "users"
     __table_args__ = (
         Index(
-            "uq_users_username", "username",
-            unique=True, postgresql_where=text("deleted_at IS NULL"),
+            "uq_users_username_lower",
+            text("lower(username)"),
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL AND username IS NOT NULL"),
+        ),
+        Index(
+            "uq_users_email_lower",
+            text("lower(email)"),
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL AND email IS NOT NULL"),
         ),
     )
 
     name: Mapped[str] = mapped_column(String(128), nullable=False)
-    email: Mapped[str | None] = mapped_column(String(256), unique=True, nullable=True)
+    email: Mapped[str | None] = mapped_column(String(256), nullable=True)
     phone: Mapped[str | None] = mapped_column(String(32), unique=True, nullable=True)
     username: Mapped[str | None] = mapped_column(String(128), nullable=True)
     password_hash: Mapped[str | None] = mapped_column(String(256), nullable=True)
