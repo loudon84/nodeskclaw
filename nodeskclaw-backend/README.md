@@ -469,6 +469,16 @@ NetworkPolicy 相关配置项（通过「组织设置 > 网络」页面管理，
 
 支持的 adapter 类型：`deskhub`（DeskHub/DeskHub 协议）、`clawhub`（ClawHub，当前 stub）。系统始终包含本地 LocalAdapter，无外部 Registry 时纯本地运行。
 
+GeneHub Desktop（Hermes Skill 注册与分发）：
+
+| 变量 | 说明 |
+|------|------|
+| `GENEHUB_BUNDLE_SIGNING_SECRET` | Bundle HMAC-SHA256 签名密钥。开启签名时必填 |
+| `GENEHUB_BUNDLE_SIGNATURE_ENABLED` | 是否对 Desktop Bundle 启用签名，默认 `true` |
+| `GENEHUB_DESKTOP_SYNC_ENABLED` | 是否启用 Desktop GeneHub 同步，默认 `true` |
+
+Admin API 前缀：`/api/v1/admin/genehub/*`（需 admin 角色）。Desktop API 前缀：`/api/v1/desktop/*`（需用户登录 token）。
+
 文件存储配置：
 
 | 变量 | 说明 |
