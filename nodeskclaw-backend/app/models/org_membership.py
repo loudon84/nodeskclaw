@@ -26,13 +26,29 @@ class OrgMembership(BaseModel):
     __table_args__ = (
         Index("uq_org_membership", "user_id", "org_id",
               unique=True, postgresql_where=text("deleted_at IS NULL")),
+        Index(
+            "ix_org_memberships_supervisor",
+            "supervisor_membership_id",
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
     )
 
     user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), nullable=False)
     org_id: Mapped[str] = mapped_column(String(36), ForeignKey("organizations.id"), nullable=False)
     role: Mapped[str] = mapped_column(String(16), default=OrgRole.member, nullable=False)
-    job_title: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    job_title: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    department: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    employee_no: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    supervisor_membership_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("org_memberships.id"),
+        nullable=True,
+    )
 
-    # relationships
     user = relationship("User", back_populates="memberships")
     organization = relationship("Organization", back_populates="memberships")
+    supervisor = relationship(
+        "OrgMembership",
+        remote_side="OrgMembership.id",
+        foreign_keys=[supervisor_membership_id],
+    )
