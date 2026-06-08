@@ -66,6 +66,8 @@ from app.api.portal.events import router as portal_events_router
 # Task Orchestrator
 from app.api.task_orchestrator import router as task_orchestrator_router
 from app.api.task_orchestrator_admin import router as task_orchestrator_admin_router
+from app.api.admin_genehub import router as admin_genehub_router
+from app.api.desktop_genehub import router as desktop_genehub_router
 
 # ── Portal 公共 API（/api/v1）──────────────────────────────
 # Portal 使用 portal/ 下的独立路由，内置实例级权限检查。
@@ -180,6 +182,7 @@ api_router.include_router(gateway_proxy_router, prefix="/gateway", tags=["Gatewa
 api_router.include_router(gateway_sse_router, prefix="/gateway", tags=["Gateway SSE"])
 api_router.include_router(hermes_skill_router, prefix="/hermes", tags=["Hermes Skill"])
 api_router.include_router(hermes_experts_router, prefix="/hermes-experts", tags=["Hermes Expert"])
+api_router.include_router(desktop_genehub_router, tags=["Desktop GeneHub"])
 
 # ── 管理平台 Admin API（/api/v1/admin）─────────────────────
 # Admin 使用原有路由模块，通过 dependencies 注入角色检查。
@@ -251,4 +254,6 @@ admin_router.include_router(engine_version_write_router, prefix="/engine-version
 admin_router.include_router(tunnel_router, tags=["Admin - Agent Tunnel"],
     dependencies=[Depends(require_org_role("admin"))])
 admin_router.include_router(task_orchestrator_admin_router, tags=["Admin - 任务编排"],
+    dependencies=[Depends(require_org_role("admin"))])
+admin_router.include_router(admin_genehub_router, tags=["Admin - GeneHub"],
     dependencies=[Depends(require_org_role("admin"))])
