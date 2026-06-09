@@ -151,7 +151,8 @@ API 路由同时挂载在两个前缀下：
 | 前缀 | 模块 | 说明 |
 |------|------|------|
 | `/api/v1/health` | 系统 | 健康检查 |
-| `GET /api/v1/system/info` | 系统 | edition、features、MCP descriptor |
+| `GET /api/v1/system/info` | 系统 | edition、features、MCP descriptor、GeneHub descriptor |
+| `GET /api/v1/desktop/genehub/health` | Desktop GeneHub | Desktop 连接探测（需登录） |
 | `GET /api/v1/mcp/health` | MCP Skill Gateway | Desktop 联调健康检查 |
 | `POST /api/v1/mcp` | MCP Skill Gateway | JSON-RPC（`initialize`、`tools/list`、`tools/call`） |
 | `POST /api/v1/hermes/mcp` | Hermes Skill | 与 `/api/v1/mcp` 行为一致的兼容入口 |
@@ -476,6 +477,10 @@ GeneHub Desktop（Hermes Skill 注册与分发）：
 | `GENEHUB_BUNDLE_SIGNING_SECRET` | Bundle HMAC-SHA256 签名密钥。开启签名时必填 |
 | `GENEHUB_BUNDLE_SIGNATURE_ENABLED` | 是否对 Desktop Bundle 启用签名，默认 `true` |
 | `GENEHUB_DESKTOP_SYNC_ENABLED` | 是否启用 Desktop GeneHub 同步，默认 `true` |
+| `GENEHUB_REGISTRY_NAME` | GeneHub descriptor 显示名称，默认 `Enterprise GeneHub Registry` |
+| `GENEHUB_API_PREFIX` | Desktop API 前缀，默认 `/api/v1/desktop` |
+| `GENEHUB_HEALTH_ENDPOINT` | Desktop 健康检查路径，默认 `/api/v1/desktop/genehub/health` |
+| `GENEHUB_REQUIRES_AUTH` | descriptor 是否要求登录，默认 `true` |
 
 Admin API 前缀：`/api/v1/admin/genehub/*`（需 admin 角色）。Desktop API 前缀：`/api/v1/desktop/*`（需用户登录 token）。
 

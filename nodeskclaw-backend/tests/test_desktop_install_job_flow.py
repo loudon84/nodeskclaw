@@ -121,7 +121,10 @@ async def test_self_service_install_job_flow(client, install_flow_data, monkeypa
 
         bundle_resp = await client.get(f"/api/v1/desktop/hermes/install-jobs/{job_id}/bundle")
         assert bundle_resp.status_code == 200
-        assert bundle_resp.json()["data"]["schema_version"] == "genehub.bundle.v1"
+        bundle_data = bundle_resp.json()["data"]
+        assert bundle_data["schema_version"] == "genehub.bundle.v1"
+        assert isinstance(bundle_data["files"], list)
+        assert bundle_data["files"][0]["relative_path"] == "skills/contact-to-order/SKILL.md"
 
         status_resp = await client.post(
             f"/api/v1/desktop/hermes/install-jobs/{job_id}/status",

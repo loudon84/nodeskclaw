@@ -169,6 +169,10 @@ class Settings(BaseSettings):
     GENEHUB_BUNDLE_SIGNING_SECRET: str = ""
     GENEHUB_BUNDLE_SIGNATURE_ENABLED: bool = True
     GENEHUB_DESKTOP_SYNC_ENABLED: bool = True
+    GENEHUB_REGISTRY_NAME: str = "Enterprise GeneHub Registry"
+    GENEHUB_API_PREFIX: str = "/api/v1/desktop"
+    GENEHUB_HEALTH_ENDPOINT: str = "/api/v1/desktop/genehub/health"
+    GENEHUB_REQUIRES_AUTH: bool = True
 
     # ── S3 兼容对象存储 ─────────────────────────────────
     S3_ENDPOINT: str = ""

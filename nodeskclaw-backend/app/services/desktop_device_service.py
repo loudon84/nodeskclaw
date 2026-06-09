@@ -61,7 +61,11 @@ async def register_device(
         db.add(device)
 
     await db.flush()
-    return DesktopDeviceInfo(desktop_device_id=device.id, status=device.status)
+    return DesktopDeviceInfo(
+        desktop_device_id=device.id,
+        device_id=device.id,
+        status=device.status,
+    )
 
 
 async def _bind_pending_jobs_to_profile(
@@ -202,5 +206,6 @@ async def heartbeat(
     await db.flush()
     return DesktopHeartbeatResponse(
         sync_interval_seconds=60,
+        pending_jobs_interval_seconds=60,
         genehub_enabled=settings.GENEHUB_DESKTOP_SYNC_ENABLED,
     )

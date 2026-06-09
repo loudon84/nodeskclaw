@@ -18,6 +18,7 @@ GENEHUB_MANIFEST_SCHEMA = "genehub.gene.v1"
 GENEHUB_BUNDLE_SCHEMA = "genehub.bundle.v1"
 SKILL_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 FORBIDDEN_SKILL_NAMES = frozenset({".", "..", ".hidden"})
+_WINDOWS_DRIVE_PATTERN = re.compile(r"^[A-Za-z]:")
 
 
 def validate_skill_name(name: str) -> str:
@@ -132,7 +133,22 @@ def build_manifest_from_skill(data: AdminGeneHubSkillCreate) -> dict[str, Any]:
 def sanitize_bundle_paths(files: dict[str, str]) -> dict[str, str]:
     sanitized: dict[str, str] = {}
     for path, content in files.items():
+        if not path or not path.strip():
+            raise BadRequestError(
+                "Bundle 路径非法",
+                message_key="errors.genehub.invalid_bundle_path",
+            )
         normalized = path.replace("\\", "/")
+        if normalized.startswith("//"):
+            raise BadRequestError(
+                "Bundle 路径非法",
+                message_key="errors.genehub.invalid_bundle_path",
+            )
+        if _WINDOWS_DRIVE_PATTERN.match(normalized):
+            raise BadRequestError(
+                "Bundle 路径非法",
+                message_key="errors.genehub.invalid_bundle_path",
+            )
         if normalized.startswith("/") or ".." in normalized.split("/"):
             raise BadRequestError(
                 "Bundle 路径非法",
@@ -162,23 +178,49 @@ def _build_files_from_manifest(manifest: dict[str, Any]) -> dict[str, str]:
     return sanitize_bundle_paths(files)
 
 
+def _split_bundle_files(files: dict[str, str]) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    skill_files: list[dict[str, str]] = []
+    script_files: list[dict[str, str]] = []
+    for path, content in sorted(files.items()):
+        item = {"relative_path": path, "content": content, "encoding": "utf-8"}
+        if path.startswith("scripts/"):
+            script_files.append(item)
+        else:
+            skill_files.append(item)
+    return skill_files, script_files
+
+
 def build_bundle_from_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
     validate_manifest(manifest)
-    files = _build_files_from_manifest(manifest)
+    files_dict = _build_files_from_manifest(manifest)
+    skill_files, script_files = _split_bundle_files(files_dict)
+
     manifest_json = json.dumps(manifest, sort_keys=True, ensure_ascii=False)
     manifest_hash = _calculate_sha256(manifest_json)
 
-    bundle_body = {
+    skill_name = manifest["skill"]["name"]
+    desktop_manifest: dict[str, Any] = {
+        "gene_slug": manifest["slug"],
+        "gene_version": manifest["version"],
+        "skill_name": skill_name,
+        "compatibility": manifest.get("compatibility", []),
+    }
+
+    bundle_body: dict[str, Any] = {
         "schema_version": GENEHUB_BUNDLE_SCHEMA,
-        "manifest": manifest,
-        "files": files,
+        "manifest": desktop_manifest,
+        "files": skill_files,
+        "scripts": script_files,
         "hashes": {
             "manifest_sha256": manifest_hash,
         },
+        "signature": None,
     }
     bundle_json = json.dumps(bundle_body, sort_keys=True, ensure_ascii=False)
     bundle_hash = _calculate_sha256(bundle_json)
     bundle_body["hashes"]["bundle_sha256"] = bundle_hash
+    desktop_manifest["manifest_hash"] = manifest_hash
+    desktop_manifest["bundle_hash"] = bundle_hash
 
     if settings.GENEHUB_BUNDLE_SIGNATURE_ENABLED:
         secret = settings.GENEHUB_BUNDLE_SIGNING_SECRET

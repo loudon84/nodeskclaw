@@ -3,6 +3,7 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.deps import get_current_org, get_db
 from app.schemas.common import ApiResponse
 from app.schemas.genehub import (
@@ -23,6 +24,19 @@ from app.schemas.genehub import (
 from app.services import desktop_device_service, genehub_service, hermes_desktop_sync_service
 
 router = APIRouter(prefix="/desktop")
+
+
+@router.get("/genehub/health", response_model=ApiResponse[dict])
+async def genehub_health(
+    user_org=Depends(get_current_org),
+):
+    user, org = user_org
+    return ApiResponse(data={
+        "status": "ok" if settings.GENEHUB_DESKTOP_SYNC_ENABLED else "disabled",
+        "genehub_enabled": settings.GENEHUB_DESKTOP_SYNC_ENABLED,
+        "org_id": org.id,
+        "user_id": user.id,
+    })
 
 
 @router.post("/devices/register", response_model=ApiResponse[DesktopDeviceInfo])

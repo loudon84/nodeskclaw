@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.exceptions import BadRequestError, ConflictError, ForbiddenError, NotFoundError
 from app.models.desktop_hermes_profile import DesktopHermesProfile
 from app.models.gene import ContentVisibility, Gene, GeneReviewStatus, GeneSource
@@ -49,6 +50,17 @@ VIEW_PERMISSIONS = frozenset({
     EntitlementPermission.update,
     EntitlementPermission.uninstall,
 })
+
+
+def build_genehub_descriptor() -> dict:
+    return {
+        "enabled": settings.GENEHUB_DESKTOP_SYNC_ENABLED,
+        "name": settings.GENEHUB_REGISTRY_NAME,
+        "apiPrefix": settings.GENEHUB_API_PREFIX,
+        "healthEndpoint": settings.GENEHUB_HEALTH_ENDPOINT,
+        "requiresAuth": settings.GENEHUB_REQUIRES_AUTH,
+        "minServerVersion": settings.APP_VERSION,
+    }
 
 
 async def _get_genehub_gene(db: AsyncSession, gene_id: str, org_id: str) -> Gene:
@@ -709,18 +721,24 @@ async def list_desktop_visible_skills(
         elif installed and installed.status == InstalledSkillStatus.failed:
             installed_status = "failed"
 
+        skill_name = manifest.get("skill", {}).get("name", gene.slug)
         visible_skills.append(
             DesktopSkillInfo(
                 gene_id=gene.id,
                 slug=gene.slug,
+                gene_slug=gene.slug,
                 name=gene.name,
+                display_name=gene.name,
                 description=gene.description,
                 short_description=gene.short_description,
                 version=gene.version,
+                gene_version=gene.version,
+                skill_name=skill_name,
                 category=gene.category,
                 tags=tags,
                 permissions=sorted(permissions),
                 installed_status=installed_status,
+                installed=installed_status == "installed",
                 update_available=update_available,
             )
         )

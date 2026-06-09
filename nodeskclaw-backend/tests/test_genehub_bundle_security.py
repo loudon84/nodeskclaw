@@ -52,6 +52,21 @@ def test_sanitize_bundle_paths_rejects_traversal():
         sanitize_bundle_paths({"../secret.txt": "x"})
 
 
+def test_sanitize_bundle_paths_rejects_windows_drive():
+    with pytest.raises(BadRequestError):
+        sanitize_bundle_paths({"C:/Windows/System32/config": "x"})
+
+
+def test_sanitize_bundle_paths_rejects_unc_path():
+    with pytest.raises(BadRequestError):
+        sanitize_bundle_paths({"//server/share/file.txt": "x"})
+
+
+def test_sanitize_bundle_paths_rejects_empty_path():
+    with pytest.raises(BadRequestError):
+        sanitize_bundle_paths({"": "x"})
+
+
 def test_validate_manifest_requires_hermes_desktop_install():
     manifest = _sample_manifest()
     del manifest["install"]["hermes_desktop"]
@@ -71,7 +86,10 @@ def test_build_bundle_from_manifest_with_signing(monkeypatch):
     monkeypatch.setattr("app.services.genehub_bundle_service.settings.GENEHUB_BUNDLE_SIGNING_SECRET", "test-secret")
     bundle = build_bundle_from_manifest(_sample_manifest())
     assert bundle["schema_version"] == "genehub.bundle.v1"
-    assert "skills/contact-to-order/SKILL.md" in bundle["files"]
+    assert bundle["files"][0]["relative_path"] == "skills/contact-to-order/SKILL.md"
+    assert bundle["manifest"]["gene_slug"] == "contact-to-order"
+    assert bundle["manifest"]["gene_version"] == "1.0.0"
+    assert bundle["manifest"]["skill_name"] == "contact-to-order"
     assert bundle["hashes"]["manifest_sha256"]
     assert bundle["hashes"]["bundle_sha256"]
     assert bundle["signature"]["algorithm"] == "hmac-sha256"

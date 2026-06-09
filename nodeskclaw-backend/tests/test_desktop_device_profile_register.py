@@ -48,6 +48,7 @@ async def test_device_register_is_idempotent(client, desktop_user_data):
         assert first.status_code == 200
         assert second.status_code == 200
         assert first.json()["data"]["desktop_device_id"] == second.json()["data"]["desktop_device_id"]
+        assert first.json()["data"]["device_id"] == first.json()["data"]["desktop_device_id"]
     finally:
         app.dependency_overrides.pop(get_current_org, None)
 
@@ -88,6 +89,9 @@ async def test_profile_register_and_heartbeat(client, desktop_user_data):
             },
         )
         assert heartbeat_resp.status_code == 200
-        assert heartbeat_resp.json()["data"]["genehub_enabled"] is True
+        heartbeat_data = heartbeat_resp.json()["data"]
+        assert heartbeat_data["genehub_enabled"] is True
+        assert heartbeat_data["sync_interval_seconds"] == 60
+        assert heartbeat_data["pending_jobs_interval_seconds"] == 60
     finally:
         app.dependency_overrides.pop(get_current_org, None)

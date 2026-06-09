@@ -3,7 +3,7 @@
 import re
 from datetime import datetime
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 SKILL_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{0,127}$")
@@ -117,6 +117,7 @@ class DesktopDeviceRegister(BaseModel):
 
 class DesktopDeviceInfo(BaseModel):
     desktop_device_id: str
+    device_id: str | None = None
     status: str
 
 
@@ -148,6 +149,7 @@ class DesktopHeartbeat(BaseModel):
 
 class DesktopHeartbeatResponse(BaseModel):
     sync_interval_seconds: int
+    pending_jobs_interval_seconds: int = 60
     genehub_enabled: bool
 
 
@@ -156,6 +158,14 @@ class DesktopSelfServiceInstallJobCreate(BaseModel):
     gene_slug: str = Field(..., max_length=128)
     version: str = "latest"
     job_type: str = Field("install", pattern=r"^(install|update|uninstall|rollback)$")
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_action_alias(cls, data):
+        if isinstance(data, dict) and "job_type" not in data and "action" in data:
+            data = dict(data)
+            data["job_type"] = data["action"]
+        return data
 
 
 class DesktopInstallJobStatusUpdate(BaseModel):
@@ -187,20 +197,27 @@ class DesktopInstalledSkillSync(BaseModel):
 class DesktopSkillInfo(BaseModel):
     gene_id: str
     slug: str
+    gene_slug: str
     name: str
+    display_name: str
     description: str | None = None
     short_description: str | None = None
     version: str
+    gene_version: str
+    skill_name: str
     category: str | None = None
     tags: list[str] = []
     permissions: list[str] = []
     installed_status: str
+    installed: bool = False
     update_available: bool = False
 
 
 class DesktopPendingJobInfo(BaseModel):
     job_id: str
+    profile_id: str | None = None
     job_type: str
+    action: str
     gene_slug: str
     gene_version: str
     skill_name: str
@@ -212,9 +229,16 @@ class DesktopInstallJobInfo(BaseModel):
     status: str
 
 
+class DesktopBundleFile(BaseModel):
+    relative_path: str
+    content: str
+    encoding: str = "utf-8"
+
+
 class DesktopBundleInfo(BaseModel):
     schema_version: str
     manifest: dict
-    files: dict[str, str]
+    files: list[DesktopBundleFile]
+    scripts: list[DesktopBundleFile] = []
     hashes: dict[str, str]
     signature: dict | None = None

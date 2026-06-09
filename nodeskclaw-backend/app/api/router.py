@@ -84,6 +84,7 @@ async def health_check():
 @api_router.get("/system/info", tags=["系统"])
 async def system_info():
     """暴露 edition 和启用的 feature 列表，供前端初始化使用。"""
+    from app.services.genehub_service import build_genehub_descriptor
     from app.services.mcp_skill_gateway.constants import build_mcp_descriptor
 
     return {
@@ -91,6 +92,7 @@ async def system_info():
         "version": settings.APP_VERSION,
         "features": feature_gate.all_features(),
         "mcp": build_mcp_descriptor(),
+        "genehub": build_genehub_descriptor(),
     }
 
 

@@ -102,7 +102,9 @@ async def get_pending_jobs(
     return [
         DesktopPendingJobInfo(
             job_id=job.id,
+            profile_id=job.profile_id,
             job_type=job.job_type,
+            action=job.job_type,
             gene_slug=job.gene_slug,
             gene_version=job.gene_version,
             skill_name=job.skill_name,
