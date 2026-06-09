@@ -8,6 +8,10 @@ import { Loader2, Save, Plug, Eye, EyeOff, Container, RefreshCw, AlertCircle } f
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 
+function normalizeRegistryUrl(url: string): string {
+  return url.trim().replace(/^https?:\/\//i, '').replace(/\/+$/, '')
+}
+
 const { t } = useI18n()
 const toast = useToast()
 
@@ -46,7 +50,8 @@ async function loadSettings() {
 
     const urls: Record<string, string> = {}
     for (const eng of engines.value) {
-      urls[eng.runtime_id] = data[eng.image_registry_key] || ''
+      const raw = data[eng.image_registry_key] || ''
+      urls[eng.runtime_id] = raw ? normalizeRegistryUrl(raw) : ''
     }
     engineRegistryUrls.value = urls
   } catch {
@@ -67,7 +72,11 @@ async function handleSave() {
   try {
     const promises: Promise<unknown>[] = []
     for (const eng of engines.value) {
-      const url = engineRegistryUrls.value[eng.runtime_id]?.trim() || null
+      const raw = engineRegistryUrls.value[eng.runtime_id]?.trim() || ''
+      const url = raw ? normalizeRegistryUrl(raw) : null
+      if (url) {
+        engineRegistryUrls.value[eng.runtime_id] = url
+      }
       promises.push(api.put(`/settings/${eng.image_registry_key}`, { value: url }))
     }
     promises.push(api.put('/settings/registry_username', { value: registryUsername.value.trim() || null }))

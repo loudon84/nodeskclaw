@@ -15,6 +15,7 @@ from app.schemas.common import ApiResponse
 from app.services import config_service
 from app.services.upload_policy_service import UPLOAD_CONFIG_KEYS, validate_upload_config_value
 from app.services.runtime.registries.runtime_registry import RUNTIME_REGISTRY
+from app.services.registry_service import normalize_image_registry
 
 logger = logging.getLogger(__name__)
 
@@ -41,9 +42,21 @@ _SENSITIVE_KEYS = {"registry_password", "smtp_password"}
 def _is_allowed_key(key: str) -> bool:
     if key in _ALLOWED_KEYS:
         return True
+
+    for spec in RUNTIME_REGISTRY.all_runtimes():
+        if getattr(spec, "image_registry_key", None) == key:
+            return True
+
+
     if key.startswith("image_registry_"):
         runtime_id = key[len("image_registry_"):]
         return RUNTIME_REGISTRY.get(runtime_id) is not None
+
+        # 兼容前端把 runtime id 的 "-" 转成 "_" 的配置 key
+        runtime_id_by_dash = runtime_id.replace("_", "-")
+        if RUNTIME_REGISTRY.get(runtime_id_by_dash) is not None:
+            return True
+            
     return False
 
 
@@ -95,7 +108,11 @@ async def update_setting(
 
     await validate_upload_config_value(key, body.value, db)
 
-    row = await config_service.set_config(key, body.value, db)
+    value = body.value
+    if value and (key == "image_registry" or key.startswith("image_registry_")):
+        value = normalize_image_registry(value)
+
+    row = await config_service.set_config(key, value, db)
     display_value = "******" if key in _SENSITIVE_KEYS and row.value else row.value
     await hooks.emit("operation_audit", action="system.setting_updated", target_type="system_config", target_id=key, actor_id=_current_user.id, org_id=_current_user.current_org_id, details={})
     return ApiResponse(data={"key": row.key, "value": display_value})

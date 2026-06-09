@@ -20,6 +20,72 @@ logger = logging.getLogger(__name__)
 
 _TIMEOUT = 10.0
 
+_PRIVATE_IPV4 = re.compile(
+    r"^(?:"
+    r"127(?:\.\d{1,3}){3}|"
+    r"localhost|"
+    r"10(?:\.\d{1,3}){3}|"
+    r"192\.168(?:\.\d{1,3}){2}|"
+    r"172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}"
+    r")$"
+)
+
+
+def _host_from_registry_path(path: str) -> str:
+    slash = path.find("/")
+    host_port = path[:slash] if slash >= 0 else path
+    return host_port.rsplit("@", 1)[-1].split(":", 1)[0]
+
+
+def _is_private_registry_host(host: str) -> bool:
+    return bool(_PRIVATE_IPV4.match(host.lower()))
+
+
+def normalize_image_registry(registry_url: str) -> str:
+    """Strip scheme and trailing slash for storage / deploy image names."""
+    registry = registry_url.strip().rstrip("/")
+    if "://" in registry:
+        registry = registry.split("://", 1)[1]
+    return registry
+
+
+def _parse_registry(registry_url: str) -> tuple[str, str, str]:
+    """Return (normalized_storage, api_base_url, repo)."""
+    raw = registry_url.strip().rstrip("/")
+    if not raw:
+        return "", "", "library/openclaw"
+
+    explicit_scheme: str | None = None
+    if "://" in raw:
+        explicit_scheme, path = raw.split("://", 1)
+        explicit_scheme = explicit_scheme.lower()
+    else:
+        path = raw
+
+    slash_idx = path.find("/")
+    if slash_idx >= 0:
+        host_part = path[:slash_idx]
+        repo = path[slash_idx + 1 :]
+    else:
+        host_part = path
+        repo = ""
+
+    if not repo:
+        repo = "library/openclaw"
+
+    normalized = f"{host_part}/{repo}" if slash_idx >= 0 else host_part
+    host = _host_from_registry_path(host_part)
+
+    if explicit_scheme:
+        scheme = explicit_scheme
+    elif _is_private_registry_host(host):
+        scheme = "http"
+    else:
+        scheme = "https"
+
+    api_base_url = f"{scheme}://{host_part}"
+    return normalized, api_base_url, repo
+
 
 async def resolve_image_registry(
     db: AsyncSession, runtime: str | None = None,
@@ -30,8 +96,9 @@ async def resolve_image_registry(
         if spec and spec.image_registry_key != "image_registry":
             per_engine = await get_config(spec.image_registry_key, db)
             if per_engine:
-                return per_engine
-    return await get_config("image_registry", db)
+                return normalize_image_registry(per_engine)
+    value = await get_config("image_registry", db)
+    return normalize_image_registry(value) if value else None
 
 
 async def _get_registry_auth(db: AsyncSession) -> tuple[str, str] | None:
@@ -100,27 +167,12 @@ async def list_image_tags(
     if not registry_url:
         registry_url = await resolve_image_registry(db, runtime)
 
-    registry = (registry_url or "").strip().rstrip("/")
+    registry = (registry_url or "").strip()
     if not registry:
         logger.warning("镜像仓库地址未配置 (runtime=%s)", runtime)
         return []
 
-    if "://" in registry:
-        url = registry
-    else:
-        url = f"https://{registry}"
-
-    parts = url.split("/")
-    if len(parts) >= 4:
-        base_url = "/".join(parts[:3])
-        repo = "/".join(parts[3:])
-    else:
-        base_url = url
-        repo = "library/openclaw"
-
-    if not repo:
-        repo = "library/openclaw"
-
+    _normalized, base_url, repo = _parse_registry(registry)
     tags_url = f"{base_url}/v2/{repo}/tags/list"
     credentials = await _get_registry_auth(db)
 
