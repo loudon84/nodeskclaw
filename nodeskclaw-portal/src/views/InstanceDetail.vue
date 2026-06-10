@@ -63,10 +63,21 @@ interface InstanceDetail {
   endpoint_url?: string | null
   compute_provider?: string
   runtime?: string
+  advanced_config?: string | null
 }
 
 const instance = ref<InstanceDetail | null>(null)
 const isDocker = computed(() => instance.value?.compute_provider === 'docker')
+const isExternalAttach = computed(() => {
+  const raw = instance.value?.advanced_config
+  if (!raw) return false
+  try {
+    const advanced = JSON.parse(raw)
+    return advanced.attach_mode === 'external' && advanced.external_lifecycle === false
+  } catch {
+    return false
+  }
+})
 
 interface EngineInfo {
   name: string
@@ -944,7 +955,7 @@ function toggleSkillEditor() {
             <div v-else class="text-sm text-muted-foreground space-y-2">
               <p>{{ t('instanceDetail.deleteConfirmQuestion', { name: getInstanceBasicDisplayName() }) }}</p>
               <ul class="list-disc list-inside space-y-1 text-xs">
-                <li>{{ t(isDocker ? 'instanceDetail.deleteImpactDocker' : 'instanceDetail.deleteImpactK8s') }}</li>
+                <li>{{ t(isExternalAttach ? 'instanceDetail.deleteImpactExternalAttach' : (isDocker ? 'instanceDetail.deleteImpactDocker' : 'instanceDetail.deleteImpactK8s')) }}</li>
                 <li>{{ t('instanceDetail.deleteImpactData') }}</li>
                 <li>{{ t('instanceDetail.deleteImpactIrreversible') }}</li>
               </ul>

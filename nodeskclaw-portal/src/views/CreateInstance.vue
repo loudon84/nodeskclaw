@@ -49,6 +49,27 @@ const error = ref('')
 const errorKey = ref('')
 const currentStep = ref(1)
 
+interface AttachableContainerInfo {
+  profile: string
+  container_name: string
+  image: string | null
+  status: string
+  health_status: string | null
+  host_port: number | null
+  container_port: number | null
+  data_dir: string
+  compose_path: string | null
+  already_attached: boolean
+  matched_instance_id: string | null
+  created_at: string | null
+}
+
+const createMode = ref<'deploy' | 'attach'>('deploy')
+const attachableContainers = ref<AttachableContainerInfo[]>([])
+const selectedAttachContainer = ref<AttachableContainerInfo | null>(null)
+const scanningContainers = ref(false)
+const attachingContainer = ref(false)
+
 // ── Engine selector ──
 interface EngineItem {
   runtime_id: string
@@ -307,6 +328,20 @@ const pvcAccessMode = ref<string>('ReadWriteOnce')
 
 const selectedClusterObj = computed(() => clusters.value.find(c => c.id === selectedCluster.value))
 const isK8sCluster = computed(() => selectedClusterObj.value?.compute_provider === 'k8s')
+const isDockerCluster = computed(() => selectedClusterObj.value?.compute_provider === 'docker')
+const hasDockerCluster = computed(() => clusters.value.some(c => c.compute_provider === 'docker'))
+const visibleAttachableContainers = computed(() =>
+  attachableContainers.value.filter(c => c.status !== 'missing')
+)
+const canAttach = computed(() =>
+  createMode.value === 'attach'
+  && !!name.value.trim() && !nameHasEdgeSpaces.value
+  && !!selectedAttachContainer.value
+  && selectedAttachContainer.value.status === 'running'
+  && !selectedAttachContainer.value.already_attached
+  && !!selectedCluster.value
+  && !attachingContainer.value
+)
 const enabledStorageClasses = computed(() => storageClasses.value.filter(sc => sc.enabled))
 const showStorageClassSelector = computed(() => isK8sCluster.value)
 
@@ -467,10 +502,30 @@ watch(selectedRuntime, () => {
 watch(selectedCluster, (id) => {
   const cluster = clusters.value.find(c => c.id === id)
   if (cluster?.compute_provider === 'k8s') {
+    if (createMode.value === 'attach') {
+      createMode.value = 'deploy'
+    }
     loadStorageClasses(id).catch(() => {})
   } else {
     storageClasses.value = []
     selectedStorageClass.value = null
+  }
+  selectedAttachContainer.value = null
+  attachableContainers.value = []
+})
+
+watch(createMode, (mode) => {
+  if (mode === 'attach') {
+    selectedRuntime.value = 'hermes-webui-expert'
+    currentStep.value = 1
+    selectedAttachContainer.value = null
+    attachableContainers.value = []
+    if (!isDockerCluster.value) {
+      const dockerCluster = clusters.value.find(c => c.compute_provider === 'docker')
+      if (dockerCluster) {
+        selectedCluster.value = dockerCluster.id
+      }
+    }
   }
 })
 
@@ -585,6 +640,87 @@ const canDeploy = computed(() =>
 
 function validateLlmConfigsBeforeDeploy(): string | null {
   return getLlmDeployBlockReason()
+}
+
+function isAttachContainerSelectable(container: AttachableContainerInfo): boolean {
+  return container.status === 'running' && !container.already_attached
+}
+
+function selectAttachContainer(container: AttachableContainerInfo) {
+  if (!isAttachContainerSelectable(container)) return
+  selectedAttachContainer.value = container
+}
+
+async function scanAttachableContainers() {
+  if (!selectedCluster.value) {
+    error.value = t('createInstance.noClusterError')
+    return
+  }
+  scanningContainers.value = true
+  error.value = ''
+  errorKey.value = ''
+  selectedAttachContainer.value = null
+  try {
+    const res = await api.get('/docker/attachable-containers', {
+      params: {
+        cluster_id: selectedCluster.value,
+        runtime: 'hermes-webui-expert',
+      },
+    })
+    attachableContainers.value = (res.data.data ?? []) as AttachableContainerInfo[]
+  } catch (e: any) {
+    errorKey.value = e?.response?.data?.message_key || ''
+    error.value = resolveApiErrorMessage(e, t('common.failed'))
+    attachableContainers.value = []
+  } finally {
+    scanningContainers.value = false
+  }
+}
+
+async function handleAttach() {
+  if (!name.value.trim()) {
+    error.value = t('createInstance.nameRequired')
+    return
+  }
+  if (!selectedAttachContainer.value) {
+    error.value = t('createInstance.attachSelectContainer')
+    return
+  }
+  if (!selectedCluster.value) {
+    error.value = t('createInstance.noClusterError')
+    return
+  }
+
+  attachingContainer.value = true
+  error.value = ''
+  errorKey.value = ''
+  const container = selectedAttachContainer.value
+
+  try {
+    const res = await api.post('/instances/attach-existing', {
+      cluster_id: selectedCluster.value,
+      runtime: 'hermes-webui-expert',
+      name: name.value.trim(),
+      slug: container.profile,
+      profile: container.profile,
+      container_name: container.container_name,
+      host_port: container.host_port,
+      image: container.image,
+      data_dir: container.data_dir,
+      compose_path: container.compose_path,
+    })
+    const instanceId = res.data.data?.instance_id
+    if (instanceId) {
+      router.push(`/instances/${instanceId}`)
+    } else {
+      router.push('/instances')
+    }
+  } catch (e: any) {
+    errorKey.value = e?.response?.data?.message_key || ''
+    error.value = resolveApiErrorMessage(e, t('common.failed'))
+  } finally {
+    attachingContainer.value = false
+  }
 }
 
 async function handleDeploy() {
@@ -722,7 +858,7 @@ async function handleDeploy() {
         >1</span>
         {{ t('createInstance.stepBasicInfo') }}
       </Button>
-      <template v-if="runtimeHasLlm">
+      <template v-if="runtimeHasLlm && createMode === 'deploy'">
         <div class="flex-1 h-px" :class="currentStep >= 2 ? 'bg-primary' : 'bg-border'" />
         <Button variant="unstyled" size="unstyled"
           class="flex items-center gap-2 text-sm transition-colors"
@@ -767,6 +903,30 @@ async function handleDeploy() {
           </div>
         </div>
 
+        <!-- 创建方式 -->
+        <div v-if="hasDockerCluster" class="space-y-3">
+          <label class="text-sm font-medium">{{ t('createInstance.createModeLabel') }}</label>
+          <RadioGroup v-model="createMode" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <label
+              class="flex items-center gap-2 p-3 rounded-lg border cursor-pointer transition-colors"
+              :class="createMode === 'deploy' ? 'border-primary bg-primary/5' : 'border-border bg-card hover:border-primary/20'"
+            >
+              <RadioGroupItem value="deploy" />
+              <span class="text-sm">{{ t('createInstance.createModeDeploy') }}</span>
+            </label>
+            <label
+              class="flex items-center gap-2 p-3 rounded-lg border transition-colors"
+              :class="[
+                createMode === 'attach' ? 'border-primary bg-primary/5' : 'border-border bg-card hover:border-primary/20',
+                isDockerCluster ? 'cursor-pointer' : 'opacity-50 cursor-not-allowed',
+              ]"
+            >
+              <RadioGroupItem value="attach" :disabled="!isDockerCluster" />
+              <span class="text-sm">{{ t('createInstance.createModeAttach') }}</span>
+            </label>
+          </RadioGroup>
+        </div>
+
         <!-- 名称 -->
         <div class="space-y-2">
           <label class="text-sm font-medium">{{ t('createInstance.nameLabel') }}</label>
@@ -784,7 +944,7 @@ async function handleDeploy() {
         </div>
 
         <!-- AI 员工标识 (slug) -->
-        <div class="space-y-2">
+        <div v-if="createMode === 'deploy'" class="space-y-2">
           <div class="flex items-center gap-2">
             <label class="text-sm font-medium">{{ t('createInstance.slugLabel') }}</label>
             <span v-if="slug && !slugManuallyEdited" class="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">{{ t('createInstance.slugAutoGenerated') }}</span>
@@ -823,8 +983,8 @@ async function handleDeploy() {
           </p>
         </div>
 
-        <!-- 目标集群选择（多集群时显示） -->
-        <div v-if="clusters.length > 1" class="space-y-2">
+        <!-- 目标集群选择 -->
+        <div v-if="clusters.length > 1 || createMode === 'attach'" class="space-y-2">
           <div class="flex items-center gap-2">
             <Server class="w-4 h-4 text-emerald-400" />
             <label class="text-sm font-medium">{{ t('createInstance.clusterLabel') }}</label>
@@ -856,8 +1016,78 @@ async function handleDeploy() {
           </div>
         </div>
 
+        <!-- 绑定已有容器 -->
+        <div v-if="createMode === 'attach'" class="space-y-4">
+          <div class="flex items-center justify-between gap-3">
+            <p class="text-xs text-muted-foreground">
+              {{ t('createInstance.createModeAttach') }} · hermes-webui-expert
+            </p>
+            <Button
+              variant="unstyled"
+              size="unstyled"
+              class="shrink-0 px-3 py-1.5 rounded-md border border-border text-xs font-medium hover:bg-muted transition-colors flex items-center gap-1.5"
+              :disabled="scanningContainers || !selectedCluster"
+              @click="scanAttachableContainers"
+            >
+              <Loader2 v-if="scanningContainers" class="w-3.5 h-3.5 animate-spin" />
+              <RefreshCw v-else class="w-3.5 h-3.5" />
+              {{ scanningContainers ? t('createInstance.attachScanning') : t('createInstance.attachScanButton') }}
+            </Button>
+          </div>
+
+          <div v-if="attachableContainers.length === 0 && !scanningContainers" class="text-sm text-muted-foreground rounded-lg border border-dashed border-border p-4">
+            {{ t('createInstance.attachNoContainers') }}
+          </div>
+
+          <div v-else-if="visibleAttachableContainers.length > 0" class="overflow-x-auto rounded-lg border border-border">
+            <table class="w-full text-xs">
+              <thead class="bg-muted/40 text-muted-foreground">
+                <tr>
+                  <th class="px-3 py-2 text-left font-medium">{{ t('createInstance.attachColProfile') }}</th>
+                  <th class="px-3 py-2 text-left font-medium">{{ t('createInstance.attachColContainer') }}</th>
+                  <th class="px-3 py-2 text-left font-medium">{{ t('createInstance.attachColImage') }}</th>
+                  <th class="px-3 py-2 text-left font-medium">{{ t('createInstance.attachColStatus') }}</th>
+                  <th class="px-3 py-2 text-left font-medium">{{ t('createInstance.attachColHealth') }}</th>
+                  <th class="px-3 py-2 text-left font-medium">{{ t('createInstance.attachColPort') }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="container in visibleAttachableContainers"
+                  :key="container.container_name"
+                  class="border-t border-border transition-colors"
+                  :class="[
+                    selectedAttachContainer?.container_name === container.container_name ? 'bg-primary/5' : '',
+                    isAttachContainerSelectable(container) ? 'cursor-pointer hover:bg-muted/40' : 'opacity-60',
+                  ]"
+                  @click="selectAttachContainer(container)"
+                >
+                  <td class="px-3 py-2 font-mono">{{ container.profile }}</td>
+                  <td class="px-3 py-2 font-mono">{{ container.container_name }}</td>
+                  <td class="px-3 py-2 max-w-[160px] truncate" :title="container.image || ''">{{ container.image || '-' }}</td>
+                  <td class="px-3 py-2">
+                    <span>{{ container.status }}</span>
+                    <span v-if="container.already_attached" class="ml-1 text-amber-500">({{ t('createInstance.attachAlreadyAttached') }})</span>
+                    <span v-else-if="container.status !== 'running'" class="ml-1 text-muted-foreground">({{ t('createInstance.attachNotRunning') }})</span>
+                  </td>
+                  <td class="px-3 py-2">{{ container.health_status || '-' }}</td>
+                  <td class="px-3 py-2">{{ container.host_port ?? '-' }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <p
+            v-if="selectedAttachContainer && selectedAttachContainer.status === 'running' && selectedAttachContainer.health_status && selectedAttachContainer.health_status !== 'healthy'"
+            class="text-xs text-amber-500 flex items-start gap-1.5"
+          >
+            <AlertCircle class="w-3.5 h-3.5 shrink-0 mt-0.5" />
+            {{ t('createInstance.attachHealthWarning') }}
+          </p>
+        </div>
+
         <!-- 工作引擎选择 -->
-        <div class="space-y-3">
+        <div v-if="createMode === 'deploy'" class="space-y-3">
           <div class="flex items-center gap-2">
             <Cpu class="w-4 h-4 text-blue-400" />
             <label class="text-sm font-medium">{{ t('engine.title') }}</label>
@@ -946,7 +1176,7 @@ async function handleDeploy() {
         </div>
 
         <!-- 规格选择 -->
-        <div class="space-y-3">
+        <div v-if="createMode === 'deploy'" class="space-y-3">
           <label class="text-sm font-medium">{{ t('createInstance.specLabel') }}</label>
           <div class="grid grid-cols-3 gap-3">
             <Button variant="unstyled" size="unstyled"
@@ -971,7 +1201,7 @@ async function handleDeploy() {
         </div>
 
         <!-- 存储空间 -->
-        <div class="space-y-3">
+        <div v-if="createMode === 'deploy'" class="space-y-3">
           <div class="flex items-center justify-between">
             <label class="text-sm font-medium flex items-center gap-1.5">
               <Database class="w-4 h-4 text-orange-400" />
@@ -1084,10 +1314,20 @@ async function handleDeploy() {
           </div>
         </div>
 
-        <!-- 下一步 / 直接部署 -->
+        <!-- 下一步 / 直接部署 / 绑定 -->
         <div class="pt-4">
           <Button variant="unstyled" size="unstyled"
-            v-if="runtimeHasLlm"
+            v-if="createMode === 'attach'"
+            :disabled="!canAttach"
+            class="w-full py-3 px-4 rounded-lg bg-primary text-primary-foreground font-medium text-sm hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+            @click="handleAttach"
+          >
+            <Loader2 v-if="attachingContainer" class="w-4 h-4 animate-spin" />
+            <Rocket v-else class="w-4 h-4" />
+            {{ attachingContainer ? t('createInstance.attachAttaching') : t('createInstance.attachButton') }}
+          </Button>
+          <Button variant="unstyled" size="unstyled"
+            v-else-if="runtimeHasLlm"
             :disabled="!canGoNext"
             class="w-full py-3 px-4 rounded-lg bg-primary text-primary-foreground font-medium text-sm hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
             @click="currentStep = 2"
@@ -1109,7 +1349,7 @@ async function handleDeploy() {
       </div>
 
       <!-- ══ Step 2: 大模型配置 ══ -->
-      <div v-if="runtimeHasLlm && currentStep === 2" class="space-y-6">
+      <div v-if="createMode === 'deploy' && runtimeHasLlm && currentStep === 2" class="space-y-6">
         <div class="space-y-3">
           <div class="flex items-center gap-2">
             <Brain class="w-4 h-4 text-violet-400" />

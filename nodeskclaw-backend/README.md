@@ -227,7 +227,18 @@ Portal「AI 专家中心」使用 `runtime=hermes-webui-expert`，通过 Docker 
 
 API 前缀：`/api/v1/hermes-experts/*`（模板、实例生命周期、实例级技能管理）。
 
-本地前置条件：已注册 `compute_provider=docker` 集群，且后端进程可执行 `docker compose`。
+### Docker 容器绑定（Attach Existing Container）
+
+当 Hermes 专家容器已由运维手工部署在 `DOCKER_DATA_DIR/{profile}` 下时，可在 Portal 创建 AI 员工页选择「绑定已有 Docker 容器」，将运行中的 `hermes-{profile}` 容器登记为 NoDeskClaw 管理记录，不触发 `/deploy` 部署管道。
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/v1/docker/attachable-containers` | 扫描可绑定容器（query: `cluster_id`, `runtime`） |
+| POST | `/api/v1/instances/attach-existing` | 绑定已有容器并创建 Instance 记录 |
+
+绑定实例在 `advanced_config` 中标记 `attach_mode=external`、`external_lifecycle=false`。删除此类 AI 员工时仅软删除数据库记录，不执行 `docker compose down` / `docker rm`，也不删除宿主机目录。
+
+本地前置条件：已注册 `compute_provider=docker` 且 `status=connected` 的集群；`DOCKER_DATA_DIR` / `DOCKER_HOST_DATA_DIR` 指向实例目录根路径；后端进程可执行 `docker inspect` / `docker compose`。
 
 - **启动时自动内置默认值**：`seed.py` 中 `_seed_default_registry_configs()` 在每次启动时幂等写入 registry 相关 key 的默认值（仅在 key 不存在时写入，不覆盖管理员修改）
 - 部署和配置更新时通过 `resolve_image_registry(db, runtime)` 自动解析

@@ -68,6 +68,8 @@ from app.api.task_orchestrator import router as task_orchestrator_router
 from app.api.task_orchestrator_admin import router as task_orchestrator_admin_router
 from app.api.admin_genehub import router as admin_genehub_router
 from app.api.desktop_genehub import router as desktop_genehub_router
+from app.api.docker_attach import docker_router as docker_attach_router
+from app.api.docker_attach import instance_attach_router
 
 # ── Portal 公共 API（/api/v1）──────────────────────────────
 # Portal 使用 portal/ 下的独立路由，内置实例级权限检查。
@@ -145,8 +147,10 @@ api_router.include_router(portal_cluster_router, prefix="/clusters", tags=["集�
 api_router.include_router(portal_cluster_write_router, prefix="/clusters", tags=["集群"],
     dependencies=[Depends(require_ce_edition), Depends(require_org_admin)])
 api_router.include_router(portal_deploy_router, prefix="/deploy", tags=["部署"])
+api_router.include_router(docker_attach_router, prefix="/docker", tags=["Docker"])
 api_router.include_router(portal_events_router, prefix="/events", tags=["事件"])
 api_router.include_router(portal_instance_router, prefix="/instances", tags=["实例"])
+api_router.include_router(instance_attach_router, prefix="/instances", tags=["实例"])
 api_router.include_router(portal_instance_members_router, prefix="/instances", tags=["实例成员"])
 api_router.include_router(portal_channel_config_router, prefix="/instances", tags=["Channel 配置"])
 api_router.include_router(portal_mcp_router, prefix="/instances", tags=["MCP"])

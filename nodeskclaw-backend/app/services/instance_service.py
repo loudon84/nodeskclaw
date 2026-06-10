@@ -285,6 +285,19 @@ async def _soft_delete_instance_records(instance: Instance, db: AsyncSession) ->
         _fire_task(_cleanup_backup_s3_objects(s3_keys))
 
 
+def _is_external_attach_instance(instance: Instance) -> bool:
+    if not instance.advanced_config:
+        return False
+    try:
+        advanced = json.loads(instance.advanced_config)
+    except json.JSONDecodeError:
+        return False
+    return (
+        advanced.get("attach_mode") == "external"
+        and advanced.get("external_lifecycle") is False
+    )
+
+
 async def _destroy_non_k8s_instance(instance: Instance) -> bool:
     provider = (
         _get_docker_provider()
@@ -352,6 +365,14 @@ async def finalize_instance_deletion_once(instance_id: str, db: AsyncSession) ->
         await db.commit()
 
     if instance.compute_provider != "k8s":
+        if _is_external_attach_instance(instance):
+            await _soft_delete_instance_records(instance, db)
+            logger.info(
+                "实例 %s 为外部绑定容器，已跳过 Docker 销毁，仅软删除 DB 记录",
+                instance.name,
+            )
+            return True
+
         try:
             if not await _destroy_non_k8s_instance(instance):
                 return False
