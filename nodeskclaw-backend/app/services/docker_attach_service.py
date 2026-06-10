@@ -24,7 +24,10 @@ from app.schemas.docker_attach import (
     AttachExistingInstanceRequest,
 )
 from app.services.deploy_service import EXPERT_RUNTIME
-from app.services.docker_constants import DOCKER_DATA_DIR, DOCKER_HOST_DATA_DIR
+from app.services.docker_constants import (
+    DOCKER_HOST_DATA_DIR,
+    get_docker_attach_scan_dirs,
+)
 from app.services.hermes_expert.expert_filesystem import validate_profile_slug
 from app.services.runtime.compute.base import http_probe
 
@@ -32,17 +35,15 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_CONTAINER_PORT = 8787
 
+class _ProfileDir:
+    def __init__(self, profile: str, data_dir: str, compose_path: str | None = None) -> None:
+        self.profile = profile
+        self.data_dir = data_dir
+        self.compose_path = compose_path
 
 def _container_name_for_profile(profile: str) -> str:
     return f"hermes-{profile}"
 
-
-def _data_dir_for_profile(profile: str) -> str:
-    return str(Path(DOCKER_HOST_DATA_DIR) / profile)
-
-
-def _compose_path_for_profile(profile: str) -> str:
-    return str(Path(DOCKER_HOST_DATA_DIR) / profile / "docker-compose.yml")
 
 
 def _parse_image_tag(image: str | None) -> str:
@@ -106,6 +107,8 @@ def _build_container_info(
     profile: str,
     inspect_data: dict,
     *,
+    data_dir: str,
+    compose_path: str | None,
     already_attached: bool,
     matched_instance_id: str | None,
 ) -> AttachableContainerInfo:
@@ -121,8 +124,8 @@ def _build_container_info(
         health_status=_parse_health_status(inspect_data),
         host_port=host_port,
         container_port=container_port,
-        data_dir=_data_dir_for_profile(profile),
-        compose_path=_compose_path_for_profile(profile),
+        data_dir=data_dir,
+        compose_path=compose_path,
         already_attached=already_attached,
         matched_instance_id=matched_instance_id,
         created_at=created_at,
@@ -188,22 +191,94 @@ async def _find_attachment_match(
     return None
 
 
-def _list_profile_dirs() -> list[str]:
-    root = Path(DOCKER_DATA_DIR)
-    if not root.is_dir():
-        return []
-    profiles: list[str] = []
-    for entry in sorted(root.iterdir()):
-        if not entry.is_dir():
+def _list_profile_dirs() -> list[_ProfileDir]:
+    profiles: list[_ProfileDir] = []
+    seen: set[str] = set()
+
+    for root in get_docker_attach_scan_dirs():
+        if not root.is_dir():
+            logger.info("docker attach scan dir not found: %s", root)
             continue
-        profile = entry.name.strip().lower()
-        try:
-            validate_profile_slug(profile)
-        except BadRequestError:
-            continue
-        profiles.append(profile)
+
+        for entry in sorted(root.iterdir()):
+            if not entry.is_dir():
+                continue
+
+            profile = entry.name.strip().lower()
+            try:
+                validate_profile_slug(profile)
+            except BadRequestError:
+                continue
+
+            container_name = _container_name_for_profile(profile)
+            if container_name in seen:
+                continue
+            seen.add(container_name)
+
+            compose_path = entry / "docker-compose.yml"
+            profiles.append(
+                _ProfileDir(
+                    profile=profile,
+                    data_dir=str(entry),
+                    compose_path=str(compose_path) if compose_path.exists() else None,
+                )
+            )
+
     return profiles
 
+async def _docker_ps_hermes_containers() -> list[str]:
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "docker",
+            "ps",
+            "-a",
+            "--filter",
+            "name=hermes-",
+            "--format",
+            "{{.Names}}",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await proc.communicate()
+        if proc.returncode != 0 or not stdout:
+            return []
+        return [
+            line.strip()
+            for line in stdout.decode().splitlines()
+            if line.strip().startswith("hermes-")
+        ]
+    except Exception:
+        logger.warning("docker ps hermes containers failed", exc_info=True)
+        return []
+
+
+def _profile_from_container_name(container_name: str) -> str | None:
+    if not container_name.startswith("hermes-"):
+        return None
+    profile = container_name[len("hermes-"):].strip().lower()
+    try:
+        validate_profile_slug(profile)
+    except BadRequestError:
+        return None
+    return profile
+
+
+def _data_dir_from_mounts(inspect_data: dict, profile: str) -> str:
+    mounts = inspect_data.get("Mounts") or []
+    for mount in mounts:
+        if not isinstance(mount, dict):
+            continue
+        destination = str(mount.get("Destination") or "")
+        source = str(mount.get("Source") or "")
+        if destination in {"/data/hermes", "/root/.hermes"} and source:
+            return source
+
+    return str(Path(DOCKER_HOST_DATA_DIR) / profile)
+
+
+def _compose_path_for_data_dir(data_dir: str) -> str | None:
+    path = Path(data_dir) / "docker-compose.yml"
+    return str(path) if path.exists() else None
 
 async def list_attachable_containers(
     db: AsyncSession,
@@ -219,21 +294,60 @@ async def list_attachable_containers(
         )
 
     items: list[AttachableContainerInfo] = []
-    for profile in _list_profile_dirs():
+    seen_container_names: set[str] = set()
+
+    # 1. 先按配置目录扫描
+    for profile_dir in _list_profile_dirs():
+        profile = profile_dir.profile
         container_name = _container_name_for_profile(profile)
         inspect_data = await _docker_inspect(container_name)
         if inspect_data is None:
             continue
+
+        seen_container_names.add(container_name)
         matched = await _find_attachment_match(db, org_id, profile, container_name)
+
         items.append(
             _build_container_info(
                 profile,
                 inspect_data,
+                data_dir=profile_dir.data_dir,
+                compose_path=profile_dir.compose_path,
                 already_attached=matched is not None,
                 matched_instance_id=matched.id if matched else None,
             )
         )
-    return items
+
+    # 2. 再从 docker ps 兜底扫描 hermes-* 容器
+    for container_name in await _docker_ps_hermes_containers():
+        if container_name in seen_container_names:
+            continue
+
+        profile = _profile_from_container_name(container_name)
+        if not profile:
+            continue
+
+        inspect_data = await _docker_inspect(container_name)
+        if inspect_data is None:
+            continue
+
+        seen_container_names.add(container_name)
+        data_dir = _data_dir_from_mounts(inspect_data, profile)
+        compose_path = _compose_path_for_data_dir(data_dir)
+        matched = await _find_attachment_match(db, org_id, profile, container_name)
+
+        items.append(
+            _build_container_info(
+                profile,
+                inspect_data,
+                data_dir=data_dir,
+                compose_path=compose_path,
+                already_attached=matched is not None,
+                matched_instance_id=matched.id if matched else None,
+            )
+        )
+
+    return sorted(items, key=lambda x: (x.host_port or 0, x.profile))
 
 
 async def _probe_health(host_port: int) -> str:
@@ -328,7 +442,7 @@ async def attach_existing_container(
         "external_lifecycle": False,
         "external_dir": profile,
         "external_container_name": expected_container_name,
-        "compose_path": req.compose_path or _compose_path_for_profile(profile),
+        "compose_path": req.compose_path or _compose_path_for_data_dir(req.data_dir),
         "expert": {
             "profile": profile,
             "template": profile,
@@ -339,7 +453,7 @@ async def attach_existing_container(
         },
         "compose": {
             "container_name": expected_container_name,
-            "compose_path": req.compose_path or _compose_path_for_profile(profile),
+            "compose_path": req.compose_path or _compose_path_for_data_dir(req.data_dir),
         },
     }
 
