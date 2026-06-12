@@ -79,6 +79,22 @@ const isExternalAttach = computed(() => {
   }
 })
 
+const dockerAttachConfig = computed(() => {
+  const raw = instance.value?.advanced_config
+  if (!raw) return null
+  try {
+    return JSON.parse(raw)
+  } catch {
+    return null
+  }
+})
+
+const showDockerMappingCard = computed(() =>
+  isDocker.value && dockerAttachConfig.value?.attach_mode === 'external',
+)
+
+const dockerMappingOpen = ref(false)
+
 interface EngineInfo {
   name: string
   description: string
@@ -310,8 +326,12 @@ async function handleDelete() {
   showDeleteDialog.value = false
   deleting.value = true
   try {
-    await api.delete(`/instances/${instanceId.value}`)
-    toast.success(t('agentDetailDialog.deleted'))
+    if (isExternalAttach.value && instance.value?.runtime === 'hermes-webui-expert') {
+      await api.post(`/hermes/experts/instances/${instanceId.value}/actions/detach`)
+    } else {
+      await api.delete(`/instances/${instanceId.value}`)
+    }
+    toast.success(t(isExternalAttach.value ? 'instanceDetail.detachSuccess' : 'agentDetailDialog.deleted'))
     router.push('/instances')
   } catch (e: any) {
     deleting.value = false
@@ -612,6 +632,35 @@ function toggleSkillEditor() {
         </div>
       </div>
 
+      <div v-if="showDockerMappingCard" class="rounded-xl border border-border bg-card overflow-hidden">
+        <Button variant="unstyled" size="unstyled"
+          class="flex items-center justify-between w-full px-4 py-3 text-left hover:bg-muted/30 transition-colors"
+          @click="dockerMappingOpen = !dockerMappingOpen"
+        >
+          <div class="flex items-center gap-2">
+            <ChevronRight v-if="!dockerMappingOpen" class="w-4 h-4 text-muted-foreground" />
+            <ChevronDown v-else class="w-4 h-4 text-muted-foreground" />
+            <span class="text-sm font-medium">{{ t('instanceDetail.dockerMappingTitle') }}</span>
+          </div>
+        </Button>
+        <div v-if="dockerMappingOpen" class="border-t border-border p-4 grid gap-2 sm:grid-cols-2 text-xs">
+          <div><span class="text-muted-foreground">{{ t('instanceDetail.dockerMappingContainer') }}:</span> {{ dockerAttachConfig?.external_container_name || dockerAttachConfig?.compose?.container_name || '-' }}</div>
+          <div><span class="text-muted-foreground">{{ t('instanceDetail.dockerMappingProfile') }}:</span> {{ dockerAttachConfig?.profile || dockerAttachConfig?.expert?.profile || '-' }}</div>
+          <div><span class="text-muted-foreground">{{ t('instanceDetail.dockerMappingLifecycle') }}:</span> {{ dockerAttachConfig?.lifecycle_mode || '-' }}</div>
+          <div class="sm:col-span-2"><span class="text-muted-foreground">{{ t('instanceDetail.dockerMappingInstanceRoot') }}:</span> {{ dockerAttachConfig?.paths?.instance_root || '-' }}</div>
+          <div class="sm:col-span-2"><span class="text-muted-foreground">{{ t('instanceDetail.dockerMappingHostDataDir') }}:</span> {{ dockerAttachConfig?.paths?.host_data_dir || '-' }}</div>
+          <div><span class="text-muted-foreground">{{ t('instanceDetail.dockerMappingContainerDataDir') }}:</span> {{ dockerAttachConfig?.paths?.container_data_dir || '-' }}</div>
+          <div class="sm:col-span-2"><span class="text-muted-foreground">{{ t('instanceDetail.dockerMappingPublicUrl') }}:</span> {{ dockerAttachConfig?.webui?.public_url || instance?.endpoint_url || '-' }}</div>
+          <div class="sm:col-span-2"><span class="text-muted-foreground">{{ t('instanceDetail.dockerMappingHealthUrl') }}:</span> {{ dockerAttachConfig?.webui?.health_url || '-' }}</div>
+          <div class="sm:col-span-2"><span class="text-muted-foreground">{{ t('instanceDetail.dockerMappingCompose') }}:</span> {{ dockerAttachConfig?.compose?.compose_path || dockerAttachConfig?.paths?.compose_path || '-' }}</div>
+          <div class="sm:col-span-2"><span class="text-muted-foreground">{{ t('instanceDetail.dockerMappingEnvFile') }}:</span> {{ dockerAttachConfig?.compose?.env_file || dockerAttachConfig?.paths?.env_file || '-' }}</div>
+          <div><span class="text-muted-foreground">{{ t('instanceDetail.dockerMappingComposeProject') }}:</span> {{ dockerAttachConfig?.compose?.project_name || '-' }}</div>
+          <div class="sm:col-span-2"><span class="text-muted-foreground">{{ t('instanceDetail.dockerMappingSkillsDir') }}:</span> {{ dockerAttachConfig?.paths?.skills_dir || '-' }}</div>
+          <div class="sm:col-span-2"><span class="text-muted-foreground">{{ t('instanceDetail.dockerMappingSkillInboxDir') }}:</span> {{ dockerAttachConfig?.paths?.skill_inbox_dir || '-' }}</div>
+          <div class="sm:col-span-2"><span class="text-muted-foreground">{{ t('instanceDetail.dockerMappingWorkspaceDir') }}:</span> {{ dockerAttachConfig?.paths?.workspace_dir || '-' }}</div>
+        </div>
+      </div>
+
       <div v-if="defaultCapabilities.length" class="p-4 rounded-xl border border-border bg-card">
         <h2 class="text-sm font-medium mb-3">{{ t('agentDetailDialog.defaultCapabilities') }}</h2>
         <div class="grid gap-2 sm:grid-cols-3">
@@ -685,7 +734,7 @@ function toggleSkillEditor() {
         >
           <Loader2 v-if="deleting" class="w-4 h-4 animate-spin" />
           <Trash2 v-else class="w-4 h-4" />
-          {{ deleting ? t('agentDetailDialog.deleting') : t('agentDetailDialog.delete') }}
+          {{ deleting ? t('agentDetailDialog.deleting') : (isExternalAttach ? t('instanceDetail.detach') : t('agentDetailDialog.delete')) }}
         </Button>
       </div>
 
@@ -936,7 +985,7 @@ function toggleSkillEditor() {
               <div class="p-2 rounded-lg bg-red-500/10">
                 <AlertTriangle class="w-5 h-5 text-red-400" />
               </div>
-              <h3 class="text-base font-semibold">{{ t('agentDetailDialog.deleteConfirmTitle') }}</h3>
+              <h3 class="text-base font-semibold">{{ isExternalAttach ? t('instanceDetail.detachConfirmTitle') : t('agentDetailDialog.deleteConfirmTitle') }}</h3>
             </div>
             <div v-if="instance?.workspaces?.length" class="text-sm text-muted-foreground space-y-2">
               <p>{{ t('instanceDetail.cannotDeleteInWorkspaces', { names: joinNames(instance.workspaces.map(w => w.name)) }) }}</p>
@@ -953,11 +1002,11 @@ function toggleSkillEditor() {
               </div>
             </div>
             <div v-else class="text-sm text-muted-foreground space-y-2">
-              <p>{{ t('instanceDetail.deleteConfirmQuestion', { name: getInstanceBasicDisplayName() }) }}</p>
+              <p>{{ isExternalAttach ? t('instanceDetail.detachConfirmQuestion', { name: getInstanceBasicDisplayName() }) : t('instanceDetail.deleteConfirmQuestion', { name: getInstanceBasicDisplayName() }) }}</p>
               <ul class="list-disc list-inside space-y-1 text-xs">
                 <li>{{ t(isExternalAttach ? 'instanceDetail.deleteImpactExternalAttach' : (isDocker ? 'instanceDetail.deleteImpactDocker' : 'instanceDetail.deleteImpactK8s')) }}</li>
-                <li>{{ t('instanceDetail.deleteImpactData') }}</li>
-                <li>{{ t('instanceDetail.deleteImpactIrreversible') }}</li>
+                <li v-if="!isExternalAttach">{{ t('instanceDetail.deleteImpactData') }}</li>
+                <li v-if="!isExternalAttach">{{ t('instanceDetail.deleteImpactIrreversible') }}</li>
               </ul>
             </div>
             <div class="flex justify-end gap-3 pt-2">
@@ -972,7 +1021,7 @@ function toggleSkillEditor() {
                 class="px-4 py-2 rounded-lg bg-red-500 text-white text-sm font-medium hover:bg-red-600 transition-colors"
                 @click="handleDelete"
               >
-                {{ t('common.delete') }}
+                {{ isExternalAttach ? t('instanceDetail.confirmDetach') : t('common.delete') }}
               </Button>
             </div>
           </div>

@@ -62,6 +62,16 @@ interface AttachableContainerInfo {
   already_attached: boolean
   matched_instance_id: string | null
   created_at: string | null
+  public_url: string | null
+  health_url: string | null
+  instance_root: string | null
+  host_data_dir: string | null
+  container_data_dir: string | null
+  env_file: string | null
+  compose_project: string | null
+  lifecycle_mode: string | null
+  attachable: boolean
+  warnings: string[]
 }
 
 const createMode = ref<'deploy' | 'attach'>('deploy')
@@ -337,7 +347,7 @@ const canAttach = computed(() =>
   createMode.value === 'attach'
   && !!name.value.trim() && !nameHasEdgeSpaces.value
   && !!selectedAttachContainer.value
-  && selectedAttachContainer.value.status === 'running'
+  && selectedAttachContainer.value.attachable !== false
   && !selectedAttachContainer.value.already_attached
   && !!selectedCluster.value
   && !attachingContainer.value
@@ -643,7 +653,7 @@ function validateLlmConfigsBeforeDeploy(): string | null {
 }
 
 function isAttachContainerSelectable(container: AttachableContainerInfo): boolean {
-  return container.status === 'running' && !container.already_attached
+  return container.attachable !== false && !container.already_attached
 }
 
 function selectAttachContainer(container: AttachableContainerInfo) {
@@ -701,6 +711,7 @@ async function handleAttach() {
       cluster_id: selectedCluster.value,
       runtime: 'hermes-webui-expert',
       name: name.value.trim(),
+      display_name: name.value.trim(),
       slug: container.profile,
       profile: container.profile,
       container_name: container.container_name,
@@ -708,6 +719,7 @@ async function handleAttach() {
       image: container.image,
       data_dir: container.data_dir,
       compose_path: container.compose_path,
+      lifecycle_mode: container.lifecycle_mode || 'managed_compose',
     })
     const instanceId = res.data.data?.instance_id
     if (instanceId) {
@@ -1049,6 +1061,8 @@ async function handleDeploy() {
                   <th class="px-3 py-2 text-left font-medium">{{ t('createInstance.attachColStatus') }}</th>
                   <th class="px-3 py-2 text-left font-medium">{{ t('createInstance.attachColHealth') }}</th>
                   <th class="px-3 py-2 text-left font-medium">{{ t('createInstance.attachColPort') }}</th>
+                  <th class="px-3 py-2 text-left font-medium">{{ t('createInstance.attachColPublicUrl') }}</th>
+                  <th class="px-3 py-2 text-left font-medium">{{ t('createInstance.attachColInstanceRoot') }}</th>
                 </tr>
               </thead>
               <tbody>
@@ -1068,13 +1082,37 @@ async function handleDeploy() {
                   <td class="px-3 py-2">
                     <span>{{ container.status }}</span>
                     <span v-if="container.already_attached" class="ml-1 text-amber-500">({{ t('createInstance.attachAlreadyAttached') }})</span>
-                    <span v-else-if="container.status !== 'running'" class="ml-1 text-muted-foreground">({{ t('createInstance.attachNotRunning') }})</span>
+                    <span v-else-if="container.attachable === false" class="ml-1 text-red-400">({{ t('createInstance.attachNotAttachable') }})</span>
                   </td>
                   <td class="px-3 py-2">{{ container.health_status || '-' }}</td>
                   <td class="px-3 py-2">{{ container.host_port ?? '-' }}</td>
+                  <td class="px-3 py-2 max-w-[180px] truncate font-mono" :title="container.public_url || ''">{{ container.public_url || '-' }}</td>
+                  <td class="px-3 py-2 max-w-[180px] truncate font-mono" :title="container.instance_root || ''">{{ container.instance_root || '-' }}</td>
                 </tr>
               </tbody>
             </table>
+          </div>
+
+          <div
+            v-if="selectedAttachContainer"
+            class="rounded-lg border border-border bg-muted/20 p-4 space-y-2 text-xs"
+          >
+            <p class="text-sm font-medium">{{ t('createInstance.attachConfirmTitle') }}</p>
+            <div class="grid gap-1 sm:grid-cols-2">
+              <div><span class="text-muted-foreground">{{ t('createInstance.attachColContainer') }}:</span> {{ selectedAttachContainer.container_name }}</div>
+              <div><span class="text-muted-foreground">{{ t('createInstance.attachColProfile') }}:</span> {{ selectedAttachContainer.profile }}</div>
+              <div><span class="text-muted-foreground">{{ t('createInstance.attachColStatus') }}:</span> {{ selectedAttachContainer.status }}</div>
+              <div><span class="text-muted-foreground">{{ t('createInstance.attachColPublicUrl') }}:</span> {{ selectedAttachContainer.public_url || '-' }}</div>
+              <div class="sm:col-span-2"><span class="text-muted-foreground">{{ t('createInstance.attachColInstanceRoot') }}:</span> {{ selectedAttachContainer.instance_root || '-' }}</div>
+              <div class="sm:col-span-2"><span class="text-muted-foreground">{{ t('createInstance.attachColHostDataDir') }}:</span> {{ selectedAttachContainer.host_data_dir || '-' }}</div>
+              <div class="sm:col-span-2"><span class="text-muted-foreground">{{ t('createInstance.attachColEnvFile') }}:</span> {{ selectedAttachContainer.env_file || '-' }}</div>
+              <div class="sm:col-span-2"><span class="text-muted-foreground">{{ t('createInstance.attachColCompose') }}:</span> {{ selectedAttachContainer.compose_path || '-' }}</div>
+              <div><span class="text-muted-foreground">{{ t('createInstance.attachColComposeProject') }}:</span> {{ selectedAttachContainer.compose_project || '-' }}</div>
+              <div><span class="text-muted-foreground">{{ t('createInstance.attachColLifecycleMode') }}:</span> {{ selectedAttachContainer.lifecycle_mode || '-' }}</div>
+            </div>
+            <ul v-if="selectedAttachContainer.warnings?.length" class="text-amber-500 space-y-1 pt-1">
+              <li v-for="warning in selectedAttachContainer.warnings" :key="warning">{{ warning }}</li>
+            </ul>
           </div>
 
           <p
@@ -1324,7 +1362,7 @@ async function handleDeploy() {
           >
             <Loader2 v-if="attachingContainer" class="w-4 h-4 animate-spin" />
             <Rocket v-else class="w-4 h-4" />
-            {{ attachingContainer ? t('createInstance.attachAttaching') : t('createInstance.attachButton') }}
+            {{ attachingContainer ? t('createInstance.attachAttaching') : t('createInstance.attachTakeoverButton') }}
           </Button>
           <Button variant="unstyled" size="unstyled"
             v-else-if="runtimeHasLlm"
