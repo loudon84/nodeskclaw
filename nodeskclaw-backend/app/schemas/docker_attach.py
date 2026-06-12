@@ -16,19 +16,31 @@ class AttachableContainerInfo(BaseModel):
     already_attached: bool = False
     matched_instance_id: str | None = None
     created_at: str | None = None
+    public_url: str | None = None
+    health_url: str | None = None
+    instance_root: str | None = None
+    host_data_dir: str | None = None
+    container_data_dir: str | None = None
+    env_file: str | None = None
+    compose_project: str | None = None
+    lifecycle_mode: str | None = None
+    attachable: bool = True
+    warnings: list[str] = Field(default_factory=list)
 
 
 class AttachExistingInstanceRequest(BaseModel):
     cluster_id: str
     runtime: str = "hermes-webui-expert"
     name: str = Field(..., min_length=1, max_length=128)
-    slug: str
-    profile: str
+    slug: str | None = None
+    profile: str | None = None
     container_name: str
-    host_port: int = Field(..., ge=1, le=65535)
+    host_port: int | None = Field(default=None, ge=1, le=65535)
     image: str | None = None
-    data_dir: str
+    data_dir: str | None = None
     compose_path: str | None = None
+    lifecycle_mode: str = "managed_compose"
+    display_name: str | None = None
 
 
 class AttachExistingInstanceResponse(BaseModel):

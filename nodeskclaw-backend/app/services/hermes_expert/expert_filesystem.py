@@ -9,9 +9,13 @@ import shutil
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from app.core.exceptions import BadRequestError
 from app.services.docker_constants import DOCKER_DATA_DIR, DOCKER_HOST_DATA_DIR
+
+if TYPE_CHECKING:
+    from app.models.instance import Instance
 
 RESOURCES_ROOT = Path(__file__).resolve().parents[2] / "resources" / "hermes_webui_expert"
 PLACEHOLDER_PATTERN = re.compile(r"__([A-Z0-9_]+)__")
@@ -22,10 +26,42 @@ def expert_resources_root() -> Path:
     return RESOURCES_ROOT
 
 
+def _parse_advanced_config(instance: Instance | None) -> dict:
+    if instance is None or not instance.advanced_config:
+        return {}
+    try:
+        data = json.loads(instance.advanced_config)
+    except json.JSONDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def get_hermes_host_data_dir(instance: Instance | None = None, instance_slug: str | None = None) -> Path:
+    advanced = _parse_advanced_config(instance)
+    paths = advanced.get("paths") or {}
+    host_data_dir = paths.get("host_data_dir") or advanced.get("host_data_dir")
+    if host_data_dir:
+        return Path(host_data_dir)
+
+    slug = instance_slug or (instance.slug if instance else None)
+    if not slug:
+        raise BadRequestError(
+            message="无法解析 Hermes 数据目录",
+            message_key="errors.hermes_expert.host_data_dir_missing",
+        )
+    root = Path(DOCKER_DATA_DIR) / slug / "data" / "hermes"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
 def expert_host_data_dir(instance_slug: str) -> Path:
     root = Path(DOCKER_DATA_DIR) / instance_slug / "data" / "hermes"
     root.mkdir(parents=True, exist_ok=True)
     return root
+
+
+def expert_host_data_dir_for_instance(instance: Instance) -> Path:
+    return get_hermes_host_data_dir(instance)
 
 
 def expert_host_data_dir_for_bind(instance_slug: str) -> str:
@@ -34,6 +70,33 @@ def expert_host_data_dir_for_bind(instance_slug: str) -> str:
 
 def expert_skills_dir(instance_slug: str) -> Path:
     path = expert_host_data_dir(instance_slug) / "skills"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def expert_skills_dir_for_instance(instance: Instance) -> Path:
+    advanced = _parse_advanced_config(instance)
+    paths = advanced.get("paths") or {}
+    skills_dir = paths.get("skills_dir")
+    if skills_dir:
+        path = Path(skills_dir)
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+    return expert_skills_dir(instance.slug)
+
+
+def expert_skill_inbox_dir_for_instance(instance: Instance) -> Path:
+    advanced = _parse_advanced_config(instance)
+    paths = advanced.get("paths") or {}
+    inbox_dir = paths.get("skill_inbox_dir")
+    if inbox_dir:
+        path = Path(inbox_dir)
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+    legacy = get_hermes_host_data_dir(instance) / "skills-inbox"
+    if legacy.is_dir() and not (get_hermes_host_data_dir(instance) / "skill-inbox").exists():
+        return legacy
+    path = get_hermes_host_data_dir(instance) / "skill-inbox"
     path.mkdir(parents=True, exist_ok=True)
     return path
 

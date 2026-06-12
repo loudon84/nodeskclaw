@@ -13,7 +13,8 @@ from app.models.instance import Instance
 from app.services.hermes_expert.expert_filesystem import (
     RESOURCES_ROOT,
     backup_path,
-    expert_skills_dir,
+    expert_skill_inbox_dir_for_instance,
+    expert_skills_dir_for_instance,
     read_json,
     safe_extract_zip,
     write_json,
@@ -33,7 +34,7 @@ SKILL_INDEX_NAME = ".index.json"
 class ExpertSkillService:
     def list_skills(self, instance: Instance) -> list[ExpertSkillInfo]:
         self._require_expert_instance(instance)
-        skills_dir = expert_skills_dir(instance.slug)
+        skills_dir = expert_skills_dir_for_instance(instance)
         items: list[ExpertSkillInfo] = []
         for child in sorted(skills_dir.iterdir()):
             if not child.is_dir() or child.name.startswith("."):
@@ -46,7 +47,7 @@ class ExpertSkillService:
 
     def get_skill(self, instance: Instance, skill_slug: str) -> ExpertSkillInfo:
         self._require_expert_instance(instance)
-        skill_dir = self._skill_dir(instance.slug, skill_slug)
+        skill_dir = self._skill_dir(instance, skill_slug)
         return self._build_skill_info(skill_dir)
 
     def install_builtin_bundle(self, instance: Instance, bundle: str) -> list[ExpertSkillInfo]:
@@ -61,13 +62,13 @@ class ExpertSkillService:
         for child in sorted(bundle_dir.iterdir()):
             if not child.is_dir():
                 continue
-            installed.append(self._install_skill_dir(instance.slug, child, source="builtin"))
+            installed.append(self._install_skill_dir(instance, child, source="builtin"))
         self.rescan_skills(instance)
         return installed
 
     def upload_skill_zip(self, instance: Instance, zip_bytes: bytes) -> ExpertSkillInfo:
         self._require_expert_instance(instance)
-        skills_dir = expert_skills_dir(instance.slug)
+        skills_dir = expert_skills_dir_for_instance(instance)
         extracted = safe_extract_zip(
             zip_bytes,
             skills_dir,
@@ -81,7 +82,7 @@ class ExpertSkillService:
         shutil.move(str(extracted), str(target))
         if extracted.exists():
             shutil.rmtree(extracted, ignore_errors=True)
-        info = self._install_skill_dir(instance.slug, target, source="upload")
+        info = self._install_skill_dir(instance, target, source="upload")
         self.rescan_skills(instance)
         return info
 
@@ -120,12 +121,12 @@ class ExpertSkillService:
         try:
             source_dir = asyncio.run(self._clone_skill_repo(auth_repo, ref, temp_dir, skill_slug))
             manifest = parse_manifest(source_dir)
-            target = expert_skills_dir(instance.slug) / manifest.slug
+            target = expert_skills_dir_for_instance(instance) / manifest.slug
             if target.exists():
                 backup_path(target)
                 shutil.rmtree(target)
             shutil.copytree(source_dir, target)
-            info = self._install_skill_dir(instance.slug, target, source="git")
+            info = self._install_skill_dir(instance, target, source="git")
             self.rescan_skills(instance)
             return info
         finally:
@@ -177,7 +178,7 @@ class ExpertSkillService:
 
     def delete_skill(self, instance: Instance, skill_slug: str) -> None:
         self._require_expert_instance(instance)
-        skill_dir = self._skill_dir(instance.slug, skill_slug)
+        skill_dir = self._skill_dir(instance, skill_slug)
         backup_path(skill_dir)
         shutil.rmtree(skill_dir)
         self.rescan_skills(instance)
@@ -198,12 +199,12 @@ class ExpertSkillService:
                 for item in skills
             ],
         }
-        write_json(expert_skills_dir(instance.slug) / SKILL_INDEX_NAME, index)
+        write_json(expert_skills_dir_for_instance(instance) / SKILL_INDEX_NAME, index)
         return skills
 
     def _set_enabled(self, instance: Instance, skill_slug: str, *, enabled: bool) -> ExpertSkillInfo:
         self._require_expert_instance(instance)
-        skill_dir = self._skill_dir(instance.slug, skill_slug)
+        skill_dir = self._skill_dir(instance, skill_slug)
         manifest = parse_manifest(skill_dir)
         manifest.enabled = enabled
         write_manifest(skill_dir, manifest)
@@ -211,14 +212,14 @@ class ExpertSkillService:
         self.rescan_skills(instance)
         return info
 
-    def _install_skill_dir(self, instance_slug: str, source_dir: Path, *, source: str) -> ExpertSkillInfo:
+    def _install_skill_dir(self, instance: Instance, source_dir: Path, *, source: str) -> ExpertSkillInfo:
         manifest = parse_manifest(source_dir)
         if not (source_dir / "SKILL.md").is_file():
             raise BadRequestError(
                 message="技能包缺少 SKILL.md",
                 message_key="errors.hermes_expert.skill_md_missing",
             )
-        target = expert_skills_dir(instance_slug) / manifest.slug
+        target = expert_skills_dir_for_instance(instance) / manifest.slug
         if target.exists():
             backup_path(target)
             shutil.rmtree(target)
@@ -265,8 +266,8 @@ class ExpertSkillService:
         )
 
     @staticmethod
-    def _skill_dir(instance_slug: str, skill_slug: str) -> Path:
-        path = expert_skills_dir(instance_slug) / skill_slug
+    def _skill_dir(instance: Instance, skill_slug: str) -> Path:
+        path = expert_skills_dir_for_instance(instance) / skill_slug
         if not path.is_dir():
             raise NotFoundError(
                 message=f"技能不存在: {skill_slug}",

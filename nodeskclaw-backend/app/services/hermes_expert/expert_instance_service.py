@@ -18,7 +18,12 @@ from app.models.instance import Instance
 from app.models.user import User
 from app.schemas.deploy import DeployRequest
 from app.services import deploy_service
-from app.services.docker_constants import HERMES_EXPERT_PORT_END, HERMES_EXPERT_PORT_START
+from app.services.docker_attach_service import sync_docker_instance_status
+from app.services.docker_constants import (
+    HERMES_EXPERT_PORT_END,
+    HERMES_EXPERT_PORT_START,
+    get_docker_public_url,
+)
 from app.services.hermes_expert.expert_filesystem import validate_profile_slug
 from app.services.hermes_expert.expert_skill_service import EXPERT_RUNTIME, ExpertSkillService
 from app.services.hermes_expert.schemas import (
@@ -29,6 +34,7 @@ from app.services.hermes_expert.schemas import (
 )
 from app.services.runtime.compute.base import http_probe
 from app.services.runtime.registries.runtime_registry import RUNTIME_REGISTRY
+from app.utils.display_status import compute_docker_display_status, compute_display_status
 
 WEBUI_PASSWORD_KEY = "HERMES_WEBUI_PASSWORD"
 
@@ -136,13 +142,13 @@ class ExpertInstanceService:
         )
         deploy_service.register_deploy_task(deploy_id, task)
 
-        host = "localhost"
+        host = settings.HERMES_EXPERT_DEFAULT_BIND_HOST or "localhost"
         port_display = webui_port or HERMES_EXPERT_PORT_START
         return CreateExpertInstanceResponse(
             instance_id=ctx.instance_id,
             deploy_id=deploy_id,
             profile=profile,
-            webui_url=f"http://{host}:{port_display}",
+            webui_url=get_docker_public_url(port_display) if host == "localhost" else f"http://{host}:{port_display}",
             webui_password=webui_password,
             status="deploying",
         )
@@ -151,6 +157,8 @@ class ExpertInstanceService:
         self,
         db: AsyncSession,
         org_id: str | None,
+        *,
+        refresh_status: bool = False,
     ) -> list[ExpertInstanceInfo]:
         query = select(Instance).where(
             not_deleted(Instance),
@@ -160,7 +168,13 @@ class ExpertInstanceService:
             query = query.where(Instance.org_id == org_id)
         query = query.order_by(Instance.created_at.desc())
         result = await db.execute(query)
-        return [self._to_info(inst) for inst in result.scalars().all()]
+        instances = list(result.scalars().all())
+        if refresh_status:
+            for instance in instances:
+                if instance.compute_provider == "docker":
+                    await sync_docker_instance_status(instance)
+            await db.commit()
+        return [self._to_info(inst) for inst in instances]
 
     async def get_instance(self, instance_id: str, db: AsyncSession) -> ExpertInstanceInfo:
         instance = await self._get_expert_instance(instance_id, db)
@@ -174,63 +188,55 @@ class ExpertInstanceService:
         )
 
     async def restart(self, instance_id: str, db: AsyncSession) -> None:
-        from app.services import instance_service
-        await self._get_expert_instance(instance_id, db)
-        await instance_service.restart_instance(instance_id, db)
+        instance = await self._get_expert_instance(instance_id, db)
+        await self._run_lifecycle_action(instance, "restart")
 
     async def stop(self, instance_id: str, db: AsyncSession) -> None:
         instance = await self._get_expert_instance(instance_id, db)
-        container_name = self._container_name(instance)
-        proc = await asyncio.create_subprocess_exec(
-            "docker", "stop", container_name,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        _, stderr = await proc.communicate()
-        if proc.returncode != 0:
-            raise BadRequestError(
-                message=f"停止容器失败: {stderr.decode().strip()[:200]}",
-                message_key="errors.hermes_expert.stop_failed",
-            )
+        await self._run_lifecycle_action(instance, "stop")
         instance.status = "stopped"
         await db.commit()
 
     async def start(self, instance_id: str, db: AsyncSession) -> None:
         instance = await self._get_expert_instance(instance_id, db)
-        advanced = json.loads(instance.advanced_config or "{}")
-        compose = advanced.get("compose") or {}
-        compose_path = compose.get("compose_path") or advanced.get("compose_path", "")
-        if compose_path:
-            proc = await asyncio.create_subprocess_exec(
-                "docker", "compose", "-f", compose_path, "up", "-d",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            _, stderr = await proc.communicate()
-            if proc.returncode != 0:
-                raise BadRequestError(
-                    message=f"启动容器失败: {stderr.decode().strip()[:200]}",
-                    message_key="errors.hermes_expert.start_failed",
-                )
-        else:
-            container_name = self._container_name(instance)
-            proc = await asyncio.create_subprocess_exec(
-                "docker", "start", container_name,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            _, stderr = await proc.communicate()
-            if proc.returncode != 0:
-                raise BadRequestError(
-                    message=f"启动容器失败: {stderr.decode().strip()[:200]}",
-                    message_key="errors.hermes_expert.start_failed",
-                )
+        await self._run_lifecycle_action(instance, "start")
         instance.status = "running"
         await db.commit()
 
+    async def detach(self, instance_id: str, db: AsyncSession) -> None:
+        from app.services import instance_service
+
+        instance = await self._get_expert_instance(instance_id, db)
+        advanced = json.loads(instance.advanced_config or "{}")
+        if advanced.get("attach_mode") != "external":
+            raise BadRequestError(
+                message="仅外部关联实例支持解除关联",
+                message_key="errors.docker_attach.detach_not_supported",
+            )
+        await instance_service.finalize_instance_deletion_once(instance_id, db)
+
+    async def sync_status(self, instance_id: str, db: AsyncSession) -> dict:
+        instance = await self._get_expert_instance(instance_id, db)
+        if instance.compute_provider != "docker":
+            display_status = compute_display_status(instance.status, instance.health_status or "unknown")
+            return {
+                "status": instance.status,
+                "health_status": instance.health_status,
+                "display_status": display_status,
+                "last_error": None,
+            }
+        payload = await sync_docker_instance_status(instance)
+        await db.commit()
+        return payload
+
     async def delete(self, instance_id: str, db: AsyncSession) -> None:
         from app.services import instance_service
-        await self._get_expert_instance(instance_id, db)
+
+        instance = await self._get_expert_instance(instance_id, db)
+        advanced = json.loads(instance.advanced_config or "{}")
+        if advanced.get("attach_mode") == "external":
+            await self.detach(instance_id, db)
+            return
         await instance_service.delete_instance(instance_id, db, delete_k8s=True)
 
     async def health(self, instance_id: str, db: AsyncSession) -> ExpertHealthInfo:
@@ -287,27 +293,98 @@ class ExpertInstanceService:
         webui = advanced.get("webui") or {}
         hindsight = advanced.get("hindsight") or {}
         env_vars = json.loads(instance.env_vars) if instance.env_vars else {}
-        port = webui.get("port") or env_vars.get("DOCKER_HOST_PORT")
-        webui_url = webui.get("url")
+        port = webui.get("host_port") or webui.get("port") or env_vars.get("DOCKER_HOST_PORT")
+        webui_url = webui.get("public_url") or webui.get("url")
         if not webui_url and instance.ingress_domain:
-            webui_url = f"http://{instance.ingress_domain}"
+            scheme = webui.get("public_scheme") or "http"
+            webui_url = f"{scheme}://{instance.ingress_domain}"
         elif not webui_url and port:
-            webui_url = f"http://localhost:{port}"
+            webui_url = get_docker_public_url(int(port))
+
+        docker_status = instance.status
+        if instance.compute_provider == "docker" and instance.status == "running":
+            display_status = compute_docker_display_status(
+                "running",
+                instance.health_status or "unknown",
+            )
+        elif instance.compute_provider == "docker" and instance.status in {"stopped", "exited"}:
+            display_status = "stopped"
+        else:
+            display_status = compute_display_status(
+                instance.status,
+                instance.health_status or "unknown",
+            )
+
         return ExpertInstanceInfo(
             instance_id=instance.id,
             name=instance.name,
-            profile=str(expert.get("profile") or instance.slug),
+            profile=str(expert.get("profile") or advanced.get("profile") or instance.slug),
             expert=str(expert.get("template") or expert.get("profile") or instance.slug),
             expert_template=str(expert.get("template") or expert.get("profile") or instance.slug),
             runtime=instance.runtime,
             status=instance.status,
-            display_status=instance.status,
+            display_status=display_status,
             webui_url=webui_url,
             webui_port=int(port) if port else None,
             hindsight_bank_id=str(hindsight.get("bank_id") or ""),
             cluster_id=instance.cluster_id,
             created_at=instance.created_at,
         )
+
+    async def _run_lifecycle_action(self, instance: Instance, action: str) -> None:
+        advanced = json.loads(instance.advanced_config or "{}")
+        lifecycle_mode = advanced.get("lifecycle_mode", "managed_container")
+        if lifecycle_mode == "linked_only":
+            raise BadRequestError(
+                message="当前实例为仅关联模式，不支持生命周期操作",
+                message_key="errors.docker_attach.lifecycle_not_allowed",
+            )
+
+        compose = advanced.get("compose") or {}
+        compose_path = compose.get("compose_path") or advanced.get("compose_path")
+        env_file = compose.get("env_file") or (advanced.get("paths") or {}).get("env_file")
+        project_name = compose.get("project_name")
+        container_name = self._container_name(instance)
+
+        use_compose = (
+            lifecycle_mode == "managed_compose"
+            and compose_path
+            and env_file
+            and project_name
+        )
+
+        if use_compose:
+            cmd = ["docker", "compose", "-f", compose_path, "--env-file", env_file, "-p", project_name]
+            if action == "start":
+                cmd.extend(["up", "-d"])
+            elif action == "stop":
+                cmd.append("stop")
+            else:
+                cmd.append("restart")
+        else:
+            if action == "start":
+                cmd = ["docker", "start", container_name]
+            elif action == "stop":
+                cmd = ["docker", "stop", container_name]
+            else:
+                cmd = ["docker", "restart", container_name]
+
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            message_key = {
+                "start": "errors.hermes_expert.start_failed",
+                "stop": "errors.hermes_expert.stop_failed",
+                "restart": "errors.hermes_expert.restart_failed",
+            }[action]
+            raise BadRequestError(
+                message=f"{'启动' if action == 'start' else '停止' if action == 'stop' else '重启'}容器失败: {stderr.decode().strip()[:200]}",
+                message_key=message_key,
+            )
 
     @staticmethod
     def _container_name(instance: Instance) -> str:

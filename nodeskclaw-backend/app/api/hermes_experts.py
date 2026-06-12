@@ -54,11 +54,14 @@ async def get_template(
 @router.get("/instances", response_model=ApiResponse[list[ExpertInstanceInfo]])
 async def list_expert_instances(
     org_id: str | None = None,
+    refresh_status: bool = False,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     effective_org_id = org_id or current_user.current_org_id
-    return ApiResponse(data=await _instance_service.list_instances(db, effective_org_id))
+    return ApiResponse(data=await _instance_service.list_instances(
+        db, effective_org_id, refresh_status=refresh_status,
+    ))
 
 
 @router.post("/instances", response_model=ApiResponse[CreateExpertInstanceResponse])
@@ -149,6 +152,31 @@ async def start_expert_instance(
     )
     await _instance_service.start(instance_id, db)
     return ApiResponse(data={"status": "running"})
+
+
+@router.post("/instances/{instance_id}/sync-status", response_model=ApiResponse[dict])
+async def sync_expert_instance_status(
+    instance_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    await instance_member_service.check_instance_access(
+        instance_id, current_user, InstanceRole.viewer, db,
+    )
+    return ApiResponse(data=await _instance_service.sync_status(instance_id, db))
+
+
+@router.post("/instances/{instance_id}/actions/detach", response_model=ApiResponse[dict])
+async def detach_expert_instance(
+    instance_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    await instance_member_service.check_instance_access(
+        instance_id, current_user, InstanceRole.admin, db,
+    )
+    await _instance_service.detach(instance_id, db)
+    return ApiResponse(data={"status": "detached"})
 
 
 @router.delete("/instances/{instance_id}", response_model=ApiResponse[dict])

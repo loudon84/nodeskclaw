@@ -24,26 +24,22 @@ from app.schemas.docker_attach import (
     AttachExistingInstanceRequest,
 )
 from app.services.deploy_service import EXPERT_RUNTIME
-from app.services.docker_constants import (
-    DOCKER_HOST_DATA_DIR,
-    get_docker_attach_scan_dirs,
+from app.services.docker_constants import get_docker_public_host
+from app.services.docker_instance_layout_resolver import (
+    layout_to_advanced_config,
+    resolve_from_inspect,
 )
 from app.services.hermes_expert.expert_filesystem import validate_profile_slug
 from app.services.runtime.compute.base import http_probe
+from app.utils.display_status import compute_docker_display_status
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_CONTAINER_PORT = 8787
 
-class _ProfileDir:
-    def __init__(self, profile: str, data_dir: str, compose_path: str | None = None) -> None:
-        self.profile = profile
-        self.data_dir = data_dir
-        self.compose_path = compose_path
 
 def _container_name_for_profile(profile: str) -> str:
     return f"hermes-{profile}"
-
 
 
 def _parse_image_tag(image: str | None) -> str:
@@ -77,25 +73,6 @@ async def _docker_inspect(container_name: str) -> dict | None:
         return None
 
 
-def _parse_ports(inspect_data: dict) -> tuple[int | None, int | None]:
-    ports = (inspect_data.get("NetworkSettings") or {}).get("Ports") or {}
-    for key, bindings in ports.items():
-        if not bindings:
-            continue
-        binding = bindings[0] if isinstance(bindings, list) and bindings else None
-        if not binding:
-            continue
-        host_port_raw = binding.get("HostPort")
-        if not host_port_raw:
-            continue
-        container_port_raw = key.split("/")[0]
-        try:
-            return int(host_port_raw), int(container_port_raw)
-        except (TypeError, ValueError):
-            continue
-    return None, DEFAULT_CONTAINER_PORT
-
-
 def _parse_health_status(inspect_data: dict) -> str | None:
     health = (inspect_data.get("State") or {}).get("Health")
     if not isinstance(health, dict):
@@ -103,32 +80,50 @@ def _parse_health_status(inspect_data: dict) -> str | None:
     return health.get("Status")
 
 
+def _profile_from_container_name(container_name: str) -> str | None:
+    if not container_name.startswith("hermes-"):
+        return None
+    profile = container_name[len("hermes-"):].strip().lower()
+    try:
+        validate_profile_slug(profile)
+    except BadRequestError:
+        return None
+    return profile
+
+
 def _build_container_info(
-    profile: str,
+    layout,
     inspect_data: dict,
     *,
     data_dir: str,
-    compose_path: str | None,
     already_attached: bool,
     matched_instance_id: str | None,
 ) -> AttachableContainerInfo:
-    container_name = _container_name_for_profile(profile)
     state = inspect_data.get("State") or {}
-    host_port, container_port = _parse_ports(inspect_data)
     created_at = inspect_data.get("Created")
     return AttachableContainerInfo(
-        profile=profile,
-        container_name=container_name,
+        profile=layout.profile,
+        container_name=layout.container_name,
         image=(inspect_data.get("Config") or {}).get("Image"),
         status=state.get("Status") or "unknown",
         health_status=_parse_health_status(inspect_data),
-        host_port=host_port,
-        container_port=container_port,
-        data_dir=data_dir,
-        compose_path=compose_path,
+        host_port=layout.host_port,
+        container_port=layout.container_port,
+        data_dir=data_dir or layout.instance_root,
+        compose_path=layout.compose_path,
         already_attached=already_attached,
         matched_instance_id=matched_instance_id,
         created_at=created_at,
+        public_url=layout.public_url,
+        health_url=layout.health_url,
+        instance_root=layout.instance_root or None,
+        host_data_dir=layout.host_data_dir or None,
+        container_data_dir=layout.container_data_dir,
+        env_file=layout.env_file or None,
+        compose_project=layout.project_name,
+        lifecycle_mode=layout.lifecycle_mode,
+        attachable=layout.attachable,
+        warnings=layout.warnings,
     )
 
 
@@ -191,41 +186,6 @@ async def _find_attachment_match(
     return None
 
 
-def _list_profile_dirs() -> list[_ProfileDir]:
-    profiles: list[_ProfileDir] = []
-    seen: set[str] = set()
-
-    for root in get_docker_attach_scan_dirs():
-        if not root.is_dir():
-            logger.info("docker attach scan dir not found: %s", root)
-            continue
-
-        for entry in sorted(root.iterdir()):
-            if not entry.is_dir():
-                continue
-
-            profile = entry.name.strip().lower()
-            try:
-                validate_profile_slug(profile)
-            except BadRequestError:
-                continue
-
-            container_name = _container_name_for_profile(profile)
-            if container_name in seen:
-                continue
-            seen.add(container_name)
-
-            compose_path = entry / "docker-compose.yml"
-            profiles.append(
-                _ProfileDir(
-                    profile=profile,
-                    data_dir=str(entry),
-                    compose_path=str(compose_path) if compose_path.exists() else None,
-                )
-            )
-
-    return profiles
-
 async def _docker_ps_hermes_containers() -> list[str]:
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -252,34 +212,6 @@ async def _docker_ps_hermes_containers() -> list[str]:
         return []
 
 
-def _profile_from_container_name(container_name: str) -> str | None:
-    if not container_name.startswith("hermes-"):
-        return None
-    profile = container_name[len("hermes-"):].strip().lower()
-    try:
-        validate_profile_slug(profile)
-    except BadRequestError:
-        return None
-    return profile
-
-
-def _data_dir_from_mounts(inspect_data: dict, profile: str) -> str:
-    mounts = inspect_data.get("Mounts") or []
-    for mount in mounts:
-        if not isinstance(mount, dict):
-            continue
-        destination = str(mount.get("Destination") or "")
-        source = str(mount.get("Source") or "")
-        if destination in {"/data/hermes", "/root/.hermes"} and source:
-            return source
-
-    return str(Path(DOCKER_HOST_DATA_DIR) / profile)
-
-
-def _compose_path_for_data_dir(data_dir: str) -> str | None:
-    path = Path(data_dir) / "docker-compose.yml"
-    return str(path) if path.exists() else None
-
 async def list_attachable_containers(
     db: AsyncSession,
     cluster_id: str,
@@ -296,29 +228,6 @@ async def list_attachable_containers(
     items: list[AttachableContainerInfo] = []
     seen_container_names: set[str] = set()
 
-    # 1. 先按配置目录扫描
-    for profile_dir in _list_profile_dirs():
-        profile = profile_dir.profile
-        container_name = _container_name_for_profile(profile)
-        inspect_data = await _docker_inspect(container_name)
-        if inspect_data is None:
-            continue
-
-        seen_container_names.add(container_name)
-        matched = await _find_attachment_match(db, org_id, profile, container_name)
-
-        items.append(
-            _build_container_info(
-                profile,
-                inspect_data,
-                data_dir=profile_dir.data_dir,
-                compose_path=profile_dir.compose_path,
-                already_attached=matched is not None,
-                matched_instance_id=matched.id if matched else None,
-            )
-        )
-
-    # 2. 再从 docker ps 兜底扫描 hermes-* 容器
     for container_name in await _docker_ps_hermes_containers():
         if container_name in seen_container_names:
             continue
@@ -332,16 +241,24 @@ async def list_attachable_containers(
             continue
 
         seen_container_names.add(container_name)
-        data_dir = _data_dir_from_mounts(inspect_data, profile)
-        compose_path = _compose_path_for_data_dir(data_dir)
+        scan_entry = None
+        if profile:
+            from app.services.docker_constants import get_docker_attach_scan_dirs
+            for root in get_docker_attach_scan_dirs():
+                candidate = root / profile
+                if candidate.is_dir():
+                    scan_entry = candidate
+                    break
+
+        layout = resolve_from_inspect(inspect_data, scan_entry=scan_entry)
         matched = await _find_attachment_match(db, org_id, profile, container_name)
+        data_dir = layout.instance_root or (scan_entry and str(scan_entry)) or ""
 
         items.append(
             _build_container_info(
-                profile,
+                layout,
                 inspect_data,
                 data_dir=data_dir,
-                compose_path=compose_path,
                 already_attached=matched is not None,
                 matched_instance_id=matched.id if matched else None,
             )
@@ -350,10 +267,17 @@ async def list_attachable_containers(
     return sorted(items, key=lambda x: (x.host_port or 0, x.profile))
 
 
-async def _probe_health(host_port: int) -> str:
-    result = await http_probe(f"http://localhost:{host_port}", path="/health")
-    if result.get("healthy") is True:
-        return "healthy"
+async def _probe_health(health_url: str | None, host_port: int | None) -> str:
+    if health_url:
+        result = await http_probe(health_url.rsplit("/health", 1)[0], path="/health")
+        if result.get("healthy") is True:
+            return "healthy"
+        return "unhealthy"
+    if host_port:
+        result = await http_probe(f"http://localhost:{host_port}", path="/health")
+        if result.get("healthy") is True:
+            return "healthy"
+        return "unhealthy"
     return "unknown"
 
 
@@ -363,6 +287,16 @@ def _rewrite_docker_callback_url(url: str | None) -> str:
     from app.services.deploy_service import _rewrite_docker_callback_url
 
     return _rewrite_docker_callback_url(url)
+
+
+def _map_docker_status_to_instance_status(docker_status: str) -> str:
+    if docker_status == "running":
+        return InstanceStatus.running
+    if docker_status in {"exited", "created", "dead"}:
+        return "stopped"
+    if docker_status == "restarting":
+        return InstanceStatus.restarting
+    return "unknown"
 
 
 async def attach_existing_container(
@@ -378,8 +312,9 @@ async def attach_existing_container(
             message_key="errors.docker_attach.unsupported_runtime",
         )
 
-    profile = validate_profile_slug(req.profile)
-    slug = validate_profile_slug(req.slug, "slug")
+    container_name = req.container_name.strip()
+    profile = validate_profile_slug(req.profile or _profile_from_container_name(container_name) or "")
+    slug = validate_profile_slug(req.slug or profile, "slug")
     if slug != profile:
         raise BadRequestError(
             message="slug 必须与 profile 一致",
@@ -387,7 +322,7 @@ async def attach_existing_container(
         )
 
     expected_container_name = _container_name_for_profile(profile)
-    if req.container_name != expected_container_name:
+    if container_name != expected_container_name:
         raise BadRequestError(
             message=f"容器名必须为 {expected_container_name}",
             message_key="errors.docker_attach.invalid_container_name",
@@ -400,18 +335,37 @@ async def attach_existing_container(
             message_key="errors.docker_attach.container_not_found",
         )
 
-    status = (inspect_data.get("State") or {}).get("Status")
-    if status != "running":
+    scan_entry = None
+    from app.services.docker_constants import get_docker_attach_scan_dirs
+    for root in get_docker_attach_scan_dirs():
+        candidate = root / profile
+        if candidate.is_dir():
+            scan_entry = candidate
+            break
+
+    layout = resolve_from_inspect(
+        inspect_data,
+        scan_entry=scan_entry,
+        lifecycle_mode=req.lifecycle_mode,
+    )
+    if not layout.attachable:
         raise BadRequestError(
-            message=f"容器当前状态为 {status or 'unknown'}，仅 running 状态可绑定",
-            message_key="errors.docker_attach.container_not_running",
+            message="无法识别容器 /data/hermes 的宿主机映射目录，请检查 volume 映射",
+            message_key="errors.docker_attach.host_data_dir_missing",
         )
 
-    host_port, container_port = _parse_ports(inspect_data)
+    if layout.host_data_dir and not Path(layout.host_data_dir).is_dir():
+        raise BadRequestError(
+            message=f"宿主机数据目录不存在: {layout.host_data_dir}",
+            message_key="errors.docker_attach.host_data_dir_not_found",
+        )
+
+    host_port = layout.host_port or req.host_port
     if host_port is None:
-        host_port = req.host_port
-    if container_port is None:
-        container_port = DEFAULT_CONTAINER_PORT
+        raise BadRequestError(
+            message="无法识别 WebUI 端口",
+            message_key="errors.docker_attach.host_port_missing",
+        )
 
     matched = await _find_attachment_match(db, org_id, profile, expected_container_name)
     if matched:
@@ -420,8 +374,12 @@ async def attach_existing_container(
             message_key="errors.docker_attach.already_attached",
         )
 
+    docker_status = (inspect_data.get("State") or {}).get("Status") or "unknown"
+    health_status = await _probe_health(layout.health_url, host_port)
+    instance_status = _map_docker_status_to_instance_status(docker_status)
+
     image = (inspect_data.get("Config") or {}).get("Image") or req.image
-    health_status = await _probe_health(host_port)
+    display_name = (req.display_name or req.name).strip()
 
     gateway_token = secrets.token_hex(24)
     env_vars = {
@@ -437,38 +395,26 @@ async def attach_existing_container(
     if tunnel_url:
         env_vars["NODESKCLAW_TUNNEL_URL"] = tunnel_url
 
-    advanced_config = {
-        "attach_mode": "external",
-        "external_lifecycle": False,
-        "external_dir": profile,
-        "external_container_name": expected_container_name,
-        "compose_path": req.compose_path or _compose_path_for_data_dir(req.data_dir),
-        "expert": {
-            "profile": profile,
-            "template": profile,
-        },
-        "webui": {
-            "port": host_port,
-            "container_port": container_port,
-        },
-        "compose": {
-            "container_name": expected_container_name,
-            "compose_path": req.compose_path or _compose_path_for_data_dir(req.data_dir),
-        },
-    }
+    advanced_config = layout_to_advanced_config(layout)
+    if req.compose_path:
+        advanced_config["compose"]["compose_path"] = req.compose_path
+        advanced_config["paths"]["compose_path"] = req.compose_path
+
+    public_host = get_docker_public_host()
+    ingress_domain = f"{public_host}:{host_port}"
 
     instance = Instance(
-        name=req.name.strip(),
+        name=display_name,
         slug=profile,
         cluster_id=req.cluster_id,
         namespace=f"docker-{profile}",
         image_version=_parse_image_tag(image),
         replicas=1,
         service_type="docker",
-        ingress_domain=f"localhost:{host_port}",
+        ingress_domain=ingress_domain,
         compute_provider="docker",
         runtime=EXPERT_RUNTIME,
-        status=InstanceStatus.running,
+        status=instance_status,
         health_status=health_status,
         proxy_token=gateway_token,
         wp_api_key=f"nodeskclaw-wp-{secrets.token_hex(32)}",
@@ -507,10 +453,47 @@ async def attach_existing_container(
     await db.refresh(instance)
 
     logger.info(
-        "attached existing docker container: instance=%s profile=%s container=%s port=%s",
+        "attached existing docker container: instance=%s profile=%s container=%s port=%s lifecycle=%s",
         instance.id,
         profile,
         expected_container_name,
         host_port,
+        layout.lifecycle_mode,
     )
     return instance
+
+
+async def sync_docker_instance_status(instance: Instance) -> dict:
+    advanced = json.loads(instance.advanced_config or "{}")
+    container_name = (
+        advanced.get("external_container_name")
+        or (advanced.get("compose") or {}).get("container_name")
+        or _container_name_for_profile(instance.slug)
+    )
+    inspect_data = await _docker_inspect(container_name)
+    if inspect_data is None:
+        instance.health_status = "unhealthy"
+        display_status = compute_docker_display_status("missing", instance.health_status)
+        return {
+            "status": "missing",
+            "health_status": instance.health_status,
+            "display_status": display_status,
+            "last_error": "container missing",
+        }
+
+    docker_status = (inspect_data.get("State") or {}).get("Status") or "unknown"
+    webui = advanced.get("webui") or {}
+    health_url = webui.get("health_url")
+    host_port = webui.get("host_port")
+    health_status = await _probe_health(health_url, host_port)
+    instance_status = _map_docker_status_to_instance_status(docker_status)
+    instance.status = instance_status
+    instance.health_status = health_status
+    display_status = compute_docker_display_status(docker_status, health_status)
+    last_error = None if display_status == "running" else "health check failed"
+    return {
+        "status": instance_status,
+        "health_status": health_status,
+        "display_status": display_status,
+        "last_error": last_error,
+    }

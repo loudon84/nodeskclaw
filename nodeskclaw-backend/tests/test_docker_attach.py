@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -9,15 +10,21 @@ from app.models.cluster import ClusterStatus
 from app.models.instance import Instance, InstanceStatus
 from app.schemas.docker_attach import AttachExistingInstanceRequest
 from app.services import docker_attach_service, instance_service
+from app.services.hermes_expert.expert_filesystem import get_hermes_host_data_dir
 
 
 def _inspect_payload(status: str = "running") -> dict:
     return {
+        "Name": "/hermes-writer",
         "State": {"Status": status, "Health": {"Status": "healthy"}},
-        "Config": {"Image": "hermes-agent-webui:latest"},
+        "Config": {"Image": "hermes-agent-webui:latest", "Labels": {}},
         "NetworkSettings": {
             "Ports": {"8787/tcp": [{"HostIp": "0.0.0.0", "HostPort": "8787"}]},
         },
+        "Mounts": [{
+            "Destination": "/data/hermes",
+            "Source": "/opt/nodeskclaw/instances/writer/data/hermes",
+        }],
         "Created": "2026-01-01T00:00:00.000000000Z",
     }
 
@@ -44,6 +51,10 @@ def _make_docker_instance(status=InstanceStatus.deleting) -> Instance:
         "attach_mode": "external",
         "external_lifecycle": False,
         "external_container_name": "hermes-writer",
+        "paths": {
+            "host_data_dir": "/opt/nodeskclaw/instances/writer/data/hermes",
+            "skills_dir": "/opt/nodeskclaw/instances/writer/data/hermes/skills",
+        },
     }
     return Instance(
         id="instance-1",
@@ -112,6 +123,11 @@ def _patch_cluster_lookup(monkeypatch):
     )
 
 
+@pytest.fixture(autouse=True)
+def _ensure_host_data_dir(monkeypatch):
+    monkeypatch.setattr(Path, "is_dir", lambda self: True)
+
+
 @pytest.mark.asyncio
 async def test_attach_existing_container_success(monkeypatch):
     monkeypatch.setattr(
@@ -160,8 +176,48 @@ async def test_attach_existing_container_success(monkeypatch):
     assert advanced["attach_mode"] == "external"
     assert advanced["external_lifecycle"] is False
     assert advanced["external_container_name"] == "hermes-writer"
+    assert advanced["paths"]["host_data_dir"] == "/opt/nodeskclaw/instances/writer/data/hermes"
+    assert advanced["webui"]["public_url"] == "http://localhost:8787"
     assert any(isinstance(item, Instance) for item in added)
     assert db.commit.await_count >= 2
+
+
+@pytest.mark.asyncio
+async def test_attach_existing_container_allows_exited_container(monkeypatch):
+    monkeypatch.setattr(
+        docker_attach_service,
+        "_docker_inspect",
+        AsyncMock(return_value=_inspect_payload(status="exited")),
+    )
+    monkeypatch.setattr(
+        docker_attach_service,
+        "_find_attachment_match",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        docker_attach_service,
+        "_probe_health",
+        AsyncMock(return_value="unhealthy"),
+    )
+
+    db = AsyncMock()
+    db.add = lambda obj: None
+    db.commit = AsyncMock()
+
+    async def refresh_side_effect(obj):
+        if isinstance(obj, Instance) and not obj.id:
+            obj.id = "instance-new"
+
+    db.refresh = AsyncMock(side_effect=refresh_side_effect)
+
+    instance = await docker_attach_service.attach_existing_container(
+        db,
+        SimpleNamespace(id="user-1"),
+        _attach_request(),
+        "org-1",
+    )
+
+    assert instance.status == "stopped"
 
 
 @pytest.mark.asyncio
@@ -213,35 +269,11 @@ async def test_attach_existing_container_rejects_missing_container(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_attach_existing_container_rejects_exited_container(monkeypatch):
-    monkeypatch.setattr(
-        docker_attach_service,
-        "_docker_inspect",
-        AsyncMock(return_value=_inspect_payload(status="exited")),
-    )
-    monkeypatch.setattr(
-        docker_attach_service,
-        "_find_attachment_match",
-        AsyncMock(return_value=None),
-    )
-
-    with pytest.raises(BadRequestError) as exc_info:
-        await docker_attach_service.attach_existing_container(
-            AsyncMock(),
-            SimpleNamespace(id="user-1"),
-            _attach_request(),
-            "org-1",
-        )
-
-    assert exc_info.value.message_key == "errors.docker_attach.container_not_running"
-
-
-@pytest.mark.asyncio
 async def test_list_attachable_containers_marks_already_attached(monkeypatch):
     monkeypatch.setattr(
         docker_attach_service,
-        "_list_profile_dirs",
-        lambda: ["writer"],
+        "_docker_ps_hermes_containers",
+        AsyncMock(return_value=["hermes-writer"]),
     )
     monkeypatch.setattr(
         docker_attach_service,
@@ -265,6 +297,7 @@ async def test_list_attachable_containers_marks_already_attached(monkeypatch):
     assert items[0].profile == "writer"
     assert items[0].already_attached is True
     assert items[0].matched_instance_id == "inst-bound"
+    assert items[0].public_url == "http://localhost:8787"
 
 
 @pytest.mark.asyncio
@@ -298,3 +331,9 @@ def test_is_external_attach_instance():
 
     instance.advanced_config = json.dumps({"attach_mode": "external", "external_lifecycle": True})
     assert instance_service._is_external_attach_instance(instance) is False
+
+
+def test_get_hermes_host_data_dir_prefers_advanced_config():
+    instance = _make_docker_instance(status=InstanceStatus.running)
+    path = get_hermes_host_data_dir(instance)
+    assert path == Path("/opt/nodeskclaw/instances/writer/data/hermes")
