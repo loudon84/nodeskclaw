@@ -9,6 +9,7 @@ import os
 import re
 import uuid
 from pathlib import Path, PurePosixPath, PureWindowsPath
+from app.core.config import settings
 
 from app.services.docker_constants import DOCKER_DATA_DIR, DOCKER_HOST_DATA_DIR
 from app.services.runtime.compute.base import (
@@ -28,7 +29,7 @@ def _docker_endpoint_host() -> str:
     Inside a container: host.docker.internal (host ports are not on localhost).
     On the host directly: localhost.
     """
-    if os.path.exists("/.dockerenv") or os.environ.get("DOCKER_DATA_DIR"):
+    if os.path.exists("/.dockerenv") or settings.DOCKER_DATA_DIR:
         return "host.docker.internal"
     return "localhost"
 

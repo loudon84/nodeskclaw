@@ -15,13 +15,14 @@ from app.services.docker_constants import (
     get_docker_public_url,
 )
 
+from app.core.config import settings
+
 DEFAULT_CONTAINER_DATA_DIR = "/data/hermes"
 DEFAULT_CONTAINER_PORT = 8787
 
 
-
 def _docker_endpoint_host() -> str:
-    if os.path.exists("/.dockerenv") or os.environ.get("DOCKER_DATA_DIR"):
+    if os.path.exists("/.dockerenv") or settings.DOCKER_DATA_DIR:
         return "host.docker.internal"
     return "localhost"
 
