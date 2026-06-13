@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed, provide } from 'vue'
+import { ref, onMounted, computed, provide, type Component } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ArrowLeft, Circle, Loader2, LayoutDashboard, Brain, Dna, History, FolderOpen, Users, Activity, Archive, Pencil, Check, X, RotateCcw, Wrench } from 'lucide-vue-next'
@@ -10,6 +10,12 @@ import { getRuntimeCaps, setRuntimeEngines } from '@/utils/runtimeCapabilities'
 import { getStatusDisplay } from '@/utils/instanceStatus'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import ExternalDockerDetail from '@/views/ExternalDockerDetail.vue'
+import ExternalDockerStatus from '@/views/external-docker/ExternalDockerStatus.vue'
+import ExternalDockerModelConfig from '@/views/external-docker/ExternalDockerModelConfig.vue'
+import ExternalDockerSkills from '@/views/external-docker/ExternalDockerSkills.vue'
+import ExternalDockerFiles from '@/views/external-docker/ExternalDockerFiles.vue'
+import ExternalDockerBackups from '@/views/external-docker/ExternalDockerBackups.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -27,6 +33,8 @@ interface InstanceBasic {
   runtime?: string
   org_id: string | null
   my_role: string | null
+  binding_type?: string
+  advanced_config?: string | null
 }
 
 const instance = ref<InstanceBasic | null>(null)
@@ -86,11 +94,13 @@ async function fetchBasic() {
 const instanceOrgId = computed(() => instance.value?.org_id ?? null)
 
 const instanceRuntime = computed(() => instance.value?.runtime ?? 'openclaw')
+const isExternalDocker = computed(() => instance.value?.binding_type === 'external_docker')
 
 provide('instanceId', instanceId)
 provide('instanceOrgId', instanceOrgId)
 provide('instanceBasic', instance)
 provide('instanceRuntime', instanceRuntime)
+provide('instanceBindingType', computed(() => instance.value?.binding_type ?? 'platform_managed'))
 provide('refreshInstanceBasic', fetchBasic)
 provide('myInstanceRole', myInstanceRole)
 
@@ -98,7 +108,35 @@ onMounted(fetchBasic)
 
 const caps = computed(() => getRuntimeCaps(instanceRuntime.value))
 
+const externalComponentMap: Record<string, Component> = {
+  InstanceDetail: ExternalDockerDetail,
+  InstanceRuntime: ExternalDockerStatus,
+  InstanceSettings: ExternalDockerModelConfig,
+  ExpertInstanceSkills: ExternalDockerSkills,
+  InstanceFiles: ExternalDockerFiles,
+  InstanceBackups: ExternalDockerBackups,
+}
+
+function resolveChildComponent(routeName: string | symbol | undefined, defaultComponent: Component) {
+  if (!isExternalDocker.value || !routeName) return defaultComponent
+  return externalComponentMap[String(routeName)] ?? defaultComponent
+}
+
 const navItems = computed(() => {
+  if (isExternalDocker.value) {
+    const items = [
+      { name: 'InstanceDetail', label: t('common.overview'), icon: LayoutDashboard },
+      { name: 'InstanceRuntime', label: t('common.runtimeStatus'), icon: Activity },
+      { name: 'InstanceSettings', label: t('common.modelConfig'), icon: Brain },
+      { name: 'ExpertInstanceSkills', label: t('externalDocker.skillsTitle'), icon: Wrench },
+    ]
+    if (myInstanceRole.value === 'admin') {
+      items.push({ name: 'InstanceFiles', label: t('common.files'), icon: FolderOpen })
+      items.push({ name: 'InstanceBackups', label: t('backup.title'), icon: Archive })
+    }
+    return items
+  }
+
   const items = [
     { name: 'InstanceDetail', label: t('common.overview'), icon: LayoutDashboard },
   ]
@@ -191,7 +229,9 @@ const navItems = computed(() => {
       <!-- Content (可滚动) -->
       <div class="flex-1 min-w-0 overflow-y-auto pr-3">
         <div class="pb-4">
-          <router-view />
+          <router-view v-slot="{ Component, route: childRoute }">
+            <component :is="resolveChildComponent(childRoute.name, Component)" />
+          </router-view>
         </div>
       </div>
     </div>

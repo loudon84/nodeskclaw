@@ -34,6 +34,8 @@ interface InstanceInfo {
   updated_at: string
   my_role: string | null
   compute_provider?: string
+  binding_type?: string
+  binding_type_label?: string
 }
 
 const roleLabels: Record<string, string> = {
@@ -89,6 +91,20 @@ function getStatusLabel(inst: InstanceInfo) {
 
 function getInstanceDisplayName(inst: InstanceInfo): string {
   return inst.effective_name || inst.display_name || inst.name
+}
+
+function getBindingTypeLabel(inst: InstanceInfo): string {
+  if (inst.binding_type_label) return inst.binding_type_label
+  if (inst.binding_type === 'external_docker') return t('bindingType.external_docker')
+  if (inst.binding_type === 'platform_managed') return t('bindingType.platform_managed')
+  return ''
+}
+
+function getBindingTypeClass(bindingType?: string): string {
+  if (bindingType === 'external_docker') {
+    return 'bg-sky-500/15 text-sky-400'
+  }
+  return 'bg-muted text-muted-foreground'
 }
 
 const sortedInstances = computed(() =>
@@ -300,6 +316,13 @@ onMounted(() => {
                 >
                   <Container class="w-3 h-3" />
                   Docker
+                </span>
+                <span
+                  v-if="inst.binding_type"
+                  class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold"
+                  :class="getBindingTypeClass(inst.binding_type)"
+                >
+                  {{ getBindingTypeLabel(inst) }}
                 </span>
               </span>
             </TableCell>
