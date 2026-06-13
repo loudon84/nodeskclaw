@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, File, Query, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_db
@@ -17,10 +17,18 @@ from app.schemas.external_docker import (
     ExternalDockerCreateBackupResponse,
     ExternalDockerDetachResponse,
     ExternalDockerFilesResponse,
+    ExternalDockerInstallBuiltinSkillRequest,
+    ExternalDockerInstallGitSkillRequest,
     ExternalDockerLifecycleResponse,
     ExternalDockerLogsResponse,
+    ExternalDockerModelConfigRawResponse,
     ExternalDockerModelConfigResponse,
+    ExternalDockerModelConfigUpdateRequest,
+    ExternalDockerModelConfigUpdateResponse,
+    ExternalDockerModelConfigValidateRequest,
+    ExternalDockerModelConfigValidateResponse,
     ExternalDockerOverviewResponse,
+    ExternalDockerSkillActionResponse,
     ExternalDockerSkillsResponse,
     ExternalDockerStatusResponse,
     ExternalDockerWebuiAccessResponse,
@@ -101,6 +109,62 @@ async def get_model_config(
     return ApiResponse(data=model_config_service.get_model_config(instance))
 
 
+@router.get(
+    "/{instance_id}/external-docker/model-config/raw",
+    response_model=ApiResponse[ExternalDockerModelConfigRawResponse],
+)
+async def get_model_config_raw(
+    instance_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    await instance_member_service.check_instance_access(
+        instance_id, current_user, InstanceRole.viewer, db,
+    )
+    instance = await require_external_docker_instance(instance_id, db, current_user.current_org_id)
+    return ApiResponse(data=model_config_service.get_model_config_raw(instance))
+
+
+@router.post(
+    "/{instance_id}/external-docker/model-config/validate",
+    response_model=ApiResponse[ExternalDockerModelConfigValidateResponse],
+)
+async def validate_model_config(
+    instance_id: str,
+    body: ExternalDockerModelConfigValidateRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    await instance_member_service.check_instance_access(
+        instance_id, current_user, InstanceRole.admin, db,
+    )
+    await require_external_docker_instance(instance_id, db, current_user.current_org_id)
+    return ApiResponse(data=model_config_service.validate_model_config(body.content))
+
+
+@router.put(
+    "/{instance_id}/external-docker/model-config",
+    response_model=ApiResponse[ExternalDockerModelConfigUpdateResponse],
+)
+async def update_model_config(
+    instance_id: str,
+    body: ExternalDockerModelConfigUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    await instance_member_service.check_instance_access(
+        instance_id, current_user, InstanceRole.admin, db,
+    )
+    instance = await require_external_docker_instance(instance_id, db, current_user.current_org_id)
+    return ApiResponse(
+        data=await model_config_service.update_model_config(
+            instance,
+            body.content,
+            restart_after_save=body.restart_after_save,
+        )
+    )
+
+
 @router.get("/{instance_id}/external-docker/skills", response_model=ApiResponse[ExternalDockerSkillsResponse])
 async def list_skills(
     instance_id: str,
@@ -112,6 +176,132 @@ async def list_skills(
     )
     instance = await require_external_docker_instance(instance_id, db, current_user.current_org_id)
     return ApiResponse(data=skill_service.list_skills(instance))
+
+
+@router.post(
+    "/{instance_id}/external-docker/skills/builtin",
+    response_model=ApiResponse[ExternalDockerSkillActionResponse],
+)
+async def install_builtin_skill(
+    instance_id: str,
+    body: ExternalDockerInstallBuiltinSkillRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    await instance_member_service.check_instance_access(
+        instance_id, current_user, InstanceRole.admin, db,
+    )
+    instance = await require_external_docker_instance(instance_id, db, current_user.current_org_id)
+    return ApiResponse(data=skill_service.install_builtin_bundle(instance, body.bundle))
+
+
+@router.post(
+    "/{instance_id}/external-docker/skills/upload",
+    response_model=ApiResponse[ExternalDockerSkillActionResponse],
+)
+async def upload_skill(
+    instance_id: str,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    await instance_member_service.check_instance_access(
+        instance_id, current_user, InstanceRole.admin, db,
+    )
+    instance = await require_external_docker_instance(instance_id, db, current_user.current_org_id)
+    payload = await file.read()
+    return ApiResponse(data=skill_service.upload_skill_zip(instance, payload))
+
+
+@router.post(
+    "/{instance_id}/external-docker/skills/git",
+    response_model=ApiResponse[ExternalDockerSkillActionResponse],
+)
+async def install_git_skill(
+    instance_id: str,
+    body: ExternalDockerInstallGitSkillRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    await instance_member_service.check_instance_access(
+        instance_id, current_user, InstanceRole.admin, db,
+    )
+    instance = await require_external_docker_instance(instance_id, db, current_user.current_org_id)
+    return ApiResponse(
+        data=await skill_service.install_from_git(
+            instance,
+            repo=body.repo,
+            ref=body.ref,
+            skill_slug=body.skill_slug,
+        )
+    )
+
+
+@router.post(
+    "/{instance_id}/external-docker/skills/{skill_slug}/enable",
+    response_model=ApiResponse[ExternalDockerSkillActionResponse],
+)
+async def enable_skill(
+    instance_id: str,
+    skill_slug: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    await instance_member_service.check_instance_access(
+        instance_id, current_user, InstanceRole.admin, db,
+    )
+    instance = await require_external_docker_instance(instance_id, db, current_user.current_org_id)
+    return ApiResponse(data=skill_service.enable_skill(instance, skill_slug))
+
+
+@router.post(
+    "/{instance_id}/external-docker/skills/{skill_slug}/disable",
+    response_model=ApiResponse[ExternalDockerSkillActionResponse],
+)
+async def disable_skill(
+    instance_id: str,
+    skill_slug: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    await instance_member_service.check_instance_access(
+        instance_id, current_user, InstanceRole.admin, db,
+    )
+    instance = await require_external_docker_instance(instance_id, db, current_user.current_org_id)
+    return ApiResponse(data=skill_service.disable_skill(instance, skill_slug))
+
+
+@router.delete(
+    "/{instance_id}/external-docker/skills/{skill_slug}",
+    response_model=ApiResponse[ExternalDockerSkillActionResponse],
+)
+async def delete_skill(
+    instance_id: str,
+    skill_slug: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    await instance_member_service.check_instance_access(
+        instance_id, current_user, InstanceRole.admin, db,
+    )
+    instance = await require_external_docker_instance(instance_id, db, current_user.current_org_id)
+    return ApiResponse(data=skill_service.delete_skill(instance, skill_slug))
+
+
+@router.post(
+    "/{instance_id}/external-docker/skills/rescan",
+    response_model=ApiResponse[ExternalDockerSkillActionResponse],
+)
+async def rescan_skills(
+    instance_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    await instance_member_service.check_instance_access(
+        instance_id, current_user, InstanceRole.viewer, db,
+    )
+    instance = await require_external_docker_instance(instance_id, db, current_user.current_org_id)
+    return ApiResponse(data=skill_service.rescan_skills(instance))
 
 
 @router.get("/{instance_id}/external-docker/files", response_model=ApiResponse[ExternalDockerFilesResponse])

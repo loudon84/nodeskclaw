@@ -2,22 +2,31 @@
 
 from __future__ import annotations
 
-import re
+import shutil
+from datetime import datetime, timezone
 from typing import Any
 
 import yaml
 
+from app.core.exceptions import BadRequestError
 from app.models.instance import Instance
-from app.schemas.external_docker import ExternalDockerModelConfigResponse
-from app.services.hermes_external._common import resolve_paths
+from app.schemas.external_docker import (
+    ExternalDockerModelConfigRawResponse,
+    ExternalDockerModelConfigResponse,
+    ExternalDockerModelConfigUpdateResponse,
+    ExternalDockerModelConfigValidateResponse,
+)
+from app.services.hermes_external._common import _path_resolver, resolve_paths
 
 _SENSITIVE_KEYS = {
     "api_key",
+    "apikey",
     "secret_key",
     "access_token",
     "authorization",
     "password",
     "token",
+    "max_tokens",
 }
 
 
@@ -75,6 +84,28 @@ def _extract_providers(config: dict[str, Any]) -> list[dict[str, Any]]:
     return providers
 
 
+def _parse_yaml_content(content: str) -> dict[str, Any]:
+    stripped = (content or "").strip()
+    if not stripped:
+        raise BadRequestError(
+            message="config.yaml 内容不能为空",
+            message_key="errors.external_docker.model_config_empty",
+        )
+    try:
+        parsed = yaml.safe_load(content)
+    except yaml.YAMLError as exc:
+        raise BadRequestError(
+            message=f"config.yaml 格式错误：{exc}",
+            message_key="errors.external_docker.model_config_invalid_yaml",
+        ) from exc
+    if not isinstance(parsed, dict):
+        raise BadRequestError(
+            message="config.yaml 顶层必须是 YAML 对象",
+            message_key="errors.external_docker.model_config_invalid_root",
+        )
+    return parsed
+
+
 def get_model_config(instance: Instance) -> ExternalDockerModelConfigResponse:
     ep = resolve_paths(instance)
     config_file = ep.config_file
@@ -107,4 +138,85 @@ def get_model_config(instance: Instance) -> ExternalDockerModelConfigResponse:
         exists=True,
         providers=_extract_providers(config),
         masked=True,
+    )
+
+
+def get_model_config_raw(instance: Instance) -> ExternalDockerModelConfigRawResponse:
+    ep = resolve_paths(instance)
+    config_file = ep.config_file
+    if not config_file.is_file():
+        return ExternalDockerModelConfigRawResponse(
+            config_file=str(config_file),
+            exists=False,
+            content="",
+            message="Hermes config.yaml 未初始化",
+        )
+    return ExternalDockerModelConfigRawResponse(
+        config_file=str(config_file),
+        exists=True,
+        content=config_file.read_text(encoding="utf-8"),
+    )
+
+
+def validate_model_config(content: str) -> ExternalDockerModelConfigValidateResponse:
+    try:
+        parsed = _parse_yaml_content(content)
+    except BadRequestError as exc:
+        return ExternalDockerModelConfigValidateResponse(
+            valid=False,
+            message=exc.message,
+        )
+    return ExternalDockerModelConfigValidateResponse(
+        valid=True,
+        message="YAML 格式正确",
+        parsed_preview=parsed,
+    )
+
+
+def backup_config(instance: Instance) -> str | None:
+    ep = resolve_paths(instance)
+    config_file = ep.config_file
+    if not config_file.is_file():
+        return None
+    backup_dir = ep.backups_dir / "config"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    backup_file = backup_dir / f"config-{stamp}.yaml"
+    shutil.copy2(config_file, backup_file)
+    return str(backup_file)
+
+
+async def update_model_config(
+    instance: Instance,
+    content: str,
+    *,
+    restart_after_save: bool = False,
+) -> ExternalDockerModelConfigUpdateResponse:
+    from app.services.hermes_external import lifecycle_service
+
+    _parse_yaml_content(content)
+    ep = resolve_paths(instance)
+    _path_resolver.ensure_auto_create_dirs(ep)
+    config_file = ep.config_file
+    config_file.parent.mkdir(parents=True, exist_ok=True)
+
+    backup_file = backup_config(instance)
+    tmp = config_file.with_suffix(".yaml.tmp")
+    tmp.write_text(content, encoding="utf-8")
+    tmp.replace(config_file)
+
+    restarted = False
+    message = "配置已保存，重启 Hermes 实例后生效"
+    if restart_after_save:
+        await lifecycle_service.restart(instance)
+        restarted = True
+        message = "配置已保存，并已重启实例"
+
+    return ExternalDockerModelConfigUpdateResponse(
+        success=True,
+        config_file=str(config_file),
+        backup_file=backup_file,
+        requires_restart=True,
+        restarted=restarted,
+        message=message,
     )

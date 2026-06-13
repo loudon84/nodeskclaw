@@ -56,11 +56,67 @@ class ExternalDockerModelConfigResponse(BaseModel):
     message: str | None = None
 
 
+class ExternalDockerModelConfigRawResponse(BaseModel):
+    config_file: str = ""
+    exists: bool = False
+    content: str = ""
+    message: str | None = None
+
+
+class ExternalDockerModelConfigValidateRequest(BaseModel):
+    content: str
+
+
+class ExternalDockerModelConfigValidateResponse(BaseModel):
+    valid: bool
+    message: str
+    parsed_preview: dict[str, Any] | None = None
+
+
+class ExternalDockerModelConfigUpdateRequest(BaseModel):
+    content: str
+    restart_after_save: bool = False
+
+
+class ExternalDockerModelConfigUpdateResponse(BaseModel):
+    success: bool
+    config_file: str
+    backup_file: str | None = None
+    requires_restart: bool = True
+    restarted: bool = False
+    message: str
+
+
 class ExternalDockerSkillItem(BaseModel):
     name: str
     path: str
     kind: str
     category: str
+    slug: str | None = None
+    version: str | None = None
+    description: str | None = None
+    enabled: bool | None = None
+    status: str | None = None
+    source: str | None = None
+    requires_restart: bool = False
+
+
+class ExternalDockerSkillActionResponse(BaseModel):
+    success: bool
+    message: str
+    requires_restart: bool = False
+    item: ExternalDockerSkillItem | None = None
+    items: list[ExternalDockerSkillItem] = Field(default_factory=list)
+
+
+class ExternalDockerInstallBuiltinSkillRequest(BaseModel):
+    bundle: str
+
+
+class ExternalDockerInstallGitSkillRequest(BaseModel):
+    repo: str
+    ref: str = "main"
+    skill_slug: str | None = None
 
 
 class ExternalDockerSkillsResponse(BaseModel):
