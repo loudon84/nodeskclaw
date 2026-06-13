@@ -36,6 +36,8 @@ class InstanceInfo(BaseModel):
     storage_size: str = "80Gi"
     advanced_config: str | None = None
     pending_config: str | None = None
+    binding_type: str = "platform_managed"
+    binding_type_label: str = ""
     created_by: str
     created_at: datetime
     updated_at: datetime

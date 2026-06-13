@@ -24,6 +24,7 @@ from app.schemas.deploy import DeployRecordInfo
 from app.schemas.instance import InstanceDetail, InstanceInfo, UpdateConfigRequest, WorkspaceBrief
 from app.services.runtime.compute.base import ComputeHandle
 from app.utils.display_status import compute_display_status
+from app.services.hermes_external.binding_type import get_binding_type_label, get_instance_binding_type
 from app.services.k8s.client_manager import k8s_manager
 from app.services.k8s.k8s_client import K8sClient
 from app.services.k8s.resource_builder import build_configmap, build_labels
@@ -543,6 +544,9 @@ async def list_instances(
         info = InstanceInfo.model_validate(i)
         info.workspaces = workspaces
         info.endpoint_url = _compute_endpoint_url(i, tls_enabled=tls_enabled)
+        bt = get_instance_binding_type(i)
+        info.binding_type = bt
+        info.binding_type_label = get_binding_type_label(bt)
         items.append(info)
 
     if health_corrected:
@@ -709,6 +713,9 @@ async def get_instance_detail(instance_id: str, db: AsyncSession, org_id: str | 
 
     info_base = InstanceInfo.model_validate(instance)
     info_base.endpoint_url = _compute_endpoint_url(instance, tls_enabled=tls_enabled)
+    bt = get_instance_binding_type(instance)
+    info_base.binding_type = bt
+    info_base.binding_type_label = get_binding_type_label(bt)
 
     detail = InstanceDetail(
         **info_base.model_dump(),
