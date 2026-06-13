@@ -52,11 +52,11 @@ def _host_from_portal_base_url() -> str | None:
 
 
 def get_docker_public_scheme() -> str:
-    return settings.get("DOCKER_PUBLIC_SCHEME", "http").strip() or "http"
+    return settings.DOCKER_PUBLIC_SCHEME or "http"
 
 
 def get_docker_public_host() -> str:
-    host_raw = settings.get("DOCKER_PUBLIC_HOST", "").strip()
+    host_raw = settings.DOCKER_PUBLIC_HOST
     if host_raw:
         return host_raw
     derived = _host_from_portal_base_url()
@@ -70,7 +70,7 @@ def get_docker_public_url(port: int) -> str:
 
 
 def get_docker_compose_file_fallback() -> str | None:
-    compose_file = settings.get("DOCKER_COMPOSE_FILE", "").strip()
+    compose_file = settings.DOCKER_COMPOSE_FILE
     if compose_file and Path(compose_file).exists():
         return compose_file
     parent_compose = DOCKER_DATA_DIR.parent / "docker-compose.yml"
