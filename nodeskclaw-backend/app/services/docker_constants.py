@@ -12,6 +12,7 @@ HERMES_EXPERT_PORT_END = settings.HERMES_EXPERT_PORT_END
 
 _DEFAULT_DOCKER_DATA_DIR = str(Path.home() / ".nodeskclaw" / "docker-instances")
 
+'''
 DOCKER_DATA_DIR = Path(os.environ.get(
     "DOCKER_DATA_DIR",
     _DEFAULT_DOCKER_DATA_DIR,
@@ -23,7 +24,17 @@ DOCKER_HOST_DATA_DIR = os.environ.get(
 )
 
 DOCKER_ATTACH_SCAN_DIRS_RAW = os.environ.get("DOCKER_ATTACH_SCAN_DIRS", "")
+'''
 
+DOCKER_DATA_DIR = Path(settings.DOCKER_DATA_DIR or _DEFAULT_DOCKER_DATA_DIR)
+
+DOCKER_HOST_DATA_DIR = (
+    settings.DOCKER_HOST_DATA_DIR
+    or settings.DOCKER_DATA_DIR
+    or _DEFAULT_DOCKER_DATA_DIR
+)
+
+DOCKER_ATTACH_SCAN_DIRS_RAW = settings.DOCKER_ATTACH_SCAN_DIRS or ""
 
 def get_docker_attach_scan_dirs() -> list[Path]:
     raw = DOCKER_ATTACH_SCAN_DIRS_RAW.strip()

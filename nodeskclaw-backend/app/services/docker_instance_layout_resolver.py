@@ -19,6 +19,7 @@ DEFAULT_CONTAINER_DATA_DIR = "/data/hermes"
 DEFAULT_CONTAINER_PORT = 8787
 
 
+
 def _docker_endpoint_host() -> str:
     if os.path.exists("/.dockerenv") or os.environ.get("DOCKER_DATA_DIR"):
         return "host.docker.internal"
@@ -224,7 +225,11 @@ def resolve_from_inspect(
         warnings.append("无法识别 WebUI 端口")
 
     public_host = get_docker_public_host()
+    '''
     if public_host == "localhost" and not os.environ.get("DOCKER_PUBLIC_HOST"):
+        warnings.append("未配置 DOCKER_PUBLIC_HOST，WebUI 公共访问地址可能不可用")
+    '''
+    if public_host == "localhost" and not settings.DOCKER_PUBLIC_HOST:
         warnings.append("未配置 DOCKER_PUBLIC_HOST，WebUI 公共访问地址可能不可用")
 
     public_url = get_docker_public_url(host_port) if host_port else None

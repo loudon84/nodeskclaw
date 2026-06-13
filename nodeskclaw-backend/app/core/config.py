@@ -281,6 +281,13 @@ class Settings(BaseSettings):
     PRIVATE_REGISTRY_USERNAME: str = ""
     PRIVATE_REGISTRY_PASSWORD_SECRET: str = ""
 
+    # -- Docker 相关配置 ─────────────────────────────────────
+    DOCKER_DATA_DIR: str = ""
+    DOCKER_HOST_DATA_DIR: str = ""
+    DOCKER_ATTACH_SCAN_DIRS: str = ""
+    DOCKER_PUBLIC_HOST: str = ""
+    DOCKER_PUBLIC_SCHEME: str = "http"
+    DOCKER_COMPOSE_FILE: str = ""
 
 settings = Settings()
 
