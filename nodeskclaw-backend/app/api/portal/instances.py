@@ -76,6 +76,7 @@ async def list_instances(
     result = await db.execute(query)
 
     from app.services.tunnel import tunnel_adapter
+    from app.services.hermes_external.binding_type import get_binding_type_label, get_instance_binding_type
     connected = tunnel_adapter.connected_instances
     health_corrected = False
 
@@ -90,6 +91,9 @@ async def list_instances(
             if await _is_org_admin(current_user.id, inst.org_id, db)
             else None
         )
+        bt = get_instance_binding_type(inst)
+        info.binding_type = bt
+        info.binding_type_label = get_binding_type_label(bt)
         items.append(info)
 
     if health_corrected:
