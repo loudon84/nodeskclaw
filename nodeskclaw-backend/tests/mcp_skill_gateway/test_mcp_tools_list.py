@@ -1,12 +1,20 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.services.mcp_skill_gateway.auth import McpAuthContext
 from app.services.mcp_skill_gateway.handler import dispatch, dispatch_authenticated
+from app.services.mcp_skill_gateway.mcp_tool_registry import build_tool_descriptor, get_tool
+
+
+def _hermes_tool(name: str) -> dict:
+    tool = get_tool(name)
+    assert tool is not None
+    return build_tool_descriptor(tool)
 
 
 @pytest.mark.asyncio
-async def test_tools_list_returns_empty_array_without_grants():
+async def test_tools_list_returns_hermes_tools_with_annotations():
+    from app.services.mcp_skill_gateway.auth import McpAuthContext
+
     user = MagicMock()
     user.id = "user-1"
     org = MagicMock()
@@ -19,21 +27,26 @@ async def test_tools_list_returns_empty_array_without_grants():
         return_value=McpAuthContext(user=user, org=org),
     ), patch(
         "app.services.mcp_skill_gateway.handler.McpToolMapper",
-    ) as mock_mapper_cls, patch(
-        "app.services.mcp_skill_gateway.handler.list_docker_tools",
-        return_value=[
-            {"name": "hermes.instances.list"},
-            {"name": "hermes.instance.status"},
-            {"name": "hermes.skills.list"},
-        ],
-    ):
+    ) as mock_mapper_cls:
         mock_mapper = AsyncMock()
         mock_mapper.list_tools.return_value = []
         mock_mapper_cls.return_value = mock_mapper
 
         result = await dispatch(body, "Bearer valid-token", db)
 
-    assert len(result["result"]["tools"]) == 3
+    tools = result["result"]["tools"]
+    assert len(tools) == 3
+    for tool in tools:
+        annotations = tool["annotations"]
+        assert set(annotations.keys()) == {
+            "category",
+            "permission",
+            "riskLevel",
+            "requiresApproval",
+            "enabled",
+        }
+        assert annotations["permission"] == "read"
+        assert annotations["enabled"] is True
 
 
 @pytest.mark.asyncio
@@ -48,8 +61,8 @@ async def test_tools_list_never_returns_null():
     with patch(
         "app.services.mcp_skill_gateway.handler.McpToolMapper",
     ) as mock_mapper_cls, patch(
-        "app.services.mcp_skill_gateway.handler.list_docker_tools",
-        return_value=[{"name": "hermes.instances.list"}],
+        "app.services.mcp_skill_gateway.handler.list_enabled_tool_descriptors",
+        return_value=[_hermes_tool("hermes.instances.list")],
     ):
         mock_mapper = AsyncMock()
         mock_mapper.list_tools.return_value = [{"name": "tool.a"}]
@@ -58,7 +71,7 @@ async def test_tools_list_never_returns_null():
         result = await dispatch_authenticated(body, (user, org), db)
 
     assert result["result"]["tools"] == [
-        {"name": "hermes.instances.list"},
+        _hermes_tool("hermes.instances.list"),
         {"name": "tool.a"},
     ]
 
@@ -77,8 +90,8 @@ async def test_tools_list_different_users_can_differ():
     with patch(
         "app.services.mcp_skill_gateway.handler.McpToolMapper",
     ) as mock_mapper_cls, patch(
-        "app.services.mcp_skill_gateway.handler.list_docker_tools",
-        return_value=[{"name": "hermes.instances.list"}],
+        "app.services.mcp_skill_gateway.handler.list_enabled_tool_descriptors",
+        return_value=[_hermes_tool("hermes.instances.list")],
     ):
         mock_mapper = AsyncMock()
         mock_mapper.list_tools.side_effect = [
@@ -90,8 +103,5 @@ async def test_tools_list_different_users_can_differ():
         granted = await dispatch_authenticated(body, (user_a, org), db)
         denied = await dispatch_authenticated(body, (user_b, org), db)
 
-    assert granted["result"]["tools"] == [
-        {"name": "hermes.instances.list"},
-        {"name": "granted_tool"},
-    ]
-    assert denied["result"]["tools"] == [{"name": "hermes.instances.list"}]
+    assert granted["result"]["tools"][0]["name"] == "hermes.instances.list"
+    assert denied["result"]["tools"] == [_hermes_tool("hermes.instances.list")]

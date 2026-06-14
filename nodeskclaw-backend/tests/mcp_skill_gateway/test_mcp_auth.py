@@ -1,23 +1,24 @@
 import pytest
 from unittest.mock import AsyncMock, patch
 
+from app.services.mcp_skill_gateway.errors import MCP_AUTH_REQUIRED
 from app.services.mcp_skill_gateway.handler import dispatch
 
 
 @pytest.mark.asyncio
-async def test_dispatch_missing_authorization_returns_mcp_unauthorized():
+async def test_dispatch_missing_authorization_returns_mcp_auth_required():
     body = {"jsonrpc": "2.0", "id": "test", "method": "tools/list", "params": {}}
     db = AsyncMock()
 
     result = await dispatch(body, None, db)
 
-    assert result["error"]["code"] == -32001
-    assert result["error"]["message"] == "MCP_UNAUTHORIZED"
-    assert result["error"]["data"]["errorCode"] == "MCP_UNAUTHORIZED"
+    assert result["error"]["code"] == -32010
+    assert result["error"]["message"] == "Missing or invalid Authorization header"
+    assert result["error"]["data"]["errorCode"] == MCP_AUTH_REQUIRED
 
 
 @pytest.mark.asyncio
-async def test_dispatch_invalid_token_returns_mcp_unauthorized():
+async def test_dispatch_invalid_token_returns_mcp_auth_required():
     from fastapi import HTTPException
 
     body = {"jsonrpc": "2.0", "id": "test", "method": "tools/list", "params": {}}
@@ -29,7 +30,7 @@ async def test_dispatch_invalid_token_returns_mcp_unauthorized():
     ):
         result = await dispatch(body, "Bearer bad-token", db)
 
-    assert result["error"]["data"]["errorCode"] == "MCP_UNAUTHORIZED"
+    assert result["error"]["data"]["errorCode"] == MCP_AUTH_REQUIRED
 
 
 @pytest.mark.asyncio
@@ -49,7 +50,7 @@ async def test_dispatch_authenticated_tools_list():
     ), patch(
         "app.services.mcp_skill_gateway.handler.McpToolMapper",
     ) as mock_mapper_cls, patch(
-        "app.services.mcp_skill_gateway.handler.list_docker_tools",
+        "app.services.mcp_skill_gateway.handler.list_enabled_tool_descriptors",
         return_value=[],
     ):
         mock_mapper = AsyncMock()

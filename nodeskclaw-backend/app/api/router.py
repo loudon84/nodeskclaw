@@ -91,6 +91,7 @@ async def system_info():
     from app.services.mcp_skill_gateway.constants import build_mcp_descriptor
 
     return {
+        "service": "nodeskclaw",
         "edition": feature_gate.edition,
         "version": settings.APP_VERSION,
         "features": feature_gate.all_features(),

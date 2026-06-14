@@ -1,3 +1,4 @@
+import json
 import logging
 import time
 from typing import Any
@@ -11,14 +12,12 @@ from app.services.mcp_skill_gateway.audit_service import log_mcp_call
 from app.services.mcp_skill_gateway.auth import McpAuthContext, McpAuthFailure, resolve_mcp_user
 from app.services.mcp_skill_gateway.constants import MCP_PROTOCOL_VERSION, MCP_SERVER_NAME
 from app.services.mcp_skill_gateway.errors import (
-    MCP_FORBIDDEN,
     MCP_INTERNAL_ERROR,
-    MCP_INVALID_REQUEST,
+    MCP_INVALID_ARGUMENTS,
     MCP_METHOD_NOT_FOUND,
     MCP_TOOLS_LIST_FAILED,
-    MCP_UNAUTHORIZED,
-    map_skill_error,
-    mcp_error,
+    map_app_error,
+    mcp_error_v2,
     mcp_success,
 )
 from app.services.mcp_skill_gateway.hermes_docker_tools import (
@@ -26,10 +25,11 @@ from app.services.mcp_skill_gateway.hermes_docker_tools import (
     extract_instance_id_from_arguments,
     is_genehub_tool,
     is_hermes_docker_tool,
-    list_tools as list_docker_tools,
-    resolve_instance_ref,
+    summarize_tool_result,
 )
-from app.services.mcp_skill_gateway.session import mark_initialized
+from app.services.mcp_skill_gateway.hermes_instance_resolver import resolve_instance_ref
+from app.services.mcp_skill_gateway.mcp_tool_registry import get_tool, list_enabled_tool_descriptors
+from app.services.mcp_skill_gateway.session import get_client_name, mark_initialized
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +52,26 @@ def _log_mcp_error(
     )
 
 
+def _tool_call_success(jsonrpc_id: Any, result: dict[str, Any]) -> dict:
+    return mcp_success(
+        jsonrpc_id,
+        {
+            "content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False)}],
+            "isError": False,
+        },
+    )
+
+
+def _extra_error_data(exc: Exception, arguments: dict[str, Any]) -> dict[str, Any]:
+    data: dict[str, Any] = {}
+    ref = extract_instance_id_from_arguments(arguments)
+    if ref:
+        data["instance_ref"] = ref
+    if isinstance(exc, BadRequestError) and exc.message_key == "errors.external_docker.instance_ambiguous":
+        data["reason"] = "multiple_instances_matched"
+    return data
+
+
 async def dispatch(
     body: dict,
     authorization: str | None,
@@ -61,13 +81,13 @@ async def dispatch(
     method = body.get("method", "")
 
     if not isinstance(body.get("jsonrpc"), str) or body.get("jsonrpc") != "2.0":
-        _log_mcp_error(MCP_INVALID_REQUEST, method, reason="jsonrpc must be 2.0")
-        return mcp_error(jsonrpc_id, MCP_INVALID_REQUEST, "jsonrpc must be '2.0'")
+        _log_mcp_error(MCP_INVALID_ARGUMENTS, method, reason="jsonrpc must be 2.0")
+        return mcp_error_v2(jsonrpc_id, MCP_INVALID_ARGUMENTS, "jsonrpc must be '2.0'")
 
     auth_result = await resolve_mcp_user(authorization, db)
     if isinstance(auth_result, McpAuthFailure):
         _log_mcp_error(auth_result.error_code, method, reason=auth_result.reason)
-        return mcp_error(jsonrpc_id, auth_result.error_code, auth_result.reason)
+        return mcp_error_v2(jsonrpc_id, auth_result.error_code, auth_result.reason)
 
     user = auth_result.user
     org = auth_result.org
@@ -80,7 +100,7 @@ async def dispatch(
         return await _handle_tools_list(jsonrpc_id, user_id, org.id, db)
 
     if method == "tools/call":
-        return await _handle_tools_call(body, jsonrpc_id, user_id, org.id, db)
+        return await _handle_tools_call(body, jsonrpc_id, user_id, org.id, db, user)
 
     _log_mcp_error(
         MCP_METHOD_NOT_FOUND,
@@ -89,7 +109,7 @@ async def dispatch(
         org_id=org.id,
         reason=f"Unknown method: {method}",
     )
-    return mcp_error(jsonrpc_id, MCP_METHOD_NOT_FOUND, f"Method not found: {method}")
+    return mcp_error_v2(jsonrpc_id, MCP_METHOD_NOT_FOUND, f"Method not found: {method}")
 
 
 async def dispatch_authenticated(
@@ -102,8 +122,8 @@ async def dispatch_authenticated(
     method = body.get("method", "")
 
     if not isinstance(body.get("jsonrpc"), str) or body.get("jsonrpc") != "2.0":
-        _log_mcp_error(MCP_INVALID_REQUEST, method, reason="jsonrpc must be 2.0")
-        return mcp_error(jsonrpc_id, MCP_INVALID_REQUEST, "jsonrpc must be '2.0'")
+        _log_mcp_error(MCP_INVALID_ARGUMENTS, method, reason="jsonrpc must be 2.0")
+        return mcp_error_v2(jsonrpc_id, MCP_INVALID_ARGUMENTS, "jsonrpc must be '2.0'")
 
     user_id = user.id if hasattr(user, "id") else ""
 
@@ -114,7 +134,7 @@ async def dispatch_authenticated(
         return await _handle_tools_list(jsonrpc_id, user_id, org.id, db)
 
     if method == "tools/call":
-        return await _handle_tools_call(body, jsonrpc_id, user_id, org.id, db)
+        return await _handle_tools_call(body, jsonrpc_id, user_id, org.id, db, user)
 
     _log_mcp_error(
         MCP_METHOD_NOT_FOUND,
@@ -123,7 +143,7 @@ async def dispatch_authenticated(
         org_id=org.id,
         reason=f"Unknown method: {method}",
     )
-    return mcp_error(jsonrpc_id, MCP_METHOD_NOT_FOUND, f"Method not found: {method}")
+    return mcp_error_v2(jsonrpc_id, MCP_METHOD_NOT_FOUND, f"Method not found: {method}")
 
 
 async def _handle_initialize(
@@ -132,17 +152,21 @@ async def _handle_initialize(
     user_id: str,
     org_id: str,
 ) -> dict:
-    mark_initialized(user_id, org_id)
     params = body.get("params") or {}
+    client_info = params.get("clientInfo") or {}
+    mark_initialized(
+        user_id,
+        org_id,
+        client_name=str(client_info.get("name") or "") or None,
+        client_version=str(client_info.get("version") or "") or None,
+    )
     protocol_version = params.get("protocolVersion") or MCP_PROTOCOL_VERSION
     return mcp_success(
         jsonrpc_id,
         {
             "protocolVersion": protocol_version,
             "capabilities": {
-                "tools": {
-                    "listChanged": True,
-                },
+                "tools": {},
             },
             "serverInfo": {
                 "name": MCP_SERVER_NAME,
@@ -155,7 +179,7 @@ async def _handle_initialize(
 async def _collect_tools(user_id: str, org_id: str, db: AsyncSession) -> list[dict[str, Any]]:
     mapper = McpToolMapper(db)
     skill_tools = await mapper.list_tools(org_id, user_id=user_id)
-    docker_tools = list_docker_tools()
+    docker_tools = list_enabled_tool_descriptors()
     merged: list[dict[str, Any]] = []
     seen: set[str] = set()
     for tool in docker_tools + skill_tools:
@@ -165,10 +189,6 @@ async def _collect_tools(user_id: str, org_id: str, db: AsyncSession) -> list[di
         seen.add(name)
         merged.append(tool)
     return merged
-
-
-async def count_available_tools(user_id: str, org_id: str, db: AsyncSession) -> int:
-    return len(await _collect_tools(user_id, org_id, db))
 
 
 async def _handle_tools_list(
@@ -182,13 +202,13 @@ async def _handle_tools_list(
         return mcp_success(jsonrpc_id, {"tools": tools})
     except ForbiddenError as exc:
         _log_mcp_error(
-            MCP_FORBIDDEN,
+            exc.message_key or MCP_INTERNAL_ERROR,
             "tools/list",
             user_id=user_id,
             org_id=org_id,
             reason=exc.message,
         )
-        return mcp_error(jsonrpc_id, MCP_FORBIDDEN, exc.message)
+        return map_app_error(jsonrpc_id, exc.message_key, exc.message)
     except Exception as exc:
         reason = str(exc)[:256]
         _log_mcp_error(
@@ -198,7 +218,7 @@ async def _handle_tools_list(
             org_id=org_id,
             reason=reason,
         )
-        return mcp_error(jsonrpc_id, MCP_TOOLS_LIST_FAILED, reason)
+        return mcp_error_v2(jsonrpc_id, MCP_TOOLS_LIST_FAILED, reason)
 
 
 def _is_docker_gateway_tool(tool_name: str) -> bool:
@@ -211,23 +231,26 @@ async def _handle_tools_call(
     user_id: str,
     org_id: str,
     db: AsyncSession,
+    user: Any,
 ) -> dict:
     params = body.get("params", {})
     tool_name = params.get("name", "")
     if not tool_name:
         _log_mcp_error(
-            MCP_INVALID_REQUEST,
+            MCP_INVALID_ARGUMENTS,
             "tools/call",
             user_id=user_id,
             org_id=org_id,
             reason="missing params.name",
         )
-        return mcp_error(jsonrpc_id, MCP_INVALID_REQUEST, "Invalid params: missing params.name")
+        return mcp_error_v2(jsonrpc_id, MCP_INVALID_ARGUMENTS, "Invalid params: missing params.name")
 
     arguments = params.get("arguments") or {}
     if not isinstance(arguments, dict):
         arguments = {}
 
+    tool_meta = get_tool(tool_name)
+    client_name = get_client_name(user_id, org_id)
     started = time.perf_counter()
     instance_id: str | None = None
 
@@ -237,32 +260,34 @@ async def _handle_tools_call(
             result = await provider.call_tool(tool_name, arguments, org_id, user_id)
             if tool_name != "hermes.instances.list":
                 ref = extract_instance_id_from_arguments(arguments)
-                if ref:
-                    try:
-                        resolved = await resolve_instance_ref(ref, org_id, db)
-                        instance_id = resolved.id
-                    except (NotFoundError, BadRequestError):
-                        instance_id = None
+                try:
+                    resolved = await resolve_instance_ref(ref or None, org_id, user, db)
+                    instance_id = resolved.id
+                except (NotFoundError, BadRequestError, ForbiddenError):
+                    instance_id = None
             duration_ms = int((time.perf_counter() - started) * 1000)
             await log_mcp_call(
                 db,
                 org_id=org_id,
                 user_id=user_id,
                 tool_name=tool_name,
-                status="ok",
+                status="success",
                 duration_ms=duration_ms,
                 instance_id=instance_id,
                 arguments=arguments,
+                result_summary=summarize_tool_result(tool_name, result),
+                client_name=client_name,
+                permission=tool_meta.permission if tool_meta else None,
+                risk_level=tool_meta.risk_level if tool_meta else None,
             )
-            return mcp_success(
-                jsonrpc_id,
-                {
-                    "content": [{"type": "text", "text": "ok"}],
-                    "structuredContent": result,
-                },
-            )
+            return _tool_call_success(jsonrpc_id, result)
         except (NotFoundError, BadRequestError, ForbiddenError) as exc:
-            error_response = map_skill_error(jsonrpc_id, exc.message_key, exc.message)
+            error_response = map_app_error(
+                jsonrpc_id,
+                exc.message_key,
+                exc.message,
+                extra_data=_extra_error_data(exc, arguments),
+            )
             duration_ms = int((time.perf_counter() - started) * 1000)
             error_data = error_response.get("error", {}).get("data", {})
             await log_mcp_call(
@@ -276,6 +301,9 @@ async def _handle_tools_call(
                 arguments=arguments,
                 error_code=error_data.get("errorCode"),
                 error_message=exc.message,
+                client_name=client_name,
+                permission=tool_meta.permission if tool_meta else None,
+                risk_level=tool_meta.risk_level if tool_meta else None,
             )
             _log_mcp_error(
                 error_data.get("errorCode", MCP_INTERNAL_ERROR),
@@ -299,6 +327,9 @@ async def _handle_tools_call(
                 arguments=arguments,
                 error_code=MCP_INTERNAL_ERROR,
                 error_message=reason,
+                client_name=client_name,
+                permission=tool_meta.permission if tool_meta else None,
+                risk_level=tool_meta.risk_level if tool_meta else None,
             )
             _log_mcp_error(
                 MCP_INTERNAL_ERROR,
@@ -307,7 +338,7 @@ async def _handle_tools_call(
                 org_id=org_id,
                 reason=reason,
             )
-            return mcp_error(jsonrpc_id, MCP_INTERNAL_ERROR, reason)
+            return mcp_error_v2(jsonrpc_id, MCP_INTERNAL_ERROR, reason)
 
     mapper = McpToolMapper(db)
     try:
@@ -324,12 +355,14 @@ async def _handle_tools_call(
             org_id=org_id,
             user_id=user_id,
             tool_name=tool_name,
-            status="ok",
+            status="success",
             duration_ms=duration_ms,
             arguments=arguments,
+            result_summary={"task_id": result.get("task_id"), "status": result.get("status")},
+            client_name=client_name,
         )
     except (NotFoundError, BadRequestError, ForbiddenError) as exc:
-        error_response = map_skill_error(jsonrpc_id, exc.message_key, exc.message)
+        error_response = map_app_error(jsonrpc_id, exc.message_key, exc.message)
         duration_ms = int((time.perf_counter() - started) * 1000)
         error_data = error_response.get("error", {}).get("data", {})
         await log_mcp_call(
@@ -342,9 +375,10 @@ async def _handle_tools_call(
             arguments=arguments,
             error_code=error_data.get("errorCode"),
             error_message=exc.message,
+            client_name=client_name,
         )
         _log_mcp_error(
-            error_response["error"]["data"]["errorCode"],
+            error_data.get("errorCode", MCP_INTERNAL_ERROR),
             "tools/call",
             user_id=user_id,
             org_id=org_id,
@@ -364,6 +398,7 @@ async def _handle_tools_call(
             arguments=arguments,
             error_code=MCP_INTERNAL_ERROR,
             error_message=reason,
+            client_name=client_name,
         )
         _log_mcp_error(
             MCP_INTERNAL_ERROR,
@@ -372,12 +407,6 @@ async def _handle_tools_call(
             org_id=org_id,
             reason=reason,
         )
-        return mcp_error(jsonrpc_id, MCP_INTERNAL_ERROR, reason)
+        return mcp_error_v2(jsonrpc_id, MCP_INTERNAL_ERROR, reason)
 
-    return mcp_success(
-        jsonrpc_id,
-        {
-            "content": [{"type": "text", "text": "任务已创建"}],
-            "structuredContent": result,
-        },
-    )
+    return _tool_call_success(jsonrpc_id, result)

@@ -31,6 +31,6 @@ async def test_initialize_returns_protocol_and_server_info():
 
     assert result["id"] == "init-1"
     assert result["result"]["protocolVersion"] == "2025-06-18"
-    assert result["result"]["capabilities"]["tools"]["listChanged"] is True
+    assert result["result"]["capabilities"]["tools"] == {}
     assert result["result"]["serverInfo"]["name"] == "nodeskclaw-mcp-skill-gateway"
     assert "version" in result["result"]["serverInfo"]

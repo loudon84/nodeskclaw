@@ -7,6 +7,7 @@ from app.api.router import system_info
 async def test_system_info_includes_mcp_descriptor():
     result = await system_info()
 
+    assert result["service"] == "nodeskclaw"
     assert "mcp" in result
     mcp = result["mcp"]
     assert mcp["enabled"] is True

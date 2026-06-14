@@ -1,19 +1,19 @@
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 from app.services.mcp_skill_gateway.errors import (
-    MCP_INVALID_REQUEST,
+    MCP_INVALID_ARGUMENTS,
     MCP_METHOD_NOT_FOUND,
-    mcp_error,
+    mcp_error_v2,
 )
 from app.services.mcp_skill_gateway.handler import dispatch_authenticated
 
 
-def test_mcp_error_includes_error_code_in_data():
-    result = mcp_error("req-1", MCP_INVALID_REQUEST, "bad request")
+def test_mcp_error_v2_includes_error_code_in_data():
+    result = mcp_error_v2("req-1", MCP_INVALID_ARGUMENTS, "bad request")
 
-    assert result["error"]["data"]["errorCode"] == MCP_INVALID_REQUEST
-    assert result["error"]["data"]["reason"] == "bad request"
+    assert result["error"]["data"]["errorCode"] == MCP_INVALID_ARGUMENTS
+    assert result["error"]["message"] == "bad request"
 
 
 @pytest.mark.asyncio
@@ -27,8 +27,8 @@ async def test_invalid_jsonrpc_version():
 
     result = await dispatch_authenticated(body, (user, org), db)
 
-    assert result["error"]["code"] == -32600
-    assert result["error"]["data"]["errorCode"] == MCP_INVALID_REQUEST
+    assert result["error"]["code"] == -32030
+    assert result["error"]["data"]["errorCode"] == MCP_INVALID_ARGUMENTS
 
 
 @pytest.mark.asyncio

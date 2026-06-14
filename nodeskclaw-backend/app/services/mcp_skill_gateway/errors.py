@@ -1,62 +1,113 @@
 from typing import Any
 
-MCP_UNAUTHORIZED = "MCP_UNAUTHORIZED"
-MCP_FORBIDDEN = "MCP_FORBIDDEN"
-MCP_INITIALIZE_REQUIRED = "MCP_INITIALIZE_REQUIRED"
-MCP_TOOLS_LIST_FAILED = "MCP_TOOLS_LIST_FAILED"
-MCP_GATEWAY_REQUEST_FAILED = "MCP_GATEWAY_REQUEST_FAILED"
-MCP_METHOD_NOT_FOUND = "MCP_METHOD_NOT_FOUND"
-MCP_INVALID_REQUEST = "MCP_INVALID_REQUEST"
+MCP_AUTH_REQUIRED = "MCP_AUTH_REQUIRED"
+MCP_AUTH_EXPIRED = "MCP_AUTH_EXPIRED"
+MCP_ORG_FORBIDDEN = "MCP_ORG_FORBIDDEN"
+MCP_TOOL_NOT_FOUND = "MCP_TOOL_NOT_FOUND"
+MCP_TOOL_DISABLED = "MCP_TOOL_DISABLED"
+MCP_TOOL_PERMISSION_DENIED = "MCP_TOOL_PERMISSION_DENIED"
+MCP_TOOL_APPROVAL_REQUIRED = "MCP_TOOL_APPROVAL_REQUIRED"
+MCP_INVALID_ARGUMENTS = "MCP_INVALID_ARGUMENTS"
+HERMES_INSTANCE_NOT_FOUND = "HERMES_INSTANCE_NOT_FOUND"
+HERMES_INSTANCE_AMBIGUOUS = "HERMES_INSTANCE_AMBIGUOUS"
+HERMES_INSTANCE_FORBIDDEN = "HERMES_INSTANCE_FORBIDDEN"
+HERMES_RUNTIME_UNAVAILABLE = "HERMES_RUNTIME_UNAVAILABLE"
+HERMES_SKILLS_LIST_FAILED = "HERMES_SKILLS_LIST_FAILED"
 MCP_INTERNAL_ERROR = "MCP_INTERNAL_ERROR"
+MCP_METHOD_NOT_FOUND = "MCP_METHOD_NOT_FOUND"
+MCP_TOOLS_LIST_FAILED = "MCP_TOOLS_LIST_FAILED"
 MCP_NOT_IMPLEMENTED = "MCP_NOT_IMPLEMENTED"
 
 _ERROR_CODES: dict[str, int] = {
-    MCP_UNAUTHORIZED: -32001,
-    MCP_FORBIDDEN: -32003,
-    MCP_INITIALIZE_REQUIRED: -32010,
-    MCP_TOOLS_LIST_FAILED: -32011,
-    MCP_GATEWAY_REQUEST_FAILED: -32012,
+    MCP_AUTH_REQUIRED: -32010,
+    MCP_AUTH_EXPIRED: -32011,
+    MCP_ORG_FORBIDDEN: -32012,
+    MCP_TOOL_NOT_FOUND: -32020,
+    MCP_TOOL_DISABLED: -32021,
+    MCP_TOOL_PERMISSION_DENIED: -32022,
+    MCP_TOOL_APPROVAL_REQUIRED: -32023,
+    MCP_INVALID_ARGUMENTS: -32030,
+    HERMES_INSTANCE_NOT_FOUND: -32040,
+    HERMES_INSTANCE_AMBIGUOUS: -32041,
+    HERMES_INSTANCE_FORBIDDEN: -32042,
+    HERMES_RUNTIME_UNAVAILABLE: -32050,
+    HERMES_SKILLS_LIST_FAILED: -32051,
+    MCP_INTERNAL_ERROR: -32060,
     MCP_METHOD_NOT_FOUND: -32601,
-    MCP_INVALID_REQUEST: -32600,
-    MCP_INTERNAL_ERROR: -32603,
-    MCP_NOT_IMPLEMENTED: -32020,
+    MCP_TOOLS_LIST_FAILED: -32053,
+    MCP_NOT_IMPLEMENTED: -32021,
 }
 
-_SKILL_ERROR_MAP: dict[str, tuple[str, int]] = {
-    "errors.skill.tool_not_found": (MCP_GATEWAY_REQUEST_FAILED, -32011),
-    "errors.skill.tool_not_installed": (MCP_GATEWAY_REQUEST_FAILED, -32011),
-    "errors.skill.permission_denied": (MCP_FORBIDDEN, -32003),
-    "errors.skill.input_schema_validation_failed": (MCP_INVALID_REQUEST, -32600),
-    "errors.member.skill_not_granted": (MCP_FORBIDDEN, -32003),
-    "errors.external_docker.instance_not_found": (MCP_GATEWAY_REQUEST_FAILED, -32011),
-    "errors.external_docker.instance_ref_required": (MCP_INVALID_REQUEST, -32600),
-    MCP_NOT_IMPLEMENTED: (MCP_NOT_IMPLEMENTED, -32020),
-    MCP_FORBIDDEN: (MCP_FORBIDDEN, -32003),
+_DEFAULT_MESSAGES: dict[str, str] = {
+    MCP_AUTH_REQUIRED: "Authentication required",
+    MCP_AUTH_EXPIRED: "Authentication expired",
+    MCP_ORG_FORBIDDEN: "Organization access forbidden",
+    MCP_TOOL_NOT_FOUND: "Tool not found",
+    MCP_TOOL_DISABLED: "Tool is disabled",
+    MCP_TOOL_PERMISSION_DENIED: "Tool permission denied",
+    MCP_TOOL_APPROVAL_REQUIRED: "Tool approval required",
+    MCP_INVALID_ARGUMENTS: "Invalid arguments",
+    HERMES_INSTANCE_NOT_FOUND: "Instance not found",
+    HERMES_INSTANCE_AMBIGUOUS: "Instance reference is ambiguous",
+    HERMES_INSTANCE_FORBIDDEN: "Instance access forbidden",
+    HERMES_RUNTIME_UNAVAILABLE: "Hermes runtime unavailable",
+    HERMES_SKILLS_LIST_FAILED: "Failed to list skills",
+    MCP_INTERNAL_ERROR: "Internal error",
+    MCP_METHOD_NOT_FOUND: "Method not found",
+    MCP_TOOLS_LIST_FAILED: "Failed to list tools",
+    MCP_NOT_IMPLEMENTED: "Not implemented",
+}
+
+_MESSAGE_KEY_MAP: dict[str, str] = {
+    "errors.auth.user_not_found": MCP_ORG_FORBIDDEN,
+    "errors.skill.tool_not_found": MCP_TOOL_NOT_FOUND,
+    "errors.skill.tool_not_installed": MCP_TOOL_NOT_FOUND,
+    "errors.skill.permission_denied": MCP_TOOL_PERMISSION_DENIED,
+    "errors.skill.input_schema_validation_failed": MCP_INVALID_ARGUMENTS,
+    "errors.member.skill_not_granted": MCP_TOOL_PERMISSION_DENIED,
+    "errors.external_docker.instance_not_found": HERMES_INSTANCE_NOT_FOUND,
+    "errors.external_docker.instance_ref_required": MCP_INVALID_ARGUMENTS,
+    "errors.external_docker.instance_ambiguous": HERMES_INSTANCE_AMBIGUOUS,
+    "errors.external_docker.instance_forbidden": HERMES_INSTANCE_FORBIDDEN,
+    "errors.external_docker.skills_list_failed": HERMES_SKILLS_LIST_FAILED,
+    "errors.external_docker.runtime_unavailable": HERMES_RUNTIME_UNAVAILABLE,
+    MCP_AUTH_REQUIRED: MCP_AUTH_REQUIRED,
+    MCP_AUTH_EXPIRED: MCP_AUTH_EXPIRED,
+    MCP_ORG_FORBIDDEN: MCP_ORG_FORBIDDEN,
+    MCP_TOOL_NOT_FOUND: MCP_TOOL_NOT_FOUND,
+    MCP_TOOL_DISABLED: MCP_TOOL_DISABLED,
+    MCP_TOOL_PERMISSION_DENIED: MCP_TOOL_PERMISSION_DENIED,
+    MCP_INVALID_ARGUMENTS: MCP_INVALID_ARGUMENTS,
+    HERMES_INSTANCE_NOT_FOUND: HERMES_INSTANCE_NOT_FOUND,
+    HERMES_INSTANCE_AMBIGUOUS: HERMES_INSTANCE_AMBIGUOUS,
+    HERMES_INSTANCE_FORBIDDEN: HERMES_INSTANCE_FORBIDDEN,
+    HERMES_RUNTIME_UNAVAILABLE: HERMES_RUNTIME_UNAVAILABLE,
+    HERMES_SKILLS_LIST_FAILED: HERMES_SKILLS_LIST_FAILED,
+    MCP_INTERNAL_ERROR: MCP_INTERNAL_ERROR,
+    MCP_NOT_IMPLEMENTED: MCP_TOOL_DISABLED,
 }
 
 
 def mcp_jsonrpc_code(error_code: str) -> int:
-    return _ERROR_CODES.get(error_code, -32603)
+    return _ERROR_CODES.get(error_code, -32060)
 
 
-def mcp_error(
+def mcp_error_v2(
     jsonrpc_id: Any,
     error_code: str,
-    reason: str,
+    message: str | None = None,
     *,
-    jsonrpc_code: int | None = None,
+    data: dict[str, Any] | None = None,
 ) -> dict:
-    code = jsonrpc_code if jsonrpc_code is not None else mcp_jsonrpc_code(error_code)
+    payload = dict(data or {})
+    payload.setdefault("errorCode", error_code)
     return {
         "jsonrpc": "2.0",
         "id": jsonrpc_id,
         "error": {
-            "code": code,
-            "message": error_code,
-            "data": {
-                "errorCode": error_code,
-                "reason": reason,
-            },
+            "code": mcp_jsonrpc_code(error_code),
+            "message": message or _DEFAULT_MESSAGES.get(error_code, error_code),
+            "data": payload,
         },
     }
 
@@ -65,9 +116,23 @@ def mcp_success(jsonrpc_id: Any, result: dict) -> dict:
     return {"jsonrpc": "2.0", "id": jsonrpc_id, "result": result}
 
 
-def map_skill_error(jsonrpc_id: Any, message_key: str | None, message: str) -> dict:
-    error_code, code = _SKILL_ERROR_MAP.get(
-        message_key or "",
-        (MCP_INTERNAL_ERROR, -32603),
-    )
-    return mcp_error(jsonrpc_id, error_code, message, jsonrpc_code=code)
+def map_app_error(
+    jsonrpc_id: Any,
+    message_key: str | None,
+    message: str,
+    *,
+    extra_data: dict[str, Any] | None = None,
+) -> dict:
+    error_code = _MESSAGE_KEY_MAP.get(message_key or "", MCP_INTERNAL_ERROR)
+    data = dict(extra_data or {})
+    return mcp_error_v2(jsonrpc_id, error_code, message, data=data)
+
+
+def map_skill_error(
+    jsonrpc_id: Any,
+    message_key: str | None,
+    message: str,
+    *,
+    extra_data: dict[str, Any] | None = None,
+) -> dict:
+    return map_app_error(jsonrpc_id, message_key, message, extra_data=extra_data)
