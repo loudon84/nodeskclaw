@@ -8,6 +8,7 @@ MCP_GATEWAY_REQUEST_FAILED = "MCP_GATEWAY_REQUEST_FAILED"
 MCP_METHOD_NOT_FOUND = "MCP_METHOD_NOT_FOUND"
 MCP_INVALID_REQUEST = "MCP_INVALID_REQUEST"
 MCP_INTERNAL_ERROR = "MCP_INTERNAL_ERROR"
+MCP_NOT_IMPLEMENTED = "MCP_NOT_IMPLEMENTED"
 
 _ERROR_CODES: dict[str, int] = {
     MCP_UNAUTHORIZED: -32001,
@@ -18,6 +19,7 @@ _ERROR_CODES: dict[str, int] = {
     MCP_METHOD_NOT_FOUND: -32601,
     MCP_INVALID_REQUEST: -32600,
     MCP_INTERNAL_ERROR: -32603,
+    MCP_NOT_IMPLEMENTED: -32020,
 }
 
 _SKILL_ERROR_MAP: dict[str, tuple[str, int]] = {
@@ -26,6 +28,10 @@ _SKILL_ERROR_MAP: dict[str, tuple[str, int]] = {
     "errors.skill.permission_denied": (MCP_FORBIDDEN, -32003),
     "errors.skill.input_schema_validation_failed": (MCP_INVALID_REQUEST, -32600),
     "errors.member.skill_not_granted": (MCP_FORBIDDEN, -32003),
+    "errors.external_docker.instance_not_found": (MCP_GATEWAY_REQUEST_FAILED, -32011),
+    "errors.external_docker.instance_ref_required": (MCP_INVALID_REQUEST, -32600),
+    MCP_NOT_IMPLEMENTED: (MCP_NOT_IMPLEMENTED, -32020),
+    MCP_FORBIDDEN: (MCP_FORBIDDEN, -32003),
 }
 
 

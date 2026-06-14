@@ -48,7 +48,10 @@ async def test_dispatch_authenticated_tools_list():
         return_value=McpAuthContext(user=user, org=org),
     ), patch(
         "app.services.mcp_skill_gateway.handler.McpToolMapper",
-    ) as mock_mapper_cls:
+    ) as mock_mapper_cls, patch(
+        "app.services.mcp_skill_gateway.handler.list_docker_tools",
+        return_value=[],
+    ):
         mock_mapper = AsyncMock()
         mock_mapper.list_tools.return_value = [{"name": "coding.create_prd"}]
         mock_mapper_cls.return_value = mock_mapper

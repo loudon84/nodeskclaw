@@ -1,4 +1,5 @@
 import logging
+import time
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -6,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.exceptions import BadRequestError, ForbiddenError, NotFoundError
 from app.services.hermes_skill.mcp_tool_mapper import McpToolMapper
+from app.services.mcp_skill_gateway.audit_service import log_mcp_call
 from app.services.mcp_skill_gateway.auth import McpAuthContext, McpAuthFailure, resolve_mcp_user
 from app.services.mcp_skill_gateway.constants import MCP_PROTOCOL_VERSION, MCP_SERVER_NAME
 from app.services.mcp_skill_gateway.errors import (
@@ -18,6 +20,14 @@ from app.services.mcp_skill_gateway.errors import (
     map_skill_error,
     mcp_error,
     mcp_success,
+)
+from app.services.mcp_skill_gateway.hermes_docker_tools import (
+    HermesDockerToolProvider,
+    extract_instance_id_from_arguments,
+    is_genehub_tool,
+    is_hermes_docker_tool,
+    list_tools as list_docker_tools,
+    resolve_instance_ref,
 )
 from app.services.mcp_skill_gateway.session import mark_initialized
 
@@ -142,6 +152,25 @@ async def _handle_initialize(
     )
 
 
+async def _collect_tools(user_id: str, org_id: str, db: AsyncSession) -> list[dict[str, Any]]:
+    mapper = McpToolMapper(db)
+    skill_tools = await mapper.list_tools(org_id, user_id=user_id)
+    docker_tools = list_docker_tools()
+    merged: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for tool in docker_tools + skill_tools:
+        name = tool.get("name")
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        merged.append(tool)
+    return merged
+
+
+async def count_available_tools(user_id: str, org_id: str, db: AsyncSession) -> int:
+    return len(await _collect_tools(user_id, org_id, db))
+
+
 async def _handle_tools_list(
     jsonrpc_id: Any,
     user_id: str,
@@ -149,8 +178,7 @@ async def _handle_tools_list(
     db: AsyncSession,
 ) -> dict:
     try:
-        mapper = McpToolMapper(db)
-        tools = await mapper.list_tools(org_id, user_id=user_id)
+        tools = await _collect_tools(user_id, org_id, db)
         return mcp_success(jsonrpc_id, {"tools": tools})
     except ForbiddenError as exc:
         _log_mcp_error(
@@ -173,6 +201,10 @@ async def _handle_tools_list(
         return mcp_error(jsonrpc_id, MCP_TOOLS_LIST_FAILED, reason)
 
 
+def _is_docker_gateway_tool(tool_name: str) -> bool:
+    return is_hermes_docker_tool(tool_name) or is_genehub_tool(tool_name)
+
+
 async def _handle_tools_call(
     body: dict,
     jsonrpc_id: Any,
@@ -192,7 +224,91 @@ async def _handle_tools_call(
         )
         return mcp_error(jsonrpc_id, MCP_INVALID_REQUEST, "Invalid params: missing params.name")
 
-    arguments = params.get("arguments", {})
+    arguments = params.get("arguments") or {}
+    if not isinstance(arguments, dict):
+        arguments = {}
+
+    started = time.perf_counter()
+    instance_id: str | None = None
+
+    if _is_docker_gateway_tool(tool_name):
+        provider = HermesDockerToolProvider(db)
+        try:
+            result = await provider.call_tool(tool_name, arguments, org_id, user_id)
+            if tool_name != "hermes.instances.list":
+                ref = extract_instance_id_from_arguments(arguments)
+                if ref:
+                    try:
+                        resolved = await resolve_instance_ref(ref, org_id, db)
+                        instance_id = resolved.id
+                    except (NotFoundError, BadRequestError):
+                        instance_id = None
+            duration_ms = int((time.perf_counter() - started) * 1000)
+            await log_mcp_call(
+                db,
+                org_id=org_id,
+                user_id=user_id,
+                tool_name=tool_name,
+                status="ok",
+                duration_ms=duration_ms,
+                instance_id=instance_id,
+                arguments=arguments,
+            )
+            return mcp_success(
+                jsonrpc_id,
+                {
+                    "content": [{"type": "text", "text": "ok"}],
+                    "structuredContent": result,
+                },
+            )
+        except (NotFoundError, BadRequestError, ForbiddenError) as exc:
+            error_response = map_skill_error(jsonrpc_id, exc.message_key, exc.message)
+            duration_ms = int((time.perf_counter() - started) * 1000)
+            error_data = error_response.get("error", {}).get("data", {})
+            await log_mcp_call(
+                db,
+                org_id=org_id,
+                user_id=user_id,
+                tool_name=tool_name,
+                status="failed",
+                duration_ms=duration_ms,
+                instance_id=instance_id,
+                arguments=arguments,
+                error_code=error_data.get("errorCode"),
+                error_message=exc.message,
+            )
+            _log_mcp_error(
+                error_data.get("errorCode", MCP_INTERNAL_ERROR),
+                "tools/call",
+                user_id=user_id,
+                org_id=org_id,
+                reason=exc.message,
+            )
+            return error_response
+        except Exception as exc:
+            reason = str(exc)[:256]
+            duration_ms = int((time.perf_counter() - started) * 1000)
+            await log_mcp_call(
+                db,
+                org_id=org_id,
+                user_id=user_id,
+                tool_name=tool_name,
+                status="failed",
+                duration_ms=duration_ms,
+                instance_id=instance_id,
+                arguments=arguments,
+                error_code=MCP_INTERNAL_ERROR,
+                error_message=reason,
+            )
+            _log_mcp_error(
+                MCP_INTERNAL_ERROR,
+                "tools/call",
+                user_id=user_id,
+                org_id=org_id,
+                reason=reason,
+            )
+            return mcp_error(jsonrpc_id, MCP_INTERNAL_ERROR, reason)
+
     mapper = McpToolMapper(db)
     try:
         result = await mapper.call_tool(
@@ -202,8 +318,31 @@ async def _handle_tools_call(
             user_id=user_id,
             jsonrpc_id=jsonrpc_id,
         )
+        duration_ms = int((time.perf_counter() - started) * 1000)
+        await log_mcp_call(
+            db,
+            org_id=org_id,
+            user_id=user_id,
+            tool_name=tool_name,
+            status="ok",
+            duration_ms=duration_ms,
+            arguments=arguments,
+        )
     except (NotFoundError, BadRequestError, ForbiddenError) as exc:
         error_response = map_skill_error(jsonrpc_id, exc.message_key, exc.message)
+        duration_ms = int((time.perf_counter() - started) * 1000)
+        error_data = error_response.get("error", {}).get("data", {})
+        await log_mcp_call(
+            db,
+            org_id=org_id,
+            user_id=user_id,
+            tool_name=tool_name,
+            status="failed",
+            duration_ms=duration_ms,
+            arguments=arguments,
+            error_code=error_data.get("errorCode"),
+            error_message=exc.message,
+        )
         _log_mcp_error(
             error_response["error"]["data"]["errorCode"],
             "tools/call",
@@ -214,6 +353,18 @@ async def _handle_tools_call(
         return error_response
     except Exception as exc:
         reason = str(exc)[:256]
+        duration_ms = int((time.perf_counter() - started) * 1000)
+        await log_mcp_call(
+            db,
+            org_id=org_id,
+            user_id=user_id,
+            tool_name=tool_name,
+            status="failed",
+            duration_ms=duration_ms,
+            arguments=arguments,
+            error_code=MCP_INTERNAL_ERROR,
+            error_message=reason,
+        )
         _log_mcp_error(
             MCP_INTERNAL_ERROR,
             "tools/call",
