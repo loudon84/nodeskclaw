@@ -1,8 +1,8 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.core.exceptions import ForbiddenError
-from app.services.mcp_skill_gateway.errors import MCP_TOOL_DISABLED
+from app.core.exceptions import BadRequestError
+from app.services.mcp_skill_gateway.errors import MCP_INVALID_ARGUMENTS
 from app.services.mcp_skill_gateway.hermes_docker_tools import (
     HermesDockerToolProvider,
     list_tools,
@@ -10,7 +10,7 @@ from app.services.mcp_skill_gateway.hermes_docker_tools import (
 from app.services.mcp_skill_gateway.hermes_instance_resolver import resolve_instance_ref
 
 
-def test_list_tools_includes_three_read_tools_with_annotations():
+def test_list_tools_includes_read_and_write_tools_with_annotations():
     tools = list_tools()
     names = {tool["name"] for tool in tools}
 
@@ -18,10 +18,17 @@ def test_list_tools_includes_three_read_tools_with_annotations():
         "hermes.instances.list",
         "hermes.instance.status",
         "hermes.skills.list",
+        "hermes.skills.install_builtin",
+        "hermes.skills.uninstall",
+        "hermes.instance.restart",
     }
-    for tool in tools:
-        assert tool["annotations"]["enabled"] is True
-        assert tool["annotations"]["permission"] == "read"
+    read_tools = [tool for tool in tools if tool["annotations"]["permission"] == "read"]
+    write_tools = [tool for tool in tools if tool["annotations"]["permission"] in ("write", "admin")]
+    assert len(read_tools) == 3
+    assert len(write_tools) == 3
+    for tool in write_tools:
+        assert tool["annotations"]["requiresApproval"] is True
+        assert tool["annotations"]["approvalMode"] == "server"
 
 
 @pytest.mark.asyncio
@@ -48,10 +55,18 @@ async def test_resolve_instance_ref_by_profile():
 
 
 @pytest.mark.asyncio
-async def test_call_tool_rejects_hermes_write_tools():
+async def test_call_tool_write_requires_arguments():
     provider = HermesDockerToolProvider(AsyncMock())
+    user = MagicMock()
 
-    with pytest.raises(ForbiddenError) as exc_info:
-        await provider.call_tool("hermes.skills.install_builtin", {}, "org-1", "user-1")
+    with patch(
+        "app.services.mcp_skill_gateway.hermes_docker_tools._load_user",
+        new=AsyncMock(return_value=user),
+    ), patch(
+        "app.services.mcp_skill_gateway.hermes_docker_tools.get_tool",
+        return_value=MagicMock(enabled=True, permission="write"),
+    ):
+        with pytest.raises(BadRequestError) as exc_info:
+            await provider.call_tool("hermes.skills.install_builtin", {}, "org-1", "user-1")
 
-    assert exc_info.value.message_key == MCP_TOOL_DISABLED
+    assert exc_info.value.message_key == MCP_INVALID_ARGUMENTS

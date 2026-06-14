@@ -11,12 +11,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import BadRequestError, ForbiddenError, NotFoundError
 from app.models.base import not_deleted
 from app.models.user import User
-from app.services.hermes_external import skill_service, status_service
+from app.services.hermes_external import lifecycle_service, skill_service, status_service
 from app.services.hermes_external._common import get_lifecycle_config, resolve_paths
+from app.services.hermes_expert.expert_filesystem import RESOURCES_ROOT
+from app.services.mcp_skill_gateway.approval_service import get_protected_skills
 from app.services.mcp_skill_gateway.errors import (
     HERMES_SKILLS_LIST_FAILED,
+    MCP_INVALID_ARGUMENTS,
+    MCP_TOOL_CONSTRAINT_VIOLATION,
     MCP_TOOL_DISABLED,
     MCP_TOOL_NOT_FOUND,
+    MCP_TOOL_PROTECTED_RESOURCE,
 )
 from app.services.mcp_skill_gateway.hermes_instance_resolver import (
     list_external_docker_instances,
@@ -85,6 +90,8 @@ class HermesDockerToolProvider:
         arguments: dict[str, Any],
         org_id: str,
         user_id: str,
+        *,
+        grant_constraints: dict | None = None,
     ) -> dict[str, Any]:
         tool = get_tool(tool_name)
         if not tool:
@@ -94,12 +101,6 @@ class HermesDockerToolProvider:
             )
 
         if not tool.enabled:
-            raise ForbiddenError(
-                f"工具 {tool_name} 尚未开放",
-                MCP_TOOL_DISABLED,
-            )
-
-        if tool.permission != "read":
             raise ForbiddenError(
                 f"工具 {tool_name} 尚未开放",
                 MCP_TOOL_DISABLED,
@@ -115,6 +116,15 @@ class HermesDockerToolProvider:
 
         if tool_name == "hermes.skills.list":
             return await self._skills_list(arguments, org_id, user)
+
+        if tool_name == "hermes.skills.install_builtin":
+            return await self._skills_install_builtin(arguments, org_id, user)
+
+        if tool_name == "hermes.skills.uninstall":
+            return await self._skills_uninstall(arguments, org_id, user, grant_constraints)
+
+        if tool_name == "hermes.instance.restart":
+            return await self._instance_restart(arguments, org_id, user)
 
         raise NotFoundError(
             f"MCP 工具不存在: {tool_name}",
@@ -207,3 +217,96 @@ class HermesDockerToolProvider:
                 "source": item.source or "manual",
             })
         return {"skills": skills}
+
+    def _list_builtin_bundle_whitelist(self) -> set[str]:
+        bundles_root = RESOURCES_ROOT / "skill-bundles"
+        if not bundles_root.is_dir():
+            return set()
+        return {item.name for item in bundles_root.iterdir() if item.is_dir()}
+
+    async def _skills_install_builtin(
+        self,
+        arguments: dict[str, Any],
+        org_id: str,
+        user: User,
+    ) -> dict[str, Any]:
+        instance_ref = str(arguments.get("instance_ref") or "")
+        skill_slug = str(arguments.get("skill_slug") or "").strip()
+        if not skill_slug:
+            raise BadRequestError("skill_slug 不能为空", MCP_INVALID_ARGUMENTS)
+
+        instance = await resolve_instance_ref(instance_ref or None, org_id, user, self.db)
+        allowed = self._list_builtin_bundle_whitelist()
+        if skill_slug not in allowed:
+            raise BadRequestError(
+                f"内置技能包不在白名单: {skill_slug}",
+                MCP_TOOL_CONSTRAINT_VIOLATION,
+            )
+
+        response = skill_service.install_builtin_bundle(instance, skill_slug)
+        return {
+            "installed": True,
+            "skill_slug": skill_slug,
+            "instance_id": instance.id,
+            "requires_restart": response.requires_restart,
+        }
+
+    async def _skills_uninstall(
+        self,
+        arguments: dict[str, Any],
+        org_id: str,
+        user: User,
+        grant_constraints: dict | None,
+    ) -> dict[str, Any]:
+        instance_ref = str(arguments.get("instance_ref") or "")
+        skill_name = str(arguments.get("skill_name") or "").strip()
+        if not skill_name:
+            raise BadRequestError("skill_name 不能为空", MCP_INVALID_ARGUMENTS)
+
+        instance = await resolve_instance_ref(instance_ref or None, org_id, user, self.db)
+        protected = get_protected_skills(grant_constraints)
+        if skill_name in protected:
+            raise ForbiddenError(
+                f"技能 {skill_name} 受保护，禁止卸载",
+                MCP_TOOL_PROTECTED_RESOURCE,
+            )
+
+        existing = skill_service.list_skills(instance)
+        skill_names = {item.slug or item.name for item in existing.items if item.category == "skills"}
+        if skill_name not in skill_names:
+            raise NotFoundError(
+                f"技能不存在: {skill_name}",
+                "errors.skill.tool_not_found",
+            )
+
+        skill_service.delete_skill(instance, skill_name)
+        return {
+            "uninstalled": True,
+            "skill_name": skill_name,
+            "instance_id": instance.id,
+        }
+
+    async def _instance_restart(
+        self,
+        arguments: dict[str, Any],
+        org_id: str,
+        user: User,
+    ) -> dict[str, Any]:
+        instance_ref = str(arguments.get("instance_ref") or "")
+        instance = await resolve_instance_ref(instance_ref or None, org_id, user, self.db)
+
+        lifecycle = get_lifecycle_config(instance)
+        if lifecycle.get("lifecycle_mode") == "linked_only":
+            raise BadRequestError(
+                "当前实例为仅关联模式，不支持重启",
+                "errors.docker_attach.lifecycle_not_allowed",
+            )
+
+        await lifecycle_service.restart(instance)
+        status = await status_service.get_status(instance)
+        return {
+            "restarted": True,
+            "instance_id": instance.id,
+            "status": status.display_status or status.docker_status,
+        }
+

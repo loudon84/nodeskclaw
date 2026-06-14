@@ -1,6 +1,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from app.services.mcp_skill_gateway.approval_service import GrantCheckResult
 from app.services.mcp_skill_gateway.handler import dispatch_authenticated
 
 
@@ -35,6 +36,9 @@ async def test_genehub_register_writes_audit():
                 "message": "ok",
             }
         ),
+    ), patch(
+        "app.services.mcp_skill_gateway.handler.check_tool_grant",
+        new=AsyncMock(return_value=GrantCheckResult(allowed=True)),
     ), patch(
         "app.services.mcp_skill_gateway.handler.log_mcp_call",
         new=AsyncMock(),

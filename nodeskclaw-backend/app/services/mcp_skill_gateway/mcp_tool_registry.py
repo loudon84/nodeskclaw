@@ -63,12 +63,19 @@ _ALL_TOOLS: tuple[ToolDefinition, ...] = (
     ToolDefinition(
         name="hermes.skills.install_builtin",
         description="Install built-in skill bundle to Hermes instance",
-        input_schema={"type": "object", "properties": {}},
+        input_schema={
+            "type": "object",
+            "properties": {
+                "instance_ref": {"type": "string"},
+                "skill_slug": {"type": "string"},
+            },
+            "required": ["instance_ref", "skill_slug"],
+        },
         category="hermes",
         permission="write",
         risk_level="medium",
         requires_approval=True,
-        enabled=False,
+        enabled=True,
     ),
     ToolDefinition(
         name="hermes.skills.install_zip",
@@ -93,22 +100,35 @@ _ALL_TOOLS: tuple[ToolDefinition, ...] = (
     ToolDefinition(
         name="hermes.skills.uninstall",
         description="Uninstall skill from Hermes instance",
-        input_schema={"type": "object", "properties": {}},
+        input_schema={
+            "type": "object",
+            "properties": {
+                "instance_ref": {"type": "string"},
+                "skill_name": {"type": "string"},
+            },
+            "required": ["instance_ref", "skill_name"],
+        },
         category="hermes",
         permission="write",
-        risk_level="medium",
+        risk_level="high",
         requires_approval=True,
-        enabled=False,
+        enabled=True,
     ),
     ToolDefinition(
         name="hermes.instance.restart",
         description="Restart Hermes Docker instance",
-        input_schema={"type": "object", "properties": {}},
+        input_schema={
+            "type": "object",
+            "properties": {
+                "instance_ref": {"type": "string"},
+            },
+            "required": ["instance_ref"],
+        },
         category="hermes",
         permission="admin",
         risk_level="high",
         requires_approval=True,
-        enabled=False,
+        enabled=True,
     ),
     ToolDefinition(
         name="hermes.instance.rebind",
@@ -214,18 +234,29 @@ def count_tools_by_permission() -> dict[str, int]:
     return counts
 
 
-def build_tool_descriptor(tool: ToolDefinition) -> dict[str, Any]:
+def build_tool_descriptor(tool: ToolDefinition, auth_annotations: dict[str, Any] | None = None) -> dict[str, Any]:
+    annotations: dict[str, Any] = {
+        "category": tool.category,
+        "permission": tool.permission,
+        "riskLevel": tool.risk_level,
+        "requiresApproval": tool.requires_approval,
+        "enabled": tool.enabled,
+    }
+    if tool.requires_approval and tool.permission in ("write", "admin"):
+        annotations["approvalMode"] = "server"
+        annotations.update(auth_annotations or {
+            "authorized": False,
+            "grantStatus": "missing",
+        })
+    elif auth_annotations:
+        annotations.update(auth_annotations)
+    else:
+        annotations["authorized"] = True
     return {
         "name": tool.name,
         "description": tool.description,
         "inputSchema": tool.input_schema,
-        "annotations": {
-            "category": tool.category,
-            "permission": tool.permission,
-            "riskLevel": tool.risk_level,
-            "requiresApproval": tool.requires_approval,
-            "enabled": tool.enabled,
-        },
+        "annotations": annotations,
     }
 
 

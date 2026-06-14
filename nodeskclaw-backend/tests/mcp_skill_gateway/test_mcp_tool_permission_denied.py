@@ -1,13 +1,13 @@
-import json
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.services.mcp_skill_gateway.errors import MCP_TOOL_DISABLED
+from app.services.mcp_skill_gateway.approval_service import GrantCheckResult
+from app.services.mcp_skill_gateway.errors import MCP_TOOL_APPROVAL_REQUIRED
 from app.services.mcp_skill_gateway.handler import dispatch_authenticated
 
 
 @pytest.mark.asyncio
-async def test_tools_call_write_tool_returns_disabled():
+async def test_tools_call_write_tool_returns_approval_required():
     user = MagicMock()
     user.id = "user-1"
     org = MagicMock()
@@ -18,24 +18,29 @@ async def test_tools_call_write_tool_returns_disabled():
         "method": "tools/call",
         "params": {
             "name": "hermes.skills.install_builtin",
-            "arguments": {},
+            "arguments": {"instance_ref": "demo", "skill_slug": "writer"},
         },
     }
     db = AsyncMock()
 
     with patch(
-        "app.services.mcp_skill_gateway.handler.HermesDockerToolProvider",
-    ) as provider_cls, patch(
+        "app.services.mcp_skill_gateway.handler.check_tool_grant",
+        new=AsyncMock(
+            return_value=GrantCheckResult(
+                allowed=False,
+                error_code=MCP_TOOL_APPROVAL_REQUIRED,
+                message="Tool approval required",
+                data={"approvalRequestId": "apr-1", "toolName": "hermes.skills.install_builtin"},
+            )
+        ),
+    ), patch(
         "app.services.mcp_skill_gateway.handler.log_mcp_call",
         new=AsyncMock(),
+    ), patch(
+        "app.services.mcp_skill_gateway.handler.resolve_instance_ref",
+        new=AsyncMock(return_value=MagicMock(id="inst-1")),
     ):
-        from app.core.exceptions import ForbiddenError
-
-        provider = AsyncMock()
-        provider.call_tool.side_effect = ForbiddenError("disabled", MCP_TOOL_DISABLED)
-        provider_cls.return_value = provider
-
         result = await dispatch_authenticated(body, (user, org), db)
 
-    assert result["error"]["code"] == -32021
-    assert result["error"]["data"]["errorCode"] == MCP_TOOL_DISABLED
+    assert result["error"]["code"] == -32023
+    assert result["error"]["data"]["errorCode"] == MCP_TOOL_APPROVAL_REQUIRED

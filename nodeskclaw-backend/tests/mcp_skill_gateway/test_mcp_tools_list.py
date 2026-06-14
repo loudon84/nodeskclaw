@@ -27,7 +27,10 @@ async def test_tools_list_returns_hermes_tools_with_annotations():
         return_value=McpAuthContext(user=user, org=org),
     ), patch(
         "app.services.mcp_skill_gateway.handler.McpToolMapper",
-    ) as mock_mapper_cls:
+    ) as mock_mapper_cls, patch(
+        "app.services.mcp_skill_gateway.handler.get_grant_annotation",
+        new=AsyncMock(return_value={"authorized": False, "grantStatus": "missing"}),
+    ):
         mock_mapper = AsyncMock()
         mock_mapper.list_tools.return_value = []
         mock_mapper_cls.return_value = mock_mapper
@@ -35,19 +38,20 @@ async def test_tools_list_returns_hermes_tools_with_annotations():
         result = await dispatch(body, "Bearer valid-token", db)
 
     tools = result["result"]["tools"]
-    assert len(tools) == 7
+    assert len(tools) == 10
     genehub_tools = [t for t in tools if t["name"].startswith("genehub.")]
     assert len(genehub_tools) == 4
     for tool in tools:
         annotations = tool["annotations"]
-        assert set(annotations.keys()) == {
-            "category",
-            "permission",
-            "riskLevel",
-            "requiresApproval",
-            "enabled",
-        }
-        assert annotations["enabled"] is True
+        assert "category" in annotations
+        assert "permission" in annotations
+        assert "riskLevel" in annotations
+        assert "requiresApproval" in annotations
+        assert "enabled" in annotations
+        if annotations["requiresApproval"]:
+            assert annotations["approvalMode"] == "server"
+        else:
+            assert annotations.get("authorized") is True
     read_genehub = [t for t in genehub_tools if t["name"] != "genehub.skill.register_to_hermes"]
     assert all(t["annotations"]["permission"] == "read" for t in read_genehub)
     register_tool = next(t for t in genehub_tools if t["name"] == "genehub.skill.register_to_hermes")
@@ -67,8 +71,11 @@ async def test_tools_list_never_returns_null():
     with patch(
         "app.services.mcp_skill_gateway.handler.McpToolMapper",
     ) as mock_mapper_cls, patch(
-        "app.services.mcp_skill_gateway.handler.list_enabled_tool_descriptors",
-        return_value=[_hermes_tool("hermes.instances.list")],
+        "app.services.mcp_skill_gateway.handler.get_grant_annotation",
+        new=AsyncMock(return_value=None),
+    ), patch(
+        "app.services.mcp_skill_gateway.handler.list_enabled_tools",
+        return_value=[get_tool("hermes.instances.list")],
     ):
         mock_mapper = AsyncMock()
         mock_mapper.list_tools.return_value = [{"name": "tool.a"}]
@@ -96,8 +103,11 @@ async def test_tools_list_different_users_can_differ():
     with patch(
         "app.services.mcp_skill_gateway.handler.McpToolMapper",
     ) as mock_mapper_cls, patch(
-        "app.services.mcp_skill_gateway.handler.list_enabled_tool_descriptors",
-        return_value=[_hermes_tool("hermes.instances.list")],
+        "app.services.mcp_skill_gateway.handler.get_grant_annotation",
+        new=AsyncMock(return_value=None),
+    ), patch(
+        "app.services.mcp_skill_gateway.handler.list_enabled_tools",
+        return_value=[get_tool("hermes.instances.list")],
     ):
         mock_mapper = AsyncMock()
         mock_mapper.list_tools.side_effect = [

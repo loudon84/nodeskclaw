@@ -14,4 +14,4 @@ async def test_mcp_health_returns_gateway_status():
     assert result["tools"]["count"] >= 7
     assert result["tools"]["read"] >= 6
     assert result["tools"]["write"] >= 1
-    assert result["tools"]["admin"] == 0
+    assert result["tools"]["admin"] >= 1

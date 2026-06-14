@@ -50,8 +50,11 @@ async def test_dispatch_authenticated_tools_list():
     ), patch(
         "app.services.mcp_skill_gateway.handler.McpToolMapper",
     ) as mock_mapper_cls, patch(
-        "app.services.mcp_skill_gateway.handler.list_enabled_tool_descriptors",
+        "app.services.mcp_skill_gateway.handler.list_enabled_tools",
         return_value=[],
+    ), patch(
+        "app.services.mcp_skill_gateway.handler.get_grant_annotation",
+        new=AsyncMock(return_value=None),
     ):
         mock_mapper = AsyncMock()
         mock_mapper.list_tools.return_value = [{"name": "coding.create_prd"}]

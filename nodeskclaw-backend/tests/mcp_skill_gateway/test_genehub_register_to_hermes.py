@@ -3,6 +3,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.schemas.genehub import McpRegistrationJobResult
+from app.services.mcp_skill_gateway.approval_service import GrantCheckResult
 from app.services.mcp_skill_gateway.handler import dispatch_authenticated
 
 
@@ -46,6 +47,9 @@ async def test_genehub_register_to_hermes_creates_job():
     ), patch(
         "app.services.mcp_skill_gateway.genehub_tools._load_user",
         new=AsyncMock(return_value=user),
+    ), patch(
+        "app.services.mcp_skill_gateway.handler.check_tool_grant",
+        new=AsyncMock(return_value=GrantCheckResult(allowed=True)),
     ), patch(
         "app.services.mcp_skill_gateway.handler.log_mcp_call",
         new=AsyncMock(),
@@ -93,6 +97,9 @@ async def test_genehub_register_duplicate_active_job():
     ), patch(
         "app.services.mcp_skill_gateway.genehub_tools._load_user",
         new=AsyncMock(return_value=user),
+    ), patch(
+        "app.services.mcp_skill_gateway.handler.check_tool_grant",
+        new=AsyncMock(return_value=GrantCheckResult(allowed=True)),
     ), patch(
         "app.services.mcp_skill_gateway.handler.log_mcp_call",
         new=AsyncMock(),

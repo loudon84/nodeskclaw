@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.exceptions import BadRequestError, ForbiddenError, NotFoundError
 from app.services.hermes_skill.mcp_tool_mapper import McpToolMapper
+from app.services.mcp_skill_gateway.approval_service import check_tool_grant, get_grant_annotation
 from app.services.mcp_skill_gateway.audit_service import log_mcp_call
 from app.services.mcp_skill_gateway.auth import McpAuthContext, McpAuthFailure, resolve_mcp_user
 from app.services.mcp_skill_gateway.constants import MCP_PROTOCOL_VERSION, MCP_SERVER_NAME
@@ -33,7 +34,11 @@ from app.services.mcp_skill_gateway.hermes_docker_tools import (
     summarize_tool_result,
 )
 from app.services.mcp_skill_gateway.hermes_instance_resolver import resolve_instance_ref
-from app.services.mcp_skill_gateway.mcp_tool_registry import get_tool, list_enabled_tool_descriptors
+from app.services.mcp_skill_gateway.mcp_tool_registry import (
+    build_tool_descriptor,
+    get_tool,
+    list_enabled_tools,
+)
 from app.services.mcp_skill_gateway.session import get_client_name, mark_initialized
 
 logger = logging.getLogger(__name__)
@@ -77,6 +82,83 @@ def _extra_error_data(exc: Exception, arguments: dict[str, Any]) -> dict[str, An
     return data
 
 
+async def _resolve_tool_instance_id(
+    *,
+    tool_name: str,
+    arguments: dict[str, Any],
+    org_id: str,
+    user: Any,
+    db: AsyncSession,
+) -> tuple[str | None, dict | None]:
+    if not is_hermes_docker_tool(tool_name) or tool_name == "hermes.instances.list":
+        return None, None
+
+    instance_ref = extract_instance_id_from_arguments(arguments)
+    if not instance_ref:
+        return None, mcp_error_v2(
+            0,
+            MCP_INVALID_ARGUMENTS,
+            "Invalid params: missing instance_ref",
+            data={"toolName": tool_name},
+        )
+
+    try:
+        resolved = await resolve_instance_ref(instance_ref, org_id, user, db)
+    except (NotFoundError, BadRequestError, ForbiddenError) as exc:
+        return None, map_app_error(
+            0,
+            exc.message_key,
+            exc.message,
+            extra_data=_extra_error_data(exc, arguments),
+        )
+    return resolved.id, None
+
+
+async def _enforce_tool_grant(
+    *,
+    jsonrpc_id: Any,
+    tool_name: str,
+    arguments: dict[str, Any],
+    org_id: str,
+    user_id: str,
+    user: Any,
+    db: AsyncSession,
+) -> tuple[dict | None, Any]:
+    tool_meta = get_tool(tool_name)
+    if not tool_meta or not tool_meta.requires_approval:
+        return None, None
+
+    instance_id, resolve_error = await _resolve_tool_instance_id(
+        tool_name=tool_name,
+        arguments=arguments,
+        org_id=org_id,
+        user=user,
+        db=db,
+    )
+    if resolve_error:
+        resolve_error["id"] = jsonrpc_id
+        return resolve_error, None
+
+    grant_check = await check_tool_grant(
+        db,
+        org_id=org_id,
+        user_id=user_id,
+        tool=tool_meta,
+        instance_id=instance_id,
+        instance_ref=extract_instance_id_from_arguments(arguments),
+        arguments=arguments,
+    )
+    if grant_check.allowed:
+        return None, grant_check.grant
+
+    return mcp_error_v2(
+        jsonrpc_id,
+        grant_check.error_code or MCP_INTERNAL_ERROR,
+        grant_check.message,
+        data=grant_check.data,
+    ), None
+
+
 async def _execute_gateway_tool_call(
     *,
     jsonrpc_id: Any,
@@ -94,8 +176,62 @@ async def _execute_gateway_tool_call(
     started = time.perf_counter()
     instance_id: str | None = None
 
+    grant_error, active_grant = await _enforce_tool_grant(
+        jsonrpc_id=jsonrpc_id,
+        tool_name=tool_name,
+        arguments=arguments,
+        org_id=org_id,
+        user_id=user_id,
+        user=user,
+        db=db,
+    )
+    if grant_error:
+        duration_ms = int((time.perf_counter() - started) * 1000)
+        error_data = grant_error.get("error", {}).get("data", {})
+        ref = extract_instance_id_from_arguments(arguments)
+        if ref and is_hermes_docker_tool(tool_name):
+            try:
+                resolved = await resolve_instance_ref(ref, org_id, user, db)
+                instance_id = resolved.id
+            except (NotFoundError, BadRequestError, ForbiddenError):
+                instance_id = None
+        await log_mcp_call(
+            db,
+            org_id=org_id,
+            user_id=user_id,
+            tool_name=tool_name,
+            status="failed",
+            duration_ms=duration_ms,
+            instance_id=instance_id,
+            arguments=arguments,
+            error_code=error_data.get("errorCode"),
+            error_message=grant_error.get("error", {}).get("message"),
+            client_name=client_name,
+            permission=tool_meta.permission if tool_meta else None,
+            risk_level=tool_meta.risk_level if tool_meta else None,
+        )
+        _log_mcp_error(
+            error_data.get("errorCode", MCP_INTERNAL_ERROR),
+            "tools/call",
+            user_id=user_id,
+            org_id=org_id,
+            reason=grant_error.get("error", {}).get("message", ""),
+        )
+        return grant_error
+
     try:
-        result = await provider.call_tool(tool_name, arguments, org_id, user_id)
+        call_kwargs: dict[str, Any] = {}
+        if is_hermes_docker_tool(tool_name):
+            call_kwargs["grant_constraints"] = (
+                active_grant.constraints_json if active_grant else None
+            )
+        result = await provider.call_tool(
+            tool_name,
+            arguments,
+            org_id,
+            user_id,
+            **call_kwargs,
+        )
         if is_hermes_docker_tool(tool_name) and tool_name != "hermes.instances.list":
             ref = extract_instance_id_from_arguments(arguments)
             try:
@@ -286,10 +422,21 @@ async def _handle_initialize(
 async def _collect_tools(user_id: str, org_id: str, db: AsyncSession) -> list[dict[str, Any]]:
     mapper = McpToolMapper(db)
     skill_tools = await mapper.list_tools(org_id, user_id=user_id)
-    docker_tools = list_enabled_tool_descriptors()
+    registry_tools: list[dict[str, Any]] = []
+    for tool in list_enabled_tools():
+        auth_annotations = None
+        if tool.requires_approval:
+            auth_annotations = await get_grant_annotation(
+                db,
+                org_id=org_id,
+                user_id=user_id,
+                instance_id=None,
+                tool_name=tool.name,
+            )
+        registry_tools.append(build_tool_descriptor(tool, auth_annotations))
     merged: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for tool in docker_tools + skill_tools:
+    for tool in registry_tools + skill_tools:
         name = tool.get("name")
         if not name or name in seen:
             continue
