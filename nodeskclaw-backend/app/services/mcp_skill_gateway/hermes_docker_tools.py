@@ -15,7 +15,6 @@ from app.services.hermes_external import skill_service, status_service
 from app.services.hermes_external._common import get_lifecycle_config, resolve_paths
 from app.services.mcp_skill_gateway.errors import (
     HERMES_SKILLS_LIST_FAILED,
-    MCP_NOT_IMPLEMENTED,
     MCP_TOOL_DISABLED,
     MCP_TOOL_NOT_FOUND,
 )
@@ -26,9 +25,7 @@ from app.services.mcp_skill_gateway.hermes_instance_resolver import (
 )
 from app.services.mcp_skill_gateway.mcp_tool_registry import (
     get_tool,
-    is_genehub_registry_tool,
     is_hermes_registry_tool,
-    list_enabled_tool_descriptors,
 )
 
 logger = logging.getLogger(__name__)
@@ -45,15 +42,17 @@ async def _load_user(user_id: str, db: AsyncSession) -> User:
 
 
 def list_tools() -> list[dict[str, Any]]:
-    return list_enabled_tool_descriptors()
+    from app.services.mcp_skill_gateway.mcp_tool_registry import build_tool_descriptor, list_enabled_tools
+
+    return [
+        build_tool_descriptor(tool)
+        for tool in list_enabled_tools()
+        if tool.category == "hermes"
+    ]
 
 
 def is_hermes_docker_tool(tool_name: str) -> bool:
     return is_hermes_registry_tool(tool_name)
-
-
-def is_genehub_tool(tool_name: str) -> bool:
-    return is_genehub_registry_tool(tool_name)
 
 
 def extract_instance_id_from_arguments(arguments: dict[str, Any] | None) -> str | None:
@@ -87,12 +86,6 @@ class HermesDockerToolProvider:
         org_id: str,
         user_id: str,
     ) -> dict[str, Any]:
-        if is_genehub_tool(tool_name):
-            raise BadRequestError(
-                "GeneHub MCP 工具尚未开放",
-                MCP_NOT_IMPLEMENTED,
-            )
-
         tool = get_tool(tool_name)
         if not tool:
             raise NotFoundError(

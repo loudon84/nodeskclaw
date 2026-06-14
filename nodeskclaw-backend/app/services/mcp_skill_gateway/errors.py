@@ -17,6 +17,13 @@ MCP_INTERNAL_ERROR = "MCP_INTERNAL_ERROR"
 MCP_METHOD_NOT_FOUND = "MCP_METHOD_NOT_FOUND"
 MCP_TOOLS_LIST_FAILED = "MCP_TOOLS_LIST_FAILED"
 MCP_NOT_IMPLEMENTED = "MCP_NOT_IMPLEMENTED"
+GENEHUB_SKILL_NOT_FOUND = "GENEHUB_SKILL_NOT_FOUND"
+GENEHUB_SKILL_FORBIDDEN = "GENEHUB_SKILL_FORBIDDEN"
+GENEHUB_PROFILE_NOT_FOUND = "GENEHUB_PROFILE_NOT_FOUND"
+GENEHUB_PROFILE_FORBIDDEN = "GENEHUB_PROFILE_FORBIDDEN"
+GENEHUB_INSTALL_NOT_ALLOWED = "GENEHUB_INSTALL_NOT_ALLOWED"
+GENEHUB_JOB_NOT_FOUND = "GENEHUB_JOB_NOT_FOUND"
+GENEHUB_JOB_STATUS_UNAVAILABLE = "GENEHUB_JOB_STATUS_UNAVAILABLE"
 
 _ERROR_CODES: dict[str, int] = {
     MCP_AUTH_REQUIRED: -32010,
@@ -36,6 +43,13 @@ _ERROR_CODES: dict[str, int] = {
     MCP_METHOD_NOT_FOUND: -32601,
     MCP_TOOLS_LIST_FAILED: -32053,
     MCP_NOT_IMPLEMENTED: -32021,
+    GENEHUB_SKILL_NOT_FOUND: -32070,
+    GENEHUB_SKILL_FORBIDDEN: -32071,
+    GENEHUB_PROFILE_NOT_FOUND: -32072,
+    GENEHUB_PROFILE_FORBIDDEN: -32073,
+    GENEHUB_INSTALL_NOT_ALLOWED: -32074,
+    GENEHUB_JOB_NOT_FOUND: -32075,
+    GENEHUB_JOB_STATUS_UNAVAILABLE: -32076,
 }
 
 _DEFAULT_MESSAGES: dict[str, str] = {
@@ -56,6 +70,13 @@ _DEFAULT_MESSAGES: dict[str, str] = {
     MCP_METHOD_NOT_FOUND: "Method not found",
     MCP_TOOLS_LIST_FAILED: "Failed to list tools",
     MCP_NOT_IMPLEMENTED: "Not implemented",
+    GENEHUB_SKILL_NOT_FOUND: "GeneHub skill not found",
+    GENEHUB_SKILL_FORBIDDEN: "GeneHub skill access forbidden",
+    GENEHUB_PROFILE_NOT_FOUND: "Desktop Hermes profile not found",
+    GENEHUB_PROFILE_FORBIDDEN: "Desktop Hermes profile access forbidden",
+    GENEHUB_INSTALL_NOT_ALLOWED: "GeneHub skill install not allowed",
+    GENEHUB_JOB_NOT_FOUND: "GeneHub install job not found",
+    GENEHUB_JOB_STATUS_UNAVAILABLE: "GeneHub registration status unavailable",
 }
 
 _MESSAGE_KEY_MAP: dict[str, str] = {
@@ -71,6 +92,12 @@ _MESSAGE_KEY_MAP: dict[str, str] = {
     "errors.external_docker.instance_forbidden": HERMES_INSTANCE_FORBIDDEN,
     "errors.external_docker.skills_list_failed": HERMES_SKILLS_LIST_FAILED,
     "errors.external_docker.runtime_unavailable": HERMES_RUNTIME_UNAVAILABLE,
+    "errors.genehub.skill_not_found": GENEHUB_SKILL_NOT_FOUND,
+    "errors.genehub.install_job_permission_denied": GENEHUB_INSTALL_NOT_ALLOWED,
+    "errors.genehub.install_job_not_found": GENEHUB_JOB_NOT_FOUND,
+    "errors.genehub.install_job_invalid_status": GENEHUB_JOB_STATUS_UNAVAILABLE,
+    "errors.desktop.profile_not_found": GENEHUB_PROFILE_NOT_FOUND,
+    "errors.desktop.profile_forbidden": GENEHUB_PROFILE_FORBIDDEN,
     MCP_AUTH_REQUIRED: MCP_AUTH_REQUIRED,
     MCP_AUTH_EXPIRED: MCP_AUTH_EXPIRED,
     MCP_ORG_FORBIDDEN: MCP_ORG_FORBIDDEN,

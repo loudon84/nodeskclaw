@@ -11,7 +11,7 @@ async def test_mcp_health_returns_gateway_status():
     assert result["service"] == "nodeskclaw-mcp-skill-gateway"
     assert result["status"] == "running"
     assert result["protocolVersion"] == "2025-06-18"
-    assert result["tools"]["count"] >= 3
-    assert result["tools"]["read"] >= 3
-    assert result["tools"]["write"] == 0
+    assert result["tools"]["count"] >= 7
+    assert result["tools"]["read"] >= 6
+    assert result["tools"]["write"] >= 1
     assert result["tools"]["admin"] == 0

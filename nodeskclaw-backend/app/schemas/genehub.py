@@ -229,6 +229,91 @@ class DesktopInstallJobInfo(BaseModel):
     status: str
 
 
+class DesktopInstallJobDetail(BaseModel):
+    job_id: str
+    gene_slug: str
+    gene_version: str
+    skill_name: str
+    profile_id: str | None = None
+    action: str
+    status: str
+    source: str | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+    assigned_at: datetime | None = None
+    claimed_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class GeneHubSkillPermissions(BaseModel):
+    can_install: bool = False
+    can_update: bool = False
+    can_uninstall: bool = False
+
+
+class GeneHubManifestPreview(BaseModel):
+    has_skill: bool = False
+    file_count: int = 0
+    has_scripts: bool = False
+    requires_signature: bool = True
+
+
+class McpGeneHubSkillItem(BaseModel):
+    gene_slug: str
+    gene_version: str
+    skill_name: str
+    display_name: str
+    description: str | None = None
+    category: str | None = None
+    tags: list[str] = []
+    installed: bool = False
+    installed_version: str | None = None
+    update_available: bool = False
+    permissions: GeneHubSkillPermissions
+
+
+class McpGeneHubSkillDetail(BaseModel):
+    gene_slug: str
+    gene_version: str
+    skill_name: str
+    display_name: str
+    description: str | None = None
+    category: str | None = None
+    tags: list[str] = []
+    installed: bool = False
+    installed_version: str | None = None
+    update_available: bool = False
+    installable: bool = False
+    permissions: GeneHubSkillPermissions
+    manifest_preview: GeneHubManifestPreview
+
+
+class McpRegistrationJobResult(BaseModel):
+    job_id: str | None = None
+    status: str
+    gene_slug: str
+    gene_version: str
+    skill_name: str
+    profile_id: str
+    action: str
+    message: str
+
+
+class McpRegistrationInfo(BaseModel):
+    job_id: str | None = None
+    gene_slug: str
+    gene_version: str | None = None
+    skill_name: str | None = None
+    profile_id: str | None = None
+    action: str | None = None
+    status: str
+    error_code: str | None = None
+    error_message: str | None = None
+    assigned_at: datetime | None = None
+    claimed_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
 class DesktopBundleFile(BaseModel):
     relative_path: str
     content: str

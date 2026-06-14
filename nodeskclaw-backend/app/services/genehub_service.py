@@ -21,11 +21,12 @@ from app.models.hermes_installed_skill import HermesInstalledSkill, InstalledSki
 from app.models.hermes_skill_install_job import (
     ACTIVE_JOB_STATUSES,
     HermesSkillInstallJob,
+    InstallJobSource,
     InstallJobStatus,
     InstallJobType,
     InstallMode,
 )
-from app.models.org_membership import OrgMembership
+from app.models.org_membership import OrgMembership, OrgRole
 from app.schemas.genehub import (
     AdminGeneHubSkillCreate,
     AdminGeneHubSkillInfo,
@@ -35,6 +36,12 @@ from app.schemas.genehub import (
     CompatibilityItem,
     DesktopSkillInfo,
     GeneHubEntitlementTarget,
+    GeneHubManifestPreview,
+    GeneHubSkillPermissions,
+    McpGeneHubSkillDetail,
+    McpGeneHubSkillItem,
+    McpRegistrationInfo,
+    McpRegistrationJobResult,
 )
 from app.services.genehub_bundle_service import (
     build_manifest_from_skill,
@@ -425,6 +432,81 @@ async def _find_active_job(
     return result.scalars().first()
 
 
+async def _find_any_active_job(
+    db: AsyncSession,
+    *,
+    org_id: str,
+    user_id: str,
+    profile_id: str,
+    gene_slug: str,
+) -> HermesSkillInstallJob | None:
+    result = await db.execute(
+        select(HermesSkillInstallJob).where(
+            HermesSkillInstallJob.org_id == org_id,
+            HermesSkillInstallJob.user_id == user_id,
+            HermesSkillInstallJob.profile_id == profile_id,
+            HermesSkillInstallJob.gene_slug == gene_slug,
+            HermesSkillInstallJob.status.in_(ACTIVE_JOB_STATUSES),
+            HermesSkillInstallJob.deleted_at.is_(None),
+        )
+    )
+    return result.scalars().first()
+
+
+def build_skill_permissions(permissions: set[str]) -> GeneHubSkillPermissions:
+    return GeneHubSkillPermissions(
+        can_install=EntitlementPermission.install in permissions,
+        can_update=EntitlementPermission.update in permissions,
+        can_uninstall=EntitlementPermission.uninstall in permissions,
+    )
+
+
+def _build_manifest_preview(manifest: dict) -> GeneHubManifestPreview:
+    skill = manifest.get("skill") or {}
+    scripts = manifest.get("scripts") or {}
+    files = manifest.get("files") or []
+    return GeneHubManifestPreview(
+        has_skill=bool(skill.get("content")),
+        file_count=len(files) if isinstance(files, list) else 0,
+        has_scripts=bool(scripts),
+        requires_signature=True,
+    )
+
+
+def _desktop_skill_to_mcp_item(skill: DesktopSkillInfo) -> McpGeneHubSkillItem:
+    perms = build_skill_permissions(set(skill.permissions))
+    installed_version = skill.gene_version if skill.installed else None
+    return McpGeneHubSkillItem(
+        gene_slug=skill.gene_slug,
+        gene_version=skill.gene_version,
+        skill_name=skill.skill_name,
+        display_name=skill.display_name,
+        description=skill.description,
+        category=skill.category,
+        tags=skill.tags,
+        installed=skill.installed,
+        installed_version=installed_version,
+        update_available=skill.update_available,
+        permissions=perms,
+    )
+
+
+async def _get_installed_skill(
+    db: AsyncSession,
+    *,
+    profile_id: str,
+    gene_slug: str,
+) -> HermesInstalledSkill | None:
+    result = await db.execute(
+        select(HermesInstalledSkill).where(
+            HermesInstalledSkill.profile_id == profile_id,
+            HermesInstalledSkill.gene_slug == gene_slug,
+            HermesInstalledSkill.deleted_at.is_(None),
+        )
+    )
+    return result.scalar_one_or_none()
+
+
 async def _create_install_job(
     db: AsyncSession,
     *,
@@ -436,6 +518,7 @@ async def _create_install_job(
     requested_by: str,
     profile_id: str | None = None,
     desktop_device_id: str | None = None,
+    source: str | None = None,
 ) -> HermesSkillInstallJob:
     manifest = json.loads(gene.manifest) if gene.manifest else {}
     skill_name = manifest.get("skill", {}).get("name", gene.slug)
@@ -464,6 +547,7 @@ async def _create_install_job(
         job_type=job_type,
         status=InstallJobStatus.pending,
         install_mode=install_mode,
+        source=source,
         requested_by=requested_by,
     )
     db.add(job)
@@ -547,6 +631,7 @@ async def create_assign_jobs(
             requested_by=requested_by,
             profile_id=profile_id,
             desktop_device_id=desktop_device_id,
+            source=InstallJobSource.server_assigned.value,
         )
         if existing_before:
             skipped += 1
@@ -610,6 +695,7 @@ async def create_self_service_job(
         requested_by=user_id,
         profile_id=profile.id,
         desktop_device_id=profile.desktop_device_id,
+        source=InstallJobSource.desktop_manual.value,
     )
 
 
@@ -744,3 +830,342 @@ async def list_desktop_visible_skills(
         )
 
     return visible_skills
+
+
+async def search_mcp_genehub_skills(
+    db: AsyncSession,
+    *,
+    org_id: str,
+    user_id: str,
+    profile_id: str,
+    query: str | None = None,
+    category: str | None = None,
+    tag: str | None = None,
+) -> list[McpGeneHubSkillItem]:
+    skills = await list_desktop_visible_skills(
+        db,
+        org_id=org_id,
+        user_id=user_id,
+        profile_id=profile_id,
+        keyword=query,
+        category=category,
+        tag=tag,
+    )
+    return [_desktop_skill_to_mcp_item(skill) for skill in skills]
+
+
+async def get_desktop_skill_detail(
+    db: AsyncSession,
+    *,
+    org_id: str,
+    user_id: str,
+    profile_id: str,
+    gene_slug: str,
+) -> McpGeneHubSkillDetail:
+    profile_result = await db.execute(
+        select(DesktopHermesProfile).where(
+            DesktopHermesProfile.id == profile_id,
+            DesktopHermesProfile.user_id == user_id,
+            DesktopHermesProfile.org_id == org_id,
+            DesktopHermesProfile.deleted_at.is_(None),
+        )
+    )
+    profile = profile_result.scalar_one_or_none()
+    if not profile:
+        raise NotFoundError(
+            "Profile 不存在",
+            message_key="errors.desktop.profile_not_found",
+        )
+
+    gene = await _get_published_gene_by_slug(db, org_id=org_id, slug=gene_slug)
+    permissions = await resolve_user_gene_permissions(
+        db,
+        org_id=org_id,
+        user_id=user_id,
+        gene_id=gene.id,
+        profile_name=profile.profile_name,
+    )
+    if not permissions & VIEW_PERMISSIONS:
+        raise ForbiddenError(
+            "无权限查看该 skill",
+            message_key="errors.genehub.install_job_permission_denied",
+        )
+
+    manifest = json.loads(gene.manifest) if gene.manifest else {}
+    installed = await _get_installed_skill(db, profile_id=profile_id, gene_slug=gene.slug)
+    installed_version = None
+    update_available = False
+    is_installed = False
+    if installed and installed.status == InstalledSkillStatus.installed:
+        is_installed = True
+        installed_version = installed.gene_version
+        update_available = installed.gene_version != gene.version
+
+    skill_name = manifest.get("skill", {}).get("name", gene.slug)
+    perms = build_skill_permissions(permissions)
+    return McpGeneHubSkillDetail(
+        gene_slug=gene.slug,
+        gene_version=gene.version,
+        skill_name=skill_name,
+        display_name=gene.name,
+        description=gene.description,
+        category=gene.category,
+        tags=_parse_tags(gene.tags),
+        installed=is_installed,
+        installed_version=installed_version,
+        update_available=update_available,
+        installable=perms.can_install or perms.can_update,
+        permissions=perms,
+        manifest_preview=_build_manifest_preview(manifest),
+    )
+
+
+async def create_mcp_registration_job(
+    db: AsyncSession,
+    *,
+    org_id: str,
+    user_id: str,
+    profile_id: str,
+    gene_slug: str,
+    version: str = "latest",
+    action: str = "install",
+) -> McpRegistrationJobResult:
+    if action not in (InstallJobType.install, InstallJobType.update):
+        raise BadRequestError(
+            "本版本仅支持 install/update",
+            message_key="errors.common.bad_request",
+        )
+
+    profile_result = await db.execute(
+        select(DesktopHermesProfile).where(
+            DesktopHermesProfile.id == profile_id,
+            DesktopHermesProfile.user_id == user_id,
+            DesktopHermesProfile.org_id == org_id,
+            DesktopHermesProfile.deleted_at.is_(None),
+        )
+    )
+    profile = profile_result.scalar_one_or_none()
+    if not profile:
+        raise NotFoundError(
+            "Profile 不存在",
+            message_key="errors.desktop.profile_not_found",
+        )
+
+    gene = await _get_published_gene_by_slug(db, org_id=org_id, slug=gene_slug, version=version)
+    permissions = await resolve_user_gene_permissions(
+        db,
+        org_id=org_id,
+        user_id=user_id,
+        gene_id=gene.id,
+        profile_name=profile.profile_name,
+    )
+    manifest = json.loads(gene.manifest) if gene.manifest else {}
+    skill_name = manifest.get("skill", {}).get("name", gene.slug)
+
+    active_job = await _find_any_active_job(
+        db,
+        org_id=org_id,
+        user_id=user_id,
+        profile_id=profile.id,
+        gene_slug=gene.slug,
+    )
+    if active_job:
+        return McpRegistrationJobResult(
+            job_id=active_job.id,
+            status=active_job.status,
+            gene_slug=gene.slug,
+            gene_version=active_job.gene_version,
+            skill_name=active_job.skill_name,
+            profile_id=profile.profile_name,
+            action=active_job.job_type,
+            message="Existing install job returned.",
+        )
+
+    installed = await _get_installed_skill(db, profile_id=profile.id, gene_slug=gene.slug)
+    if (
+        installed
+        and installed.status == InstalledSkillStatus.installed
+        and installed.gene_version == gene.version
+        and action == InstallJobType.install
+    ):
+        return McpRegistrationJobResult(
+            job_id=None,
+            status=InstallJobStatus.installed.value,
+            gene_slug=gene.slug,
+            gene_version=gene.version,
+            skill_name=skill_name,
+            profile_id=profile.profile_name,
+            action=action,
+            message="Skill is already installed at the current version.",
+        )
+
+    job_type = action
+    if (
+        installed
+        and installed.status == InstalledSkillStatus.installed
+        and installed.gene_version != gene.version
+    ):
+        job_type = InstallJobType.update
+
+    if job_type == InstallJobType.install and EntitlementPermission.install not in permissions:
+        raise ForbiddenError(
+            "无安装权限",
+            message_key="errors.genehub.install_job_permission_denied",
+        )
+    if job_type == InstallJobType.update and EntitlementPermission.update not in permissions:
+        if EntitlementPermission.install not in permissions:
+            raise ForbiddenError(
+                "无更新权限",
+                message_key="errors.genehub.install_job_permission_denied",
+            )
+
+    job = await _create_install_job(
+        db,
+        org_id=org_id,
+        user_id=user_id,
+        gene=gene,
+        job_type=job_type,
+        install_mode=InstallMode.self_service,
+        requested_by=user_id,
+        profile_id=profile.id,
+        desktop_device_id=profile.desktop_device_id,
+        source=InstallJobSource.mcp_agent_request.value,
+    )
+    return McpRegistrationJobResult(
+        job_id=job.id,
+        status=job.status,
+        gene_slug=gene.slug,
+        gene_version=job.gene_version,
+        skill_name=job.skill_name,
+        profile_id=profile.profile_name,
+        action=job.job_type,
+        message="Install job created. Copilot Desktop will apply it locally after user confirmation.",
+    )
+
+
+async def _user_can_view_org_jobs(
+    db: AsyncSession,
+    *,
+    org_id: str,
+    user_id: str,
+) -> bool:
+    result = await db.execute(
+        select(OrgMembership.role).where(
+            OrgMembership.org_id == org_id,
+            OrgMembership.user_id == user_id,
+            OrgMembership.deleted_at.is_(None),
+        )
+    )
+    role = result.scalar_one_or_none()
+    return role == OrgRole.admin
+
+
+def _job_to_registration_info(job: HermesSkillInstallJob, profile_name: str | None) -> McpRegistrationInfo:
+    return McpRegistrationInfo(
+        job_id=job.id,
+        gene_slug=job.gene_slug,
+        gene_version=job.gene_version,
+        skill_name=job.skill_name,
+        profile_id=profile_name or job.profile_id,
+        action=job.job_type,
+        status=job.status,
+        error_code=job.error_code,
+        error_message=job.error_message,
+        assigned_at=job.created_at,
+        claimed_at=job.claimed_at,
+        updated_at=job.updated_at,
+    )
+
+
+async def get_registration_status(
+    db: AsyncSession,
+    *,
+    org_id: str,
+    user_id: str,
+    job_id: str | None = None,
+    profile_id: str | None = None,
+    gene_slug: str | None = None,
+) -> McpRegistrationInfo:
+    if job_id:
+        query = select(HermesSkillInstallJob).where(
+            HermesSkillInstallJob.id == job_id,
+            HermesSkillInstallJob.org_id == org_id,
+            HermesSkillInstallJob.deleted_at.is_(None),
+        )
+        is_admin = await _user_can_view_org_jobs(db, org_id=org_id, user_id=user_id)
+        if not is_admin:
+            query = query.where(HermesSkillInstallJob.user_id == user_id)
+        result = await db.execute(query)
+        job = result.scalar_one_or_none()
+        if not job:
+            raise NotFoundError(
+                "安装任务不存在",
+                message_key="errors.genehub.install_job_not_found",
+            )
+        profile_name = None
+        if job.profile_id:
+            profile_result = await db.execute(
+                select(DesktopHermesProfile.profile_name).where(
+                    DesktopHermesProfile.id == job.profile_id,
+                    DesktopHermesProfile.deleted_at.is_(None),
+                )
+            )
+            profile_name = profile_result.scalar_one_or_none()
+        return _job_to_registration_info(job, profile_name)
+
+    if not gene_slug or not profile_id:
+        raise BadRequestError(
+            "job_id 或 gene_slug+profile_id 必填其一",
+            message_key="errors.common.bad_request",
+        )
+
+    profile_result = await db.execute(
+        select(DesktopHermesProfile).where(
+            DesktopHermesProfile.id == profile_id,
+            DesktopHermesProfile.user_id == user_id,
+            DesktopHermesProfile.org_id == org_id,
+            DesktopHermesProfile.deleted_at.is_(None),
+        )
+    )
+    profile = profile_result.scalar_one_or_none()
+    if not profile:
+        raise NotFoundError(
+            "Profile 不存在",
+            message_key="errors.desktop.profile_not_found",
+        )
+
+    job_result = await db.execute(
+        select(HermesSkillInstallJob)
+        .where(
+            HermesSkillInstallJob.org_id == org_id,
+            HermesSkillInstallJob.user_id == user_id,
+            HermesSkillInstallJob.profile_id == profile.id,
+            HermesSkillInstallJob.gene_slug == gene_slug,
+            HermesSkillInstallJob.deleted_at.is_(None),
+        )
+        .order_by(HermesSkillInstallJob.created_at.desc())
+    )
+    job = job_result.scalars().first()
+    if job:
+        return _job_to_registration_info(job, profile.profile_name)
+
+    installed = await _get_installed_skill(
+        db, profile_id=profile.id, gene_slug=gene_slug
+    )
+    if installed and installed.status == InstalledSkillStatus.installed:
+        return McpRegistrationInfo(
+            job_id=None,
+            gene_slug=gene_slug,
+            gene_version=installed.gene_version,
+            skill_name=installed.skill_name,
+            profile_id=profile.profile_name,
+            action=InstallJobType.install,
+            status=InstallJobStatus.installed.value,
+            assigned_at=installed.created_at,
+            updated_at=installed.updated_at,
+        )
+
+    raise NotFoundError(
+        "未找到注册记录",
+        message_key="errors.genehub.install_job_not_found",
+    )

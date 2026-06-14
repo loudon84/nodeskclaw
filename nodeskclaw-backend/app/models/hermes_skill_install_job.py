@@ -34,6 +34,12 @@ class InstallMode(str, Enum):
     self_service = "self_service"
 
 
+class InstallJobSource(str, Enum):
+    desktop_manual = "desktop_manual"
+    server_assigned = "server_assigned"
+    mcp_agent_request = "mcp_agent_request"
+
+
 ACTIVE_JOB_STATUSES = frozenset({
     InstallJobStatus.pending,
     InstallJobStatus.claimed,
@@ -87,6 +93,7 @@ class HermesSkillInstallJob(BaseModel):
     job_type: Mapped[str] = mapped_column(String(32), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     install_mode: Mapped[str] = mapped_column(String(32), nullable=False)
+    source: Mapped[str | None] = mapped_column(String(32), nullable=True)
     manifest_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
     bundle_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
     requested_by: Mapped[str | None] = mapped_column(

@@ -14,6 +14,7 @@ from app.schemas.genehub import (
     DesktopHeartbeatResponse,
     DesktopHermesProfileInfo,
     DesktopHermesProfileRegister,
+    DesktopInstallJobDetail,
     DesktopInstallJobInfo,
     DesktopInstallJobStatusUpdate,
     DesktopInstalledSkillSync,
@@ -132,6 +133,34 @@ async def list_pending_jobs(
     user, org = user_org
     data = await hermes_desktop_sync_service.get_pending_jobs(
         db, org_id=org.id, user_id=user.id, profile_id=profile_id
+    )
+    await db.commit()
+    return ApiResponse(data=data)
+
+
+@router.get("/hermes/install-jobs/{job_id}", response_model=ApiResponse[DesktopInstallJobDetail])
+async def get_install_job(
+    job_id: str,
+    user_org=Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    user, _ = user_org
+    data = await hermes_desktop_sync_service.get_install_job_detail(
+        db, user_id=user.id, job_id=job_id
+    )
+    await db.commit()
+    return ApiResponse(data=data)
+
+
+@router.post("/hermes/install-jobs/{job_id}/ignore", response_model=ApiResponse[DesktopInstallJobInfo])
+async def ignore_install_job(
+    job_id: str,
+    user_org=Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    user, _ = user_org
+    data = await hermes_desktop_sync_service.cancel_install_job(
+        db, user_id=user.id, job_id=job_id
     )
     await db.commit()
     return ApiResponse(data=data)

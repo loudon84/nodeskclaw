@@ -2,7 +2,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.core.exceptions import ForbiddenError
-from app.services.mcp_skill_gateway.errors import MCP_NOT_IMPLEMENTED, MCP_TOOL_DISABLED
+from app.services.mcp_skill_gateway.errors import MCP_TOOL_DISABLED
 from app.services.mcp_skill_gateway.hermes_docker_tools import (
     HermesDockerToolProvider,
     list_tools,
@@ -48,17 +48,7 @@ async def test_resolve_instance_ref_by_profile():
 
 
 @pytest.mark.asyncio
-async def test_call_tool_rejects_genehub_tools():
-    provider = HermesDockerToolProvider(AsyncMock())
-
-    with pytest.raises(Exception) as exc_info:
-        await provider.call_tool("genehub.skills.search", {"query": "x"}, "org-1", "user-1")
-
-    assert exc_info.value.message_key == MCP_NOT_IMPLEMENTED
-
-
-@pytest.mark.asyncio
-async def test_call_tool_rejects_write_tools():
+async def test_call_tool_rejects_hermes_write_tools():
     provider = HermesDockerToolProvider(AsyncMock())
 
     with pytest.raises(ForbiddenError) as exc_info:

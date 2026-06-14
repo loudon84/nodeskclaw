@@ -20,10 +20,15 @@ from app.services.mcp_skill_gateway.errors import (
     mcp_error_v2,
     mcp_success,
 )
+from app.services.mcp_skill_gateway.genehub_tools import (
+    GeneHubMcpToolProvider,
+    extract_genehub_error_context,
+    is_genehub_tool,
+    summarize_genehub_result,
+)
 from app.services.mcp_skill_gateway.hermes_docker_tools import (
     HermesDockerToolProvider,
     extract_instance_id_from_arguments,
-    is_genehub_tool,
     is_hermes_docker_tool,
     summarize_tool_result,
 )
@@ -63,13 +68,115 @@ def _tool_call_success(jsonrpc_id: Any, result: dict[str, Any]) -> dict:
 
 
 def _extra_error_data(exc: Exception, arguments: dict[str, Any]) -> dict[str, Any]:
-    data: dict[str, Any] = {}
+    data: dict[str, Any] = extract_genehub_error_context(arguments)
     ref = extract_instance_id_from_arguments(arguments)
     if ref:
         data["instance_ref"] = ref
     if isinstance(exc, BadRequestError) and exc.message_key == "errors.external_docker.instance_ambiguous":
         data["reason"] = "multiple_instances_matched"
     return data
+
+
+async def _execute_gateway_tool_call(
+    *,
+    jsonrpc_id: Any,
+    tool_name: str,
+    arguments: dict[str, Any],
+    org_id: str,
+    user_id: str,
+    user: Any,
+    db: AsyncSession,
+    provider: Any,
+    summarize_fn: Any,
+) -> dict:
+    tool_meta = get_tool(tool_name)
+    client_name = get_client_name(user_id, org_id)
+    started = time.perf_counter()
+    instance_id: str | None = None
+
+    try:
+        result = await provider.call_tool(tool_name, arguments, org_id, user_id)
+        if is_hermes_docker_tool(tool_name) and tool_name != "hermes.instances.list":
+            ref = extract_instance_id_from_arguments(arguments)
+            try:
+                resolved = await resolve_instance_ref(ref or None, org_id, user, db)
+                instance_id = resolved.id
+            except (NotFoundError, BadRequestError, ForbiddenError):
+                instance_id = None
+        duration_ms = int((time.perf_counter() - started) * 1000)
+        await log_mcp_call(
+            db,
+            org_id=org_id,
+            user_id=user_id,
+            tool_name=tool_name,
+            status="success",
+            duration_ms=duration_ms,
+            instance_id=instance_id,
+            arguments=arguments,
+            result_summary=summarize_fn(tool_name, result),
+            client_name=client_name,
+            permission=tool_meta.permission if tool_meta else None,
+            risk_level=tool_meta.risk_level if tool_meta else None,
+        )
+        return _tool_call_success(jsonrpc_id, result)
+    except (NotFoundError, BadRequestError, ForbiddenError) as exc:
+        error_response = map_app_error(
+            jsonrpc_id,
+            exc.message_key,
+            exc.message,
+            extra_data=_extra_error_data(exc, arguments),
+        )
+        duration_ms = int((time.perf_counter() - started) * 1000)
+        error_data = error_response.get("error", {}).get("data", {})
+        await log_mcp_call(
+            db,
+            org_id=org_id,
+            user_id=user_id,
+            tool_name=tool_name,
+            status="failed",
+            duration_ms=duration_ms,
+            instance_id=instance_id,
+            arguments=arguments,
+            error_code=error_data.get("errorCode"),
+            error_message=exc.message,
+            client_name=client_name,
+            permission=tool_meta.permission if tool_meta else None,
+            risk_level=tool_meta.risk_level if tool_meta else None,
+        )
+        _log_mcp_error(
+            error_data.get("errorCode", MCP_INTERNAL_ERROR),
+            "tools/call",
+            user_id=user_id,
+            org_id=org_id,
+            reason=exc.message,
+        )
+        return error_response
+    except Exception as exc:
+        reason = str(exc)[:256]
+        duration_ms = int((time.perf_counter() - started) * 1000)
+        await log_mcp_call(
+            db,
+            org_id=org_id,
+            user_id=user_id,
+            tool_name=tool_name,
+            status="failed",
+            duration_ms=duration_ms,
+            instance_id=instance_id,
+            arguments=arguments,
+            error_code=MCP_INTERNAL_ERROR,
+            error_message=reason,
+            client_name=client_name,
+            permission=tool_meta.permission if tool_meta else None,
+            risk_level=tool_meta.risk_level if tool_meta else None,
+        )
+        _log_mcp_error(
+            MCP_INTERNAL_ERROR,
+            "tools/call",
+            user_id=user_id,
+            org_id=org_id,
+            reason=reason,
+        )
+        return mcp_error_v2(jsonrpc_id, MCP_INTERNAL_ERROR, reason)
 
 
 async def dispatch(
@@ -221,8 +328,12 @@ async def _handle_tools_list(
         return mcp_error_v2(jsonrpc_id, MCP_TOOLS_LIST_FAILED, reason)
 
 
-def _is_docker_gateway_tool(tool_name: str) -> bool:
-    return is_hermes_docker_tool(tool_name) or is_genehub_tool(tool_name)
+def _is_hermes_gateway_tool(tool_name: str) -> bool:
+    return is_hermes_docker_tool(tool_name)
+
+
+def _is_genehub_gateway_tool(tool_name: str) -> bool:
+    return is_genehub_tool(tool_name)
 
 
 async def _handle_tools_call(
@@ -252,93 +363,32 @@ async def _handle_tools_call(
     tool_meta = get_tool(tool_name)
     client_name = get_client_name(user_id, org_id)
     started = time.perf_counter()
-    instance_id: str | None = None
 
-    if _is_docker_gateway_tool(tool_name):
-        provider = HermesDockerToolProvider(db)
-        try:
-            result = await provider.call_tool(tool_name, arguments, org_id, user_id)
-            if tool_name != "hermes.instances.list":
-                ref = extract_instance_id_from_arguments(arguments)
-                try:
-                    resolved = await resolve_instance_ref(ref or None, org_id, user, db)
-                    instance_id = resolved.id
-                except (NotFoundError, BadRequestError, ForbiddenError):
-                    instance_id = None
-            duration_ms = int((time.perf_counter() - started) * 1000)
-            await log_mcp_call(
-                db,
-                org_id=org_id,
-                user_id=user_id,
-                tool_name=tool_name,
-                status="success",
-                duration_ms=duration_ms,
-                instance_id=instance_id,
-                arguments=arguments,
-                result_summary=summarize_tool_result(tool_name, result),
-                client_name=client_name,
-                permission=tool_meta.permission if tool_meta else None,
-                risk_level=tool_meta.risk_level if tool_meta else None,
-            )
-            return _tool_call_success(jsonrpc_id, result)
-        except (NotFoundError, BadRequestError, ForbiddenError) as exc:
-            error_response = map_app_error(
-                jsonrpc_id,
-                exc.message_key,
-                exc.message,
-                extra_data=_extra_error_data(exc, arguments),
-            )
-            duration_ms = int((time.perf_counter() - started) * 1000)
-            error_data = error_response.get("error", {}).get("data", {})
-            await log_mcp_call(
-                db,
-                org_id=org_id,
-                user_id=user_id,
-                tool_name=tool_name,
-                status="failed",
-                duration_ms=duration_ms,
-                instance_id=instance_id,
-                arguments=arguments,
-                error_code=error_data.get("errorCode"),
-                error_message=exc.message,
-                client_name=client_name,
-                permission=tool_meta.permission if tool_meta else None,
-                risk_level=tool_meta.risk_level if tool_meta else None,
-            )
-            _log_mcp_error(
-                error_data.get("errorCode", MCP_INTERNAL_ERROR),
-                "tools/call",
-                user_id=user_id,
-                org_id=org_id,
-                reason=exc.message,
-            )
-            return error_response
-        except Exception as exc:
-            reason = str(exc)[:256]
-            duration_ms = int((time.perf_counter() - started) * 1000)
-            await log_mcp_call(
-                db,
-                org_id=org_id,
-                user_id=user_id,
-                tool_name=tool_name,
-                status="failed",
-                duration_ms=duration_ms,
-                instance_id=instance_id,
-                arguments=arguments,
-                error_code=MCP_INTERNAL_ERROR,
-                error_message=reason,
-                client_name=client_name,
-                permission=tool_meta.permission if tool_meta else None,
-                risk_level=tool_meta.risk_level if tool_meta else None,
-            )
-            _log_mcp_error(
-                MCP_INTERNAL_ERROR,
-                "tools/call",
-                user_id=user_id,
-                org_id=org_id,
-                reason=reason,
-            )
-            return mcp_error_v2(jsonrpc_id, MCP_INTERNAL_ERROR, reason)
+    if _is_genehub_gateway_tool(tool_name):
+        return await _execute_gateway_tool_call(
+            jsonrpc_id=jsonrpc_id,
+            tool_name=tool_name,
+            arguments=arguments,
+            org_id=org_id,
+            user_id=user_id,
+            user=user,
+            db=db,
+            provider=GeneHubMcpToolProvider(db),
+            summarize_fn=summarize_genehub_result,
+        )
+
+    if _is_hermes_gateway_tool(tool_name):
+        return await _execute_gateway_tool_call(
+            jsonrpc_id=jsonrpc_id,
+            tool_name=tool_name,
+            arguments=arguments,
+            org_id=org_id,
+            user_id=user_id,
+            user=user,
+            db=db,
+            provider=HermesDockerToolProvider(db),
+            summarize_fn=summarize_tool_result,
+        )
 
     mapper = McpToolMapper(db)
     try:

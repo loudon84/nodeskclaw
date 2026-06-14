@@ -35,7 +35,9 @@ async def test_tools_list_returns_hermes_tools_with_annotations():
         result = await dispatch(body, "Bearer valid-token", db)
 
     tools = result["result"]["tools"]
-    assert len(tools) == 3
+    assert len(tools) == 7
+    genehub_tools = [t for t in tools if t["name"].startswith("genehub.")]
+    assert len(genehub_tools) == 4
     for tool in tools:
         annotations = tool["annotations"]
         assert set(annotations.keys()) == {
@@ -45,8 +47,12 @@ async def test_tools_list_returns_hermes_tools_with_annotations():
             "requiresApproval",
             "enabled",
         }
-        assert annotations["permission"] == "read"
         assert annotations["enabled"] is True
+    read_genehub = [t for t in genehub_tools if t["name"] != "genehub.skill.register_to_hermes"]
+    assert all(t["annotations"]["permission"] == "read" for t in read_genehub)
+    register_tool = next(t for t in genehub_tools if t["name"] == "genehub.skill.register_to_hermes")
+    assert register_tool["annotations"]["permission"] == "write"
+    assert register_tool["annotations"]["requiresApproval"] is True
 
 
 @pytest.mark.asyncio

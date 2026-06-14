@@ -16,6 +16,7 @@ from app.models.hermes_skill_install_job import (
     InstallJobType,
 )
 from app.schemas.genehub import (
+    DesktopInstallJobDetail,
     DesktopInstallJobInfo,
     DesktopInstallJobStatusUpdate,
     DesktopInstalledSkillSync,
@@ -348,3 +349,53 @@ async def sync_installed_skills(
         synced += 1
 
     return {"synced": synced, "unmanaged": unmanaged}
+
+
+async def get_install_job_detail(
+    db: AsyncSession,
+    *,
+    user_id: str,
+    job_id: str,
+) -> DesktopInstallJobDetail:
+    job = await _get_user_job(db, user_id=user_id, job_id=job_id)
+    profile_name = None
+    if job.profile_id:
+        profile_result = await db.execute(
+            select(DesktopHermesProfile.profile_name).where(
+                DesktopHermesProfile.id == job.profile_id,
+                DesktopHermesProfile.deleted_at.is_(None),
+            )
+        )
+        profile_name = profile_result.scalar_one_or_none()
+    return DesktopInstallJobDetail(
+        job_id=job.id,
+        gene_slug=job.gene_slug,
+        gene_version=job.gene_version,
+        skill_name=job.skill_name,
+        profile_id=profile_name or job.profile_id,
+        action=job.job_type,
+        status=job.status,
+        source=job.source,
+        error_code=job.error_code,
+        error_message=job.error_message,
+        assigned_at=job.created_at,
+        claimed_at=job.claimed_at,
+        updated_at=job.updated_at,
+    )
+
+
+async def cancel_install_job(
+    db: AsyncSession,
+    *,
+    user_id: str,
+    job_id: str,
+) -> DesktopInstallJobInfo:
+    job = await _get_user_job(db, user_id=user_id, job_id=job_id)
+    if job.status != InstallJobStatus.pending:
+        raise BadRequestError(
+            "仅 pending 状态的任务可忽略",
+            message_key="errors.genehub.install_job_invalid_status",
+        )
+    job.status = InstallJobStatus.cancelled
+    await db.flush()
+    return DesktopInstallJobInfo(job_id=job.id, status=job.status)
