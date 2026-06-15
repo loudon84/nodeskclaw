@@ -1,6 +1,6 @@
+import json
 import logging
 from collections.abc import AsyncIterator
-from datetime import datetime, timezone
 
 import httpx
 from sqlalchemy import select
@@ -9,10 +9,30 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.exceptions import NotFoundError, BadRequestError
 from app.models.base import not_deleted
-from app.models.hermes_skill.hermes_task import HermesTask, TaskStatus, EventType
+from app.models.hermes_skill.hermes_task import HermesTask, EventType
 from app.models.instance import Instance
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_advanced_config(instance: Instance) -> dict:
+    if not instance.advanced_config:
+        return {}
+    if isinstance(instance.advanced_config, dict):
+        return instance.advanced_config
+    try:
+        data = json.loads(instance.advanced_config)
+    except (json.JSONDecodeError, TypeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _is_hermes_agent_instance(instance: Instance) -> bool:
+    advanced = _parse_advanced_config(instance)
+    runtime_type = advanced.get("runtime_type")
+    if runtime_type:
+        return runtime_type == "hermes_agent"
+    return instance.runtime in ("hermes_agent", "hermes")
 
 
 class HermesAgentAdapter:
@@ -24,7 +44,10 @@ class HermesAgentAdapter:
         task: HermesTask,
         arguments: dict,
     ) -> dict:
-        instance = await self._get_instance(task.agent_id)
+        instance = await self._get_instance(task.agent_id, task.org_id)
+        if not _is_hermes_agent_instance(instance):
+            raise BadRequestError("实例不是 Hermes Agent 类型", "errors.task.agent_not_hermes")
+
         base_url = self._get_base_url(instance)
         if not base_url:
             raise BadRequestError("Hermes Agent 地址未配置", "errors.task.agent_no_base_url")
@@ -57,7 +80,8 @@ class HermesAgentAdapter:
             )
 
         run_data = response.json()
-        run_id = run_data.get("run_id") or run_data.get("id") or (run_data.get("data", {}) if isinstance(run_data.get("data"), dict) else {}).get("id")
+        data_block = run_data.get("data") if isinstance(run_data.get("data"), dict) else {}
+        run_id = run_data.get("run_id") or run_data.get("id") or data_block.get("id")
         if not run_id:
             from app.core.exceptions import TaskAgentRunIdMissingError
             raise TaskAgentRunIdMissingError()
@@ -69,7 +93,7 @@ class HermesAgentAdapter:
     async def cancel_run(self, task: HermesTask) -> None:
         if not task.hermes_run_id:
             return
-        instance = await self._get_instance(task.agent_id)
+        instance = await self._get_instance(task.agent_id, task.org_id)
         base_url = self._get_base_url(instance)
         if not base_url:
             return
@@ -77,17 +101,25 @@ class HermesAgentAdapter:
         timeout = httpx.Timeout(
             connect=settings.HERMES_AGENT_CONNECT_TIMEOUT_SECONDS,
             read=settings.HERMES_AGENT_READ_TIMEOUT_SECONDS,
+            write=settings.HERMES_AGENT_READ_TIMEOUT_SECONDS,
+            pool=settings.HERMES_AGENT_READ_TIMEOUT_SECONDS,
         )
         async with httpx.AsyncClient(timeout=timeout) as client:
             try:
-                await client.delete(f"{base_url}/v1/runs/{task.hermes_run_id}")
+                response = await client.delete(f"{base_url}/v1/runs/{task.hermes_run_id}")
+                if response.status_code < 400:
+                    return
             except httpx.HTTPError as exc:
-                logger.warning("cancel_run 请求失败: %s", exc)
+                logger.warning("cancel_run DELETE 请求失败: %s", exc)
+            try:
+                await client.post(f"{base_url}/v1/runs/{task.hermes_run_id}/cancel")
+            except httpx.HTTPError as exc:
+                logger.warning("cancel_run POST 请求失败: %s", exc)
 
     async def read_run_events(self, task: HermesTask) -> AsyncIterator[dict]:
         if not task.hermes_run_id:
             return
-        instance = await self._get_instance(task.agent_id)
+        instance = await self._get_instance(task.agent_id, task.org_id)
         base_url = self._get_base_url(instance)
         if not base_url:
             return
@@ -104,7 +136,6 @@ class HermesAgentAdapter:
                 async for line in response.aiter_lines():
                     if not line.startswith("data: "):
                         continue
-                    import json
                     try:
                         event_data = json.loads(line[6:])
                         yield event_data
@@ -114,7 +145,7 @@ class HermesAgentAdapter:
     async def get_run(self, task: HermesTask) -> dict:
         if not task.hermes_run_id:
             raise BadRequestError("任务尚未关联 Hermes Run", "errors.task.no_hermes_run")
-        instance = await self._get_instance(task.agent_id)
+        instance = await self._get_instance(task.agent_id, task.org_id)
         base_url = self._get_base_url(instance)
         if not base_url:
             raise BadRequestError("Hermes Agent 地址未配置", "errors.task.agent_no_base_url")
@@ -135,7 +166,14 @@ class HermesAgentAdapter:
 
     async def get_run_status(self, task: HermesTask) -> dict:
         run_data = await self.get_run(task)
-        status = run_data.get("status", "unknown")
+        data_block = run_data.get("data") if isinstance(run_data.get("data"), dict) else {}
+        status = (
+            run_data.get("status")
+            or run_data.get("state")
+            or data_block.get("status")
+            or data_block.get("state")
+            or "unknown"
+        )
         return {"status": status}
 
     @staticmethod
@@ -151,7 +189,7 @@ class HermesAgentAdapter:
                 "hermes.run.started": EventType.HERMES_RUN_STARTED,
                 "hermes.run.delta": EventType.HERMES_RUN_DELTA,
                 "hermes.run.completed": EventType.HERMES_RUN_COMPLETED,
-                "hermes.run.failed": EventType.TASK_FAILED,
+                "hermes.run.failed": EventType.HERMES_RUN_FAILED,
             }
 
             task_event_type = mapping.get(hermes_type)
@@ -175,14 +213,18 @@ class HermesAgentAdapter:
 
     @staticmethod
     def _get_base_url(instance: Instance) -> str | None:
-        advanced_config = instance.advanced_config if hasattr(instance, "advanced_config") else None
-        if advanced_config and isinstance(advanced_config, dict):
-            hermes_base_url = advanced_config.get("hermes_base_url")
-            if hermes_base_url:
-                return hermes_base_url.rstrip("/")
-            gateway_url = advanced_config.get("gateway_url")
-            if gateway_url:
-                return gateway_url.rstrip("/")
+        advanced = _parse_advanced_config(instance)
+        hermes_base_url = advanced.get("hermes_base_url")
+        if hermes_base_url:
+            return str(hermes_base_url).rstrip("/")
+        gateway_url = advanced.get("gateway_url")
+        if gateway_url:
+            return str(gateway_url).rstrip("/")
+
+        from app.services.instance_service import _compute_endpoint_url
+        endpoint_url = advanced.get("endpoint_url") or _compute_endpoint_url(instance)
+        if endpoint_url:
+            return str(endpoint_url).rstrip("/")
 
         if instance.ingress_domain:
             domain = instance.ingress_domain
@@ -192,8 +234,8 @@ class HermesAgentAdapter:
         return None
 
     async def compute_output_dir_for_task(self, task: HermesTask) -> str:
-        instance = await self._get_instance(task.agent_id)
-        advanced = instance.advanced_config if hasattr(instance, "advanced_config") and instance.advanced_config else {}
+        instance = await self._get_instance(task.agent_id, task.org_id)
+        advanced = _parse_advanced_config(instance)
         output_dir_mode = advanced.get("output_dir_mode", "relative")
 
         if output_dir_mode == "absolute":
@@ -204,10 +246,11 @@ class HermesAgentAdapter:
 
         return f".{settings.HERMES_OUTPUT_BASE_DIR_NAME.lstrip('.')}/runs/{task.id}/outputs"
 
-    async def _get_instance(self, agent_id: str) -> Instance:
+    async def _get_instance(self, agent_id: str, org_id: str) -> Instance:
         stmt = select(Instance).where(
             not_deleted(Instance),
             Instance.id == agent_id,
+            Instance.org_id == org_id,
         )
         result = await self.db.execute(stmt)
         instance = result.scalar_one_or_none()
