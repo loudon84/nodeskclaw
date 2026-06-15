@@ -80,6 +80,17 @@ def _tool_call_success(jsonrpc_id: Any, result: dict[str, Any]) -> dict:
     )
 
 
+def _hermes_skill_tool_call_success(jsonrpc_id: Any, result: dict[str, Any]) -> dict:
+    return mcp_success(
+        jsonrpc_id,
+        {
+            "content": [{"type": "text", "text": "任务已创建"}],
+            "structuredContent": result,
+            "isError": False,
+        },
+    )
+
+
 def _extra_error_data(exc: Exception, arguments: dict[str, Any]) -> dict[str, Any]:
     data: dict[str, Any] = extract_genehub_error_context(arguments)
     ref = extract_instance_id_from_arguments(arguments)
@@ -575,6 +586,7 @@ async def _handle_tools_call(
             result_summary={"task_id": result.get("task_id"), "status": result.get("status")},
             client_name=client_name,
         )
+        await db.commit()
     except (NotFoundError, BadRequestError, ForbiddenError) as exc:
         error_response = map_app_error(jsonrpc_id, exc.message_key, exc.message)
         duration_ms = int((time.perf_counter() - started) * 1000)
@@ -623,4 +635,4 @@ async def _handle_tools_call(
         )
         return mcp_error_v2(jsonrpc_id, MCP_INTERNAL_ERROR, reason)
 
-    return _tool_call_success(jsonrpc_id, result)
+    return _hermes_skill_tool_call_success(jsonrpc_id, result)
