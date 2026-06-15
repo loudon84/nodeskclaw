@@ -426,7 +426,8 @@ class ArtifactService:
         if settings.HERMES_WORKSPACE_ROOT:
             return Path(settings.HERMES_WORKSPACE_ROOT)
 
-        raise ArtifactWorkspaceRootUnresolvedError()
+        workspace_key = task.workspace_id or "default"
+        return Path(f"/tmp/nodeskclaw-workspaces/{workspace_key}")
 
     @staticmethod
     def resolve_artifact_file_path(artifact: HermesArtifact) -> Path | None:
