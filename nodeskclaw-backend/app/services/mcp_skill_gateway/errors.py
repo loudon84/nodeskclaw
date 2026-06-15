@@ -30,7 +30,9 @@ GENEHUB_PROFILE_NOT_FOUND = "GENEHUB_PROFILE_NOT_FOUND"
 GENEHUB_PROFILE_FORBIDDEN = "GENEHUB_PROFILE_FORBIDDEN"
 GENEHUB_INSTALL_NOT_ALLOWED = "GENEHUB_INSTALL_NOT_ALLOWED"
 GENEHUB_JOB_NOT_FOUND = "GENEHUB_JOB_NOT_FOUND"
+GENEHUB_JOB_NOT_PENDING = "GENEHUB_JOB_NOT_PENDING"
 GENEHUB_JOB_STATUS_UNAVAILABLE = "GENEHUB_JOB_STATUS_UNAVAILABLE"
+GENEHUB_BUNDLE_PREVIEW_UNAVAILABLE = "GENEHUB_BUNDLE_PREVIEW_UNAVAILABLE"
 
 _ERROR_CODES: dict[str, int] = {
     MCP_AUTH_REQUIRED: -32010,
@@ -63,7 +65,9 @@ _ERROR_CODES: dict[str, int] = {
     GENEHUB_PROFILE_FORBIDDEN: -32073,
     GENEHUB_INSTALL_NOT_ALLOWED: -32074,
     GENEHUB_JOB_NOT_FOUND: -32075,
+    GENEHUB_JOB_NOT_PENDING: -32077,
     GENEHUB_JOB_STATUS_UNAVAILABLE: -32076,
+    GENEHUB_BUNDLE_PREVIEW_UNAVAILABLE: -32078,
 }
 
 _DEFAULT_MESSAGES: dict[str, str] = {
@@ -97,7 +101,9 @@ _DEFAULT_MESSAGES: dict[str, str] = {
     GENEHUB_PROFILE_FORBIDDEN: "Desktop Hermes profile access forbidden",
     GENEHUB_INSTALL_NOT_ALLOWED: "GeneHub skill install not allowed",
     GENEHUB_JOB_NOT_FOUND: "GeneHub install job not found",
+    GENEHUB_JOB_NOT_PENDING: "GeneHub install job is not pending",
     GENEHUB_JOB_STATUS_UNAVAILABLE: "GeneHub registration status unavailable",
+    GENEHUB_BUNDLE_PREVIEW_UNAVAILABLE: "GeneHub bundle preview unavailable",
 }
 
 _MESSAGE_KEY_MAP: dict[str, str] = {
@@ -117,6 +123,7 @@ _MESSAGE_KEY_MAP: dict[str, str] = {
     "errors.genehub.install_job_permission_denied": GENEHUB_INSTALL_NOT_ALLOWED,
     "errors.genehub.install_job_not_found": GENEHUB_JOB_NOT_FOUND,
     "errors.genehub.install_job_invalid_status": GENEHUB_JOB_STATUS_UNAVAILABLE,
+    "errors.genehub.bundle_preview_unavailable": GENEHUB_BUNDLE_PREVIEW_UNAVAILABLE,
     "errors.desktop.profile_not_found": GENEHUB_PROFILE_NOT_FOUND,
     "errors.desktop.profile_forbidden": GENEHUB_PROFILE_FORBIDDEN,
     MCP_AUTH_REQUIRED: MCP_AUTH_REQUIRED,

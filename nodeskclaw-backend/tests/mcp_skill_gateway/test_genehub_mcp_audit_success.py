@@ -1,7 +1,6 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.services.mcp_skill_gateway.approval_service import GrantCheckResult
 from app.services.mcp_skill_gateway.handler import dispatch_authenticated
 
 
@@ -33,12 +32,11 @@ async def test_genehub_register_writes_audit():
                 "skill_name": "contact-to-order",
                 "profile_id": "default",
                 "action": "install",
+                "source": "mcp_agent_request",
+                "desktop_confirmation_required": True,
                 "message": "ok",
             }
         ),
-    ), patch(
-        "app.services.mcp_skill_gateway.handler.check_tool_grant",
-        new=AsyncMock(return_value=GrantCheckResult(allowed=True)),
     ), patch(
         "app.services.mcp_skill_gateway.handler.log_mcp_call",
         new=AsyncMock(),
@@ -49,5 +47,7 @@ async def test_genehub_register_writes_audit():
     kwargs = log_mock.await_args.kwargs
     assert kwargs["status"] == "success"
     assert kwargs["permission"] == "write"
+    assert kwargs["approval_mode"] == "desktop"
     assert kwargs["result_summary"]["gene_slug"] == "contact-to-order"
     assert kwargs["result_summary"]["job_id"] == "job-1"
+    assert kwargs["result_summary"]["source"] == "mcp_agent_request"

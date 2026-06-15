@@ -8,12 +8,14 @@ from app.core.deps import get_current_org, get_db
 from app.schemas.common import ApiResponse
 from app.schemas.genehub import (
     DesktopBundleInfo,
+    DesktopBundlePreviewInfo,
     DesktopDeviceInfo,
     DesktopDeviceRegister,
     DesktopHeartbeat,
     DesktopHeartbeatResponse,
     DesktopHermesProfileInfo,
     DesktopHermesProfileRegister,
+    DesktopIgnoreInstallJobRequest,
     DesktopInstallJobDetail,
     DesktopInstallJobInfo,
     DesktopInstallJobStatusUpdate,
@@ -155,12 +157,13 @@ async def get_install_job(
 @router.post("/hermes/install-jobs/{job_id}/ignore", response_model=ApiResponse[DesktopInstallJobInfo])
 async def ignore_install_job(
     job_id: str,
+    body: DesktopIgnoreInstallJobRequest | None = None,
     user_org=Depends(get_current_org),
     db: AsyncSession = Depends(get_db),
 ):
     user, _ = user_org
     data = await hermes_desktop_sync_service.cancel_install_job(
-        db, user_id=user.id, job_id=job_id
+        db, user_id=user.id, job_id=job_id, data=body
     )
     await db.commit()
     return ApiResponse(data=data)
@@ -178,6 +181,23 @@ async def claim_install_job(
     )
     await db.commit()
     return ApiResponse(data=data)
+
+
+@router.get(
+    "/hermes/install-jobs/{job_id}/bundle-preview",
+    response_model=ApiResponse[DesktopBundlePreviewInfo],
+)
+async def preview_install_bundle(
+    job_id: str,
+    user_org=Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    user, _ = user_org
+    preview = await hermes_desktop_sync_service.get_job_bundle_preview(
+        db, user_id=user.id, job_id=job_id
+    )
+    await db.commit()
+    return ApiResponse(data=preview)
 
 
 @router.get("/hermes/install-jobs/{job_id}/bundle", response_model=ApiResponse[DesktopBundleInfo])

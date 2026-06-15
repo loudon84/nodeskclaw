@@ -28,3 +28,5 @@ class McpCallLog(BaseModel):
     result_summary: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     error_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
     error_message: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    approval_mode: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    approval_mode: Mapped[str | None] = mapped_column(String(20), nullable=True)

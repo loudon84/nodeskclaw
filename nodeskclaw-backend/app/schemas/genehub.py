@@ -171,7 +171,7 @@ class DesktopSelfServiceInstallJobCreate(BaseModel):
 class DesktopInstallJobStatusUpdate(BaseModel):
     status: str = Field(
         ...,
-        pattern=r"^(downloading|validating|installing|installed|failed)$",
+        pattern=r"^(downloading|validating|installing|installed|failed|cancelled)$",
     )
     install_path: str | None = None
     gene_version: str | None = Field(None, max_length=32)
@@ -191,6 +191,7 @@ class DesktopInstalledSkillItem(BaseModel):
 
 class DesktopInstalledSkillSync(BaseModel):
     profile_id: str
+    device_id: str | None = None
     skills: list[DesktopInstalledSkillItem] = []
 
 
@@ -215,13 +216,23 @@ class DesktopSkillInfo(BaseModel):
 
 class DesktopPendingJobInfo(BaseModel):
     job_id: str
+    source: str | None = None
+    requested_by: str | None = None
     profile_id: str | None = None
-    job_type: str
-    action: str
+    profile_name: str | None = None
     gene_slug: str
     gene_version: str
     skill_name: str
+    job_type: str
+    action: str
     status: str
+    created_at: datetime | None = None
+    assigned_at: datetime | None = None
+    claimed_at: datetime | None = None
+    updated_at: datetime | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+    client_report: dict | None = None
 
 
 class DesktopInstallJobInfo(BaseModel):
@@ -231,18 +242,68 @@ class DesktopInstallJobInfo(BaseModel):
 
 class DesktopInstallJobDetail(BaseModel):
     job_id: str
+    source: str | None = None
+    requested_by: str | None = None
+    profile_id: str | None = None
+    profile_name: str | None = None
     gene_slug: str
     gene_version: str
     skill_name: str
-    profile_id: str | None = None
+    job_type: str | None = None
     action: str
     status: str
-    source: str | None = None
-    error_code: str | None = None
-    error_message: str | None = None
+    desktop_confirmation_required: bool = False
+    created_at: datetime | None = None
     assigned_at: datetime | None = None
     claimed_at: datetime | None = None
     updated_at: datetime | None = None
+    finished_at: datetime | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+    client_report: dict | None = None
+
+
+class DesktopIgnoreInstallJobRequest(BaseModel):
+    reason: str | None = Field(None, max_length=128)
+    client_report: dict | None = None
+
+
+class BundlePreviewFile(BaseModel):
+    relative_path: str
+    size: int | None = None
+    sha256: str | None = None
+    kind: str = "file"
+
+
+class BundlePreviewScript(BaseModel):
+    relative_path: str
+    size: int | None = None
+    sha256: str | None = None
+    entry: bool | None = None
+    risk_level: str | None = None
+
+
+class BundleValidationPreview(BaseModel):
+    has_skill: bool = False
+    has_scripts: bool = False
+    requires_signature: bool = True
+    signature_present: bool = False
+    path_warnings: list[str] = []
+    compatibility_warnings: list[str] = []
+
+
+class DesktopBundlePreviewInfo(BaseModel):
+    job_id: str
+    gene_slug: str
+    gene_version: str
+    skill_name: str
+    action: str
+    manifest_hash: str
+    bundle_hash: str
+    compatibility: list | dict = []
+    files: list[BundlePreviewFile] = []
+    scripts: list[BundlePreviewScript] = []
+    validation_preview: BundleValidationPreview
 
 
 class GeneHubSkillPermissions(BaseModel):
@@ -291,20 +352,25 @@ class McpGeneHubSkillDetail(BaseModel):
 class McpRegistrationJobResult(BaseModel):
     job_id: str | None = None
     status: str
+    source: str | None = None
     gene_slug: str
     gene_version: str
     skill_name: str
     profile_id: str
+    profile_name: str | None = None
     action: str
+    desktop_confirmation_required: bool = False
     message: str
 
 
 class McpRegistrationInfo(BaseModel):
     job_id: str | None = None
+    source: str | None = None
     gene_slug: str
     gene_version: str | None = None
     skill_name: str | None = None
     profile_id: str | None = None
+    profile_name: str | None = None
     action: str | None = None
     status: str
     error_code: str | None = None
@@ -312,6 +378,7 @@ class McpRegistrationInfo(BaseModel):
     assigned_at: datetime | None = None
     claimed_at: datetime | None = None
     updated_at: datetime | None = None
+    finished_at: datetime | None = None
 
 
 class DesktopBundleFile(BaseModel):

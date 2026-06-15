@@ -1,4 +1,3 @@
-import json
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -6,7 +5,7 @@ from app.services.mcp_skill_gateway.handler import dispatch_authenticated
 
 
 @pytest.mark.asyncio
-async def test_genehub_register_tool_is_callable():
+async def test_register_audit_includes_desktop_confirmation_fields():
     user = MagicMock()
     user.id = "user-1"
     org = MagicMock()
@@ -17,7 +16,7 @@ async def test_genehub_register_tool_is_callable():
         "method": "tools/call",
         "params": {
             "name": "genehub.skill.register_to_hermes",
-            "arguments": {"gene_slug": "contact-to-order"},
+            "arguments": {"gene_slug": "contact-to-order", "profile_id": "default"},
         },
     }
     db = AsyncMock()
@@ -28,20 +27,25 @@ async def test_genehub_register_tool_is_callable():
             return_value={
                 "job_id": "job-1",
                 "status": "pending",
+                "source": "mcp_agent_request",
                 "gene_slug": "contact-to-order",
                 "gene_version": "1.0.0",
                 "skill_name": "contact-to-order",
-                "profile_id": "default",
+                "profile_id": "profile-server-1",
+                "profile_name": "default",
                 "action": "install",
+                "desktop_confirmation_required": True,
                 "message": "ok",
             }
         ),
     ), patch(
         "app.services.mcp_skill_gateway.handler.log_mcp_call",
         new=AsyncMock(),
-    ):
-        result = await dispatch_authenticated(body, (user, org), db)
+    ) as log_mock:
+        await dispatch_authenticated(body, (user, org), db)
 
-    assert "error" not in result
-    payload = json.loads(result["result"]["content"][0]["text"])
-    assert payload["job_id"] == "job-1"
+    kwargs = log_mock.await_args.kwargs
+    assert kwargs["approval_mode"] == "desktop"
+    assert kwargs["result_summary"]["source"] == "mcp_agent_request"
+    assert kwargs["result_summary"]["desktop_confirmation_required"] is True
+    assert kwargs["result_summary"]["job_id"] == "job-1"

@@ -7,6 +7,7 @@ from typing import Any, Literal
 
 PermissionLevel = Literal["read", "write", "admin"]
 RiskLevel = Literal["low", "medium", "high"]
+ApprovalMode = Literal["none", "server", "desktop", "hybrid"]
 
 
 @dataclass(frozen=True)
@@ -19,6 +20,16 @@ class ToolDefinition:
     risk_level: RiskLevel
     requires_approval: bool
     enabled: bool
+    approval_mode: ApprovalMode = "none"
+    desktop_confirmation_required: bool = False
+
+
+def resolve_approval_mode(tool: ToolDefinition) -> ApprovalMode:
+    if tool.approval_mode != "none":
+        return tool.approval_mode
+    if tool.requires_approval:
+        return "server"
+    return "none"
 
 
 _ALL_TOOLS: tuple[ToolDefinition, ...] = (
@@ -191,8 +202,10 @@ _ALL_TOOLS: tuple[ToolDefinition, ...] = (
         category="genehub",
         permission="write",
         risk_level="medium",
-        requires_approval=True,
+        requires_approval=False,
         enabled=True,
+        approval_mode="desktop",
+        desktop_confirmation_required=True,
     ),
     ToolDefinition(
         name="genehub.registration.status",
@@ -235,15 +248,23 @@ def count_tools_by_permission() -> dict[str, int]:
 
 
 def build_tool_descriptor(tool: ToolDefinition, auth_annotations: dict[str, Any] | None = None) -> dict[str, Any]:
+    mode = resolve_approval_mode(tool)
     annotations: dict[str, Any] = {
         "category": tool.category,
         "permission": tool.permission,
         "riskLevel": tool.risk_level,
         "requiresApproval": tool.requires_approval,
         "enabled": tool.enabled,
+        "approvalMode": mode,
     }
-    if tool.requires_approval and tool.permission in ("write", "admin"):
-        annotations["approvalMode"] = "server"
+    if tool.desktop_confirmation_required:
+        annotations["desktopConfirmationRequired"] = True
+    if mode == "desktop":
+        annotations.update(auth_annotations or {
+            "authorized": True,
+            "grantStatus": "desktop_pending",
+        })
+    elif mode in ("server", "hybrid") and tool.permission in ("write", "admin"):
         annotations.update(auth_annotations or {
             "authorized": False,
             "grantStatus": "missing",
@@ -276,3 +297,8 @@ def is_hermes_registry_tool(tool_name: str) -> bool:
 def is_genehub_registry_tool(tool_name: str) -> bool:
     tool = _TOOL_BY_NAME.get(tool_name)
     return tool is not None and tool.category == "genehub"
+
+
+def is_desktop_confirmation_tool(tool_name: str) -> bool:
+    tool = _TOOL_BY_NAME.get(tool_name)
+    return tool is not None and resolve_approval_mode(tool) == "desktop"

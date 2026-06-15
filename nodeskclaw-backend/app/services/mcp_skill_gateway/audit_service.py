@@ -66,6 +66,7 @@ async def log_mcp_call(
     client_name: str | None = None,
     permission: str | None = None,
     risk_level: str | None = None,
+    approval_mode: str | None = None,
 ) -> None:
     try:
         entry = McpCallLog(
@@ -82,6 +83,7 @@ async def log_mcp_call(
             result_summary=sanitize_result_summary(result_summary),
             error_code=error_code,
             error_message=(error_message or "")[:500] or None,
+            approval_mode=approval_mode,
         )
         db.add(entry)
         await db.commit()

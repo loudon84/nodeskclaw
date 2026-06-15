@@ -50,13 +50,18 @@ async def test_tools_list_returns_hermes_tools_with_annotations():
         assert "enabled" in annotations
         if annotations["requiresApproval"]:
             assert annotations["approvalMode"] == "server"
+        elif annotations.get("approvalMode") == "desktop":
+            assert annotations.get("authorized") is True
+            assert annotations.get("grantStatus") == "desktop_pending"
         else:
             assert annotations.get("authorized") is True
     read_genehub = [t for t in genehub_tools if t["name"] != "genehub.skill.register_to_hermes"]
     assert all(t["annotations"]["permission"] == "read" for t in read_genehub)
     register_tool = next(t for t in genehub_tools if t["name"] == "genehub.skill.register_to_hermes")
     assert register_tool["annotations"]["permission"] == "write"
-    assert register_tool["annotations"]["requiresApproval"] is True
+    assert register_tool["annotations"]["requiresApproval"] is False
+    assert register_tool["annotations"]["approvalMode"] == "desktop"
+    assert register_tool["annotations"]["desktopConfirmationRequired"] is True
 
 
 @pytest.mark.asyncio

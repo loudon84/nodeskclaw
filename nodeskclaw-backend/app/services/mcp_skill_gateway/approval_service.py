@@ -23,7 +23,7 @@ from app.services.mcp_skill_gateway.errors import (
     MCP_TOOL_GRANT_NOT_FOUND,
     MCP_TOOL_GRANT_REVOKED,
 )
-from app.services.mcp_skill_gateway.mcp_tool_registry import ToolDefinition
+from app.services.mcp_skill_gateway.mcp_tool_registry import ToolDefinition, resolve_approval_mode
 
 DEFAULT_PROTECTED_SKILLS = frozenset({
     "hermes-agent",
@@ -139,7 +139,20 @@ async def get_grant_annotation(
     user_id: str,
     instance_id: str | None,
     tool_name: str,
+    tool: ToolDefinition | None = None,
 ) -> dict[str, Any]:
+    if tool is None:
+        from app.services.mcp_skill_gateway.mcp_tool_registry import get_tool
+
+        tool = get_tool(tool_name)
+    if tool and resolve_approval_mode(tool) in ("none", "desktop"):
+        if resolve_approval_mode(tool) == "desktop":
+            return {
+                "authorized": True,
+                "grantStatus": "desktop_pending",
+                "approvalMode": "desktop",
+            }
+        return {"authorized": True}
     grant = await _get_latest_grant(
         db,
         org_id=org_id,
@@ -187,7 +200,11 @@ async def check_tool_grant(
     instance_ref: str | None,
     arguments: dict[str, Any] | None = None,
 ) -> GrantCheckResult:
-    if not tool.requires_approval or tool.permission == "read":
+    mode = resolve_approval_mode(tool)
+    if mode in ("none", "desktop") or tool.permission == "read":
+        return GrantCheckResult(allowed=True)
+
+    if not tool.requires_approval and mode not in ("server", "hybrid"):
         return GrantCheckResult(allowed=True)
 
     grant = await _get_latest_grant(

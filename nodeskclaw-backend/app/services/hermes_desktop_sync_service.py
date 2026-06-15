@@ -1,5 +1,6 @@
 """Hermes desktop install job sync and status management."""
 
+import json
 import uuid
 from datetime import datetime, timezone
 
@@ -8,21 +9,25 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import BadRequestError, ForbiddenError, NotFoundError
 from app.models.desktop_hermes_profile import DesktopHermesProfile
+from app.models.gene import Gene
 from app.models.hermes_installed_skill import HermesInstalledSkill, InstalledSkillStatus
 from app.models.hermes_skill_install_job import (
     ACTIVE_JOB_STATUSES,
     HermesSkillInstallJob,
+    InstallJobSource,
     InstallJobStatus,
     InstallJobType,
 )
 from app.schemas.genehub import (
+    DesktopBundlePreviewInfo,
+    DesktopIgnoreInstallJobRequest,
     DesktopInstallJobDetail,
     DesktopInstallJobInfo,
     DesktopInstallJobStatusUpdate,
     DesktopInstalledSkillSync,
     DesktopPendingJobInfo,
 )
-from app.services.genehub_bundle_service import build_hermes_desktop_bundle
+from app.services.genehub_bundle_service import build_bundle_metadata_preview, build_hermes_desktop_bundle
 from app.services.hermes_skill.skill_audit_logger import SkillAuditLogger
 
 
@@ -39,7 +44,32 @@ CLIENT_REPORTABLE_STATUSES = frozenset({
     InstallJobStatus.installing,
     InstallJobStatus.installed,
     InstallJobStatus.failed,
+    InstallJobStatus.cancelled,
 })
+
+PREVIEWABLE_STATUSES = frozenset({
+    InstallJobStatus.pending,
+})
+
+
+def _desktop_confirmation_required(job: HermesSkillInstallJob) -> bool:
+    return job.source == InstallJobSource.mcp_agent_request.value
+
+
+async def _get_profile_for_job(
+    db: AsyncSession,
+    *,
+    profile_id: str | None,
+) -> DesktopHermesProfile | None:
+    if not profile_id:
+        return None
+    result = await db.execute(
+        select(DesktopHermesProfile).where(
+            DesktopHermesProfile.id == profile_id,
+            DesktopHermesProfile.deleted_at.is_(None),
+        )
+    )
+    return result.scalar_one_or_none()
 
 
 async def _get_user_job(db: AsyncSession, *, user_id: str, job_id: str) -> HermesSkillInstallJob:
@@ -57,6 +87,60 @@ async def _get_user_job(db: AsyncSession, *, user_id: str, job_id: str) -> Herme
             message_key="errors.genehub.install_job_not_found",
         )
     return job
+
+
+def _job_to_pending_info(
+    job: HermesSkillInstallJob,
+    profile: DesktopHermesProfile | None,
+) -> DesktopPendingJobInfo:
+    return DesktopPendingJobInfo(
+        job_id=job.id,
+        source=job.source,
+        requested_by=job.requested_by,
+        profile_id=job.profile_id,
+        profile_name=profile.profile_name if profile else None,
+        gene_slug=job.gene_slug,
+        gene_version=job.gene_version,
+        skill_name=job.skill_name,
+        job_type=job.job_type,
+        action=job.job_type,
+        status=job.status,
+        created_at=job.created_at,
+        assigned_at=job.created_at,
+        claimed_at=job.claimed_at,
+        updated_at=job.updated_at,
+        error_code=job.error_code,
+        error_message=job.error_message,
+        client_report=job.client_report,
+    )
+
+
+def _job_to_detail(
+    job: HermesSkillInstallJob,
+    profile: DesktopHermesProfile | None,
+) -> DesktopInstallJobDetail:
+    return DesktopInstallJobDetail(
+        job_id=job.id,
+        source=job.source,
+        requested_by=job.requested_by,
+        profile_id=job.profile_id,
+        profile_name=profile.profile_name if profile else None,
+        gene_slug=job.gene_slug,
+        gene_version=job.gene_version,
+        skill_name=job.skill_name,
+        job_type=job.job_type,
+        action=job.job_type,
+        status=job.status,
+        desktop_confirmation_required=_desktop_confirmation_required(job),
+        created_at=job.created_at,
+        assigned_at=job.created_at,
+        claimed_at=job.claimed_at,
+        updated_at=job.updated_at,
+        finished_at=job.finished_at,
+        error_code=job.error_code,
+        error_message=job.error_message,
+        client_report=job.client_report,
+    )
 
 
 async def get_pending_jobs(
@@ -85,7 +169,7 @@ async def get_pending_jobs(
         select(HermesSkillInstallJob).where(
             HermesSkillInstallJob.org_id == org_id,
             HermesSkillInstallJob.user_id == user_id,
-            HermesSkillInstallJob.status == InstallJobStatus.pending,
+            HermesSkillInstallJob.status.in_(ACTIVE_JOB_STATUSES),
             HermesSkillInstallJob.deleted_at.is_(None),
             or_(
                 HermesSkillInstallJob.profile_id == profile_id,
@@ -100,19 +184,7 @@ async def get_pending_jobs(
             job.desktop_device_id = profile.desktop_device_id
     await db.flush()
 
-    return [
-        DesktopPendingJobInfo(
-            job_id=job.id,
-            profile_id=job.profile_id,
-            job_type=job.job_type,
-            action=job.job_type,
-            gene_slug=job.gene_slug,
-            gene_version=job.gene_version,
-            skill_name=job.skill_name,
-            status=job.status,
-        )
-        for job in jobs
-    ]
+    return [_job_to_pending_info(job, profile) for job in jobs]
 
 
 async def claim_job(
@@ -170,6 +242,40 @@ async def get_job_bundle(
     return bundle
 
 
+async def get_job_bundle_preview(
+    db: AsyncSession,
+    *,
+    user_id: str,
+    job_id: str,
+) -> DesktopBundlePreviewInfo:
+    job = await _get_user_job(db, user_id=user_id, job_id=job_id)
+    if job.status not in PREVIEWABLE_STATUSES:
+        raise BadRequestError(
+            "仅 pending 状态可预览 bundle",
+            message_key="errors.genehub.install_job_invalid_status",
+        )
+
+    gene_result = await db.execute(
+        select(Gene).where(Gene.id == job.gene_id, Gene.deleted_at.is_(None))
+    )
+    gene = gene_result.scalar_one_or_none()
+    if not gene or not gene.manifest:
+        raise BadRequestError(
+            "Bundle 预览不可用",
+            message_key="errors.genehub.bundle_preview_unavailable",
+        )
+
+    manifest = json.loads(gene.manifest)
+    return build_bundle_metadata_preview(
+        job_id=job.id,
+        gene_slug=job.gene_slug,
+        gene_version=job.gene_version,
+        skill_name=job.skill_name,
+        action=job.job_type,
+        manifest=manifest,
+    )
+
+
 async def update_job_status(
     db: AsyncSession,
     *,
@@ -193,11 +299,12 @@ async def update_job_status(
         job.error_code = data.error_code
         job.error_message = data.error_message or data.message
         job.finished_at = now
-    elif data.status == InstallJobStatus.installed:
+    elif data.status in (InstallJobStatus.installed, InstallJobStatus.cancelled):
         job.finished_at = now
-        await _upsert_installed_skill(db, job=job, data=data)
-        if job.job_type == InstallJobType.uninstall:
-            await _mark_skill_uninstalled(db, job=job)
+        if data.status == InstallJobStatus.installed:
+            await _upsert_installed_skill(db, job=job, data=data)
+            if job.job_type == InstallJobType.uninstall:
+                await _mark_skill_uninstalled(db, job=job)
     else:
         if data.message:
             job.error_message = data.message
@@ -310,6 +417,12 @@ async def sync_installed_skills(
             message_key="errors.desktop.profile_not_found",
         )
 
+    if data.device_id and data.device_id != profile.desktop_device_id:
+        raise ForbiddenError(
+            "Profile 不属于当前设备",
+            message_key="errors.desktop.profile_forbidden",
+        )
+
     now = datetime.now(timezone.utc)
     synced = 0
     unmanaged = 0
@@ -358,30 +471,8 @@ async def get_install_job_detail(
     job_id: str,
 ) -> DesktopInstallJobDetail:
     job = await _get_user_job(db, user_id=user_id, job_id=job_id)
-    profile_name = None
-    if job.profile_id:
-        profile_result = await db.execute(
-            select(DesktopHermesProfile.profile_name).where(
-                DesktopHermesProfile.id == job.profile_id,
-                DesktopHermesProfile.deleted_at.is_(None),
-            )
-        )
-        profile_name = profile_result.scalar_one_or_none()
-    return DesktopInstallJobDetail(
-        job_id=job.id,
-        gene_slug=job.gene_slug,
-        gene_version=job.gene_version,
-        skill_name=job.skill_name,
-        profile_id=profile_name or job.profile_id,
-        action=job.job_type,
-        status=job.status,
-        source=job.source,
-        error_code=job.error_code,
-        error_message=job.error_message,
-        assigned_at=job.created_at,
-        claimed_at=job.claimed_at,
-        updated_at=job.updated_at,
-    )
+    profile = await _get_profile_for_job(db, profile_id=job.profile_id)
+    return _job_to_detail(job, profile)
 
 
 async def cancel_install_job(
@@ -389,6 +480,7 @@ async def cancel_install_job(
     *,
     user_id: str,
     job_id: str,
+    data: DesktopIgnoreInstallJobRequest | None = None,
 ) -> DesktopInstallJobInfo:
     job = await _get_user_job(db, user_id=user_id, job_id=job_id)
     if job.status != InstallJobStatus.pending:
@@ -396,6 +488,26 @@ async def cancel_install_job(
             "仅 pending 状态的任务可忽略",
             message_key="errors.genehub.install_job_invalid_status",
         )
+    now = datetime.now(timezone.utc)
     job.status = InstallJobStatus.cancelled
+    job.finished_at = now
+    if data:
+        if data.reason:
+            job.error_message = data.reason
+        if data.client_report:
+            job.client_report = data.client_report
     await db.flush()
+
+    audit = SkillAuditLogger(db)
+    await audit.log(
+        action="genehub.install_job.cancelled",
+        target_id=job.id,
+        org_id=job.org_id,
+        actor_id=user_id,
+        details={
+            "gene_slug": job.gene_slug,
+            "reason": data.reason if data else None,
+            "client_report": data.client_report if data else None,
+        },
+    )
     return DesktopInstallJobInfo(job_id=job.id, status=job.status)

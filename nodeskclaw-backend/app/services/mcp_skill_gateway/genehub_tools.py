@@ -52,6 +52,10 @@ def summarize_genehub_result(tool_name: str, result: dict[str, Any]) -> dict[str
             summary["job_id"] = result["job_id"]
         if result.get("status"):
             summary["job_status"] = result["status"]
+        if result.get("source"):
+            summary["source"] = result["source"]
+        if result.get("desktop_confirmation_required"):
+            summary["desktop_confirmation_required"] = result["desktop_confirmation_required"]
         return summary
     if tool_name == "genehub.registration.status":
         registration = result.get("registration") or {}

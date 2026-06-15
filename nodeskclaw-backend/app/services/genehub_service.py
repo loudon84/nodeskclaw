@@ -970,14 +970,14 @@ async def create_mcp_registration_job(
         gene_slug=gene.slug,
     )
     if active_job:
-        return McpRegistrationJobResult(
-            job_id=active_job.id,
-            status=active_job.status,
+        return _build_mcp_registration_result(
+            job=active_job,
+            profile=profile,
             gene_slug=gene.slug,
             gene_version=active_job.gene_version,
             skill_name=active_job.skill_name,
-            profile_id=profile.profile_name,
             action=active_job.job_type,
+            status=active_job.status,
             message="Existing install job returned.",
         )
 
@@ -988,14 +988,14 @@ async def create_mcp_registration_job(
         and installed.gene_version == gene.version
         and action == InstallJobType.install
     ):
-        return McpRegistrationJobResult(
-            job_id=None,
-            status=InstallJobStatus.installed.value,
+        return _build_mcp_registration_result(
+            job=None,
+            profile=profile,
             gene_slug=gene.slug,
             gene_version=gene.version,
             skill_name=skill_name,
-            profile_id=profile.profile_name,
             action=action,
+            status=InstallJobStatus.installed.value,
             message="Skill is already installed at the current version.",
         )
 
@@ -1031,15 +1031,16 @@ async def create_mcp_registration_job(
         desktop_device_id=profile.desktop_device_id,
         source=InstallJobSource.mcp_agent_request.value,
     )
-    return McpRegistrationJobResult(
-        job_id=job.id,
-        status=job.status,
+    return _build_mcp_registration_result(
+        job=job,
+        profile=profile,
         gene_slug=gene.slug,
         gene_version=job.gene_version,
         skill_name=job.skill_name,
-        profile_id=profile.profile_name,
         action=job.job_type,
+        status=job.status,
         message="Install job created. Copilot Desktop will apply it locally after user confirmation.",
+        source=InstallJobSource.mcp_agent_request.value,
     )
 
 
@@ -1060,13 +1061,54 @@ async def _user_can_view_org_jobs(
     return role == OrgRole.admin
 
 
-def _job_to_registration_info(job: HermesSkillInstallJob, profile_name: str | None) -> McpRegistrationInfo:
+def _desktop_confirmation_required(job: HermesSkillInstallJob) -> bool:
+    return job.source == InstallJobSource.mcp_agent_request.value
+
+
+def _build_mcp_registration_result(
+    *,
+    job: HermesSkillInstallJob | None,
+    profile: DesktopHermesProfile,
+    gene_slug: str,
+    gene_version: str,
+    skill_name: str,
+    action: str,
+    status: str,
+    message: str,
+    source: str | None = None,
+) -> McpRegistrationJobResult:
+    job_source = source or (job.source if job else None)
+    return McpRegistrationJobResult(
+        job_id=job.id if job else None,
+        status=status,
+        source=job_source,
+        gene_slug=gene_slug,
+        gene_version=gene_version,
+        skill_name=skill_name,
+        profile_id=profile.id,
+        profile_name=profile.profile_name,
+        action=action,
+        desktop_confirmation_required=_desktop_confirmation_required(job) if job else (
+            job_source == InstallJobSource.mcp_agent_request.value
+        ),
+        message=message,
+    )
+
+
+def _job_to_registration_info(
+    job: HermesSkillInstallJob,
+    profile: DesktopHermesProfile | None,
+) -> McpRegistrationInfo:
+    profile_id = profile.id if profile else job.profile_id
+    profile_name = profile.profile_name if profile else None
     return McpRegistrationInfo(
         job_id=job.id,
+        source=job.source,
         gene_slug=job.gene_slug,
         gene_version=job.gene_version,
         skill_name=job.skill_name,
-        profile_id=profile_name or job.profile_id,
+        profile_id=profile_id,
+        profile_name=profile_name,
         action=job.job_type,
         status=job.status,
         error_code=job.error_code,
@@ -1074,6 +1116,7 @@ def _job_to_registration_info(job: HermesSkillInstallJob, profile_name: str | No
         assigned_at=job.created_at,
         claimed_at=job.claimed_at,
         updated_at=job.updated_at,
+        finished_at=job.finished_at,
     )
 
 
@@ -1102,16 +1145,16 @@ async def get_registration_status(
                 "安装任务不存在",
                 message_key="errors.genehub.install_job_not_found",
             )
-        profile_name = None
+        profile = None
         if job.profile_id:
             profile_result = await db.execute(
-                select(DesktopHermesProfile.profile_name).where(
+                select(DesktopHermesProfile).where(
                     DesktopHermesProfile.id == job.profile_id,
                     DesktopHermesProfile.deleted_at.is_(None),
                 )
             )
-            profile_name = profile_result.scalar_one_or_none()
-        return _job_to_registration_info(job, profile_name)
+            profile = profile_result.scalar_one_or_none()
+        return _job_to_registration_info(job, profile)
 
     if not gene_slug or not profile_id:
         raise BadRequestError(
@@ -1147,7 +1190,7 @@ async def get_registration_status(
     )
     job = job_result.scalars().first()
     if job:
-        return _job_to_registration_info(job, profile.profile_name)
+        return _job_to_registration_info(job, profile)
 
     installed = await _get_installed_skill(
         db, profile_id=profile.id, gene_slug=gene_slug
@@ -1158,7 +1201,8 @@ async def get_registration_status(
             gene_slug=gene_slug,
             gene_version=installed.gene_version,
             skill_name=installed.skill_name,
-            profile_id=profile.profile_name,
+            profile_id=profile.id,
+            profile_name=profile.profile_name,
             action=InstallJobType.install,
             status=InstallJobStatus.installed.value,
             assigned_at=installed.created_at,

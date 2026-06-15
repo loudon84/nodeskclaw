@@ -12,7 +12,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.exceptions import BadRequestError, NotFoundError
 from app.models.gene import Gene
-from app.schemas.genehub import AdminGeneHubSkillCreate
+from app.schemas.genehub import (
+    AdminGeneHubSkillCreate,
+    BundlePreviewFile,
+    BundlePreviewScript,
+    BundleValidationPreview,
+    DesktopBundlePreviewInfo,
+)
 
 GENEHUB_MANIFEST_SCHEMA = "genehub.gene.v1"
 GENEHUB_BUNDLE_SCHEMA = "genehub.bundle.v1"
@@ -232,6 +238,107 @@ def build_bundle_from_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
         bundle_body["signature"] = _sign_bundle(bundle_json, secret)
 
     return bundle_body
+
+
+def _file_sha256(content: str) -> str:
+    return _calculate_sha256(content)
+
+
+def _build_validation_preview(
+    manifest: dict[str, Any],
+    *,
+    signature_present: bool,
+) -> BundleValidationPreview:
+    skill = manifest.get("skill") or {}
+    scripts = manifest.get("scripts") or {}
+    path_warnings: list[str] = []
+    compatibility_warnings: list[str] = []
+    if not is_hermes_desktop_compatible(manifest):
+        compatibility_warnings.append("manifest_missing_hermes_desktop_compatibility")
+    return BundleValidationPreview(
+        has_skill=bool(skill.get("name") and skill.get("content")),
+        has_scripts=bool(scripts),
+        requires_signature=settings.GENEHUB_BUNDLE_SIGNATURE_ENABLED,
+        signature_present=signature_present,
+        path_warnings=path_warnings,
+        compatibility_warnings=compatibility_warnings,
+    )
+
+
+def build_bundle_metadata_preview(
+    *,
+    job_id: str,
+    gene_slug: str,
+    gene_version: str,
+    skill_name: str,
+    action: str,
+    manifest: dict[str, Any],
+) -> DesktopBundlePreviewInfo:
+    validate_manifest(manifest)
+    files_dict = _build_files_from_manifest(manifest)
+    manifest_json = json.dumps(manifest, sort_keys=True, ensure_ascii=False)
+    manifest_hash = _calculate_sha256(manifest_json)
+
+    preview_files: list[BundlePreviewFile] = []
+    preview_scripts: list[BundlePreviewScript] = []
+    for path, content in sorted(files_dict.items()):
+        item_hash = _file_sha256(content)
+        size = len(content.encode("utf-8"))
+        if path.startswith("scripts/"):
+            preview_scripts.append(
+                BundlePreviewScript(
+                    relative_path=path,
+                    size=size,
+                    sha256=item_hash,
+                    entry=False,
+                    risk_level="medium",
+                )
+            )
+        else:
+            preview_files.append(
+                BundlePreviewFile(
+                    relative_path=path,
+                    size=size,
+                    sha256=item_hash,
+                    kind="skill",
+                )
+            )
+
+    bundle_body = {
+        "schema_version": GENEHUB_BUNDLE_SCHEMA,
+        "manifest": {
+            "gene_slug": manifest["slug"],
+            "gene_version": manifest["version"],
+            "skill_name": skill_name,
+            "compatibility": manifest.get("compatibility", []),
+        },
+        "files": [],
+        "scripts": [],
+        "hashes": {"manifest_sha256": manifest_hash},
+        "signature": None,
+    }
+    bundle_json = json.dumps(bundle_body, sort_keys=True, ensure_ascii=False)
+    bundle_hash = _calculate_sha256(bundle_json)
+    signature_present = False
+    if settings.GENEHUB_BUNDLE_SIGNATURE_ENABLED and settings.GENEHUB_BUNDLE_SIGNING_SECRET:
+        signature_present = True
+
+    return DesktopBundlePreviewInfo(
+        job_id=job_id,
+        gene_slug=gene_slug,
+        gene_version=gene_version,
+        skill_name=skill_name,
+        action=action,
+        manifest_hash=manifest_hash,
+        bundle_hash=bundle_hash,
+        compatibility=manifest.get("compatibility", []),
+        files=preview_files,
+        scripts=preview_scripts,
+        validation_preview=_build_validation_preview(
+            manifest,
+            signature_present=signature_present,
+        ),
+    )
 
 
 async def build_hermes_desktop_bundle(

@@ -38,10 +38,18 @@ from app.services.mcp_skill_gateway.mcp_tool_registry import (
     build_tool_descriptor,
     get_tool,
     list_enabled_tools,
+    resolve_approval_mode,
 )
 from app.services.mcp_skill_gateway.session import get_client_name, mark_initialized
 
 logger = logging.getLogger(__name__)
+
+
+def _tool_approval_mode(tool_name: str) -> str | None:
+    tool_meta = get_tool(tool_name)
+    if not tool_meta:
+        return None
+    return resolve_approval_mode(tool_meta)
 
 
 def _log_mcp_error(
@@ -125,7 +133,10 @@ async def _enforce_tool_grant(
     db: AsyncSession,
 ) -> tuple[dict | None, Any]:
     tool_meta = get_tool(tool_name)
-    if not tool_meta or not tool_meta.requires_approval:
+    if not tool_meta:
+        return None, None
+    mode = resolve_approval_mode(tool_meta)
+    if mode in ("none", "desktop"):
         return None, None
 
     instance_id, resolve_error = await _resolve_tool_instance_id(
@@ -209,6 +220,7 @@ async def _execute_gateway_tool_call(
             client_name=client_name,
             permission=tool_meta.permission if tool_meta else None,
             risk_level=tool_meta.risk_level if tool_meta else None,
+            approval_mode=_tool_approval_mode(tool_name),
         )
         _log_mcp_error(
             error_data.get("errorCode", MCP_INTERNAL_ERROR),
@@ -253,6 +265,7 @@ async def _execute_gateway_tool_call(
             client_name=client_name,
             permission=tool_meta.permission if tool_meta else None,
             risk_level=tool_meta.risk_level if tool_meta else None,
+            approval_mode=_tool_approval_mode(tool_name),
         )
         return _tool_call_success(jsonrpc_id, result)
     except (NotFoundError, BadRequestError, ForbiddenError) as exc:
@@ -278,6 +291,7 @@ async def _execute_gateway_tool_call(
             client_name=client_name,
             permission=tool_meta.permission if tool_meta else None,
             risk_level=tool_meta.risk_level if tool_meta else None,
+            approval_mode=_tool_approval_mode(tool_name),
         )
         _log_mcp_error(
             error_data.get("errorCode", MCP_INTERNAL_ERROR),
@@ -304,6 +318,7 @@ async def _execute_gateway_tool_call(
             client_name=client_name,
             permission=tool_meta.permission if tool_meta else None,
             risk_level=tool_meta.risk_level if tool_meta else None,
+            approval_mode=_tool_approval_mode(tool_name),
         )
         _log_mcp_error(
             MCP_INTERNAL_ERROR,
@@ -425,13 +440,15 @@ async def _collect_tools(user_id: str, org_id: str, db: AsyncSession) -> list[di
     registry_tools: list[dict[str, Any]] = []
     for tool in list_enabled_tools():
         auth_annotations = None
-        if tool.requires_approval:
+        mode = resolve_approval_mode(tool)
+        if mode in ("server", "hybrid"):
             auth_annotations = await get_grant_annotation(
                 db,
                 org_id=org_id,
                 user_id=user_id,
                 instance_id=None,
                 tool_name=tool.name,
+                tool=tool,
             )
         registry_tools.append(build_tool_descriptor(tool, auth_annotations))
     merged: list[dict[str, Any]] = []
