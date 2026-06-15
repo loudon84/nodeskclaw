@@ -89,7 +89,11 @@ onMounted(() => {
             <TableHead class="text-left px-4 py-3 font-medium text-muted-foreground">agent_id</TableHead>
             <TableHead class="text-left px-4 py-3 font-medium text-muted-foreground">install_mode</TableHead>
             <TableHead class="text-left px-4 py-3 font-medium text-muted-foreground">status</TableHead>
-            <TableHead class="text-left px-4 py-3 font-medium text-muted-foreground">installed_version</TableHead>
+            <TableHead class="text-left px-4 py-3 font-medium text-muted-foreground">profile_id</TableHead>
+            <TableHead class="text-left px-4 py-3 font-medium text-muted-foreground">workspace_id</TableHead>
+            <TableHead class="text-left px-4 py-3 font-medium text-muted-foreground">installed_path</TableHead>
+            <TableHead class="text-left px-4 py-3 font-medium text-muted-foreground">profile_root_path</TableHead>
+            <TableHead class="text-left px-4 py-3 font-medium text-muted-foreground">error_message</TableHead>
             <TableHead class="text-right px-4 py-3 font-medium text-muted-foreground">{{ t('common.settings') }}</TableHead>
           </TableRow>
         </TableHeader>
@@ -109,7 +113,11 @@ onMounted(() => {
                 {{ inst.status }}
               </Badge>
             </TableCell>
-            <TableCell class="px-4 py-3 font-mono text-xs text-muted-foreground">{{ inst.installed_version ?? '-' }}</TableCell>
+            <TableCell class="px-4 py-3 font-mono text-xs">{{ inst.profile_id ?? '-' }}</TableCell>
+            <TableCell class="px-4 py-3 font-mono text-xs">{{ inst.workspace_id ?? '-' }}</TableCell>
+            <TableCell class="px-4 py-3 font-mono text-xs break-all">{{ inst.installed_path ?? '-' }}</TableCell>
+            <TableCell class="px-4 py-3 font-mono text-xs break-all">{{ inst.profile_root_path ?? '-' }}</TableCell>
+            <TableCell class="px-4 py-3 text-xs text-red-400 break-all">{{ inst.error_message ?? '-' }}</TableCell>
             <TableCell class="px-4 py-3 text-right">
               <div class="flex items-center justify-end gap-1">
                 <Button variant="ghost" size="icon" @click="handleSync(inst)">

@@ -7,6 +7,11 @@ export interface Installation {
   install_mode: string
   status: string
   installed_version: string | null
+  installed_path: string | null
+  profile_id: string | null
+  workspace_id: string | null
+  profile_root_path: string | null
+  error_message: string | null
   created_at: string
   updated_at: string
 }
