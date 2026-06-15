@@ -158,6 +158,7 @@ async def test_tools_call_creates_task_and_events():
 
     skill = MagicMock()
     skill.id = "skill-1"
+    skill.skill_id = "skill-ext-1"
     skill.tool_name = "test_tool"
     skill.is_mcp_exposed = True
     skill.is_active = True
@@ -187,24 +188,33 @@ async def test_tools_call_creates_task_and_events():
         return MagicMock()
 
     db.execute.side_effect = mock_execute
-    db.flush = AsyncMock()
-    db.commit = AsyncMock()
-    db.refresh = AsyncMock()
-    db.add = MagicMock()
 
-    skill.skill_id = "skill-ext-1"
+    created_task = MagicMock()
+    created_task.id = "task-uuid"
+    created_task.task_no = "TASK-org1-abc"
+    created_task.status = TaskStatus.QUEUED
+    created_task.event_url = "/api/v1/hermes/tasks/task-uuid/events"
+    created_task.artifact_url = "/api/v1/hermes/tasks/task-uuid/artifacts"
 
     mapper = McpToolMapper(db)
     with patch.object(PermissionChecker, "require_permission", return_value=None), \
-         patch("app.services.member_skill_service.require_invoke_skill", new_callable=AsyncMock):
+         patch("app.services.member_skill_service.require_invoke_skill", new_callable=AsyncMock), \
+         patch("app.services.hermes_skill.mcp_tool_mapper.TaskService") as mock_task_svc_cls, \
+         patch("app.services.hermes_skill.skill_audit_logger.SkillAuditLogger") as mock_audit_cls:
+        mock_task_svc = AsyncMock()
+        mock_task_svc.create_task.return_value = created_task
+        mock_task_svc_cls.return_value = mock_task_svc
+        mock_audit_cls.return_value = AsyncMock()
+
         result = await mapper.call_tool("test_tool", {}, "org-1", "user-1")
 
     assert result["tool_name"] == "test_tool"
     assert result["status"] == "queued"
-    assert "task_id" in result
-    assert "task_no" in result
+    assert result["task_id"] == "task-uuid"
+    assert result["task_no"] == "TASK-org1-abc"
     assert "event_url" in result
     assert "artifact_url" in result
+    mock_task_svc.create_task.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -220,6 +230,7 @@ async def test_mcp_router_tools_call_success():
 
     mapper_result = {
         "tool_name": "test_tool",
+        "agent_id": "agent-1",
         "status": "queued",
         "task_id": "task-1",
         "task_no": "TASK-org1-abc",
@@ -244,7 +255,9 @@ async def test_mcp_router_tools_call_success():
     assert result["jsonrpc"] == "2.0"
     assert result["id"] == 42
     assert "result" in result
-    assert "content" in result["result"]
+    assert result["result"]["content"][0]["text"] == "任务已创建"
+    assert result["result"]["structuredContent"]["task_id"] == "task-1"
+    assert db.commit.await_count >= 1
 
 
 @pytest.mark.asyncio
@@ -274,8 +287,8 @@ async def test_mcp_router_tools_call_error_format():
     assert result["jsonrpc"] == "2.0"
     assert result["id"] == 99
     assert "error" in result
-    assert result["error"]["code"] == -32011
-    assert result["error"]["data"]["errorCode"] == "MCP_GATEWAY_REQUEST_FAILED"
+    assert result["error"]["code"] == -32020
+    assert result["error"]["data"]["errorCode"] == "MCP_TOOL_NOT_FOUND"
 
 
 @pytest.mark.asyncio
@@ -291,7 +304,7 @@ async def test_mcp_router_invalid_jsonrpc_version():
     db = AsyncMock()
 
     result = await mcp_jsonrpc(body, user_org=(user, org), db=db)
-    assert result["error"]["code"] == -32600
+    assert result["error"]["code"] == -32030
 
 
 @pytest.mark.asyncio
@@ -323,5 +336,5 @@ async def test_mcp_router_missing_params_name():
     db = AsyncMock()
 
     result = await mcp_jsonrpc(body, user_org=(user, org), db=db)
-    assert result["error"]["code"] == -32600
-    assert result["error"]["data"]["errorCode"] == "MCP_INVALID_REQUEST"
+    assert result["error"]["code"] == -32030
+    assert result["error"]["data"]["errorCode"] == "MCP_INVALID_ARGUMENTS"

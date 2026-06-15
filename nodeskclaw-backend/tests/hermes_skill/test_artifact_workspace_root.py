@@ -4,11 +4,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.services.hermes_skill.artifact_service import ArtifactService
 from app.core.config import settings
-from app.core.exceptions import ArtifactWorkspaceRootUnresolvedError
+
+
+def _path_contains(path: Path, segment: str) -> bool:
+    return segment in path.as_posix()
 
 
 @pytest.mark.asyncio
-async def test_compute_outputs_dir_raises_when_root_unresolved():
+async def test_compute_outputs_dir_uses_tmp_fallback():
     db = AsyncMock()
     service = ArtifactService(db)
 
@@ -17,12 +20,14 @@ async def test_compute_outputs_dir_raises_when_root_unresolved():
     task.workspace_id = None
     task.agent_id = None
 
-    ws_result = None
-    db.get.return_value = ws_result
+    db.get.return_value = None
 
     with patch.object(settings, "HERMES_WORKSPACE_ROOT", ""):
-        with pytest.raises(ArtifactWorkspaceRootUnresolvedError):
-            await service.compute_outputs_dir(task)
+        result = await service.compute_outputs_dir(task)
+
+    assert result.name == "outputs"
+    assert _path_contains(result, "nodeskclaw-workspaces/default")
+    assert _path_contains(result, "runs/task-1")
 
 
 @pytest.mark.asyncio
@@ -44,8 +49,8 @@ async def test_compute_outputs_dir_uses_settings_root():
 
     with patch.object(settings, "HERMES_WORKSPACE_ROOT", "/data/workspaces"):
         result = await service.compute_outputs_dir(task)
-    assert "/data/workspaces" in str(result)
-    assert "task-2" in str(result)
+    assert _path_contains(result, "data/workspaces")
+    assert _path_contains(result, "task-2")
 
 
 @pytest.mark.asyncio
@@ -66,8 +71,8 @@ async def test_compute_outputs_dir_uses_workspace_storage_root():
     db.get.return_value = ws
 
     result = await service.compute_outputs_dir(task)
-    assert "/mnt/ws2" in str(result)
-    assert "task-3" in str(result)
+    assert _path_contains(result, "mnt/ws2")
+    assert _path_contains(result, "task-3")
 
 
 @pytest.mark.asyncio
@@ -80,15 +85,13 @@ async def test_compute_outputs_dir_uses_instance_workspace_root_path():
     task.workspace_id = None
     task.agent_id = "agent-1"
 
-    ws_result = None
-
     instance = MagicMock()
     instance.deleted_at = None
     instance.advanced_config = {"workspace_root_path": "/opt/hermes/ws1"}
 
     def mock_get(model, id):
         if model.__name__ == "Workspace":
-            return ws_result
+            return None
         if model.__name__ == "Instance":
             return instance
         return None
@@ -96,5 +99,5 @@ async def test_compute_outputs_dir_uses_instance_workspace_root_path():
     db.get.side_effect = mock_get
 
     result = await service.compute_outputs_dir(task)
-    assert "/opt/hermes/ws1" in str(result)
-    assert "task-4" in str(result)
+    assert _path_contains(result, "opt/hermes/ws1")
+    assert _path_contains(result, "task-4")
