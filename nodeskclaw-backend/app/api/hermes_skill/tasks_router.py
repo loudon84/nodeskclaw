@@ -2,7 +2,7 @@ import asyncio
 import json
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,6 +22,57 @@ router = APIRouter()
 
 def _ok(data: Any = None, message: str = "success") -> dict:
     return {"code": 0, "message": message, "data": data}
+
+
+@router.get("/tasks")
+async def list_tasks(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    status: str | None = Query(None),
+    skill_id: str | None = Query(None),
+    tool_name: str | None = Query(None),
+    agent_id: str | None = Query(None),
+    profile_id: str | None = Query(None),
+    workspace_id: str | None = Query(None),
+    user_id: str | None = Query(None),
+    user_org=Depends(require_org_member),
+    db: AsyncSession = Depends(get_db),
+):
+    user, org = user_org
+    if user:
+        await PermissionChecker.require_permission(db, user.id, org.id, "hermes_task:view")
+
+    filter_user_id = user_id
+    if user and not filter_user_id:
+        from sqlalchemy import select
+        from app.models.org_membership import OrgMembership, OrgRole
+        from app.models.base import not_deleted
+        role_result = await db.execute(
+            select(OrgMembership.role).where(
+                OrgMembership.user_id == user.id,
+                OrgMembership.org_id == org.id,
+                not_deleted(OrgMembership),
+            )
+        )
+        org_role = role_result.scalar_one_or_none()
+        if org_role not in (OrgRole.admin, OrgRole.operator):
+            filter_user_id = user.id
+
+    service = TaskService(db)
+    items, total = await service.list_tasks(
+        org_id=org.id,
+        skill_id=skill_id,
+        status=status,
+        tool_name=tool_name,
+        agent_id=agent_id,
+        profile_id=profile_id,
+        workspace_id=workspace_id,
+        user_id=filter_user_id,
+        page=page,
+        page_size=page_size,
+    )
+    payload = [TaskRead.model_validate(item).model_dump() for item in items]
+    return _ok({"items": payload, "total": total, "page": page, "page_size": page_size})
 
 
 @router.get("/tasks/{task_id}")
@@ -73,9 +124,7 @@ async def stream_task_events(
             TaskStatus.CANCELLED, TaskStatus.TIMEOUT,
         })
 
-        existing_events = await event_service.get_events(task_id, org.id)
-        if last_seq is not None:
-            existing_events = [e for e in existing_events if e.event_seq > last_seq]
+        existing_events = await event_service.get_events(task_id, org.id, start_after_seq=last_seq)
 
         for event in existing_events:
             data = json.dumps({
