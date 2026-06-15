@@ -1,4 +1,5 @@
 import logging
+import json
 import os
 import shutil
 import uuid
@@ -55,11 +56,17 @@ class SkillInstaller:
                 "errors.skill.install_mode_not_allowed",
             )
 
-        target_path = await self._build_target_path(skill, agent_id, profile_id, mode)
+        target_path = await self._build_target_path(skill, agent_id, profile_id, mode, target_agent_type)
 
-        hub_root = Path(settings.HERMES_SKILL_HUB_ROOT)
-        PathGuard.validate_within_root(target_path, hub_root)
-        PathGuard.reject_system_dirs(target_path)
+        if target_path and str(target_path):
+            profile_root_path = await self._get_profile_root_path(agent_id)
+            if profile_root_path:
+                skills_root = Path(profile_root_path) / "skills"
+                PathGuard.validate_within_root(target_path, skills_root)
+            else:
+                hub_root = Path(settings.HERMES_SKILL_HUB_ROOT)
+                PathGuard.validate_within_root(target_path, hub_root)
+            PathGuard.reject_system_dirs(target_path)
 
         report = await self.conflict_detector.detect(
             skill_id=skill.skill_id,
@@ -177,19 +184,61 @@ class SkillInstaller:
         agent_id: str,
         profile_id: str | None,
         mode: str,
+        target_agent_type: str | None = None,
     ) -> Path:
         if mode == InstallMode.REGISTRY_BIND:
             return Path("")
 
         safe_skill_id = skill.skill_id.replace(".", "-")
-
         profile_root_path = await self._get_profile_root_path(agent_id)
+        resolved_agent_type = target_agent_type or await self._resolve_agent_type(agent_id)
+
+        if resolved_agent_type == "hermes_agent" and not profile_root_path:
+            raise BadRequestError(
+                "Hermes Agent 实例缺少 profile_root_path 配置",
+                "errors.skill.profile_root_path_missing",
+            )
+
         if profile_root_path:
-            return Path(profile_root_path) / "skills" / safe_skill_id
+            target_path = Path(profile_root_path) / "skills" / safe_skill_id
+            skills_root = Path(profile_root_path) / "skills"
+            PathGuard.validate_within_root(target_path, skills_root)
+            return target_path
 
         hub_root = Path(settings.HERMES_SKILL_HUB_ROOT)
         profile_part = profile_id or "default"
         return hub_root / "agents" / agent_id / profile_part / "skills" / safe_skill_id
+
+    async def _resolve_agent_type(self, agent_id: str) -> str | None:
+        from app.models.instance import Instance
+        stmt = select(Instance).where(
+            not_deleted(Instance),
+            Instance.id == agent_id,
+        )
+        result = await self.db.execute(stmt)
+        instance = result.scalar_one_or_none()
+        if not instance:
+            return None
+        advanced = self._parse_advanced_config(instance)
+        runtime_type = advanced.get("runtime_type")
+        if runtime_type:
+            return runtime_type
+        if instance.runtime in ("hermes_agent", "hermes"):
+            return "hermes_agent"
+        return instance.runtime
+
+    @staticmethod
+    def _parse_advanced_config(instance) -> dict:
+        raw = getattr(instance, "advanced_config", None)
+        if not raw:
+            return {}
+        if isinstance(raw, dict):
+            return raw
+        try:
+            data = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            return {}
+        return data if isinstance(data, dict) else {}
 
     async def _get_profile_root_path(self, agent_id: str) -> str | None:
         from app.models.instance import Instance
@@ -202,10 +251,8 @@ class SkillInstaller:
         if not instance:
             return None
 
-        advanced_config = getattr(instance, "advanced_config", None)
-        if advanced_config and isinstance(advanced_config, dict):
-            return advanced_config.get("profile_root_path")
-        return None
+        advanced_config = self._parse_advanced_config(instance)
+        return advanced_config.get("profile_root_path")
 
     async def _execute_file_operation(
         self,

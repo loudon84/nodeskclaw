@@ -27,6 +27,7 @@ class InstallationRead(BaseModel):
     status: str = "pending"
     error_message: str | None = None
     installed_by: str | None = None
+    profile_root_path: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
