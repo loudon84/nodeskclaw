@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.hermes_skill.hermes_task import HermesTaskEvent, EventType
+from app.models.hermes_skill.hermes_task import HermesTask, HermesTaskEvent, EventType
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +14,15 @@ logger = logging.getLogger(__name__)
 class TaskEventService:
     def __init__(self, db: AsyncSession):
         self.db = db
+
+    async def has_event(self, task_id: str, event_type: EventType) -> bool:
+        result = await self.db.execute(
+            select(HermesTaskEvent.id).where(
+                HermesTaskEvent.task_id == task_id,
+                HermesTaskEvent.event_type == event_type,
+            ).limit(1)
+        )
+        return result.scalar_one_or_none() is not None
 
     async def write_event(
         self,
@@ -23,6 +32,28 @@ class TaskEventService:
         payload: dict | None = None,
         event_seq: int | None = None,
     ) -> HermesTaskEvent:
+        return await self._write_event_once(
+            task_id=task_id,
+            org_id=org_id,
+            event_type=event_type,
+            payload=payload,
+            event_seq=event_seq,
+        )
+
+    async def _write_event_once(
+        self,
+        task_id: str,
+        org_id: str,
+        event_type: EventType,
+        payload: dict | None = None,
+        event_seq: int | None = None,
+    ) -> HermesTaskEvent:
+        await self.db.execute(
+            select(HermesTask.id).where(
+                HermesTask.id == task_id,
+                HermesTask.org_id == org_id,
+            ).with_for_update()
+        )
         if event_seq is None:
             max_seq_result = await self.db.execute(
                 select(HermesTaskEvent.event_seq).where(
@@ -52,13 +83,16 @@ class TaskEventService:
         self,
         task_id: str,
         org_id: str,
+        start_after_seq: int | None = None,
     ) -> list[HermesTaskEvent]:
-        result = await self.db.execute(
-            select(HermesTaskEvent).where(
-                HermesTaskEvent.task_id == task_id,
-                HermesTaskEvent.org_id == org_id,
-            ).order_by(HermesTaskEvent.event_seq)
+        stmt = select(HermesTaskEvent).where(
+            HermesTaskEvent.task_id == task_id,
+            HermesTaskEvent.org_id == org_id,
         )
+        if start_after_seq is not None:
+            stmt = stmt.where(HermesTaskEvent.event_seq > start_after_seq)
+        stmt = stmt.order_by(HermesTaskEvent.event_seq)
+        result = await self.db.execute(stmt)
         return result.scalars().all()
 
     async def stream_events(

@@ -1,5 +1,4 @@
 import logging
-import uuid
 from datetime import datetime, timezone
 from typing import Any
 
@@ -10,9 +9,9 @@ from app.core.exceptions import NotFoundError, BadRequestError, ForbiddenError
 from app.models.base import not_deleted
 from app.models.hermes_skill.skill import HermesSkill
 from app.models.hermes_skill.skill_installation import HermesSkillInstallation
-from app.models.hermes_skill.hermes_task import HermesTask, HermesTaskEvent, TaskStatus, EventType
 from app.models.org_member_skill_grant import OrgMemberSkillGrant
 from app.services.hermes_skill.permission_checker import PermissionChecker
+from app.services.hermes_skill.task_service import TaskService
 
 logger = logging.getLogger(__name__)
 
@@ -151,15 +150,8 @@ class McpToolMapper:
                     "errors.skill.input_schema_validation_failed",
                 )
 
-        import hashlib
-        arguments_hash = hashlib.sha256(
-            str(sorted(arguments.items())).encode()
-        ).hexdigest() if arguments else ""
-
-        task = HermesTask(
-            id=str(uuid.uuid4()),
+        task = await TaskService(self.db).create_task(
             org_id=org_id,
-            task_no=f"TASK-{org_id[:4]}-{uuid.uuid4().hex[:8]}",
             skill_id=skill.skill_id,
             tool_name=tool_name,
             agent_id=installation.agent_id,
@@ -167,45 +159,29 @@ class McpToolMapper:
             workspace_id=installation.workspace_id,
             installation_id=installation.id,
             user_id=user_id or None,
-            status=TaskStatus.QUEUED,
             arguments=arguments,
-            arguments_hash=arguments_hash,
-            event_url=f"/api/v1/hermes/tasks/{{task_id}}/events",
-            artifact_url=f"/api/v1/hermes/tasks/{{task_id}}/artifacts",
         )
-        self.db.add(task)
-        await self.db.flush()
-        await self.db.refresh(task)
 
-        task.event_url = f"/api/v1/hermes/tasks/{task.id}/events"
-        task.artifact_url = f"/api/v1/hermes/tasks/{task.id}/artifacts"
-
-        task_event = HermesTaskEvent(
-            id=str(uuid.uuid4()),
+        from app.services.hermes_skill.skill_audit_logger import SkillAuditLogger
+        audit_logger = SkillAuditLogger(self.db)
+        await audit_logger.log(
+            action="hermes.skill.invoked",
+            target_id=task.id,
             org_id=org_id,
-            task_id=task.id,
-            event_type=EventType.TASK_CREATED,
-            event_seq=0,
-            payload={"tool_name": tool_name, "skill_id": skill.skill_id},
+            actor_id=user_id or "",
+            details={
+                "task_id": task.id,
+                "task_no": task.task_no,
+                "skill_id": skill.skill_id,
+                "tool_name": tool_name,
+                "agent_id": installation.agent_id,
+            },
         )
-        self.db.add(task_event)
-
-        queued_event = HermesTaskEvent(
-            id=str(uuid.uuid4()),
-            org_id=org_id,
-            task_id=task.id,
-            event_type=EventType.TASK_QUEUED,
-            event_seq=1,
-            payload={"status": "queued"},
-        )
-        self.db.add(queued_event)
-
-        await self.db.commit()
 
         return {
             "tool_name": tool_name,
             "agent_id": installation.agent_id,
-            "status": "queued",
+            "status": task.status.value,
             "task_id": task.id,
             "task_no": task.task_no,
             "event_url": task.event_url,
