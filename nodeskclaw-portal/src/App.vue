@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAuthStore } from '@/stores/auth'
 import { getCurrentLocale, setCurrentLocale } from '@/i18n'
-import { Settings, LogOut, Boxes, Server, FlaskConical, User, Loader2, BarChart3, Bot, Users, ListTodo, FileArchive, Activity, Gauge, Shield } from 'lucide-vue-next'
+import { Settings, LogOut, Boxes, Server, FlaskConical, User, Loader2, BarChart3, Bot, Users, ListTodo, FileArchive, Activity, Gauge, Shield, ChevronDown, ListOrdered, Puzzle, Package, Upload } from 'lucide-vue-next'
 import { useFeature } from '@/composables/useFeature'
 import LocaleSelect from '@/components/shared/LocaleSelect.vue'
 import ToastContainer from '@/components/shared/ToastContainer.vue'
@@ -25,6 +25,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import type { Component } from 'vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -57,6 +58,46 @@ function navigateFromMenu(path: string) {
 
 function onLocaleChange(value: string) {
   locale.value = setCurrentLocale(value)
+}
+
+const isAdminOrOperator = computed(() => {
+  const role = authStore.user?.portal_org_role
+  return role === 'admin' || role === 'operator'
+})
+
+const isHermesActive = computed(() => route.path.startsWith('/hermes'))
+
+interface HermesNavItem {
+  path: string
+  labelKey: string
+  icon: Component
+  adminOnly?: boolean
+}
+
+const hermesNavItems: HermesNavItem[] = [
+  { path: '/hermes/tasks', labelKey: 'nav.hermesTasks', icon: ListTodo },
+  { path: '/hermes/artifacts', labelKey: 'nav.hermesArtifacts', icon: FileArchive },
+  { path: '/hermes/diagnostics', labelKey: 'nav.hermesDiagnostics', icon: Activity },
+  { path: '/hermes/runtime', labelKey: 'nav.hermesRuntime', icon: Gauge, adminOnly: true },
+  { path: '/hermes/agents', labelKey: 'nav.hermesAgents', icon: Bot, adminOnly: true },
+  { path: '/hermes/queue', labelKey: 'nav.hermesQueue', icon: ListOrdered, adminOnly: true },
+  { path: '/hermes/metrics', labelKey: 'nav.hermesMetrics', icon: BarChart3, adminOnly: true },
+  { path: '/hermes/skill-authorizations', labelKey: 'nav.hermesAuthorizations', icon: Shield, adminOnly: true },
+  { path: '/hermes/skills', labelKey: 'nav.hermesSkills', icon: Puzzle },
+  { path: '/hermes/installations', labelKey: 'nav.hermesInstallations', icon: Package },
+  { path: '/hermes/imports', labelKey: 'nav.hermesImports', icon: Upload },
+  { path: '/hermes/experts', labelKey: 'nav.hermesExperts', icon: Bot },
+]
+
+const visibleHermesNavItems = computed(() =>
+  hermesNavItems.filter((item) => !item.adminOnly || isAdminOrOperator.value),
+)
+
+function isHermesNavItemActive(path: string) {
+  if (path === '/hermes/experts') {
+    return route.path.startsWith('/hermes/experts')
+  }
+  return route.path === path || route.path.startsWith(`${path}/`)
 }
 </script>
 
@@ -117,83 +158,36 @@ function onLocaleChange(value: string) {
               <span class="hidden lg:inline">{{ t('nav.memberManagement') }}</span>
               <span class="lg:hidden">{{ t('nav.members') }}</span>
             </Button>
-            <Button variant="unstyled" size="unstyled"
-              v-if="authStore.user?.portal_org_role === 'admin' || authStore.user?.portal_org_role === 'operator'"
-              :class="[
-                'shrink-0 whitespace-nowrap px-3 py-1.5 rounded-md text-sm transition-colors',
-                route.path.startsWith('/hermes/runtime') ? 'bg-primary/10 text-primary font-medium' : 'text-muted-foreground hover:text-foreground',
-              ]"
-              @click="router.push('/hermes/runtime')"
-            >
-              <Gauge class="w-4 h-4 inline mr-1.5" />
-              <span class="hidden lg:inline">{{ t('nav.hermesRuntime') }}</span>
-            </Button>
-            <Button variant="unstyled" size="unstyled"
-              :class="[
-                'shrink-0 whitespace-nowrap px-3 py-1.5 rounded-md text-sm transition-colors',
-                route.path.startsWith('/hermes/tasks') ? 'bg-primary/10 text-primary font-medium' : 'text-muted-foreground hover:text-foreground',
-              ]"
-              @click="router.push('/hermes/tasks')"
-            >
-              <ListTodo class="w-4 h-4 inline mr-1.5" />
-              <span class="hidden lg:inline">{{ t('nav.hermesTasks') }}</span>
-              <span class="lg:hidden">{{ t('nav.hermesTasks') }}</span>
-            </Button>
-            <Button variant="unstyled" size="unstyled"
-              :class="[
-                'shrink-0 whitespace-nowrap px-3 py-1.5 rounded-md text-sm transition-colors',
-                route.path.startsWith('/hermes/artifacts') ? 'bg-primary/10 text-primary font-medium' : 'text-muted-foreground hover:text-foreground',
-              ]"
-              @click="router.push('/hermes/artifacts')"
-            >
-              <FileArchive class="w-4 h-4 inline mr-1.5" />
-              <span class="hidden lg:inline">{{ t('nav.hermesArtifacts') }}</span>
-              <span class="lg:hidden">{{ t('nav.hermesArtifacts') }}</span>
-            </Button>
-            <Button variant="unstyled" size="unstyled"
-              :class="[
-                'shrink-0 whitespace-nowrap px-3 py-1.5 rounded-md text-sm transition-colors',
-                route.path.startsWith('/hermes/diagnostics') ? 'bg-primary/10 text-primary font-medium' : 'text-muted-foreground hover:text-foreground',
-              ]"
-              @click="router.push('/hermes/diagnostics')"
-            >
-              <Activity class="w-4 h-4 inline mr-1.5" />
-              <span class="hidden lg:inline">{{ t('nav.hermesDiagnostics') }}</span>
-              <span class="lg:hidden">{{ t('nav.hermesDiagnostics') }}</span>
-            </Button>
-            <Button variant="unstyled" size="unstyled"
-              v-if="authStore.user?.portal_org_role === 'admin' || authStore.user?.portal_org_role === 'operator'"
-              :class="[
-                'shrink-0 whitespace-nowrap px-3 py-1.5 rounded-md text-sm transition-colors',
-                route.path.startsWith('/hermes/metrics') ? 'bg-primary/10 text-primary font-medium' : 'text-muted-foreground hover:text-foreground',
-              ]"
-              @click="router.push('/hermes/metrics')"
-            >
-              <BarChart3 class="w-4 h-4 inline mr-1.5" />
-              <span class="hidden lg:inline">{{ t('nav.hermesMetrics') }}</span>
-            </Button>
-            <Button variant="unstyled" size="unstyled"
-              v-if="authStore.user?.portal_org_role === 'admin' || authStore.user?.portal_org_role === 'operator'"
-              :class="[
-                'shrink-0 whitespace-nowrap px-3 py-1.5 rounded-md text-sm transition-colors',
-                route.path.startsWith('/hermes/skill-authorizations') ? 'bg-primary/10 text-primary font-medium' : 'text-muted-foreground hover:text-foreground',
-              ]"
-              @click="router.push('/hermes/skill-authorizations')"
-            >
-              <Shield class="w-4 h-4 inline mr-1.5" />
-              <span class="hidden lg:inline">{{ t('nav.hermesAuthorizations') }}</span>
-            </Button>
-            <Button variant="unstyled" size="unstyled"
-              :class="[
-                'shrink-0 whitespace-nowrap px-3 py-1.5 rounded-md text-sm transition-colors',
-                route.path.startsWith('/hermes/experts') ? 'bg-primary/10 text-primary font-medium' : 'text-muted-foreground hover:text-foreground',
-              ]"
-              @click="router.push('/hermes/experts')"
-            >
-              <Bot class="w-4 h-4 inline mr-1.5" />
-              <span class="hidden lg:inline">{{ t('nav.hermesExperts') }}</span>
-              <span class="lg:hidden">{{ t('nav.hermesExperts') }}</span>
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger as-child>
+                <Button
+                  variant="unstyled"
+                  size="unstyled"
+                  :class="[
+                    'shrink-0 whitespace-nowrap px-3 py-1.5 rounded-md text-sm transition-colors inline-flex items-center gap-1',
+                    isHermesActive ? 'bg-primary/10 text-primary font-medium' : 'text-muted-foreground hover:text-foreground',
+                  ]"
+                >
+                  <Gauge class="w-4 h-4" />
+                  <span class="hidden lg:inline">{{ t('nav.hermesMcp') }}</span>
+                  <span class="lg:hidden">{{ t('nav.hermesMcpShort') }}</span>
+                  <ChevronDown class="w-3.5 h-3.5 opacity-70" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" class="w-56">
+                <DropdownMenuLabel>{{ t('nav.hermesMcp') }}</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  v-for="item in visibleHermesNavItems"
+                  :key="item.path"
+                  :class="isHermesNavItemActive(item.path) ? 'bg-accent text-accent-foreground' : ''"
+                  @click="navigateFromMenu(item.path)"
+                >
+                  <component :is="item.icon" class="w-4 h-4" />
+                  {{ t(item.labelKey) }}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             <Button variant="unstyled" size="unstyled"
               :class="[
                 'shrink-0 whitespace-nowrap px-3 py-1.5 rounded-md text-sm transition-colors',
