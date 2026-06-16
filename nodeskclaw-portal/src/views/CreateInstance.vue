@@ -64,6 +64,13 @@ interface AttachableContainerInfo {
   created_at: string | null
   public_url: string | null
   health_url: string | null
+  gateway_port: number | null
+  gateway_url: string | null
+  gateway_status: string | null
+  runtime_status: string | null
+  mcp_status: string | null
+  last_probe_at: string | null
+  last_error: string | null
   instance_root: string | null
   host_data_dir: string | null
   container_data_dir: string | null
@@ -1062,6 +1069,10 @@ async function handleDeploy() {
                   <th class="px-3 py-2 text-left font-medium">{{ t('createInstance.attachColHealth') }}</th>
                   <th class="px-3 py-2 text-left font-medium">{{ t('createInstance.attachColPort') }}</th>
                   <th class="px-3 py-2 text-left font-medium">{{ t('createInstance.attachColPublicUrl') }}</th>
+                  <th class="px-3 py-2 text-left font-medium">{{ t('createInstance.attachColGatewayPort') }}</th>
+                  <th class="px-3 py-2 text-left font-medium">{{ t('createInstance.attachColGatewayUrl') }}</th>
+                  <th class="px-3 py-2 text-left font-medium">{{ t('createInstance.attachColGatewayStatus') }}</th>
+                  <th class="px-3 py-2 text-left font-medium">{{ t('createInstance.attachColRuntimeStatus') }}</th>
                   <th class="px-3 py-2 text-left font-medium">{{ t('createInstance.attachColInstanceRoot') }}</th>
                 </tr>
               </thead>
@@ -1087,6 +1098,10 @@ async function handleDeploy() {
                   <td class="px-3 py-2">{{ container.health_status || '-' }}</td>
                   <td class="px-3 py-2">{{ container.host_port ?? '-' }}</td>
                   <td class="px-3 py-2 max-w-[180px] truncate font-mono" :title="container.public_url || ''">{{ container.public_url || '-' }}</td>
+                  <td class="px-3 py-2">{{ container.gateway_port ?? '-' }}</td>
+                  <td class="px-3 py-2 max-w-[180px] truncate font-mono" :title="container.gateway_url || ''">{{ container.gateway_url || '-' }}</td>
+                  <td class="px-3 py-2">{{ container.gateway_status || '-' }}</td>
+                  <td class="px-3 py-2">{{ container.runtime_status || '-' }}</td>
                   <td class="px-3 py-2 max-w-[180px] truncate font-mono" :title="container.instance_root || ''">{{ container.instance_root || '-' }}</td>
                 </tr>
               </tbody>
@@ -1103,6 +1118,11 @@ async function handleDeploy() {
               <div><span class="text-muted-foreground">{{ t('createInstance.attachColProfile') }}:</span> {{ selectedAttachContainer.profile }}</div>
               <div><span class="text-muted-foreground">{{ t('createInstance.attachColStatus') }}:</span> {{ selectedAttachContainer.status }}</div>
               <div><span class="text-muted-foreground">{{ t('createInstance.attachColPublicUrl') }}:</span> {{ selectedAttachContainer.public_url || '-' }}</div>
+              <div><span class="text-muted-foreground">{{ t('createInstance.attachColGatewayUrl') }}:</span> {{ selectedAttachContainer.gateway_url || '-' }}</div>
+              <div><span class="text-muted-foreground">{{ t('createInstance.attachColGatewayStatus') }}:</span> {{ selectedAttachContainer.gateway_status || '-' }}</div>
+              <div><span class="text-muted-foreground">{{ t('createInstance.attachColRuntimeStatus') }}:</span> {{ selectedAttachContainer.runtime_status || '-' }}</div>
+              <div><span class="text-muted-foreground">{{ t('createInstance.attachColMcpStatus') }}:</span> {{ selectedAttachContainer.mcp_status || '-' }}</div>
+              <div v-if="selectedAttachContainer.last_probe_at"><span class="text-muted-foreground">{{ t('createInstance.attachColLastProbe') }}:</span> {{ new Date(selectedAttachContainer.last_probe_at).toLocaleString() }}</div>
               <div class="sm:col-span-2"><span class="text-muted-foreground">{{ t('createInstance.attachColInstanceRoot') }}:</span> {{ selectedAttachContainer.instance_root || '-' }}</div>
               <div class="sm:col-span-2"><span class="text-muted-foreground">{{ t('createInstance.attachColHostDataDir') }}:</span> {{ selectedAttachContainer.host_data_dir || '-' }}</div>
               <div class="sm:col-span-2"><span class="text-muted-foreground">{{ t('createInstance.attachColEnvFile') }}:</span> {{ selectedAttachContainer.env_file || '-' }}</div>
@@ -1113,6 +1133,15 @@ async function handleDeploy() {
             <ul v-if="selectedAttachContainer.warnings?.length" class="text-amber-500 space-y-1 pt-1">
               <li v-for="warning in selectedAttachContainer.warnings" :key="warning">{{ warning }}</li>
             </ul>
+            <p v-if="selectedAttachContainer.runtime_status === 'unconfigured'" class="text-red-400 pt-1">
+              {{ t('createInstance.attachGatewayPortMissing') }}
+            </p>
+            <p v-else-if="selectedAttachContainer.gateway_status && !['online', 'unconfigured'].includes(selectedAttachContainer.gateway_status)" class="text-amber-500 pt-1">
+              {{ t('createInstance.attachGatewayUnreachable') }}
+            </p>
+            <p v-if="selectedAttachContainer.last_error && selectedAttachContainer.runtime_status !== 'ready'" class="text-red-400 break-all pt-1">
+              {{ selectedAttachContainer.last_error }}
+            </p>
           </div>
 
           <p

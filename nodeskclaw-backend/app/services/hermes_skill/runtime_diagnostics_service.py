@@ -82,7 +82,32 @@ class RuntimeDiagnosticsService:
 
     async def _agent_stats(self, org_id: str) -> list[dict]:
         runtime_svc = HermesAgentRuntimeService(self.db)
-        return await runtime_svc.list_runtime_states(org_id)
+        governance_agents = await runtime_svc.list_runtime_states(org_id)
+        from app.services.hermes_external.hermes_docker_binding_service import HermesDockerBindingService
+        binding = HermesDockerBindingService(self.db)
+        docker_records = await binding.list_instances(org_id, include_unavailable=True)
+        docker_agents = []
+        seen_profiles: set[str] = set()
+        for record in docker_records:
+            seen_profiles.add(record.profile_name)
+            docker_agents.append({
+                "agent_id": record.instance_id or record.profile_name,
+                "profile_name": record.profile_name,
+                "name": record.profile_name,
+                "gateway_url": record.gateway_url,
+                "gateway_status": record.gateway_status,
+                "runtime_status": record.gateway_runtime_status,
+                "mcp_status": record.mcp_status,
+                "health": "ok" if record.gateway_runtime_status == "ready" else "degraded",
+                "last_error": record.last_error,
+                "source": "docker_bind",
+            })
+        for agent in governance_agents:
+            profile = agent.get("name") or agent.get("agent_id")
+            if profile not in seen_profiles:
+                agent["source"] = "governance"
+                docker_agents.append(agent)
+        return docker_agents
 
     async def _artifact_stats(self, org_id: str, since: datetime) -> dict:
         created = await self.db.execute(

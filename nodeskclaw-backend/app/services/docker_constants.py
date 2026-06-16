@@ -43,6 +43,23 @@ def get_docker_attach_scan_dirs() -> list[Path]:
     return [DOCKER_DATA_DIR]
 
 
+def get_hermes_instances_root() -> Path:
+    root = (settings.HERMES_INSTANCES_ROOT or "").strip()
+    if root:
+        return Path(root)
+    scan_dirs = get_docker_attach_scan_dirs()
+    if scan_dirs:
+        return scan_dirs[0]
+    return DOCKER_DATA_DIR
+
+
+def get_hermes_agent_host_ip() -> str:
+    host = (settings.HERMES_AGENT_HOST_IP or "").strip()
+    if host:
+        return host
+    return get_docker_public_host()
+
+
 def _host_from_portal_base_url() -> str | None:
     portal_url = (settings.PORTAL_BASE_URL or "").strip()
     if not portal_url:

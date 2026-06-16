@@ -27,11 +27,26 @@ def _parse_advanced_config(instance: Instance) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def _is_external_docker_with_gateway(instance: Instance) -> bool:
+    from app.services.hermes_external.binding_type import get_instance_binding_type
+    if get_instance_binding_type(instance) != "external_docker":
+        return False
+    advanced = _parse_advanced_config(instance)
+    gateway = advanced.get("gateway") or {}
+    return bool(
+        advanced.get("gateway_url")
+        or advanced.get("hermes_base_url")
+        or gateway.get("public_url")
+    )
+
+
 def _is_hermes_agent_instance(instance: Instance) -> bool:
     advanced = _parse_advanced_config(instance)
     runtime_type = advanced.get("runtime_type")
     if runtime_type:
         return runtime_type == "hermes_agent"
+    if _is_external_docker_with_gateway(instance):
+        return True
     return instance.runtime in ("hermes_agent", "hermes")
 
 
@@ -190,6 +205,17 @@ class HermesAgentAdapter:
         gateway_url = advanced.get("gateway_url")
         if gateway_url:
             return str(gateway_url).rstrip("/")
+        gateway = advanced.get("gateway") or {}
+        gateway_public = gateway.get("public_url")
+        if gateway_public:
+            return str(gateway_public).rstrip("/")
+
+        from app.services.hermes_external.binding_type import get_instance_binding_type
+        if get_instance_binding_type(instance) == "external_docker":
+            webui = advanced.get("webui") or {}
+            webui_url = webui.get("public_url")
+            if webui_url:
+                return str(webui_url).rstrip("/")
 
         from app.services.instance_service import _compute_endpoint_url
         endpoint_url = advanced.get("endpoint_url") or _compute_endpoint_url(instance)

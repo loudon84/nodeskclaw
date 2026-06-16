@@ -242,6 +242,14 @@ class Settings(BaseSettings):
     HERMES_SKILL_IMPORT_MAX_SIZE_MB: int = 50
     HERMES_SKILL_REGISTRY_SYNC_TIMEOUT_SECONDS: int = 60
 
+    # ── Hermes Docker Agent Bind (v4.4) ───────────────────
+    HERMES_INSTANCES_ROOT: str = ""
+    HERMES_DEFAULT_GATEWAY_INTERNAL_PORT: int = 8642
+    HERMES_AGENT_HOST_IP: str = ""
+    HERMES_GATEWAY_PROBE_TIMEOUT_SECONDS: int = 3
+    HERMES_GATEWAY_PROBE_CONCURRENCY: int = 5
+    HERMES_AUTO_PROBE_AFTER_SCAN: bool = True
+
     # ── Hermes Agent Adapter ──────────────────────────────
     HERMES_AGENT_DEFAULT_TIMEOUT_SECONDS: int = 900
     HERMES_AGENT_CONNECT_TIMEOUT_SECONDS: int = 10

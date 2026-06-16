@@ -1,3 +1,4 @@
+import json
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -125,16 +126,31 @@ class HermesAgentRuntimeService:
             await self.db.flush()
             return {"ok": False, "status": "unhealthy", "error": "errors.task.agent_not_hermes", "checks": checks}
 
+        from app.services.hermes_external.binding_type import get_instance_binding_type
+        is_external = get_instance_binding_type(instance) == "external_docker"
+
         base_url = HermesAgentAdapter._get_base_url(instance)
         checks["details"]["base_url"] = base_url
         http_ok = False
         if base_url:
-            http_ok = await self._probe_health(base_url)
+            if is_external:
+                from app.services.hermes_external.hermes_gateway_probe_service import HermesGatewayProbeService
+                probe = await HermesGatewayProbeService().probe_url(base_url)
+                http_ok = probe.gateway_status == "online"
+                checks["details"]["gateway_status"] = probe.gateway_status
+            else:
+                http_ok = await self._probe_health(base_url)
         checks["details"]["http_health"] = http_ok
 
         installation = await self._get_primary_installation(org_id, agent_id)
         profile_exists = self._path_exists(installation.profile_root_path if installation else None)
         workspace_exists = self._path_exists(installation.installed_path if installation else None)
+        if is_external:
+            advanced = json.loads(instance.advanced_config or "{}") if isinstance(instance.advanced_config, str) else (instance.advanced_config or {})
+            paths = advanced.get("paths") or {}
+            host_data_dir = paths.get("host_data_dir")
+            profile_exists = self._path_exists(host_data_dir) if host_data_dir else True
+            workspace_exists = True
         checks["details"]["profile_root_path_exists"] = profile_exists
         checks["details"]["workspace_root_path_exists"] = workspace_exists
 
@@ -247,7 +263,20 @@ class HermesAgentRuntimeService:
                 HermesSkillInstallation.status == "installed",
             ).distinct()
         )
-        return [row[0] for row in result.all() if row[0]]
+        agent_ids = [row[0] for row in result.all() if row[0]]
+
+        from app.models.hermes_skill.hermes_agent_instance import HermesAgentInstance
+        bound = await self.db.execute(
+            select(HermesAgentInstance.instance_id).where(
+                not_deleted(HermesAgentInstance),
+                HermesAgentInstance.org_id == org_id,
+                HermesAgentInstance.instance_id.is_not(None),
+            )
+        )
+        for (instance_id,) in bound.all():
+            if instance_id and instance_id not in agent_ids:
+                agent_ids.append(instance_id)
+        return agent_ids
 
     async def _get_primary_installation(self, org_id: str, agent_id: str) -> HermesSkillInstallation | None:
         result = await self.db.execute(

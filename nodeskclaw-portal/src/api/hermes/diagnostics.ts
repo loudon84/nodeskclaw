@@ -25,13 +25,19 @@ export interface RuntimeDiagnosticsQueue {
 export interface RuntimeDiagnosticsAgent {
   agent_id: string
   name: string
-  base_url: string | null
+  base_url?: string | null
+  gateway_url?: string | null
+  gateway_status?: string | null
+  runtime_status?: string | null
+  mcp_status?: string | null
+  profile_name?: string | null
   health: string
-  profile_root_path: string | null
-  profile_root_path_exists: boolean
-  workspace_root_path: string | null
-  workspace_root_path_exists: boolean
+  profile_root_path?: string | null
+  profile_root_path_exists?: boolean
+  workspace_root_path?: string | null
+  workspace_root_path_exists?: boolean
   last_error: string | null
+  source?: string
 }
 
 export interface RuntimeDiagnosticsArtifactStats {

@@ -52,8 +52,14 @@ def test_env_file_and_compose_labels(monkeypatch, tmp_path: Path):
     mount_source = env_dir / "data" / "hermes"
     mount_source.mkdir(parents=True)
 
-    monkeypatch.setenv("DOCKER_PUBLIC_HOST", "192.168.102.247")
-    monkeypatch.setenv("DOCKER_PUBLIC_SCHEME", "http")
+    monkeypatch.setattr(
+        "app.services.docker_constants.settings.DOCKER_PUBLIC_HOST",
+        "192.168.102.247",
+    )
+    monkeypatch.setattr(
+        "app.services.docker_constants.settings.DOCKER_PUBLIC_SCHEME",
+        "http",
+    )
 
     layout = resolve_from_inspect(
         _inspect(
@@ -123,3 +129,33 @@ def test_layout_to_advanced_config_structure():
     assert advanced["compose"]["project_name"] == layout.project_name
     assert advanced["webui"]["public_url"] == layout.public_url
     assert advanced["capabilities"]["allow_destroy_container"] is False
+
+
+def test_gateway_fields_from_env(monkeypatch, tmp_path: Path):
+    env_dir = tmp_path / "instances" / "common-writer"
+    env_dir.mkdir(parents=True)
+    env_file = env_dir / ".env"
+    env_file.write_text(
+        "HERMES_WEBUI_PORT=8900\nHERMES_GATEWAY_PORT=18900\n",
+        encoding="utf-8",
+    )
+    mount_source = env_dir / "data" / "hermes"
+    mount_source.mkdir(parents=True)
+    monkeypatch.setattr(
+        "app.services.docker_constants.settings.DOCKER_PUBLIC_HOST",
+        "192.168.102.247",
+    )
+
+    layout = resolve_from_inspect(
+        _inspect(
+            container_name="hermes-common-writer",
+            host_port="8900",
+            mount_source=str(mount_source),
+        ),
+        scan_entry=env_dir,
+    )
+    assert layout.gateway_host_port == 18900
+    assert layout.gateway_url == "http://192.168.102.247:18900"
+    advanced = layout_to_advanced_config(layout)
+    assert advanced["gateway_url"] == layout.gateway_url
+    assert advanced["hermes_base_url"] == layout.gateway_url

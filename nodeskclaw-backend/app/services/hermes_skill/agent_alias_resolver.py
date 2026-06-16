@@ -9,6 +9,7 @@ from app.models.base import not_deleted
 from app.models.hermes_skill.hermes_agent_runtime_state import AgentRuntimeStatus
 from app.models.hermes_skill.skill_installation import HermesSkillInstallation
 from app.models.instance import Instance
+from app.services.hermes_skill.hermes_agent_adapter import _is_external_docker_with_gateway
 from app.services.hermes_skill.hermes_agent_runtime_service import HermesAgentRuntimeService
 
 logger = logging.getLogger(__name__)
@@ -91,7 +92,8 @@ class AgentAliasResolver:
             if instance.id in seen:
                 continue
             if not await self.runtime_svc.is_agent_routable(org_id, instance.id):
-                continue
+                if not _is_external_docker_with_gateway(instance):
+                    continue
             seen.add(instance.id)
             advanced = _parse_advanced_config(instance.advanced_config)
             alias = (
@@ -103,6 +105,31 @@ class AgentAliasResolver:
             )
             resolution = await self._build_resolution(
                 org_id, instance, str(alias), REASON_MATCHED_BY_ALIAS,
+            )
+            results.append(resolution)
+
+        from app.models.hermes_skill.hermes_agent_instance import HermesAgentInstance
+        from sqlalchemy import select as sa_select
+        bound_result = await self.db.execute(
+            sa_select(HermesAgentInstance).where(
+                not_deleted(HermesAgentInstance),
+                HermesAgentInstance.org_id == org_id,
+                HermesAgentInstance.gateway_runtime_status == "ready",
+                HermesAgentInstance.instance_id.is_not(None),
+            )
+        )
+        for record in bound_result.scalars().all():
+            if record.instance_id in seen:
+                continue
+            instance = next((i for i in instances if i.id == record.instance_id), None)
+            if not instance:
+                continue
+            seen.add(record.instance_id)
+            resolution = await self._build_resolution(
+                org_id,
+                instance,
+                record.profile_name,
+                REASON_MATCHED_BY_ALIAS,
             )
             results.append(resolution)
         return results

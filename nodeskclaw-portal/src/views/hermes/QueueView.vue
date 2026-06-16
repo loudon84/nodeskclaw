@@ -2,7 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Loader2, RefreshCw } from 'lucide-vue-next'
-import { getQueueStats, listQueueTasks, requeueQueueTask, markFailedQueueTask } from '@/api/hermes/queue'
+import { getQueueStats, listQueueTasks, requeueQueueTask, markFailedQueueTask, type QueueStats } from '@/api/hermes/queue'
 import type { HermesTask } from '@/api/hermes/tasks'
 import { resolveApiErrorMessage } from '@/i18n/error'
 import { useToast } from '@/composables/useToast'
@@ -14,7 +14,7 @@ import { Badge } from '@/components/ui/badge'
 const { t } = useI18n()
 const toast = useToast()
 const loading = ref(false)
-const stats = ref<Record<string, number> | null>(null)
+const stats = ref<QueueStats | null>(null)
 const tasks = ref<HermesTask[]>([])
 const statusFilter = ref('')
 const agentFilter = ref('')

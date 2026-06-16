@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
-import { Loader2, RefreshCw, Server, ListOrdered, AlertTriangle } from 'lucide-vue-next'
+import { Loader2, RefreshCw, Server, ListOrdered, AlertTriangle, Bot } from 'lucide-vue-next'
 import { getRuntimeDiagnostics, type RuntimeDiagnostics } from '@/api/hermes/diagnostics'
+import { probeAllHermesAgents } from '@/api/hermes/agentInstances'
 import {
   getRuntimeControls,
   pauseWorker,
@@ -27,6 +28,35 @@ const loading = ref(false)
 const actionLoading = ref(false)
 const diagnostics = ref<RuntimeDiagnostics | null>(null)
 const controls = ref<{ worker: { paused: boolean }; queue: { paused: boolean } } | null>(null)
+
+const dockerAgents = computed(() =>
+  (diagnostics.value?.agents ?? []).filter(a => a.source === 'docker_bind' || a.gateway_url),
+)
+
+const runtimeSummary = computed(() => {
+  const items = dockerAgents.value
+  const counts = { total: items.length, ready: 0, degraded: 0, unavailable: 0, unconfigured: 0 }
+  for (const item of items) {
+    const status = item.runtime_status || 'unknown'
+    if (status in counts) {
+      counts[status as keyof typeof counts] += 1
+    }
+  }
+  return counts
+})
+
+async function refreshDockerAgents() {
+  actionLoading.value = true
+  try {
+    await probeAllHermesAgents()
+    await fetchAll()
+    toast.success(t('hermes.runtime.dockerRefreshSuccess'))
+  } catch (e: unknown) {
+    toast.error(resolveApiErrorMessage(e, t('hermes.runtime.actionFailed')))
+  } finally {
+    actionLoading.value = false
+  }
+}
 
 async function fetchAll() {
   loading.value = true
@@ -121,6 +151,36 @@ onMounted(fetchAll)
           <Button size="sm" variant="secondary" :disabled="actionLoading" @click="runAction(() => clearStaleLocks(), 'hermes.runtime.locksCleared')">
             {{ t('hermes.runtime.clearStaleLocks') }}
           </Button>
+        </div>
+      </div>
+
+      <div class="rounded-xl border border-border p-4">
+        <div class="flex items-center justify-between mb-3 gap-2 flex-wrap">
+          <div class="flex items-center gap-2">
+            <Bot class="w-4 h-4 text-muted-foreground" />
+            <h2 class="text-sm font-semibold">{{ t('hermes.runtime.dockerAgentsTitle') }}</h2>
+          </div>
+          <Button size="sm" variant="outline" :disabled="actionLoading" @click="refreshDockerAgents">
+            {{ t('hermes.runtime.dockerRefresh') }}
+          </Button>
+        </div>
+        <div class="grid grid-cols-2 md:grid-cols-5 gap-2 text-xs mb-4">
+          <div class="rounded-lg border border-border p-2"><span class="text-muted-foreground">{{ t('hermes.runtime.dockerTotal') }}</span><p class="font-mono text-lg">{{ runtimeSummary.total }}</p></div>
+          <div class="rounded-lg border border-border p-2"><span class="text-muted-foreground">Ready</span><p class="font-mono text-lg text-emerald-400">{{ runtimeSummary.ready }}</p></div>
+          <div class="rounded-lg border border-border p-2"><span class="text-muted-foreground">Degraded</span><p class="font-mono text-lg text-yellow-400">{{ runtimeSummary.degraded }}</p></div>
+          <div class="rounded-lg border border-border p-2"><span class="text-muted-foreground">Unavailable</span><p class="font-mono text-lg text-red-400">{{ runtimeSummary.unavailable }}</p></div>
+          <div class="rounded-lg border border-border p-2"><span class="text-muted-foreground">Unconfigured</span><p class="font-mono text-lg text-muted-foreground">{{ runtimeSummary.unconfigured }}</p></div>
+        </div>
+        <div v-if="!dockerAgents.length" class="text-sm text-muted-foreground py-2">{{ t('hermes.runtime.dockerAgentsEmpty') }}</div>
+        <div v-else class="space-y-2">
+          <div v-for="agent in dockerAgents" :key="agent.agent_id" class="rounded-lg border border-border p-3 text-xs">
+            <div class="flex justify-between gap-2 mb-1">
+              <span class="font-mono font-medium">{{ agent.profile_name || agent.name }}</span>
+              <span>{{ agent.runtime_status || '-' }} / {{ agent.mcp_status || '-' }}</span>
+            </div>
+            <p class="font-mono text-muted-foreground truncate">{{ agent.gateway_url || agent.base_url || '-' }}</p>
+            <p v-if="agent.last_error" class="text-red-400 break-all mt-1">{{ agent.last_error }}</p>
+          </div>
         </div>
       </div>
 

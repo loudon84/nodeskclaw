@@ -18,6 +18,13 @@ class AttachableContainerInfo(BaseModel):
     created_at: str | None = None
     public_url: str | None = None
     health_url: str | None = None
+    gateway_port: int | None = None
+    gateway_url: str | None = None
+    gateway_status: str | None = None
+    runtime_status: str | None = None
+    mcp_status: str | None = None
+    last_probe_at: str | None = None
+    last_error: str | None = None
     instance_root: str | None = None
     host_data_dir: str | None = None
     container_data_dir: str | None = None

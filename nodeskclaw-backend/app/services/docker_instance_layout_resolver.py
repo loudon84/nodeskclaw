@@ -19,6 +19,7 @@ from app.core.config import settings
 
 DEFAULT_CONTAINER_DATA_DIR = "/data/hermes"
 DEFAULT_CONTAINER_PORT = 8787
+DEFAULT_GATEWAY_INTERNAL_PORT = settings.HERMES_DEFAULT_GATEWAY_INTERNAL_PORT
 
 
 def _docker_endpoint_host() -> str:
@@ -43,6 +44,9 @@ class DockerInstanceLayout:
     public_url: str | None
     health_url: str | None
     lifecycle_mode: str
+    gateway_host_port: int | None = None
+    gateway_internal_port: int = DEFAULT_GATEWAY_INTERNAL_PORT
+    gateway_url: str | None = None
     paths: dict[str, str] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
 
@@ -105,7 +109,7 @@ def _parse_ports(inspect_data: dict) -> tuple[int | None, int]:
     return None, DEFAULT_CONTAINER_PORT
 
 
-def _read_env_port(env_file: str) -> int | None:
+def _read_env_port(env_file: str, key: str) -> int | None:
     path = Path(env_file)
     if not path.is_file():
         return None
@@ -114,8 +118,8 @@ def _read_env_port(env_file: str) -> int | None:
             line = line.strip()
             if not line or line.startswith("#") or "=" not in line:
                 continue
-            key, _, value = line.partition("=")
-            if key.strip() == "HERMES_WEBUI_PORT":
+            env_key, _, value = line.partition("=")
+            if env_key.strip() == key:
                 try:
                     return int(value.strip().strip('"').strip("'"))
                 except ValueError:
@@ -123,6 +127,13 @@ def _read_env_port(env_file: str) -> int | None:
     except OSError:
         return None
     return None
+
+
+def _read_env_ports(env_file: str) -> tuple[int | None, int | None, int]:
+    webui = _read_env_port(env_file, "HERMES_WEBUI_PORT")
+    gateway = _read_env_port(env_file, "HERMES_GATEWAY_PORT")
+    internal = _read_env_port(env_file, "HERMES_GATEWAY_INTERNAL_PORT") or DEFAULT_GATEWAY_INTERNAL_PORT
+    return webui, gateway, internal
 
 
 def _compose_path_from_labels(labels: dict) -> str | None:
@@ -220,20 +231,25 @@ def resolve_from_inspect(
     service_name = labels.get("com.docker.compose.service")
 
     host_port, container_port = _parse_ports(inspect_data)
-    if host_port is None and env_file:
-        host_port = _read_env_port(env_file)
+    gateway_host_port: int | None = None
+    gateway_internal_port = DEFAULT_GATEWAY_INTERNAL_PORT
+    if env_file:
+        env_webui, env_gateway, env_internal = _read_env_ports(env_file)
+        if host_port is None:
+            host_port = env_webui
+        gateway_host_port = env_gateway
+        gateway_internal_port = env_internal
     if host_port is None:
         warnings.append("无法识别 WebUI 端口")
+    if gateway_host_port is None and env_file:
+        warnings.append("实例 .env 缺少 HERMES_GATEWAY_PORT，无法监听 Hermes Agent Runtime")
 
     public_host = get_docker_public_host()
-    '''
-    if public_host == "localhost" and not os.environ.get("DOCKER_PUBLIC_HOST"):
-        warnings.append("未配置 DOCKER_PUBLIC_HOST，WebUI 公共访问地址可能不可用")
-    '''
     if public_host == "localhost" and not settings.DOCKER_PUBLIC_HOST:
         warnings.append("未配置 DOCKER_PUBLIC_HOST，WebUI 公共访问地址可能不可用")
 
     public_url = get_docker_public_url(host_port) if host_port else None
+    gateway_url = get_docker_public_url(gateway_host_port) if gateway_host_port else None
     health_url = (
         f"http://{_docker_endpoint_host()}:{host_port}/health"
         if host_port
@@ -269,6 +285,9 @@ def resolve_from_inspect(
         public_url=public_url,
         health_url=health_url,
         lifecycle_mode=resolved_lifecycle,
+        gateway_host_port=gateway_host_port,
+        gateway_internal_port=gateway_internal_port,
+        gateway_url=gateway_url,
         paths=paths,
         warnings=warnings,
     )
@@ -312,6 +331,15 @@ def layout_to_advanced_config(layout: DockerInstanceLayout) -> dict:
             "public_url": layout.public_url,
             "health_url": layout.health_url,
         },
+        "gateway": {
+            "public_scheme": get_docker_public_scheme(),
+            "public_host": get_docker_public_host(),
+            "host_port": layout.gateway_host_port,
+            "container_port": layout.gateway_internal_port,
+            "public_url": layout.gateway_url,
+        },
+        "gateway_url": layout.gateway_url,
+        "hermes_base_url": layout.gateway_url,
         "capabilities": {
             "allow_logs": True,
             "allow_start": layout.lifecycle_mode != "linked_only",

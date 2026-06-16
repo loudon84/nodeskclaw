@@ -91,7 +91,7 @@ def _profile_from_container_name(container_name: str) -> str | None:
     return profile
 
 
-def _build_container_info(
+async def _build_container_info(
     layout,
     inspect_data: dict,
     *,
@@ -101,6 +101,34 @@ def _build_container_info(
 ) -> AttachableContainerInfo:
     state = inspect_data.get("State") or {}
     created_at = inspect_data.get("Created")
+    gateway_status = None
+    runtime_status = None
+    mcp_status = None
+    last_error = None
+    last_probe_at = None
+
+    if layout.gateway_url:
+        from app.services.hermes_external.hermes_gateway_probe_service import HermesGatewayProbeService
+        from app.services.hermes_external.hermes_runtime_status_service import HermesRuntimeStatusService
+
+        probe = await HermesGatewayProbeService().probe_url(layout.gateway_url)
+        gateway_status = probe.gateway_status
+        last_probe_at = probe.last_probe_at.isoformat()
+        last_error = probe.last_error
+        docker_status = str(state.get("Status") or "unknown").lower()
+        pair = HermesRuntimeStatusService().compute(
+            docker_status=docker_status,
+            gateway_status=gateway_status,
+            gateway_port=layout.gateway_host_port,
+        )
+        runtime_status = pair.gateway_runtime_status
+        mcp_status = pair.mcp_status
+    elif layout.env_file:
+        last_error = "missing HERMES_GATEWAY_PORT"
+        runtime_status = "unconfigured"
+        mcp_status = "unconfigured"
+        gateway_status = "unconfigured"
+
     return AttachableContainerInfo(
         profile=layout.profile,
         container_name=layout.container_name,
@@ -116,6 +144,13 @@ def _build_container_info(
         created_at=created_at,
         public_url=layout.public_url,
         health_url=layout.health_url,
+        gateway_port=layout.gateway_host_port,
+        gateway_url=layout.gateway_url,
+        gateway_status=gateway_status,
+        runtime_status=runtime_status,
+        mcp_status=mcp_status,
+        last_probe_at=last_probe_at,
+        last_error=last_error,
         instance_root=layout.instance_root or None,
         host_data_dir=layout.host_data_dir or None,
         container_data_dir=layout.container_data_dir,
@@ -255,7 +290,7 @@ async def list_attachable_containers(
         data_dir = layout.instance_root or (scan_entry and str(scan_entry)) or ""
 
         items.append(
-            _build_container_info(
+            await _build_container_info(
                 layout,
                 inspect_data,
                 data_dir=data_dir,
@@ -451,6 +486,18 @@ async def attach_existing_container(
     ))
     await db.commit()
     await db.refresh(instance)
+
+    if layout.env_file:
+        from app.services.hermes_external.hermes_docker_binding_service import HermesDockerBindingService
+        binding = HermesDockerBindingService(db)
+        await binding.upsert_from_env(
+            org_id,
+            layout.env_file,
+            probe=True,
+            instance_id=instance.id,
+            managed_mode=layout.lifecycle_mode,
+        )
+        await db.commit()
 
     logger.info(
         "attached existing docker container: instance=%s profile=%s container=%s port=%s lifecycle=%s",

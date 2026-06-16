@@ -98,6 +98,7 @@ from app.models.hermes_skill import (  # noqa: F401
     HermesTask,
     HermesTaskEvent,
 )
+from app.models.hermes_skill.hermes_agent_instance import HermesAgentInstance  # noqa: F401
 
 # Task Orchestrator models are registered via their own __init__.py
 # and will be discovered by Alembic through app.modules.task_orchestrator.models
