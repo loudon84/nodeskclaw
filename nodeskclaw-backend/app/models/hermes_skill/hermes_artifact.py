@@ -38,6 +38,9 @@ class HermesArtifact(BaseModel):
     download_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     preview_supported: Mapped[bool] = mapped_column(default=False)
     source_run_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    title: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    artifact_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
     metadata_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
     __table_args__ = (

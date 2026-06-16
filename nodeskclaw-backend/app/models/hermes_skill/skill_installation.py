@@ -8,16 +8,6 @@ from datetime import datetime
 
 class HermesSkillInstallation(BaseModel):
     __tablename__ = "hermes_skill_installations"
-    __table_args__ = (
-        Index(
-            "ix_hermes_skill_inst_skill_agent_unique",
-            "skill_id", "agent_id",
-            unique=True,
-            postgresql_where=text("deleted_at IS NULL"),
-        ),
-        Index("ix_hermes_skill_inst_org", "org_id"),
-        Index("ix_hermes_skill_inst_status", "status"),
-    )
 
     org_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
@@ -40,3 +30,22 @@ class HermesSkillInstallation(BaseModel):
     last_synced_at: Mapped[datetime | None] = mapped_column(nullable=True)
     install_metadata: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     profile_root_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    priority: Mapped[int] = mapped_column(nullable=False, default=0)
+    routing_scope: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    routing_metadata: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
+    __table_args__ = (
+        Index(
+            "ix_hermes_skill_inst_skill_agent_unique",
+            "skill_id", "agent_id",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+        Index("ix_hermes_skill_inst_org", "org_id"),
+        Index("ix_hermes_skill_inst_status", "status"),
+        Index(
+            "ix_hermes_skill_installations_routing",
+            "org_id", "skill_id", "status", "is_default", "priority",
+        ),
+    )

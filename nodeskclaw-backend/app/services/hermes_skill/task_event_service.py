@@ -4,11 +4,14 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.hermes_skill.hermes_task import HermesTask, HermesTaskEvent, EventType
 
 logger = logging.getLogger(__name__)
+
+_MAX_EVENT_WRITE_RETRIES = 3
 
 
 class TaskEventService:
@@ -30,15 +33,41 @@ class TaskEventService:
         org_id: str,
         event_type: EventType,
         payload: dict | None = None,
-        event_seq: int | None = None,
+        source: str = "backend",
+        source_event_seq: int | None = None,
     ) -> HermesTaskEvent:
-        return await self._write_event_once(
-            task_id=task_id,
-            org_id=org_id,
-            event_type=event_type,
-            payload=payload,
-            event_seq=event_seq,
-        )
+        merged_payload = dict(payload or {})
+        if source != "backend":
+            merged_payload = {
+                "source": source,
+                "hermes_event_seq": source_event_seq,
+                "payload": merged_payload,
+            }
+        elif source_event_seq is not None:
+            merged_payload["hermes_event_seq"] = source_event_seq
+
+        last_exc: Exception | None = None
+        for attempt in range(_MAX_EVENT_WRITE_RETRIES):
+            try:
+                return await self._write_event_once(
+                    task_id=task_id,
+                    org_id=org_id,
+                    event_type=event_type,
+                    payload=merged_payload,
+                )
+            except IntegrityError as exc:
+                last_exc = exc
+                await self.db.rollback()
+                logger.warning(
+                    "event_seq conflict task=%s attempt=%s: %s",
+                    task_id,
+                    attempt + 1,
+                    exc,
+                )
+                await asyncio.sleep(0.05 * (attempt + 1))
+        if last_exc:
+            logger.error("write_event failed after retries task=%s", task_id)
+        raise last_exc or RuntimeError("write_event failed")
 
     async def _write_event_once(
         self,
@@ -46,7 +75,6 @@ class TaskEventService:
         org_id: str,
         event_type: EventType,
         payload: dict | None = None,
-        event_seq: int | None = None,
     ) -> HermesTaskEvent:
         await self.db.execute(
             select(HermesTask.id).where(
@@ -54,14 +82,13 @@ class TaskEventService:
                 HermesTask.org_id == org_id,
             ).with_for_update()
         )
-        if event_seq is None:
-            max_seq_result = await self.db.execute(
-                select(HermesTaskEvent.event_seq).where(
-                    HermesTaskEvent.task_id == task_id,
-                ).order_by(HermesTaskEvent.event_seq.desc()).limit(1)
-            )
-            max_seq = max_seq_result.scalar_one_or_none() or 0
-            event_seq = max_seq + 1
+        max_seq_result = await self.db.execute(
+            select(HermesTaskEvent.event_seq).where(
+                HermesTaskEvent.task_id == task_id,
+            ).order_by(HermesTaskEvent.event_seq.desc()).limit(1)
+        )
+        max_seq = max_seq_result.scalar_one_or_none() or 0
+        event_seq = max_seq + 1
 
         event = HermesTaskEvent(
             id=str(uuid.uuid4()),

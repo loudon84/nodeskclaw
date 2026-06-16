@@ -3,6 +3,10 @@ from pathlib import Path
 from app.core.config import settings
 from app.core.exceptions import ForbiddenError
 
+import re
+
+_CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f\x7f]")
+
 
 _FORBIDDEN_DIRS = frozenset({"/etc", "/root", "/boot", "/proc", "/sys", "/var/run", "/dev"})
 _FORBIDDEN_EXTENSIONS = frozenset({".env", ".pem", ".key", ".secret"})
@@ -11,13 +15,13 @@ _FORBIDDEN_EXTENSIONS = frozenset({".env", ".pem", ".key", ".secret"})
 class PathGuard:
     @staticmethod
     def validate_within_root(path: Path, root: Path) -> Path:
-        resolved = path.resolve()
-        root_resolved = root.resolve()
-        if resolved.is_symlink():
+        if path.is_symlink():
             raise ForbiddenError(
                 "禁止软链接",
                 "errors.skill.symlink_forbidden",
             )
+        resolved = path.resolve()
+        root_resolved = root.resolve()
         try:
             resolved.relative_to(root_resolved)
         except ValueError:
@@ -29,13 +33,13 @@ class PathGuard:
 
     @staticmethod
     def validate_file_for_download(path: Path, root: Path, max_size: int | None = None) -> Path:
-        resolved = path.resolve()
-        root_resolved = root.resolve()
-        if resolved.is_symlink():
+        if path.is_symlink():
             raise ForbiddenError(
                 "禁止软链接",
                 "errors.skill.symlink_forbidden",
             )
+        resolved = path.resolve()
+        root_resolved = root.resolve()
         try:
             resolved.relative_to(root_resolved)
         except ValueError:
@@ -74,13 +78,13 @@ class PathGuard:
 
     @staticmethod
     def validate_output_file(path: Path, outputs_dir: Path) -> Path:
-        resolved = path.resolve()
-        outputs_resolved = outputs_dir.resolve()
-        if resolved.is_symlink():
+        if path.is_symlink():
             raise ForbiddenError(
                 "禁止软链接",
                 "errors.skill.symlink_forbidden",
             )
+        resolved = path.resolve()
+        outputs_resolved = outputs_dir.resolve()
         try:
             resolved.relative_to(outputs_resolved)
         except ValueError:
@@ -102,9 +106,25 @@ class PathGuard:
 
     @staticmethod
     def validate_zip_entry_name(name: str) -> None:
-        if name.startswith("/") or ".." in name.split("/"):
+        if not name or not name.strip():
+            raise ForbiddenError(
+                "ZIP 条目名无效",
+                "errors.skill.path_traversal_in_zip",
+            )
+        if _CONTROL_CHAR_RE.search(name):
+            raise ForbiddenError(
+                "ZIP 条目名包含非法字符",
+                "errors.skill.path_traversal_in_zip",
+            )
+        normalized = name.replace("\\", "/")
+        if normalized.startswith("/") or ".." in normalized.split("/"):
             raise ForbiddenError(
                 "禁止绝对路径或路径穿越",
+                "errors.skill.path_traversal_in_zip",
+            )
+        if re.match(r"^[A-Za-z]:", normalized):
+            raise ForbiddenError(
+                "禁止 Windows 绝对路径",
                 "errors.skill.path_traversal_in_zip",
             )
 

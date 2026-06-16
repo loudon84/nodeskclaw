@@ -2,13 +2,13 @@ import asyncio
 import json
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_db, require_org_member
 from app.core.exceptions import NotFoundError, BadRequestError
-from app.models.hermes_skill.hermes_task import HermesTask, TaskStatus
+from app.models.hermes_skill.hermes_task import HermesTask, TaskStatus, EventType
 from app.schemas.hermes_skill.task import TaskRead
 from app.schemas.hermes_skill.artifact import ArtifactRead
 from app.services.hermes_skill.task_service import TaskService
@@ -18,6 +18,39 @@ from app.services.hermes_skill.skill_audit_logger import SkillAuditLogger
 from app.services.hermes_skill.permission_checker import PermissionChecker
 
 router = APIRouter()
+
+_EVENT_TITLES: dict[str, str] = {
+    EventType.TASK_CREATED.value: "任务创建",
+    EventType.TASK_QUEUED.value: "任务入队",
+    EventType.TASK_ACCEPTED.value: "任务已接受",
+    EventType.TASK_STARTED.value: "任务开始",
+    EventType.TASK_RETRYING.value: "任务重试",
+    EventType.TASK_CANCEL_REQUESTED.value: "取消请求",
+    EventType.TASK_COMPLETED.value: "任务完成",
+    EventType.TASK_FAILED.value: "任务失败",
+    EventType.TASK_CANCELLED.value: "任务已取消",
+    EventType.TASK_TIMEOUT.value: "任务超时",
+    EventType.HERMES_RUN_CREATED.value: "Hermes Run 创建",
+    EventType.HERMES_RUN_STARTED.value: "Hermes Run 开始",
+    EventType.HERMES_RUN_DELTA.value: "Hermes Run 增量",
+    EventType.HERMES_RUN_COMPLETED.value: "Hermes Run 完成",
+    EventType.HERMES_RUN_FAILED.value: "Hermes Run 失败",
+    EventType.ARTIFACT_SCAN_STARTED.value: "产物扫描开始",
+    EventType.ARTIFACT_CREATED.value: "产物创建",
+    EventType.ARTIFACT_SCAN_COMPLETED.value: "产物扫描完成",
+    EventType.ARTIFACT_SCAN_FAILED.value: "产物扫描失败",
+}
+
+
+def _unwrap_event_payload(payload: dict | None) -> dict:
+    if not payload:
+        return {}
+    if payload.get("source") == "hermes" and isinstance(payload.get("payload"), dict):
+        inner = dict(payload["payload"])
+        if payload.get("hermes_event_seq") is not None:
+            inner["hermes_event_seq"] = payload["hermes_event_seq"]
+        return inner
+    return payload
 
 
 def _ok(data: Any = None, message: str = "success") -> dict:
@@ -89,14 +122,45 @@ async def get_task(
     return _ok(TaskRead.model_validate(task).model_dump())
 
 
+@router.get("/tasks/{task_id}/timeline")
+async def get_task_timeline(
+    task_id: str,
+    user_org=Depends(require_org_member),
+    db: AsyncSession = Depends(get_db),
+):
+    user, org = user_org
+    if user:
+        await PermissionChecker.require_permission(db, user.id, org.id, "hermes_task:view")
+    task_service = TaskService(db)
+    task = await task_service.get_task(task_id, org.id)
+    event_service = TaskEventService(db)
+    events = await event_service.get_events(task_id, org.id)
+    items = []
+    for event in events:
+        payload = _unwrap_event_payload(event.payload)
+        items.append({
+            "event_seq": event.event_seq,
+            "event_type": event.event_type.value,
+            "title": _EVENT_TITLES.get(event.event_type.value, event.event_type.value),
+            "timestamp": event.created_at.isoformat() if event.created_at else None,
+            "payload": payload,
+        })
+    return _ok({
+        "task_id": task.id,
+        "task_no": task.task_no,
+        "status": task.status.value if hasattr(task.status, "value") else task.status,
+        "items": items,
+    })
+
+
 @router.get("/tasks/{task_id}/events")
 async def stream_task_events(
     task_id: str,
+    request: Request,
     user_org=Depends(require_org_member),
     db: AsyncSession = Depends(get_db),
     last_event_id: str | None = None,
 ):
-    from fastapi import Request
     from app.core.config import settings as _settings
 
     user, org = user_org
@@ -110,9 +174,11 @@ async def stream_task_events(
     event_bus = EventBus.get_instance()
 
     last_seq = None
-    if last_event_id:
+    header_last = request.headers.get("Last-Event-ID") or request.headers.get("last-event-id")
+    resume_id = header_last or last_event_id
+    if resume_id:
         try:
-            last_seq = int(last_event_id.split("-")[-1])
+            last_seq = int(resume_id.split("-")[-1])
         except (ValueError, IndexError):
             pass
 
@@ -127,11 +193,13 @@ async def stream_task_events(
         existing_events = await event_service.get_events(task_id, org.id, start_after_seq=last_seq)
 
         for event in existing_events:
+            payload = _unwrap_event_payload(event.payload)
             data = json.dumps({
                 "task_id": task_id,
                 "event_type": event.event_type.value,
                 "event_seq": event.event_seq,
-                "payload": event.payload,
+                "payload": payload,
+                "hermes_event_seq": payload.get("hermes_event_seq"),
                 "created_at": event.created_at.isoformat() if event.created_at else None,
             })
             yield f"id: {task_id}-{event.event_seq}\nevent: {event.event_type.value}\ndata: {data}\n\n"
@@ -160,11 +228,13 @@ async def stream_task_events(
                     continue
                 seen_seqs.add(event.event_seq)
 
+                payload = _unwrap_event_payload(event.payload)
                 data = json.dumps({
                     "task_id": task_id,
                     "event_type": event.event_type.value,
                     "event_seq": event.event_seq,
-                    "payload": event.payload,
+                    "payload": payload,
+                    "hermes_event_seq": payload.get("hermes_event_seq"),
                     "created_at": event.created_at.isoformat() if event.created_at else None,
                 })
                 yield f"id: {task_id}-{event.event_seq}\nevent: {event.event_type.value}\ndata: {data}\n\n"
@@ -215,6 +285,15 @@ async def cancel_task(
     if task.status not in cancellable:
         raise BadRequestError("当前任务状态不可取消", "errors.task.cannot_cancel")
 
+    event_service = TaskEventService(db)
+    if task.status in {TaskStatus.QUEUED, TaskStatus.ACCEPTED}:
+        await event_service.write_event(
+            task_id=task_id,
+            org_id=org.id,
+            event_type=EventType.TASK_CANCEL_REQUESTED,
+            payload={"requested_by": user.id if user else None},
+        )
+
     if task.hermes_run_id:
         try:
             from app.services.hermes_skill.hermes_agent_adapter import HermesAgentAdapter
@@ -245,7 +324,7 @@ async def retry_task(
 ):
     user, org = user_org
     if user:
-        await PermissionChecker.require_permission(db, user.id, org.id, "hermes_task:create")
+        await PermissionChecker.require_permission(db, user.id, org.id, "hermes_task:retry")
     service = TaskService(db)
     task = await service.get_task(task_id, org.id)
 
@@ -269,7 +348,7 @@ async def retry_task(
 
     audit_logger = SkillAuditLogger(db)
     await audit_logger.log(
-        action="hermes.task.created",
+        action="hermes.task.retried",
         target_id=new_task.id,
         org_id=org.id,
         actor_id=user.id if user else "",

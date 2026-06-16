@@ -12,9 +12,12 @@ class ArtifactSummary(BaseModel):
     agent_id: str | None = None
     workspace_id: str | None = None
     file_name: str
+    title: str | None = None
     relative_path: str | None = None
     content_type: str | None = None
+    artifact_type: str | None = None
     size_bytes: int | None = None
+    sha256: str | None = None
     download_count: int = 0
     permission_scope: str = "workspace"
     preview_supported: bool = False
@@ -34,8 +37,11 @@ class ArtifactDetail(BaseModel):
     agent_id: str | None = None
     workspace_id: str | None = None
     file_name: str
+    title: str | None = None
+    description: str | None = None
     relative_path: str | None = None
     content_type: str | None = None
+    artifact_type: str | None = None
     size_bytes: int | None = None
     sha256: str | None = None
     storage_type: str = "local"

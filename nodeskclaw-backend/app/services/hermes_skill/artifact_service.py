@@ -27,12 +27,17 @@ from app.services.hermes_skill.artifact_audit_service import ArtifactAuditServic
 from app.services.hermes_skill.download_token_service import DownloadTokenService
 from app.services.hermes_skill.artifact_permission_service import ArtifactPermissionService
 from app.services.hermes_skill.task_event_service import TaskEventService
+from app.services.hermes_skill.output_manifest_parser import (
+    guess_artifact_type,
+    parse_manifest_file,
+    resolve_artifact_title,
+)
 from app.models.hermes_skill.hermes_task import EventType
 
 logger = logging.getLogger(__name__)
 
 PREVIEWABLE_PREFIXES = ("text/", "image/", "application/json")
-PREVIEW_MAX_SIZE_BYTES = 512 * 1024
+PREVIEW_MAX_SIZE_BYTES = 2 * 1024 * 1024
 
 
 def _max_artifact_size_bytes() -> int:
@@ -80,10 +85,30 @@ class ArtifactService:
 
         artifacts: list[HermesArtifact] = []
         max_size = _max_artifact_size_bytes()
+        manifest_entries = parse_manifest_file(outputs_dir / "manifest.json")
+
+        skill_title: str | None = None
+        if task.skill_id:
+            try:
+                from app.models.hermes_skill.skill import HermesSkill
+                from sqlalchemy import select as sa_select
+                skill_result = await self.db.execute(
+                    sa_select(HermesSkill).where(
+                        not_deleted(HermesSkill),
+                        HermesSkill.skill_id == task.skill_id,
+                    ).limit(1)
+                )
+                skill = skill_result.scalar_one_or_none()
+                if skill:
+                    skill_title = skill.title
+            except Exception:
+                pass
 
         try:
             for file_path in outputs_dir.rglob("*"):
                 if not file_path.is_file():
+                    continue
+                if file_path.name == "manifest.json" and file_path.parent == outputs_dir:
                     continue
 
                 try:
@@ -107,6 +132,19 @@ class ArtifactService:
                 relative_path = str(file_path.relative_to(outputs_dir))
                 content_type = self._guess_content_type(file_path)
                 size_bytes = file_path.stat().st_size
+                manifest_entry = manifest_entries.get(file_path.name)
+                artifact_title = resolve_artifact_title(
+                    file_path,
+                    manifest_entry,
+                    task.request_summary,
+                    skill_title,
+                )
+                artifact_type = (
+                    manifest_entry.artifact_type
+                    if manifest_entry and manifest_entry.artifact_type
+                    else guess_artifact_type(file_path)
+                )
+                description = manifest_entry.description if manifest_entry else None
 
                 existing = await self.db.execute(
                     select(HermesArtifact).where(
@@ -125,6 +163,8 @@ class ArtifactService:
                     permission_scope = "task_creator"
 
                 preview_supported = content_type.startswith(PREVIEWABLE_PREFIXES) if content_type else False
+                if manifest_entry and manifest_entry.preview is not None:
+                    preview_supported = manifest_entry.preview
 
                 artifact = HermesArtifact(
                     id=str(uuid.uuid4()),
@@ -142,6 +182,9 @@ class ArtifactService:
                     permission_scope=permission_scope,
                     source_run_id=task.hermes_run_id,
                     preview_supported=preview_supported,
+                    title=artifact_title,
+                    description=description,
+                    artifact_type=artifact_type,
                     metadata_json=None,
                     created_by=task.user_id,
                 )
@@ -181,6 +224,7 @@ class ArtifactService:
         task_id: str | None = None,
         workspace_id: str | None = None,
         skill_id: str | None = None,
+        agent_id: str | None = None,
         content_type: str | None = None,
         page: int = 1,
         page_size: int = 20,
@@ -198,6 +242,8 @@ class ArtifactService:
             base = base.where(HermesArtifact.workspace_id == workspace_id)
         if skill_id:
             base = base.where(HermesArtifact.skill_id == skill_id)
+        if agent_id:
+            base = base.where(HermesArtifact.agent_id == agent_id)
         if content_type:
             base = base.where(HermesArtifact.content_type == content_type)
 
@@ -253,7 +299,7 @@ class ArtifactService:
         artifact_id: str,
         org_id: str,
         user_id: str | None = None,
-    ) -> tuple[HermesArtifact, str]:
+    ) -> tuple[HermesArtifact, str, bool, str]:
         artifact = await self.get_artifact(artifact_id, org_id)
 
         if user_id:
@@ -273,17 +319,36 @@ class ArtifactService:
         if not file_path.is_file():
             raise ArtifactFileNotFoundError()
 
+        truncated = False
+        preview_type = "text"
         try:
             stat = file_path.stat()
             if stat.st_size > PREVIEW_MAX_SIZE_BYTES:
-                raise ArtifactPreviewUnsupportedError()
+                truncated = True
         except OSError:
             raise ArtifactFileNotFoundError()
 
         if artifact.content_type == "application/octet-stream":
             raise ArtifactPreviewUnsupportedError()
 
-        content = file_path.read_text(encoding="utf-8", errors="replace")
+        raw_bytes = file_path.read_bytes()
+        if len(raw_bytes) > PREVIEW_MAX_SIZE_BYTES:
+            raw_bytes = raw_bytes[:PREVIEW_MAX_SIZE_BYTES]
+            truncated = True
+
+        content = raw_bytes.decode("utf-8", errors="replace")
+
+        if artifact.content_type == "application/json" or artifact.artifact_type == "json":
+            import json as json_mod
+            try:
+                content = json_mod.dumps(json_mod.loads(content), ensure_ascii=False, indent=2)
+                preview_type = "json"
+            except json_mod.JSONDecodeError:
+                preview_type = "text"
+        elif artifact.content_type == "text/html" or artifact.artifact_type == "html":
+            import html
+            content = html.escape(content)
+            preview_type = "html"
 
         await self.audit.log_artifact_action(
             action="artifact.previewed",
@@ -291,7 +356,7 @@ class ArtifactService:
             org_id=org_id,
             actor_id=user_id,
         )
-        return artifact, content
+        return artifact, content, truncated, preview_type
 
     async def download(
         self,

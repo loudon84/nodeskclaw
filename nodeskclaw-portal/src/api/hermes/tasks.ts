@@ -15,6 +15,7 @@ export interface HermesTask {
   agent_id: string | null
   profile_id: string | null
   workspace_id: string | null
+  installation_id: string | null
   status: string
   hermes_run_id: string | null
   event_url: string | null
@@ -32,6 +33,7 @@ export interface TaskListParams {
   status?: string
   tool_name?: string
   agent_id?: string
+  workspace_id?: string
 }
 
 export interface TaskListResult {
@@ -49,6 +51,21 @@ export interface TaskEvent {
   created_at: string | null
 }
 
+export interface TaskTimelineItem {
+  event_seq: number
+  event_type: string
+  title: string
+  timestamp: string | null
+  payload: Record<string, unknown> | null
+}
+
+export interface TaskTimeline {
+  task_id: string
+  task_no: string
+  status: string
+  items: TaskTimelineItem[]
+}
+
 export async function listTasks(params?: TaskListParams): Promise<TaskListResult> {
   const { data } = await api.get('/hermes/tasks', { params })
   return unwrapEnvelope<TaskListResult>(data)
@@ -57,6 +74,11 @@ export async function listTasks(params?: TaskListParams): Promise<TaskListResult
 export async function getTask(taskId: string): Promise<HermesTask> {
   const { data } = await api.get(`/hermes/tasks/${taskId}`)
   return unwrapEnvelope<HermesTask>(data)
+}
+
+export async function getTaskTimeline(taskId: string): Promise<TaskTimeline> {
+  const { data } = await api.get(`/hermes/tasks/${taskId}/timeline`)
+  return unwrapEnvelope<TaskTimeline>(data)
 }
 
 export async function cancelTask(taskId: string): Promise<HermesTask> {

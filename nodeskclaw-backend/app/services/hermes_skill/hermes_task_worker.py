@@ -11,6 +11,7 @@ from app.core.deps import async_session_factory
 from app.models.hermes_skill.hermes_task import HermesTask, TaskStatus, EventType
 from app.models.base import not_deleted
 from app.services.hermes_skill.hermes_agent_adapter import HermesAgentAdapter
+from app.services.hermes_skill.hermes_run_state_resolver import HermesRunStateResolver, RunStateTracker
 from app.services.hermes_skill.task_event_service import TaskEventService
 from app.services.hermes_skill.task_service import TaskService
 from app.services.hermes_skill.skill_audit_logger import SkillAuditLogger
@@ -135,6 +136,16 @@ class HermesTaskWorker:
             )
             await db.flush()
 
+            if await event_service.has_event(task.id, EventType.TASK_CANCEL_REQUESTED):
+                await task_service.mark_failed(
+                    task,
+                    error_code="TASK_CANCELLED",
+                    error_message="任务已请求取消",
+                )
+                task.status = TaskStatus.CANCELLED
+                await db.flush()
+                return
+
             adapter = HermesAgentAdapter(db)
             try:
                 await adapter.submit_run(task, task.arguments or {})
@@ -160,24 +171,31 @@ class HermesTaskWorker:
             await db.flush()
 
             stream_interrupted = False
+            state_tracker = RunStateTracker()
             try:
                 async for event_data in adapter.read_run_events(task):
                     try:
-                        converted = HermesAgentAdapter.convert_events([event_data])
+                        converted = HermesRunStateResolver.convert_hermes_event(event_data)
                     except Exception as exc:
                         logger.warning("convert_events failed for task %s: %s", task.id, exc)
                         continue
-                    for ce in converted:
-                        try:
-                            await event_service.write_event(
-                                task_id=task.id,
-                                org_id=task.org_id,
-                                event_type=ce["event_type"],
-                                payload=ce["payload"],
-                                event_seq=ce.get("event_seq"),
-                            )
-                        except Exception as exc:
-                            logger.warning("write_event failed for task %s: %s", task.id, exc)
+                    if not converted:
+                        continue
+                    state_tracker.observe_event_type(
+                        converted["event_type"],
+                        converted.get("payload"),
+                    )
+                    try:
+                        await event_service.write_event(
+                            task_id=task.id,
+                            org_id=task.org_id,
+                            event_type=converted["event_type"],
+                            payload=converted.get("payload"),
+                            source="hermes",
+                            source_event_seq=converted.get("source_event_seq"),
+                        )
+                    except Exception as exc:
+                        logger.warning("write_event failed for task %s: %s", task.id, exc)
                     await db.flush()
             except Exception as exc:
                 logger.warning("read_run_events stream error for task %s: %s", task.id, exc)
@@ -186,40 +204,63 @@ class HermesTaskWorker:
             await db.refresh(task)
 
             if task.status == TaskStatus.RUNNING:
-                if stream_interrupted:
+                run_status_value: str | None = None
+                resolved = state_tracker.resolve_after_stream(
+                    stream_interrupted=stream_interrupted,
+                    run_status=None,
+                )
+
+                if resolved is None:
                     try:
                         run_status = await adapter.get_run_status(task)
-                        run_state = run_status.get("status", "unknown")
+                        run_status_value = run_status.get("status", "unknown")
                     except Exception as exc:
                         logger.error("get_run_status failed for task %s: %s", task.id, exc)
-                        run_state = "unknown"
+                        run_status_value = "unknown"
 
-                    if run_state == "completed":
-                        task.status = TaskStatus.COMPLETED
-                        task.run_finished_at = datetime.now(timezone.utc)
-                        task.completed_at = datetime.now(timezone.utc)
-                    elif run_state == "failed":
-                        await task_service.mark_failed(
-                            task,
-                            error_code="RUN_FAILED",
-                            error_message="Run failed after stream interrupt",
-                        )
-                    elif run_state == "running":
-                        task.worker_id = None
-                        task.locked_at = None
-                        task.dispatch_status = "running"
-                        await db.flush()
-                        return
-                    else:
-                        await task_service.mark_failed(
-                            task,
-                            error_code="RUN_STATUS_UNKNOWN",
-                            error_message=f"Unknown run status: {run_state}",
-                        )
-                else:
+                    resolved = state_tracker.resolve_after_stream(
+                        stream_interrupted=stream_interrupted,
+                        run_status=run_status_value,
+                    )
+                    if resolved is None and run_status_value:
+                        resolved = state_tracker.map_hermes_run_status(run_status_value)
+
+                if resolved is None and (
+        run_status_value in (None, "unknown", "running", "in_progress", "created", "queued")
+        or state_tracker.map_hermes_run_status(str(run_status_value or "unknown")) == TaskStatus.RUNNING
+    ):
+                    task.worker_id = None
+                    task.locked_at = None
+                    task.dispatch_status = "running"
+                    await db.flush()
+                    return
+
+                if resolved == TaskStatus.FAILED:
+                    await task_service.mark_failed(
+                        task,
+                        error_code="RUN_FAILED",
+                        error_message=state_tracker.last_error or "Run failed",
+                    )
+                elif resolved == TaskStatus.CANCELLED:
+                    task.status = TaskStatus.CANCELLED
+                    task.run_finished_at = datetime.now(timezone.utc)
+                    await task_service.update_status(task.id, task.org_id, TaskStatus.CANCELLED)
+                elif resolved == TaskStatus.COMPLETED:
                     task.status = TaskStatus.COMPLETED
                     task.run_finished_at = datetime.now(timezone.utc)
                     task.completed_at = datetime.now(timezone.utc)
+                elif resolved == TaskStatus.TIMEOUT:
+                    await task_service.mark_timeout(
+                        task,
+                        (datetime.now(timezone.utc) - task.run_started_at).total_seconds()
+                        if task.run_started_at else 0,
+                    )
+                elif resolved is None:
+                    await task_service.mark_failed(
+                        task,
+                        error_code="RUN_STATUS_UNKNOWN",
+                        error_message=f"Unknown run status: {run_status_value}",
+                    )
 
                 if task.status == TaskStatus.COMPLETED:
                     await task_service.mark_completed(task)

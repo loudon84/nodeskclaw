@@ -3,7 +3,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.services.hermes_skill.mcp_tool_mapper import McpToolMapper
 from app.services.hermes_skill.permission_checker import PermissionChecker
-from app.models.hermes_skill.hermes_task import HermesTask, TaskStatus
+from app.services.hermes_skill.skill_routing_service import RoutingResult, ROUTING_REASON_SINGLE, SkillRoutingService
+from app.models.hermes_skill.hermes_task import TaskStatus
 from app.core.exceptions import ForbiddenError, NotFoundError, BadRequestError
 
 
@@ -56,35 +57,18 @@ async def test_tools_call_tool_not_found():
 @pytest.mark.asyncio
 async def test_tools_call_skill_not_installed():
     db = AsyncMock()
-
-    skill = MagicMock()
-    skill.id = "skill-1"
-    skill.tool_name = "test_tool"
-    skill.is_mcp_exposed = True
-    skill.is_active = True
-
-    mock_skill_result = MagicMock()
-    mock_skill_result.scalar_one_or_none.return_value = skill
-
-    mock_install_result = MagicMock()
-    mock_install_result.scalar_one_or_none.return_value = None
-
-    call_count = 0
-
-    async def mock_execute(stmt):
-        nonlocal call_count
-        call_count += 1
-        if call_count <= 1:
-            return mock_skill_result
-        return mock_install_result
-
-    db.execute.side_effect = mock_execute
-
     mapper = McpToolMapper(db)
-    with patch.object(PermissionChecker, "require_permission", return_value=None):
+    with patch.object(PermissionChecker, "require_permission", return_value=None), \
+         patch.object(SkillRoutingService, "resolve_by_tool_name", new_callable=AsyncMock) as mock_resolve, \
+         patch("app.services.hermes_skill.skill_audit_logger.SkillAuditLogger") as mock_audit_cls:
+        mock_resolve.side_effect = NotFoundError(
+            "Skill test_tool 未安装到任何 Agent",
+            "errors.skill.installation_not_found",
+        )
+        mock_audit_cls.return_value = AsyncMock()
         with pytest.raises(NotFoundError) as exc_info:
             await mapper.call_tool("test_tool", {}, "org-1", "user-1")
-    assert exc_info.value.message_key == "errors.skill.tool_not_installed"
+    assert exc_info.value.message_key == "errors.skill.installation_not_found"
 
 
 @pytest.mark.asyncio
@@ -93,9 +77,8 @@ async def test_tools_call_invalid_params():
 
     skill = MagicMock()
     skill.id = "skill-1"
+    skill.skill_id = "skill-ext-1"
     skill.tool_name = "test_tool"
-    skill.is_mcp_exposed = True
-    skill.is_active = True
     skill.input_schema = {
         "type": "object",
         "properties": {"name": {"type": "string"}},
@@ -108,22 +91,15 @@ async def test_tools_call_invalid_params():
     installation.workspace_id = "ws-1"
     installation.id = "inst-1"
 
-    mock_skill_result = MagicMock()
-    mock_skill_result.scalar_one_or_none.return_value = skill
-
-    mock_install_result = MagicMock()
-    mock_install_result.scalar_one_or_none.return_value = installation
-
-    call_count = 0
-
-    async def mock_execute(stmt):
-        nonlocal call_count
-        call_count += 1
-        if call_count <= 1:
-            return mock_skill_result
-        return mock_install_result
-
-    db.execute.side_effect = mock_execute
+    routing_result = RoutingResult(
+        matched=True,
+        installation=installation,
+        skill=skill,
+        reason=ROUTING_REASON_SINGLE,
+        installation_id="inst-1",
+        skill_id="skill-ext-1",
+        agent_id="agent-1",
+    )
 
     mapper = McpToolMapper(db)
     class _ValidationError(Exception):
@@ -137,7 +113,9 @@ async def test_tools_call_invalid_params():
 
     with patch.object(PermissionChecker, "require_permission", return_value=None), \
          patch("app.services.member_skill_service.require_invoke_skill", new_callable=AsyncMock), \
+         patch.object(SkillRoutingService, "resolve_by_tool_name", new_callable=AsyncMock) as mock_resolve, \
          patch.dict("sys.modules", {"jsonschema": mock_jsonschema}):
+        mock_resolve.return_value = routing_result
         with pytest.raises(BadRequestError) as exc_info:
             await mapper.call_tool("test_tool", {"invalid": 123}, "org-1", "user-1")
     assert exc_info.value.message_key == "errors.skill.input_schema_validation_failed"
@@ -170,24 +148,15 @@ async def test_tools_call_creates_task_and_events():
     installation.workspace_id = "ws-1"
     installation.id = "inst-1"
 
-    mock_skill_result = MagicMock()
-    mock_skill_result.scalar_one_or_none.return_value = skill
-
-    mock_install_result = MagicMock()
-    mock_install_result.scalar_one_or_none.return_value = installation
-
-    call_count = 0
-
-    async def mock_execute(stmt):
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
-            return mock_skill_result
-        if call_count == 2:
-            return mock_install_result
-        return MagicMock()
-
-    db.execute.side_effect = mock_execute
+    routing_result = RoutingResult(
+        matched=True,
+        installation=installation,
+        skill=skill,
+        reason=ROUTING_REASON_SINGLE,
+        installation_id="inst-1",
+        skill_id="skill-ext-1",
+        agent_id="agent-1",
+    )
 
     created_task = MagicMock()
     created_task.id = "task-uuid"
@@ -199,8 +168,10 @@ async def test_tools_call_creates_task_and_events():
     mapper = McpToolMapper(db)
     with patch.object(PermissionChecker, "require_permission", return_value=None), \
          patch("app.services.member_skill_service.require_invoke_skill", new_callable=AsyncMock), \
+         patch.object(SkillRoutingService, "resolve_by_tool_name", new_callable=AsyncMock) as mock_resolve, \
          patch("app.services.hermes_skill.mcp_tool_mapper.TaskService") as mock_task_svc_cls, \
          patch("app.services.hermes_skill.skill_audit_logger.SkillAuditLogger") as mock_audit_cls:
+        mock_resolve.return_value = routing_result
         mock_task_svc = AsyncMock()
         mock_task_svc.create_task.return_value = created_task
         mock_task_svc_cls.return_value = mock_task_svc

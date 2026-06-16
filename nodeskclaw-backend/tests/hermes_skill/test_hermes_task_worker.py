@@ -116,7 +116,9 @@ async def test_execute_task_agent_unreachable():
         mock_adapter = AsyncMock()
         mock_adapter.submit_run.side_effect = Exception("Agent unreachable")
         mock_adapter_cls.return_value = mock_adapter
-        mock_event_svc.return_value = AsyncMock()
+        mock_event_svc_inst = AsyncMock()
+        mock_event_svc_inst.has_event.return_value = False
+        mock_event_svc.return_value = mock_event_svc_inst
         mock_task_svc = AsyncMock()
         mock_task_svc.mark_failed.side_effect = lambda task, **kwargs: setattr(task, "status", TaskStatus.FAILED) or setattr(task, "error_code", kwargs.get("error_code")) or task
         mock_task_svc_cls.return_value = mock_task_svc
@@ -165,6 +167,7 @@ async def test_execute_task_full_lifecycle():
         mock_adapter = AsyncMock()
         mock_adapter.read_run_events = MagicMock(side_effect=lambda _task: _empty_event_stream())
         mock_adapter.submit_run.return_value = {"run_id": "run-1"}
+        mock_adapter.get_run_status.return_value = {"status": "completed"}
         mock_adapter_cls.return_value = mock_adapter
         mock_event_svc_inst = AsyncMock()
         mock_event_svc_inst.has_event.return_value = False
@@ -245,6 +248,7 @@ async def test_scan_failed_does_not_override_completed():
         mock_adapter = AsyncMock()
         mock_adapter.submit_run.return_value = {"run_id": "run-scan"}
         mock_adapter.read_run_events = MagicMock(side_effect=lambda _task: _empty_event_stream())
+        mock_adapter.get_run_status.return_value = {"status": "completed"}
         mock_adapter_cls.return_value = mock_adapter
         mock_event_svc_inst = AsyncMock()
         mock_event_svc_inst.has_event.return_value = False

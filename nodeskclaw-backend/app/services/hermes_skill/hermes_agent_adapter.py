@@ -178,38 +178,8 @@ class HermesAgentAdapter:
 
     @staticmethod
     def convert_events(hermes_events: list[dict]) -> list[dict]:
-        converted = []
-        for event in hermes_events:
-            hermes_type = event.get("event_type", "")
-            event_seq = event.get("event_seq", 0)
-            payload = event.get("payload", {})
-
-            mapping = {
-                "hermes.run.created": EventType.HERMES_RUN_CREATED,
-                "hermes.run.started": EventType.HERMES_RUN_STARTED,
-                "hermes.run.delta": EventType.HERMES_RUN_DELTA,
-                "hermes.run.completed": EventType.HERMES_RUN_COMPLETED,
-                "hermes.run.failed": EventType.HERMES_RUN_FAILED,
-            }
-
-            task_event_type = mapping.get(hermes_type)
-            if not task_event_type:
-                continue
-
-            if hermes_type == "hermes.run.completed":
-                status = payload.get("status", "completed")
-                if status == "failed":
-                    task_event_type = EventType.TASK_FAILED
-                else:
-                    task_event_type = EventType.TASK_COMPLETED
-
-            converted.append({
-                "event_type": task_event_type,
-                "event_seq": event_seq,
-                "payload": payload,
-            })
-
-        return converted
+        from app.services.hermes_skill.hermes_run_state_resolver import HermesRunStateResolver
+        return HermesRunStateResolver.convert_events(hermes_events)
 
     @staticmethod
     def _get_base_url(instance: Instance) -> str | None:

@@ -11,6 +11,7 @@ from app.models.hermes_skill.skill import HermesSkill
 from app.models.hermes_skill.skill_installation import HermesSkillInstallation
 from app.models.org_member_skill_grant import OrgMemberSkillGrant
 from app.services.hermes_skill.permission_checker import PermissionChecker
+from app.services.hermes_skill.skill_routing_service import SkillRoutingService
 from app.services.hermes_skill.task_service import TaskService
 
 logger = logging.getLogger(__name__)
@@ -93,33 +94,33 @@ class McpToolMapper:
             await PermissionChecker.require_permission(self.db, user_id, org_id, "skill:view")
             await PermissionChecker.require_permission(self.db, user_id, org_id, "skill:invoke")
 
-        result = await self.db.execute(
-            select(HermesSkill).where(
-                not_deleted(HermesSkill),
-                HermesSkill.org_id == org_id,
-                HermesSkill.tool_name == tool_name,
-                HermesSkill.is_mcp_exposed.is_(True),
-                HermesSkill.is_active.is_(True),
-            )
-        )
-        skill = result.scalar_one_or_none()
-        if not skill:
-            raise NotFoundError(f"MCP Tool {tool_name} 不存在", "errors.skill.tool_not_found")
+        agent_arguments, routing = SkillRoutingService.extract_routing(arguments or {})
 
-        install_result = await self.db.execute(
-            select(HermesSkillInstallation).where(
-                not_deleted(HermesSkillInstallation),
-                HermesSkillInstallation.skill_id == skill.skill_id,
-                HermesSkillInstallation.org_id == org_id,
-                HermesSkillInstallation.status == "installed",
+        routing_service = SkillRoutingService(self.db)
+        try:
+            routing_result = await routing_service.resolve_by_tool_name(
+                tool_name=tool_name,
+                org_id=org_id,
+                routing=routing,
             )
-        )
-        installation = install_result.scalar_one_or_none()
-        if not installation:
-            raise NotFoundError(
-                f"Skill {tool_name} 未安装到任何 Agent",
-                "errors.skill.tool_not_installed",
+            skill = routing_result.skill
+            installation = routing_result.installation
+            if not skill or not installation:
+                raise NotFoundError(
+                    f"Skill {tool_name} 未安装到任何 Agent",
+                    "errors.skill.installation_not_found",
+                )
+        except (NotFoundError, BadRequestError) as exc:
+            from app.services.hermes_skill.skill_audit_logger import SkillAuditLogger
+            audit_logger = SkillAuditLogger(self.db)
+            await audit_logger.log(
+                action="hermes.skill.routing.failed",
+                target_id=tool_name,
+                org_id=org_id,
+                actor_id=user_id or "",
+                details={"tool_name": tool_name, "error": exc.message_key},
             )
+            raise
 
         if user_id:
             from app.services.member_skill_service import require_invoke_skill
@@ -141,7 +142,7 @@ class McpToolMapper:
         if skill.input_schema:
             try:
                 import jsonschema
-                jsonschema.validate(instance=arguments, schema=skill.input_schema)
+                jsonschema.validate(instance=agent_arguments, schema=skill.input_schema)
             except ImportError:
                 pass
             except jsonschema.ValidationError as exc:
@@ -159,11 +160,25 @@ class McpToolMapper:
             workspace_id=installation.workspace_id,
             installation_id=installation.id,
             user_id=user_id or None,
-            arguments=arguments,
+            arguments=agent_arguments,
         )
 
         from app.services.hermes_skill.skill_audit_logger import SkillAuditLogger
         audit_logger = SkillAuditLogger(self.db)
+        await audit_logger.log(
+            action="hermes.skill.routing.resolved",
+            target_id=task.id,
+            org_id=org_id,
+            actor_id=user_id or "",
+            details={
+                "task_id": task.id,
+                "installation_id": installation.id,
+                "routing_reason": routing_result.reason,
+                "agent_id": installation.agent_id,
+                "profile_id": installation.profile_id,
+                "workspace_id": installation.workspace_id,
+            },
+        )
         await audit_logger.log(
             action="hermes.skill.invoked",
             target_id=task.id,
@@ -186,4 +201,6 @@ class McpToolMapper:
             "task_no": task.task_no,
             "event_url": task.event_url,
             "artifact_url": task.artifact_url,
+            "routing_reason": routing_result.reason,
+            "installation_id": installation.id,
         }

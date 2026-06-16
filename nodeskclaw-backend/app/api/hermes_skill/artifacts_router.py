@@ -31,6 +31,7 @@ async def list_artifacts(
     task_id: str | None = Query(None),
     workspace_id: str | None = Query(None),
     skill_id: str | None = Query(None),
+    agent_id: str | None = Query(None),
     content_type: str | None = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
@@ -47,6 +48,7 @@ async def list_artifacts(
         task_id=task_id,
         workspace_id=workspace_id,
         skill_id=skill_id,
+        agent_id=agent_id,
         content_type=content_type,
         page=page,
         page_size=page_size,
@@ -81,13 +83,14 @@ async def preview_artifact(
     if user:
         await PermissionChecker.require_permission(db, user.id, org.id, "hermes_artifact:view")
     service = ArtifactService(db)
-    artifact, content = await service.preview(artifact_id, org.id, user_id=user.id if user else None)
-    truncated = len(content) >= 512 * 1024
+    artifact, content, truncated, preview_type = await service.preview(
+        artifact_id, org.id, user_id=user.id if user else None,
+    )
     resp = ArtifactPreviewResponse(
         artifact_id=artifact_id,
         file_name=artifact.file_name,
         content_type=artifact.content_type or "text/plain",
-        preview_type="text",
+        preview_type=preview_type,
         content=content,
         truncated=truncated,
         size_bytes=artifact.size_bytes,
@@ -148,7 +151,7 @@ async def batch_download_artifacts(
 
     user, org = user_org
     if user:
-        await PermissionChecker.require_permission(db, user.id, org.id, "hermes_artifact:download")
+        await PermissionChecker.require_permission(db, user.id, org.id, "hermes_artifact:batch_download")
 
     task = await db.get(HermesTask, task_id)
     if not task or task.deleted_at is not None or task.org_id != org.id:
@@ -191,6 +194,16 @@ async def batch_download_artifacts(
 
     if not paths:
         raise ArtifactBatchEmptyError()
+
+    if user:
+        await audit.log_artifact_action(
+            action="artifact.batch_downloaded",
+            artifact_id=task_id,
+            org_id=org.id,
+            actor_id=user.id,
+            actor_name=user.display_name if user else None,
+            details={"task_id": task_id, "artifact_count": len(paths)},
+        )
 
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:

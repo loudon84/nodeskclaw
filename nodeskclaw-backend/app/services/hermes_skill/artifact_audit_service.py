@@ -93,3 +93,17 @@ class ArtifactAuditService:
             .limit(page_size)
         )
         return result.scalars().all(), total
+
+    async def count_actions_since(
+        self,
+        org_id: str,
+        action: str,
+        since: datetime,
+    ) -> int:
+        stmt = select(func.count()).where(
+            OperationAuditLog.org_id == org_id,
+            OperationAuditLog.target_type == "hermes_artifact",
+            OperationAuditLog.action == action,
+            OperationAuditLog.created_at >= since,
+        )
+        return (await self.db.execute(stmt)).scalar_one()

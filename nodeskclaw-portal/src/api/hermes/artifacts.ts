@@ -13,9 +13,12 @@ export interface Artifact {
   skill_id: string | null
   agent_id: string | null
   file_name: string
+  title: string | null
   content_type: string | null
+  artifact_type: string | null
   size_bytes: number | null
   sha256: string | null
+  source_run_id: string | null
   download_count: number
   created_at: string
 }
@@ -25,6 +28,7 @@ export interface ArtifactListParams {
   page_size?: number
   task_id?: string
   skill_id?: string
+  agent_id?: string
   content_type?: string
 }
 
@@ -60,6 +64,20 @@ export async function downloadArtifact(id: string, fileName: string) {
   const link = document.createElement('a')
   link.href = url
   link.download = fileName
+  link.click()
+  window.URL.revokeObjectURL(url)
+}
+
+export async function batchDownloadTaskArtifacts(taskId: string, artifactIds?: string[]) {
+  const { data } = await api.post(
+    `/hermes/tasks/${taskId}/artifacts/download`,
+    { artifact_ids: artifactIds ?? [] },
+    { responseType: 'blob' },
+  )
+  const url = window.URL.createObjectURL(data)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = 'artifacts.zip'
   link.click()
   window.URL.revokeObjectURL(url)
 }

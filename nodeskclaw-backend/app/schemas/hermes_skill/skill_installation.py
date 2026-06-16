@@ -28,6 +28,10 @@ class InstallationRead(BaseModel):
     error_message: str | None = None
     installed_by: str | None = None
     profile_root_path: str | None = None
+    is_default: bool = False
+    priority: int = 0
+    routing_scope: str | None = None
+    routing_metadata: dict | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -45,3 +49,16 @@ class InstallationListResult(BaseModel):
     total: int
     page: int
     page_size: int
+
+
+class InstallationRoutingUpdate(BaseModel):
+    is_default: bool | None = None
+    priority: int | None = None
+    routing_scope: str | None = None
+    routing_metadata: dict | None = None
+
+
+class RoutingTestRequest(BaseModel):
+    tool_name: str
+    workspace_id: str | None = None
+    routing: dict | None = None
