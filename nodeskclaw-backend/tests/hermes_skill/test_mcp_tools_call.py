@@ -114,8 +114,12 @@ async def test_tools_call_invalid_params():
     with patch.object(PermissionChecker, "require_permission", return_value=None), \
          patch("app.services.member_skill_service.require_invoke_skill", new_callable=AsyncMock), \
          patch.object(SkillRoutingService, "resolve_by_tool_name", new_callable=AsyncMock) as mock_resolve, \
+         patch("app.services.hermes_skill.mcp_tool_mapper.AgentAliasResolver") as mock_alias_cls, \
+         patch("app.services.hermes_skill.mcp_tool_mapper.HermesSkillAuthorizationService") as mock_authz_cls, \
          patch.dict("sys.modules", {"jsonschema": mock_jsonschema}):
         mock_resolve.return_value = routing_result
+        mock_alias_cls.return_value.enrich_routing = AsyncMock(return_value={})
+        mock_authz_cls.return_value.can_invoke = AsyncMock(return_value=True)
         with pytest.raises(BadRequestError) as exc_info:
             await mapper.call_tool("test_tool", {"invalid": 123}, "org-1", "user-1")
     assert exc_info.value.message_key == "errors.skill.input_schema_validation_failed"
@@ -170,8 +174,13 @@ async def test_tools_call_creates_task_and_events():
          patch("app.services.member_skill_service.require_invoke_skill", new_callable=AsyncMock), \
          patch.object(SkillRoutingService, "resolve_by_tool_name", new_callable=AsyncMock) as mock_resolve, \
          patch("app.services.hermes_skill.mcp_tool_mapper.TaskService") as mock_task_svc_cls, \
+         patch("app.services.hermes_skill.mcp_tool_mapper.AgentAliasResolver") as mock_alias_cls, \
+         patch("app.services.hermes_skill.mcp_tool_mapper.HermesSkillAuthorizationService") as mock_authz_cls, \
          patch("app.services.hermes_skill.skill_audit_logger.SkillAuditLogger") as mock_audit_cls:
         mock_resolve.return_value = routing_result
+        mock_alias_cls.return_value.enrich_routing = AsyncMock(return_value={})
+        mock_alias_cls.return_value.resolve = AsyncMock(return_value=None)
+        mock_authz_cls.return_value.can_invoke = AsyncMock(return_value=True)
         mock_task_svc = AsyncMock()
         mock_task_svc.create_task.return_value = created_task
         mock_task_svc_cls.return_value = mock_task_svc
@@ -221,7 +230,7 @@ async def test_mcp_router_tools_call_success():
         mock_mapper.call_tool.return_value = mapper_result
         mock_mapper_cls.return_value = mock_mapper
 
-        result = await mcp_jsonrpc(body, user_org=(user, org), db=db)
+        result = await mcp_jsonrpc(body, MagicMock(headers={}), user_org=(user, org), db=db)
 
     assert result["jsonrpc"] == "2.0"
     assert result["id"] == 42
@@ -253,7 +262,7 @@ async def test_mcp_router_tools_call_error_format():
         mock_mapper.call_tool.side_effect = NotFoundError("MCP Tool nonexistent 不存在", "errors.skill.tool_not_found")
         mock_mapper_cls.return_value = mock_mapper
 
-        result = await mcp_jsonrpc(body, user_org=(user, org), db=db)
+        result = await mcp_jsonrpc(body, MagicMock(headers={}), user_org=(user, org), db=db)
 
     assert result["jsonrpc"] == "2.0"
     assert result["id"] == 99
@@ -274,7 +283,7 @@ async def test_mcp_router_invalid_jsonrpc_version():
     body = {"jsonrpc": "1.0", "id": 1, "method": "tools/list"}
     db = AsyncMock()
 
-    result = await mcp_jsonrpc(body, user_org=(user, org), db=db)
+    result = await mcp_jsonrpc(body, MagicMock(headers={}), user_org=(user, org), db=db)
     assert result["error"]["code"] == -32030
 
 
@@ -290,7 +299,7 @@ async def test_mcp_router_method_not_found():
     body = {"jsonrpc": "2.0", "id": 2, "method": "unknown/method"}
     db = AsyncMock()
 
-    result = await mcp_jsonrpc(body, user_org=(user, org), db=db)
+    result = await mcp_jsonrpc(body, MagicMock(headers={}), user_org=(user, org), db=db)
     assert result["error"]["code"] == -32601
 
 
@@ -306,6 +315,6 @@ async def test_mcp_router_missing_params_name():
     body = {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {}}
     db = AsyncMock()
 
-    result = await mcp_jsonrpc(body, user_org=(user, org), db=db)
+    result = await mcp_jsonrpc(body, MagicMock(headers={}), user_org=(user, org), db=db)
     assert result["error"]["code"] == -32030
     assert result["error"]["data"]["errorCode"] == "MCP_INVALID_ARGUMENTS"
