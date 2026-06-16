@@ -255,6 +255,14 @@ class Settings(BaseSettings):
     HERMES_TASK_LOCK_TIMEOUT_SECONDS: int = 300
     HERMES_TASK_SSE_HEARTBEAT_SECONDS: int = 30
 
+    HERMES_QUEUE_ORG_MAX_QUEUED: int = 1000
+    HERMES_QUEUE_USER_MAX_RUNNING: int = 3
+    HERMES_QUEUE_SKILL_MAX_RUNNING: int = 10
+    HERMES_QUEUE_AGENT_MAX_RUNNING: int = 5
+    HERMES_QUEUE_DEFAULT_PRIORITY: int = 0
+    HERMES_TASK_DEFAULT_MAX_RETRY: int = 1
+    HERMES_TASK_RETRY_BACKOFF_SECONDS: int = 60
+
     # ── Hermes Artifact ───────────────────────────────────
     HERMES_OUTPUT_BASE_DIR_NAME: str = ".nodeskclaw"
     HERMES_WORKSPACE_ROOT: str = ""

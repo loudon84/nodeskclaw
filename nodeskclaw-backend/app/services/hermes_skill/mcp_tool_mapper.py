@@ -1,15 +1,14 @@
 import logging
-from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import or_, select, exists
+from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import NotFoundError, BadRequestError, ForbiddenError
 from app.models.base import not_deleted
 from app.models.hermes_skill.skill import HermesSkill
 from app.models.hermes_skill.skill_installation import HermesSkillInstallation
-from app.models.org_member_skill_grant import OrgMemberSkillGrant
+from app.services.hermes_skill.hermes_skill_authorization_service import HermesSkillAuthorizationService
 from app.services.hermes_skill.permission_checker import PermissionChecker
 from app.services.hermes_skill.skill_routing_service import SkillRoutingService
 from app.services.hermes_skill.task_service import TaskService
@@ -50,29 +49,20 @@ class McpToolMapper:
             exists(installed_subq.where(HermesSkillInstallation.skill_id == HermesSkill.skill_id)),
         ]
 
-        if user_id:
-            now = datetime.now(timezone.utc)
-            grant_subq = (
-                select(OrgMemberSkillGrant.skill_db_id)
-                .where(
-                    not_deleted(OrgMemberSkillGrant),
-                    OrgMemberSkillGrant.org_id == org_id,
-                    OrgMemberSkillGrant.user_id == user_id,
-                    OrgMemberSkillGrant.can_list.is_(True),
-                    OrgMemberSkillGrant.can_invoke.is_(True),
-                    or_(
-                        OrgMemberSkillGrant.expires_at.is_(None),
-                        OrgMemberSkillGrant.expires_at > now,
-                    ),
-                    OrgMemberSkillGrant.skill_db_id == HermesSkill.id,
-                )
-                .correlate(HermesSkill)
-            )
-            conditions.append(exists(grant_subq))
-
         result = await self.db.execute(select(HermesSkill).where(*conditions))
+        skills = list(result.scalars().all())
+
+        if user_id:
+            role = await PermissionChecker.get_user_role(self.db, user_id, org_id)
+            if role not in PermissionChecker.ADMIN_OPERATOR_ROLES:
+                authz = HermesSkillAuthorizationService(self.db)
+                skills = [
+                    s for s in skills
+                    if await authz.can_list(org_id, user_id, s.id, s.skill_id)
+                ]
+
         tools = []
-        for skill in result.scalars().all():
+        for skill in skills:
             tools.append({
                 "name": skill.tool_name,
                 "title": skill.title or skill.name,
@@ -123,10 +113,8 @@ class McpToolMapper:
             raise
 
         if user_id:
-            from app.services.member_skill_service import require_invoke_skill
-            try:
-                await require_invoke_skill(self.db, org_id, user_id, skill.id)
-            except ForbiddenError:
+            authz_service = HermesSkillAuthorizationService(self.db)
+            if not await authz_service.can_invoke(org_id, user_id, skill.id, skill.skill_id):
                 from app.core import hooks
                 await hooks.emit(
                     "operation_audit",
@@ -137,7 +125,10 @@ class McpToolMapper:
                     org_id=org_id,
                     details={"skill_id": skill.skill_id, "tool_name": tool_name},
                 )
-                raise
+                raise ForbiddenError(
+                    "无权调用该 Skill",
+                    "errors.skill.permission_denied",
+                )
 
         if skill.input_schema:
             try:

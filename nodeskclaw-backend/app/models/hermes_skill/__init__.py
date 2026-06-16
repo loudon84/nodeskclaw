@@ -10,3 +10,6 @@ from app.models.hermes_skill.hermes_task import HermesTask, HermesTaskEvent  # n
 from app.models.hermes_skill.hermes_artifact import HermesArtifact, PermissionScope  # noqa: F401
 from app.models.hermes_skill.artifact_download_token import ArtifactDownloadToken  # noqa: F401
 from app.models.hermes_skill.artifact_permission import ArtifactPermission  # noqa: F401
+from app.models.hermes_skill.hermes_agent_runtime_state import HermesAgentRuntimeState  # noqa: F401
+from app.models.hermes_skill.hermes_runtime_control import HermesRuntimeControl  # noqa: F401
+from app.models.hermes_skill.hermes_skill_authorization_grant import HermesSkillAuthorizationGrant  # noqa: F401

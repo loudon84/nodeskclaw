@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAuthStore } from '@/stores/auth'
 import { getCurrentLocale, setCurrentLocale } from '@/i18n'
-import { Settings, LogOut, Boxes, Server, FlaskConical, User, Loader2, BarChart3, Bot, Users, ListTodo, FileArchive, Activity } from 'lucide-vue-next'
+import { Settings, LogOut, Boxes, Server, FlaskConical, User, Loader2, BarChart3, Bot, Users, ListTodo, FileArchive, Activity, Gauge, Shield } from 'lucide-vue-next'
 import { useFeature } from '@/composables/useFeature'
 import LocaleSelect from '@/components/shared/LocaleSelect.vue'
 import ToastContainer from '@/components/shared/ToastContainer.vue'
@@ -118,6 +118,17 @@ function onLocaleChange(value: string) {
               <span class="lg:hidden">{{ t('nav.members') }}</span>
             </Button>
             <Button variant="unstyled" size="unstyled"
+              v-if="authStore.user?.portal_org_role === 'admin' || authStore.user?.portal_org_role === 'operator'"
+              :class="[
+                'shrink-0 whitespace-nowrap px-3 py-1.5 rounded-md text-sm transition-colors',
+                route.path.startsWith('/hermes/runtime') ? 'bg-primary/10 text-primary font-medium' : 'text-muted-foreground hover:text-foreground',
+              ]"
+              @click="router.push('/hermes/runtime')"
+            >
+              <Gauge class="w-4 h-4 inline mr-1.5" />
+              <span class="hidden lg:inline">{{ t('nav.hermesRuntime') }}</span>
+            </Button>
+            <Button variant="unstyled" size="unstyled"
               :class="[
                 'shrink-0 whitespace-nowrap px-3 py-1.5 rounded-md text-sm transition-colors',
                 route.path.startsWith('/hermes/tasks') ? 'bg-primary/10 text-primary font-medium' : 'text-muted-foreground hover:text-foreground',
@@ -149,6 +160,28 @@ function onLocaleChange(value: string) {
               <Activity class="w-4 h-4 inline mr-1.5" />
               <span class="hidden lg:inline">{{ t('nav.hermesDiagnostics') }}</span>
               <span class="lg:hidden">{{ t('nav.hermesDiagnostics') }}</span>
+            </Button>
+            <Button variant="unstyled" size="unstyled"
+              v-if="authStore.user?.portal_org_role === 'admin' || authStore.user?.portal_org_role === 'operator'"
+              :class="[
+                'shrink-0 whitespace-nowrap px-3 py-1.5 rounded-md text-sm transition-colors',
+                route.path.startsWith('/hermes/metrics') ? 'bg-primary/10 text-primary font-medium' : 'text-muted-foreground hover:text-foreground',
+              ]"
+              @click="router.push('/hermes/metrics')"
+            >
+              <BarChart3 class="w-4 h-4 inline mr-1.5" />
+              <span class="hidden lg:inline">{{ t('nav.hermesMetrics') }}</span>
+            </Button>
+            <Button variant="unstyled" size="unstyled"
+              v-if="authStore.user?.portal_org_role === 'admin' || authStore.user?.portal_org_role === 'operator'"
+              :class="[
+                'shrink-0 whitespace-nowrap px-3 py-1.5 rounded-md text-sm transition-colors',
+                route.path.startsWith('/hermes/skill-authorizations') ? 'bg-primary/10 text-primary font-medium' : 'text-muted-foreground hover:text-foreground',
+              ]"
+              @click="router.push('/hermes/skill-authorizations')"
+            >
+              <Shield class="w-4 h-4 inline mr-1.5" />
+              <span class="hidden lg:inline">{{ t('nav.hermesAuthorizations') }}</span>
             </Button>
             <Button variant="unstyled" size="unstyled"
               :class="[

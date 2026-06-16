@@ -11,6 +11,8 @@ from app.models.hermes_skill.hermes_artifact import HermesArtifact
 from app.models.hermes_skill.hermes_task import HermesTask, TaskStatus
 from app.models.hermes_skill.skill_installation import HermesSkillInstallation
 from app.services.hermes_skill.artifact_audit_service import ArtifactAuditService
+from app.services.hermes_skill.hermes_agent_runtime_service import HermesAgentRuntimeService
+from app.services.hermes_skill.hermes_runtime_control_service import HermesRuntimeControlService
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +30,7 @@ class RuntimeDiagnosticsService:
         artifacts = await self._artifact_stats(org_id, since_24h)
         recent_failures = await self._recent_failed_tasks(org_id, since_24h)
         recent_scan_failed = await self._recent_scan_failed(org_id, since_24h)
+        controls = await HermesRuntimeControlService(self.db).get_controls(org_id)
 
         return {
             "worker": {
@@ -35,8 +38,10 @@ class RuntimeDiagnosticsService:
                 "interval_seconds": settings.HERMES_TASK_WORKER_INTERVAL_SECONDS,
                 "batch_size": settings.HERMES_TASK_WORKER_BATCH_SIZE,
                 "lock_timeout_seconds": settings.HERMES_TASK_LOCK_TIMEOUT_SECONDS,
+                "paused": controls["worker"]["paused"],
             },
-            "queue": queue,
+            "queue": {**queue, "paused": controls["queue"]["paused"]},
+            "controls": controls,
             "agents": agents,
             "artifacts": artifacts,
             "recent_failures": recent_failures,
@@ -76,39 +81,8 @@ class RuntimeDiagnosticsService:
         }
 
     async def _agent_stats(self, org_id: str) -> list[dict]:
-        stmt = (
-            select(HermesSkillInstallation)
-            .where(
-                not_deleted(HermesSkillInstallation),
-                HermesSkillInstallation.org_id == org_id,
-                HermesSkillInstallation.status == "installed",
-            )
-            .order_by(HermesSkillInstallation.agent_id)
-        )
-        installations = (await self.db.execute(stmt)).scalars().all()
-        seen: set[str] = set()
-        agents: list[dict] = []
-        for inst in installations:
-            if inst.agent_id in seen:
-                continue
-            seen.add(inst.agent_id)
-            profile_exists = self._path_exists(inst.profile_root_path)
-            workspace_exists = self._path_exists(inst.installed_path)
-            health = "ok" if inst.status == "installed" else "degraded"
-            if not profile_exists or not workspace_exists:
-                health = "degraded"
-            agents.append({
-                "agent_id": inst.agent_id,
-                "name": inst.agent_id,
-                "base_url": None,
-                "health": health,
-                "profile_root_path": inst.profile_root_path,
-                "profile_root_path_exists": profile_exists,
-                "workspace_root_path": inst.installed_path,
-                "workspace_root_path_exists": workspace_exists,
-                "last_error": inst.error_message,
-            })
-        return agents
+        runtime_svc = HermesAgentRuntimeService(self.db)
+        return await runtime_svc.list_runtime_states(org_id)
 
     async def _artifact_stats(self, org_id: str, since: datetime) -> dict:
         created = await self.db.execute(

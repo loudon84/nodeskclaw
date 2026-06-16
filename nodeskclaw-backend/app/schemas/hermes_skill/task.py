@@ -30,6 +30,12 @@ class TaskRead(BaseModel):
     completed_at: datetime | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
+    priority: int = 0
+    retry_count: int = 0
+    max_retry: int = 0
+    queue_reason: str | None = None
+    queue_entered_at: datetime | None = None
+    not_before: datetime | None = None
 
 
 class TaskListResult(BaseModel):

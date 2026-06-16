@@ -18,6 +18,9 @@ import {
   getTaskTimeline,
   cancelTask,
   retryTask,
+  requeueTask,
+  setTaskPriority,
+  markTaskFailed,
   listTaskArtifacts,
   type HermesTask,
   type TaskEvent,
@@ -51,6 +54,8 @@ const statusFilter = ref('')
 const toolNameFilter = ref('')
 const agentIdFilter = ref('')
 const workspaceIdFilter = ref('')
+const userIdFilter = ref('')
+const priorityInput = ref(0)
 const drawerOpen = ref(false)
 const selectedTask = ref<HermesTask | null>(null)
 const taskEvents = ref<TaskEvent[]>([])
@@ -120,6 +125,7 @@ async function fetchTasks() {
       tool_name: toolNameFilter.value || undefined,
       agent_id: agentIdFilter.value || undefined,
       workspace_id: workspaceIdFilter.value || undefined,
+      user_id: userIdFilter.value || undefined,
     })
     tasks.value = res.items ?? []
     total.value = res.total ?? 0
@@ -176,6 +182,7 @@ async function openTaskDetail(task: HermesTask) {
   expandedPayloads.value = new Set()
   try {
     selectedTask.value = await getTask(task.id)
+    priorityInput.value = selectedTask.value.priority ?? 0
     const timeline = await getTaskTimeline(task.id)
     timelineItems.value = timeline.items ?? []
     taskArtifacts.value = await listTaskArtifacts(task.id)
@@ -217,6 +224,39 @@ async function handleRetry() {
     await openTaskDetail(newTask)
   } catch (e: unknown) {
     toast.error(resolveApiErrorMessage(e, t('hermes.tasks.retryFailed')))
+  }
+}
+
+async function handleRequeue() {
+  if (!selectedTask.value) return
+  try {
+    selectedTask.value = await requeueTask(selectedTask.value.id)
+    toast.success(t('hermes.tasks.requeueSuccess'))
+    await fetchTasks()
+  } catch (e: unknown) {
+    toast.error(resolveApiErrorMessage(e, t('hermes.tasks.requeueFailed')))
+  }
+}
+
+async function handleMarkFailed() {
+  if (!selectedTask.value) return
+  try {
+    selectedTask.value = await markTaskFailed(selectedTask.value.id)
+    toast.success(t('hermes.tasks.markFailedSuccess'))
+    await fetchTasks()
+  } catch (e: unknown) {
+    toast.error(resolveApiErrorMessage(e, t('hermes.tasks.markFailedFailed')))
+  }
+}
+
+async function handleSetPriority() {
+  if (!selectedTask.value) return
+  try {
+    selectedTask.value = await setTaskPriority(selectedTask.value.id, priorityInput.value)
+    toast.success(t('hermes.tasks.prioritySuccess'))
+    await fetchTasks()
+  } catch (e: unknown) {
+    toast.error(resolveApiErrorMessage(e, t('hermes.tasks.priorityFailed')))
   }
 }
 
@@ -305,7 +345,7 @@ onUnmounted(stopEventStream)
       </div>
     </div>
 
-    <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-3 mb-4">
       <Input
         v-model="toolNameFilter"
         :placeholder="t('hermes.tasks.filterToolName')"
@@ -319,6 +359,11 @@ onUnmounted(stopEventStream)
       <Input
         v-model="workspaceIdFilter"
         :placeholder="t('hermes.tasks.filterWorkspaceId')"
+        @keyup.enter="applyFilters"
+      />
+      <Input
+        v-model="userIdFilter"
+        :placeholder="t('hermes.tasks.filterUserId')"
         @keyup.enter="applyFilters"
       />
     </div>
@@ -338,6 +383,8 @@ onUnmounted(stopEventStream)
             <TableHead class="text-left px-4 py-3 font-medium text-muted-foreground">{{ t('hermes.tasks.toolName') }}</TableHead>
             <TableHead class="text-left px-4 py-3 font-medium text-muted-foreground">{{ t('hermes.tasks.agentId') }}</TableHead>
             <TableHead class="text-left px-4 py-3 font-medium text-muted-foreground">{{ t('hermes.tasks.status') }}</TableHead>
+            <TableHead class="text-left px-4 py-3 font-medium text-muted-foreground">{{ t('hermes.tasks.priority') }}</TableHead>
+            <TableHead class="text-left px-4 py-3 font-medium text-muted-foreground">{{ t('hermes.tasks.retryCount') }}</TableHead>
             <TableHead class="text-left px-4 py-3 font-medium text-muted-foreground">{{ t('hermes.tasks.createdAt') }}</TableHead>
           </TableRow>
         </TableHeader>
@@ -356,6 +403,8 @@ onUnmounted(stopEventStream)
                 {{ task.status }}
               </Badge>
             </TableCell>
+            <TableCell class="px-4 py-3 font-mono text-xs">{{ task.priority ?? 0 }}</TableCell>
+            <TableCell class="px-4 py-3 font-mono text-xs">{{ task.retry_count ?? 0 }}</TableCell>
             <TableCell class="px-4 py-3 text-muted-foreground text-xs">{{ formatTime(task.created_at) }}</TableCell>
           </TableRow>
         </TableBody>
@@ -387,7 +436,15 @@ onUnmounted(stopEventStream)
                 <RotateCcw class="w-4 h-4" />
                 {{ t('hermes.tasks.retry') }}
               </Button>
+              <Button variant="outline" size="sm" @click="handleRequeue">{{ t('hermes.tasks.requeue') }}</Button>
+              <Button variant="outline" size="sm" @click="handleMarkFailed">{{ t('hermes.tasks.markFailed') }}</Button>
             </div>
+          </div>
+
+          <div class="mt-3 flex items-center gap-2 text-xs">
+            <span class="text-muted-foreground">{{ t('hermes.tasks.priority') }}</span>
+            <Input v-model.number="priorityInput" type="number" class="h-7 w-20" />
+            <Button size="sm" variant="secondary" @click="handleSetPriority">{{ t('hermes.tasks.setPriority') }}</Button>
           </div>
 
           <dl class="mt-4 space-y-2 text-xs">

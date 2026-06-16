@@ -92,6 +92,11 @@ from app.models.hermes_skill import (  # noqa: F401
     HermesCollectionSkill,
     HermesSkillRegistry,
     HermesSkillImport,
+    HermesAgentRuntimeState,
+    HermesRuntimeControl,
+    HermesSkillAuthorizationGrant,
+    HermesTask,
+    HermesTaskEvent,
 )
 
 # Task Orchestrator models are registered via their own __init__.py

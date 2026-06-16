@@ -20,6 +20,11 @@ _ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
         "hermes_artifact:delete", "hermes_artifact:share",
         "hermes_artifact:manage_permission",
         "hermes_runtime:diagnostics",
+        "hermes_runtime:control",
+        "hermes_runtime:metrics",
+        "hermes_agent:view", "hermes_agent:manage", "hermes_agent:health_check", "hermes_agent:drain",
+        "hermes_queue:view", "hermes_queue:manage", "hermes_queue:requeue",
+        "skill:authorize", "skill:bulk_authorize",
     }),
     "operator": frozenset({
         "skill:view", "skill:scan", "skill:install", "skill:uninstall",
@@ -30,6 +35,11 @@ _ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
         "hermes_artifact:delete", "hermes_artifact:share",
         "hermes_artifact:manage_permission",
         "hermes_runtime:diagnostics",
+        "hermes_runtime:control",
+        "hermes_runtime:metrics",
+        "hermes_agent:view", "hermes_agent:manage", "hermes_agent:health_check", "hermes_agent:drain",
+        "hermes_queue:view", "hermes_queue:manage", "hermes_queue:requeue",
+        "skill:authorize", "skill:bulk_authorize",
     }),
     "workspace_manager": frozenset({
         "skill:view", "skill:install", "skill:invoke",
@@ -51,6 +61,8 @@ _ADMIN_OPERATOR_ROLES = {"admin", "operator"}
 
 
 class PermissionChecker:
+    ADMIN_OPERATOR_ROLES = _ADMIN_OPERATOR_ROLES
+
     @staticmethod
     async def has_permission(db: AsyncSession, user_id: str, org_id: str, permission: str) -> bool:
         stmt = select(OrgMembership.role).where(

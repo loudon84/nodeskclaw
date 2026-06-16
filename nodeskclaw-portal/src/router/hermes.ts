@@ -17,6 +17,31 @@ const hermesRoutes: RouteRecordRaw[] = [
     component: () => import('@/views/hermes/ImportsView.vue'),
   },
   {
+    path: '/hermes/runtime',
+    name: 'HermesRuntime',
+    component: () => import('@/views/hermes/RuntimeView.vue'),
+  },
+  {
+    path: '/hermes/agents',
+    name: 'HermesAgents',
+    component: () => import('@/views/hermes/AgentsView.vue'),
+  },
+  {
+    path: '/hermes/queue',
+    name: 'HermesQueue',
+    component: () => import('@/views/hermes/QueueView.vue'),
+  },
+  {
+    path: '/hermes/skill-authorizations',
+    name: 'HermesSkillAuthorizations',
+    component: () => import('@/views/hermes/SkillAuthorizationsView.vue'),
+  },
+  {
+    path: '/hermes/metrics',
+    name: 'HermesMetrics',
+    component: () => import('@/views/hermes/MetricsView.vue'),
+  },
+  {
     path: '/hermes/tasks',
     name: 'HermesTasks',
     component: () => import('@/views/hermes/TasksView.vue'),

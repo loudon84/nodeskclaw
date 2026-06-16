@@ -4,6 +4,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_db, require_org_member
@@ -16,6 +17,8 @@ from app.services.hermes_skill.task_event_service import TaskEventService
 from app.services.hermes_skill.artifact_service import ArtifactService
 from app.services.hermes_skill.skill_audit_logger import SkillAuditLogger
 from app.services.hermes_skill.permission_checker import PermissionChecker
+from app.services.hermes_skill.hermes_runtime_control_service import HermesRuntimeControlService
+from app.services.hermes_skill.hermes_queue_policy_service import HermesQueuePolicyService
 
 router = APIRouter()
 
@@ -356,3 +359,94 @@ async def retry_task(
     )
     await db.commit()
     return _ok(TaskRead.model_validate(new_task).model_dump())
+
+
+class TaskPriorityBody(BaseModel):
+    priority: int
+
+
+class TaskMarkFailedBody(BaseModel):
+    error_code: str = "MANUAL_FAILED"
+    error_message: str = "Marked failed by operator"
+
+
+@router.post("/tasks/{task_id}/requeue")
+async def requeue_task(
+    task_id: str,
+    user_org=Depends(require_org_member),
+    db: AsyncSession = Depends(get_db),
+):
+    user, org = user_org
+    if user:
+        await PermissionChecker.require_permission(db, user.id, org.id, "hermes_queue:requeue")
+    service = TaskService(db)
+    task = await service.get_task(task_id, org.id)
+    control = HermesRuntimeControlService(db)
+    await control.requeue_task(task, actor_id=user.id if user else None)
+    audit_logger = SkillAuditLogger(db)
+    await audit_logger.log(
+        action="hermes.task.requeued",
+        target_id=task_id,
+        org_id=org.id,
+        actor_id=user.id if user else "",
+        details={"task_no": task.task_no},
+    )
+    await db.commit()
+    return _ok(TaskRead.model_validate(task).model_dump())
+
+
+@router.post("/tasks/{task_id}/priority")
+async def set_task_priority(
+    task_id: str,
+    body: TaskPriorityBody,
+    user_org=Depends(require_org_member),
+    db: AsyncSession = Depends(get_db),
+):
+    user, org = user_org
+    if user:
+        await PermissionChecker.require_permission(db, user.id, org.id, "hermes_queue:manage")
+    service = TaskService(db)
+    task = await service.get_task(task_id, org.id)
+    policy = HermesQueuePolicyService(db)
+    await policy.set_priority(task, body.priority)
+    audit_logger = SkillAuditLogger(db)
+    await audit_logger.log(
+        action="hermes.task.priority_changed",
+        target_id=task_id,
+        org_id=org.id,
+        actor_id=user.id if user else "",
+        details={"priority": body.priority},
+    )
+    await db.commit()
+    return _ok(TaskRead.model_validate(task).model_dump())
+
+
+@router.post("/tasks/{task_id}/mark-failed")
+async def mark_task_failed(
+    task_id: str,
+    body: TaskMarkFailedBody,
+    user_org=Depends(require_org_member),
+    db: AsyncSession = Depends(get_db),
+):
+    user, org = user_org
+    if user:
+        await PermissionChecker.require_permission(db, user.id, org.id, "hermes_queue:manage")
+    service = TaskService(db)
+    task = await service.get_task(task_id, org.id)
+    control = HermesRuntimeControlService(db)
+    await control.mark_task_failed(
+        task,
+        body.error_code,
+        body.error_message,
+        actor_id=user.id if user else None,
+    )
+    audit_logger = SkillAuditLogger(db)
+    await audit_logger.log(
+        action="hermes.task.marked_failed",
+        target_id=task_id,
+        org_id=org.id,
+        actor_id=user.id if user else "",
+        details={"error_code": body.error_code},
+    )
+    await db.commit()
+    return _ok(TaskRead.model_validate(task).model_dump())

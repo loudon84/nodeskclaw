@@ -12,6 +12,8 @@ from app.models.hermes_skill.hermes_task import HermesTask, TaskStatus, EventTyp
 from app.models.base import not_deleted
 from app.services.hermes_skill.hermes_agent_adapter import HermesAgentAdapter
 from app.services.hermes_skill.hermes_run_state_resolver import HermesRunStateResolver, RunStateTracker
+from app.services.hermes_skill.hermes_queue_policy_service import HermesQueuePolicyService
+from app.services.hermes_skill.hermes_runtime_control_service import HermesRuntimeControlService
 from app.services.hermes_skill.task_event_service import TaskEventService
 from app.services.hermes_skill.task_service import TaskService
 from app.services.hermes_skill.skill_audit_logger import SkillAuditLogger
@@ -57,6 +59,7 @@ class HermesTaskWorker:
                         error_code="TASK_EXECUTION_ERROR",
                         error_message=str(exc)[:1024],
                     )
+                    await self._maybe_auto_retry(db, task, task_service)
 
                     audit_logger = SkillAuditLogger(db)
                     await audit_logger.log(
@@ -78,7 +81,11 @@ class HermesTaskWorker:
 
     async def _fetch_and_lock(self, db: AsyncSession) -> list[HermesTask]:
         from datetime import timedelta
+        from sqlalchemy import nullsfirst
+
         lock_cutoff = datetime.now(timezone.utc) - timedelta(seconds=settings.HERMES_TASK_LOCK_TIMEOUT_SECONDS)
+        control = HermesRuntimeControlService(db)
+        policy = HermesQueuePolicyService(db)
 
         stmt = (
             select(HermesTask)
@@ -87,20 +94,36 @@ class HermesTaskWorker:
                 HermesTask.status == TaskStatus.QUEUED,
                 (HermesTask.locked_at.is_(None)) | (HermesTask.locked_at < lock_cutoff),
             )
-            .order_by(HermesTask.created_at.asc())
-            .limit(settings.HERMES_TASK_WORKER_BATCH_SIZE)
+            .order_by(
+                HermesTask.priority.desc(),
+                nullsfirst(HermesTask.scheduled_at.asc()),
+                HermesTask.created_at.asc(),
+            )
+            .limit(settings.HERMES_TASK_WORKER_BATCH_SIZE * 3)
             .with_for_update(skip_locked=True)
         )
         result = await db.execute(stmt)
-        tasks = list(result.scalars().all())
+        candidates = list(result.scalars().all())
 
         now = datetime.now(timezone.utc)
         task_service = TaskService(db)
-        for task in tasks:
+        accepted: list[HermesTask] = []
+        for task in candidates:
+            if len(accepted) >= settings.HERMES_TASK_WORKER_BATCH_SIZE:
+                break
+            if await control.is_worker_paused(task.org_id):
+                continue
+            if task.not_before and task.not_before > now:
+                continue
+            can_dispatch, _ = await policy.can_dispatch(task)
+            if not can_dispatch:
+                continue
+
             task.worker_id = self._worker_id
             task.locked_at = now
             task.dispatch_status = "accepted"
             task.dispatch_attempts = (task.dispatch_attempts or 0) + 1
+            task.run_dispatched_at = now
             await task_service.mark_accepted(
                 task,
                 payload={
@@ -109,9 +132,10 @@ class HermesTaskWorker:
                     "status": TaskStatus.ACCEPTED.value,
                 },
             )
+            accepted.append(task)
 
         await db.flush()
-        return tasks
+        return accepted
 
     async def _execute_task(self, db: AsyncSession, task: HermesTask):
         now = datetime.now(timezone.utc)
@@ -298,6 +322,36 @@ class HermesTaskWorker:
             if task.status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.TIMEOUT, TaskStatus.CANCELLED):
                 task.dispatch_status = "finished"
             await db.flush()
+
+    async def _maybe_auto_retry(
+        self,
+        db: AsyncSession,
+        task: HermesTask,
+        task_service: TaskService,
+    ) -> None:
+        if task.status != TaskStatus.FAILED:
+            return
+        if task.retry_count >= task.max_retry:
+            return
+        policy = HermesQueuePolicyService(db)
+        task.status = TaskStatus.QUEUED
+        task.retry_count += 1
+        task.not_before = policy.compute_retry_not_before(task.retry_count)
+        task.worker_id = None
+        task.locked_at = None
+        task.queue_entered_at = datetime.now(timezone.utc)
+        task.error_code = None
+        task.error_message = None
+        await task_service._append_status_event(
+            task,
+            EventType.TASK_RETRYING,
+            {
+                "status": TaskStatus.QUEUED.value,
+                "retry_count": task.retry_count,
+                "not_before": task.not_before.isoformat() if task.not_before else None,
+            },
+        )
+        await db.flush()
 
     async def _scan_artifacts(self, db: AsyncSession, task: HermesTask) -> None:
         try:

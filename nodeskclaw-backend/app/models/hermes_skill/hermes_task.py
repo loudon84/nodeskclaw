@@ -81,12 +81,24 @@ class HermesTask(BaseModel):
     timeout_seconds: Mapped[int] = mapped_column(Integer, default=900)
     run_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     run_finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    queue_group: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    scheduled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    not_before: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    max_retry: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    retry_policy: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    parent_task_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    queue_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    queue_entered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    run_dispatched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
         Index("ix_hermes_tasks_org_status", "org_id", "status"),
         Index("ix_hermes_tasks_org_skill", "org_id", "skill_id"),
         Index("ix_hermes_tasks_org_agent", "org_id", "agent_id"),
         Index("ix_hermes_tasks_queue_status_created_at", "org_id", "status", "created_at"),
+        Index("ix_hermes_tasks_queue_priority", "org_id", "status", "priority", "created_at"),
         Index("ix_hermes_tasks_worker_lock", "status", "locked_at"),
         Index(
             "uq_hermes_tasks_task_no_alive", "task_no",

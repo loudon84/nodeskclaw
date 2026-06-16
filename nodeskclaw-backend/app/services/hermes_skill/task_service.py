@@ -7,9 +7,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.exceptions import NotFoundError
+from app.core.exceptions import BadRequestError, NotFoundError
 from app.models.base import not_deleted
 from app.models.hermes_skill.hermes_task import HermesTask, HermesTaskEvent, TaskStatus, EventType
+from app.services.hermes_skill.hermes_queue_policy_service import HermesQueuePolicyService
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,13 @@ class TaskService:
         user_id: str | None = None,
         arguments: dict | None = None,
     ) -> HermesTask:
+        queue_policy = HermesQueuePolicyService(self.db)
+        can_enqueue, message_key = await queue_policy.can_enqueue(
+            org_id, user_id, agent_id, skill_id,
+        )
+        if not can_enqueue:
+            raise BadRequestError("任务无法入队", message_key or "errors.hermes.cannot_enqueue")
+
         arguments_hash = ""
         if arguments:
             arguments_hash = hashlib.sha256(
@@ -51,6 +59,9 @@ class TaskService:
             arguments=arguments,
             arguments_hash=arguments_hash,
             timeout_seconds=settings.HERMES_TASK_DEFAULT_TIMEOUT_SECONDS,
+            priority=settings.HERMES_QUEUE_DEFAULT_PRIORITY,
+            max_retry=settings.HERMES_TASK_DEFAULT_MAX_RETRY,
+            queue_entered_at=datetime.now(timezone.utc),
             event_url=f"/api/v1/hermes/tasks/{{task_id}}/events",
             artifact_url=f"/api/v1/hermes/tasks/{{task_id}}/artifacts",
         )

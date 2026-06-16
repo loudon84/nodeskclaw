@@ -24,6 +24,11 @@ export interface HermesTask {
   error_message: string | null
   created_at: string
   updated_at: string
+  priority?: number
+  retry_count?: number
+  max_retry?: number
+  queue_reason?: string | null
+  user_id?: string | null
 }
 
 export interface TaskListParams {
@@ -34,6 +39,7 @@ export interface TaskListParams {
   tool_name?: string
   agent_id?: string
   workspace_id?: string
+  user_id?: string
 }
 
 export interface TaskListResult {
@@ -94,4 +100,21 @@ export async function retryTask(taskId: string): Promise<HermesTask> {
 export async function listTaskArtifacts(taskId: string) {
   const { data } = await api.get(`/hermes/tasks/${taskId}/artifacts`)
   return unwrapEnvelope<unknown[]>(data)
+}
+
+export async function requeueTask(taskId: string): Promise<HermesTask> {
+  const { data } = await api.post(`/hermes/tasks/${taskId}/requeue`)
+  return unwrapEnvelope<HermesTask>(data)
+}
+
+export async function setTaskPriority(taskId: string, priority: number): Promise<HermesTask> {
+  const { data } = await api.post(`/hermes/tasks/${taskId}/priority`, { priority })
+  return unwrapEnvelope<HermesTask>(data)
+}
+
+export async function markTaskFailed(taskId: string, errorMessage?: string): Promise<HermesTask> {
+  const { data } = await api.post(`/hermes/tasks/${taskId}/mark-failed`, {
+    error_message: errorMessage ?? 'Marked failed by operator',
+  })
+  return unwrapEnvelope<HermesTask>(data)
 }

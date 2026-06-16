@@ -9,6 +9,7 @@ from app.core.exceptions import BadRequestError, NotFoundError
 from app.models.base import not_deleted
 from app.models.hermes_skill.skill import HermesSkill
 from app.models.hermes_skill.skill_installation import HermesSkillInstallation
+from app.services.hermes_skill.hermes_agent_runtime_service import HermesAgentRuntimeService
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +119,13 @@ class SkillRoutingService:
                 HermesSkillInstallation.status == "installed",
             ).order_by(HermesSkillInstallation.created_at.desc())
         )
-        return list(result.scalars().all())
+        installations = list(result.scalars().all())
+        runtime_svc = HermesAgentRuntimeService(self.db)
+        filtered: list[HermesSkillInstallation] = []
+        for inst in installations:
+            if await runtime_svc.is_agent_routable(org_id, inst.agent_id):
+                filtered.append(inst)
+        return filtered
 
     def _select_installation(
         self,
