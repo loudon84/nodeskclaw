@@ -63,6 +63,9 @@ class ParsedGatewayConfig:
     permissions: dict = field(default_factory=dict)
     install_config: dict = field(default_factory=dict)
     allowed_modes: list[str] = field(default_factory=lambda: ["copy"])
+    ui_schema: dict | None = None
+    examples: list[dict] | None = None
+    primary_artifact_policy: dict | None = None
 
 
 @dataclass
@@ -203,6 +206,9 @@ class ManifestParser:
             permissions=data.get("permissions", {}) or {},
             install_config=data.get("install", {}) or {},
             allowed_modes=allowed_modes,
+            ui_schema=data.get("ui_schema") or None,
+            examples=data.get("examples") or None,
+            primary_artifact_policy=data.get("primary_artifact_policy") or None,
         )
 
     @staticmethod

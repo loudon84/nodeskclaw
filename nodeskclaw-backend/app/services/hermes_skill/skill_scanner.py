@@ -167,6 +167,7 @@ class SkillScanner:
                     "input_schema": manifest.gateway.input_schema,
                     "output_schema": manifest.gateway.output_schema,
                     "tags": manifest.meta.tags,
+                    "extra_metadata": self._build_extra_metadata(manifest),
                     "scanned_at": datetime.now(timezone.utc).isoformat(),
                 }
             except ManifestParseError as exc:
@@ -249,6 +250,18 @@ class SkillScanner:
             result.deleted_count += 1
 
         await self.db.flush()
+
+    @staticmethod
+    def _build_extra_metadata(manifest) -> dict | None:
+        gateway = manifest.gateway
+        extra: dict = {}
+        if gateway.ui_schema:
+            extra["ui_schema"] = gateway.ui_schema
+        if gateway.examples:
+            extra["examples"] = gateway.examples
+        if gateway.primary_artifact_policy:
+            extra["primary_artifact_policy"] = gateway.primary_artifact_policy
+        return extra or None
 
     async def scan_agent_profiles(self, org_id: str) -> ScanResult:
         result = ScanResult()

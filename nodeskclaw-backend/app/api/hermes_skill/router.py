@@ -17,6 +17,8 @@ from app.api.hermes_skill.queue_router import router as queue_router
 from app.api.hermes_skill.runtime_control_router import router as runtime_control_router
 from app.api.hermes_skill.authorizations_router import router as authorizations_router
 from app.api.hermes_skill.metrics_router import router as metrics_router
+from app.api.hermes_skill.client_router import router as client_router
+from app.api.hermes_skill.task_result_router import router as task_result_router
 
 router = APIRouter()
 
@@ -35,6 +37,8 @@ router.include_router(queue_router)
 router.include_router(runtime_control_router)
 router.include_router(authorizations_router)
 router.include_router(metrics_router)
+router.include_router(client_router)
+router.include_router(task_result_router)
 router.include_router(compat_router)
 
 if feature_gate.is_ee:

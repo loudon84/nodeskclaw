@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_db, require_org_member
-from app.core.exceptions import NotFoundError, BadRequestError
+from app.core.exceptions import NotFoundError, BadRequestError, ForbiddenError
 from app.models.hermes_skill.hermes_task import HermesTask, TaskStatus, EventType
 from app.schemas.hermes_skill.task import TaskRead
 from app.schemas.hermes_skill.artifact import ArtifactRead
@@ -160,17 +160,38 @@ async def get_task_timeline(
 async def stream_task_events(
     task_id: str,
     request: Request,
-    user_org=Depends(require_org_member),
     db: AsyncSession = Depends(get_db),
+    token: str | None = Query(None),
     last_event_id: str | None = None,
 ):
     from app.core.config import settings as _settings
+    from app.core.security import get_current_user
+    from app.services.hermes_skill.task_event_token_service import TaskEventTokenService
 
-    user, org = user_org
-    if user:
-        await PermissionChecker.require_permission(db, user.id, org.id, "hermes_task:view")
     service = TaskService(db)
-    await service.get_task(task_id, org.id)
+    authorization = request.headers.get("authorization")
+    org_id: str
+
+    if authorization:
+        user = await get_current_user(request=request, db=db)
+        from app.services.org.factory import get_org_provider
+        org = await get_org_provider().resolve_org_for_user(user, db)
+        if org is None:
+            raise ForbiddenError("用户未加入任何组织", "errors.org.user_has_no_org")
+        await PermissionChecker.require_permission(db, user.id, org.id, "hermes_task:view")
+        await service.get_task(task_id, org.id)
+        org_id = org.id
+    elif token:
+        token_service = TaskEventTokenService(db)
+        valid, token_user_id, token_org_id = await token_service.verify_token(token, task_id)
+        if not valid or not token_org_id:
+            raise ForbiddenError("SSE token 无效或已过期", "errors.task.events_token_invalid")
+        task = await service.get_task(task_id, token_org_id)
+        org_id = token_org_id
+        if token_user_id and task.user_id and token_user_id != task.user_id:
+            raise ForbiddenError("SSE token 无权访问该任务", "errors.task.events_token_forbidden")
+    else:
+        raise ForbiddenError("需要认证或 SSE token", "errors.auth.unauthorized")
 
     event_service = TaskEventService(db)
     from app.services.hermes_skill.event_bus import EventBus
@@ -193,7 +214,7 @@ async def stream_task_events(
             TaskStatus.CANCELLED, TaskStatus.TIMEOUT,
         })
 
-        existing_events = await event_service.get_events(task_id, org.id, start_after_seq=last_seq)
+        existing_events = await event_service.get_events(task_id, org_id, start_after_seq=last_seq)
 
         for event in existing_events:
             payload = _unwrap_event_payload(event.payload)
@@ -213,7 +234,7 @@ async def stream_task_events(
 
         seen_seqs = {e.event_seq for e in existing_events}
         if last_seq is not None:
-            all_events = await event_service.get_events(task_id, org.id)
+            all_events = await event_service.get_events(task_id, org_id)
             seen_seqs = {e.event_seq for e in all_events}
 
         heartbeat_interval = _settings.HERMES_TASK_SSE_HEARTBEAT_SECONDS
@@ -225,7 +246,7 @@ async def stream_task_events(
                 yield ": heartbeat\n\n"
                 continue
 
-            new_events = await event_service.get_events(task_id, org.id)
+            new_events = await event_service.get_events(task_id, org_id)
             for event in new_events:
                 if event.event_seq in seen_seqs:
                     continue

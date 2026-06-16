@@ -30,6 +30,8 @@ class TaskService:
         installation_id: str | None = None,
         user_id: str | None = None,
         arguments: dict | None = None,
+        client_context: dict | None = None,
+        routing_metadata: dict | None = None,
     ) -> HermesTask:
         queue_policy = HermesQueuePolicyService(self.db)
         can_enqueue, message_key = await queue_policy.can_enqueue(
@@ -64,6 +66,8 @@ class TaskService:
             queue_entered_at=datetime.now(timezone.utc),
             event_url=f"/api/v1/hermes/tasks/{{task_id}}/events",
             artifact_url=f"/api/v1/hermes/tasks/{{task_id}}/artifacts",
+            client_context=client_context,
+            routing_metadata=routing_metadata,
         )
         self.db.add(task)
         await self.db.flush()

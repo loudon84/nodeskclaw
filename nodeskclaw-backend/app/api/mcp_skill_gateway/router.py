@@ -29,7 +29,12 @@ from app.services.mcp_skill_gateway.approval_service import (
     revoke_grant,
 )
 from app.services.mcp_skill_gateway.audit_service import list_mcp_calls
-from app.services.mcp_skill_gateway.constants import MCP_PROTOCOL_VERSION, MCP_SERVER_NAME
+from app.services.mcp_skill_gateway.constants import (
+    HERMES_MCP_VERSION,
+    MCP_HEALTH_ENDPOINT_LEGACY,
+    MCP_PROTOCOL_VERSION,
+    MCP_SERVER_NAME,
+)
 from app.services.mcp_skill_gateway.handler import dispatch
 from app.services.mcp_skill_gateway.mcp_tool_registry import count_tools_by_permission
 router = APIRouter()
@@ -45,6 +50,21 @@ async def mcp_health():
         "protocolVersion": MCP_PROTOCOL_VERSION,
         "tools": tool_counts,
     }
+
+
+@router.get("/hermes/mcp/health", tags=["MCP Skill Gateway"])
+async def hermes_mcp_health():
+    return {
+        "status": "ok",
+        "service": "hermes-mcp-gateway",
+        "version": HERMES_MCP_VERSION,
+        "protocolVersion": MCP_PROTOCOL_VERSION,
+    }
+
+
+@router.get(MCP_HEALTH_ENDPOINT_LEGACY, tags=["MCP Skill Gateway"], include_in_schema=False)
+async def mcp_health_legacy():
+    return await mcp_health()
 
 
 @router.get("/hermes/mcp/audit", response_model=ApiResponse[McpCallLogListResponse], tags=["MCP Skill Gateway"])
@@ -370,7 +390,7 @@ async def mcp_jsonrpc(
     db: AsyncSession = Depends(get_db),
 ):
     authorization = request.headers.get("authorization")
-    return await dispatch(body, authorization, db)
+    return await dispatch(body, authorization, db, request_headers=dict(request.headers))
 
 
 @router.post("/hermes/mcp", tags=["MCP Skill Gateway"])
@@ -380,4 +400,4 @@ async def hermes_mcp_jsonrpc(
     db: AsyncSession = Depends(get_db),
 ):
     authorization = request.headers.get("authorization")
-    return await dispatch(body, authorization, db)
+    return await dispatch(body, authorization, db, request_headers=dict(request.headers))

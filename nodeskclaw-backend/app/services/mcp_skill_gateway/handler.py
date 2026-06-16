@@ -40,9 +40,34 @@ from app.services.mcp_skill_gateway.mcp_tool_registry import (
     list_enabled_tools,
     resolve_approval_mode,
 )
+from app.services.hermes_skill.hermes_client_service import (
+    HEADER_CLIENT,
+    HEADER_DEVICE_ID,
+    HEADER_HERMES_PROFILE,
+    HEADER_PROXY_VERSION,
+)
 from app.services.mcp_skill_gateway.session import get_client_name, mark_initialized
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_headers(headers: dict | None) -> dict[str, str]:
+    if not headers:
+        return {}
+    return {str(k).lower(): str(v) for k, v in headers.items()}
+
+
+def _build_client_context(headers: dict | None) -> dict | None:
+    normalized = _normalize_headers(headers)
+    context = {
+        "desktop_device_id": normalized.get(HEADER_DEVICE_ID.lower()),
+        "profile": normalized.get(HEADER_HERMES_PROFILE.lower()),
+        "client": normalized.get(HEADER_CLIENT.lower()),
+        "proxy_version": normalized.get(HEADER_PROXY_VERSION.lower()),
+    }
+    if any(context.values()):
+        return context
+    return None
 
 
 def _tool_approval_mode(tool_name: str) -> str | None:
@@ -345,6 +370,7 @@ async def dispatch(
     body: dict,
     authorization: str | None,
     db: AsyncSession,
+    request_headers: dict | None = None,
 ) -> dict:
     jsonrpc_id = body.get("id", 1)
     method = body.get("method", "")
@@ -366,10 +392,15 @@ async def dispatch(
         return await _handle_initialize(body, jsonrpc_id, user_id, org.id)
 
     if method == "tools/list":
-        return await _handle_tools_list(jsonrpc_id, user_id, org.id, db)
+        params = body.get("params") or {}
+        return await _handle_tools_list(
+            jsonrpc_id, user_id, org.id, db, params=params, request_headers=request_headers,
+        )
 
     if method == "tools/call":
-        return await _handle_tools_call(body, jsonrpc_id, user_id, org.id, db, user)
+        return await _handle_tools_call(
+            body, jsonrpc_id, user_id, org.id, db, user, request_headers=request_headers,
+        )
 
     _log_mcp_error(
         MCP_METHOD_NOT_FOUND,
@@ -385,6 +416,7 @@ async def dispatch_authenticated(
     body: dict,
     user_org: tuple[Any, Any],
     db: AsyncSession,
+    request_headers: dict | None = None,
 ) -> dict:
     user, org = user_org
     jsonrpc_id = body.get("id", 1)
@@ -400,10 +432,15 @@ async def dispatch_authenticated(
         return await _handle_initialize(body, jsonrpc_id, user_id, org.id)
 
     if method == "tools/list":
-        return await _handle_tools_list(jsonrpc_id, user_id, org.id, db)
+        params = body.get("params") or {}
+        return await _handle_tools_list(
+            jsonrpc_id, user_id, org.id, db, params=params, request_headers=request_headers,
+        )
 
     if method == "tools/call":
-        return await _handle_tools_call(body, jsonrpc_id, user_id, org.id, db, user)
+        return await _handle_tools_call(
+            body, jsonrpc_id, user_id, org.id, db, user, request_headers=request_headers,
+        )
 
     _log_mcp_error(
         MCP_METHOD_NOT_FOUND,
@@ -445,9 +482,23 @@ async def _handle_initialize(
     )
 
 
-async def _collect_tools(user_id: str, org_id: str, db: AsyncSession) -> list[dict[str, Any]]:
+async def _collect_tools(
+    user_id: str,
+    org_id: str,
+    db: AsyncSession,
+    *,
+    agent_alias: str | None = None,
+    profile: str | None = None,
+    workspace_id: str | None = None,
+) -> list[dict[str, Any]]:
     mapper = McpToolMapper(db)
-    skill_tools = await mapper.list_tools(org_id, user_id=user_id)
+    skill_tools = await mapper.list_tools(
+        org_id,
+        user_id=user_id,
+        agent_alias=agent_alias,
+        profile=profile,
+        workspace_id=workspace_id,
+    )
     registry_tools: list[dict[str, Any]] = []
     for tool in list_enabled_tools():
         auth_annotations = None
@@ -478,9 +529,26 @@ async def _handle_tools_list(
     user_id: str,
     org_id: str,
     db: AsyncSession,
+    *,
+    params: dict | None = None,
+    request_headers: dict | None = None,
 ) -> dict:
     try:
-        tools = await _collect_tools(user_id, org_id, db)
+        params = params or {}
+        normalized = _normalize_headers(request_headers)
+        agent_alias = params.get("agent_alias")
+        profile = params.get("profile")
+        workspace_id = params.get("workspace_id")
+        if not profile:
+            profile = normalized.get(HEADER_HERMES_PROFILE.lower())
+        tools = await _collect_tools(
+            user_id,
+            org_id,
+            db,
+            agent_alias=agent_alias,
+            profile=profile,
+            workspace_id=workspace_id,
+        )
         return mcp_success(jsonrpc_id, {"tools": tools})
     except ForbiddenError as exc:
         _log_mcp_error(
@@ -518,6 +586,8 @@ async def _handle_tools_call(
     org_id: str,
     db: AsyncSession,
     user: Any,
+    *,
+    request_headers: dict | None = None,
 ) -> dict:
     params = body.get("params", {})
     tool_name = params.get("name", "")
@@ -566,6 +636,9 @@ async def _handle_tools_call(
         )
 
     mapper = McpToolMapper(db)
+    normalized = _normalize_headers(request_headers)
+    profile_name = normalized.get(HEADER_HERMES_PROFILE.lower())
+    client_context = _build_client_context(request_headers)
     try:
         result = await mapper.call_tool(
             tool_name,
@@ -573,6 +646,8 @@ async def _handle_tools_call(
             org_id,
             user_id=user_id,
             jsonrpc_id=jsonrpc_id,
+            client_context=client_context,
+            profile_name=profile_name,
         )
         duration_ms = int((time.perf_counter() - started) * 1000)
         await log_mcp_call(
