@@ -92,6 +92,8 @@ class HermesTask(BaseModel):
     queue_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     queue_entered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     run_dispatched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    client_context: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    routing_metadata: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
     __table_args__ = (
         Index("ix_hermes_tasks_org_status", "org_id", "status"),
