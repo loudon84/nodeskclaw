@@ -20,9 +20,14 @@ export interface HermesAgentInstance {
   webui_url?: string | null
   gateway_port?: number | null
   gateway_url?: string | null
-  gateway_status: string
+  api_server_enabled?: boolean | null
+  api_server_model_name?: string | null
+  has_api_server_key?: boolean | null
+  api_server_status?: string | null
+  agent_call_status?: string | null
+  gateway_status?: string | null
   runtime_status: string
-  mcp_status: string
+  mcp_status?: string | null
   instance_dir?: string | null
   data_dir?: string | null
   env_file?: string | null
@@ -47,6 +52,7 @@ export async function scanExistingHermesAgents(instancesRoot?: string) {
   const { data } = await api.post('/hermes/agents/scan-existing', {
     instances_root: instancesRoot ?? null,
     probe_after_scan: true,
+    call_test: false,
   })
   return unwrapEnvelope(data)
 }
@@ -64,4 +70,9 @@ export async function probeAllHermesAgents() {
 export async function getHermesAgentDiagnostics(profileName: string) {
   const { data } = await api.get(`/hermes/agents/${encodeURIComponent(profileName)}/diagnostics`)
   return unwrapEnvelope<{ profile_name: string; checks: DiagnosticCheck[] }>(data)
+}
+
+export async function testCallHermesAgent(profileName: string) {
+  const { data } = await api.post(`/hermes/agents/${encodeURIComponent(profileName)}/test-call`)
+  return unwrapEnvelope(data)
 }

@@ -14,8 +14,7 @@ from app.models.hermes_skill.hermes_agent_instance import HermesAgentInstance
 from app.services.docker_constants import get_docker_public_url, get_hermes_agent_host_ip, get_hermes_instances_root
 from app.services.hermes_external.docker_container_inspect_service import DockerContainerInspectService
 from app.services.hermes_external.hermes_env_parser import HermesEnvData, parse_env_file
-from app.services.hermes_external.hermes_gateway_probe_service import HermesGatewayProbeService
-from app.services.hermes_external.hermes_runtime_status_service import HermesRuntimeStatusService
+from app.services.hermes_external.hermes_api_server_probe_service import HermesApiServerProbeService
 
 
 @dataclass
@@ -27,7 +26,11 @@ class BindScanItem:
     docker_health: str
     webui_url: str | None
     gateway_url: str | None
-    gateway_status: str
+    api_server_enabled: bool | None
+    api_server_model_name: str | None
+    has_api_server_key: bool
+    api_server_status: str
+    agent_call_status: str
     runtime_status: str
     mcp_status: str
     last_error: str | None
@@ -46,8 +49,7 @@ class HermesDockerBindingService:
     def __init__(self, db: AsyncSession) -> None:
         self.db = db
         self._inspect = DockerContainerInspectService()
-        self._probe = HermesGatewayProbeService()
-        self._status = HermesRuntimeStatusService()
+        self._probe = HermesApiServerProbeService()
 
     async def scan_existing(
         self,
@@ -55,12 +57,14 @@ class HermesDockerBindingService:
         *,
         instances_root: str | None = None,
         probe_after_scan: bool | None = None,
+        call_test: bool | None = None,
         instance_id: str | None = None,
     ) -> BindScanResult:
         root = Path(instances_root) if instances_root else get_hermes_instances_root()
         should_probe = (
             settings.HERMES_AUTO_PROBE_AFTER_SCAN if probe_after_scan is None else probe_after_scan
         )
+        should_call_test = settings.HERMES_ENABLE_CALL_TEST if call_test is None else call_test
         items: list[BindScanItem] = []
         failed = 0
         scanned = 0
@@ -81,6 +85,7 @@ class HermesDockerBindingService:
                     entry,
                     env_file,
                     probe=should_probe,
+                    call_test=should_call_test,
                     instance_id=instance_id,
                 )
                 items.append(item)
@@ -189,6 +194,7 @@ class HermesDockerBindingService:
         env_file: Path,
         *,
         probe: bool,
+        call_test: bool,
         instance_id: str | None,
     ) -> BindScanItem:
         env_data = parse_env_file(env_file, require_gateway_port=False)
@@ -198,6 +204,7 @@ class HermesDockerBindingService:
             env_file,
             env_data,
             probe=probe,
+            call_test=call_test,
             instance_id=instance_id,
         )
         return BindScanItem(
@@ -208,7 +215,11 @@ class HermesDockerBindingService:
             docker_health=record.docker_health,
             webui_url=record.webui_url,
             gateway_url=record.gateway_url,
-            gateway_status=record.gateway_status,
+            api_server_enabled=env_data.api_server_enabled,
+            api_server_model_name=env_data.api_server_model_name,
+            has_api_server_key=env_data.has_api_server_key,
+            api_server_status=record.gateway_status,
+            agent_call_status=record.mcp_status,
             runtime_status=record.gateway_runtime_status,
             mcp_status=record.mcp_status,
             last_error=record.last_error,
@@ -223,6 +234,7 @@ class HermesDockerBindingService:
         env_data: HermesEnvData,
         *,
         probe: bool,
+        call_test: bool = False,
         instance_id: str | None,
         managed_mode: str | None = None,
     ) -> HermesAgentInstance:
@@ -249,39 +261,38 @@ class HermesDockerBindingService:
         labels = ((inspect_result.inspect_data or {}).get("Config") or {}).get("Labels") or {}
         compose_project = labels.get("com.docker.compose.project")
 
-        gateway_status = "unconfigured"
-        gateway_runtime_status = "unconfigured"
-        mcp_status = "unconfigured"
+        api_server_status = "unconfigured"
+        runtime_status = "unconfigured"
+        agent_call_status = "not_callable"
         last_error = inspect_result.last_error or ("; ".join(env_data.errors) if env_data.errors else None)
         last_probe_at = None
 
         if not env_data.gateway_port:
-            gateway_status = "unconfigured"
-            gateway_runtime_status = "unconfigured"
-            mcp_status = "unconfigured"
+            api_server_status = "unconfigured"
+            runtime_status = "unconfigured"
+            agent_call_status = "not_callable"
             last_error = last_error or "missing HERMES_GATEWAY_PORT"
         elif not inspect_result.gateway_port_mapped:
-            gateway_status = "unknown"
-            pair = self._status.compute(
-                docker_status=inspect_result.docker_status,
-                gateway_status=gateway_status,
-                gateway_port=env_data.gateway_port,
-            )
-            gateway_runtime_status = pair.gateway_runtime_status
-            mcp_status = pair.mcp_status
+            api_server_status = "offline"
+            runtime_status = "degraded" if inspect_result.docker_status == "running" else "unavailable"
+            agent_call_status = "not_callable"
+            last_error = last_error or "HERMES_GATEWAY_PORT not mapped to API_SERVER_PORT"
         else:
             if probe and gateway_url:
-                probe_result = await self._probe.probe_url(gateway_url)
-                gateway_status = probe_result.gateway_status
+                probe_result = await self._probe.probe_env(
+                    env_file=env_file,
+                    gateway_url=gateway_url,
+                    call_test=call_test,
+                )
+                api_server_status = probe_result.api_server_status
+                runtime_status = probe_result.runtime_status
+                agent_call_status = probe_result.agent_call_status
                 last_probe_at = probe_result.last_probe_at
                 last_error = probe_result.last_error or last_error
-            pair = self._status.compute(
-                docker_status=inspect_result.docker_status,
-                gateway_status=gateway_status,
-                gateway_port=env_data.gateway_port,
-            )
-            gateway_runtime_status = pair.gateway_runtime_status
-            mcp_status = pair.mcp_status
+            else:
+                api_server_status = "unknown"
+                runtime_status = "unknown" if inspect_result.docker_status == "running" else "unavailable"
+                agent_call_status = "unknown"
 
         record = await self.get_by_profile(org_id, profile)
         if not record:
@@ -304,9 +315,9 @@ class HermesDockerBindingService:
         record.webui_url = webui_url
         record.gateway_port = env_data.gateway_port
         record.gateway_url = gateway_url
-        record.gateway_status = gateway_status
-        record.gateway_runtime_status = gateway_runtime_status
-        record.mcp_status = mcp_status
+        record.gateway_status = api_server_status
+        record.gateway_runtime_status = runtime_status
+        record.mcp_status = agent_call_status
         record.instance_dir = str(instance_dir)
         record.data_dir = env_data.data_dir
         record.env_file = str(env_file)
@@ -322,14 +333,9 @@ class HermesDockerBindingService:
 
     async def _probe_record(self, record: HermesAgentInstance) -> HermesAgentInstance:
         if not record.gateway_url:
-            pair = self._status.compute(
-                docker_status=record.docker_status,
-                gateway_status="unconfigured",
-                gateway_port=record.gateway_port,
-            )
             record.gateway_status = "unconfigured"
-            record.gateway_runtime_status = pair.gateway_runtime_status
-            record.mcp_status = pair.mcp_status
+            record.gateway_runtime_status = "unconfigured"
+            record.mcp_status = "not_callable"
             record.last_error = record.last_error or "missing HERMES_GATEWAY_PORT"
             return record
 
@@ -343,23 +349,27 @@ class HermesDockerBindingService:
         record.container_id = inspect_result.container_id
         record.image = inspect_result.image
 
-        probe_result = await self._probe.probe_url(record.gateway_url)
-        record.gateway_status = probe_result.gateway_status
+        probe_result = await self._probe.probe_env(
+            env_file=record.env_file or "",
+            gateway_url=record.gateway_url,
+            call_test=False,
+        )
+        record.gateway_status = probe_result.api_server_status
+        record.gateway_runtime_status = probe_result.runtime_status
+        record.mcp_status = probe_result.agent_call_status
         record.last_probe_at = probe_result.last_probe_at
         record.last_error = probe_result.last_error or inspect_result.last_error
-
-        pair = self._status.compute(
-            docker_status=record.docker_status,
-            gateway_status=record.gateway_status,
-            gateway_port=record.gateway_port,
-        )
-        record.gateway_runtime_status = pair.gateway_runtime_status
-        record.mcp_status = pair.mcp_status
         await self.db.flush()
         return record
 
     @staticmethod
     def to_api_dict(record: HermesAgentInstance) -> dict:
+        env = None
+        if record.env_file:
+            try:
+                env = parse_env_file(Path(record.env_file), require_gateway_port=False)
+            except Exception:
+                env = None
         return {
             "id": record.id,
             "profile_name": record.profile_name,
@@ -373,6 +383,11 @@ class HermesDockerBindingService:
             "webui_url": record.webui_url,
             "gateway_port": record.gateway_port,
             "gateway_url": record.gateway_url,
+            "api_server_enabled": env.api_server_enabled if env else None,
+            "api_server_model_name": env.api_server_model_name if env else None,
+            "has_api_server_key": env.has_api_server_key if env else None,
+            "api_server_status": record.gateway_status,
+            "agent_call_status": record.mcp_status,
             "gateway_status": record.gateway_status,
             "runtime_status": record.gateway_runtime_status,
             "mcp_status": record.mcp_status,

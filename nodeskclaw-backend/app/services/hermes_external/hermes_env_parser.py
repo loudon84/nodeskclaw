@@ -11,6 +11,11 @@ ENV_WHITELIST_KEYS = frozenset({
     "HERMES_WEBUI_PORT",
     "HERMES_GATEWAY_PORT",
     "HERMES_GATEWAY_INTERNAL_PORT",
+    "API_SERVER_ENABLED",
+    "API_SERVER_HOST",
+    "API_SERVER_PORT",
+    "API_SERVER_KEY",
+    "API_SERVER_MODEL_NAME",
     "HERMES_INSTANCE_DIR",
     "HERMES_DATA_DIR",
 })
@@ -23,6 +28,12 @@ class HermesEnvData:
     webui_port: int | None = None
     gateway_port: int | None = None
     gateway_internal_port: int = 8642
+    api_server_enabled: bool | None = None
+    api_server_host: str | None = None
+    api_server_port: int | None = None
+    api_server_model_name: str | None = None
+    api_server_key_ref: str | None = None
+    has_api_server_key: bool = False
     instance_dir: str | None = None
     data_dir: str | None = None
     raw: dict[str, str] = field(default_factory=dict)
@@ -91,5 +102,34 @@ def parse_env_file(env_path: Path, *, require_gateway_port: bool = False) -> Her
             data.gateway_internal_port = int(internal_raw)
         except ValueError:
             data.errors.append("HERMES_GATEWAY_INTERNAL_PORT is invalid")
+
+    enabled_raw = (raw.get("API_SERVER_ENABLED") or "").strip().lower()
+    if enabled_raw:
+        if enabled_raw in {"true", "1", "yes", "on"}:
+            data.api_server_enabled = True
+        elif enabled_raw in {"false", "0", "no", "off"}:
+            data.api_server_enabled = False
+        else:
+            data.errors.append("API_SERVER_ENABLED is invalid")
+
+    host_raw = (raw.get("API_SERVER_HOST") or "").strip()
+    if host_raw:
+        data.api_server_host = host_raw
+
+    port_raw = (raw.get("API_SERVER_PORT") or "").strip()
+    if port_raw:
+        try:
+            data.api_server_port = int(port_raw)
+        except ValueError:
+            data.errors.append("API_SERVER_PORT is invalid")
+
+    model_raw = (raw.get("API_SERVER_MODEL_NAME") or "").strip()
+    if model_raw:
+        data.api_server_model_name = model_raw
+
+    key_raw = (raw.get("API_SERVER_KEY") or "").strip()
+    if key_raw:
+        data.has_api_server_key = True
+        data.api_server_key_ref = f"env:{env_path.as_posix()}#API_SERVER_KEY"
 
     return data

@@ -80,6 +80,13 @@ async def test_list_available_agents_filters_non_routable():
     db = AsyncMock()
     inst = _instance(advanced_config=json.dumps({"agent_alias": "common-writer"}))
     svc = AgentAliasResolver(db)
+
+    bound_scalars = MagicMock()
+    bound_scalars.all.return_value = []
+    bound_result = MagicMock()
+    bound_result.scalars.return_value = bound_scalars
+    db.execute = AsyncMock(return_value=bound_result)
+
     with patch.object(svc, "_list_org_instances", AsyncMock(return_value=[inst])):
         with patch.object(svc.runtime_svc, "is_agent_routable", AsyncMock(return_value=False)):
             items = await svc.list_available_agents("org-1")

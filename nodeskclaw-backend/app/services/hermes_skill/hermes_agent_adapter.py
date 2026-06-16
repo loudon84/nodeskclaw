@@ -1,6 +1,7 @@
 import json
 import logging
 from collections.abc import AsyncIterator
+from pathlib import Path
 
 import httpx
 from sqlalchemy import select
@@ -54,6 +55,55 @@ class HermesAgentAdapter:
     def __init__(self, db: AsyncSession):
         self.db = db
 
+    @staticmethod
+    def _read_env_value(env_file: str, key: str) -> str | None:
+        try:
+            text = Path(env_file).read_text(encoding="utf-8")
+        except OSError:
+            return None
+
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            if k.strip() != key:
+                continue
+            v = v.strip()
+            if len(v) >= 2 and ((v[0] == v[-1]) and v[0] in {"'", '"'}):
+                v = v[1:-1]
+            return v
+
+        return None
+
+    @staticmethod
+    def _get_api_server_key(instance: Instance) -> str | None:
+        advanced = _parse_advanced_config(instance)
+        paths = advanced.get("paths") or {}
+        env_file = ""
+        if isinstance(paths, dict):
+            env_file = str(paths.get("env_file") or "")
+        if not env_file:
+            env_file = str(advanced.get("env_file") or "")
+        if not env_file or not Path(env_file).is_file():
+            return None
+        return HermesAgentAdapter._read_env_value(env_file, "API_SERVER_KEY")
+
+    @staticmethod
+    def _get_auth_headers(instance: Instance, *, require_key: bool) -> dict[str, str]:
+        api_server_key = HermesAgentAdapter._get_api_server_key(instance)
+        if not api_server_key:
+            if require_key:
+                raise BadRequestError(
+                    "实例 .env 缺少 API_SERVER_KEY，NoDeskClaw 无法调用该 Hermes Agent。",
+                    "errors.task.agent_api_key_missing",
+                )
+            return {}
+        return {
+            "Authorization": f"Bearer {api_server_key}",
+            "Content-Type": "application/json",
+        }
+
     async def submit_run(
         self,
         task: HermesTask,
@@ -85,7 +135,9 @@ class HermesAgentAdapter:
             write=settings.HERMES_AGENT_READ_TIMEOUT_SECONDS,
             pool=settings.HERMES_AGENT_READ_TIMEOUT_SECONDS,
         )
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        require_key = _is_external_docker_with_gateway(instance)
+        headers = self._get_auth_headers(instance, require_key=require_key)
+        async with httpx.AsyncClient(timeout=timeout, headers=headers) as client:
             response = await client.post(f"{base_url}/v1/runs", json=payload)
 
         if response.status_code >= 400:
@@ -119,7 +171,8 @@ class HermesAgentAdapter:
             write=settings.HERMES_AGENT_READ_TIMEOUT_SECONDS,
             pool=settings.HERMES_AGENT_READ_TIMEOUT_SECONDS,
         )
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        headers = self._get_auth_headers(instance, require_key=False)
+        async with httpx.AsyncClient(timeout=timeout, headers=headers) as client:
             try:
                 response = await client.delete(f"{base_url}/v1/runs/{task.hermes_run_id}")
                 if response.status_code < 400:
@@ -143,7 +196,8 @@ class HermesAgentAdapter:
             connect=settings.HERMES_AGENT_CONNECT_TIMEOUT_SECONDS,
             read=settings.HERMES_AGENT_DEFAULT_TIMEOUT_SECONDS,
         )
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        headers = self._get_auth_headers(instance, require_key=False)
+        async with httpx.AsyncClient(timeout=timeout, headers=headers) as client:
             async with client.stream(
                 "GET",
                 f"{base_url}/v1/runs/{task.hermes_run_id}/events",
@@ -169,7 +223,8 @@ class HermesAgentAdapter:
             connect=settings.HERMES_AGENT_CONNECT_TIMEOUT_SECONDS,
             read=settings.HERMES_AGENT_READ_TIMEOUT_SECONDS,
         )
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        headers = self._get_auth_headers(instance, require_key=False)
+        async with httpx.AsyncClient(timeout=timeout, headers=headers) as client:
             response = await client.get(f"{base_url}/v1/runs/{task.hermes_run_id}")
 
         if response.status_code >= 400:

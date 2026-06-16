@@ -9,6 +9,7 @@ import {
   probeHermesAgent,
   scanExistingHermesAgents,
   getHermesAgentDiagnostics,
+  testCallHermesAgent,
   type HermesAgentInstance,
   type DiagnosticCheck,
 } from '@/api/hermes/agentInstances'
@@ -39,6 +40,14 @@ const statusColor: Record<string, string> = {
   unhealthy: 'bg-red-500/15 text-red-400',
   unconfigured: 'bg-muted text-muted-foreground',
   unknown: 'bg-muted text-muted-foreground',
+}
+
+function apiServerStatus(agent: HermesAgentInstance) {
+  return agent.api_server_status || agent.gateway_status || 'unknown'
+}
+
+function agentCallStatus(agent: HermesAgentInstance) {
+  return agent.agent_call_status || agent.mcp_status || 'unknown'
 }
 
 function formatTime(iso: string | null | undefined) {
@@ -89,6 +98,20 @@ async function probeOne(agent: HermesAgentInstance) {
     await probeHermesAgent(agent.profile_name)
     await fetchAgents()
     toast.success(t('hermes.agents.actionSuccess'))
+  } catch (e: unknown) {
+    toast.error(resolveApiErrorMessage(e, t('hermes.agents.actionFailed')))
+  } finally {
+    actionLoading.value = false
+  }
+}
+
+async function testCall(agent: HermesAgentInstance) {
+  actionLoading.value = true
+  try {
+    const res = await testCallHermesAgent(agent.profile_name)
+    if (res?.ok) toast.success(t('hermes.agents.testCallSuccess'))
+    else toast.error(t('hermes.agents.testCallFailed'))
+    await fetchAgents()
   } catch (e: unknown) {
     toast.error(resolveApiErrorMessage(e, t('hermes.agents.actionFailed')))
   } finally {
@@ -155,14 +178,14 @@ onMounted(fetchAgents)
             </div>
             <div class="flex flex-wrap gap-2 mt-2">
               <Badge variant="outline">{{ t('hermes.agents.docker') }}: {{ agent.docker_status }}</Badge>
-              <Badge variant="outline" :class="statusColor[agent.gateway_status] ?? ''">
-                Gateway: {{ agent.gateway_status }}
+              <Badge variant="outline" :class="statusColor[apiServerStatus(agent)] ?? ''">
+                API Server: {{ apiServerStatus(agent) }}
+              </Badge>
+              <Badge variant="outline" :class="statusColor[agentCallStatus(agent)] ?? ''">
+                Agent: {{ agentCallStatus(agent) }}
               </Badge>
               <Badge variant="outline" :class="statusColor[agent.runtime_status] ?? ''">
                 Runtime: {{ agent.runtime_status }}
-              </Badge>
-              <Badge variant="outline" :class="statusColor[agent.mcp_status] ?? ''">
-                MCP: {{ agent.mcp_status }}
               </Badge>
             </div>
           </div>
@@ -171,6 +194,8 @@ onMounted(fetchAgents)
         <dl class="grid gap-1 text-xs sm:grid-cols-2 mb-3">
           <div><span class="text-muted-foreground">WebUI:</span> <span class="font-mono">{{ agent.webui_url || '-' }}</span></div>
           <div><span class="text-muted-foreground">Gateway:</span> <span class="font-mono">{{ agent.gateway_url || '-' }}</span></div>
+          <div><span class="text-muted-foreground">Model:</span> <span class="font-mono">{{ agent.api_server_model_name || '-' }}</span></div>
+          <div><span class="text-muted-foreground">Key:</span> <span class="font-mono">{{ agent.has_api_server_key ? t('hermes.agents.keyConfigured') : t('hermes.agents.keyMissing') }}</span></div>
         </dl>
         <p v-if="agent.last_error" class="text-xs text-red-400 mb-3 break-all">{{ agent.last_error }}</p>
         <div class="flex flex-wrap gap-2">
@@ -181,6 +206,9 @@ onMounted(fetchAgents)
           </Button>
           <Button size="sm" variant="outline" :disabled="actionLoading" @click="probeOne(agent)">
             <Activity class="w-3 h-3 mr-1" />{{ t('hermes.agents.probe') }}
+          </Button>
+          <Button size="sm" variant="outline" :disabled="actionLoading" @click="testCall(agent)">
+            {{ t('hermes.agents.testCall') }}
           </Button>
           <Button size="sm" variant="outline" :disabled="actionLoading" @click="showDiagnostics(agent)">
             {{ t('hermes.agents.diagnostics') }}

@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 class ScanExistingAgentsRequest(BaseModel):
     instances_root: str | None = None
     probe_after_scan: bool = True
+    call_test: bool = False
 
 
 class HermesAgentInstanceSummary(BaseModel):
@@ -21,9 +22,14 @@ class HermesAgentInstanceSummary(BaseModel):
     webui_url: str | None = None
     gateway_port: int | None = None
     gateway_url: str | None = None
-    gateway_status: str
+    api_server_enabled: bool | None = None
+    api_server_model_name: str | None = None
+    has_api_server_key: bool | None = None
+    api_server_status: str | None = None
+    agent_call_status: str | None = None
+    gateway_status: str | None = None
     runtime_status: str
-    mcp_status: str
+    mcp_status: str | None = None
     instance_dir: str | None = None
     data_dir: str | None = None
     env_file: str | None = None

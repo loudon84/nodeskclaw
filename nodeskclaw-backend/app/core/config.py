@@ -250,6 +250,14 @@ class Settings(BaseSettings):
     HERMES_GATEWAY_PROBE_CONCURRENCY: int = 5
     HERMES_AUTO_PROBE_AFTER_SCAN: bool = True
 
+    # ── Hermes API Server Gateway (v4.4.1 hotfix) ──────────
+    HERMES_DEFAULT_API_SERVER_PORT: int = 8642
+    HERMES_API_SERVER_PROBE_TIMEOUT_SECONDS: int = 5
+    HERMES_API_SERVER_CALL_TIMEOUT_SECONDS: int = 120
+    HERMES_API_SERVER_PROBE_CONCURRENCY: int = 5
+    HERMES_ENABLE_CALL_TEST: bool = False
+    HERMES_PREFER_RUNS_API: bool = True
+
     # ── Hermes Agent Adapter ──────────────────────────────
     HERMES_AGENT_DEFAULT_TIMEOUT_SECONDS: int = 900
     HERMES_AGENT_CONNECT_TIMEOUT_SECONDS: int = 10
