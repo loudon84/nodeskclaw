@@ -1,6 +1,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from app.core.exceptions import BadRequestError
 from app.models.instance import Instance
 from app.services.hermes_skill.hermes_agent_adapter import HermesAgentAdapter, _parse_advanced_config
 
@@ -37,6 +38,28 @@ def test_get_base_url_ingress_fallback():
 
 
 @pytest.mark.asyncio
+async def test_submit_run_rejects_unbound_agent():
+    db = AsyncMock()
+    adapter = HermesAgentAdapter(db)
+    task = MagicMock()
+    task.agent_id = "common-writer"
+    task.org_id = "org-1"
+
+    with patch(
+        "app.services.hermes_skill.hermes_agent_adapter.HermesBoundAgentScopeService",
+    ) as scope_cls:
+        scope_cls.return_value.assert_dispatchable_instance = AsyncMock(
+            side_effect=BadRequestError(
+                "任务只能下发给已绑定的 Hermes Agent AI 员工实例",
+                "errors.hermes.agent_not_bound",
+            ),
+        )
+        with pytest.raises(BadRequestError) as exc:
+            await adapter.submit_run(task, {})
+    assert exc.value.message_key == "errors.hermes.agent_not_bound"
+
+
+@pytest.mark.asyncio
 async def test_get_run_status_supports_nested_status():
     db = AsyncMock()
     adapter = HermesAgentAdapter(db)
@@ -65,18 +88,22 @@ async def test_cancel_run_fallback_to_post():
     instance.advanced_config = {"hermes_base_url": "https://agent.example.com"}
     instance.org_id = "org-1"
 
-    with patch.object(adapter, "_get_instance", new_callable=AsyncMock, return_value=instance):
-        with patch("app.services.hermes_skill.hermes_agent_adapter.httpx.AsyncClient") as mock_client_cls:
-            mock_client = AsyncMock()
-            mock_client.__aenter__.return_value = mock_client
-            mock_client.__aexit__.return_value = None
-            delete_resp = MagicMock()
-            delete_resp.status_code = 405
-            mock_client.delete = AsyncMock(return_value=delete_resp)
-            mock_client.post = AsyncMock(return_value=MagicMock(status_code=200))
-            mock_client_cls.return_value = mock_client
+    with patch(
+        "app.services.hermes_skill.hermes_agent_adapter.HermesBoundAgentScopeService",
+    ) as scope_cls:
+        scope_cls.return_value.assert_bound_instance = AsyncMock(return_value=(MagicMock(), instance))
+        with patch.object(adapter, "_get_instance", new_callable=AsyncMock, return_value=instance):
+            with patch("app.services.hermes_skill.hermes_agent_adapter.httpx.AsyncClient") as mock_client_cls:
+                mock_client = AsyncMock()
+                mock_client.__aenter__.return_value = mock_client
+                mock_client.__aexit__.return_value = None
+                delete_resp = MagicMock()
+                delete_resp.status_code = 405
+                mock_client.delete = AsyncMock(return_value=delete_resp)
+                mock_client.post = AsyncMock(return_value=MagicMock(status_code=200))
+                mock_client_cls.return_value = mock_client
 
-            await adapter.cancel_run(task)
+                await adapter.cancel_run(task)
 
     mock_client.delete.assert_awaited_once()
     mock_client.post.assert_awaited_once()
@@ -108,21 +135,27 @@ async def test_submit_run_sets_authorization_header_from_env(tmp_path):
     task.org_id = "org-1"
     task.hermes_run_id = None
 
-    with patch.object(adapter, "_get_instance", new_callable=AsyncMock, return_value=instance):
-        with patch.object(adapter, "compute_output_dir_for_task", AsyncMock(return_value="/out")):
-            with patch("app.services.hermes_skill.hermes_agent_adapter.httpx.AsyncClient") as mock_client_cls:
-                mock_client = AsyncMock()
-                mock_client.__aenter__.return_value = mock_client
-                mock_client.__aexit__.return_value = None
+    with patch(
+        "app.services.hermes_skill.hermes_agent_adapter.HermesBoundAgentScopeService",
+    ) as scope_cls:
+        scope_cls.return_value.assert_dispatchable_instance = AsyncMock(
+            return_value=(MagicMock(), instance),
+        )
+        with patch.object(adapter, "_get_instance", new_callable=AsyncMock, return_value=instance):
+            with patch.object(adapter, "compute_output_dir_for_task", AsyncMock(return_value="/out")):
+                with patch("app.services.hermes_skill.hermes_agent_adapter.httpx.AsyncClient") as mock_client_cls:
+                    mock_client = AsyncMock()
+                    mock_client.__aenter__.return_value = mock_client
+                    mock_client.__aexit__.return_value = None
 
-                mock_response = MagicMock()
-                mock_response.status_code = 200
-                mock_response.json.return_value = {"run_id": "run-1", "data": {}}
-                mock_client.post = AsyncMock(return_value=mock_response)
+                    mock_response = MagicMock()
+                    mock_response.status_code = 200
+                    mock_response.json.return_value = {"run_id": "run-1", "data": {}}
+                    mock_client.post = AsyncMock(return_value=mock_response)
 
-                mock_client_cls.return_value = mock_client
+                    mock_client_cls.return_value = mock_client
 
-                result = await adapter.submit_run(task, {})
+                    result = await adapter.submit_run(task, {})
 
     headers = mock_client_cls.call_args.kwargs["headers"]
     assert headers["Authorization"] == "Bearer secret-123"
@@ -150,18 +183,22 @@ async def test_cancel_run_includes_authorization_header_from_env(tmp_path):
     task.agent_id = "agent-1"
     task.org_id = "org-1"
 
-    with patch.object(adapter, "_get_instance", new_callable=AsyncMock, return_value=instance):
-        with patch("app.services.hermes_skill.hermes_agent_adapter.httpx.AsyncClient") as mock_client_cls:
-            mock_client = AsyncMock()
-            mock_client.__aenter__.return_value = mock_client
-            mock_client.__aexit__.return_value = None
+    with patch(
+        "app.services.hermes_skill.hermes_agent_adapter.HermesBoundAgentScopeService",
+    ) as scope_cls:
+        scope_cls.return_value.assert_bound_instance = AsyncMock(return_value=(MagicMock(), instance))
+        with patch.object(adapter, "_get_instance", new_callable=AsyncMock, return_value=instance):
+            with patch("app.services.hermes_skill.hermes_agent_adapter.httpx.AsyncClient") as mock_client_cls:
+                mock_client = AsyncMock()
+                mock_client.__aenter__.return_value = mock_client
+                mock_client.__aexit__.return_value = None
 
-            delete_resp = MagicMock()
-            delete_resp.status_code = 200
-            mock_client.delete = AsyncMock(return_value=delete_resp)
+                delete_resp = MagicMock()
+                delete_resp.status_code = 200
+                mock_client.delete = AsyncMock(return_value=delete_resp)
 
-            mock_client_cls.return_value = mock_client
-            await adapter.cancel_run(task)
+                mock_client_cls.return_value = mock_client
+                await adapter.cancel_run(task)
 
     headers = mock_client_cls.call_args.kwargs["headers"]
     assert headers["Authorization"] == "Bearer secret-456"

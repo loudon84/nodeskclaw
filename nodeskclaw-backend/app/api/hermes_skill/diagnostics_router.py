@@ -1,6 +1,6 @@
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_db, require_org_member
@@ -17,6 +17,7 @@ def _ok(data: Any = None, message: str = "success") -> dict:
 
 @router.get("/diagnostics/runtime")
 async def get_runtime_diagnostics(
+    include_unbound: bool = Query(default=False),
     user_org=Depends(require_org_member),
     db: AsyncSession = Depends(get_db),
 ):
@@ -24,8 +25,16 @@ async def get_runtime_diagnostics(
     if user:
         await PermissionChecker.require_permission(db, user.id, org.id, "hermes_runtime:diagnostics")
 
+    include_unbound_effective = include_unbound
+    if include_unbound and user:
+        can_view_unbound = await PermissionChecker.has_permission(
+            db, user.id, org.id, "hermes_agent:manage",
+        )
+        if not can_view_unbound:
+            include_unbound_effective = False
+
     service = RuntimeDiagnosticsService(db)
-    payload = await service.get_runtime_diagnostics(org.id)
+    payload = await service.get_runtime_diagnostics(org.id, include_unbound=include_unbound_effective)
 
     if user:
         audit = SkillAuditLogger(db)

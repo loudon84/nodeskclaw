@@ -193,6 +193,13 @@ onMounted(fetchAgents)
               <Badge variant="outline" :class="statusColor[agent.runtime_status] ?? ''">
                 Runtime: {{ agent.runtime_status }}
               </Badge>
+              <Badge
+                v-if="agent.task_dispatchable !== undefined"
+                variant="outline"
+                :class="agent.task_dispatchable ? 'bg-emerald-500/15 text-emerald-400' : 'bg-muted text-muted-foreground'"
+              >
+                {{ agent.task_dispatchable ? t('hermes.agents.taskDispatchable') : t('hermes.agents.taskNotDispatchable') }}
+              </Badge>
             </div>
           </div>
           <p class="text-xs text-muted-foreground">{{ t('hermes.agents.lastProbe') }}: {{ formatTime(agent.last_probe_at) }}</p>

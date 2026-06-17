@@ -41,6 +41,7 @@ class HermesAgentInstanceSummary(BaseModel):
     binding_type: str | None = None
     instance_status: str | None = None
     is_bound: bool = False
+    task_dispatchable: bool = False
     last_probe_at: datetime | str | None = None
     last_seen_at: datetime | str | None = None
     last_error: str | None = None

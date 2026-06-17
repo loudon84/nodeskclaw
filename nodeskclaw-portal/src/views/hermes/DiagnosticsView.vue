@@ -145,7 +145,12 @@ onMounted(fetchDiagnostics)
             class="rounded-lg border border-border p-3 text-xs"
           >
             <div class="flex items-center justify-between mb-2">
-              <span class="font-mono font-medium">{{ agent.agent_id }}</span>
+              <div>
+                <span class="font-medium">{{ agent.employee_name || agent.name }}</span>
+                <p v-if="agent.profile_name" class="text-muted-foreground font-mono mt-0.5">
+                  {{ agent.profile_name }}<span v-if="agent.container_name"> / {{ agent.container_name }}</span>
+                </p>
+              </div>
               <Badge variant="outline" :class="healthColorMap[agent.health] ?? ''">
                 {{ agent.health }}
               </Badge>

@@ -6,10 +6,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.base import not_deleted
+from app.models.hermes_skill.hermes_agent_instance import HermesAgentInstance
 from app.models.hermes_skill.hermes_agent_runtime_state import AgentRuntimeStatus
 from app.models.hermes_skill.skill_installation import HermesSkillInstallation
 from app.models.instance import Instance
-from app.services.hermes_skill.hermes_agent_adapter import _is_external_docker_with_gateway
+from app.services.hermes_external.hermes_bound_agent_scope_service import HermesBoundAgentScopeService
 from app.services.hermes_skill.hermes_agent_runtime_service import HermesAgentRuntimeService
 
 logger = logging.getLogger(__name__)
@@ -19,6 +20,7 @@ REASON_MATCHED_BY_HERMES_ALIAS = "matched_by_hermes_agent_alias"
 REASON_MATCHED_BY_NAME = "matched_by_name"
 REASON_MATCHED_BY_SLUG = "matched_by_slug"
 REASON_MATCHED_BY_AGENT_ID = "matched_by_agent_id"
+REASON_MATCHED_BY_BOUND_PROFILE = "matched_by_bound_profile"
 
 
 @dataclass
@@ -33,18 +35,27 @@ class AliasResolution:
     name: str = ""
     description: str = ""
     health: str = "ok"
+    profile_name: str | None = None
+    container_name: str | None = None
+    gateway_url: str | None = None
+    task_dispatchable: bool = False
 
     def to_dict(self) -> dict:
         return {
             "agent_alias": self.agent_alias,
             "agent_id": self.agent_id,
+            "instance_id": self.agent_id,
             "name": self.name,
+            "employee_name": self.name,
             "description": self.description,
             "profile_id": self.profile_id,
             "workspace_id": self.workspace_id,
-            "profile_name": self.profile_id,
+            "profile_name": self.profile_name or self.profile_id,
+            "container_name": self.container_name,
+            "gateway_url": self.gateway_url,
             "runtime_status": self.runtime_status,
             "accepting_tasks": self.accepting_tasks,
+            "task_dispatchable": self.task_dispatchable,
             "health": self.health,
             "reason": self.reason,
         }
@@ -66,11 +77,12 @@ class AgentAliasResolver:
     def __init__(self, db: AsyncSession):
         self.db = db
         self.runtime_svc = HermesAgentRuntimeService(db)
+        self.scope = HermesBoundAgentScopeService(db)
 
     async def resolve(self, org_id: str, alias: str) -> AliasResolution | None:
         if not alias:
             return None
-        instances = await self._list_org_instances(org_id)
+        instances = await self._list_bound_instances(org_id)
         normalized = alias.strip()
         for reason, matcher in (
             (REASON_MATCHED_BY_ALIAS, self._match_agent_alias),
@@ -82,56 +94,41 @@ class AgentAliasResolver:
             for instance in instances:
                 if matcher(instance, normalized):
                     return await self._build_resolution(org_id, instance, normalized, reason)
+
+        for record, instance in await self.scope.list_bound_pairs(org_id):
+            if record.profile_name == normalized or record.container_name == normalized:
+                return await self._build_resolution_from_pair(
+                    org_id, record, instance, normalized, REASON_MATCHED_BY_BOUND_PROFILE,
+                )
         return None
 
-    async def list_available_agents(self, org_id: str) -> list[AliasResolution]:
-        instances = await self._list_org_instances(org_id)
-        seen: set[str] = set()
+    async def list_available_agents(
+        self,
+        org_id: str,
+        *,
+        dispatchable_only: bool = True,
+    ) -> list[AliasResolution]:
+        pairs = (
+            await self.scope.list_dispatchable_pairs(org_id)
+            if dispatchable_only
+            else await self.scope.list_bound_pairs(org_id)
+        )
         results: list[AliasResolution] = []
-        for instance in instances:
-            if instance.id in seen:
+        for record, instance in pairs:
+            if dispatchable_only and not self.scope.is_dispatchable(record, instance):
                 continue
-            if not await self.runtime_svc.is_agent_routable(org_id, instance.id):
-                if not _is_external_docker_with_gateway(instance):
-                    continue
-            seen.add(instance.id)
             advanced = _parse_advanced_config(instance.advanced_config)
             alias = (
                 advanced.get("agent_alias")
                 or advanced.get("hermes_agent_alias")
+                or record.profile_name
                 or instance.slug
                 or instance.name
                 or instance.id
             )
-            resolution = await self._build_resolution(
-                org_id, instance, str(alias), REASON_MATCHED_BY_ALIAS,
-            )
-            results.append(resolution)
-
-        from app.models.hermes_skill.hermes_agent_instance import HermesAgentInstance
-        from sqlalchemy import select as sa_select
-        bound_result = await self.db.execute(
-            sa_select(HermesAgentInstance).where(
-                not_deleted(HermesAgentInstance),
-                HermesAgentInstance.org_id == org_id,
-                HermesAgentInstance.gateway_runtime_status == "ready",
-                HermesAgentInstance.instance_id.is_not(None),
-            )
-        )
-        for record in bound_result.scalars().all():
-            if record.instance_id in seen:
-                continue
-            instance = next((i for i in instances if i.id == record.instance_id), None)
-            if not instance:
-                continue
-            seen.add(record.instance_id)
-            resolution = await self._build_resolution(
-                org_id,
-                instance,
-                record.profile_name,
-                REASON_MATCHED_BY_ALIAS,
-            )
-            results.append(resolution)
+            results.append(await self._build_resolution_from_pair(
+                org_id, record, instance, str(alias), REASON_MATCHED_BY_BOUND_PROFILE,
+            ))
         return results
 
     async def enrich_routing(
@@ -155,14 +152,24 @@ class AgentAliasResolver:
             enriched["profile_id"] = profile
         return enriched
 
-    async def _list_org_instances(self, org_id: str) -> list[Instance]:
-        result = await self.db.execute(
-            select(Instance).where(
-                not_deleted(Instance),
-                Instance.org_id == org_id,
-            )
-        )
-        return list(result.scalars().all())
+    async def _list_bound_instances(self, org_id: str) -> list[Instance]:
+        pairs = await self.scope.list_bound_pairs(org_id)
+        return [instance for _record, instance in pairs]
+
+    async def _build_resolution_from_pair(
+        self,
+        org_id: str,
+        record: HermesAgentInstance,
+        instance: Instance,
+        alias: str,
+        reason: str,
+    ) -> AliasResolution:
+        resolution = await self._build_resolution(org_id, instance, alias, reason)
+        resolution.profile_name = record.profile_name
+        resolution.container_name = record.container_name
+        resolution.gateway_url = record.gateway_url
+        resolution.task_dispatchable = self.scope.is_dispatchable(record, instance)
+        return resolution
 
     async def _build_resolution(
         self,

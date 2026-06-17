@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_db, require_org_member
+from app.services.hermes_external.hermes_bound_agent_scope_service import HermesBoundAgentScopeService
 from app.services.hermes_skill.hermes_skill_authorization_service import HermesSkillAuthorizationService
 from app.services.hermes_skill.permission_checker import PermissionChecker
 from app.services.hermes_skill.skill_audit_logger import SkillAuditLogger
@@ -73,7 +74,12 @@ async def list_authorizations(
         await PermissionChecker.require_permission(db, user.id, org.id, "skill:authorize")
     service = HermesSkillAuthorizationService(db)
     grants = await service.list_grants(org.id, skill_id=skill_id, workspace_id=workspace_id)
-    return _ok([_grant_dict(g) for g in grants])
+    bound_ids = set(await HermesBoundAgentScopeService(db).list_bound_instance_ids(org.id))
+    filtered = [
+        g for g in grants
+        if g.subject_type != "agent" or g.subject_id in bound_ids
+    ]
+    return _ok([_grant_dict(g) for g in filtered])
 
 
 @router.post("/skill-authorizations")

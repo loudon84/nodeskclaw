@@ -3,13 +3,14 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.exceptions import BadRequestError, NotFoundError
 from app.models.base import not_deleted
 from app.models.hermes_skill.hermes_task import HermesTask, HermesTaskEvent, TaskStatus, EventType
+from app.services.hermes_external.hermes_bound_agent_scope_service import HermesBoundAgentScopeService
 from app.services.hermes_skill.hermes_queue_policy_service import HermesQueuePolicyService
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,9 @@ class TaskService:
         client_context: dict | None = None,
         routing_metadata: dict | None = None,
     ) -> HermesTask:
+        if agent_id:
+            await HermesBoundAgentScopeService(self.db).assert_bound_instance(org_id, agent_id)
+
         queue_policy = HermesQueuePolicyService(self.db)
         can_enqueue, message_key = await queue_policy.can_enqueue(
             org_id, user_id, agent_id, skill_id,
@@ -261,14 +265,17 @@ class TaskService:
         page: int = 1,
         page_size: int = 20,
     ) -> tuple[list[HermesTask], int]:
+        bound_ids = await HermesBoundAgentScopeService(self.db).list_bound_instance_ids(org_id)
+        agent_filter = HermesQueuePolicyService._bound_agent_filter(bound_ids)
         stmt = select(HermesTask).where(
             not_deleted(HermesTask),
             HermesTask.org_id == org_id,
+            agent_filter,
         )
-        from sqlalchemy import func
         count_stmt = select(func.count()).select_from(HermesTask).where(
             not_deleted(HermesTask),
             HermesTask.org_id == org_id,
+            agent_filter,
         )
         if skill_id:
             stmt = stmt.where(HermesTask.skill_id == skill_id)

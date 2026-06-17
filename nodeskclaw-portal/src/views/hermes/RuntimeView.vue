@@ -29,12 +29,10 @@ const actionLoading = ref(false)
 const diagnostics = ref<RuntimeDiagnostics | null>(null)
 const controls = ref<{ worker: { paused: boolean }; queue: { paused: boolean } } | null>(null)
 
-const dockerAgents = computed(() =>
-  (diagnostics.value?.agents ?? []).filter(a => a.source === 'docker_bind' || a.gateway_url),
-)
+const boundAgents = computed(() => diagnostics.value?.agents ?? [])
 
 const runtimeSummary = computed(() => {
-  const items = dockerAgents.value
+  const items = boundAgents.value
   const counts = { total: items.length, ready: 0, degraded: 0, unavailable: 0, unconfigured: 0 }
   for (const item of items) {
     const status = item.runtime_status || 'unknown'
@@ -171,13 +169,16 @@ onMounted(fetchAll)
           <div class="rounded-lg border border-border p-2"><span class="text-muted-foreground">Unavailable</span><p class="font-mono text-lg text-red-400">{{ runtimeSummary.unavailable }}</p></div>
           <div class="rounded-lg border border-border p-2"><span class="text-muted-foreground">Unconfigured</span><p class="font-mono text-lg text-muted-foreground">{{ runtimeSummary.unconfigured }}</p></div>
         </div>
-        <div v-if="!dockerAgents.length" class="text-sm text-muted-foreground py-2">{{ t('hermes.runtime.dockerAgentsEmpty') }}</div>
+        <div v-if="!boundAgents.length" class="text-sm text-muted-foreground py-2">{{ t('hermes.runtime.dockerAgentsEmpty') }}</div>
         <div v-else class="space-y-2">
-          <div v-for="agent in dockerAgents" :key="agent.agent_id" class="rounded-lg border border-border p-3 text-xs">
+          <div v-for="agent in boundAgents" :key="agent.agent_id" class="rounded-lg border border-border p-3 text-xs">
             <div class="flex justify-between gap-2 mb-1">
-              <span class="font-mono font-medium">{{ agent.profile_name || agent.name }}</span>
-              <span>{{ agent.runtime_status || '-' }} / {{ agent.mcp_status || '-' }}</span>
+              <span class="font-medium">{{ agent.employee_name || agent.name }}</span>
+              <span>{{ agent.runtime_status || '-' }} / {{ agent.agent_call_status || agent.mcp_status || '-' }}</span>
             </div>
+            <p v-if="agent.profile_name" class="text-muted-foreground font-mono">
+              {{ agent.profile_name }}<span v-if="agent.container_name"> / {{ agent.container_name }}</span>
+            </p>
             <p class="font-mono text-muted-foreground truncate">{{ agent.gateway_url || agent.base_url || '-' }}</p>
             <p v-if="agent.last_error" class="text-red-400 break-all mt-1">{{ agent.last_error }}</p>
           </div>

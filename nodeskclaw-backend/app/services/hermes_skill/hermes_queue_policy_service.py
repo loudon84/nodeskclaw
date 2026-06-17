@@ -1,13 +1,14 @@
 import logging
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.exceptions import BadRequestError
 from app.models.base import not_deleted
 from app.models.hermes_skill.hermes_task import HermesTask, TaskStatus
+from app.services.hermes_external.hermes_bound_agent_scope_service import HermesBoundAgentScopeService
 from app.services.hermes_skill.hermes_agent_runtime_service import HermesAgentRuntimeService
 from app.services.hermes_skill.hermes_runtime_control_service import HermesRuntimeControlService
 
@@ -34,6 +35,11 @@ class HermesQueuePolicyService:
             return False, "errors.hermes.queue_org_limit"
 
         if agent_id:
+            scope = HermesBoundAgentScopeService(self.db)
+            try:
+                await scope.assert_bound_instance(org_id, agent_id)
+            except BadRequestError:
+                return False, "errors.hermes.agent_not_bound"
             runtime = HermesAgentRuntimeService(self.db)
             if not await runtime.is_agent_routable(org_id, agent_id):
                 return False, "errors.hermes.agent_not_accepting"
@@ -75,9 +81,12 @@ class HermesQueuePolicyService:
         return True, None
 
     async def get_queue_stats(self, org_id: str) -> dict:
+        bound_ids = await HermesBoundAgentScopeService(self.db).list_bound_instance_ids(org_id)
+        agent_filter = self._bound_agent_filter(bound_ids)
         base = select(HermesTask.status, func.count()).where(
             not_deleted(HermesTask),
             HermesTask.org_id == org_id,
+            agent_filter,
         ).group_by(HermesTask.status)
         rows = (await self.db.execute(base)).all()
         counts = {status.value if hasattr(status, "value") else str(status): cnt for status, cnt in rows}
@@ -100,13 +109,17 @@ class HermesQueuePolicyService:
         page: int = 1,
         page_size: int = 20,
     ) -> tuple[list[HermesTask], int]:
+        bound_ids = await HermesBoundAgentScopeService(self.db).list_bound_instance_ids(org_id)
+        agent_filter = self._bound_agent_filter(bound_ids)
         stmt = select(HermesTask).where(
             not_deleted(HermesTask),
             HermesTask.org_id == org_id,
+            agent_filter,
         )
         count_stmt = select(func.count()).select_from(HermesTask).where(
             not_deleted(HermesTask),
             HermesTask.org_id == org_id,
+            agent_filter,
         )
         if status:
             stmt = stmt.where(HermesTask.status == status)
@@ -171,3 +184,9 @@ class HermesQueuePolicyService:
     def compute_retry_not_before(self, retry_count: int) -> datetime:
         backoff = settings.HERMES_TASK_RETRY_BACKOFF_SECONDS * max(1, retry_count)
         return datetime.now(timezone.utc) + timedelta(seconds=backoff)
+
+    @staticmethod
+    def _bound_agent_filter(bound_ids: list[str]):
+        if not bound_ids:
+            return HermesTask.agent_id.is_(None)
+        return or_(HermesTask.agent_id.is_(None), HermesTask.agent_id.in_(bound_ids))

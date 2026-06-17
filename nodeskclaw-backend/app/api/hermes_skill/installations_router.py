@@ -17,6 +17,7 @@ from app.schemas.hermes_skill.skill_installation import (
     InstallationRoutingUpdate,
     RoutingTestRequest,
 )
+from app.services.hermes_external.hermes_bound_agent_scope_service import HermesBoundAgentScopeService
 from app.services.hermes_skill.skill_installer import SkillInstaller
 from app.services.hermes_skill.permission_checker import PermissionChecker
 from app.services.hermes_skill.skill_routing_service import SkillRoutingService
@@ -39,6 +40,7 @@ async def list_installations(
     db: AsyncSession = Depends(get_db),
 ):
     _, org = user_org
+    bound_ids = await HermesBoundAgentScopeService(db).list_bound_instance_ids(org.id)
     query = select(HermesSkillInstallation).where(
         not_deleted(HermesSkillInstallation),
         HermesSkillInstallation.org_id == org.id,
@@ -54,6 +56,12 @@ async def list_installations(
     if agent_id:
         query = query.where(HermesSkillInstallation.agent_id == agent_id)
         count_query = count_query.where(HermesSkillInstallation.agent_id == agent_id)
+    elif bound_ids:
+        query = query.where(HermesSkillInstallation.agent_id.in_(bound_ids))
+        count_query = count_query.where(HermesSkillInstallation.agent_id.in_(bound_ids))
+    else:
+        query = query.where(HermesSkillInstallation.agent_id.is_(None))
+        count_query = count_query.where(HermesSkillInstallation.agent_id.is_(None))
     if status:
         query = query.where(HermesSkillInstallation.status == status)
         count_query = count_query.where(HermesSkillInstallation.status == status)

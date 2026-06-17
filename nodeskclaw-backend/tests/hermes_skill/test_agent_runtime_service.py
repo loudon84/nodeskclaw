@@ -6,6 +6,15 @@ from app.services.hermes_skill.hermes_agent_runtime_service import HermesAgentRu
 
 
 @pytest.mark.asyncio
+async def test_discover_agent_ids_bound_only_uses_scope():
+    db = AsyncMock()
+    svc = HermesAgentRuntimeService(db)
+    with patch.object(svc, "_discover_bound_agent_ids", AsyncMock(return_value=["inst-1"])):
+        ids = await svc._discover_agent_ids("org-1", bound_only=True)
+    assert ids == ["inst-1"]
+
+
+@pytest.mark.asyncio
 async def test_is_agent_routable_disabled():
     db = AsyncMock()
     svc = HermesAgentRuntimeService(db)

@@ -24,19 +24,26 @@ export interface RuntimeDiagnosticsQueue {
 
 export interface RuntimeDiagnosticsAgent {
   agent_id: string
+  instance_id?: string | null
   name: string
+  employee_name?: string | null
   base_url?: string | null
   gateway_url?: string | null
   gateway_status?: string | null
   runtime_status?: string | null
   mcp_status?: string | null
+  agent_call_status?: string | null
   profile_name?: string | null
+  container_name?: string | null
   health: string
   profile_root_path?: string | null
   profile_root_path_exists?: boolean
   workspace_root_path?: string | null
   workspace_root_path_exists?: boolean
   last_error: string | null
+  is_bound?: boolean
+  task_dispatchable?: boolean
+  binding_type?: string | null
   source?: string
 }
 

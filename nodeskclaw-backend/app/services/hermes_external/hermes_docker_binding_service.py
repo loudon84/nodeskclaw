@@ -165,23 +165,10 @@ class HermesDockerBindingService:
         return records
 
     async def list_bound_pairs(self, org_id: str) -> list[tuple[HermesAgentInstance, Instance]]:
-        stmt = (
-            select(HermesAgentInstance, Instance)
-            .join(Instance, HermesAgentInstance.instance_id == Instance.id)
-            .where(
-                not_deleted(HermesAgentInstance),
-                HermesAgentInstance.org_id == org_id,
-                HermesAgentInstance.instance_id.isnot(None),
-                not_deleted(Instance),
-            )
-            .order_by(HermesAgentInstance.profile_name)
+        from app.services.hermes_external.hermes_bound_agent_scope_service import (
+            HermesBoundAgentScopeService,
         )
-        result = await self.db.execute(stmt)
-        pairs: list[tuple[HermesAgentInstance, Instance]] = []
-        for record, instance in result.all():
-            if get_instance_binding_type(instance) == "external_docker":
-                pairs.append((record, instance))
-        return pairs
+        return await HermesBoundAgentScopeService(self.db).list_bound_pairs(org_id)
 
     async def list_all_with_instances(
         self,

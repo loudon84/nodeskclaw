@@ -14,6 +14,7 @@ from app.models.base import not_deleted
 from app.models.hermes_skill.hermes_agent_runtime_state import AgentRuntimeStatus, HermesAgentRuntimeState
 from app.models.hermes_skill.hermes_task import HermesTask, TaskStatus
 from app.models.hermes_skill.skill_installation import HermesSkillInstallation
+from app.services.hermes_external.hermes_bound_agent_scope_service import HermesBoundAgentScopeService
 from app.services.hermes_skill.hermes_agent_adapter import HermesAgentAdapter, _is_hermes_agent_instance
 
 logger = logging.getLogger(__name__)
@@ -31,15 +32,17 @@ class HermesAgentRuntimeService:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def list_runtime_states(self, org_id: str) -> list[dict]:
-        agent_ids = await self._discover_agent_ids(org_id)
+    async def list_runtime_states(self, org_id: str, *, bound_only: bool = True) -> list[dict]:
+        agent_ids = await self._discover_agent_ids(org_id, bound_only=bound_only)
         items = []
         for agent_id in agent_ids:
             state = await self.get_or_create_state(org_id, agent_id)
             items.append(await self._to_dict(org_id, agent_id, state))
         return items
 
-    async def get_runtime_state(self, org_id: str, agent_id: str) -> dict:
+    async def get_runtime_state(self, org_id: str, agent_id: str, *, require_bound: bool = True) -> dict:
+        if require_bound:
+            await HermesBoundAgentScopeService(self.db).assert_bound_instance(org_id, agent_id)
         state = await self.get_or_create_state(org_id, agent_id)
         return await self._to_dict(org_id, agent_id, state)
 
@@ -255,7 +258,13 @@ class HermesAgentRuntimeService:
             "workspace_root_path_exists": self._path_exists(installation.installed_path if installation else None),
         }
 
-    async def _discover_agent_ids(self, org_id: str) -> list[str]:
+    async def _discover_bound_agent_ids(self, org_id: str) -> list[str]:
+        return await HermesBoundAgentScopeService(self.db).list_bound_instance_ids(org_id)
+
+    async def _discover_agent_ids(self, org_id: str, *, bound_only: bool = True) -> list[str]:
+        if bound_only:
+            return await self._discover_bound_agent_ids(org_id)
+
         result = await self.db.execute(
             select(HermesSkillInstallation.agent_id).where(
                 not_deleted(HermesSkillInstallation),
@@ -264,17 +273,9 @@ class HermesAgentRuntimeService:
             ).distinct()
         )
         agent_ids = [row[0] for row in result.all() if row[0]]
-
-        from app.models.hermes_skill.hermes_agent_instance import HermesAgentInstance
-        bound = await self.db.execute(
-            select(HermesAgentInstance.instance_id).where(
-                not_deleted(HermesAgentInstance),
-                HermesAgentInstance.org_id == org_id,
-                HermesAgentInstance.instance_id.is_not(None),
-            )
-        )
-        for (instance_id,) in bound.all():
-            if instance_id and instance_id not in agent_ids:
+        bound_ids = await self._discover_bound_agent_ids(org_id)
+        for instance_id in bound_ids:
+            if instance_id not in agent_ids:
                 agent_ids.append(instance_id)
         return agent_ids
 

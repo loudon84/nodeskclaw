@@ -2,17 +2,17 @@ import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.models.base import not_deleted
 from app.models.hermes_skill.hermes_artifact import HermesArtifact
 from app.models.hermes_skill.hermes_task import HermesTask, TaskStatus
-from app.models.hermes_skill.skill_installation import HermesSkillInstallation
 from app.services.hermes_skill.artifact_audit_service import ArtifactAuditService
-from app.services.hermes_skill.hermes_agent_runtime_service import HermesAgentRuntimeService
 from app.services.hermes_skill.hermes_runtime_control_service import HermesRuntimeControlService
+from app.services.hermes_external.hermes_bound_agent_scope_service import HermesBoundAgentScopeService
+from app.services.hermes_external.hermes_docker_binding_service import HermesDockerBindingService
 
 logger = logging.getLogger(__name__)
 
@@ -21,14 +21,15 @@ class RuntimeDiagnosticsService:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def get_runtime_diagnostics(self, org_id: str) -> dict:
+    async def get_runtime_diagnostics(self, org_id: str, *, include_unbound: bool = False) -> dict:
         now = datetime.now(timezone.utc)
         since_24h = now - timedelta(hours=24)
+        bound_ids = await HermesBoundAgentScopeService(self.db).list_bound_instance_ids(org_id)
 
-        queue = await self._queue_stats(org_id, since_24h)
-        agents = await self._agent_stats(org_id)
+        queue = await self._queue_stats(org_id, since_24h, bound_ids)
+        agents = await self._agent_stats(org_id, include_unbound=include_unbound)
         artifacts = await self._artifact_stats(org_id, since_24h)
-        recent_failures = await self._recent_failed_tasks(org_id, since_24h)
+        recent_failures = await self._recent_failed_tasks(org_id, since_24h, bound_ids)
         recent_scan_failed = await self._recent_scan_failed(org_id, since_24h)
         controls = await HermesRuntimeControlService(self.db).get_controls(org_id)
 
@@ -48,10 +49,12 @@ class RuntimeDiagnosticsService:
             "recent_scan_failed": recent_scan_failed,
         }
 
-    async def _queue_stats(self, org_id: str, since: datetime) -> dict:
+    async def _queue_stats(self, org_id: str, since: datetime, bound_ids: list[str]) -> dict:
+        agent_filter = self._bound_agent_filter(bound_ids)
         base = select(HermesTask.status, func.count()).where(
             not_deleted(HermesTask),
             HermesTask.org_id == org_id,
+            agent_filter,
         ).group_by(HermesTask.status)
         rows = (await self.db.execute(base)).all()
         counts = {status.value if hasattr(status, "value") else str(status): cnt for status, cnt in rows}
@@ -62,6 +65,7 @@ class RuntimeDiagnosticsService:
                 HermesTask.org_id == org_id,
                 HermesTask.status == TaskStatus.FAILED,
                 HermesTask.updated_at >= since,
+                agent_filter,
             )
         )
         timeout_24h = await self.db.execute(
@@ -70,6 +74,7 @@ class RuntimeDiagnosticsService:
                 HermesTask.org_id == org_id,
                 HermesTask.status == TaskStatus.TIMEOUT,
                 HermesTask.updated_at >= since,
+                agent_filter,
             )
         )
         return {
@@ -80,34 +85,57 @@ class RuntimeDiagnosticsService:
             "timeout_last_24h": timeout_24h.scalar_one(),
         }
 
-    async def _agent_stats(self, org_id: str) -> list[dict]:
-        runtime_svc = HermesAgentRuntimeService(self.db)
-        governance_agents = await runtime_svc.list_runtime_states(org_id)
-        from app.services.hermes_external.hermes_docker_binding_service import HermesDockerBindingService
-        binding = HermesDockerBindingService(self.db)
-        docker_records = await binding.list_instances(org_id, include_unavailable=True)
-        docker_agents = []
-        seen_profiles: set[str] = set()
-        for record in docker_records:
-            seen_profiles.add(record.profile_name)
-            docker_agents.append({
-                "agent_id": record.instance_id or record.profile_name,
-                "profile_name": record.profile_name,
-                "name": record.profile_name,
-                "gateway_url": record.gateway_url,
-                "gateway_status": record.gateway_status,
-                "runtime_status": record.gateway_runtime_status,
-                "mcp_status": record.mcp_status,
-                "health": "ok" if record.gateway_runtime_status == "ready" else "degraded",
-                "last_error": record.last_error,
-                "source": "docker_bind",
-            })
-        for agent in governance_agents:
-            profile = agent.get("name") or agent.get("agent_id")
-            if profile not in seen_profiles:
-                agent["source"] = "governance"
-                docker_agents.append(agent)
-        return docker_agents
+    @staticmethod
+    def _bound_agent_filter(bound_ids: list[str]):
+        if not bound_ids:
+            return HermesTask.agent_id.is_(None)
+        return or_(HermesTask.agent_id.is_(None), HermesTask.agent_id.in_(bound_ids))
+
+    async def _agent_stats(self, org_id: str, *, include_unbound: bool = False) -> list[dict]:
+        scope = HermesBoundAgentScopeService(self.db)
+        agents: list[dict] = []
+        for record, instance in await scope.list_bound_pairs(org_id):
+            agents.append(self._pair_to_agent_dict(scope, record, instance, is_bound=True))
+        if include_unbound:
+            binding = HermesDockerBindingService(self.db)
+            for record, instance in await binding.list_all_with_instances(org_id):
+                if scope.is_bound(record, instance):
+                    continue
+                agents.append(self._pair_to_agent_dict(scope, record, instance, is_bound=False))
+        return agents
+
+    @staticmethod
+    def _pair_to_agent_dict(
+        scope: HermesBoundAgentScopeService,
+        record,
+        instance,
+        *,
+        is_bound: bool,
+    ) -> dict:
+        summary = scope.to_agent_summary(record, instance)
+        employee_name = summary.get("employee_name")
+        display_name = employee_name or record.profile_name
+        agent_id = instance.id if instance is not None else (record.instance_id or record.profile_name)
+        runtime_status = record.gateway_runtime_status or "unknown"
+        return {
+            "agent_id": agent_id,
+            "instance_id": record.instance_id,
+            "profile_name": record.profile_name,
+            "container_name": record.container_name,
+            "name": display_name,
+            "employee_name": employee_name,
+            "gateway_url": record.gateway_url,
+            "gateway_status": record.gateway_status,
+            "runtime_status": runtime_status,
+            "mcp_status": record.mcp_status,
+            "agent_call_status": record.mcp_status,
+            "health": "ok" if runtime_status == "ready" else "degraded",
+            "last_error": record.last_error,
+            "binding_type": summary.get("binding_type"),
+            "is_bound": is_bound,
+            "task_dispatchable": summary.get("task_dispatchable", False),
+            "source": "bound" if is_bound else "docker_scan",
+        }
 
     async def _artifact_stats(self, org_id: str, since: datetime) -> dict:
         created = await self.db.execute(
@@ -132,7 +160,14 @@ class RuntimeDiagnosticsService:
             "downloaded_last_24h": downloaded,
         }
 
-    async def _recent_failed_tasks(self, org_id: str, since: datetime, limit: int = 10) -> list[dict]:
+    async def _recent_failed_tasks(
+        self,
+        org_id: str,
+        since: datetime,
+        bound_ids: list[str],
+        limit: int = 10,
+    ) -> list[dict]:
+        agent_filter = self._bound_agent_filter(bound_ids)
         stmt = (
             select(HermesTask)
             .where(
@@ -140,6 +175,7 @@ class RuntimeDiagnosticsService:
                 HermesTask.org_id == org_id,
                 HermesTask.status == TaskStatus.FAILED,
                 HermesTask.updated_at >= since,
+                agent_filter,
             )
             .order_by(HermesTask.updated_at.desc())
             .limit(limit)

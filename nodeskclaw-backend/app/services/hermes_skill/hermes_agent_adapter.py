@@ -12,6 +12,7 @@ from app.core.exceptions import NotFoundError, BadRequestError
 from app.models.base import not_deleted
 from app.models.hermes_skill.hermes_task import HermesTask, EventType
 from app.models.instance import Instance
+from app.services.hermes_external.hermes_bound_agent_scope_service import HermesBoundAgentScopeService
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +110,14 @@ class HermesAgentAdapter:
         task: HermesTask,
         arguments: dict,
     ) -> dict:
+        if not task.agent_id:
+            raise BadRequestError(
+                "任务只能下发给已绑定的 Hermes Agent AI 员工实例",
+                "errors.hermes.agent_not_bound",
+            )
+        await HermesBoundAgentScopeService(self.db).assert_dispatchable_instance(
+            task.org_id, task.agent_id,
+        )
         instance = await self._get_instance(task.agent_id, task.org_id)
         if not _is_hermes_agent_instance(instance):
             raise BadRequestError("实例不是 Hermes Agent 类型", "errors.task.agent_not_hermes")
@@ -160,6 +169,10 @@ class HermesAgentAdapter:
     async def cancel_run(self, task: HermesTask) -> None:
         if not task.hermes_run_id:
             return
+        if task.agent_id:
+            await HermesBoundAgentScopeService(self.db).assert_bound_instance(
+                task.org_id, task.agent_id,
+            )
         instance = await self._get_instance(task.agent_id, task.org_id)
         base_url = self._get_base_url(instance)
         if not base_url:
@@ -187,6 +200,10 @@ class HermesAgentAdapter:
     async def read_run_events(self, task: HermesTask) -> AsyncIterator[dict]:
         if not task.hermes_run_id:
             return
+        if task.agent_id:
+            await HermesBoundAgentScopeService(self.db).assert_bound_instance(
+                task.org_id, task.agent_id,
+            )
         instance = await self._get_instance(task.agent_id, task.org_id)
         base_url = self._get_base_url(instance)
         if not base_url:
@@ -214,6 +231,10 @@ class HermesAgentAdapter:
     async def get_run(self, task: HermesTask) -> dict:
         if not task.hermes_run_id:
             raise BadRequestError("任务尚未关联 Hermes Run", "errors.task.no_hermes_run")
+        if task.agent_id:
+            await HermesBoundAgentScopeService(self.db).assert_bound_instance(
+                task.org_id, task.agent_id,
+            )
         instance = await self._get_instance(task.agent_id, task.org_id)
         base_url = self._get_base_url(instance)
         if not base_url:

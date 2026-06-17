@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Annotated, Any
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Query
@@ -15,6 +15,7 @@ from app.schemas.hermes_skill.hermes_agent_instance import (
 )
 from app.services.hermes_external.hermes_agent_diagnostics_service import HermesAgentDiagnosticsService
 from app.services.hermes_external.hermes_api_server_client import HermesApiServerClient
+from app.services.hermes_external.hermes_bound_agent_scope_service import HermesBoundAgentScopeService
 from app.services.hermes_external.hermes_docker_binding_service import HermesDockerBindingService
 from app.services.hermes_external.hermes_env_parser import parse_env_file
 from app.services.hermes_external import core_file_service, profile_service
@@ -91,10 +92,11 @@ async def scan_existing_agents(
 
 @router.get("/agents")
 async def list_hermes_agents(
-    include_unavailable: bool = Query(default=True),
-    include_unbound: bool = Query(default=False),
-    managed_mode: str | None = Query(default=None),
-    refresh: bool = Query(default=False),
+    include_unavailable: Annotated[bool, Query()] = True,
+    include_unbound: Annotated[bool, Query()] = False,
+    dispatchable_only: Annotated[bool, Query()] = False,
+    managed_mode: Annotated[str | None, Query()] = None,
+    refresh: Annotated[bool, Query()] = False,
     user_org=Depends(require_org_member),
     db: AsyncSession = Depends(get_db),
 ):
@@ -118,10 +120,13 @@ async def list_hermes_agents(
         include_unavailable=include_unavailable,
         managed_mode=managed_mode,
     )
-    items = [
-        _to_summary(HermesDockerBindingService.to_api_dict(record, instance))
-        for record, instance in pairs
-    ]
+    scope = HermesBoundAgentScopeService(db)
+    items = []
+    for record, instance in pairs:
+        summary = scope.to_agent_summary(record, instance)
+        if dispatchable_only and not summary.get("task_dispatchable"):
+            continue
+        items.append(_to_summary(summary))
     return _ok(HermesAgentInstanceListResponse(items=items).model_dump())
 
 
@@ -140,7 +145,8 @@ async def get_hermes_agent(
         from app.core.exceptions import NotFoundError
         raise NotFoundError("Hermes Agent 实例不存在", "errors.hermes.agent_instance_not_found")
     instance = await service.get_linked_instance(record)
-    return _ok(_to_summary(HermesDockerBindingService.to_api_dict(record, instance)).model_dump())
+    scope = HermesBoundAgentScopeService(db)
+    return _ok(_to_summary(scope.to_agent_summary(record, instance)).model_dump())
 
 
 @router.post("/agents/{profile_name}/probe")

@@ -38,6 +38,12 @@ export interface HermesAgentInstance {
   binding_type?: string | null
   instance_status?: string | null
   is_bound?: boolean
+  task_dispatchable?: boolean
+}
+
+export interface ListBoundHermesAgentsOptions {
+  dispatchableOnly?: boolean
+  refresh?: boolean
 }
 
 export interface ListHermesAgentInstancesOptions {
@@ -58,6 +64,20 @@ export async function listHermesAgentInstances(
     params: {
       refresh,
       include_unbound: options?.includeUnbound ?? false,
+    },
+  })
+  const payload = unwrapEnvelope<{ items: HermesAgentInstance[] }>(data)
+  return payload.items ?? []
+}
+
+export async function listBoundHermesAgents(
+  options?: ListBoundHermesAgentsOptions,
+): Promise<HermesAgentInstance[]> {
+  const { data } = await api.get('/hermes/agents', {
+    params: {
+      refresh: options?.refresh ?? false,
+      include_unbound: false,
+      dispatchable_only: options?.dispatchableOnly ?? false,
     },
   })
   const payload = unwrapEnvelope<{ items: HermesAgentInstance[] }>(data)
