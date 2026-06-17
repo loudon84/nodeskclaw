@@ -171,6 +171,11 @@ async def restart(instance: Instance) -> ExternalDockerLifecycleResponse:
     return ExternalDockerLifecycleResponse(success=True, action="restart", message="重启成功")
 
 
+async def restart_container(container_name: str) -> ExternalDockerLifecycleResponse:
+    await _run_cmd(["docker", "restart", container_name])
+    return ExternalDockerLifecycleResponse(success=True, action="restart", message="重启成功")
+
+
 async def get_logs(instance: Instance, tail: int = 200) -> ExternalDockerLogsResponse:
     ep = resolve_paths(instance)
     tail = max(1, min(tail, 2000))

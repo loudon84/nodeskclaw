@@ -17,8 +17,14 @@ from app.services.hermes_external.hermes_agent_diagnostics_service import Hermes
 from app.services.hermes_external.hermes_api_server_client import HermesApiServerClient
 from app.services.hermes_external.hermes_docker_binding_service import HermesDockerBindingService
 from app.services.hermes_external.hermes_env_parser import parse_env_file
+from app.services.hermes_external import core_file_service, profile_service
 from app.services.hermes_skill.permission_checker import PermissionChecker
 from app.services.hermes_skill.skill_audit_logger import SkillAuditLogger
+from app.schemas.external_docker_profiles import (
+    CoreFileSaveRequest,
+    CoreFileValidateRequest,
+    ProfileCreateRequest,
+)
 
 router = APIRouter()
 
@@ -274,3 +280,163 @@ async def get_hermes_agent_diagnostics(
         profile_name=profile_name,
         checks=[{"name": c.name, "status": c.status, "message": c.message} for c in checks],
     ).model_dump())
+
+
+async def _require_agent_record(
+    db: AsyncSession,
+    org_id: str,
+    profile_name: str,
+):
+    service = HermesDockerBindingService(db)
+    record = await service.get_by_profile(org_id, profile_name)
+    if not record:
+        from app.core.exceptions import NotFoundError
+        raise NotFoundError("Hermes Agent 实例不存在", "errors.hermes.agent_instance_not_found")
+    if not record.data_dir:
+        from app.core.exceptions import BadRequestError
+        raise BadRequestError(
+            "实例缺少 Hermes 数据目录，无法管理 Profile",
+            "errors.hermes.data_dir_missing",
+        )
+    return record
+
+
+@router.get("/agents/{profile_name}/profiles")
+async def list_agent_profiles(
+    profile_name: str,
+    user_org=Depends(require_org_member),
+    db: AsyncSession = Depends(get_db),
+):
+    user, org = user_org
+    if user:
+        await PermissionChecker.require_permission(db, user.id, org.id, "hermes_agent:view")
+    record = await _require_agent_record(db, org.id, profile_name)
+    data = profile_service.list_profiles_for_host_data_dir(Path(record.data_dir))
+    return _ok(data.model_dump())
+
+
+@router.post("/agents/{profile_name}/profiles")
+async def create_agent_profile(
+    profile_name: str,
+    body: ProfileCreateRequest,
+    user_org=Depends(require_org_member),
+    db: AsyncSession = Depends(get_db),
+):
+    user, org = user_org
+    if user:
+        await PermissionChecker.require_permission(db, user.id, org.id, "hermes_agent:manage")
+    record = await _require_agent_record(db, org.id, profile_name)
+    result = profile_service.create_profile_for_host_data_dir(
+        Path(record.data_dir),
+        body.profile,
+        from_profile=body.from_profile,
+    )
+    audit = SkillAuditLogger(db)
+    await audit.log(
+        action="hermes.profile.create",
+        target_id=body.profile,
+        org_id=org.id,
+        actor_id=user.id if user else "",
+        details={"agent_profile": profile_name, "from_profile": body.from_profile},
+    )
+    await db.commit()
+    return _ok(result.model_dump())
+
+
+@router.delete("/agents/{profile_name}/profiles/{target_profile}")
+async def delete_agent_profile(
+    profile_name: str,
+    target_profile: str,
+    user_org=Depends(require_org_member),
+    db: AsyncSession = Depends(get_db),
+):
+    user, org = user_org
+    if user:
+        await PermissionChecker.require_permission(db, user.id, org.id, "hermes_agent:manage")
+    record = await _require_agent_record(db, org.id, profile_name)
+    result = profile_service.delete_profile_for_host_data_dir(Path(record.data_dir), target_profile)
+    audit = SkillAuditLogger(db)
+    await audit.log(
+        action="hermes.profile.delete",
+        target_id=target_profile,
+        org_id=org.id,
+        actor_id=user.id if user else "",
+        details={"agent_profile": profile_name},
+    )
+    await db.commit()
+    return _ok(result.model_dump())
+
+
+@router.get("/agents/{profile_name}/profiles/{target_profile}/core-files/{kind}")
+async def read_agent_core_file(
+    profile_name: str,
+    target_profile: str,
+    kind: str,
+    user_org=Depends(require_org_member),
+    db: AsyncSession = Depends(get_db),
+):
+    user, org = user_org
+    if user:
+        await PermissionChecker.require_permission(db, user.id, org.id, "hermes_agent:manage")
+    record = await _require_agent_record(db, org.id, profile_name)
+    data = core_file_service.read_core_file_for_host_data_dir(
+        Path(record.data_dir),
+        target_profile,
+        kind,
+    )
+    return _ok(data.model_dump())
+
+
+@router.post("/agents/{profile_name}/profiles/{target_profile}/core-files/{kind}/validate")
+async def validate_agent_core_file(
+    profile_name: str,
+    target_profile: str,
+    kind: str,
+    body: CoreFileValidateRequest,
+    user_org=Depends(require_org_member),
+    db: AsyncSession = Depends(get_db),
+):
+    user, org = user_org
+    if user:
+        await PermissionChecker.require_permission(db, user.id, org.id, "hermes_agent:manage")
+    await _require_agent_record(db, org.id, profile_name)
+    data = core_file_service.validate_core_file(kind, body.content)
+    return _ok(data.model_dump())
+
+
+@router.put("/agents/{profile_name}/profiles/{target_profile}/core-files/{kind}")
+async def save_agent_core_file(
+    profile_name: str,
+    target_profile: str,
+    kind: str,
+    body: CoreFileSaveRequest,
+    user_org=Depends(require_org_member),
+    db: AsyncSession = Depends(get_db),
+):
+    user, org = user_org
+    if user:
+        await PermissionChecker.require_permission(db, user.id, org.id, "hermes_agent:manage")
+    record = await _require_agent_record(db, org.id, profile_name)
+    data = await core_file_service.save_core_file_for_host_data_dir(
+        Path(record.data_dir),
+        target_profile,
+        kind,
+        body.content,
+        restart_after_save=body.restart_after_save,
+        container_name=record.container_name,
+    )
+    audit = SkillAuditLogger(db)
+    await audit.log(
+        action="hermes.profile.core_file.save",
+        target_id=f"{target_profile}:{kind}",
+        org_id=org.id,
+        actor_id=user.id if user else "",
+        details={
+            "agent_profile": profile_name,
+            "profile": target_profile,
+            "kind": kind,
+            "restarted": data.restarted,
+        },
+    )
+    await db.commit()
+    return _ok(data.model_dump())

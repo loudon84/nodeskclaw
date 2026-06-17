@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from app.core.exceptions import BadRequestError
 from app.services.docker_constants import DOCKER_DATA_DIR
 
 if TYPE_CHECKING:
@@ -16,6 +18,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 AUTO_CREATE_DIRS = ("workspace", "attachments", "backups", "skill-inbox")
+PROFILE_NAME_PATTERN = re.compile(r"^[a-z0-9_-]+$")
+DEFAULT_PROFILE_NAME = "default"
 
 
 @dataclass
@@ -36,6 +40,40 @@ class HermesExternalPaths:
     logs_dir: Path
     sessions_dir: Path
     backups_dir: Path
+
+
+@dataclass
+class HermesProfilePaths:
+    profile: str
+    profile_type: str
+    profile_dir: Path
+    env_file: Path
+    config_file: Path
+    soul_file: Path
+    skills_dir: Path
+    workspace_dir: Path
+    backups_dir: Path
+    core_file_backup_dir: Path
+
+
+def validate_profile_name(name: str) -> str:
+    value = (name or "").strip()
+    if not value:
+        raise BadRequestError(
+            message="Profile 名称不能为空",
+            message_key="errors.external_docker.profile_name_invalid",
+        )
+    if value != DEFAULT_PROFILE_NAME and not PROFILE_NAME_PATTERN.match(value):
+        raise BadRequestError(
+            message="Profile 名称仅允许小写字母、数字、连字符和下划线",
+            message_key="errors.external_docker.profile_name_invalid",
+        )
+    if ".." in value or "/" in value or "\\" in value:
+        raise BadRequestError(
+            message="Profile 名称包含非法字符",
+            message_key="errors.external_docker.profile_name_invalid",
+        )
+    return value
 
 
 class HermesExternalPathResolver:
@@ -92,3 +130,37 @@ class HermesExternalPathResolver:
             raise FileNotFoundError(
                 f"Hermes 数据目录不存在: {ep.host_data_dir}，请检查 Docker volume 映射"
             )
+
+    def resolve_profile(self, instance: Instance, profile_name: str) -> HermesProfilePaths:
+        ep = self.resolve(instance)
+        return self.resolve_profile_from_host_data_dir(ep.host_data_dir, profile_name)
+
+    def resolve_profile_from_host_data_dir(
+        self,
+        host_data_dir: Path,
+        profile_name: str,
+    ) -> HermesProfilePaths:
+        profile = validate_profile_name(profile_name)
+        host_data_dir = Path(host_data_dir)
+
+        if profile == DEFAULT_PROFILE_NAME:
+            profile_dir = host_data_dir
+            profile_type = "default"
+            core_file_backup_dir = host_data_dir / "backups" / "core-files" / DEFAULT_PROFILE_NAME
+        else:
+            profile_dir = host_data_dir / "profiles" / profile
+            profile_type = "extended"
+            core_file_backup_dir = profile_dir / "backups" / "core-files"
+
+        return HermesProfilePaths(
+            profile=profile,
+            profile_type=profile_type,
+            profile_dir=profile_dir,
+            env_file=profile_dir / ".env",
+            config_file=profile_dir / "config.yaml",
+            soul_file=profile_dir / "SOUL.md",
+            skills_dir=profile_dir / "skills",
+            workspace_dir=profile_dir / "workspace",
+            backups_dir=profile_dir / "backups",
+            core_file_backup_dir=core_file_backup_dir,
+        )
