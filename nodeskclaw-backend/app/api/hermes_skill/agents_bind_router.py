@@ -92,6 +92,7 @@ async def scan_existing_agents(
 @router.get("/agents")
 async def list_hermes_agents(
     include_unavailable: bool = Query(default=True),
+    include_unbound: bool = Query(default=False),
     managed_mode: str | None = Query(default=None),
     refresh: bool = Query(default=False),
     user_org=Depends(require_org_member),
@@ -100,16 +101,27 @@ async def list_hermes_agents(
     user, org = user_org
     if user:
         await PermissionChecker.require_permission(db, user.id, org.id, "hermes_agent:view")
+    include_unbound_effective = include_unbound
+    if include_unbound and user:
+        can_view_unbound = await PermissionChecker.has_permission(
+            db, user.id, org.id, "hermes_agent:manage",
+        )
+        if not can_view_unbound:
+            include_unbound_effective = False
     service = HermesDockerBindingService(db)
     if refresh:
-        await service.probe_all(org.id)
+        await service.probe_all(org.id, include_unbound=include_unbound_effective)
         await db.commit()
-    records = await service.list_instances(
+    pairs = await service.list_instances_for_api(
         org.id,
+        include_unbound=include_unbound_effective,
         include_unavailable=include_unavailable,
         managed_mode=managed_mode,
     )
-    items = [_to_summary(HermesDockerBindingService.to_api_dict(r)) for r in records]
+    items = [
+        _to_summary(HermesDockerBindingService.to_api_dict(record, instance))
+        for record, instance in pairs
+    ]
     return _ok(HermesAgentInstanceListResponse(items=items).model_dump())
 
 
@@ -127,7 +139,8 @@ async def get_hermes_agent(
     if not record:
         from app.core.exceptions import NotFoundError
         raise NotFoundError("Hermes Agent 实例不存在", "errors.hermes.agent_instance_not_found")
-    return _ok(_to_summary(HermesDockerBindingService.to_api_dict(record)).model_dump())
+    instance = await service.get_linked_instance(record)
+    return _ok(_to_summary(HermesDockerBindingService.to_api_dict(record, instance)).model_dump())
 
 
 @router.post("/agents/{profile_name}/probe")
@@ -172,7 +185,7 @@ async def probe_all_hermes_agents(
     if user:
         await PermissionChecker.require_permission(db, user.id, org.id, "hermes_agent:manage")
     service = HermesDockerBindingService(db)
-    records = await service.probe_all(org.id)
+    records = await service.probe_all(org.id, include_unbound=False)
     audit = SkillAuditLogger(db)
     await audit.log(
         action="hermes.agent.probe_all",

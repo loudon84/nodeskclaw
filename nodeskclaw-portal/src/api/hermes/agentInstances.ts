@@ -34,6 +34,14 @@ export interface HermesAgentInstance {
   last_probe_at?: string | null
   last_error?: string | null
   instance_id?: string | null
+  employee_name?: string | null
+  binding_type?: string | null
+  instance_status?: string | null
+  is_bound?: boolean
+}
+
+export interface ListHermesAgentInstancesOptions {
+  includeUnbound?: boolean
 }
 
 export interface DiagnosticCheck {
@@ -42,8 +50,16 @@ export interface DiagnosticCheck {
   message: string
 }
 
-export async function listHermesAgentInstances(refresh = false): Promise<HermesAgentInstance[]> {
-  const { data } = await api.get('/hermes/agents', { params: { refresh } })
+export async function listHermesAgentInstances(
+  refresh = false,
+  options?: ListHermesAgentInstancesOptions,
+): Promise<HermesAgentInstance[]> {
+  const { data } = await api.get('/hermes/agents', {
+    params: {
+      refresh,
+      include_unbound: options?.includeUnbound ?? false,
+    },
+  })
   const payload = unwrapEnvelope<{ items: HermesAgentInstance[] }>(data)
   return payload.items ?? []
 }

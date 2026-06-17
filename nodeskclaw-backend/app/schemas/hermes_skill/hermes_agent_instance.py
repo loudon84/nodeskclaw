@@ -37,6 +37,10 @@ class HermesAgentInstanceSummary(BaseModel):
     compose_project: str | None = None
     managed_mode: str | None = None
     instance_id: str | None = None
+    employee_name: str | None = None
+    binding_type: str | None = None
+    instance_status: str | None = None
+    is_bound: bool = False
     last_probe_at: datetime | str | None = None
     last_seen_at: datetime | str | None = None
     last_error: str | None = None

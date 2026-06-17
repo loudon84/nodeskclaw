@@ -130,8 +130,8 @@ async function showDiagnostics(agent: HermesAgentInstance) {
   }
 }
 
-function goAttach() {
-  router.push({ path: '/create', query: { mode: 'attach' } })
+function goCreateEmployee() {
+  router.push({ path: '/instances/create' })
 }
 
 function goDetail(agent: HermesAgentInstance) {
@@ -168,7 +168,7 @@ onMounted(fetchAgents)
       <p class="text-sm text-muted-foreground">{{ t('hermes.agents.emptyHint') }}</p>
       <div class="flex justify-center gap-2">
         <Button variant="outline" size="sm" @click="scanExisting">{{ t('hermes.agents.scanExisting') }}</Button>
-        <Button variant="secondary" size="sm" @click="goAttach">{{ t('hermes.agents.goAttach') }}</Button>
+        <Button variant="secondary" size="sm" @click="goCreateEmployee">{{ t('hermes.agents.createEmployee') }}</Button>
       </div>
     </div>
     <div v-else class="space-y-4">
@@ -177,9 +177,11 @@ onMounted(fetchAgents)
           <div>
             <div class="flex items-center gap-2 flex-wrap">
               <Bot class="w-4 h-4" />
-              <span class="font-mono font-medium">{{ agent.profile_name }}</span>
-              <span class="text-xs text-muted-foreground font-mono">{{ agent.container_name }}</span>
+              <span class="font-medium">{{ agent.employee_name || agent.profile_name }}</span>
             </div>
+            <p class="text-xs text-muted-foreground font-mono mt-1">
+              {{ agent.profile_name }} / {{ agent.container_name }}
+            </p>
             <div class="flex flex-wrap gap-2 mt-2">
               <Badge variant="outline">{{ t('hermes.agents.docker') }}: {{ agent.docker_status }}</Badge>
               <Badge variant="outline" :class="statusColor[apiServerStatus(agent)] ?? ''">

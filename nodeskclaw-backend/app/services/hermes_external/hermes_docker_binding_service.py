@@ -11,7 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.models.base import not_deleted
 from app.models.hermes_skill.hermes_agent_instance import HermesAgentInstance
+from app.models.instance import Instance
 from app.services.docker_constants import get_docker_public_url, get_hermes_agent_host_ip, get_hermes_instances_root
+from app.services.hermes_external.binding_type import get_instance_binding_type
 from app.services.hermes_external.docker_container_inspect_service import DockerContainerInspectService
 from app.services.hermes_external.hermes_env_parser import HermesEnvData, parse_env_file
 from app.services.hermes_external.hermes_api_server_probe_service import HermesApiServerProbeService
@@ -152,17 +154,95 @@ class HermesDockerBindingService:
         include_unavailable: bool = True,
         managed_mode: str | None = None,
     ) -> list[HermesAgentInstance]:
-        stmt = select(HermesAgentInstance).where(
-            not_deleted(HermesAgentInstance),
-            HermesAgentInstance.org_id == org_id,
+        pairs = await self.list_all_with_instances(org_id)
+        records: list[HermesAgentInstance] = []
+        for record, _instance in pairs:
+            if managed_mode and record.managed_mode != managed_mode:
+                continue
+            if not include_unavailable and record.gateway_runtime_status != "ready":
+                continue
+            records.append(record)
+        return records
+
+    async def list_bound_pairs(self, org_id: str) -> list[tuple[HermesAgentInstance, Instance]]:
+        stmt = (
+            select(HermesAgentInstance, Instance)
+            .join(Instance, HermesAgentInstance.instance_id == Instance.id)
+            .where(
+                not_deleted(HermesAgentInstance),
+                HermesAgentInstance.org_id == org_id,
+                HermesAgentInstance.instance_id.isnot(None),
+                not_deleted(Instance),
+            )
+            .order_by(HermesAgentInstance.profile_name)
         )
-        if managed_mode:
-            stmt = stmt.where(HermesAgentInstance.managed_mode == managed_mode)
-        if not include_unavailable:
-            stmt = stmt.where(HermesAgentInstance.gateway_runtime_status == "ready")
-        stmt = stmt.order_by(HermesAgentInstance.profile_name)
         result = await self.db.execute(stmt)
-        return list(result.scalars().all())
+        pairs: list[tuple[HermesAgentInstance, Instance]] = []
+        for record, instance in result.all():
+            if get_instance_binding_type(instance) == "external_docker":
+                pairs.append((record, instance))
+        return pairs
+
+    async def list_all_with_instances(
+        self,
+        org_id: str,
+    ) -> list[tuple[HermesAgentInstance, Instance | None]]:
+        stmt = (
+            select(HermesAgentInstance)
+            .where(
+                not_deleted(HermesAgentInstance),
+                HermesAgentInstance.org_id == org_id,
+            )
+            .order_by(HermesAgentInstance.profile_name)
+        )
+        result = await self.db.execute(stmt)
+        records = list(result.scalars().all())
+        pairs: list[tuple[HermesAgentInstance, Instance | None]] = []
+        for record in records:
+            instance = None
+            if record.instance_id:
+                inst_result = await self.db.execute(
+                    select(Instance).where(
+                        Instance.id == record.instance_id,
+                        not_deleted(Instance),
+                    )
+                )
+                instance = inst_result.scalar_one_or_none()
+            pairs.append((record, instance))
+        return pairs
+
+    async def list_instances_for_api(
+        self,
+        org_id: str,
+        *,
+        include_unbound: bool = False,
+        include_unavailable: bool = True,
+        managed_mode: str | None = None,
+    ) -> list[tuple[HermesAgentInstance, Instance | None]]:
+        pairs = (
+            await self.list_all_with_instances(org_id)
+            if include_unbound
+            else [(record, instance) for record, instance in await self.list_bound_pairs(org_id)]
+        )
+        filtered: list[tuple[HermesAgentInstance, Instance | None]] = []
+        for record, instance in pairs:
+            if managed_mode and record.managed_mode != managed_mode:
+                continue
+            if not include_unavailable and record.gateway_runtime_status != "ready":
+                continue
+            filtered.append((record, instance))
+        return filtered
+
+    async def get_linked_instance(self, record: HermesAgentInstance) -> Instance | None:
+        if not record.instance_id:
+            return None
+        result = await self.db.execute(
+            select(Instance).where(
+                Instance.id == record.instance_id,
+                not_deleted(Instance),
+            )
+        )
+        return result.scalar_one_or_none()
 
     async def probe_one(self, org_id: str, profile_name: str) -> HermesAgentInstance:
         record = await self.get_by_profile(org_id, profile_name)
@@ -171,8 +251,11 @@ class HermesDockerBindingService:
             raise NotFoundError("Hermes Agent 实例不存在", "errors.hermes.agent_instance_not_found")
         return await self._probe_record(record)
 
-    async def probe_all(self, org_id: str) -> list[HermesAgentInstance]:
-        records = await self.list_instances(org_id, include_unavailable=True)
+    async def probe_all(self, org_id: str, *, include_unbound: bool = False) -> list[HermesAgentInstance]:
+        if include_unbound:
+            records = [record for record, _instance in await self.list_all_with_instances(org_id)]
+        else:
+            records = [record for record, _instance in await self.list_bound_pairs(org_id)]
         updated: list[HermesAgentInstance] = []
         for record in records:
             updated.append(await self._probe_record(record))
@@ -363,13 +446,23 @@ class HermesDockerBindingService:
         return record
 
     @staticmethod
-    def to_api_dict(record: HermesAgentInstance) -> dict:
+    def to_api_dict(record: HermesAgentInstance, instance: Instance | None = None) -> dict:
         env = None
         if record.env_file:
             try:
                 env = parse_env_file(Path(record.env_file), require_gateway_port=False)
             except Exception:
                 env = None
+        binding_type = None
+        employee_name = None
+        instance_status = None
+        is_bound = False
+        if instance is not None:
+            binding_type = get_instance_binding_type(instance)
+            employee_name = instance.name
+            status = instance.status
+            instance_status = status.value if hasattr(status, "value") else str(status)
+            is_bound = binding_type == "external_docker"
         return {
             "id": record.id,
             "profile_name": record.profile_name,
@@ -398,6 +491,10 @@ class HermesDockerBindingService:
             "compose_project": record.compose_project,
             "managed_mode": record.managed_mode,
             "instance_id": record.instance_id,
+            "employee_name": employee_name,
+            "binding_type": binding_type,
+            "instance_status": instance_status,
+            "is_bound": is_bound,
             "last_probe_at": record.last_probe_at.isoformat() if record.last_probe_at else None,
             "last_seen_at": record.last_seen_at.isoformat() if record.last_seen_at else None,
             "last_error": record.last_error,

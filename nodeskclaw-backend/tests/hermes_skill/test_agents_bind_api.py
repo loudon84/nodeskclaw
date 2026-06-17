@@ -55,9 +55,14 @@ async def test_list_hermes_agents_returns_summaries():
     record.last_error = None
 
     with patch("app.api.hermes_skill.agents_bind_router.PermissionChecker.require_permission", AsyncMock()):
-        with patch.object(HermesDockerBindingService, "list_instances", AsyncMock(return_value=[record])):
+        with patch.object(
+            HermesDockerBindingService,
+            "list_instances_for_api",
+            AsyncMock(return_value=[(record, None)]),
+        ):
             response = await list_hermes_agents(
                 include_unavailable=True,
+                include_unbound=False,
                 managed_mode=None,
                 refresh=False,
                 user_org=(user, org),
@@ -86,7 +91,11 @@ async def test_scan_existing_agents_commits_and_returns_counts():
                 docker_health="healthy",
                 webui_url="http://127.0.0.1:8900",
                 gateway_url="http://127.0.0.1:18900",
-                gateway_status="online",
+                api_server_enabled=True,
+                api_server_model_name="gpt-4",
+                has_api_server_key=True,
+                api_server_status="online",
+                agent_call_status="callable",
                 runtime_status="ready",
                 mcp_status="ready",
                 last_error=None,
