@@ -27,6 +27,11 @@ const hermesRoutes: RouteRecordRaw[] = [
     component: () => import('@/views/hermes/AgentsView.vue'),
   },
   {
+    path: '/hermes/agents/:profileName',
+    name: 'HermesAgentDetail',
+    component: () => import('@/views/hermes/AgentDetailView.vue'),
+  },
+  {
     path: '/hermes/queue',
     name: 'HermesQueue',
     component: () => import('@/views/hermes/QueueView.vue'),

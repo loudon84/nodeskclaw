@@ -48,6 +48,11 @@ export async function listHermesAgentInstances(refresh = false): Promise<HermesA
   return payload.items ?? []
 }
 
+export async function getHermesAgentInstance(profileName: string): Promise<HermesAgentInstance> {
+  const { data } = await api.get(`/hermes/agents/${encodeURIComponent(profileName)}`)
+  return unwrapEnvelope<HermesAgentInstance>(data)
+}
+
 export async function scanExistingHermesAgents(instancesRoot?: string) {
   const { data } = await api.post('/hermes/agents/scan-existing', {
     instances_root: instancesRoot ?? null,
@@ -74,5 +79,5 @@ export async function getHermesAgentDiagnostics(profileName: string) {
 
 export async function testCallHermesAgent(profileName: string) {
   const { data } = await api.post(`/hermes/agents/${encodeURIComponent(profileName)}/test-call`)
-  return unwrapEnvelope(data)
+  return unwrapEnvelope<{ ok?: boolean }>(data)
 }

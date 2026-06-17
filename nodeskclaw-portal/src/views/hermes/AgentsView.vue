@@ -2,7 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { Loader2, RefreshCw, Bot, ExternalLink, Activity, ScanSearch } from 'lucide-vue-next'
+import { Loader2, RefreshCw, Bot, ExternalLink, Activity, ScanSearch, ArrowRight } from 'lucide-vue-next'
 import {
   listHermesAgentInstances,
   probeAllHermesAgents,
@@ -134,6 +134,10 @@ function goAttach() {
   router.push({ path: '/create', query: { mode: 'attach' } })
 }
 
+function goDetail(agent: HermesAgentInstance) {
+  router.push({ name: 'HermesAgentDetail', params: { profileName: agent.profile_name } })
+}
+
 onMounted(fetchAgents)
 </script>
 
@@ -212,6 +216,10 @@ onMounted(fetchAgents)
           </Button>
           <Button size="sm" variant="outline" :disabled="actionLoading" @click="showDiagnostics(agent)">
             {{ t('hermes.agents.diagnostics') }}
+          </Button>
+          <Button size="sm" variant="secondary" :disabled="actionLoading" @click="goDetail(agent)">
+            <ArrowRight class="w-3 h-3 mr-1" />
+            {{ t('hermes.agents.goDetail') }}
           </Button>
         </div>
       </div>
