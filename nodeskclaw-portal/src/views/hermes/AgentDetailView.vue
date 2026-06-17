@@ -3,7 +3,6 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import {
-  Activity,
   ArrowLeft,
   Bot,
   ExternalLink,
@@ -23,6 +22,7 @@ import ProfileActionBar from '@/views/hermes/ProfileActionBar.vue'
 import AgentProfileSkillsView from '@/views/hermes/AgentProfileSkillsView.vue'
 import AgentProfileFilesView from '@/views/hermes/AgentProfileFilesView.vue'
 import AgentProfileBackupsView from '@/views/hermes/AgentProfileBackupsView.vue'
+import AgentRuntimeInsightPanel from '@/views/hermes/AgentRuntimeInsightPanel.vue'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -237,18 +237,7 @@ onMounted(fetchAgent)
       </div>
 
       <div v-else-if="activeTab === 'runtime'" class="space-y-4">
-        <div class="rounded-xl border border-border p-4 space-y-3">
-          <div class="flex flex-wrap gap-2">
-            <Badge variant="outline">{{ t('hermes.agents.docker') }}: {{ agent.docker_status }}</Badge>
-            <Badge variant="outline">Health: {{ agent.docker_health }}</Badge>
-          </div>
-          <p class="text-sm text-muted-foreground">{{ t('hermes.agents.lastProbe') }}: {{ agent.last_probe_at || '-' }}</p>
-          <p v-if="agent.last_error" class="text-sm text-red-400 break-all">{{ agent.last_error }}</p>
-          <Button size="sm" variant="outline" :disabled="actionLoading" @click="probeAgent">
-            <Activity class="w-4 h-4 mr-1" />
-            {{ t('hermes.agents.probe') }}
-          </Button>
-        </div>
+        <AgentRuntimeInsightPanel :profile-name="profileName" />
       </div>
 
       <AgentProfileConfigView
