@@ -13,10 +13,13 @@ class ProfileListItem(BaseModel):
     config_exists: bool
     soul_exists: bool
     status: str
+    runtime_model_name: str | None = None
 
 
 class ProfileListResponse(BaseModel):
     items: list[ProfileListItem] = Field(default_factory=list)
+    active_profile: str | None = None
+    runtime_model_name: str | None = None
 
 
 class ProfileCreateRequest(BaseModel):
@@ -31,10 +34,15 @@ class ProfileCreateResponse(BaseModel):
     message: str
 
 
+class ProfileDeleteRequest(BaseModel):
+    confirm_profile: str
+
+
 class ProfileDeleteResponse(BaseModel):
     success: bool
     profile: str
     message: str
+    backup_file: str | None = None
 
 
 class CoreFileReadResponse(BaseModel):
@@ -70,4 +78,9 @@ class CoreFileSaveResponse(BaseModel):
     file_path: str
     backup_file: str | None = None
     restarted: bool = False
+    docker_status: str | None = None
+    api_server_status: str | None = None
+    agent_call_status: str | None = None
+    runtime_status: str | None = None
+    error_code: str | None = None
     message: str

@@ -151,6 +151,7 @@ class HermesExternalPathResolver:
             profile_dir = host_data_dir / "profiles" / profile
             profile_type = "extended"
             core_file_backup_dir = profile_dir / "backups" / "core-files"
+            self.ensure_profile_dir_safe(profile_dir, host_data_dir)
 
         return HermesProfilePaths(
             profile=profile,
@@ -164,3 +165,37 @@ class HermesExternalPathResolver:
             backups_dir=profile_dir / "backups",
             core_file_backup_dir=core_file_backup_dir,
         )
+
+    def ensure_profile_dir_safe(self, profile_dir: Path, host_data_dir: Path) -> None:
+        profile_dir = Path(profile_dir)
+        host_data_dir = Path(host_data_dir)
+        if profile_dir.is_symlink():
+            raise BadRequestError(
+                message="Profile 目录不允许使用软链接",
+                message_key="errors.external_docker.profile_symlink_not_allowed",
+            )
+        host_real = host_data_dir.resolve()
+        profile_real = profile_dir.resolve()
+        profiles_root = host_real / "profiles"
+        if not profile_real.is_relative_to(profiles_root):
+            raise BadRequestError(
+                message="Profile 路径越界",
+                message_key="errors.external_docker.profile_path_escape",
+            )
+
+    def validate_profile_path(self, profile_dir: Path, target_path: Path) -> Path:
+        profile_dir = Path(profile_dir)
+        target_path = Path(target_path)
+        if profile_dir.is_symlink():
+            raise BadRequestError(
+                message="Profile 目录不允许使用软链接",
+                message_key="errors.external_docker.profile_symlink_not_allowed",
+            )
+        profile_real = profile_dir.resolve()
+        target_real = target_path.resolve()
+        if not target_real.is_relative_to(profile_real):
+            raise BadRequestError(
+                message="路径越界",
+                message_key="errors.external_docker.profile_path_escape",
+            )
+        return target_real

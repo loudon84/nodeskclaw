@@ -24,7 +24,9 @@ from app.schemas.external_docker_profiles import (
     CoreFileSaveRequest,
     CoreFileValidateRequest,
     ProfileCreateRequest,
+    ProfileDeleteRequest,
 )
+from app.services.hermes_external._common import require_external_docker_instance
 
 router = APIRouter()
 
@@ -282,23 +284,11 @@ async def get_hermes_agent_diagnostics(
     ).model_dump())
 
 
-async def _require_agent_record(
-    db: AsyncSession,
-    org_id: str,
-    profile_name: str,
-):
-    service = HermesDockerBindingService(db)
-    record = await service.get_by_profile(org_id, profile_name)
-    if not record:
-        from app.core.exceptions import NotFoundError
-        raise NotFoundError("Hermes Agent 实例不存在", "errors.hermes.agent_instance_not_found")
-    if not record.data_dir:
-        from app.core.exceptions import BadRequestError
-        raise BadRequestError(
-            "实例缺少 Hermes 数据目录，无法管理 Profile",
-            "errors.hermes.data_dir_missing",
-        )
-    return record
+from app.api.hermes_skill._agent_profile_context import (
+    host_data_dir_context as _host_data_dir_context,
+    require_agent_record as _require_agent_record,
+    resolve_bound_instance as _resolve_bound_instance,
+)
 
 
 @router.get("/agents/{profile_name}/profiles")
@@ -311,7 +301,25 @@ async def list_agent_profiles(
     if user:
         await PermissionChecker.require_permission(db, user.id, org.id, "hermes_agent:view")
     record = await _require_agent_record(db, org.id, profile_name)
-    data = profile_service.list_profiles_for_host_data_dir(Path(record.data_dir))
+    instance = await _resolve_bound_instance(db, org.id, record)
+    if instance is not None:
+        data = profile_service.list_profiles(instance)
+    else:
+        ctx = _host_data_dir_context(record, profile_name)
+        data = profile_service.list_profiles_for_host_data_dir(
+            ctx["host_data_dir"],
+            instance_dir=ctx["instance_dir"],
+            agent_profile_name=ctx["agent_profile_name"],
+        )
+    audit = SkillAuditLogger(db)
+    await audit.log(
+        action="profile.list",
+        target_id=profile_name,
+        org_id=org.id,
+        actor_id=user.id if user else "",
+        details={"count": len(data.items), "instance_id": record.instance_id},
+    )
+    await db.commit()
     return _ok(data.model_dump())
 
 
@@ -326,18 +334,27 @@ async def create_agent_profile(
     if user:
         await PermissionChecker.require_permission(db, user.id, org.id, "hermes_agent:manage")
     record = await _require_agent_record(db, org.id, profile_name)
-    result = profile_service.create_profile_for_host_data_dir(
-        Path(record.data_dir),
-        body.profile,
-        from_profile=body.from_profile,
-    )
+    instance = await _resolve_bound_instance(db, org.id, record)
+    if instance is not None:
+        result = profile_service.create_profile(
+            instance,
+            body.profile,
+            from_profile=body.from_profile,
+        )
+    else:
+        ctx = _host_data_dir_context(record, profile_name)
+        result = profile_service.create_profile_for_host_data_dir(
+            ctx["host_data_dir"],
+            body.profile,
+            from_profile=body.from_profile,
+        )
     audit = SkillAuditLogger(db)
     await audit.log(
-        action="hermes.profile.create",
+        action="profile.create",
         target_id=body.profile,
         org_id=org.id,
         actor_id=user.id if user else "",
-        details={"agent_profile": profile_name, "from_profile": body.from_profile},
+        details={"agent_profile": profile_name, "from_profile": body.from_profile, "instance_id": record.instance_id},
     )
     await db.commit()
     return _ok(result.model_dump())
@@ -347,6 +364,7 @@ async def create_agent_profile(
 async def delete_agent_profile(
     profile_name: str,
     target_profile: str,
+    body: ProfileDeleteRequest,
     user_org=Depends(require_org_member),
     db: AsyncSession = Depends(get_db),
 ):
@@ -354,14 +372,29 @@ async def delete_agent_profile(
     if user:
         await PermissionChecker.require_permission(db, user.id, org.id, "hermes_agent:manage")
     record = await _require_agent_record(db, org.id, profile_name)
-    result = profile_service.delete_profile_for_host_data_dir(Path(record.data_dir), target_profile)
+    instance = await _resolve_bound_instance(db, org.id, record)
+    if instance is not None:
+        result = profile_service.delete_profile(
+            instance,
+            target_profile,
+            confirm_profile=body.confirm_profile,
+        )
+    else:
+        ctx = _host_data_dir_context(record, profile_name)
+        result = profile_service.delete_profile_for_host_data_dir(
+            ctx["host_data_dir"],
+            target_profile,
+            confirm_profile=body.confirm_profile,
+            instance_dir=ctx["instance_dir"],
+            agent_profile_name=ctx["agent_profile_name"],
+        )
     audit = SkillAuditLogger(db)
     await audit.log(
-        action="hermes.profile.delete",
+        action="profile.delete",
         target_id=target_profile,
         org_id=org.id,
         actor_id=user.id if user else "",
-        details={"agent_profile": profile_name},
+        details={"agent_profile": profile_name, "instance_id": record.instance_id, "backup_file": result.backup_file},
     )
     await db.commit()
     return _ok(result.model_dump())
@@ -379,11 +412,25 @@ async def read_agent_core_file(
     if user:
         await PermissionChecker.require_permission(db, user.id, org.id, "hermes_agent:manage")
     record = await _require_agent_record(db, org.id, profile_name)
-    data = core_file_service.read_core_file_for_host_data_dir(
-        Path(record.data_dir),
-        target_profile,
-        kind,
+    instance = await _resolve_bound_instance(db, org.id, record)
+    if instance is not None:
+        data = core_file_service.read_core_file(instance, target_profile, kind)
+    else:
+        ctx = _host_data_dir_context(record, profile_name)
+        data = core_file_service.read_core_file_for_host_data_dir(
+            ctx["host_data_dir"],
+            target_profile,
+            kind,
+        )
+    audit = SkillAuditLogger(db)
+    await audit.log(
+        action="core_file.read",
+        target_id=f"{target_profile}:{kind}",
+        org_id=org.id,
+        actor_id=user.id if user else "",
+        details={"agent_profile": profile_name, "profile": target_profile, "kind": kind},
     )
+    await db.commit()
     return _ok(data.model_dump())
 
 
@@ -401,6 +448,15 @@ async def validate_agent_core_file(
         await PermissionChecker.require_permission(db, user.id, org.id, "hermes_agent:manage")
     await _require_agent_record(db, org.id, profile_name)
     data = core_file_service.validate_core_file(kind, body.content)
+    audit = SkillAuditLogger(db)
+    await audit.log(
+        action="core_file.validate",
+        target_id=f"{target_profile}:{kind}",
+        org_id=org.id,
+        actor_id=user.id if user else "",
+        details={"agent_profile": profile_name, "profile": target_profile, "kind": kind, "valid": data.valid},
+    )
+    await db.commit()
     return _ok(data.model_dump())
 
 
@@ -417,17 +473,30 @@ async def save_agent_core_file(
     if user:
         await PermissionChecker.require_permission(db, user.id, org.id, "hermes_agent:manage")
     record = await _require_agent_record(db, org.id, profile_name)
-    data = await core_file_service.save_core_file_for_host_data_dir(
-        Path(record.data_dir),
-        target_profile,
-        kind,
-        body.content,
-        restart_after_save=body.restart_after_save,
-        container_name=record.container_name,
-    )
+    instance = await _resolve_bound_instance(db, org.id, record)
+    if instance is not None:
+        data = await core_file_service.save_core_file(
+            instance,
+            target_profile,
+            kind,
+            body.content,
+            restart_after_save=body.restart_after_save,
+        )
+    else:
+        ctx = _host_data_dir_context(record, profile_name)
+        data = await core_file_service.save_core_file_for_host_data_dir(
+            ctx["host_data_dir"],
+            target_profile,
+            kind,
+            body.content,
+            restart_after_save=body.restart_after_save,
+            container_name=ctx["container_name"],
+            gateway_url=ctx["gateway_url"],
+        )
+    action = "core_file.save_and_restart" if body.restart_after_save else "core_file.save"
     audit = SkillAuditLogger(db)
     await audit.log(
-        action="hermes.profile.core_file.save",
+        action=action,
         target_id=f"{target_profile}:{kind}",
         org_id=org.id,
         actor_id=user.id if user else "",
@@ -436,6 +505,9 @@ async def save_agent_core_file(
             "profile": target_profile,
             "kind": kind,
             "restarted": data.restarted,
+            "runtime_status": data.runtime_status,
+            "error_code": data.error_code,
+            "instance_id": record.instance_id,
         },
     )
     await db.commit()

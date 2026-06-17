@@ -34,6 +34,8 @@ router.include_router(tasks_router)
 router.include_router(artifacts_router)
 router.include_router(diagnostics_router)
 router.include_router(agents_bind_router)
+from app.api.hermes_profile_extended_agent import router as profile_extended_agent_router
+router.include_router(profile_extended_agent_router)
 router.include_router(agents_runtime_router)
 router.include_router(queue_router)
 router.include_router(runtime_control_router)

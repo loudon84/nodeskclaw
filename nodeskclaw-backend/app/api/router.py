@@ -72,6 +72,7 @@ from app.api.docker_attach import docker_router as docker_attach_router
 from app.api.docker_attach import instance_attach_router
 from app.api.external_docker import router as external_docker_router
 from app.api.external_docker_profiles import router as external_docker_profiles_router
+from app.api.external_docker_profile_extended import router as external_docker_profile_extended_router
 
 # ── Portal 公共 API（/api/v1）──────────────────────────────
 # Portal 使用 portal/ 下的独立路由，内置实例级权限检查。
@@ -160,6 +161,7 @@ api_router.include_router(portal_mcp_router, prefix="/instances", tags=["MCP"])
 api_router.include_router(portal_instance_files_router, prefix="/instances", tags=["实例文件"])
 api_router.include_router(external_docker_router, prefix="/instances", tags=["外部 Docker 实例"])
 api_router.include_router(external_docker_profiles_router, prefix="/instances", tags=["外部 Docker Profile"])
+api_router.include_router(external_docker_profile_extended_router, prefix="/instances", tags=["外部 Docker Profile"])
 api_router.include_router(llm_keys_router, tags=["LLM Key 管理"])
 api_router.include_router(performance_router, tags=["绩效"])
 api_router.include_router(registry_router, prefix="/registry", tags=["镜像仓库"])
@@ -217,6 +219,9 @@ admin_router.include_router(external_docker_router, prefix="/instances",
     tags=["Admin - 外部 Docker 实例"],
     dependencies=[Depends(require_org_role("member"))])
 admin_router.include_router(external_docker_profiles_router, prefix="/instances",
+    tags=["Admin - 外部 Docker Profile"],
+    dependencies=[Depends(require_org_role("member"))])
+admin_router.include_router(external_docker_profile_extended_router, prefix="/instances",
     tags=["Admin - 外部 Docker Profile"],
     dependencies=[Depends(require_org_role("member"))])
 

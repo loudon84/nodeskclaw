@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import {
   Activity,
@@ -19,6 +19,10 @@ import { useToast } from '@/composables/useToast'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import AgentProfileConfigView from '@/views/hermes/AgentProfileConfigView.vue'
+import ProfileActionBar from '@/views/hermes/ProfileActionBar.vue'
+import AgentProfileSkillsView from '@/views/hermes/AgentProfileSkillsView.vue'
+import AgentProfileFilesView from '@/views/hermes/AgentProfileFilesView.vue'
+import AgentProfileBackupsView from '@/views/hermes/AgentProfileBackupsView.vue'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -30,6 +34,11 @@ const actionLoading = ref(false)
 const agent = ref<HermesAgentInstance | null>(null)
 const activeTab = ref('overview')
 const selectedProfile = ref('default')
+const profileDirty = ref(false)
+const activeRuntimeProfile = ref<string | null>(null)
+const runtimeModelName = ref<string | null>(null)
+const profileConfigRef = ref<InstanceType<typeof AgentProfileConfigView> | null>(null)
+const profileActionBarRef = ref<InstanceType<typeof ProfileActionBar> | null>(null)
 
 const profileName = computed(() => String(route.params.profileName || ''))
 
@@ -97,8 +106,43 @@ async function probeAgent() {
   }
 }
 
+function confirmDiscardProfileChanges(): boolean {
+  if (!profileDirty.value) return true
+  return profileConfigRef.value?.confirmDiscard?.() ?? window.confirm(t('hermes.profiles.unsavedConfirm'))
+}
+
+function switchTab(tabId: string) {
+  if (tabId === activeTab.value) return
+  if (activeTab.value === 'model-config' && !confirmDiscardProfileChanges()) return
+  activeTab.value = tabId
+}
+
+function onProfileDirtyChange(dirty: boolean) {
+  profileDirty.value = dirty
+}
+
+function onRuntimeMetaChange(meta: { activeProfile: string | null; runtimeModelName: string | null }) {
+  activeRuntimeProfile.value = meta.activeProfile
+  runtimeModelName.value = meta.runtimeModelName
+}
+
 function goBack() {
+  if (!confirmDiscardProfileChanges()) return
   router.push({ name: 'HermesAgents' })
+}
+
+onBeforeRouteLeave(() => {
+  if (!confirmDiscardProfileChanges()) return false
+})
+
+function onProfileActivated() {
+  probeAgent()
+  profileActionBarRef.value?.fetchProfiles()
+}
+
+function onProfileRestored() {
+  probeAgent()
+  profileActionBarRef.value?.fetchProfiles()
 }
 
 onMounted(fetchAgent)
@@ -125,6 +169,20 @@ onMounted(fetchAgent)
     </div>
 
     <template v-else-if="agent">
+      <div
+        v-if="activeRuntimeProfile || runtimeModelName"
+        class="mb-4 rounded-lg border border-border px-4 py-2 text-sm text-muted-foreground"
+      >
+        <span v-if="activeRuntimeProfile">
+          {{ t('hermes.profiles.activeRuntimeProfile') }}:
+          <span class="font-mono text-foreground">{{ activeRuntimeProfile }}</span>
+        </span>
+        <span v-if="runtimeModelName" class="ml-4">
+          {{ t('hermes.profiles.runtimeModel') }}:
+          <span class="font-mono text-foreground">{{ runtimeModelName }}</span>
+        </span>
+      </div>
+
       <div class="flex flex-wrap gap-2 mb-6 border-b border-border pb-2">
         <button
           v-for="tab in tabs"
@@ -132,15 +190,21 @@ onMounted(fetchAgent)
           type="button"
           class="rounded-md px-3 py-1.5 text-sm"
           :class="activeTab === tab.id ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted'"
-          @click="activeTab = tab.id"
+          @click="switchTab(tab.id)"
         >
           {{ t(tab.labelKey) }}
         </button>
       </div>
 
-      <div v-if="profileScopedTabs.has(activeTab)" class="mb-4 text-sm text-muted-foreground">
-        {{ t('hermes.profiles.currentProfile') }}: <span class="font-mono text-foreground">{{ selectedProfile }}</span>
-      </div>
+      <ProfileActionBar
+        v-if="profileScopedTabs.has(activeTab)"
+        ref="profileActionBarRef"
+        v-model:profile="selectedProfile"
+        :agent-profile-name="agent.profile_name"
+        :confirm-discard="confirmDiscardProfileChanges"
+        @runtime-meta-change="onRuntimeMetaChange"
+        @activated="onProfileActivated"
+      />
 
       <div v-if="activeTab === 'overview'" class="space-y-4">
         <div class="rounded-xl border border-border p-4 space-y-3">
@@ -189,14 +253,31 @@ onMounted(fetchAgent)
 
       <AgentProfileConfigView
         v-else-if="activeTab === 'model-config'"
+        ref="profileConfigRef"
         v-model:profile="selectedProfile"
         :agent-profile-name="agent.profile_name"
+        @dirty-change="onProfileDirtyChange"
+        @runtime-meta-change="onRuntimeMetaChange"
       />
 
-      <div v-else class="rounded-xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
-        <p>{{ t('hermes.profiles.tabs.comingSoon', { tab: t(tabs.find((item) => item.id === activeTab)?.labelKey || '') }) }}</p>
-        <p class="mt-2">{{ t('hermes.profiles.currentProfile') }}: {{ selectedProfile }}</p>
-      </div>
+      <AgentProfileSkillsView
+        v-else-if="activeTab === 'skills'"
+        :agent-profile-name="agent.profile_name"
+        :profile="selectedProfile"
+      />
+
+      <AgentProfileFilesView
+        v-else-if="activeTab === 'files'"
+        :agent-profile-name="agent.profile_name"
+        :profile="selectedProfile"
+      />
+
+      <AgentProfileBackupsView
+        v-else-if="activeTab === 'backups'"
+        :agent-profile-name="agent.profile_name"
+        :profile="selectedProfile"
+        @restored="onProfileRestored"
+      />
     </template>
   </div>
 </template>

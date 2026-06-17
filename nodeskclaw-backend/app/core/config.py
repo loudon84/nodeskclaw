@@ -257,6 +257,9 @@ class Settings(BaseSettings):
     HERMES_API_SERVER_PROBE_CONCURRENCY: int = 5
     HERMES_ENABLE_CALL_TEST: bool = False
     HERMES_PREFER_RUNS_API: bool = True
+    HERMES_RESTART_WAIT_TIMEOUT_SECONDS: int = 60
+    HERMES_RESTART_POLL_INTERVAL_SECONDS: int = 3
+    HERMES_GIT_ALLOWED_HOSTS: str = ""
 
     # ── Hermes Agent Adapter ──────────────────────────────
     HERMES_AGENT_DEFAULT_TIMEOUT_SECONDS: int = 900
