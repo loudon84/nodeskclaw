@@ -1,0 +1,14 @@
+---
+description: Security and sensitive information rules
+alwaysApply: true
+---
+
+安全规则：
+- 不要读取、输出、提交 .env、密钥、token、cookie、私有证书。
+- 不要把真实密钥写入示例配置，占位统一用 example.com。
+- 日志、截图、报错中出现敏感信息时必须脱敏。
+- 不要修改生产连接信息、云账号、K8s kubeconfig、CI secret。
+- 涉及权限、租户隔离、鉴权、审计、账单、额度时，必须保持默认拒绝策略。
+- 不要将 ee/ 私有实现、客户信息、内部部署细节复制到公开文档。
+- 代码中禁止出现真人个人信息（姓名、邮箱、手机号），邮箱占位统一用 user@example.com。
+- .cursor/rules/*.mdc 禁止包含 IP 地址、域名、URL、数据库连接串等基础设施细节。

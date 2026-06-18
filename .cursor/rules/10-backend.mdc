@@ -1,0 +1,21 @@
+---
+description: Backend coding rules
+globs:
+  - "nodeskclaw-backend/**/*.py"
+alwaysApply: false
+---
+
+后端分层：api（路由与权限） → schemas（请求/响应契约） → services（业务逻辑） → models（SQLAlchemy ORM） → alembic（迁移） → core（配置、依赖、权限、feature gate） → services/runtime（实例运行时、K8s、消息、上下文桥接）。
+
+规则：
+- 删除必须软删除（deleted_at），严禁物理删除。唯一约束使用 Partial Unique Index。
+- 新增或修改 SQLAlchemy Model 字段，必须同步生成 Alembic 迁移（alembic revision --autogenerate），禁止手写 revision ID。
+- API 错误返回必须包含 error_code + message_key + message。
+- K8s 操作必须显式 --context，禁止依赖隐式当前集群。部署必须同时确认 context 和 namespace。
+- Docker 构建/拉取必须指定 --platform linux/amd64。
+- 变更 API 时同步检查 schemas、service、测试与前端调用。
+- 解析 openclaw.json 等 JSONC 文件前必须剥离 // 行注释。
+- NFS 操作时注意容器路径与本地挂载路径的转换。
+- 修改 Gene 模板或 Agent 行为后需评估是否同步 Skill 定义。
+- 默认先读取 .cursor/context/backend-codemap.md。
+- 不要读取 portal、llm-proxy、ee、openclaw、vibecraft，除非任务明确要求。

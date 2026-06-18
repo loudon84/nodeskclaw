@@ -1,0 +1,18 @@
+---
+description: CE/EE boundary rules
+globs:
+  - "ee/**"
+  - "**/features.yaml"
+  - "**/feature_gate.py"
+  - "**/feature*.py"
+alwaysApply: false
+---
+
+CE/EE 边界规则：
+- CE 代码不得直接 import ee 模块。
+- 企业版能力必须通过 feature gate、adapter、配置或运行时注册接入。
+- EE 私有实现不要复制到 CE。
+- 涉及 features.yaml、feature_gate、license、quota、tenant isolation 时必须检查 CE fallback。
+- 未明确要求时，不要读取 ee/ 目录。
+- 修改 EE 能力时，必须说明 CE 行为是否保持不变。
+- 所有项目文档必须放在 ee/docs/，CE 仓库禁止新建文档目录。

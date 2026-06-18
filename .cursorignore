@@ -1,0 +1,36 @@
+# dependency / generated
+**/node_modules/**
+**/.venv/**
+**/__pycache__/**
+**/.pytest_cache/**
+**/.ruff_cache/**
+**/dist/**
+**/dist-ssr/**
+**/coverage/**
+**/htmlcov/**
+**/*.log
+**/*.db
+**/*.sqlite3
+
+# local runtime data
+data/**
+stats_output/**
+.codex/**
+.claude/**
+.codex-screenshots/**
+
+# external runtime source, only open when explicitly debugging runtime
+openclaw/**
+vibecraft/**
+zeroclaw/**
+hermes-agent/**
+
+# private EE: keep ignored by default in CE tasks.
+# When doing EE work, comment this block or open ee/ as a separate Cursor window.
+ee/**
+
+# large artifacts
+nodeskclaw-artifacts/**/*.tar
+nodeskclaw-artifacts/**/*.tgz
+nodeskclaw-artifacts/**/*.zip
+nodeskclaw-artifacts/**/build/**

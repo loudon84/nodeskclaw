@@ -1,0 +1,25 @@
+---
+description: NoDeskClaw minimal project map
+alwaysApply: true
+---
+
+NoDeskClaw 是 DeskClaw 团队版实例管理平台。所有功能必须服务于"人和 AI 共同经营"这个核心场景，偏离此方向的需求必须先质疑再动手。
+
+目录边界：
+- nodeskclaw-backend：FastAPI 后端，API / Service / Model / K8s / Runtime。
+- nodeskclaw-portal：CE+EE 共用用户门户，Vue 3。
+- nodeskclaw-llm-proxy：LLM 请求转发、鉴权、额度、用量记录。
+- openclaw-channel-*：运行时 Channel 插件。
+- ee/：企业版私有扩展，未明确要求不要读取。
+- openclaw/、vibecraft/：外部源码，未明确要求不要读取。
+
+默认策略：
+- 只读取当前任务相关目录，不要全仓扫描。
+- 优先读取 .cursor/context 下对应 CODEMAP，再读取目标文件。
+- 修改同源逻辑时，先用 rg 限定目录搜索。
+- Grep 搜不到 ≠ 不存在，必须换更宽泛关键词重试确认。
+- 每完成一个单元性改动后必须立即 git commit，禁止攒多个独立改动。
+- git add 时只加本次改动文件，禁止 git add . / git add -A。
+- 变更涉及 ≥1 个独立功能点时必须提示用户进入 Plan 模式。
+- Plan 必须包含前端表现变化章节（三层描述结构），代码定位禁止使用行号。
+- 不确定的事情先用工具查证再回答，禁止猜测性断言。
