@@ -4,9 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概述
 
-DeskClaw（曾用名 NoDeskClaw）— DeskClaw 实例可视化管理平台，通过 Web 界面管理 K8s 集群上的 DeskClaw 实例，支持一键部署、实时日志、集群健康巡检、飞书 SSO 登录。
-
-采用 CE（社区版）/ EE（企业版）双版本架构：CE 为本仓库开源部分，EE 在私有 `ee/` 目录。运行时通过 `FeatureGate` 判断版本：优先读取 `NODESKCLAW_EDITION` 环境变量（`ce`/`ee`），未设置时检测 `ee/` 目录是否存在。`./dev.sh ce` 会自动设置此环境变量以确保后端以 CE 模式运行。
+DeskClaw（曾用名 NoDeskClaw）— DeskClaw 实例可视化管理平台（社区版 / CE），通过 Web 界面管理 K8s 集群上的 DeskClaw 实例，支持一键部署、实时日志、集群健康巡检。本仓库为开源版本，下载后不再引用 `ee/` 企业版模块。
 
 ## 产品称呼
 
@@ -18,15 +16,12 @@ DeskClaw（曾用名 NoDeskClaw）— DeskClaw 实例可视化管理平台，通
 
 ```
 NoDeskClaw/
-├── nodeskclaw-portal/              # 用户门户前端（CE + EE，Vue 3 + Tailwind CSS）
+├── nodeskclaw-portal/              # 用户门户前端（Vue 3 + Tailwind CSS）
 ├── nodeskclaw-backend/             # 后端 API 服务（Python 3.12 + FastAPI）
 ├── nodeskclaw-llm-proxy/          # LLM Proxy 服务（Python + FastAPI）
 ├── nodeskclaw-artifacts/          # 镜像构建 & 部署制品
 ├── openclaw-channel-nodeskclaw/   # DeskClaw channel plugin
 ├── openclaw-channel-dingtalk/     # DingTalk channel plugin (Stream protocol)
-├── features.yaml                   # CE/EE Feature 定义
-├── ee/                             # Enterprise Edition 模块（私有）
-│   └── nodeskclaw-frontend/       # 管理后台前端（EE-only，Vue 3 + shadcn-vue + Tailwind CSS）
 ├── openclaw/                       # DeskClaw 源码（独立仓库）
 └── vibecraft/                      # VibeCraft 源码（独立仓库）
 ```
@@ -36,22 +31,19 @@ NoDeskClaw/
 ### 一键启动
 
 ```bash
-./dev.sh         # 自动检测：ee/ 存在 -> EE，否则 -> CE
-./dev.sh ce      # 强制 CE 模式（即使存在 ee/ 目录，后端也以 CE 运行）
-./dev.sh ee      # 强制 EE 模式（backend + portal + admin）
+./dev.sh         # CE 模式
 ```
 
 ### Docker Compose 部署
 
 ```bash
-docker compose up -d                     # CE 模式（默认）
-docker compose -f docker-compose.yml -f docker-compose.ee.yml up -d  # EE 模式
+docker compose up -d
 
-# 可选：需要自定义 JWT_SECRET / 飞书 SSO 等配置时
+# 可选：需要自定义 JWT_SECRET 等配置时
 # cp .env.example nodeskclaw-backend/.env && vi nodeskclaw-backend/.env
 ```
 
-Docker Compose 部署自动配置 Docker socket 挂载和数据目录映射，支持创建 Docker 类型集群。Mac/Linux 默认使用 `$HOME/.nodeskclaw/docker-instances`，Windows 必须显式设置 `NODESKCLAW_DATA_DIR`，后端容器内 `DOCKER_DATA_DIR` 固定为 `/nodeskclaw-data`，`NODESKCLAW_EDITION` 由 compose 文件自动设置。
+Docker Compose 部署自动配置 Docker socket 挂载和数据目录映射，支持创建 Docker 类型集群。Mac/Linux 默认使用 `$HOME/.nodeskclaw/docker-instances`，Windows 必须显式设置 `NODESKCLAW_DATA_DIR`，后端容器内 `DOCKER_DATA_DIR` 固定为 `/nodeskclaw-data`。
 
 ### 后端（Python）
 
@@ -65,16 +57,9 @@ uv run ruff check .        # 代码检查
 uv run ruff check --fix . # 自动修复
 ```
 
-### 前端
+### 前端（nodeskclaw-portal）
 
 ```bash
-# 管理前端（EE-only）
-cd ee/nodeskclaw-frontend
-npm install
-npm run dev               # 开发服务器 http://localhost:4518
-npm run build             # 构建生产版本
-
-# 用户门户
 cd nodeskclaw-portal
 npm install
 npm run dev               # 开发服务器 http://localhost:4517
@@ -86,13 +71,13 @@ npm run test:watch        # 监听模式
 
 ## i18n 国际化
 
-- 覆盖范围：`nodeskclaw-portal`、`ee/nodeskclaw-frontend`、`nodeskclaw-backend`
+- 覆盖范围：`nodeskclaw-portal`、`nodeskclaw-backend`
 - 前端错误展示：优先使用后端 `message_key` 本地翻译，词条缺失时回退 `message`
 - 后端失败响应：`code` + `error_code` + `message_key` + `message` + `data`
 
 ## 代码架构
 
-- **前端**：双前端架构。`ee/nodeskclaw-frontend`（Admin 管理后台）仅 EE 版部署，CE 用户只有 `nodeskclaw-portal`（用户门户）。图标统一使用 `lucide-vue-next`
+- **前端**：用户门户 `nodeskclaw-portal`。图标统一使用 `lucide-vue-next`
 - **后端**：FastAPI + SQLAlchemy + asyncpg，采用 Service Layer 模式
 - **K8s**：通过 kubectl 与 K8s 集群交互，目标节点架构 `linux/amd64`
 - **DeskClaw 源码**：本地副本位于 `openclaw/src/`，用于调试和问题排查
@@ -148,7 +133,7 @@ kubectl get deploy -n <namespace> --context <context-name>
 
 ### 敏感信息隔离
 
-- 文档、设计资产默认放 `ee/` 私有仓库，CE 仅保留代码和最小必要公开文件
+- 文档、设计资产禁止包含 IP、域名、Token、密钥等敏感信息
 - `.cursor/rules/*.mdc` 禁止包含 IP、域名、Token、密钥等敏感信息
 - 代码中发现真人信息必须立即替换并提交
 

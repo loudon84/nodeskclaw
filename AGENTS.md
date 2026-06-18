@@ -2,13 +2,12 @@
 
 ## 项目概述
 
-NoDeskClaw 是 DeskClaw 实例可视化管理系统，通过 Web 界面管理 K8s 集群上的 DeskClaw 实例。
+NoDeskClaw 是 DeskClaw 实例可视化管理系统（社区版 / CE），通过 Web 界面管理 K8s 集群上的 DeskClaw 实例。本仓库为开源版本，下载后不再引用 `ee/` 企业版模块。
 
-| 组件 | 技术 | 可用版本 |
-|------|------|---------|
-| 后端 | Python 3.12 + FastAPI + SQLAlchemy + PostgreSQL | CE + EE |
-| 管理前端 | Vue 3 + Vite + TypeScript + Tailwind CSS + shadcn-vue | EE-only |
-| 用户门户 | Vue 3 + Vite + TypeScript + Tailwind CSS + Three.js | CE + EE |
+| 组件 | 技术 |
+|------|------|
+| 后端 | Python 3.12 + FastAPI + SQLAlchemy + PostgreSQL |
+| 用户门户 | Vue 3 + Vite + TypeScript + Tailwind CSS + Three.js |
 
 ## 产品称呼
 
@@ -31,10 +30,10 @@ uv run ruff check .                        # Lint 检查
 uv run ruff check --fix .                  # 自动修复
 ```
 
-### 前端（ee/nodeskclaw-frontend / nodeskclaw-portal）
+### 前端（nodeskclaw-portal）
 
 ```bash
-cd ee/nodeskclaw-frontend  # 管理后台（EE-only）
+cd nodeskclaw-portal
 npm install
 npm run dev
 npm run build
@@ -239,46 +238,6 @@ fix(deploy): 修复 env_vars 存数据库未序列化的问题
 
 | 逻辑类型 | 可能位置 |
 |---------|----------|
-| slug 生成、表单校验 | `ee/nodeskclaw-frontend` 和 `nodeskclaw-portal` 的对应页面 |
-| API 调用封装 | 两个前端的 `api.ts` |
+| slug 生成、表单校验 | `nodeskclaw-portal` 页面 |
+| API 调用封装 | `nodeskclaw-portal` 的 `api.ts` |
 | K8s 资源构建逻辑 | `resource_builder.py`、`deploy_service.py` |
-
-## CE/EE 架构
-
-### 目录结构
-
-- `features.yaml` — EE 功能清单定义
-- `ee/` — EE 私有仓库（`.gitignore` 排除，需手动 clone 到项目根目录）
-  - `ee/backend/` — EE 后端（路由、Service、Model、Hook）
-  - `ee/nodeskclaw-frontend/` — Admin 管理后台前端（EE-only，完整 Vue 项目）
-  - `ee/frontend/portal/` — Portal 前端 EE 页面和路由
-
-### FeatureGate
-
-`app/core/feature_gate.py` — 检测 `ee/` 目录是否存在决定 edition，控制功能开关。
-
-### 后端抽象层
-
-4 个 Factory 模式抽象层，CE/EE 各自实现：
-
-| 抽象层 | CE 实现 | EE 实现（ee/backend/） |
-|--------|---------|----------------------|
-| DeploymentAdapter | BasicK8sAdapter | FullK8sAdapter |
-| EmailTransport | GlobalSmtpTransport | OrgSmtpTransport |
-| OrgProvider | SingleOrgProvider | MultiOrgProvider |
-| QuotaChecker | NoopQuotaChecker | PlanBasedQuotaChecker |
-
-### EE Model 注册
-
-EE Model 使用 CE 的 `Base`，在 `main.py` lifespan 中 `create_all` 前条件导入 `ee.backend.models`。
-
-### 前端架构
-
-- **Admin**（`ee/nodeskclaw-frontend/`）：完整独立的 Vue 项目，EE-only，CE 版不包含此目录。EE 路由直接定义在 `src/router/index.ts` 中。
-- **Portal**（`nodeskclaw-portal/`）：CE + EE 共用。CE 前端定义 `src/router/ee-stub.ts`（空数组），Vite 在检测到 `ee/` 时通过 alias 替换为 `ee/frontend/portal/routes.ts` 提供的 EE 路由。
-
-### 开发指南
-
-- 新增 EE 功能：在 `ee/` 中添加，CE 通过 Factory/Hook/Stub 扩展点接入
-- 新增 CE 功能：直接在主仓库中开发
-- EE Model 必须 import CE 的 `Base`/`BaseModel`
