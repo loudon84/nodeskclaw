@@ -35,6 +35,9 @@ class HermesApiServerClient:
     async def list_models(self) -> HermesApiResponse:
         return await self._get("/v1/models", timeout_seconds=settings.HERMES_API_SERVER_PROBE_TIMEOUT_SECONDS)
 
+    async def list_skills(self) -> HermesApiResponse:
+        return await self._get("/v1/skills", timeout_seconds=settings.HERMES_API_SERVER_PROBE_TIMEOUT_SECONDS)
+
     async def get_capabilities(self) -> HermesApiResponse:
         return await self._get(
             "/v1/capabilities",

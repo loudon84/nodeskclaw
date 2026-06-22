@@ -6,10 +6,10 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-SkillSource = Literal["builtin", "github", "clawhub", "local", "profile", "unknown"]
+SkillSource = Literal["builtin", "github", "clawhub", "local", "profile", "api_server", "unknown"]
 SkillTrust = Literal["builtin", "trusted", "community", "local", "unknown"]
 SkillStatus = Literal["enabled", "disabled", "unknown"]
-SourceMode = Literal["runtime_inventory", "profile_only_fallback"]
+SourceMode = Literal["runtime_inventory", "profile_only_fallback", "api_server_inventory"]
 
 
 class ProfileSkillInventoryItem(BaseModel):

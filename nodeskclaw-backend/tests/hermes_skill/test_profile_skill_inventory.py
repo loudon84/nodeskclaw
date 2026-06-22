@@ -3,8 +3,9 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.schemas.profile_extended import ProfileSkillItem
+from app.core.exceptions import AppException, ConflictError, ForbiddenError
 from app.services.hermes_external import profile_skill_inventory_service as inventory_service
+from app.services.hermes_external.hermes_api_server_client import HermesApiResponse
 from app.services.hermes_skill.hermes_skill_authorization_service import HermesSkillAuthorizationService
 from app.services.hermes_skill.permission_checker import PermissionChecker
 
@@ -12,107 +13,124 @@ from app.services.hermes_skill.permission_checker import PermissionChecker
 def _prepare_host_data_dir(tmp_path: Path) -> Path:
     host_data_dir = tmp_path / "data" / "hermes"
     host_data_dir.mkdir(parents=True)
-    (host_data_dir / ".env").write_text("API_SERVER_ENABLED=true\n", encoding="utf-8")
+    (host_data_dir / ".env").write_text(
+        "API_SERVER_ENABLED=true\nAPI_SERVER_KEY=test-key\n",
+        encoding="utf-8",
+    )
     (host_data_dir / "config.yaml").write_text("models: {}\n", encoding="utf-8")
     (host_data_dir / "SOUL.md").write_text("You are a helpful assistant.\n", encoding="utf-8")
     return host_data_dir
 
 
-def _runtime_json() -> str:
-    return """
-    [
-      {"name": "arxiv", "category": "research", "source": "builtin", "trust": "builtin", "status": "enabled"},
-      {"name": "writer-outline", "category": "", "source": "local", "trust": "local", "status": "enabled"}
-    ]
-    """
+def _api_server_skills_payload() -> dict:
+    return {
+        "skills": [
+            {"name": "arxiv", "category": "research", "description": "Search arxiv papers"},
+            {"name": "web-search", "category": "web", "description": "Search the web"},
+        ]
+    }
 
 
 @pytest.mark.asyncio
-async def test_list_skill_tree_from_runtime(tmp_path: Path):
+async def test_list_skill_tree_from_api_server(tmp_path: Path):
     host_data_dir = _prepare_host_data_dir(tmp_path)
-    writer_skills = host_data_dir / "profiles" / "researcher" / "skills" / "writer-outline"
-    writer_skills.mkdir(parents=True)
-    (writer_skills / "SKILL.md").write_text("# writer\n", encoding="utf-8")
-    (host_data_dir / "profiles" / "researcher" / ".env").write_text("X=1\n", encoding="utf-8")
+    profile_dir = host_data_dir / "profiles" / "researcher"
+    profile_dir.mkdir(parents=True)
+    (profile_dir / ".env").write_text("X=1\n", encoding="utf-8")
 
-    async def fake_exec(container_name: str, profile: str, *, use_json: bool):
-        assert container_name == "hermes-common-writer"
-        assert profile == "researcher"
-        if use_json:
-            return 0, _runtime_json(), ""
-        return 1, "", "table fallback failed"
+    async def fake_list_skills(self):
+        return HermesApiResponse(status_code=200, ok=True, data=_api_server_skills_payload())
 
-    with patch.object(inventory_service, "_ensure_container_running", AsyncMock()), \
-         patch.object(inventory_service, "_exec_runtime_command", side_effect=fake_exec):
+    with patch(
+        "app.services.hermes_external.profile_skill_inventory_service.HermesApiServerClient.list_skills",
+        fake_list_skills,
+    ):
         result = await inventory_service.list_full_skill_inventory(
             "common-writer",
             "researcher",
             host_data_dir,
-            "hermes-common-writer",
+            "http://127.0.0.1:18789",
+            str(host_data_dir / ".env"),
         )
 
-    assert result.source_mode == "runtime_inventory"
+    assert result.source_mode == "api_server_inventory"
+    assert result.total == 2
     slugs = {item.slug for group in result.groups for item in group.items}
-    assert "arxiv" in slugs
-    assert "writer-outline" in slugs
-    writer = next(item for group in result.groups for item in group.items if item.slug == "writer-outline")
-    assert writer.manageable is True
-    assert writer.path is not None
+    assert slugs == {"arxiv", "web-search"}
+    arxiv = next(item for group in result.groups for item in group.items if item.slug == "arxiv")
+    assert arxiv.source == "api_server"
+    assert arxiv.manageable is False
+    assert arxiv.can_authorize is True
+    assert arxiv.category == "research"
 
 
 @pytest.mark.asyncio
-async def test_list_skill_tree_fallback_to_profile_dir(tmp_path: Path):
+async def test_list_skill_tree_api_server_not_configured(tmp_path: Path):
     host_data_dir = _prepare_host_data_dir(tmp_path)
-    local_skill = host_data_dir / "profiles" / "researcher" / "skills" / "local-only"
-    local_skill.mkdir(parents=True)
-    (local_skill / "SKILL.md").write_text("# local\n", encoding="utf-8")
-    (host_data_dir / "profiles" / "researcher" / ".env").write_text("X=1\n", encoding="utf-8")
+    profile_dir = host_data_dir / "profiles" / "researcher"
+    profile_dir.mkdir(parents=True)
+    (profile_dir / ".env").write_text("X=1\n", encoding="utf-8")
 
-    async def fake_exec(container_name: str, profile: str, *, use_json: bool):
-        return 1, "", "hermes skills list failed: timeout"
-
-    with patch.object(inventory_service, "_ensure_container_running", AsyncMock()), \
-         patch.object(inventory_service, "_exec_runtime_command", side_effect=fake_exec):
-        result = await inventory_service.list_full_skill_inventory(
+    with pytest.raises(ConflictError) as exc_info:
+        await inventory_service.list_full_skill_inventory(
             "common-writer",
             "researcher",
             host_data_dir,
-            "hermes-common-writer",
+            None,
+            str(host_data_dir / ".env"),
         )
-
-    assert result.source_mode == "profile_only_fallback"
-    assert result.warnings
-    slugs = {item.slug for group in result.groups for item in group.items}
-    assert slugs == {"local-only"}
+    assert exc_info.value.message_key == "errors.hermes.api_server_not_configured"
 
 
-def test_merge_runtime_and_profile_local_skill():
-    runtime_items = [
-        inventory_service._runtime_item_from_fields(
-            name="writer-outline",
-            category="uncategorized",
-            source_raw="local",
-            trust_raw="local",
-            status_raw="enabled",
-        )
-    ]
-    local_items = [
-        ProfileSkillItem(
-            slug="writer-outline",
-            name="Writer Outline",
-            path="/data/hermes/profiles/researcher/skills/writer-outline",
-            enabled=True,
-            has_skill_md=True,
-            source="profile",
-        )
-    ]
-    merged = inventory_service._merge_runtime_and_local(runtime_items, local_items)
-    assert len(merged) == 1
-    item = merged[0]
-    assert item.source == "local"
-    assert item.manageable is True
-    assert item.path == "/data/hermes/profiles/researcher/skills/writer-outline"
-    assert item.has_skill_md is True
+@pytest.mark.asyncio
+async def test_list_skill_tree_api_server_offline(tmp_path: Path):
+    host_data_dir = _prepare_host_data_dir(tmp_path)
+    profile_dir = host_data_dir / "profiles" / "researcher"
+    profile_dir.mkdir(parents=True)
+    (profile_dir / ".env").write_text("X=1\n", encoding="utf-8")
+
+    async def fake_list_skills(self):
+        return HermesApiResponse(status_code=None, ok=False, data=None, error="offline")
+
+    with patch(
+        "app.services.hermes_external.profile_skill_inventory_service.HermesApiServerClient.list_skills",
+        fake_list_skills,
+    ):
+        with pytest.raises(AppException) as exc_info:
+            await inventory_service.list_full_skill_inventory(
+                "common-writer",
+                "researcher",
+                host_data_dir,
+                "http://127.0.0.1:18789",
+                str(host_data_dir / ".env"),
+            )
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.message_key == "errors.hermes.api_server_offline"
+
+
+@pytest.mark.asyncio
+async def test_list_skill_tree_api_server_unauthorized(tmp_path: Path):
+    host_data_dir = _prepare_host_data_dir(tmp_path)
+    profile_dir = host_data_dir / "profiles" / "researcher"
+    profile_dir.mkdir(parents=True)
+    (profile_dir / ".env").write_text("X=1\n", encoding="utf-8")
+
+    async def fake_list_skills(self):
+        return HermesApiResponse(status_code=401, ok=False, data=None, error="unauthorized")
+
+    with patch(
+        "app.services.hermes_external.profile_skill_inventory_service.HermesApiServerClient.list_skills",
+        fake_list_skills,
+    ):
+        with pytest.raises(ForbiddenError) as exc_info:
+            await inventory_service.list_full_skill_inventory(
+                "common-writer",
+                "researcher",
+                host_data_dir,
+                "http://127.0.0.1:18789",
+                str(host_data_dir / ".env"),
+            )
+    assert exc_info.value.message_key == "errors.hermes.api_server_unauthorized"
 
 
 @pytest.mark.asyncio
