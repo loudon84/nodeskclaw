@@ -2,21 +2,20 @@
 
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 
-from app.core.exceptions import AppException, ConflictError, ForbiddenError, NotFoundError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.exceptions import NotFoundError
 from app.schemas.profile_skill_inventory import (
     ProfileSkillGroup,
     ProfileSkillInventoryItem,
     ProfileSkillTreeResponse,
 )
+from app.schemas.hermes_instance_skill import HermesInstanceSkillItem
+from app.services.hermes_external import hermes_instance_skill_service as instance_skill_service
 from app.services.hermes_external._profile_helpers import resolve_profile_paths
-from app.services.hermes_external.hermes_api_server_client import HermesApiServerClient
-from app.services.hermes_external.hermes_env_parser import parse_env_file
 from app.services.hermes_external.path_resolver import DEFAULT_PROFILE_NAME
-
-logger = logging.getLogger(__name__)
 
 
 def _normalize_category(value: str | None) -> str:
@@ -30,18 +29,14 @@ def _category_label(category: str) -> str:
     return category.replace("-", " ").replace("_", " ").upper()
 
 
-def _api_server_item_from_fields(
-    name: str,
-    category: str | None,
-    description: str | None = None,
-) -> ProfileSkillInventoryItem:
-    slug = (name or "").strip()
+def _inventory_item_from_instance_skill(skill: HermesInstanceSkillItem) -> ProfileSkillInventoryItem:
+    slug = skill.name.strip()
     return ProfileSkillInventoryItem(
         id=slug,
         slug=slug,
         name=slug,
-        description=(description or "").strip() or None,
-        category=_normalize_category(category),
+        description=skill.description,
+        category=_normalize_category(skill.category),
         source="api_server",
         trust="unknown",
         status="enabled",
@@ -57,97 +52,6 @@ def _api_server_item_from_fields(
         can_delete=False,
         can_authorize=True,
     )
-
-
-def _parse_api_server_skills(data: dict | list | None) -> list[ProfileSkillInventoryItem]:
-    rows: list[dict] = []
-    if isinstance(data, list):
-        rows = [row for row in data if isinstance(row, dict)]
-    elif isinstance(data, dict):
-        for key in ("skills", "items", "data"):
-            value = data.get(key)
-            if isinstance(value, list):
-                rows = [row for row in value if isinstance(row, dict)]
-                break
-
-    items: list[ProfileSkillInventoryItem] = []
-    for row in rows:
-        name = str(row.get("name") or row.get("slug") or row.get("id") or "").strip()
-        if not name:
-            continue
-        items.append(
-            _api_server_item_from_fields(
-                name=name,
-                category=row.get("category"),
-                description=row.get("description"),
-            )
-        )
-    return items
-
-
-def _raise_not_configured(detail: str = "") -> None:
-    raise ConflictError(
-        message="该实例未启用 API_SERVER，请在实例 .env 配置 API_SERVER_ENABLED 与 API_SERVER_KEY",
-        message_key="errors.hermes.api_server_not_configured",
-        message_params={"detail": detail} if detail else None,
-    )
-
-
-def _raise_unauthorized() -> None:
-    raise ForbiddenError(
-        message="Hermes API_SERVER 鉴权失败，请检查 API_SERVER_KEY 配置",
-        message_key="errors.hermes.api_server_unauthorized",
-    )
-
-
-def _raise_offline(detail: str = "") -> None:
-    raise AppException(
-        code=50301,
-        error_code=50301,
-        message="无法连接 Hermes API_SERVER，请确认实例容器运行中",
-        message_key="errors.hermes.api_server_offline",
-        status_code=503,
-        message_params={"detail": detail} if detail else None,
-    )
-
-
-def _resolve_api_server_client(gateway_url: str | None, env_file: str | None) -> HermesApiServerClient:
-    if not gateway_url:
-        _raise_not_configured("gateway_url missing")
-    if not env_file:
-        _raise_not_configured("env_file missing")
-
-    env_path = Path(env_file)
-    env = parse_env_file(env_path, require_gateway_port=False)
-    if env.api_server_enabled is False:
-        _raise_not_configured("API_SERVER_ENABLED is false")
-    if not env.has_api_server_key:
-        _raise_not_configured("API_SERVER_KEY missing")
-
-    api_key = (env.raw.get("API_SERVER_KEY") or "").strip()
-    if not api_key:
-        _raise_not_configured("API_SERVER_KEY missing")
-
-    return HermesApiServerClient(base_url=gateway_url, api_key=api_key)
-
-
-async def _fetch_api_server_inventory(
-    gateway_url: str | None,
-    env_file: str | None,
-) -> list[ProfileSkillInventoryItem]:
-    client = _resolve_api_server_client(gateway_url, env_file)
-    response = await client.list_skills()
-    if response.error == "unauthorized":
-        _raise_unauthorized()
-    if response.error in {"offline", "timeout"}:
-        _raise_offline(response.error or "")
-    if not response.ok:
-        _raise_offline(response.error or "invalid_response")
-
-    items = _parse_api_server_skills(response.data)  # type: ignore[arg-type]
-    if not items and response.data not in (None, [], {}):
-        logger.warning("API_SERVER /v1/skills returned unexpected payload: %r", response.data)
-    return items
 
 
 def _apply_filters(
@@ -214,19 +118,26 @@ def _ensure_profile_exists(host_data_dir: Path, profile: str) -> None:
 
 
 async def list_full_skill_inventory(
+    db: AsyncSession,
+    org_id: str,
     agent_profile: str,
     profile: str,
     host_data_dir: Path,
-    gateway_url: str | None = None,
-    env_file: str | None = None,
     *,
     keyword: str | None = None,
     include_builtin: bool = True,
     include_local: bool = True,
     include_profile: bool = True,
+    force_refresh: bool = False,
 ) -> ProfileSkillTreeResponse:
     _ensure_profile_exists(host_data_dir, profile)
-    items = await _fetch_api_server_inventory(gateway_url, env_file)
+    instance_list = await instance_skill_service.list_instance_skills(
+        db,
+        org_id,
+        agent_profile,
+        force_refresh=force_refresh,
+    )
+    items = [_inventory_item_from_instance_skill(skill) for skill in instance_list.skills]
     filtered = _apply_filters(
         items,
         keyword=keyword,
@@ -245,6 +156,6 @@ async def list_full_skill_inventory(
         total=len(filtered),
         enabled_count=enabled_count,
         manageable_count=manageable_count,
-        warnings=[],
+        warnings=instance_list.warnings,
         groups=groups,
     )

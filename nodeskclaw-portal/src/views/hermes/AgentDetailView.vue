@@ -23,6 +23,7 @@ import AgentProfileSkillsView from '@/views/hermes/AgentProfileSkillsView.vue'
 import AgentProfileFilesView from '@/views/hermes/AgentProfileFilesView.vue'
 import AgentProfileBackupsView from '@/views/hermes/AgentProfileBackupsView.vue'
 import AgentRuntimeInsightPanel from '@/views/hermes/AgentRuntimeInsightPanel.vue'
+import AgentMcpGatewayCard from '@/views/hermes/AgentMcpGatewayCard.vue'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -207,6 +208,7 @@ onMounted(fetchAgent)
       />
 
       <div v-if="activeTab === 'overview'" class="space-y-4">
+        <AgentMcpGatewayCard :agent-profile-name="agent.profile_name" />
         <div class="rounded-xl border border-border p-4 space-y-3">
           <div class="flex flex-wrap gap-2">
             <Badge variant="outline">{{ t('hermes.agents.docker') }}: {{ agent.docker_status }}</Badge>
@@ -253,6 +255,7 @@ onMounted(fetchAgent)
         v-else-if="activeTab === 'skills'"
         :agent-profile-name="agent.profile_name"
         :profile="selectedProfile"
+        @open-mcp-gateway="switchTab('overview')"
       />
 
       <AgentProfileFilesView

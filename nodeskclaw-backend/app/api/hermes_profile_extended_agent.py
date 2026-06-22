@@ -73,11 +73,11 @@ async def list_skill_tree(
         await PermissionChecker.require_permission(db, user.id, org.id, "hermes_agent:view")
     host_data_dir, record, _ = await _host_dir_from_agent(db, org.id, agent_profile)
     data = await profile_skill_inventory_service.list_full_skill_inventory(
+        db,
+        org.id,
         agent_profile,
         profile,
         host_data_dir,
-        record.gateway_url,
-        record.env_file,
         keyword=keyword,
         include_builtin=include_builtin,
         include_local=include_local,

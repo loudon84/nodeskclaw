@@ -28,6 +28,10 @@ const props = defineProps<{
   profile: string
 }>()
 
+const emit = defineEmits<{
+  openMcpGateway: []
+}>()
+
 const { t } = useI18n()
 const toast = useToast()
 const { confirm } = useConfirm()
@@ -138,6 +142,7 @@ watch(viewMode, (mode) => {
       v-if="viewMode === 'tree'"
       :agent-profile-name="agentProfileName"
       :profile="profile"
+      @open-mcp-gateway="emit('openMcpGateway')"
     />
 
     <template v-else>

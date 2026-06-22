@@ -31,6 +31,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   refreshed: []
+  openMcpGateway: []
 }>()
 
 const { t, te } = useI18n()
@@ -154,6 +155,14 @@ watch(
             </Badge>
           </div>
           <p class="text-sm text-muted-foreground">{{ t('hermes.profiles.skills.mcpInfoHint') }}</p>
+          <p class="text-xs text-muted-foreground">{{ t('hermes.profiles.skills.defaultOnlyNotice') }}</p>
+          <button
+            type="button"
+            class="text-sm text-primary hover:underline"
+            @click="emit('openMcpGateway')"
+          >
+            {{ t('hermes.profiles.skills.viewMcpGatewayDetail') }}
+          </button>
         </div>
         <div class="flex items-center gap-3">
           <span class="text-sm text-muted-foreground">
