@@ -17,5 +17,5 @@ alwaysApply: false
 - 解析 openclaw.json 等 JSONC 文件前必须剥离 // 行注释。
 - NFS 操作时注意容器路径与本地挂载路径的转换。
 - 修改 Gene 模板或 Agent 行为后需评估是否同步 Skill 定义。
-- 默认先读取 .cursor/context/backend-codemap.md。
+- 默认先读取 .cursor/context/backend-codemap.md（Hub），再按任务读 1 个子索引：backend-api-index.md / backend-models-migration.md / backend-services-index.md；Runtime/K8s 任务读 runtime-codemap.md。
 - 不要读取 portal、llm-proxy、ee、openclaw、vibecraft，除非任务明确要求。
