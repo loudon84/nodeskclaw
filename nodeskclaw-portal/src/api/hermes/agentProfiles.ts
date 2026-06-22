@@ -197,10 +197,10 @@ export interface ProfileSkillActionResponse {
   installed_path?: string | null
 }
 
-export type ProfileSkillSource = 'builtin' | 'github' | 'clawhub' | 'local' | 'profile' | 'unknown'
+export type ProfileSkillSource = 'builtin' | 'github' | 'clawhub' | 'local' | 'profile' | 'api_server' | 'unknown'
 export type ProfileSkillTrust = 'builtin' | 'trusted' | 'community' | 'local' | 'unknown'
 export type ProfileSkillStatus = 'enabled' | 'disabled' | 'unknown'
-export type ProfileSkillTreeSourceMode = 'runtime_inventory' | 'profile_only_fallback'
+export type ProfileSkillTreeSourceMode = 'runtime_inventory' | 'profile_only_fallback' | 'api_server_inventory'
 
 export interface ProfileSkillInventoryItem {
   id: string

@@ -22,6 +22,8 @@ const variantClass = computed(() => {
     case 'local':
     case 'profile':
       return 'border-emerald-500/40 text-emerald-600 dark:text-emerald-400'
+    case 'api_server':
+      return 'border-sky-500/40 text-sky-600 dark:text-sky-400'
     default:
       return 'border-border text-muted-foreground'
   }
