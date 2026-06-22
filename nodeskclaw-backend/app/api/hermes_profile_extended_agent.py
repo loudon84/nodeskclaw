@@ -33,6 +33,7 @@ from app.services.hermes_external import (
     profile_file_service,
     profile_package_service,
     profile_runtime_service,
+    profile_skill_inventory_service,
     profile_skill_service,
 )
 from app.services.hermes_external._common import resolve_paths
@@ -53,6 +54,34 @@ async def list_skills(agent_profile: str, profile: str, user_org=Depends(require
         await PermissionChecker.require_permission(db, user.id, org.id, "hermes_agent:view")
     host_data_dir, _, _ = await _host_dir_from_agent(db, org.id, agent_profile)
     data = profile_skill_service.list_profile_skills(host_data_dir, profile)
+    return _ok(data.model_dump())
+
+
+@router.get("/agents/{agent_profile}/profiles/{profile}/skills/tree")
+async def list_skill_tree(
+    agent_profile: str,
+    profile: str,
+    keyword: str | None = Query(None),
+    include_builtin: bool = Query(True),
+    include_local: bool = Query(True),
+    include_profile: bool = Query(True),
+    user_org=Depends(require_org_member),
+    db: AsyncSession = Depends(get_db),
+):
+    user, org = user_org
+    if user:
+        await PermissionChecker.require_permission(db, user.id, org.id, "hermes_agent:view")
+    host_data_dir, record, _ = await _host_dir_from_agent(db, org.id, agent_profile)
+    data = await profile_skill_inventory_service.list_full_skill_inventory(
+        agent_profile,
+        profile,
+        host_data_dir,
+        record.container_name,
+        keyword=keyword,
+        include_builtin=include_builtin,
+        include_local=include_local,
+        include_profile=include_profile,
+    )
     return _ok(data.model_dump())
 
 

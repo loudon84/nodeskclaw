@@ -18,17 +18,37 @@ class HermesSkillAuthorizationService:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def can_list(self, org_id: str, user_id: str, skill_db_id: str, skill_id: str) -> bool:
+    async def can_list(
+        self,
+        org_id: str,
+        user_id: str,
+        skill_db_id: str,
+        skill_id: str,
+        *,
+        agent_id: str | None = None,
+    ) -> bool:
         role = await PermissionChecker.get_user_role(self.db, user_id, org_id)
         if role in PermissionChecker.ADMIN_OPERATOR_ROLES:
             return True
-        return await self._check_permission(org_id, user_id, skill_db_id, skill_id, "can_list")
+        return await self._check_permission(
+            org_id, user_id, skill_db_id, skill_id, "can_list", agent_id=agent_id,
+        )
 
-    async def can_invoke(self, org_id: str, user_id: str, skill_db_id: str, skill_id: str) -> bool:
+    async def can_invoke(
+        self,
+        org_id: str,
+        user_id: str,
+        skill_db_id: str,
+        skill_id: str,
+        *,
+        agent_id: str | None = None,
+    ) -> bool:
         role = await PermissionChecker.get_user_role(self.db, user_id, org_id)
         if role in PermissionChecker.ADMIN_OPERATOR_ROLES:
             return True
-        return await self._check_permission(org_id, user_id, skill_db_id, skill_id, "can_invoke")
+        return await self._check_permission(
+            org_id, user_id, skill_db_id, skill_id, "can_invoke", agent_id=agent_id,
+        )
 
     async def list_grants(
         self,
@@ -136,12 +156,18 @@ class HermesSkillAuthorizationService:
         skill_db_id: str,
         skill_id: str,
         perm: str,
+        *,
+        agent_id: str | None = None,
     ) -> bool:
         now = datetime.now(timezone.utc)
         if await self._user_grant_allows(org_id, user_id, skill_db_id, perm, now):
             return True
+        if await self._subject_grant_allows(org_id, "user", user_id, skill_id, perm, now):
+            return True
         role = await PermissionChecker.get_user_role(self.db, user_id, org_id)
         if role and await self._subject_grant_allows(org_id, "role", role, skill_id, perm, now):
+            return True
+        if agent_id and await self._subject_grant_allows(org_id, "agent", agent_id, skill_id, perm, now):
             return True
         return await self._subject_grant_allows(org_id, "org", org_id, skill_id, perm, now)
 
