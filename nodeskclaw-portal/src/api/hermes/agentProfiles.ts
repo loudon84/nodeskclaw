@@ -197,6 +197,51 @@ export interface ProfileSkillActionResponse {
   installed_path?: string | null
 }
 
+export type ProfileSkillSource = 'builtin' | 'github' | 'clawhub' | 'local' | 'profile' | 'unknown'
+export type ProfileSkillTrust = 'builtin' | 'trusted' | 'community' | 'local' | 'unknown'
+export type ProfileSkillStatus = 'enabled' | 'disabled' | 'unknown'
+export type ProfileSkillTreeSourceMode = 'runtime_inventory' | 'profile_only_fallback'
+
+export interface ProfileSkillInventoryItem {
+  id: string
+  slug: string
+  name: string
+  description?: string | null
+  category: string
+  source: ProfileSkillSource
+  trust: ProfileSkillTrust
+  status: ProfileSkillStatus
+  enabled: boolean
+  installed: boolean
+  manageable: boolean
+  path?: string | null
+  profile_path?: string | null
+  has_skill_md: boolean
+  can_install: boolean
+  can_enable: boolean
+  can_disable: boolean
+  can_delete: boolean
+  can_authorize: boolean
+}
+
+export interface ProfileSkillGroup {
+  category: string
+  label: string
+  count: number
+  items: ProfileSkillInventoryItem[]
+}
+
+export interface ProfileSkillTreeResponse {
+  agent_profile: string
+  profile: string
+  source_mode: ProfileSkillTreeSourceMode
+  total: number
+  enabled_count: number
+  manageable_count: number
+  warnings: string[]
+  groups: ProfileSkillGroup[]
+}
+
 export interface ProfileFileItem {
   name: string
   type: 'file' | 'dir' | string
@@ -251,6 +296,27 @@ export interface ProfileActivateResponse {
 export async function listProfileSkills(agentProfileName: string, targetProfile: string): Promise<ProfileSkillsResponse> {
   const { data } = await api.get(`${profileBase(agentProfileName, targetProfile)}/skills`)
   return unwrapEnvelope<ProfileSkillsResponse>(data)
+}
+
+export async function listProfileSkillTree(
+  agentProfileName: string,
+  targetProfile: string,
+  params?: {
+    keyword?: string
+    includeBuiltin?: boolean
+    includeLocal?: boolean
+    includeProfile?: boolean
+  },
+): Promise<ProfileSkillTreeResponse> {
+  const { data } = await api.get(`${profileBase(agentProfileName, targetProfile)}/skills/tree`, {
+    params: {
+      keyword: params?.keyword,
+      include_builtin: params?.includeBuiltin,
+      include_local: params?.includeLocal,
+      include_profile: params?.includeProfile,
+    },
+  })
+  return unwrapEnvelope<ProfileSkillTreeResponse>(data)
 }
 
 export async function installProfileBuiltinSkill(

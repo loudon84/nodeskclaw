@@ -21,6 +21,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table'
+import AgentProfileSkillTreeView from '@/views/hermes/AgentProfileSkillTreeView.vue'
 
 const props = defineProps<{
   agentProfileName: string
@@ -31,6 +32,9 @@ const { t } = useI18n()
 const toast = useToast()
 const { confirm } = useConfirm()
 
+type SkillsViewMode = 'tree' | 'local'
+
+const viewMode = ref<SkillsViewMode>('tree')
 const loading = ref(false)
 const actionLoading = ref(false)
 const data = ref<ProfileSkillsResponse | null>(null)
@@ -86,9 +90,19 @@ async function onDelete(skill: ProfileSkillItem) {
 
 watch(
   () => [props.agentProfileName, props.profile] as const,
-  () => fetchSkills(),
+  () => {
+    if (viewMode.value === 'local') {
+      fetchSkills()
+    }
+  },
   { immediate: true },
 )
+
+watch(viewMode, (mode) => {
+  if (mode === 'local' && !data.value && !loading.value) {
+    fetchSkills()
+  }
+})
 </script>
 
 <template>
@@ -96,108 +110,137 @@ watch(
     <div>
       <h2 class="text-lg font-semibold">{{ t('hermes.profiles.tabs.skills') }}</h2>
       <p class="text-sm text-muted-foreground">{{ t('hermes.profiles.skills.subtitle') }}</p>
-      <p v-if="data?.skills_dir" class="mt-1 text-xs text-muted-foreground font-mono break-all">{{ data.skills_dir }}</p>
+      <p v-if="viewMode === 'local' && data?.skills_dir" class="mt-1 text-xs text-muted-foreground font-mono break-all">
+        {{ data.skills_dir }}
+      </p>
     </div>
 
-    <div class="flex flex-wrap gap-2 items-end">
-      <div class="flex items-center gap-2">
-        <Input v-model="bundleName" class="w-40" :placeholder="t('hermes.profiles.skills.bundleName')" />
-        <Button
-          variant="outline"
-          size="sm"
-          :disabled="actionLoading"
-          @click="runAction(() => installProfileBuiltinSkill(agentProfileName, profile, bundleName))"
-        >
-          {{ t('hermes.profiles.skills.installBuiltin') }}
-        </Button>
-      </div>
-      <Button variant="outline" size="sm" class="gap-1" :disabled="actionLoading" @click="fileInput?.click()">
-        <Upload class="w-4 h-4" /> {{ t('hermes.profiles.skills.uploadZip') }}
-      </Button>
-      <input ref="fileInput" type="file" accept=".zip" class="hidden" @change="onUpload" />
-      <div class="flex flex-wrap items-center gap-2">
-        <Input v-model="gitRepo" class="w-56" :placeholder="t('hermes.profiles.skills.gitRepo')" />
-        <Input v-model="gitRef" class="w-28" :placeholder="t('hermes.profiles.skills.gitRef')" />
-        <Input v-model="gitSubdir" class="w-36" :placeholder="t('hermes.profiles.skills.gitSubdir')" />
-        <Button
-          variant="outline"
-          size="sm"
-          :disabled="actionLoading || !gitRepo.trim()"
-          @click="runAction(() => installProfileGitSkill(agentProfileName, profile, { repo_url: gitRepo, ref: gitRef, subdir: gitSubdir || null }))"
-        >
-          {{ t('hermes.profiles.skills.installGit') }}
-        </Button>
-      </div>
-      <Button
-        variant="outline"
-        size="sm"
-        class="gap-1"
-        :disabled="actionLoading"
-        @click="runAction(async () => { await rescanProfileSkills(agentProfileName, profile); return { message: t('hermes.profiles.skills.rescanSuccess') } })"
+    <div class="inline-flex rounded-lg border border-border p-1 bg-muted/30">
+      <button
+        type="button"
+        class="px-3 py-1.5 text-sm rounded-md transition-colors"
+        :class="viewMode === 'tree' ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground'"
+        @click="viewMode = 'tree'"
       >
-        <RefreshCw class="w-4 h-4" /> {{ t('hermes.profiles.skills.rescan') }}
-      </Button>
+        {{ t('hermes.profiles.skills.viewTree') }}
+      </button>
+      <button
+        type="button"
+        class="px-3 py-1.5 text-sm rounded-md transition-colors"
+        :class="viewMode === 'local' ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground'"
+        @click="viewMode = 'local'"
+      >
+        {{ t('hermes.profiles.skills.viewLocal') }}
+      </button>
     </div>
 
-    <div v-if="loading" class="flex justify-center py-10">
-      <Loader2 class="w-6 h-6 animate-spin text-muted-foreground" />
-    </div>
+    <AgentProfileSkillTreeView
+      v-if="viewMode === 'tree'"
+      :agent-profile-name="agentProfileName"
+      :profile="profile"
+    />
 
-    <template v-else-if="data">
-      <div v-if="!data.items.length" class="text-sm text-muted-foreground py-8 text-center">
-        {{ t('hermes.profiles.skills.empty') }}
+    <template v-else>
+      <div class="flex flex-wrap gap-2 items-end">
+        <div class="flex items-center gap-2">
+          <Input v-model="bundleName" class="w-40" :placeholder="t('hermes.profiles.skills.bundleName')" />
+          <Button
+            variant="outline"
+            size="sm"
+            :disabled="actionLoading"
+            @click="runAction(() => installProfileBuiltinSkill(agentProfileName, profile, bundleName))"
+          >
+            {{ t('hermes.profiles.skills.installBuiltin') }}
+          </Button>
+        </div>
+        <Button variant="outline" size="sm" class="gap-1" :disabled="actionLoading" @click="fileInput?.click()">
+          <Upload class="w-4 h-4" /> {{ t('hermes.profiles.skills.uploadZip') }}
+        </Button>
+        <input ref="fileInput" type="file" accept=".zip" class="hidden" @change="onUpload" />
+        <div class="flex flex-wrap items-center gap-2">
+          <Input v-model="gitRepo" class="w-56" :placeholder="t('hermes.profiles.skills.gitRepo')" />
+          <Input v-model="gitRef" class="w-28" :placeholder="t('hermes.profiles.skills.gitRef')" />
+          <Input v-model="gitSubdir" class="w-36" :placeholder="t('hermes.profiles.skills.gitSubdir')" />
+          <Button
+            variant="outline"
+            size="sm"
+            :disabled="actionLoading || !gitRepo.trim()"
+            @click="runAction(() => installProfileGitSkill(agentProfileName, profile, { repo_url: gitRepo, ref: gitRef, subdir: gitSubdir || null }))"
+          >
+            {{ t('hermes.profiles.skills.installGit') }}
+          </Button>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          class="gap-1"
+          :disabled="actionLoading"
+          @click="runAction(async () => { await rescanProfileSkills(agentProfileName, profile); return { message: t('hermes.profiles.skills.rescanSuccess') } })"
+        >
+          <RefreshCw class="w-4 h-4" /> {{ t('hermes.profiles.skills.rescan') }}
+        </Button>
       </div>
-      <Table v-else>
-        <TableHeader>
-          <TableRow>
-            <TableHead>{{ t('hermes.profiles.skills.name') }}</TableHead>
-            <TableHead>{{ t('hermes.profiles.skills.source') }}</TableHead>
-            <TableHead>{{ t('hermes.profiles.skills.status') }}</TableHead>
-            <TableHead>{{ t('hermes.profiles.skills.path') }}</TableHead>
-            <TableHead></TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          <TableRow v-for="skill in data.items" :key="skill.path">
-            <TableCell>
-              <div class="font-medium font-mono">{{ skill.slug }}</div>
-              <div class="text-xs text-muted-foreground">{{ skill.name }}</div>
-            </TableCell>
-            <TableCell>{{ skill.source }}</TableCell>
-            <TableCell>
-              <Badge variant="outline">
-                {{ skill.enabled ? t('hermes.profiles.skills.enabled') : t('hermes.profiles.skills.disabled') }}
-              </Badge>
-            </TableCell>
-            <TableCell class="text-xs font-mono text-muted-foreground max-w-xs truncate">{{ skill.path }}</TableCell>
-            <TableCell>
-              <div class="flex flex-wrap gap-2">
-                <Button
-                  v-if="!skill.enabled"
-                  variant="outline"
-                  size="sm"
-                  :disabled="actionLoading"
-                  @click="runAction(() => enableProfileSkill(agentProfileName, profile, skill.slug))"
-                >
-                  <Power class="w-4 h-4" />
-                </Button>
-                <Button
-                  v-else
-                  variant="outline"
-                  size="sm"
-                  :disabled="actionLoading"
-                  @click="runAction(() => disableProfileSkill(agentProfileName, profile, skill.slug))"
-                >
-                  <PowerOff class="w-4 h-4" />
-                </Button>
-                <Button variant="outline" size="sm" :disabled="actionLoading" @click="onDelete(skill)">
-                  <Trash2 class="w-4 h-4" />
-                </Button>
-              </div>
-            </TableCell>
-          </TableRow>
-        </TableBody>
-      </Table>
+
+      <div v-if="loading" class="flex justify-center py-10">
+        <Loader2 class="w-6 h-6 animate-spin text-muted-foreground" />
+      </div>
+
+      <template v-else-if="data">
+        <div v-if="!data.items.length" class="text-sm text-muted-foreground py-8 text-center">
+          {{ t('hermes.profiles.skills.empty') }}
+        </div>
+        <Table v-else>
+          <TableHeader>
+            <TableRow>
+              <TableHead>{{ t('hermes.profiles.skills.name') }}</TableHead>
+              <TableHead>{{ t('hermes.profiles.skills.source') }}</TableHead>
+              <TableHead>{{ t('hermes.profiles.skills.status') }}</TableHead>
+              <TableHead>{{ t('hermes.profiles.skills.path') }}</TableHead>
+              <TableHead></TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            <TableRow v-for="skill in data.items" :key="skill.path">
+              <TableCell>
+                <div class="font-medium font-mono">{{ skill.slug }}</div>
+                <div class="text-xs text-muted-foreground">{{ skill.name }}</div>
+              </TableCell>
+              <TableCell>{{ skill.source }}</TableCell>
+              <TableCell>
+                <Badge variant="outline">
+                  {{ skill.enabled ? t('hermes.profiles.skills.enabled') : t('hermes.profiles.skills.disabled') }}
+                </Badge>
+              </TableCell>
+              <TableCell class="text-xs font-mono text-muted-foreground max-w-xs truncate">{{ skill.path }}</TableCell>
+              <TableCell>
+                <div class="flex flex-wrap gap-2">
+                  <Button
+                    v-if="!skill.enabled"
+                    variant="outline"
+                    size="sm"
+                    :disabled="actionLoading"
+                    @click="runAction(() => enableProfileSkill(agentProfileName, profile, skill.slug))"
+                  >
+                    <Power class="w-4 h-4" />
+                  </Button>
+                  <Button
+                    v-else
+                    variant="outline"
+                    size="sm"
+                    :disabled="actionLoading"
+                    @click="runAction(() => disableProfileSkill(agentProfileName, profile, skill.slug))"
+                  >
+                    <PowerOff class="w-4 h-4" />
+                  </Button>
+                  <Button variant="outline" size="sm" :disabled="actionLoading" @click="onDelete(skill)">
+                    <Trash2 class="w-4 h-4" />
+                  </Button>
+                </div>
+              </TableCell>
+            </TableRow>
+          </TableBody>
+        </Table>
+      </template>
     </template>
   </div>
 </template>
