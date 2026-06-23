@@ -16,10 +16,13 @@ class ArtifactRead(BaseModel):
     file_path: str
     relative_path: str | None = None
     content_type: str | None = None
+    artifact_type: str | None = None
     size_bytes: int | None = None
     sha256: str | None = None
     storage_type: str = "local"
     download_count: int = 0
     permission_scope: str = "workspace"
+    preview_supported: bool = False
+    metadata_json: dict | None = None
     created_by: str | None = None
     created_at: datetime | None = None

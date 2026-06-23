@@ -22,6 +22,7 @@ export interface HermesTask {
   artifact_url: string | null
   error_code: string | null
   error_message: string | null
+  result_summary: string | null
   created_at: string
   updated_at: string
   priority?: number
@@ -99,7 +100,38 @@ export async function retryTask(taskId: string): Promise<HermesTask> {
 
 export async function listTaskArtifacts(taskId: string) {
   const { data } = await api.get(`/hermes/tasks/${taskId}/artifacts`)
-  return unwrapEnvelope<unknown[]>(data)
+  return unwrapEnvelope<TaskArtifact[]>(data)
+}
+
+export interface TaskArtifact {
+  id: string
+  task_id: string | null
+  file_name: string
+  relative_path: string | null
+  content_type: string | null
+  artifact_type: string | null
+  size_bytes: number | null
+  preview_supported?: boolean
+  metadata_json?: Record<string, unknown> | null
+}
+
+export interface ArtifactRescanResult {
+  task_id: string
+  artifact_count: number
+  artifacts: Array<{
+    id: string
+    filename: string
+    artifact_type: string | null
+    mime_type: string | null
+    relative_path: string | null
+    size_bytes: number | null
+  }>
+  warning?: string | null
+}
+
+export async function rescanTaskArtifacts(taskId: string, force = false): Promise<ArtifactRescanResult> {
+  const { data } = await api.post(`/hermes/tasks/${taskId}/artifacts/rescan`, { force })
+  return unwrapEnvelope<ArtifactRescanResult>(data)
 }
 
 export async function requeueTask(taskId: string): Promise<HermesTask> {

@@ -513,6 +513,29 @@ class ArtifactService:
         if file_path is None:
             raise ArtifactFileNotFoundError()
 
+        meta = artifact.metadata_json or {}
+        if meta.get("source") == "hermes_api_server_workspace" or meta.get("container_path"):
+            host_root = self._resolve_host_workspace_root_from_artifact(artifact, meta)
+            if host_root is not None:
+                PathGuard.validate_file_for_download(file_path, host_root)
+                return file_path
+
         workspace_root = await self._resolve_workspace_root_for_task(task)
         self.validate_artifact_file_path(file_path, workspace_root, task.id)
         return file_path
+
+    @staticmethod
+    def _resolve_host_workspace_root_from_artifact(
+        artifact: HermesArtifact,
+        metadata: dict,
+    ) -> Path | None:
+        host_root_str = metadata.get("host_workspace_root")
+        if host_root_str:
+            return Path(host_root_str)
+
+        relative_path = metadata.get("relative_path") or artifact.relative_path
+        if relative_path and artifact.file_path:
+            rel_parts = Path(relative_path).parts
+            if rel_parts:
+                return Path(artifact.file_path).parents[len(rel_parts)]
+        return None

@@ -302,6 +302,63 @@ async def test_worker_executes_hermes_api_server_route():
 
 
 @pytest.mark.asyncio
+async def test_worker_api_server_completed_calls_artifact_discovery():
+    from app.services.hermes_skill.hermes_task_worker import HermesTaskWorker
+
+    worker = HermesTaskWorker()
+    db = AsyncMock()
+    task = MagicMock()
+    task.id = "task-1"
+    task.org_id = "org-1"
+    task.task_no = "TASK-001"
+    task.skill_id = "hermes_common_writer__customer-profiling"
+    task.tool_name = "hermes_common_writer__customer-profiling"
+    task.agent_id = "inst-1"
+    task.arguments = {"prompt": "analyze customer"}
+    task.routing_metadata = {
+        "route_snapshot": {
+            "route_type": "hermes_api_server",
+            "agent_profile": "common-writer",
+            "hermes_agent_instance_id": "hermes-rec-1",
+            "runtime_skill_id": "customer-profiling",
+            "hermes_instance_name": "common-writer",
+        },
+    }
+    task.worker_id = worker._worker_id
+    task.locked_at = datetime.now(timezone.utc)
+
+    task_service = AsyncMock()
+    event_service = AsyncMock()
+    audit_logger = AsyncMock()
+
+    with patch(
+        "app.services.hermes_skill.hermes_task_worker.HermesDockerBindingService",
+    ) as mock_binding_cls, patch(
+        "app.services.hermes_external.hermes_bound_agent_scope_service.HermesBoundAgentScopeService",
+    ) as mock_scope_cls, patch(
+        "app.services.hermes_skill.hermes_task_worker.execute_runtime_skill_via_api_server",
+        AsyncMock(return_value="saved to /data/hermes/workspace/a.md"),
+    ), patch(
+        "app.services.hermes_skill.artifact_discovery_service.ArtifactDiscoveryService.discover_and_register_for_task",
+        AsyncMock(return_value=[]),
+    ) as mock_discover:
+        mock_binding_cls.return_value.get_by_profile = AsyncMock(return_value=_binding_record())
+        mock_scope_cls.return_value.assert_dispatchable_instance = AsyncMock()
+
+        await worker._execute_api_server_task(
+            db,
+            task,
+            task.routing_metadata["route_snapshot"],
+            task_service,
+            event_service,
+            audit_logger,
+        )
+
+    mock_discover.assert_awaited_once()
+    assert mock_discover.await_args.kwargs["result_text"] == "saved to /data/hermes/workspace/a.md"
+
+
+@pytest.mark.asyncio
 async def test_worker_does_not_fallback_when_instance_mismatch():
     worker = HermesTaskWorker()
     db = AsyncMock()

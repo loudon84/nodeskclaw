@@ -12,6 +12,11 @@ from app.core.exceptions import NotFoundError, BadRequestError, ForbiddenError
 from app.models.hermes_skill.hermes_task import HermesTask, TaskStatus, EventType
 from app.schemas.hermes_skill.task import TaskRead
 from app.schemas.hermes_skill.artifact import ArtifactRead
+from app.schemas.hermes_skill.artifact_rescan import (
+    ArtifactRescanRequest,
+    ArtifactRescanResponse,
+    ArtifactRescanItem,
+)
 from app.services.hermes_skill.task_service import TaskService
 from app.services.hermes_skill.task_event_service import TaskEventService
 from app.services.hermes_skill.artifact_service import ArtifactService
@@ -291,6 +296,80 @@ async def list_task_artifacts(
     artifacts, _ = await service.list_artifacts(org_id=org.id, task_id=task_id, user_id=user.id if user else None)
     items = [ArtifactRead.model_validate(a).model_dump() for a in artifacts]
     return _ok(items)
+
+
+async def _assert_can_rescan_task_artifacts(
+    db: AsyncSession,
+    task: HermesTask,
+    user_id: str,
+    org_id: str,
+) -> None:
+    if task.user_id and task.user_id == user_id:
+        return
+    from sqlalchemy import select
+    from app.models.org_membership import OrgMembership, OrgRole
+    from app.models.base import not_deleted
+    role_result = await db.execute(
+        select(OrgMembership.role).where(
+            OrgMembership.user_id == user_id,
+            OrgMembership.org_id == org_id,
+            not_deleted(OrgMembership),
+        )
+    )
+    org_role = role_result.scalar_one_or_none()
+    if org_role in (OrgRole.admin, OrgRole.operator):
+        return
+    raise ForbiddenError("无权重新扫描该任务产物", "errors.hermes.artifact_rescan_forbidden")
+
+
+@router.post("/tasks/{task_id}/artifacts/rescan")
+async def rescan_task_artifacts(
+    task_id: str,
+    body: ArtifactRescanRequest | None = None,
+    user_org=Depends(require_org_member),
+    db: AsyncSession = Depends(get_db),
+):
+    user, org = user_org
+    if not user:
+        raise ForbiddenError("需要登录", "errors.auth.unauthorized")
+    await PermissionChecker.require_permission(db, user.id, org.id, "hermes_task:view")
+
+    task_service = TaskService(db)
+    task = await task_service.get_task(task_id, org.id)
+    await _assert_can_rescan_task_artifacts(db, task, user.id, org.id)
+
+    if task.status != TaskStatus.COMPLETED:
+        raise BadRequestError("仅已完成任务可重新扫描产物", "errors.hermes.artifact_rescan_not_completed")
+
+    from app.services.hermes_skill.artifact_discovery_service import ArtifactDiscoveryService
+
+    force = body.force if body else False
+    artifacts = await ArtifactDiscoveryService(db).discover_and_register_for_task(
+        task=task,
+        result_text=None,
+        force_rescan=force,
+    )
+    await db.commit()
+
+    items = [
+        ArtifactRescanItem(
+            id=a.id,
+            filename=a.file_name,
+            artifact_type=a.artifact_type,
+            mime_type=a.content_type,
+            relative_path=a.relative_path,
+            size_bytes=a.size_bytes,
+        )
+        for a in artifacts
+    ]
+    response = ArtifactRescanResponse(
+        task_id=task_id,
+        artifact_count=len(items),
+        artifacts=items,
+    )
+    if not items:
+        response.warning = "No artifact path found in task result_summary."
+    return _ok(response.model_dump())
 
 
 @router.post("/tasks/{task_id}/cancel")

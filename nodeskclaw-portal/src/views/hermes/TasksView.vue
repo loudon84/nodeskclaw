@@ -22,10 +22,13 @@ import {
   setTaskPriority,
   markTaskFailed,
   listTaskArtifacts,
+  rescanTaskArtifacts,
   type HermesTask,
   type TaskEvent,
   type TaskTimelineItem,
+  type TaskArtifact,
 } from '@/api/hermes/tasks'
+import { previewArtifact, downloadArtifact } from '@/api/hermes/artifacts'
 import { resolveApiErrorMessage } from '@/i18n/error'
 import { useToast } from '@/composables/useToast'
 import { copyToClipboard } from '@/utils/clipboard'
@@ -60,7 +63,13 @@ const drawerOpen = ref(false)
 const selectedTask = ref<HermesTask | null>(null)
 const taskEvents = ref<TaskEvent[]>([])
 const timelineItems = ref<TaskTimelineItem[]>([])
-const taskArtifacts = ref<unknown[]>([])
+const taskArtifacts = ref<TaskArtifact[]>([])
+const artifactsLoading = ref(false)
+const rescanning = ref(false)
+const previewOpen = ref(false)
+const previewTitle = ref('')
+const previewContent = ref('')
+const previewTruncated = ref(false)
 const detailLoading = ref(false)
 const sseAbort = ref<AbortController | null>(null)
 const expandedPayloads = ref<Set<number>>(new Set())
@@ -173,6 +182,70 @@ async function startEventStream(taskId: string) {
   })
 }
 
+async function loadTaskArtifacts(taskId: string) {
+  artifactsLoading.value = true
+  try {
+    taskArtifacts.value = await listTaskArtifacts(taskId)
+  } catch {
+    taskArtifacts.value = []
+  } finally {
+    artifactsLoading.value = false
+  }
+}
+
+const hasWorkspacePathInResult = computed(() => {
+  const summary = selectedTask.value?.result_summary ?? ''
+  return summary.includes('/data/hermes/workspace/')
+})
+
+const canRescanArtifacts = computed(() => selectedTask.value?.status === 'completed')
+
+async function handleRescanArtifacts() {
+  if (!selectedTask.value) return
+  rescanning.value = true
+  try {
+    const result = await rescanTaskArtifacts(selectedTask.value.id, true)
+    await loadTaskArtifacts(selectedTask.value.id)
+    if (result.artifact_count > 0) {
+      toast.success(t('hermes.tasks.artifactsRescanSuccess', { count: result.artifact_count }))
+    } else {
+      toast.info(t('hermes.tasks.artifactsRescanEmpty'))
+    }
+  } catch (e: unknown) {
+    toast.error(resolveApiErrorMessage(e, t('hermes.tasks.artifactsRescanFailed')))
+  } finally {
+    rescanning.value = false
+  }
+}
+
+function artifactInstanceName(artifact: TaskArtifact): string | null {
+  const meta = artifact.metadata_json
+  if (meta && typeof meta.hermes_instance_name === 'string') {
+    return meta.hermes_instance_name
+  }
+  return null
+}
+
+async function handleArtifactPreview(artifact: TaskArtifact) {
+  try {
+    const res = await previewArtifact(artifact.id)
+    previewTitle.value = res.file_name
+    previewContent.value = res.content
+    previewTruncated.value = res.truncated
+    previewOpen.value = true
+  } catch (e: unknown) {
+    toast.error(resolveApiErrorMessage(e, t('hermes.artifacts.previewFailed')))
+  }
+}
+
+async function handleArtifactDownload(artifact: TaskArtifact) {
+  try {
+    await downloadArtifact(artifact.id, artifact.file_name)
+  } catch (e: unknown) {
+    toast.error(resolveApiErrorMessage(e, t('hermes.artifacts.downloadFailed')))
+  }
+}
+
 async function openTaskDetail(task: HermesTask) {
   drawerOpen.value = true
   detailLoading.value = true
@@ -185,7 +258,7 @@ async function openTaskDetail(task: HermesTask) {
     priorityInput.value = selectedTask.value.priority ?? 0
     const timeline = await getTaskTimeline(task.id)
     timelineItems.value = timeline.items ?? []
-    taskArtifacts.value = await listTaskArtifacts(task.id)
+    await loadTaskArtifacts(task.id)
     await startEventStream(task.id)
   } catch (e: unknown) {
     toast.error(resolveApiErrorMessage(e, t('hermes.tasks.detailFailed')))
@@ -538,15 +611,84 @@ onUnmounted(stopEventStream)
           </div>
 
           <div class="mt-6">
-            <h3 class="text-sm font-medium mb-2">{{ t('hermes.tasks.artifacts') }} ({{ taskArtifacts.length }})</h3>
-            <div class="space-y-1 text-xs">
-              <div v-for="artifact in taskArtifacts" :key="(artifact as any).id" class="text-muted-foreground">
-                {{ (artifact as any).file_name }} · {{ formatBytes((artifact as any).size_bytes) }}
-              </div>
-              <div v-if="!taskArtifacts.length" class="text-muted-foreground">{{ t('hermes.tasks.noArtifacts') }}</div>
+            <div class="flex items-center justify-between gap-2 mb-2">
+              <h3 class="text-sm font-medium flex items-center gap-2">
+                {{ t('hermes.tasks.artifacts') }} ({{ taskArtifacts.length }})
+                <Loader2 v-if="artifactsLoading" class="w-3.5 h-3.5 animate-spin text-muted-foreground" />
+              </h3>
+              <Button
+                v-if="canRescanArtifacts"
+                variant="outline"
+                size="sm"
+                class="text-xs h-7"
+                :disabled="rescanning || artifactsLoading"
+                @click="handleRescanArtifacts"
+              >
+                <Loader2 v-if="rescanning" class="w-3 h-3 animate-spin mr-1" />
+                <RefreshCw v-else class="w-3 h-3 mr-1" />
+                {{ t('hermes.tasks.rescanArtifacts') }}
+              </Button>
             </div>
+            <div
+              v-if="!taskArtifacts.length && hasWorkspacePathInResult"
+              class="mb-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200/90"
+            >
+              {{ t('hermes.tasks.artifactsPathHint') }}
+            </div>
+            <div v-if="artifactsLoading" class="text-xs text-muted-foreground py-2">
+              {{ t('hermes.tasks.artifactsLoading') }}
+            </div>
+            <div v-else-if="taskArtifacts.length" class="space-y-2">
+              <div
+                v-for="artifact in taskArtifacts"
+                :key="artifact.id"
+                class="rounded-lg border border-border p-3 text-xs space-y-1"
+              >
+                <div class="font-medium text-foreground">{{ artifact.file_name }}</div>
+                <div class="text-muted-foreground">
+                  {{ artifact.artifact_type || artifact.content_type || '-' }}
+                  <span v-if="artifact.size_bytes != null"> · {{ formatBytes(artifact.size_bytes) }}</span>
+                </div>
+                <div v-if="artifact.relative_path" class="text-muted-foreground font-mono text-[10px] break-all">
+                  {{ artifact.relative_path }}
+                </div>
+                <div v-if="artifactInstanceName(artifact)" class="text-muted-foreground">
+                  {{ t('hermes.tasks.artifactSource', { instance: artifactInstanceName(artifact) }) }}
+                </div>
+                <div class="flex items-center gap-2 pt-1">
+                  <Button
+                    v-if="artifact.preview_supported !== false"
+                    variant="outline"
+                    size="sm"
+                    class="h-7 text-xs"
+                    @click="handleArtifactPreview(artifact)"
+                  >
+                    {{ t('hermes.tasks.artifactPreview') }}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    class="h-7 text-xs"
+                    @click="handleArtifactDownload(artifact)"
+                  >
+                    {{ t('hermes.tasks.artifactDownload') }}
+                  </Button>
+                </div>
+              </div>
+            </div>
+            <div v-else class="text-xs text-muted-foreground">{{ t('hermes.tasks.noArtifacts') }}</div>
           </div>
         </template>
+      </SheetContent>
+    </Sheet>
+
+    <Sheet v-model:open="previewOpen">
+      <SheetContent side="right" class="w-full sm:max-w-xl overflow-y-auto">
+        <SheetHeader>
+          <SheetTitle>{{ previewTitle }}</SheetTitle>
+          <SheetDescription v-if="previewTruncated">{{ t('hermes.artifacts.previewTruncated') }}</SheetDescription>
+        </SheetHeader>
+        <pre class="mt-4 text-xs font-mono whitespace-pre-wrap break-all">{{ previewContent }}</pre>
       </SheetContent>
     </Sheet>
 

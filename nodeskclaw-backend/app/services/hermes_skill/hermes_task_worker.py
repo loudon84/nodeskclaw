@@ -503,6 +503,28 @@ class HermesTaskWorker:
                 **instance_detail,
             },
         )
+        if settings.HERMES_ARTIFACT_DISCOVERY_ENABLED:
+            try:
+                from app.services.hermes_skill.artifact_discovery_service import ArtifactDiscoveryService
+                await ArtifactDiscoveryService(db).discover_and_register_for_task(
+                    task=task,
+                    result_text=content_text,
+                    force_rescan=False,
+                )
+            except Exception as exc:
+                logger.error(
+                    "Artifact discovery failed for task %s: %s",
+                    task.id,
+                    exc,
+                    exc_info=True,
+                )
+                await event_service.write_event(
+                    task_id=task.id,
+                    org_id=task.org_id,
+                    event_type=EventType.ARTIFACT_SCAN_FAILED,
+                    payload={"status": "failed", "error": str(exc)[:1024]},
+                    source="worker",
+                )
         task.worker_id = None
         task.locked_at = None
         task.dispatch_status = "finished"
