@@ -222,6 +222,9 @@ export interface ProfileSkillInventoryItem {
   can_disable: boolean
   can_delete: boolean
   can_authorize: boolean
+  org_mcp_registered?: boolean
+  org_mcp_tool_name?: string | null
+  execution_instance_name?: string | null
 }
 
 export interface ProfileSkillGroup {
@@ -317,6 +320,53 @@ export async function listProfileSkillTree(
     },
   })
   return unwrapEnvelope<ProfileSkillTreeResponse>(data)
+}
+
+export interface RuntimeSkillRegisterGrant {
+  subject_type?: 'org' | 'user' | 'role' | 'agent'
+  subject_id?: string | null
+  can_list?: boolean
+  can_invoke?: boolean
+  can_install?: boolean
+  can_manage?: boolean
+}
+
+export interface RuntimeSkillRegisterRequest {
+  profile_id?: string
+  workspace_id?: string
+  tool_name?: string | null
+  is_mcp_exposed?: boolean
+  default_execution_mode?: 'async'
+  timeout_seconds?: number
+  grant?: RuntimeSkillRegisterGrant | null
+}
+
+export interface RuntimeSkillRegisterResponse {
+  skill_db_id: string
+  skill_id: string
+  tool_name: string
+  runtime_skill_id: string
+  hermes_instance_name: string
+  hermes_agent_instance_id: string
+  agent_profile: string
+  profile_id: string
+  workspace_id: string
+  installation_id: string
+  is_mcp_exposed: boolean
+  grant_created: boolean
+  status: 'created' | 'updated'
+}
+
+export async function registerRuntimeSkillToOrgMcp(
+  agentProfileName: string,
+  runtimeSkillId: string,
+  body: RuntimeSkillRegisterRequest = {},
+): Promise<RuntimeSkillRegisterResponse> {
+  const { data } = await api.post(
+    `/hermes/agents/${encodeURIComponent(agentProfileName)}/skills/${encodeURIComponent(runtimeSkillId)}/register-to-org-mcp`,
+    body,
+  )
+  return unwrapEnvelope<RuntimeSkillRegisterResponse>(data)
 }
 
 export async function installProfileBuiltinSkill(

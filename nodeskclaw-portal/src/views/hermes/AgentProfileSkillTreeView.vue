@@ -8,6 +8,7 @@ import {
   Loader2,
   RefreshCw,
   Search,
+  Share2,
   Shield,
 } from 'lucide-vue-next'
 import {
@@ -23,6 +24,7 @@ import { Badge } from '@/components/ui/badge'
 import SkillSourceBadge from '@/views/hermes/SkillSourceBadge.vue'
 import SkillStatusBadge from '@/views/hermes/SkillStatusBadge.vue'
 import SkillAuthorizationDialog from '@/views/hermes/SkillAuthorizationDialog.vue'
+import RuntimeSkillRegisterToMcpDialog from '@/views/hermes/RuntimeSkillRegisterToMcpDialog.vue'
 
 const props = defineProps<{
   agentProfileName: string
@@ -44,6 +46,7 @@ const loadErrorMessage = ref<string | null>(null)
 const searchQuery = ref('')
 const collapsedGroups = ref<Set<string>>(new Set())
 const authDialogOpen = ref(false)
+const registerDialogOpen = ref(false)
 const selectedSkill = ref<ProfileSkillInventoryItem | null>(null)
 const detailSkill = ref<ProfileSkillInventoryItem | null>(null)
 
@@ -127,6 +130,11 @@ function collapseAll() {
 function openAuthorize(skill: ProfileSkillInventoryItem) {
   selectedSkill.value = skill
   authDialogOpen.value = true
+}
+
+function openRegister(skill: ProfileSkillInventoryItem) {
+  selectedSkill.value = skill
+  registerDialogOpen.value = true
 }
 
 function openDetail(skill: ProfileSkillInventoryItem) {
@@ -257,8 +265,21 @@ watch(
                     <span class="font-mono font-medium">{{ skill.slug }}</span>
                     <SkillStatusBadge :status="skill.status" :enabled="skill.enabled" />
                     <SkillSourceBadge :source="skill.source" />
+                    <Badge
+                      v-if="skill.org_mcp_registered"
+                      variant="outline"
+                      class="border-emerald-500/40 text-emerald-600 dark:text-emerald-400"
+                    >
+                      {{ t('hermes.profiles.skills.orgMcpRegistered') }}
+                    </Badge>
                   </div>
                   <p v-if="skill.description" class="text-sm text-muted-foreground mt-1">{{ skill.description }}</p>
+                  <p
+                    v-if="skill.org_mcp_registered && skill.execution_instance_name"
+                    class="text-xs text-muted-foreground mt-1"
+                  >
+                    {{ t('hermes.profiles.skills.executionInstance', { name: skill.execution_instance_name }) }}
+                  </p>
                 </div>
                 <div class="flex flex-wrap gap-2">
                   <Button variant="outline" size="sm" class="gap-1" @click="openDetail(skill)">
@@ -272,6 +293,24 @@ watch(
                     @click="openAuthorize(skill)"
                   >
                     <Shield class="w-4 h-4" /> {{ t('hermes.profiles.skills.authorize') }}
+                  </Button>
+                  <Button
+                    v-if="isAdminOrOperator && skill.can_authorize && !skill.org_mcp_registered"
+                    variant="default"
+                    size="sm"
+                    class="gap-1"
+                    @click="openRegister(skill)"
+                  >
+                    <Share2 class="w-4 h-4" /> {{ t('hermes.profiles.skills.registerToOrgMcp') }}
+                  </Button>
+                  <Button
+                    v-if="isAdminOrOperator && skill.can_authorize && skill.org_mcp_registered"
+                    variant="outline"
+                    size="sm"
+                    class="gap-1"
+                    @click="openRegister(skill)"
+                  >
+                    <Share2 class="w-4 h-4" /> {{ t('hermes.profiles.skills.updateOrgMcpRegister') }}
                   </Button>
                 </div>
               </div>
@@ -297,6 +336,15 @@ watch(
       :profile="profile"
       @close="authDialogOpen = false"
       @authorized="fetchTree"
+    />
+
+    <RuntimeSkillRegisterToMcpDialog
+      :open="registerDialogOpen"
+      :skill="selectedSkill"
+      :agent-profile-name="agentProfileName"
+      :profile="profile"
+      @close="registerDialogOpen = false"
+      @registered="fetchTree"
     />
   </div>
 </template>
