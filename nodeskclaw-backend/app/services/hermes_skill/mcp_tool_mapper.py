@@ -220,6 +220,14 @@ class McpToolMapper:
                 )
             raise
 
+        if skill.source_type == "hermes_api_server":
+            raw_args = arguments or {}
+            if routing or raw_args.get("_execution") or raw_args.get("route_config"):
+                raise BadRequestError(
+                    "组织级 MCP 不允许覆盖 Hermes 实例路由",
+                    "errors.skill.route_override_not_allowed",
+                )
+
         if user_id:
             authz_service = HermesSkillAuthorizationService(self.db)
             if not await authz_service.can_invoke(org_id, user_id, skill.id, skill.skill_id):
@@ -264,6 +272,10 @@ class McpToolMapper:
             "installation_id": installation.id,
             "routing_reason": routing_result.reason,
         }
+        if installation.routing_metadata:
+            routing_metadata["route_snapshot"] = dict(installation.routing_metadata)
+            if skill.source_type == "hermes_api_server":
+                routing_metadata["task_source"] = "org_mcp"
 
         task = await TaskService(self.db).create_task(
             org_id=org_id,

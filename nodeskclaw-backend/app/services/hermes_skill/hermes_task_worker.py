@@ -10,6 +10,8 @@ from app.core.config import settings
 from app.core.deps import async_session_factory
 from app.models.hermes_skill.hermes_task import HermesTask, TaskStatus, EventType
 from app.models.base import not_deleted
+from app.services.hermes_external.hermes_docker_binding_service import HermesDockerBindingService
+from app.services.hermes_external.hermes_runtime_skill_executor import execute_runtime_skill_via_api_server
 from app.services.hermes_skill.hermes_agent_adapter import HermesAgentAdapter
 from app.services.hermes_skill.hermes_run_state_resolver import HermesRunStateResolver, RunStateTracker
 from app.services.hermes_skill.hermes_queue_policy_service import HermesQueuePolicyService
@@ -168,6 +170,18 @@ class HermesTaskWorker:
                 )
                 task.status = TaskStatus.CANCELLED
                 await db.flush()
+                return
+
+            route_snapshot = self._get_route_snapshot(task)
+            if route_snapshot.get("route_type") == "hermes_api_server":
+                await self._execute_api_server_task(
+                    db,
+                    task,
+                    route_snapshot,
+                    task_service,
+                    event_service,
+                    audit_logger,
+                )
                 return
 
             adapter = HermesAgentAdapter(db)
@@ -351,6 +365,147 @@ class HermesTaskWorker:
                 "not_before": task.not_before.isoformat() if task.not_before else None,
             },
         )
+        await db.flush()
+
+    @staticmethod
+    def _get_route_snapshot(task: HermesTask) -> dict:
+        metadata = task.routing_metadata or {}
+        snapshot = metadata.get("route_snapshot")
+        if isinstance(snapshot, dict):
+            return snapshot
+        return metadata
+
+    async def _execute_api_server_task(
+        self,
+        db: AsyncSession,
+        task: HermesTask,
+        route_snapshot: dict,
+        task_service: TaskService,
+        event_service: TaskEventService,
+        audit_logger: SkillAuditLogger,
+    ) -> None:
+        agent_profile = str(route_snapshot.get("agent_profile") or task.agent_id or "")
+        hermes_agent_instance_id = str(route_snapshot.get("hermes_agent_instance_id") or "")
+        runtime_skill_id = str(route_snapshot.get("runtime_skill_id") or "")
+        hermes_instance_name = str(route_snapshot.get("hermes_instance_name") or agent_profile)
+        timeout_seconds = route_snapshot.get("timeout_seconds")
+
+        binding = HermesDockerBindingService(db)
+        record = await binding.get_by_profile(task.org_id, agent_profile)
+        if not record or record.id != hermes_agent_instance_id:
+            await task_service.mark_failed(
+                task,
+                error_code="hermes_instance_unavailable",
+                error_message="指定 Hermes 实例绑定记录不存在或已变更",
+            )
+            task.worker_id = None
+            task.locked_at = None
+            task.dispatch_status = "failed"
+            await db.flush()
+            return
+
+        from app.services.hermes_external.hermes_bound_agent_scope_service import HermesBoundAgentScopeService
+
+        try:
+            if task.agent_id:
+                await HermesBoundAgentScopeService(db).assert_dispatchable_instance(
+                    task.org_id, task.agent_id,
+                )
+        except Exception as exc:
+            await task_service.mark_failed(
+                task,
+                error_code="hermes_instance_unavailable",
+                error_message=str(exc)[:1024],
+            )
+            task.worker_id = None
+            task.locked_at = None
+            task.dispatch_status = "failed"
+            await db.flush()
+            return
+
+        arguments = task.arguments or {}
+        prompt = str(arguments.get("prompt") or "").strip()
+        context = arguments.get("context") if isinstance(arguments.get("context"), dict) else None
+
+        instance_detail = {
+            "hermes_instance_name": hermes_instance_name,
+            "hermes_agent_instance_id": hermes_agent_instance_id,
+            "runtime_skill_id": runtime_skill_id,
+            "agent_profile": agent_profile,
+        }
+
+        await event_service.write_event(
+            task_id=task.id,
+            org_id=task.org_id,
+            event_type=EventType.HERMES_RUN_STARTED,
+            payload=instance_detail,
+            source="worker",
+        )
+        await audit_logger.log(
+            action="hermes.task.assigned_to_hermes_instance",
+            target_id=task.id,
+            org_id=task.org_id,
+            actor_type="system",
+            actor_id=self._worker_id,
+            details={**instance_detail, "task_no": task.task_no},
+        )
+        await db.flush()
+
+        try:
+            content_text = await execute_runtime_skill_via_api_server(
+                gateway_url=record.gateway_url,
+                env_file=record.env_file,
+                agent_profile=agent_profile,
+                runtime_skill_id=runtime_skill_id,
+                prompt=prompt,
+                context=context,
+                timeout_seconds=int(timeout_seconds) if timeout_seconds else None,
+            )
+        except Exception as exc:
+            await task_service.mark_failed(
+                task,
+                error_code="HERMES_API_SERVER_CALL_FAILED",
+                error_message=str(exc)[:1024],
+            )
+            await audit_logger.log(
+                action="hermes.instance.execution_failed",
+                target_id=task.id,
+                org_id=task.org_id,
+                actor_type="system",
+                actor_id=self._worker_id,
+                details={**instance_detail, "error": str(exc)[:512]},
+            )
+            task.worker_id = None
+            task.locked_at = None
+            task.dispatch_status = "failed"
+            await db.flush()
+            return
+
+        await event_service.write_event(
+            task_id=task.id,
+            org_id=task.org_id,
+            event_type=EventType.HERMES_RUN_COMPLETED,
+            payload={**instance_detail, "result_preview": content_text[:500]},
+            source="worker",
+        )
+        task.run_finished_at = datetime.now(timezone.utc)
+        await task_service.mark_completed(task, result_summary=content_text[:500])
+        await audit_logger.log(
+            action="hermes.task.completed",
+            target_id=task.id,
+            org_id=task.org_id,
+            actor_type="system",
+            actor_id=self._worker_id,
+            details={
+                "task_no": task.task_no,
+                "skill_id": task.skill_id,
+                "tool_name": task.tool_name,
+                **instance_detail,
+            },
+        )
+        task.worker_id = None
+        task.locked_at = None
+        task.dispatch_status = "finished"
         await db.flush()
 
     async def _scan_artifacts(self, db: AsyncSession, task: HermesTask) -> None:

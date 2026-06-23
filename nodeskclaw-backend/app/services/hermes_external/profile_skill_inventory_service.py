@@ -4,9 +4,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import NotFoundError
+from app.models.base import not_deleted
+from app.models.hermes_skill.skill import HermesSkill
+from app.models.hermes_skill.skill_installation import HermesSkillInstallation
 from app.schemas.profile_skill_inventory import (
     ProfileSkillGroup,
     ProfileSkillInventoryItem,
@@ -29,7 +33,13 @@ def _category_label(category: str) -> str:
     return category.replace("-", " ").replace("_", " ").upper()
 
 
-def _inventory_item_from_instance_skill(skill: HermesInstanceSkillItem) -> ProfileSkillInventoryItem:
+def _inventory_item_from_instance_skill(
+    skill: HermesInstanceSkillItem,
+    *,
+    org_mcp_registered: bool = False,
+    org_mcp_tool_name: str | None = None,
+    execution_instance_name: str | None = None,
+) -> ProfileSkillInventoryItem:
     slug = skill.name.strip()
     return ProfileSkillInventoryItem(
         id=slug,
@@ -51,6 +61,9 @@ def _inventory_item_from_instance_skill(skill: HermesInstanceSkillItem) -> Profi
         can_disable=False,
         can_delete=False,
         can_authorize=True,
+        org_mcp_registered=org_mcp_registered,
+        org_mcp_tool_name=org_mcp_tool_name,
+        execution_instance_name=execution_instance_name,
     )
 
 
@@ -117,6 +130,55 @@ def _ensure_profile_exists(host_data_dir: Path, profile: str) -> None:
         )
 
 
+async def _load_org_mcp_registration_map(
+    db: AsyncSession,
+    org_id: str,
+    agent_profile: str,
+    skill_names: list[str],
+) -> dict[str, dict[str, str | bool]]:
+    if not skill_names:
+        return {}
+
+    tool_names = {
+        instance_skill_service.build_tool_name(agent_profile, name): name
+        for name in skill_names
+    }
+    installed_subq = (
+        select(HermesSkillInstallation.skill_id)
+        .where(
+            not_deleted(HermesSkillInstallation),
+            HermesSkillInstallation.org_id == org_id,
+            HermesSkillInstallation.status == "installed",
+            HermesSkillInstallation.skill_id == HermesSkill.skill_id,
+        )
+        .correlate(HermesSkill)
+    )
+    result = await db.execute(
+        select(HermesSkill).where(
+            not_deleted(HermesSkill),
+            HermesSkill.org_id == org_id,
+            HermesSkill.source_type == "hermes_api_server",
+            HermesSkill.tool_name.in_(list(tool_names.keys())),
+            HermesSkill.is_active.is_(True),
+            exists(installed_subq),
+        )
+    )
+    mapping: dict[str, dict[str, str | bool]] = {}
+    for row in result.scalars().all():
+        runtime_name = tool_names.get(row.tool_name or "")
+        if not runtime_name:
+            continue
+        meta = row.extra_metadata or {}
+        mapping[runtime_name] = {
+            "org_mcp_registered": True,
+            "org_mcp_tool_name": row.tool_name,
+            "execution_instance_name": str(
+                meta.get("hermes_instance_name") or agent_profile,
+            ),
+        }
+    return mapping
+
+
 async def list_full_skill_inventory(
     db: AsyncSession,
     org_id: str,
@@ -137,7 +199,23 @@ async def list_full_skill_inventory(
         agent_profile,
         force_refresh=force_refresh,
     )
-    items = [_inventory_item_from_instance_skill(skill) for skill in instance_list.skills]
+    registration_map = await _load_org_mcp_registration_map(
+        db,
+        org_id,
+        agent_profile,
+        [skill.name for skill in instance_list.skills],
+    )
+    items = []
+    for skill in instance_list.skills:
+        reg = registration_map.get(skill.name, {})
+        items.append(
+            _inventory_item_from_instance_skill(
+                skill,
+                org_mcp_registered=bool(reg.get("org_mcp_registered")),
+                org_mcp_tool_name=reg.get("org_mcp_tool_name"),  # type: ignore[arg-type]
+                execution_instance_name=reg.get("execution_instance_name"),  # type: ignore[arg-type]
+            )
+        )
     filtered = _apply_filters(
         items,
         keyword=keyword,

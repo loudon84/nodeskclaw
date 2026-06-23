@@ -32,6 +32,9 @@ class ProfileSkillInventoryItem(BaseModel):
     can_disable: bool = False
     can_delete: bool = False
     can_authorize: bool = True
+    org_mcp_registered: bool = False
+    org_mcp_tool_name: str | None = None
+    execution_instance_name: str | None = None
 
 
 class ProfileSkillGroup(BaseModel):

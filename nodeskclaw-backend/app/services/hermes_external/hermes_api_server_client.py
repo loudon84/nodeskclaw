@@ -45,11 +45,16 @@ class HermesApiServerClient:
             allow_404=True,
         )
 
-    async def chat_completions(self, payload: dict) -> HermesApiResponse:
+    async def chat_completions(
+        self,
+        payload: dict,
+        *,
+        timeout_seconds: int | None = None,
+    ) -> HermesApiResponse:
         return await self._post(
             "/v1/chat/completions",
             payload,
-            timeout_seconds=settings.HERMES_API_SERVER_CALL_TIMEOUT_SECONDS,
+            timeout_seconds=timeout_seconds or settings.HERMES_API_SERVER_CALL_TIMEOUT_SECONDS,
         )
 
     async def _get(self, path: str, *, timeout_seconds: int, allow_404: bool = False) -> HermesApiResponse:
