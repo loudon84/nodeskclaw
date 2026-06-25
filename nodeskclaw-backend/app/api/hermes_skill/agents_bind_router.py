@@ -14,6 +14,7 @@ from app.schemas.hermes_skill.hermes_agent_instance import (
     ScanExistingAgentsResponse,
 )
 from app.services.hermes_agents.mcp_gateway_authorization_service import McpGatewayAuthorizationService
+from app.services.hermes_agents.mcp_skill_router_service import McpSkillRouterService
 from app.services.hermes_external.hermes_agent_diagnostics_service import HermesAgentDiagnosticsService
 from app.services.hermes_external.hermes_api_server_client import HermesApiServerClient
 from app.services.hermes_external.hermes_bound_agent_scope_service import HermesBoundAgentScopeService
@@ -123,12 +124,14 @@ async def list_hermes_agents(
     )
     scope = HermesBoundAgentScopeService(db)
     mcp_auth = McpGatewayAuthorizationService(db)
+    mcp_router = McpSkillRouterService(db)
     items = []
     for record, instance in pairs:
         summary = scope.to_agent_summary(record, instance)
         if dispatchable_only and not summary.get("task_dispatchable"):
             continue
         summary = await mcp_auth.enrich_agent_summary(record, summary)
+        summary = await mcp_router.enrich_agent_summary(record, summary)
         items.append(_to_summary(summary))
     return _ok(HermesAgentInstanceListResponse(items=items).model_dump())
 
@@ -150,8 +153,10 @@ async def get_hermes_agent(
     instance = await service.get_linked_instance(record)
     scope = HermesBoundAgentScopeService(db)
     mcp_auth = McpGatewayAuthorizationService(db)
+    mcp_router = McpSkillRouterService(db)
     summary = scope.to_agent_summary(record, instance)
     summary = await mcp_auth.enrich_agent_summary(record, summary)
+    summary = await mcp_router.enrich_agent_summary(record, summary)
     return _ok(_to_summary(summary).model_dump())
 
 

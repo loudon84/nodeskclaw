@@ -49,6 +49,16 @@ class HermesAgentInstance(BaseModel):
         DateTime(timezone=True), nullable=True,
     )
     mcp_gateway_last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    mcp_router_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    mcp_router_skill_name: Mapped[str] = mapped_column(
+        String(128), nullable=False, default="nodeskclaw-skill-router",
+    )
+    mcp_router_skill_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    mcp_router_tool_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    mcp_router_last_synced_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
+    mcp_router_last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     __table_args__ = (
         Index(

@@ -1,0 +1,103 @@
+import re
+from typing import Any
+
+ROUTER_SKILL_NAME = "nodeskclaw-skill-router"
+
+FORBIDDEN_CONTENT_FRAGMENTS = (
+    "ndsk_mcp_",
+    "Bearer ",
+    "Authorization",
+    "NODESKCLAW_MCP_TOKEN",
+)
+
+TITLE_OVERRIDES: dict[str, str] = {
+    "customer-profiling": "客户画像与销售机会分析",
+    "enterprise-risk-analysis": "企业风险分析",
+    "manufacturer-profiling": "原厂画像分析",
+    "semiconductor-marketing-copy": "半导体营销文案",
+}
+
+
+def tool_display_title(tool_name: str) -> str:
+    slug = tool_name.split("__")[-1] if "__" in tool_name else tool_name
+    slug = slug.replace("skill.", "")
+    if slug in TITLE_OVERRIDES:
+        return TITLE_OVERRIDES[slug]
+    parts = re.split(r"[-_.]+", slug)
+    return " ".join(p.capitalize() for p in parts if p)
+
+
+def extract_trigger_rules(description: str, tool_name: str) -> list[str]:
+    rules: list[str] = []
+    text = (description or "").strip()
+    if text:
+        for line in text.splitlines():
+            line = line.strip().lstrip("-*•").strip()
+            if line and len(line) > 4:
+                rules.append(line)
+    title = tool_display_title(tool_name)
+    if not rules:
+        rules.append(f"用户提出与「{title}」相关的业务需求")
+        rules.append(f"用户描述的任务类型匹配 `{tool_name}` 的能力")
+    if len(rules) > 6:
+        rules = rules[:6]
+    return rules
+
+
+def render_tool_section(tool: dict[str, Any]) -> str:
+    name = tool.get("name") or ""
+    description = (tool.get("description") or "").strip() or "无描述"
+    title = tool_display_title(name)
+    triggers = extract_trigger_rules(description, name)
+    trigger_lines = "\n".join(f"- {rule}" for rule in triggers)
+    return (
+        f"### {title}\n\n"
+        f"工具名：\n\n"
+        f"`{name}`\n\n"
+        f"能力说明：\n\n"
+        f"{description}\n\n"
+        f"适合场景：\n\n"
+        f"{trigger_lines}\n\n"
+        f"调用要求：\n\n"
+        f"当用户需求匹配以上场景时，调用 `{name}`。\n"
+    )
+
+
+def render_router_skill_md(mcp_name: str, tools: list[dict[str, Any]]) -> str:
+    tools_section = "\n".join(render_tool_section(t) for t in tools)
+    content = (
+        f"# {ROUTER_SKILL_NAME}\n\n"
+        "## 作用\n\n"
+        "你是 nodeskclaw MCP Skill Router。\n\n"
+        "你的任务是根据用户的自然语言需求，自动选择 common-skills MCP 中最合适的远程技能并调用。\n\n"
+        "用户不需要知道英文工具名。\n\n"
+        "## MCP 工具集\n\n"
+        "MCP Server 名称：\n\n"
+        f"{mcp_name}\n\n"
+        "## 可用远程技能\n\n"
+        f"{tools_section}\n"
+        "## 路由规则\n\n"
+        "1. 用户提出业务需求时，不要求用户输入英文 skill 名称。\n"
+        "2. 根据用户意图、公司名称、产品类型、任务类型选择最匹配的远程技能。\n"
+        "3. 如果用户意图明确，直接调用对应 MCP tool。\n"
+        "4. 如果多个 tool 都匹配，选择最贴近用户最终产出的一个。\n"
+        "5. 只有在用户缺少必要参数时才追问。\n"
+        "6. 不要向用户暴露内部路由过程。\n"
+        "7. 不要要求用户说出 tool name。\n"
+        "8. 调用完成后，直接输出业务结果。\n"
+        "9. 如果 MCP 调用失败，说明失败原因，并给出下一步建议。\n\n"
+        "## 工具选择优先级\n\n"
+        "1. 用户明确要求客户画像、采购需求、销售机会 → 使用客户画像工具。\n"
+        "2. 用户明确要求风险评估、信用评级、经营风险 → 使用企业风险分析工具。\n"
+        "3. 用户明确要求芯片原厂、厂家画像、供应商合作 → 使用原厂画像工具。\n"
+        "4. 用户明确要求推广文案、产品介绍、技术方案营销 → 使用半导体营销文案工具。\n\n"
+        "## 禁止行为\n\n"
+        "- 不要让用户输入英文 tool name。\n"
+        "- 不要伪造远程工具结果。\n"
+        "- 不要绕过 common-skills MCP Gateway。\n"
+        "- 不要修改用户输入的公司名称、品牌、产品线。\n"
+    )
+    for fragment in FORBIDDEN_CONTENT_FRAGMENTS:
+        if fragment in content:
+            raise ValueError(f"Router skill content must not contain forbidden fragment: {fragment}")
+    return content

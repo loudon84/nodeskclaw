@@ -1,5 +1,6 @@
 import api from '@/services/api'
 import type { McpGatewayUiStatus } from '@/api/hermes/agentMcpClientGateway'
+import type { McpRouterUiStatus } from '@/api/hermes/agentMcpSkillRouter'
 
 function unwrapEnvelope<T>(body: unknown): T {
   if (body && typeof body === 'object' && 'data' in (body as Record<string, unknown>)) {
@@ -35,6 +36,11 @@ export interface HermesAgentInstance {
   mcp_gateway_env_synced?: boolean | null
   mcp_gateway_expires_at?: string | null
   mcp_gateway_last_error?: string | null
+  mcp_router_status?: McpRouterUiStatus | null
+  mcp_router_tool_count?: number | null
+  mcp_router_skill_path?: string | null
+  mcp_router_last_synced_at?: string | null
+  mcp_router_last_error?: string | null
   instance_dir?: string | null
   data_dir?: string | null
   env_file?: string | null

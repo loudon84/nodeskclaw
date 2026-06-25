@@ -1974,6 +1974,15 @@ const zhCN = {
       server_not_found: "MCP Server 不存在",
       approval_timeout: "敏感工具审批超时",
     },
+    mcp_router: {
+      mcp_not_authorized: "请先授权 MCP Skill Gateway",
+      mcp_unreachable: "无法连接 MCP Skill Gateway，请检查 NODESKCLAW_MCP_URL",
+      tools_empty: "MCP tools/list 返回空列表，请检查授权范围",
+      skill_exists: "Router Skill 已存在，请设置 force=true 覆盖",
+      skill_path_missing: "无法解析 Router Skill 路径",
+      skill_delete_failed: "删除 Router Skill 目录失败",
+      sync_failed: "MCP Skill Router 同步失败",
+    },
     system: {
       internal_error: "服务器内部错误",
       backend_starting: "后端服务正在启动中，请稍候重试",
@@ -2614,6 +2623,32 @@ const zhCN = {
           allSkillsDefault: "留空表示授权当前可见的全部 Skill",
           confirm: "确认授权",
           noContainerAction: "本操作不会进入容器执行 hermes mcp add，也不会重启容器。",
+        },
+      },
+      mcpSkillRouter: {
+        status: {
+          none: 'Router: 未同步',
+          mcp_unauthorized: 'Router: MCP 未授权',
+          synced: 'Router: 已同步',
+          syncedWithCount: 'Router: 已同步 · {count} tools',
+          failed: 'Router: 同步失败',
+        },
+        actions: {
+          sync: '同步 MCP Skill Router',
+          resync: '重新同步 Router',
+          retry: '重试同步',
+          requiresGateway: '请先执行「授权 MCP Skill Gateway」',
+        },
+        syncSuccess: 'Router Skill 已同步，共 {count} 个工具。请重启 Hermes gateway 后测试自然语言调用。',
+        syncFailed: 'MCP Skill Router 同步失败',
+        dialog: {
+          title: '同步 MCP Skill Router',
+          description: '将从 common-skills MCP Gateway 读取 tools/list，并生成本地 Hermes Skill：nodeskclaw-skill-router',
+          instance: '实例',
+          targetPath: '目标路径',
+          pathPending: '同步时自动解析',
+          confirm: '确认同步',
+          noContainerAction: '本操作不会重启容器，也不会执行 hermes mcp add。',
         },
       },
       mcpTools: {

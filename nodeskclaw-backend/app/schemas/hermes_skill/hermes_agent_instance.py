@@ -51,6 +51,11 @@ class HermesAgentInstanceSummary(BaseModel):
     mcp_gateway_env_synced: bool | None = None
     mcp_gateway_expires_at: str | None = None
     mcp_gateway_last_error: str | None = None
+    mcp_router_status: str | None = None
+    mcp_router_tool_count: int | None = None
+    mcp_router_skill_path: str | None = None
+    mcp_router_last_synced_at: str | None = None
+    mcp_router_last_error: str | None = None
 
 
 class ScanExistingAgentsResponse(BaseModel):

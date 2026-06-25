@@ -1974,6 +1974,15 @@ const enUS = {
       server_not_found: "MCP Server not found",
       approval_timeout: "Sensitive tool approval timeout",
     },
+    mcp_router: {
+      mcp_not_authorized: "Authorize MCP Skill Gateway first",
+      mcp_unreachable: "Cannot reach MCP Skill Gateway; check NODESKCLAW_MCP_URL",
+      tools_empty: "MCP tools/list returned no tools; check authorization scope",
+      skill_exists: "Router skill already exists; set force=true to overwrite",
+      skill_path_missing: "Cannot resolve Router skill path",
+      skill_delete_failed: "Failed to delete Router skill directory",
+      sync_failed: "MCP Skill Router sync failed",
+    },
     system: {
       internal_error: "Internal server error",
       backend_starting: "Backend service is starting, please retry shortly",
@@ -2614,6 +2623,32 @@ const enUS = {
           allSkillsDefault: "Leave empty to authorize all visible skills",
           confirm: "Confirm",
           noContainerAction: "This will not run hermes mcp add in the container or restart the container.",
+        },
+      },
+      mcpSkillRouter: {
+        status: {
+          none: 'Router: Not synced',
+          mcp_unauthorized: 'Router: MCP not authorized',
+          synced: 'Router: Synced',
+          syncedWithCount: 'Router: Synced · {count} tools',
+          failed: 'Router: Sync failed',
+        },
+        actions: {
+          sync: 'Sync MCP Skill Router',
+          resync: 'Resync Router',
+          retry: 'Retry sync',
+          requiresGateway: 'Authorize MCP Skill Gateway first',
+        },
+        syncSuccess: 'Router skill synced with {count} tools. Restart Hermes gateway before testing natural language.',
+        syncFailed: 'MCP Skill Router sync failed',
+        dialog: {
+          title: 'Sync MCP Skill Router',
+          description: 'Reads tools/list from common-skills MCP Gateway and writes local skill nodeskclaw-skill-router',
+          instance: 'Instance',
+          targetPath: 'Target path',
+          pathPending: 'Resolved on sync',
+          confirm: 'Confirm sync',
+          noContainerAction: 'This does not restart the container or run hermes mcp add.',
         },
       },
       mcpTools: {
