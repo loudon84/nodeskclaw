@@ -55,6 +55,10 @@ class TaskResultService:
             "artifacts": [self._artifact_to_dict(a) for a in artifacts if primary is None or a.id != primary.id],
             "timeline": timeline,
             "result_summary": task.result_summary,
+            "artifact_mode": "pull_only",
+            "server_artifacts": task.server_artifacts or self._materialized_server_artifacts(artifacts),
+            "artifact_status": task.artifact_status,
+            "kb_status": task.kb_status,
         }
 
     async def _get_task(self, task_id: str, org_id: str) -> HermesTask:
@@ -155,6 +159,15 @@ class TaskResultService:
             return any(artifact.content_type.startswith(p) for p in _TEXT_CONTENT_PREFIXES)
         suffix = Path(artifact.file_name).suffix.lower()
         return suffix in {".md", ".txt", ".json", ".html", ".csv"}
+
+    @staticmethod
+    def _materialized_server_artifacts(artifacts: list[HermesArtifact]) -> list[dict]:
+        from app.services.mcp_skill_gateway.server_artifact_service import ServerArtifactService
+        return [
+            ServerArtifactService.to_server_artifact_dict(a)
+            for a in artifacts
+            if getattr(a, "source", "discovery") == "materialized"
+        ]
 
     @staticmethod
     def _artifact_to_dict(artifact: HermesArtifact) -> dict:

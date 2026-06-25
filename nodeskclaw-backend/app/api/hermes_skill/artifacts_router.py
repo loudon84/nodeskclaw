@@ -108,11 +108,19 @@ async def download_artifact(
     if user:
         await PermissionChecker.require_permission(db, user.id, org.id, "hermes_artifact:download")
     service = ArtifactService(db)
-    file_path = await service.download(
+    result = await service.download(
         artifact_id, org.id,
         user_id=user.id if user else None,
         actor_name=user.name if user else None,
     )
+    if isinstance(result, tuple):
+        artifact, raw_bytes = result
+        return StreamingResponse(
+            io.BytesIO(raw_bytes),
+            media_type=artifact.content_type or "application/octet-stream",
+            headers={"Content-Disposition": f'attachment; filename="{artifact.file_name}"'},
+        )
+    file_path = result
     return FileResponse(
         path=str(file_path),
         filename=file_path.name,

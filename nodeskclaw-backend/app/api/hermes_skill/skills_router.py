@@ -2,6 +2,7 @@ import uuid
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -92,6 +93,36 @@ async def get_skill(
     if not skill or skill.deleted_at is not None or skill.org_id != org.id:
         raise NotFoundError("Skill 不存在", "errors.skill.not_found")
     return _ok(SkillRead.model_validate(skill).model_dump())
+
+
+class SkillOutputPolicyBody(BaseModel):
+    artifact_mode: str | None = None
+    store_to_gateway: bool | None = None
+    format: str | None = None
+    suggested_workspace_dir: str | None = None
+    filename_template: str | None = None
+    kb_ingest: dict | None = None
+
+
+@router.patch("/skills/{skill_db_id}/output-policy")
+async def update_skill_output_policy(
+    skill_db_id: str,
+    body: SkillOutputPolicyBody,
+    user_org=Depends(require_org_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    _, org = user_org
+    skill = await db.get(HermesSkill, skill_db_id)
+    if not skill or skill.deleted_at is not None or skill.org_id != org.id:
+        raise NotFoundError("Skill 不存在", "errors.skill.not_found")
+    policy = dict(skill.output_policy or {})
+    payload = body.model_dump(exclude_none=True)
+    policy.update(payload)
+    policy["artifact_mode"] = "pull_only"
+    skill.output_policy = policy
+    await db.flush()
+    await db.commit()
+    return _ok({"skill_id": skill.id, "output_policy": skill.output_policy})
 
 
 @router.post("/skills/scan")

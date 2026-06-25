@@ -292,10 +292,23 @@ async def list_task_artifacts(
     user, org = user_org
     if user:
         await PermissionChecker.require_permission(db, user.id, org.id, "hermes_artifact:view")
+    task_service = TaskService(db)
+    task = await task_service.get_task(task_id, org.id)
     service = ArtifactService(db)
     artifacts, _ = await service.list_artifacts(org_id=org.id, task_id=task_id, user_id=user.id if user else None)
     items = [ArtifactRead.model_validate(a).model_dump() for a in artifacts]
-    return _ok(items)
+    server_artifacts = task.server_artifacts or []
+    if not server_artifacts:
+        from app.services.mcp_skill_gateway.server_artifact_service import ServerArtifactService
+        server_artifacts = [
+            ServerArtifactService.to_server_artifact_dict(a)
+            for a in artifacts
+            if getattr(a, "source", "discovery") == "materialized"
+        ]
+    response = _ok(items)
+    response["server_artifacts"] = server_artifacts
+    response["artifact_mode"] = "pull_only"
+    return response
 
 
 async def _assert_can_rescan_task_artifacts(

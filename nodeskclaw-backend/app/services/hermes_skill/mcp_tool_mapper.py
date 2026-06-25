@@ -13,6 +13,7 @@ from app.services.hermes_skill.hermes_skill_authorization_service import HermesS
 from app.services.hermes_skill.permission_checker import PermissionChecker
 from app.services.hermes_skill.skill_routing_service import SkillRoutingService
 from app.services.hermes_skill.task_service import TaskService
+from app.services.mcp_skill_gateway.output_policy_service import OutputPolicyService
 
 logger = logging.getLogger(__name__)
 
@@ -272,6 +273,12 @@ class McpToolMapper:
             "installation_id": installation.id,
             "routing_reason": routing_result.reason,
         }
+        output_policy = OutputPolicyService.resolve(
+            skill=skill,
+            installation=installation,
+            tool_name=tool_name,
+        )
+        routing_metadata["output_policy"] = output_policy
         if installation.routing_metadata:
             routing_metadata["route_snapshot"] = dict(installation.routing_metadata)
             if skill.source_type == "hermes_api_server":
@@ -342,6 +349,8 @@ class McpToolMapper:
             "event_token_url": f"/api/v1/hermes/tasks/{task.id}/events-token",
             "artifact_url": task.artifact_url,
             "result_url": f"/api/v1/hermes/tasks/{task.id}/result",
+            "artifact_mode": output_policy.get("artifact_mode", "pull_only"),
+            "server_artifacts": [],
             "routing_reason": routing_result.reason,
             "installation_id": installation.id,
         }

@@ -490,6 +490,47 @@ class HermesTaskWorker:
         )
         task.run_finished_at = datetime.now(timezone.utc)
         await task_service.mark_completed(task, result_summary=content_text[:500])
+
+        output_policy = None
+        if task.routing_metadata and isinstance(task.routing_metadata, dict):
+            output_policy = task.routing_metadata.get("output_policy")
+        if output_policy:
+            try:
+                from app.services.mcp_skill_gateway.server_artifact_service import ServerArtifactService
+                from app.services.hermes_skill.skill_audit_logger import SkillAuditLogger
+
+                server_svc = ServerArtifactService(db)
+                server_artifacts = await server_svc.create_from_task_result(
+                    task=task,
+                    full_result_text=content_text,
+                    output_policy=output_policy,
+                )
+                if server_artifacts:
+                    task.server_artifacts = server_artifacts
+                    task.artifact_status = "stored"
+                    task.kb_status = server_svc.resolve_task_kb_status(server_artifacts)
+                    task.result_summary = server_svc.append_artifact_links(
+                        task.result_summary or content_text[:500],
+                        server_artifacts,
+                    )
+                    await db.flush()
+            except Exception as exc:
+                logger.error(
+                    "Server artifact materialization failed for task %s: %s",
+                    task.id,
+                    exc,
+                    exc_info=True,
+                )
+                audit_logger = SkillAuditLogger(db)
+                await audit_logger.log(
+                    action="mcp_artifact.materialize.failed",
+                    target_id=task.id,
+                    org_id=task.org_id,
+                    actor_type="system",
+                    actor_id=self._worker_id,
+                    details={"error": str(exc)[:512], "tool_name": task.tool_name},
+                )
+
         await audit_logger.log(
             action="hermes.task.completed",
             target_id=task.id,

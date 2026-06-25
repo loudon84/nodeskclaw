@@ -38,6 +38,8 @@ logger = logging.getLogger(__name__)
 
 PREVIEWABLE_PREFIXES = ("text/", "image/", "application/json")
 PREVIEW_MAX_SIZE_BYTES = 2 * 1024 * 1024
+OBJECT_STORE_PREVIEW_MAX_BYTES = 200 * 1024
+OBJECT_STORE_STORAGE_TYPE = "object_store"
 
 
 def _max_artifact_size_bytes() -> int:
@@ -294,6 +296,20 @@ class ArtifactService:
         if not await PermissionChecker.can_manage_artifact_permission(self.db, artifact, user_id, org_id):
             raise ArtifactForbiddenError()
 
+    async def _read_artifact_bytes(self, artifact: HermesArtifact, task: HermesTask) -> bytes:
+        if artifact.storage_type == OBJECT_STORE_STORAGE_TYPE and artifact.object_key:
+            from app.services import storage_service
+            return await storage_service.download_raw(artifact.object_key)
+        file_path = await self.resolve_and_validate(artifact, task)
+        if not file_path.is_file():
+            raise ArtifactFileNotFoundError()
+        return file_path.read_bytes()
+
+    def _preview_limit_bytes(self, artifact: HermesArtifact) -> int:
+        if artifact.storage_type == OBJECT_STORE_STORAGE_TYPE:
+            return OBJECT_STORE_PREVIEW_MAX_BYTES
+        return PREVIEW_MAX_SIZE_BYTES
+
     async def preview(
         self,
         artifact_id: str,
@@ -314,26 +330,20 @@ class ArtifactService:
         if not task or task.deleted_at is not None:
             raise NotFoundError("Task 不存在", "errors.task.not_found")
 
-        file_path = await self.resolve_and_validate(artifact, task)
-
-        if not file_path.is_file():
-            raise ArtifactFileNotFoundError()
-
+        preview_limit = self._preview_limit_bytes(artifact)
         truncated = False
         preview_type = "text"
-        try:
-            stat = file_path.stat()
-            if stat.st_size > PREVIEW_MAX_SIZE_BYTES:
-                truncated = True
-        except OSError:
-            raise ArtifactFileNotFoundError()
 
         if artifact.content_type == "application/octet-stream":
             raise ArtifactPreviewUnsupportedError()
 
-        raw_bytes = file_path.read_bytes()
-        if len(raw_bytes) > PREVIEW_MAX_SIZE_BYTES:
-            raw_bytes = raw_bytes[:PREVIEW_MAX_SIZE_BYTES]
+        try:
+            raw_bytes = await self._read_artifact_bytes(artifact, task)
+        except Exception:
+            raise ArtifactFileNotFoundError()
+
+        if len(raw_bytes) > preview_limit:
+            raw_bytes = raw_bytes[:preview_limit]
             truncated = True
 
         content = raw_bytes.decode("utf-8", errors="replace")
@@ -364,7 +374,7 @@ class ArtifactService:
         org_id: str,
         user_id: str | None = None,
         actor_name: str | None = None,
-    ) -> Path:
+    ) -> Path | tuple[HermesArtifact, bytes]:
         artifact = await self.db.get(HermesArtifact, artifact_id)
         if not artifact or artifact.deleted_at is not None or artifact.org_id != org_id:
             raise ArtifactNotFoundError()
@@ -375,11 +385,6 @@ class ArtifactService:
         task = await self.db.get(HermesTask, artifact.task_id)
         if not task or task.deleted_at is not None:
             raise NotFoundError("Task 不存在", "errors.task.not_found")
-
-        file_path = await self.resolve_and_validate(artifact, task)
-
-        if not file_path.is_file():
-            raise ArtifactFileNotFoundError()
 
         stmt = select(HermesArtifact).where(
             HermesArtifact.id == artifact_id,
@@ -395,6 +400,16 @@ class ArtifactService:
             actor_id=user_id or "",
             actor_name=actor_name,
         )
+
+        if artifact.storage_type == OBJECT_STORE_STORAGE_TYPE and artifact.object_key:
+            raw_bytes = await self._read_artifact_bytes(artifact, task)
+            return artifact, raw_bytes
+
+        file_path = await self.resolve_and_validate(artifact, task)
+
+        if not file_path.is_file():
+            raise ArtifactFileNotFoundError()
+
         return file_path
 
     async def soft_delete(
