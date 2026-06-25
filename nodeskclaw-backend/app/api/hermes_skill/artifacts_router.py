@@ -111,7 +111,7 @@ async def download_artifact(
     file_path = await service.download(
         artifact_id, org.id,
         user_id=user.id if user else None,
-        actor_name=user.display_name if user else None,
+        actor_name=user.name if user else None,
     )
     return FileResponse(
         path=str(file_path),
@@ -133,7 +133,7 @@ async def delete_artifact(
     await service.soft_delete(
         artifact_id, org.id,
         user_id=user.id if user else None,
-        actor_name=user.display_name if user else None,
+        actor_name=user.name if user else None,
     )
     return _ok(message="已删除")
 
@@ -188,7 +188,7 @@ async def batch_download_artifacts(
                 artifact_id=aid,
                 org_id=org.id,
                 actor_id=user.id if user else "",
-                actor_name=user.display_name if user else None,
+                actor_name=user.name if user else None,
                 details={"download_mode": "batch", "task_id": task_id, "zip_name": "artifacts.zip"},
             )
 
@@ -201,7 +201,7 @@ async def batch_download_artifacts(
             artifact_id=task_id,
             org_id=org.id,
             actor_id=user.id,
-            actor_name=user.display_name if user else None,
+            actor_name=user.name if user else None,
             details={"task_id": task_id, "artifact_count": len(paths)},
         )
 

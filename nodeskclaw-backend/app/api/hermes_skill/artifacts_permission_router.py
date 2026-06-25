@@ -45,7 +45,7 @@ async def change_artifact_scope(
         org_id=org.id,
         new_scope=body.permission_scope,
         actor_id=user.id if user else "",
-        actor_name=user.display_name if user else None,
+        actor_name=user.name if user else None,
     )
     return _ok({"permission_scope": artifact.permission_scope})
 
@@ -73,7 +73,7 @@ async def grant_artifact_permission(
         user_id=body.user_id,
         permission_level=body.permission_level,
         granted_by=user.id if user else "",
-        granted_by_name=user.display_name if user else None,
+        granted_by_name=user.name if user else None,
     )
     return _ok(ArtifactPermissionDetail.model_validate(perm).model_dump())
 
@@ -100,7 +100,7 @@ async def revoke_artifact_permission(
         org_id=org.id,
         user_id=body.user_id,
         revoked_by=user.id if user else "",
-        revoked_by_name=user.display_name if user else None,
+        revoked_by_name=user.name if user else None,
     )
     return _ok(message="已撤销")
 

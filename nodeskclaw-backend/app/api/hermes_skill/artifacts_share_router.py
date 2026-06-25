@@ -37,7 +37,7 @@ async def share_artifact(
         artifact_id=artifact_id,
         org_id=org.id,
         actor_id=user.id if user else "",
-        actor_name=user.display_name if user else None,
+        actor_name=user.name if user else None,
         max_uses=body.max_uses,
         expires_hours=body.expires_hours,
     )
