@@ -94,6 +94,10 @@ class HermesTask(BaseModel):
     run_dispatched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     client_context: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     routing_metadata: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    output_policy: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    server_artifacts: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    artifact_status: Mapped[str] = mapped_column(String(32), nullable=False, default="none")
+    kb_status: Mapped[str] = mapped_column(String(32), nullable=False, default="none")
 
     __table_args__ = (
         Index("ix_hermes_tasks_org_status", "org_id", "status"),

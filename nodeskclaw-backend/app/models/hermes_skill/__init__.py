@@ -8,6 +8,7 @@ from app.models.hermes_skill.skill_registry_source import HermesSkillRegistry  #
 from app.models.hermes_skill.skill_import import HermesSkillImport  # noqa: F401
 from app.models.hermes_skill.hermes_task import HermesTask, HermesTaskEvent  # noqa: F401
 from app.models.hermes_skill.hermes_artifact import HermesArtifact, PermissionScope  # noqa: F401
+from app.models.hermes_skill.hermes_artifact_kb_ingestion_job import HermesArtifactKbIngestionJob  # noqa: F401
 from app.models.hermes_skill.artifact_download_token import ArtifactDownloadToken  # noqa: F401
 from app.models.hermes_skill.artifact_permission import ArtifactPermission  # noqa: F401
 from app.models.hermes_skill.hermes_agent_runtime_state import HermesAgentRuntimeState  # noqa: F401

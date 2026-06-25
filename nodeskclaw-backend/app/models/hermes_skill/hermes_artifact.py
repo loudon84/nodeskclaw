@@ -42,6 +42,13 @@ class HermesArtifact(BaseModel):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     artifact_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
     metadata_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    object_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    suggested_workspace_dir: Mapped[str | None] = mapped_column(Text, nullable=True)
+    suggested_workspace_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    workspace_saved: Mapped[bool] = mapped_column(default=False)
+    kb_status: Mapped[str] = mapped_column(String(32), nullable=False, default="none")
+    format: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    source: Mapped[str] = mapped_column(String(32), nullable=False, default="discovery")
 
     __table_args__ = (
         Index("ix_hermes_artifacts_org_task", "org_id", "task_id"),
