@@ -98,9 +98,14 @@ export async function retryTask(taskId: string): Promise<HermesTask> {
   return unwrapEnvelope<HermesTask>(data)
 }
 
-export async function listTaskArtifacts(taskId: string) {
+export async function listTaskArtifacts(taskId: string): Promise<TaskArtifactsResponse> {
   const { data } = await api.get(`/hermes/tasks/${taskId}/artifacts`)
-  return unwrapEnvelope<TaskArtifact[]>(data)
+  const body = data as Record<string, unknown>
+  return {
+    items: Array.isArray(body.data) ? (body.data as TaskArtifact[]) : [],
+    server_artifacts: (body.server_artifacts as ServerArtifact[]) ?? [],
+    artifact_mode: (body.artifact_mode as string) ?? 'pull_only',
+  }
 }
 
 export interface TaskArtifact {
@@ -113,6 +118,26 @@ export interface TaskArtifact {
   size_bytes: number | null
   preview_supported?: boolean
   metadata_json?: Record<string, unknown> | null
+}
+
+export interface ServerArtifact {
+  artifact_id: string
+  name: string
+  type: string
+  mime_type: string | null
+  stored: boolean
+  store: string
+  download_url: string
+  preview_url: string
+  suggested_workspace_path: string | null
+  workspace_saved: boolean
+  kb_status: string
+}
+
+export interface TaskArtifactsResponse {
+  items: TaskArtifact[]
+  server_artifacts: ServerArtifact[]
+  artifact_mode: string
 }
 
 export interface ArtifactRescanResult {

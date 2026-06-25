@@ -47,6 +47,11 @@ const hermesRoutes: RouteRecordRaw[] = [
     component: () => import('@/views/hermes/MetricsView.vue'),
   },
   {
+    path: '/hermes/kb-ingestion',
+    name: 'HermesKbIngestion',
+    component: () => import('@/views/hermes/KbIngestionView.vue'),
+  },
+  {
     path: '/hermes/tasks',
     name: 'HermesTasks',
     component: () => import('@/views/hermes/TasksView.vue'),

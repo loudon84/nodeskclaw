@@ -27,7 +27,9 @@ import {
   type TaskEvent,
   type TaskTimelineItem,
   type TaskArtifact,
+  type ServerArtifact,
 } from '@/api/hermes/tasks'
+import ServerArtifactsCard from '@/views/hermes/ServerArtifactsCard.vue'
 import { previewArtifact, downloadArtifact } from '@/api/hermes/artifacts'
 import { resolveApiErrorMessage } from '@/i18n/error'
 import { useToast } from '@/composables/useToast'
@@ -64,6 +66,7 @@ const selectedTask = ref<HermesTask | null>(null)
 const taskEvents = ref<TaskEvent[]>([])
 const timelineItems = ref<TaskTimelineItem[]>([])
 const taskArtifacts = ref<TaskArtifact[]>([])
+const serverArtifacts = ref<ServerArtifact[]>([])
 const artifactsLoading = ref(false)
 const rescanning = ref(false)
 const previewOpen = ref(false)
@@ -185,9 +188,12 @@ async function startEventStream(taskId: string) {
 async function loadTaskArtifacts(taskId: string) {
   artifactsLoading.value = true
   try {
-    taskArtifacts.value = await listTaskArtifacts(taskId)
+    const res = await listTaskArtifacts(taskId)
+    taskArtifacts.value = res.items
+    serverArtifacts.value = res.server_artifacts
   } catch {
     taskArtifacts.value = []
+    serverArtifacts.value = []
   } finally {
     artifactsLoading.value = false
   }
@@ -246,12 +252,20 @@ async function handleArtifactDownload(artifact: TaskArtifact) {
   }
 }
 
+async function handleServerArtifactPreview(title: string, content: string, truncated: boolean) {
+  previewTitle.value = title
+  previewContent.value = content
+  previewTruncated.value = truncated
+  previewOpen.value = true
+}
+
 async function openTaskDetail(task: HermesTask) {
   drawerOpen.value = true
   detailLoading.value = true
   taskEvents.value = []
   timelineItems.value = []
   taskArtifacts.value = []
+  serverArtifacts.value = []
   expandedPayloads.value = new Set()
   try {
     selectedTask.value = await getTask(task.id)
@@ -274,6 +288,7 @@ function closeTaskDetail() {
   taskEvents.value = []
   timelineItems.value = []
   taskArtifacts.value = []
+  serverArtifacts.value = []
 }
 
 async function handleCancel() {
@@ -678,6 +693,11 @@ onUnmounted(stopEventStream)
             </div>
             <div v-else class="text-xs text-muted-foreground">{{ t('hermes.tasks.noArtifacts') }}</div>
           </div>
+
+          <ServerArtifactsCard
+            :artifacts="serverArtifacts"
+            @preview="handleServerArtifactPreview"
+          />
         </template>
       </SheetContent>
     </Sheet>
