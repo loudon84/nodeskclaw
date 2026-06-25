@@ -47,6 +47,7 @@ from app.models.instance_provider_config import InstanceProviderConfig  # noqa: 
 from app.models.instance_member import InstanceMember  # noqa: F401
 from app.models.llm_usage_log import LlmUsageLog  # noqa: F401
 from app.models.mcp_call_log import McpCallLog  # noqa: F401
+from app.models.mcp_client_token import McpClientToken  # noqa: F401
 from app.models.message_queue import MessageQueueItem  # noqa: F401
 from app.models.message_schema import MessageSchema  # noqa: F401
 from app.models.node_card import NodeCard  # noqa: F401

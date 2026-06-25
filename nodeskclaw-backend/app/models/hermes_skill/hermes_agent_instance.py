@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import BaseModel
@@ -40,6 +40,15 @@ class HermesAgentInstance(BaseModel):
     last_probe_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    mcp_gateway_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    mcp_gateway_token_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    mcp_gateway_token_prefix: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    mcp_gateway_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    mcp_gateway_env_synced: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    mcp_gateway_last_authorized_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
+    mcp_gateway_last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     __table_args__ = (
         Index(

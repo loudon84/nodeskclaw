@@ -394,12 +394,14 @@ async def dispatch(
     if method == "tools/list":
         params = body.get("params") or {}
         return await _handle_tools_list(
-            jsonrpc_id, user_id, org.id, db, params=params, request_headers=request_headers,
+            jsonrpc_id, user_id, org.id, db,
+            params=params, request_headers=request_headers, auth_ctx=auth_result,
         )
 
     if method == "tools/call":
         return await _handle_tools_call(
-            body, jsonrpc_id, user_id, org.id, db, user, request_headers=request_headers,
+            body, jsonrpc_id, user_id, org.id, db, user,
+            request_headers=request_headers, auth_ctx=auth_result,
         )
 
     _log_mcp_error(
@@ -490,6 +492,7 @@ async def _collect_tools(
     agent_alias: str | None = None,
     profile: str | None = None,
     workspace_id: str | None = None,
+    allowed_skills: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     mapper = McpToolMapper(db)
     skill_tools = await mapper.list_tools(
@@ -499,20 +502,24 @@ async def _collect_tools(
         profile=profile,
         workspace_id=workspace_id,
     )
+    if allowed_skills:
+        allowed_set = set(allowed_skills)
+        skill_tools = [t for t in skill_tools if t.get("name") in allowed_set]
     registry_tools: list[dict[str, Any]] = []
-    for tool in list_enabled_tools():
-        auth_annotations = None
-        mode = resolve_approval_mode(tool)
-        if mode in ("server", "hybrid"):
-            auth_annotations = await get_grant_annotation(
-                db,
-                org_id=org_id,
-                user_id=user_id,
-                instance_id=None,
-                tool_name=tool.name,
-                tool=tool,
-            )
-        registry_tools.append(build_tool_descriptor(tool, auth_annotations))
+    if allowed_skills is None:
+        for tool in list_enabled_tools():
+            auth_annotations = None
+            mode = resolve_approval_mode(tool)
+            if mode in ("server", "hybrid"):
+                auth_annotations = await get_grant_annotation(
+                    db,
+                    org_id=org_id,
+                    user_id=user_id,
+                    instance_id=None,
+                    tool_name=tool.name,
+                    tool=tool,
+                )
+            registry_tools.append(build_tool_descriptor(tool, auth_annotations))
     merged: list[dict[str, Any]] = []
     seen: set[str] = set()
     for tool in registry_tools + skill_tools:
@@ -532,6 +539,7 @@ async def _handle_tools_list(
     *,
     params: dict | None = None,
     request_headers: dict | None = None,
+    auth_ctx: McpAuthContext | None = None,
 ) -> dict:
     try:
         params = params or {}
@@ -539,8 +547,13 @@ async def _handle_tools_list(
         agent_alias = params.get("agent_alias")
         profile = params.get("profile")
         workspace_id = params.get("workspace_id")
+        if not profile and auth_ctx and auth_ctx.profile:
+            profile = auth_ctx.profile
         if not profile:
             profile = normalized.get(HEADER_HERMES_PROFILE.lower())
+        if not workspace_id and auth_ctx and auth_ctx.workspace_id:
+            workspace_id = auth_ctx.workspace_id
+        allowed_skills = auth_ctx.allowed_skills if auth_ctx and auth_ctx.auth_type == "mcp_client_token" else None
         tools = await _collect_tools(
             user_id,
             org_id,
@@ -548,6 +561,7 @@ async def _handle_tools_list(
             agent_alias=agent_alias,
             profile=profile,
             workspace_id=workspace_id,
+            allowed_skills=allowed_skills,
         )
         return mcp_success(jsonrpc_id, {"tools": tools})
     except ForbiddenError as exc:
@@ -588,6 +602,7 @@ async def _handle_tools_call(
     user: Any,
     *,
     request_headers: dict | None = None,
+    auth_ctx: McpAuthContext | None = None,
 ) -> dict:
     params = body.get("params", {})
     tool_name = params.get("name", "")
@@ -604,6 +619,12 @@ async def _handle_tools_call(
     arguments = params.get("arguments") or {}
     if not isinstance(arguments, dict):
         arguments = {}
+
+    if auth_ctx and auth_ctx.auth_type == "mcp_client_token":
+        if _is_genehub_gateway_tool(tool_name) or _is_hermes_gateway_tool(tool_name):
+            return mcp_error_v2(jsonrpc_id, MCP_INTERNAL_ERROR, "Tool not allowed for MCP client token")
+        if auth_ctx.allowed_skills and tool_name not in set(auth_ctx.allowed_skills):
+            return mcp_error_v2(jsonrpc_id, MCP_INTERNAL_ERROR, "Tool not allowed for MCP client token")
 
     tool_meta = get_tool(tool_name)
     client_name = get_client_name(user_id, org_id)
@@ -637,7 +658,7 @@ async def _handle_tools_call(
 
     mapper = McpToolMapper(db)
     normalized = _normalize_headers(request_headers)
-    profile_name = normalized.get(HEADER_HERMES_PROFILE.lower())
+    profile_name = auth_ctx.profile if auth_ctx and auth_ctx.profile else normalized.get(HEADER_HERMES_PROFILE.lower())
     client_context = _build_client_context(request_headers)
     try:
         result = await mapper.call_tool(

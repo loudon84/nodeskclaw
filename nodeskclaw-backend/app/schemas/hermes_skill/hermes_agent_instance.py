@@ -45,6 +45,12 @@ class HermesAgentInstanceSummary(BaseModel):
     last_probe_at: datetime | str | None = None
     last_seen_at: datetime | str | None = None
     last_error: str | None = None
+    mcp_gateway_status: str | None = None
+    mcp_gateway_token_prefix: str | None = None
+    mcp_gateway_url: str | None = None
+    mcp_gateway_env_synced: bool | None = None
+    mcp_gateway_expires_at: str | None = None
+    mcp_gateway_last_error: str | None = None
 
 
 class ScanExistingAgentsResponse(BaseModel):

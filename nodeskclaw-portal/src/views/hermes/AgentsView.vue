@@ -17,6 +17,8 @@ import { resolveApiErrorMessage } from '@/i18n/error'
 import { useToast } from '@/composables/useToast'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import McpGatewayStatusBadge from '@/views/hermes/McpGatewayStatusBadge.vue'
+import McpGatewayAuthorizeButton from '@/views/hermes/McpGatewayAuthorizeButton.vue'
 
 const { t } = useI18n()
 const router = useRouter()
@@ -200,7 +202,14 @@ onMounted(fetchAgents)
               >
                 {{ agent.task_dispatchable ? t('hermes.agents.taskDispatchable') : t('hermes.agents.taskNotDispatchable') }}
               </Badge>
+              <McpGatewayStatusBadge :status="agent.mcp_gateway_status" />
             </div>
+            <p
+              v-if="agent.mcp_gateway_token_prefix"
+              class="text-xs text-muted-foreground font-mono mt-1"
+            >
+              MCP Token: {{ agent.mcp_gateway_token_prefix }}
+            </p>
           </div>
           <p class="text-xs text-muted-foreground">{{ t('hermes.agents.lastProbe') }}: {{ formatTime(agent.last_probe_at) }}</p>
         </div>
@@ -210,8 +219,11 @@ onMounted(fetchAgents)
           <div><span class="text-muted-foreground">Model:</span> <span class="font-mono">{{ agent.api_server_model_name || '-' }}</span></div>
           <div><span class="text-muted-foreground">Key:</span> <span class="font-mono">{{ agent.has_api_server_key ? t('hermes.agents.keyConfigured') : t('hermes.agents.keyMissing') }}</span></div>
         </dl>
-        <p v-if="agent.last_error" class="text-xs text-red-400 mb-3 break-all">{{ agent.last_error }}</p>
+        <p v-if="agent.last_error || agent.mcp_gateway_last_error" class="text-xs text-red-400 mb-3 break-all">
+          {{ agent.mcp_gateway_last_error || agent.last_error }}
+        </p>
         <div class="flex flex-wrap gap-2">
+          <McpGatewayAuthorizeButton :agent="agent" :disabled="actionLoading" @changed="fetchAgents" />
           <Button v-if="agent.webui_url" size="sm" variant="outline" as-child>
             <a :href="agent.webui_url" target="_blank" rel="noopener noreferrer" class="flex items-center gap-1">
               <ExternalLink class="w-3 h-3" />{{ t('hermes.agents.openWebui') }}

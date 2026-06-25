@@ -13,6 +13,9 @@ from app.api.hermes_skill.artifacts_router import router as artifacts_router
 from app.api.hermes_skill.diagnostics_router import router as diagnostics_router
 from app.api.hermes_skill.compat_router import router as compat_router
 from app.api.hermes_skill.agents_runtime_router import router as agents_runtime_router
+from app.api.hermes_skill.mcp_gateway_authorization_router import (
+    router as mcp_gateway_authorization_router,
+)
 from app.api.hermes_skill.agents_bind_router import router as agents_bind_router
 from app.api.hermes_skill.agent_mcp_gateway_router import router as agent_mcp_gateway_router
 from app.api.hermes_skill.runtime_skill_registration_router import (
@@ -38,6 +41,7 @@ router.include_router(audit_router)
 router.include_router(tasks_router)
 router.include_router(artifacts_router)
 router.include_router(diagnostics_router)
+router.include_router(mcp_gateway_authorization_router)
 router.include_router(agents_bind_router)
 router.include_router(agent_mcp_gateway_router)
 router.include_router(runtime_skill_registration_router)

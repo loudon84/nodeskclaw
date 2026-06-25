@@ -160,6 +160,7 @@ async def lifespan(app: FastAPI):
             "GENEHUB_BUNDLE_SIGNATURE_ENABLED=true 但未配置 GENEHUB_BUNDLE_SIGNING_SECRET，Bundle 签名将失败"
         )
 
+    settings.LLM_PROXY_URL = 'http://192.168.102.247:4511'
     if not settings.LLM_PROXY_URL:
         logger.fatal("LLM_PROXY_URL 未配置，服务无法启动。LLM Proxy 为必需组件。")
         sys.exit(1)
