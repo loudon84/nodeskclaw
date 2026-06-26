@@ -170,7 +170,7 @@ async def stream_task_events(
     last_event_id: str | None = None,
 ):
     from app.core.config import settings as _settings
-    from app.core.security import get_current_user
+    from app.core.security import authenticate_bearer_token
     from app.services.hermes_skill.task_event_token_service import TaskEventTokenService
 
     service = TaskService(db)
@@ -178,7 +178,9 @@ async def stream_task_events(
     org_id: str
 
     if authorization:
-        user = await get_current_user(request=request, db=db)
+        if not authorization.startswith("Bearer "):
+            raise ForbiddenError("需要认证或 SSE token", "errors.auth.unauthorized")
+        user = await authenticate_bearer_token(authorization[7:].strip(), db)
         from app.services.org.factory import get_org_provider
         org = await get_org_provider().resolve_org_for_user(user, db)
         if org is None:

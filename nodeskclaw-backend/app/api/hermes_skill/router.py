@@ -41,7 +41,7 @@ router.include_router(imports_router)
 router.include_router(mcp_router)
 router.include_router(audit_router)
 router.include_router(tasks_router)
-router.include_router(artifacts_router)
+
 router.include_router(diagnostics_router)
 router.include_router(mcp_gateway_authorization_router)
 router.include_router(mcp_skill_router_router)
@@ -59,6 +59,8 @@ router.include_router(metrics_router)
 router.include_router(client_router)
 router.include_router(task_result_router)
 router.include_router(kb_ingestion_router)
+
+router.include_router(artifacts_router)
 router.include_router(compat_router)
 
 if feature_gate.is_ee:

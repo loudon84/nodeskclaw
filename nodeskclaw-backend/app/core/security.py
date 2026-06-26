@@ -174,6 +174,14 @@ async def get_current_user(
     return user
 
 
+async def authenticate_bearer_token(token: str, db: AsyncSession) -> User:
+    """Validate a raw Bearer JWT string and return the corresponding User."""
+    user = await _get_user_by_token(token, db)
+    _auth_actor.set(AuthActor("user", user.id, user.name))
+    _ensure_password_change_allowed(user)
+    return user
+
+
 def _ensure_password_change_allowed(user: User) -> None:
     if user.must_change_password:
         raise HTTPException(

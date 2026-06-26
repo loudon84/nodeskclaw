@@ -407,7 +407,7 @@ async def get_api_key_or_jwt(
     db: AsyncSession = Depends(get_db),
 ):
     """JWT 优先，其次 API Key（X-API-Key Header），返回 (user, org, auth_type, auth_key_id)。"""
-    from app.core.security import get_current_user
+    from app.core.security import authenticate_bearer_token
     from app.models.organization import Organization
 
     auth_header = request.headers.get("authorization", "")
@@ -415,7 +415,7 @@ async def get_api_key_or_jwt(
 
     if auth_header and auth_header.startswith("Bearer "):
         try:
-            user = await get_current_user(request=request, db=db)
+            user = await authenticate_bearer_token(auth_header[7:].strip(), db)
             from app.services.org.factory import get_org_provider
             provider = get_org_provider()
             org = await provider.resolve_org_for_user(user, db)
