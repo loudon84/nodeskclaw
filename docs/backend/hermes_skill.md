@@ -66,7 +66,7 @@ app/models/hermes_skill/*            ← PostgreSQL 持久化
 |------|------|------|
 | Skill 扫描 | `skill_scanner.py` | 从 Registry / Hub 扫描 Skill 元数据入库 |
 | Skill 安装 | `skill_installer.py` | 将 Skill 安装到 Agent Profile |
-| 路由决策 | `skill_routing_service.py` | 根据 agent/profile/workspace 选择目标安装 |
+| 路由决策 | `skill_routing_service.py` | 根据 agent/profile/workspace 选择目标安装；v5.6.1 `resolve_runtime_skill_fixed_route` 固定 Runtime Skill 路由 |
 | MCP 工具映射 | `mcp_tool_mapper.py` | 将已安装且暴露的 Skill 映射为 MCP Tool；`call_tool` 创建异步任务；v5.3 复制 `route_snapshot`；v5.6 写入 `output_policy` |
 | 中心产物物化 | `mcp_skill_gateway/server_artifact_service.py` | v5.6：任务完成后物化报告到中心产物库，写 `server_artifacts` |
 | KB 入库审核 | `mcp_skill_gateway/kb_ingestion_service.py` | v5.6：入库 job 创建、审核、sha256 去重 |
@@ -116,8 +116,11 @@ Hermes Skill 与 MCP 有两条独立入口，职责不同：
 Skill 工具调用链路（`mcp_tool_mapper.call_tool`）：
 
 1. 校验 `skill:invoke` 权限与 Skill 授权
-2. `SkillRoutingService` 解析目标 agent/profile（`resolve_by_tool_name`）
-3. 若 `source_type=hermes_api_server`：拒绝调用方覆盖路由（`_routing` / `route_config` 等）
+2. `get_exposed_skill()` 判断 Skill 类型（v5.6.1）
+3. **Intent Routing 与 Execution Routing 分离**（v5.6.1）：
+   - `hermes_api_server`：走 `resolve_runtime_skill_fixed_route()`，执行实例仅来自 `installation.routing_metadata`；MCP token/header 的 `profile_name` **不参与**路由
+   - 普通 Skill：继续 `enrich_routing(profile_name)` + `resolve_by_tool_name()`
+   - 显式覆盖：仅当 `arguments` 中出现 `_routing` / `_execution` / `route_config` 字段时拒绝（含空对象）
 4. `OutputPolicyService.resolve()` 写入 `routing_metadata.output_policy`（v5.6）
 5. `TaskService.create_task()`，将 `installation.routing_metadata` 复制为 `task.routing_metadata.route_snapshot`
 6. `hermes_task_worker` 异步执行：

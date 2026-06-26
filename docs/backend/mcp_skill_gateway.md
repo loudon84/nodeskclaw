@@ -163,9 +163,11 @@ tools/call(name=hermes_common_writer__customer-profiling, arguments={...})
     │
     ▼
 McpToolMapper.call_tool()
-    ├─ SkillRoutingService.resolve_by_tool_name()  → skill + installation
+    ├─ get_exposed_skill() 判断 source_type（v5.6.1）
+    ├─ hermes_api_server → resolve_runtime_skill_fixed_route()（固定 installation，忽略 token/profile）
+    │     └─ 仅当 arguments 含 _routing / _execution / route_config 字段时拒绝覆盖
+    ├─ 普通 Skill → enrich_routing(profile_name) + resolve_by_tool_name()
     ├─ OutputPolicyService.resolve()  → output_policy（v5.6）
-    ├─ hermes_api_server：拒绝 arguments 中的 _routing / _execution / route_config 覆盖
     ├─ HermesSkillAuthorizationService.can_invoke()
     └─ TaskService.create_task()
            routing_metadata = {
@@ -210,9 +212,11 @@ hermes_task_worker
 }
 ```
 
-**安全约束**（`mcp_tool_mapper.call_tool`）：
+**安全约束**（`mcp_tool_mapper.call_tool`，v5.6.1 起）：
 
-- `source_type=hermes_api_server` 时，调用方 **不得** 在 `arguments` 中传入 `_routing`、`_execution`、`route_config`，否则返回 `errors.skill.route_override_not_allowed`。
+- **Client Context 与 Execution Routing 分离**：MCP token / `X-Hermes-Profile` / `profile_name` 仅用于 `tools/list` 可见性过滤与审计，**不参与** `hermes_api_server` 的执行实例选择。
+- `source_type=hermes_api_server` 时，执行路由唯一来源为 `HermesSkillInstallation.routing_metadata`，经 `SkillRoutingService.resolve_runtime_skill_fixed_route()` 解析（`routing_reason` 为 `matched_by_runtime_fixed_default` 或 `matched_by_runtime_fixed_single`）。
+- 调用方 **不得** 在 `arguments` 中 **出现**（含空对象）`_routing`、`_execution`、`route_config` 字段，否则返回 `errors.skill.route_override_not_allowed`；判断标准为字段存在，而非字段是否有值。
 - Worker 执行时校验 `hermes_agent_instance_id` 与当前绑定记录一致，禁止静默切换到其他实例。
 
 ### Skill 工具调用响应字段（异步任务）
