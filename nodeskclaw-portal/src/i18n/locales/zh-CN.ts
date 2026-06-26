@@ -2485,6 +2485,8 @@ const zhCN = {
       eventUrl: "Event URL",
       artifactUrl: "Artifact URL",
       copied: "已复制",
+      userPrompt: "用户提示词",
+      noUserPrompt: "暂无用户提示词",
       timeline: {
         title: "时间线",
         hermesEventSeq: "Hermes 事件序号",

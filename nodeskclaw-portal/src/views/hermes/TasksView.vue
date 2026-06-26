@@ -108,6 +108,20 @@ function payloadJson(payload: Record<string, unknown> | null) {
   return JSON.stringify(payload, null, 2)
 }
 
+function extractUserPrompt(task: HermesTask | null): string {
+  if (!task) return ''
+  const args = task.arguments
+  if (args && typeof args === 'object') {
+    const prompt = args.prompt
+    if (typeof prompt === 'string' && prompt.trim()) return prompt.trim()
+  }
+  const summary = task.request_summary
+  if (typeof summary === 'string' && summary.trim()) return summary.trim()
+  return ''
+}
+
+const userPromptContent = computed(() => extractUserPrompt(selectedTask.value))
+
 function hermesEventSeq(payload: Record<string, unknown> | null) {
   if (!payload) return null
   const seq = payload.hermes_event_seq
@@ -590,6 +604,28 @@ onUnmounted(stopEventStream)
             </div>
             <p v-if="selectedTask.error_message" class="text-red-400 break-all">{{ selectedTask.error_message }}</p>
           </dl>
+
+          <div class="mt-6">
+            <div class="flex items-center justify-between gap-2 mb-2">
+              <h3 class="text-sm font-medium">{{ t('hermes.tasks.userPrompt') }}</h3>
+              <Button
+                v-if="userPromptContent"
+                variant="unstyled"
+                size="unstyled"
+                class="p-0.5"
+                @click="copyText(userPromptContent)"
+              >
+                <Copy class="w-3.5 h-3.5 text-muted-foreground" />
+              </Button>
+            </div>
+            <div
+              v-if="userPromptContent"
+              class="rounded-lg border border-border bg-muted/30 p-3 text-xs whitespace-pre-wrap break-words max-h-48 overflow-y-auto"
+            >
+              {{ userPromptContent }}
+            </div>
+            <p v-else class="text-xs text-muted-foreground">{{ t('hermes.tasks.noUserPrompt') }}</p>
+          </div>
 
           <div class="mt-6">
             <h3 class="text-sm font-medium mb-2">{{ t('hermes.tasks.timeline.title') }}</h3>

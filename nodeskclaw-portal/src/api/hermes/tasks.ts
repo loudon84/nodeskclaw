@@ -23,6 +23,8 @@ export interface HermesTask {
   error_code: string | null
   error_message: string | null
   result_summary: string | null
+  arguments?: Record<string, unknown> | null
+  request_summary?: string | null
   created_at: string
   updated_at: string
   priority?: number

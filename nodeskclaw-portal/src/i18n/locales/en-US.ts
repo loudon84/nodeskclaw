@@ -2485,6 +2485,8 @@ const enUS = {
       eventUrl: "Event URL",
       artifactUrl: "Artifact URL",
       copied: "Copied",
+      userPrompt: "User prompt",
+      noUserPrompt: "No user prompt",
       timeline: {
         title: "Timeline",
         hermesEventSeq: "Hermes event seq",
