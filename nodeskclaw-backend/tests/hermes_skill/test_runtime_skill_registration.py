@@ -214,6 +214,7 @@ async def test_org_mcp_tools_call_rejects_route_override():
 
     mapper = McpToolMapper(db)
     with patch.object(PermissionChecker, "require_permission", AsyncMock()), \
+         patch.object(SkillRoutingService, "get_exposed_skill", AsyncMock(return_value=skill)), \
          patch.object(
              SkillRoutingService,
              "extract_routing",

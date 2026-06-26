@@ -58,13 +58,18 @@ async def test_tools_call_tool_not_found():
 async def test_tools_call_skill_not_installed():
     db = AsyncMock()
     mapper = McpToolMapper(db)
+    skill = MagicMock()
+    skill.source_type = "hub"
     with patch.object(PermissionChecker, "require_permission", return_value=None), \
+         patch.object(SkillRoutingService, "get_exposed_skill", AsyncMock(return_value=skill)), \
          patch.object(SkillRoutingService, "resolve_by_tool_name", new_callable=AsyncMock) as mock_resolve, \
+         patch("app.services.hermes_skill.mcp_tool_mapper.AgentAliasResolver") as mock_alias_cls, \
          patch("app.services.hermes_skill.skill_audit_logger.SkillAuditLogger") as mock_audit_cls:
         mock_resolve.side_effect = NotFoundError(
             "Skill test_tool 未安装到任何 Agent",
             "errors.skill.installation_not_found",
         )
+        mock_alias_cls.return_value.enrich_routing = AsyncMock(return_value={})
         mock_audit_cls.return_value = AsyncMock()
         with pytest.raises(NotFoundError) as exc_info:
             await mapper.call_tool("test_tool", {}, "org-1", "user-1")
@@ -79,6 +84,7 @@ async def test_tools_call_invalid_params():
     skill.id = "skill-1"
     skill.skill_id = "skill-ext-1"
     skill.tool_name = "test_tool"
+    skill.source_type = "hub"
     skill.input_schema = {
         "type": "object",
         "properties": {"name": {"type": "string"}},
@@ -113,6 +119,7 @@ async def test_tools_call_invalid_params():
 
     with patch.object(PermissionChecker, "require_permission", return_value=None), \
          patch("app.services.member_skill_service.require_invoke_skill", new_callable=AsyncMock), \
+         patch.object(SkillRoutingService, "get_exposed_skill", AsyncMock(return_value=skill)), \
          patch.object(SkillRoutingService, "resolve_by_tool_name", new_callable=AsyncMock) as mock_resolve, \
          patch("app.services.hermes_skill.mcp_tool_mapper.AgentAliasResolver") as mock_alias_cls, \
          patch("app.services.hermes_skill.mcp_tool_mapper.HermesSkillAuthorizationService") as mock_authz_cls, \
@@ -142,6 +149,7 @@ async def test_tools_call_creates_task_and_events():
     skill.id = "skill-1"
     skill.skill_id = "skill-ext-1"
     skill.tool_name = "test_tool"
+    skill.source_type = "hub"
     skill.is_mcp_exposed = True
     skill.is_active = True
     skill.input_schema = None
@@ -172,6 +180,7 @@ async def test_tools_call_creates_task_and_events():
     mapper = McpToolMapper(db)
     with patch.object(PermissionChecker, "require_permission", return_value=None), \
          patch("app.services.member_skill_service.require_invoke_skill", new_callable=AsyncMock), \
+         patch.object(SkillRoutingService, "get_exposed_skill", AsyncMock(return_value=skill)), \
          patch.object(SkillRoutingService, "resolve_by_tool_name", new_callable=AsyncMock) as mock_resolve, \
          patch("app.services.hermes_skill.mcp_tool_mapper.TaskService") as mock_task_svc_cls, \
          patch("app.services.hermes_skill.mcp_tool_mapper.AgentAliasResolver") as mock_alias_cls, \

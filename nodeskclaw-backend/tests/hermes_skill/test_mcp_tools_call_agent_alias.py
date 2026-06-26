@@ -11,6 +11,7 @@ async def test_call_tool_with_agent_alias_routing():
     db = AsyncMock()
     mapper = McpToolMapper(db)
     skill = MagicMock(skill_id="writer.article", id="skill-db-1", input_schema=None)
+    skill.source_type = "hub"
     installation = MagicMock(
         id="inst-1",
         agent_id="agent-1",
@@ -42,6 +43,7 @@ async def test_call_tool_with_agent_alias_routing():
             perm.require_permission = AsyncMock()
             with patch("app.services.hermes_skill.mcp_tool_mapper.SkillRoutingService") as routing_cls:
                 routing_cls.extract_routing.return_value = ({"requirement": "test"}, {"agent_alias": "common-writer"})
+                routing_cls.return_value.get_exposed_skill = AsyncMock(return_value=skill)
                 routing_cls.return_value.resolve_by_tool_name = AsyncMock(return_value=routing_result)
                 with patch("app.services.hermes_skill.mcp_tool_mapper.AgentAliasResolver") as alias_cls:
                     alias = alias_cls.return_value
