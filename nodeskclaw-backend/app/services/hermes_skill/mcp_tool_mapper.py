@@ -8,12 +8,19 @@ from app.core.exceptions import NotFoundError, BadRequestError, ForbiddenError
 from app.models.base import not_deleted
 from app.models.hermes_skill.skill import HermesSkill
 from app.models.hermes_skill.skill_installation import HermesSkillInstallation
+from app.models.hermes_skill.hermes_task import TaskStatus
 from app.services.hermes_skill.agent_alias_resolver import AgentAliasResolver
 from app.services.hermes_skill.hermes_skill_authorization_service import HermesSkillAuthorizationService
 from app.services.hermes_skill.permission_checker import PermissionChecker
 from app.services.hermes_skill.skill_routing_service import SkillRoutingService
 from app.services.hermes_skill.task_service import TaskService
+from app.services.mcp_skill_gateway.mcp_execution_mode import (
+    WAIT_MODE,
+    resolve_mcp_execution_mode,
+    strip_mcp_control_args,
+)
 from app.services.mcp_skill_gateway.mcp_task_dedup_service import McpTaskDedupService
+from app.services.mcp_skill_gateway.mcp_task_wait_service import McpTaskWaitService
 from app.services.mcp_skill_gateway.output_policy_service import OutputPolicyService
 
 logger = logging.getLogger(__name__)
@@ -193,7 +200,7 @@ class McpToolMapper:
             await PermissionChecker.require_permission(self.db, user_id, org_id, "skill:view")
             await PermissionChecker.require_permission(self.db, user_id, org_id, "skill:invoke")
 
-        raw_args = arguments or {}
+        raw_args, wait_override = strip_mcp_control_args(arguments)
         agent_arguments, explicit_routing = SkillRoutingService.extract_routing(raw_args)
         alias_resolver = AgentAliasResolver(self.db)
         routing_service = SkillRoutingService(self.db)
@@ -337,6 +344,13 @@ class McpToolMapper:
             if skill.source_type == "hermes_api_server":
                 routing_metadata["task_source"] = "org_mcp"
 
+        execution_mode = resolve_mcp_execution_mode(
+            auth_ctx,
+            skill,
+            output_policy,
+            wait_override=wait_override,
+        )
+
         fingerprint = (client_context or {}).get("request_fingerprint")
         if fingerprint:
             existing = await McpTaskDedupService(self.db).find_dedupe_task(org_id, fingerprint)
@@ -358,6 +372,16 @@ class McpToolMapper:
                         "request_fingerprint": fingerprint,
                     },
                 )
+                if execution_mode == WAIT_MODE:
+                    return await self._finalize_wait_response(
+                        existing.id,
+                        org_id,
+                        tool_name=tool_name,
+                        agent_alias=existing_alias,
+                        installation=installation,
+                        deduped=True,
+                        existing_task=existing,
+                    )
                 return self._build_task_response(
                     task=existing,
                     tool_name=tool_name,
@@ -433,6 +457,20 @@ class McpToolMapper:
                 },
             )
 
+        await self.db.flush()
+
+        if execution_mode == WAIT_MODE:
+            await self.db.commit()
+            return await self._finalize_wait_response(
+                task.id,
+                org_id,
+                tool_name=tool_name,
+                agent_alias=agent_alias,
+                installation=installation,
+                deduped=False,
+                existing_task=task,
+            )
+
         return self._build_task_response(
             task=task,
             tool_name=tool_name,
@@ -442,6 +480,59 @@ class McpToolMapper:
             output_policy=output_policy,
             deduped=False,
         )
+
+    async def _finalize_wait_response(
+        self,
+        task_id: str,
+        org_id: str,
+        *,
+        tool_name: str,
+        agent_alias: str | None,
+        installation: Any,
+        deduped: bool,
+        existing_task: Any,
+    ) -> dict[str, Any]:
+        wait_service = McpTaskWaitService()
+        if existing_task.status == TaskStatus.COMPLETED:
+            wait_result = await wait_service.build_result_for_task(existing_task)
+        elif existing_task.status in {
+            TaskStatus.FAILED,
+            TaskStatus.TIMEOUT,
+            TaskStatus.CANCELLED,
+        }:
+            wait_result = wait_service._build_failed_result(existing_task)
+        else:
+            wait_result = await wait_service.wait_for_task_result(task_id, org_id)
+        return self._merge_wait_result(
+            wait_result,
+            tool_name=tool_name,
+            agent_alias=agent_alias,
+            installation=installation,
+            deduped=deduped,
+        )
+
+    def _merge_wait_result(
+        self,
+        wait_result: dict[str, Any],
+        *,
+        tool_name: str,
+        agent_alias: str | None,
+        installation: Any,
+        deduped: bool,
+    ) -> dict[str, Any]:
+        payload = dict(wait_result)
+        payload.update({
+            "tool_name": tool_name,
+            "agent_alias": agent_alias,
+            "agent_id": installation.agent_id,
+            "profile_id": installation.profile_id,
+            "workspace_id": installation.workspace_id,
+            "installation_id": installation.id,
+            "committed": True,
+        })
+        if deduped:
+            payload["deduped"] = True
+        return payload
 
     def _build_task_response(
         self,

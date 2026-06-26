@@ -5,8 +5,7 @@ import pytest
 
 from app.models.hermes_skill.hermes_task import TaskStatus
 from app.services.mcp_skill_gateway.auth import McpAuthContext
-from app.services.mcp_skill_gateway.builtin_task_tool_executor import BuiltinTaskToolExecutor
-from app.services.mcp_skill_gateway.handler import dispatch
+from app.services.mcp_skill_gateway.handler import _build_hermes_skill_text, dispatch
 
 
 def _auth_ctx():
@@ -132,8 +131,30 @@ async def test_tools_call_task_result_completed():
     assert structured["server_artifacts"][0]["artifact_id"] == "art-1"
 
 
+def test_build_hermes_skill_text_completed():
+    text = _build_hermes_skill_text({
+        "task_no": "TASK-001",
+        "status": "completed",
+        "ready": True,
+        "server_artifacts": [{"name": "report.md"}],
+        "kb_status": "pending_review",
+    })
+    assert "TASK-001" in text
+    assert "report.md" in text
+    assert "pending_review" in text
+
+
+def test_build_hermes_skill_text_wait_timeout():
+    text = _build_hermes_skill_text({
+        "task_no": "TASK-001",
+        "status": "running",
+        "wait_timeout": True,
+    })
+    assert "nodeskclaw_task_wait" in text
+
+
 @pytest.mark.asyncio
-async def test_builtin_task_result_not_ready_summary():
+async def test_tools_call_task_wait_delegates_to_wait_service():
     task = SimpleNamespace(
         id="task-1",
         task_no="TASK-001",
@@ -143,15 +164,31 @@ async def test_builtin_task_result_not_ready_summary():
         client_context={"mcp_client_token_id": "tok-1"},
     )
     db = AsyncMock()
-    executor = BuiltinTaskToolExecutor(db)
-    with patch.object(executor.access, "assert_can_access_task", new=AsyncMock(return_value=task)), patch(
+    auth_ctx = _auth_ctx()
+    wait_payload = {
+        "task_id": "task-1",
+        "task_no": "TASK-001",
+        "status": "completed",
+        "ready": True,
+        "server_artifacts": [],
+    }
+
+    with patch(
+        "app.services.mcp_skill_gateway.builtin_task_tool_executor.McpTaskWaitService.wait_for_task_result",
+        new=AsyncMock(return_value=wait_payload),
+    ), patch(
+        "app.services.mcp_skill_gateway.mcp_task_access_service.TaskService.get_task",
+        new=AsyncMock(return_value=task),
+    ), patch(
         "app.services.mcp_skill_gateway.builtin_task_tool_executor.SkillAuditLogger.log",
         new=AsyncMock(),
     ):
-        payload = await executor.call(
-            "nodeskclaw_task_result",
-            {"task_id": "task-1"},
-            _auth_ctx(),
+        from app.services.mcp_skill_gateway.builtin_task_tool_executor import BuiltinTaskToolExecutor
+        payload = await BuiltinTaskToolExecutor(db).call(
+            "nodeskclaw_task_wait",
+            {"task_id": "task-1", "timeout_seconds": 120},
+            auth_ctx,
         )
-    assert payload["structuredContent"]["ready"] is False
+
+    assert payload["structuredContent"]["ready"] is True
     assert "TASK-001" in payload["content"][0]["text"]

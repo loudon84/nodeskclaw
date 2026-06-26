@@ -97,9 +97,9 @@ _TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "task_id": {"type": "string"},
                 "timeout_seconds": {
                     "type": "integer",
-                    "default": 30,
+                    "default": 120,
                     "minimum": 5,
-                    "maximum": 60,
+                    "maximum": 300,
                 },
                 "poll_interval_seconds": {
                     "type": "integer",

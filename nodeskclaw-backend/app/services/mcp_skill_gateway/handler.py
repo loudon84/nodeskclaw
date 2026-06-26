@@ -15,6 +15,7 @@ from app.services.mcp_skill_gateway.builtin_task_tools import (
     list_builtin_task_tool_descriptors,
 )
 from app.services.mcp_skill_gateway.mcp_task_dedup_service import build_mcp_task_dedup_key
+from app.services.mcp_skill_gateway.mcp_execution_mode import strip_mcp_control_args
 from app.services.mcp_skill_gateway.approval_service import check_tool_grant, get_grant_annotation
 from app.services.mcp_skill_gateway.audit_service import log_mcp_call
 from app.services.mcp_skill_gateway.auth import McpAuthContext, McpAuthFailure, resolve_mcp_user
@@ -100,7 +101,8 @@ def _inject_request_fingerprint(
 ) -> dict | None:
     if not settings.MCP_TASK_DEDUP_ENABLED or not auth_ctx:
         return client_context
-    fingerprint = build_mcp_task_dedup_key(org_id, auth_ctx, tool_name, arguments)
+    stripped_args, _ = strip_mcp_control_args(arguments)
+    fingerprint = build_mcp_task_dedup_key(org_id, auth_ctx, tool_name, stripped_args)
     merged = dict(client_context or {})
     merged["request_fingerprint"] = fingerprint
     return merged
@@ -141,13 +143,47 @@ def _tool_call_success(jsonrpc_id: Any, result: dict[str, Any]) -> dict:
     )
 
 
+def _build_hermes_skill_text(result: dict[str, Any]) -> str:
+    task_no = result.get("task_no") or result.get("task_id") or ""
+    status = result.get("status") or ""
+
+    if result.get("ready") is True and status == "completed":
+        artifacts = result.get("server_artifacts") or []
+        kb_status = result.get("kb_status") or ""
+        if artifacts:
+            names = "、".join(
+                a.get("name") or a.get("artifact_id") or ""
+                for a in artifacts[:3]
+                if a.get("name") or a.get("artifact_id")
+            )
+            text = f"任务 {task_no} 已完成。已生成中心产物：{names}。"
+            if kb_status:
+                text += f" Artifact 已保存到 NoDeskClaw 中心产物库，知识库状态：{kb_status}。"
+            return text
+        return f"任务 {task_no} 已完成。"
+
+    if result.get("wait_timeout"):
+        return (
+            f"任务 {task_no} 仍在执行中，本次等待已超时。"
+            "稍后请调用 nodeskclaw_task_wait 查询，不要重复调用原业务工具。"
+        )
+
+    if status in ("failed", "timeout", "cancelled") or result.get("isError"):
+        err = result.get("error") or {}
+        message = err.get("message") or ""
+        return f"任务 {task_no} 未完成，状态：{status}。{message}".strip()
+
+    return f"任务 {task_no} 已提交，状态：{status}。"
+
+
 def _hermes_skill_tool_call_success(jsonrpc_id: Any, result: dict[str, Any]) -> dict:
+    is_error = bool(result.get("isError")) or result.get("status") in ("failed", "timeout", "cancelled")
     return mcp_success(
         jsonrpc_id,
         {
-            "content": [{"type": "text", "text": "任务已创建"}],
+            "content": [{"type": "text", "text": _build_hermes_skill_text(result)}],
             "structuredContent": result,
-            "isError": False,
+            "isError": is_error,
         },
     )
 
@@ -803,7 +839,13 @@ async def _handle_tools_call(
             status="success",
             duration_ms=duration_ms,
             arguments=arguments,
-            result_summary={"task_id": result.get("task_id"), "status": result.get("status")},
+            result_summary={
+                "task_id": result.get("task_id"),
+                "status": result.get("status"),
+                "ready": result.get("ready"),
+                "wait_timeout": result.get("wait_timeout"),
+                "deduped": result.get("deduped"),
+            },
             client_name=client_name,
         )
         await db.commit()

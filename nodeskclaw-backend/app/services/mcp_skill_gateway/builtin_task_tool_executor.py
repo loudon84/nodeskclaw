@@ -1,6 +1,6 @@
-import asyncio
-import time
 from typing import Any
+
+from app.services.mcp_skill_gateway.mcp_task_wait_service import McpTaskWaitService
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -361,46 +361,28 @@ class BuiltinTaskToolExecutor:
         auth_ctx: McpAuthContext,
     ) -> dict[str, Any]:
         task_id = str(arguments.get("task_id") or "").strip()
-        timeout_seconds = int(arguments.get("timeout_seconds") or 30)
-        poll_interval = int(arguments.get("poll_interval_seconds") or 3)
+        timeout_seconds = int(arguments.get("timeout_seconds") or 120)
         timeout_seconds = max(5, min(timeout_seconds, settings.MCP_TASK_WAIT_MAX_SECONDS))
-        poll_interval = max(1, min(poll_interval, 10))
 
-        deadline = time.monotonic() + timeout_seconds
-        task = await self.access.assert_can_access_task(task_id, auth_ctx)
-
-        while task.status in _RUNNING_STATUSES:
-            if time.monotonic() >= deadline:
-                structured = {
-                    "ready": False,
-                    "task_id": task.id,
-                    "status": task.status.value,
-                    "message": "任务仍在执行中",
-                    "next_action": "call_task_wait_or_timeline",
-                    "poll_after_seconds": 5,
-                }
-                summary = f"任务 {task.task_no} 等待超时，当前状态：{task.status.value}。"
-                return self._wrap_result(summary, structured)
-            await asyncio.sleep(poll_interval)
-            await self.db.refresh(task)
-
-        if task.status == TaskStatus.COMPLETED:
-            result_payload = await self._task_result(
-                {"task_id": task_id, "include_timeline": False, "include_artifacts": True},
-                auth_ctx,
-            )
-            structured = dict(result_payload.get("structuredContent") or {})
-            structured["ready"] = True
-            structured["task_id"] = task.id
-            structured["status"] = task.status.value
-            return self._wrap_result(result_payload["content"][0]["text"], structured)
-
-        result_payload = await self._task_result({"task_id": task_id}, auth_ctx)
-        structured = dict(result_payload.get("structuredContent") or {})
-        structured["ready"] = False
-        structured["task_id"] = task.id
-        structured["status"] = task.status.value
-        return self._wrap_result(result_payload["content"][0]["text"], structured)
+        await self.access.assert_can_access_task(task_id, auth_ctx)
+        wait_result = await McpTaskWaitService().wait_for_task_result(
+            task_id,
+            auth_ctx.org.id,
+            timeout_seconds=timeout_seconds,
+        )
+        summary = _build_task_wait_summary(wait_result)
+        await self._log_audit(
+            "mcp.task.wait.viewed",
+            task_id,
+            auth_ctx,
+            {
+                "task_id": task_id,
+                "status": wait_result.get("status"),
+                "ready": wait_result.get("ready"),
+                "wait_timeout": wait_result.get("wait_timeout"),
+            },
+        )
+        return self._wrap_result(summary, wait_result)
 
     async def _materialized_server_artifacts(
         self,
@@ -471,5 +453,25 @@ class BuiltinTaskToolExecutor:
         return {
             "content": [{"type": "text", "text": summary}],
             "structuredContent": structured,
-            "isError": False,
+            "isError": bool(structured.get("isError")),
         }
+
+
+def _build_task_wait_summary(result: dict[str, Any]) -> str:
+    task_no = result.get("task_no") or result.get("task_id") or ""
+    status = result.get("status") or ""
+    if result.get("ready") is True and status == "completed":
+        artifacts = result.get("server_artifacts") or []
+        if artifacts:
+            names = "、".join(a.get("name") or "" for a in artifacts[:3] if a.get("name"))
+            return f"任务 {task_no} 已完成。已生成中心产物：{names}。"
+        return f"任务 {task_no} 已完成。"
+    if result.get("wait_timeout"):
+        return (
+            f"任务 {task_no} 仍在执行中，本次等待已超时。"
+            "请稍后再次调用 nodeskclaw_task_wait。"
+        )
+    if result.get("isError") or status in ("failed", "timeout", "cancelled"):
+        err = result.get("error") or {}
+        return f"任务 {task_no} 执行失败：{err.get('message') or status}"
+    return f"任务 {task_no} 当前状态：{status}。"
