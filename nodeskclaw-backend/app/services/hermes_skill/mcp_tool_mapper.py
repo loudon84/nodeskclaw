@@ -13,6 +13,7 @@ from app.services.hermes_skill.hermes_skill_authorization_service import HermesS
 from app.services.hermes_skill.permission_checker import PermissionChecker
 from app.services.hermes_skill.skill_routing_service import SkillRoutingService
 from app.services.hermes_skill.task_service import TaskService
+from app.services.mcp_skill_gateway.mcp_task_dedup_service import McpTaskDedupService
 from app.services.mcp_skill_gateway.output_policy_service import OutputPolicyService
 
 logger = logging.getLogger(__name__)
@@ -186,6 +187,7 @@ class McpToolMapper:
         *,
         client_context: dict | None = None,
         profile_name: str | None = None,
+        auth_ctx: Any = None,
     ) -> dict[str, Any]:
         if user_id:
             await PermissionChecker.require_permission(self.db, user_id, org_id, "skill:view")
@@ -335,6 +337,37 @@ class McpToolMapper:
             if skill.source_type == "hermes_api_server":
                 routing_metadata["task_source"] = "org_mcp"
 
+        fingerprint = (client_context or {}).get("request_fingerprint")
+        if fingerprint:
+            existing = await McpTaskDedupService(self.db).find_dedupe_task(org_id, fingerprint)
+            if existing:
+                from app.services.hermes_skill.skill_audit_logger import SkillAuditLogger
+                audit_logger = SkillAuditLogger(self.db)
+                existing_routing = existing.routing_metadata or {}
+                existing_output = existing_routing.get("output_policy") or output_policy
+                existing_alias = existing_routing.get("agent_alias") or agent_alias
+                await audit_logger.log(
+                    action="mcp.task.dedup.hit",
+                    target_id=existing.id,
+                    org_id=org_id,
+                    actor_id=user_id or "",
+                    details={
+                        "task_id": existing.id,
+                        "task_no": existing.task_no,
+                        "tool_name": tool_name,
+                        "request_fingerprint": fingerprint,
+                    },
+                )
+                return self._build_task_response(
+                    task=existing,
+                    tool_name=tool_name,
+                    agent_alias=existing_alias,
+                    installation=installation,
+                    routing_result=routing_result,
+                    output_policy=existing_output,
+                    deduped=True,
+                )
+
         task = await TaskService(self.db).create_task(
             org_id=org_id,
             skill_id=skill.skill_id,
@@ -386,8 +419,42 @@ class McpToolMapper:
                 "agent_id": installation.agent_id,
             },
         )
+        if fingerprint:
+            await audit_logger.log(
+                action="mcp.task.dedup.created",
+                target_id=task.id,
+                org_id=org_id,
+                actor_id=user_id or "",
+                details={
+                    "task_id": task.id,
+                    "task_no": task.task_no,
+                    "tool_name": tool_name,
+                    "request_fingerprint": fingerprint,
+                },
+            )
 
-        return {
+        return self._build_task_response(
+            task=task,
+            tool_name=tool_name,
+            agent_alias=agent_alias,
+            installation=installation,
+            routing_result=routing_result,
+            output_policy=output_policy,
+            deduped=False,
+        )
+
+    def _build_task_response(
+        self,
+        *,
+        task: Any,
+        tool_name: str,
+        agent_alias: str | None,
+        installation: Any,
+        routing_result: Any,
+        output_policy: dict,
+        deduped: bool,
+    ) -> dict[str, Any]:
+        payload = {
             "tool_name": tool_name,
             "agent_alias": agent_alias,
             "agent_id": installation.agent_id,
@@ -401,7 +468,10 @@ class McpToolMapper:
             "artifact_url": task.artifact_url,
             "result_url": f"/api/v1/hermes/tasks/{task.id}/result",
             "artifact_mode": output_policy.get("artifact_mode", "pull_only"),
-            "server_artifacts": [],
+            "server_artifacts": task.server_artifacts or [],
             "routing_reason": routing_result.reason,
             "installation_id": installation.id,
         }
+        if deduped:
+            payload["deduped"] = True
+        return payload

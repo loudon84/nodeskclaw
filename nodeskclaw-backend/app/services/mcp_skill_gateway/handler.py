@@ -1,6 +1,7 @@
 import json
 import logging
 import time
+from types import SimpleNamespace
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,6 +9,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.exceptions import BadRequestError, ForbiddenError, NotFoundError
 from app.services.hermes_skill.mcp_tool_mapper import McpToolMapper
+from app.services.mcp_skill_gateway.builtin_task_tool_executor import BuiltinTaskToolExecutor
+from app.services.mcp_skill_gateway.builtin_task_tools import (
+    is_builtin_task_tool,
+    list_builtin_task_tool_descriptors,
+)
+from app.services.mcp_skill_gateway.mcp_task_dedup_service import build_mcp_task_dedup_key
 from app.services.mcp_skill_gateway.approval_service import check_tool_grant, get_grant_annotation
 from app.services.mcp_skill_gateway.audit_service import log_mcp_call
 from app.services.mcp_skill_gateway.auth import McpAuthContext, McpAuthFailure, resolve_mcp_user
@@ -57,17 +64,46 @@ def _normalize_headers(headers: dict | None) -> dict[str, str]:
     return {str(k).lower(): str(v) for k, v in headers.items()}
 
 
-def _build_client_context(headers: dict | None) -> dict | None:
+def _build_client_context(
+    headers: dict | None,
+    auth_ctx: McpAuthContext | None = None,
+) -> dict | None:
     normalized = _normalize_headers(headers)
-    context = {
+    context: dict[str, Any] = {
         "desktop_device_id": normalized.get(HEADER_DEVICE_ID.lower()),
         "profile": normalized.get(HEADER_HERMES_PROFILE.lower()),
         "client": normalized.get(HEADER_CLIENT.lower()),
         "proxy_version": normalized.get(HEADER_PROXY_VERSION.lower()),
     }
-    if any(context.values()):
-        return context
-    return None
+    if auth_ctx and auth_ctx.auth_type == "mcp_client_token":
+        context.update({
+            "source": "mcp_skill_gateway",
+            "auth_type": "mcp_client_token",
+            "mcp_client_token_id": auth_ctx.mcp_client_token_id,
+            "mcp_client_token_prefix": auth_ctx.mcp_client_token_prefix,
+            "hermes_agent_id": auth_ctx.hermes_agent_id,
+            "mcp_profile": auth_ctx.profile,
+            "mcp_workspace_id": auth_ctx.workspace_id,
+            "mcp_client_name": get_client_name(auth_ctx.user.id, auth_ctx.org.id),
+        })
+    cleaned = {key: value for key, value in context.items() if value}
+    return cleaned or None
+
+
+def _inject_request_fingerprint(
+    client_context: dict | None,
+    *,
+    org_id: str,
+    auth_ctx: McpAuthContext | None,
+    tool_name: str,
+    arguments: dict[str, Any],
+) -> dict | None:
+    if not settings.MCP_TASK_DEDUP_ENABLED or not auth_ctx:
+        return client_context
+    fingerprint = build_mcp_task_dedup_key(org_id, auth_ctx, tool_name, arguments)
+    merged = dict(client_context or {})
+    merged["request_fingerprint"] = fingerprint
+    return merged
 
 
 def _tool_approval_mode(tool_name: str) -> str | None:
@@ -528,6 +564,12 @@ async def _collect_tools(
             continue
         seen.add(name)
         merged.append(tool)
+    for tool in list_builtin_task_tool_descriptors():
+        name = tool.get("name")
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        merged.append(tool)
     return merged
 
 
@@ -623,12 +665,86 @@ async def _handle_tools_call(
     if auth_ctx and auth_ctx.auth_type == "mcp_client_token":
         if _is_genehub_gateway_tool(tool_name) or _is_hermes_gateway_tool(tool_name):
             return mcp_error_v2(jsonrpc_id, MCP_INTERNAL_ERROR, "Tool not allowed for MCP client token")
-        if auth_ctx.allowed_skills and tool_name not in set(auth_ctx.allowed_skills):
-            return mcp_error_v2(jsonrpc_id, MCP_INTERNAL_ERROR, "Tool not allowed for MCP client token")
+        if not is_builtin_task_tool(tool_name):
+            if auth_ctx.allowed_skills and tool_name not in set(auth_ctx.allowed_skills):
+                return mcp_error_v2(jsonrpc_id, MCP_INTERNAL_ERROR, "Tool not allowed for MCP client token")
 
     tool_meta = get_tool(tool_name)
     client_name = get_client_name(user_id, org_id)
     started = time.perf_counter()
+
+    if is_builtin_task_tool(tool_name):
+        effective_ctx = auth_ctx or McpAuthContext(
+            user=user,
+            org=SimpleNamespace(id=org_id),
+            auth_type="user_jwt",
+        )
+        try:
+            result = await BuiltinTaskToolExecutor(db).call(
+                tool_name=tool_name,
+                arguments=arguments,
+                auth_ctx=effective_ctx,
+            )
+            duration_ms = int((time.perf_counter() - started) * 1000)
+            await log_mcp_call(
+                db,
+                org_id=org_id,
+                user_id=user_id,
+                tool_name=tool_name,
+                status="success",
+                duration_ms=duration_ms,
+                arguments=arguments,
+                result_summary={"tool": tool_name},
+                client_name=client_name,
+            )
+            return mcp_success(jsonrpc_id, result)
+        except (NotFoundError, BadRequestError, ForbiddenError) as exc:
+            error_response = map_app_error(jsonrpc_id, exc.message_key, exc.message)
+            duration_ms = int((time.perf_counter() - started) * 1000)
+            error_data = error_response.get("error", {}).get("data", {})
+            await log_mcp_call(
+                db,
+                org_id=org_id,
+                user_id=user_id,
+                tool_name=tool_name,
+                status="failed",
+                duration_ms=duration_ms,
+                arguments=arguments,
+                error_code=error_data.get("errorCode"),
+                error_message=exc.message,
+                client_name=client_name,
+            )
+            _log_mcp_error(
+                error_data.get("errorCode", MCP_INTERNAL_ERROR),
+                "tools/call",
+                user_id=user_id,
+                org_id=org_id,
+                reason=exc.message,
+            )
+            return error_response
+        except Exception as exc:
+            reason = str(exc)[:256]
+            duration_ms = int((time.perf_counter() - started) * 1000)
+            await log_mcp_call(
+                db,
+                org_id=org_id,
+                user_id=user_id,
+                tool_name=tool_name,
+                status="failed",
+                duration_ms=duration_ms,
+                arguments=arguments,
+                error_code=MCP_INTERNAL_ERROR,
+                error_message=reason,
+                client_name=client_name,
+            )
+            _log_mcp_error(
+                MCP_INTERNAL_ERROR,
+                "tools/call",
+                user_id=user_id,
+                org_id=org_id,
+                reason=reason,
+            )
+            return mcp_error_v2(jsonrpc_id, MCP_INTERNAL_ERROR, reason)
 
     if _is_genehub_gateway_tool(tool_name):
         return await _execute_gateway_tool_call(
@@ -659,7 +775,14 @@ async def _handle_tools_call(
     mapper = McpToolMapper(db)
     normalized = _normalize_headers(request_headers)
     profile_name = auth_ctx.profile if auth_ctx and auth_ctx.profile else normalized.get(HEADER_HERMES_PROFILE.lower())
-    client_context = _build_client_context(request_headers)
+    client_context = _build_client_context(request_headers, auth_ctx)
+    client_context = _inject_request_fingerprint(
+        client_context,
+        org_id=org_id,
+        auth_ctx=auth_ctx,
+        tool_name=tool_name,
+        arguments=arguments,
+    )
     try:
         result = await mapper.call_tool(
             tool_name,
@@ -669,6 +792,7 @@ async def _handle_tools_call(
             jsonrpc_id=jsonrpc_id,
             client_context=client_context,
             profile_name=profile_name,
+            auth_ctx=auth_ctx,
         )
         duration_ms = int((time.perf_counter() - started) * 1000)
         await log_mcp_call(

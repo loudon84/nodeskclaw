@@ -17,6 +17,7 @@ class McpAuthContext:
     org: Organization
     auth_type: str = "user_jwt"
     mcp_client_token_id: str | None = None
+    mcp_client_token_prefix: str | None = None
     profile: str | None = None
     workspace_id: str | None = None
     scopes: list[str] = field(default_factory=list)
@@ -79,6 +80,7 @@ async def resolve_mcp_client_token(token: str, db: AsyncSession) -> McpAuthConte
         org=org,
         auth_type="mcp_client_token",
         mcp_client_token_id=record.id,
+        mcp_client_token_prefix=record.token_prefix,
         profile=record.profile,
         workspace_id=record.workspace_id,
         scopes=list(record.scopes or []),
