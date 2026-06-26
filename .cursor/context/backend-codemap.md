@@ -21,7 +21,29 @@ nodeskclaw-backend 是 NoDeskClaw 的 FastAPI 后端，负责 API、认证依赖
 | `app/realtime/` | WebSocket/SSE |
 | `alembic/` | 数据库迁移 |
 
-## 子文档导航
+## 设计文档（双轨衔接）
+
+功能变动时 **先读设计、再读 CODEMAP**：`docs/backend/` 说明模块做什么、接口契约与数据流；本目录说明代码在哪、改哪几个文件。
+
+| 步骤 | 读什么 | 目的 |
+|------|--------|------|
+| 1 | `docs/backend/index.md` | 能力域、分层、模块边界 |
+| 2 | 下表「任务域 → 模块文档」中 **1 份** | 契约、数据流、接口清单 |
+| 3 | 本 Hub + 1 个 CODEMAP 子索引 | 路由 / model / service 文件路径 |
+
+### 任务域 → 模块设计文档
+
+| 任务域 | 设计文档 | CODEMAP 子索引 |
+|--------|----------|----------------|
+| Hermes Skill、任务、产物、Agent 绑定、组织 MCP Session | `docs/backend/hermes_skill.md` | `backend-api-index.md` + `backend-services-index.md` |
+| MCP Skill Gateway、tools/call、审批、产物桥接、KB 入库 | `docs/backend/mcp_skill_gateway.md` | 同上 |
+| 全栈概览、API 前缀、环境变量、本地开发 | `nodeskclaw-backend/README.md` | 本 Hub |
+| 实例 Runtime、K8s、消息总线、部署 | `@runtime-codemap.md` | 不读本 Hub 的 Runtime 细节 |
+| 其它域（Workspace 黑板等） | `docs/backend/index.md` + `docs/后端架构设计.md`（按需） | 按改码类型选子索引 |
+
+实现 + review 通过后：契约或架构有变 → 回写 `docs/backend/`；仅路径/目录有变 → 酌情更新本目录子索引。
+
+## 子文档导航（CODEMAP 定位）
 
 按任务类型只读 **Hub + 1 个子文档**，不要一次加载全部索引。
 
@@ -80,9 +102,12 @@ Hub → `app/core/deps.py`、`app/core/feature_gate.py`、`app/services/auth_ser
 - `openclaw/`
 - `vibecraft/`
 - `hermes-agent/`
-- `node_modules/`、`dist/`、`docs/`、`docs_prd/`
+- `node_modules/`、`dist/`
+- `docs_prd/`（PRD 仅在用户点名或需求澄清时读）
 
-除非任务明确要求跨端联调，不要读取以上目录。
+**允许且鼓励**（功能变动时）：`docs/backend/`（先 `index.md`，再 1 份模块文档）。
+
+除非任务明确要求跨端联调，不要读取以上禁止目录。
 
 ## 常用命令
 

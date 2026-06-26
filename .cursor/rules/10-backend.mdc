@@ -17,5 +17,6 @@ alwaysApply: false
 - 解析 openclaw.json 等 JSONC 文件前必须剥离 // 行注释。
 - NFS 操作时注意容器路径与本地挂载路径的转换。
 - 修改 Gene 模板或 Agent 行为后需评估是否同步 Skill 定义。
-- 默认先读取 .cursor/context/backend-codemap.md（Hub），再按任务读 1 个子索引：backend-api-index.md / backend-models-migration.md / backend-services-index.md；Runtime/K8s 任务读 runtime-codemap.md。
+- **双轨读档（需求分析）**：涉及 nodeskclaw-backend 功能变动时，先读 `docs/backend/index.md` 确认能力域与模块边界；再按任务域读 **1 份** 模块设计文档（见 `backend-codemap.md` 任务域映射表）。然后用 `.cursor/context/backend-codemap.md`（Hub）+ 1 个子索引定位改码路径：backend-api-index.md / backend-models-migration.md / backend-services-index.md；Runtime/K8s 任务读 runtime-codemap.md。设计文档定「做什么、契约与数据流」；CODEMAP 定「改哪些文件」——互补，不互相替代。
+- **文档回写（实现 + review 通过后）**：若变更涉及新/改 API、数据模型、跨模块数据流、权限码、MCP 契约或环境变量，必须同步更新 `docs/backend/` 对应文档；跨域或新能力先更新 `index.md`，再更新模块专文。仅内部重构且无行为变化可不更新，须在 PR/回复中说明「无文档变更」。目录重组或新增路由文件时，酌情更新 CODEMAP 子索引（locator），不必把架构叙述写进 CODEMAP。
 - 不要读取 portal、llm-proxy、ee、openclaw、vibecraft，除非任务明确要求。
