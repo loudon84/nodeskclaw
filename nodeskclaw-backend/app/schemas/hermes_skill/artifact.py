@@ -24,5 +24,7 @@ class ArtifactRead(BaseModel):
     permission_scope: str = "workspace"
     preview_supported: bool = False
     metadata_json: dict | None = None
+    source: str = "discovery"
+    kb_status: str = "none"
     created_by: str | None = None
     created_at: datetime | None = None

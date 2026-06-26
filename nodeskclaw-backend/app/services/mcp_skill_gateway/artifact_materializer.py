@@ -36,11 +36,57 @@ def _format_date(dt: datetime | None = None) -> str:
     return when.strftime("%Y%m%d_%H%M")
 
 
+_COMPANY_PROMPT_PATTERNS = [
+    re.compile(r"为(.+?)做客户画像"),
+    re.compile(r"分析(.+?)的客户画像"),
+    re.compile(r"(.+?)客户画像"),
+    re.compile(r"公司[：:]\s*(.+)"),
+    re.compile(r"企业[：:]\s*(.+)"),
+    re.compile(r"客户[：:]\s*(.+)"),
+]
+
+_COMPANY_ARG_KEYS = (
+    "company",
+    "company_name",
+    "customer",
+    "customer_name",
+    "enterprise",
+    "enterprise_name",
+    "name",
+)
+
+
+def extract_company_from_task(task: HermesTask) -> str:
+    args = task.arguments or {}
+
+    for key in _COMPANY_ARG_KEYS:
+        value = args.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+
+    context = args.get("context")
+    if isinstance(context, dict):
+        for key in _COMPANY_ARG_KEYS:
+            value = context.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+
+    prompt = str(args.get("prompt") or task.request_summary or "")
+    for pattern in _COMPANY_PROMPT_PATTERNS:
+        match = pattern.search(prompt)
+        if match:
+            value = match.group(1).strip(" ，。,.：:；;")
+            if value:
+                return value
+
+    return "unknown"
+
+
 def render_filename(template: str, task: HermesTask, *, completed_at: datetime | None = None) -> str:
     args = task.arguments or {}
     replacements = {
         "topic": _sanitize_filename_part(str(args.get("topic") or args.get("subject") or task.request_summary or "report")),
-        "company": _sanitize_filename_part(str(args.get("company") or args.get("company_name") or args.get("name") or "unknown")),
+        "company": _sanitize_filename_part(extract_company_from_task(task)),
         "date": _format_date(completed_at),
     }
     filename = template

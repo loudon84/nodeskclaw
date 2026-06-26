@@ -187,8 +187,9 @@ hermes_task_worker
     ├─ route_snapshot.route_type == "hermes_api_server"
     │     → execute_runtime_skill_via_api_server()（指定实例，不 fallback）
     │     → mark_completed(result_summary)
-    │     → ServerArtifactService.create_from_task_result()（v5.6，用全文 content_text 物化）
     │     → ArtifactDiscoveryService（v5.3.1，从响应文本发现 workspace 产物）
+    │     → ServerArtifactService.create_from_discovered_artifacts()（v5.6.2，优先 promote 真实报告）
+    │     → 若无可 promote 文件 → create_from_task_result() fallback（v5.6 content_text 物化）
     └─ 其他 route_type → HermesAgentAdapter /v1/runs + outputs 目录 scan
 ```
 
@@ -244,7 +245,8 @@ v5.6 为 MCP Skill Gateway 增加 **Pull-only 产物桥接**：将 Runtime Skill
 |------|------|
 | 复用 `HermesArtifact` | 不新建 `hermes_task_artifacts`；物化产物 `source=materialized`、`storage_type=object_store` |
 | Pull-only | `artifact_mode` 固定 `pull_only`；Gateway 物化到中心库，不自动写入实例 workspace |
-| 全文物化 | Worker 使用 API 响应全文 `content_text`，**不能**读 DB 中截断的 `result_summary`（500 字） |
+| 全文物化 | fallback 时 Worker 使用 API 响应全文 `content_text` 物化；**优先** promote discovery 真实 workspace 文件（v5.6.2） |
+| 真实文件优先 | Discovery 先于物化；promote 成功则跳过 content_text 物化，KB job 绑定真实报告（v5.6.2） |
 | 异常隔离 | 物化失败不影响任务 `completed`；写审计 `mcp_artifact.materialize.failed` |
 | 安全 | frontmatter / 正文不得写入 token、Authorization 等敏感信息 |
 
@@ -288,29 +290,56 @@ installation.routing_metadata.output_policy
 
 管理员可通过 `PATCH /api/v1/hermes/skills/{skill_id}/output-policy` 写入 Skill 级策略；Installation 级可在 `routing_metadata.output_policy` 覆盖。
 
-### 物化与存储流水线
+### 物化与存储流水线（v5.6.2 更新）
 
 ```
 任务 completed（Worker 持有全文 content_text）
     │
     ▼
-ServerArtifactService.create_from_task_result()
+ArtifactDiscoveryService.discover_and_register_for_task()
+    │  发现 Hermes workspace 真实导出文件（.md/.txt/.json/.csv）
+    ▼
+ServerArtifactService.create_from_discovered_artifacts()   # v5.6.2
     ├─ store_to_gateway=false → 跳过
-    ├─ ArtifactMaterializer.materialize()
-    │     markdown：YAML frontmatter（source/task_id/tool_name/artifact_id/created_at/kb_status）+ 正文
-    │     filename_template → 清洗非法字符
-    │     suggested_workspace_path → workspace/{dir}/{filename}
+    ├─ 过滤 eligible discovery artifacts（本地文件、PathGuard、MIME/扩展名）
+    ├─ 读取真实文件 → ArtifactStoreService.store()
+    ├─ 原地更新 HermesArtifact（object_store、metadata.source=hermes_api_server_workspace_promoted）
+    ├─ KbIngestionService.create_job()（kb_ingest.enabled 时）
+    └─ 返回 server_artifacts[]
+           │
+           ▼（若无 discovery 产物或 promote 全部失败，且 fallback 开启）
+ServerArtifactService.create_from_task_result()   # fallback
+    ├─ ArtifactMaterializer.materialize()（全文 content_text，非 result_summary[:500]）
     ├─ ArtifactStoreService.store()
-    │     object_key = orgs/{org_id}/tasks/{task_id}/artifacts/{artifact_id}/{filename}
-    │     → storage_service.upload_raw()
-    ├─ 创建 HermesArtifact（source=materialized, storage_type=object_store, object_key, kb_status, ...）
-    ├─ KbIngestionService.create_job()（kb_ingest.enabled 时，sha256 去重）
+    ├─ 创建 HermesArtifact（source=materialized, metadata.source=materialized_fallback）
+    ├─ KbIngestionService.create_job()
     └─ 返回 server_artifacts[]
            │
            ▼
 写 task.server_artifacts / artifact_status=stored / kb_status
-可选：result_summary 末尾追加紧凑链接（仍受 500 字限制）
 ```
+
+配置项（`config.py`）：
+
+| 配置 | 默认 | 说明 |
+|------|------|------|
+| `HERMES_ARTIFACT_PROMOTE_DISCOVERED_ENABLED` | true | 是否 promote discovery 真实文件 |
+| `HERMES_ARTIFACT_MATERIALIZE_FALLBACK_ENABLED` | true | promote 失败时是否 fallback 物化 content_text |
+| `HERMES_ARTIFACT_PROMOTE_MODE` | `all_documents` | `primary_only` 时只 promote 主文档 |
+
+### 物化与存储流水线（v5.6 原始 fallback 细节）
+
+fallback `create_from_task_result()` 内部：
+
+```
+    ├─ ArtifactMaterializer.materialize()
+    │     markdown：YAML frontmatter + 正文；filename 支持从 prompt 提取 company（v5.6.2）
+    ├─ ArtifactStoreService.store()
+    ├─ 创建 HermesArtifact（source=materialized, storage_type=object_store）
+    └─ KbIngestionService.create_job()（sha256 去重时同步 artifact.kb_status）
+```
+
+可选：result_summary 末尾追加紧凑链接（仍受 500 字限制）。
 
 ### server_artifacts 响应形态
 
@@ -331,7 +360,7 @@ ServerArtifactService.create_from_task_result()
 
 ### 知识库入库（KbIngestionService）
 
-当 `output_policy.kb_ingest.enabled=true` 时，物化后创建 `HermesArtifactKbIngestionJob`：
+当 `output_policy.kb_ingest.enabled=true` 时，**promote 或 fallback 物化成功后**创建 `HermesArtifactKbIngestionJob`（v5.6.2：优先绑定真实报告产物，非 unknown 物化副本）：
 
 | 状态 | 说明 |
 |------|------|
@@ -339,7 +368,7 @@ ServerArtifactService.create_from_task_result()
 | `approved` → `indexing` → `indexed` | v5.6 为 hook，无真实索引执行器 |
 | `rejected` | 审核拒绝 |
 
-- **sha256 去重**：同组织同 `sha256` 已有 job 则跳过创建
+- **sha256 去重**：同组织同 `sha256` 已有 job 则跳过创建，并将 `artifact.kb_status` 同步为已有 job 状态（v5.6.2）
 - **REST API**（`hermes_skill/kb_ingestion_router.py`）：列表 / approve / reject / 手动 `kb-ingest`
 - **审计**：`mcp_artifact.kb_job.created` / `approved` / `rejected` / `indexed`
 

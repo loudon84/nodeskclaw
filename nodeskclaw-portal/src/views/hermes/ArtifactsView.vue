@@ -14,6 +14,7 @@ import { useToast } from '@/composables/useToast'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table'
+import { Badge } from '@/components/ui/badge'
 import {
   Sheet,
   SheetContent,
@@ -40,6 +41,23 @@ const previewContent = ref('')
 const previewTitle = ref('')
 const previewTruncated = ref(false)
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
+
+const kbStatusClass: Record<string, string> = {
+  pending_review: 'bg-amber-500/15 text-amber-400',
+  indexed: 'bg-emerald-500/15 text-emerald-400',
+  rejected: 'bg-red-500/15 text-red-400',
+  none: 'bg-muted text-muted-foreground',
+}
+
+function artifactSourceKey(artifact: Artifact): string {
+  const meta = artifact.metadata_json
+  if (meta && meta.source === 'hermes_api_server_workspace_promoted') return 'promoted'
+  if (artifact.source === 'materialized' && artifact.file_name.startsWith('unknown_')) {
+    return 'materialized_fallback'
+  }
+  if (artifact.source === 'materialized') return 'materialized'
+  return artifact.source || 'discovery'
+}
 
 function formatBytes(size: number | null | undefined) {
   if (!size) return '-'
@@ -190,7 +208,23 @@ onMounted(fetchArtifacts)
             :key="artifact.id"
             class="border-b border-border last:border-b-0 hover:bg-accent/50 transition-colors"
           >
-            <TableCell class="px-4 py-3 font-medium">{{ artifact.file_name }}</TableCell>
+            <TableCell class="px-4 py-3 font-medium">
+              <div class="space-y-1">
+                <div>{{ artifact.file_name }}</div>
+                <div class="flex flex-wrap gap-1">
+                  <Badge variant="outline" class="text-[10px]">
+                    {{ t(`hermes.artifacts.source.${artifactSourceKey(artifact)}`, artifactSourceKey(artifact)) }}
+                  </Badge>
+                  <Badge
+                    variant="outline"
+                    :class="kbStatusClass[artifact.kb_status ?? 'none'] ?? kbStatusClass.none"
+                    class="text-[10px]"
+                  >
+                    {{ t(`hermes.artifacts.kbStatus.${artifact.kb_status ?? 'none'}`, artifact.kb_status ?? 'none') }}
+                  </Badge>
+                </div>
+              </div>
+            </TableCell>
             <TableCell class="px-4 py-3 text-muted-foreground text-xs">{{ artifact.title || '-' }}</TableCell>
             <TableCell class="px-4 py-3 text-muted-foreground text-xs">{{ artifact.content_type || '-' }}</TableCell>
             <TableCell class="px-4 py-3 font-mono text-[10px] text-muted-foreground" :title="artifact.sha256 ?? undefined">

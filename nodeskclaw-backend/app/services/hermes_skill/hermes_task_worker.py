@@ -494,60 +494,12 @@ class HermesTaskWorker:
         output_policy = None
         if task.routing_metadata and isinstance(task.routing_metadata, dict):
             output_policy = task.routing_metadata.get("output_policy")
-        if output_policy:
-            try:
-                from app.services.mcp_skill_gateway.server_artifact_service import ServerArtifactService
-                from app.services.hermes_skill.skill_audit_logger import SkillAuditLogger
 
-                server_svc = ServerArtifactService(db)
-                server_artifacts = await server_svc.create_from_task_result(
-                    task=task,
-                    full_result_text=content_text,
-                    output_policy=output_policy,
-                )
-                if server_artifacts:
-                    task.server_artifacts = server_artifacts
-                    task.artifact_status = "stored"
-                    task.kb_status = server_svc.resolve_task_kb_status(server_artifacts)
-                    task.result_summary = server_svc.append_artifact_links(
-                        task.result_summary or content_text[:500],
-                        server_artifacts,
-                    )
-                    await db.flush()
-            except Exception as exc:
-                logger.error(
-                    "Server artifact materialization failed for task %s: %s",
-                    task.id,
-                    exc,
-                    exc_info=True,
-                )
-                audit_logger = SkillAuditLogger(db)
-                await audit_logger.log(
-                    action="mcp_artifact.materialize.failed",
-                    target_id=task.id,
-                    org_id=task.org_id,
-                    actor_type="system",
-                    actor_id=self._worker_id,
-                    details={"error": str(exc)[:512], "tool_name": task.tool_name},
-                )
-
-        await audit_logger.log(
-            action="hermes.task.completed",
-            target_id=task.id,
-            org_id=task.org_id,
-            actor_type="system",
-            actor_id=self._worker_id,
-            details={
-                "task_no": task.task_no,
-                "skill_id": task.skill_id,
-                "tool_name": task.tool_name,
-                **instance_detail,
-            },
-        )
+        discovered_artifacts: list = []
         if settings.HERMES_ARTIFACT_DISCOVERY_ENABLED:
             try:
                 from app.services.hermes_skill.artifact_discovery_service import ArtifactDiscoveryService
-                await ArtifactDiscoveryService(db).discover_and_register_for_task(
+                discovered_artifacts = await ArtifactDiscoveryService(db).discover_and_register_for_task(
                     task=task,
                     result_text=content_text,
                     force_rescan=False,
@@ -566,6 +518,89 @@ class HermesTaskWorker:
                     payload={"status": "failed", "error": str(exc)[:1024]},
                     source="worker",
                 )
+
+        server_artifacts: list = []
+        if output_policy:
+            from app.services.mcp_skill_gateway.server_artifact_service import ServerArtifactService
+            from app.services.hermes_skill.skill_audit_logger import SkillAuditLogger
+
+            server_svc = ServerArtifactService(db)
+            if (
+                settings.HERMES_ARTIFACT_PROMOTE_DISCOVERED_ENABLED
+                and discovered_artifacts
+            ):
+                try:
+                    server_artifacts = await server_svc.create_from_discovered_artifacts(
+                        task=task,
+                        artifacts=discovered_artifacts,
+                        output_policy=output_policy,
+                        result_text=content_text,
+                    )
+                except Exception as exc:
+                    logger.error(
+                        "Promote discovered artifacts failed for task %s: %s",
+                        task.id,
+                        exc,
+                        exc_info=True,
+                    )
+
+            if not server_artifacts and settings.HERMES_ARTIFACT_MATERIALIZE_FALLBACK_ENABLED:
+                try:
+                    server_artifacts = await server_svc.create_from_task_result(
+                        task=task,
+                        full_result_text=content_text,
+                        output_policy=output_policy,
+                        fallback=bool(discovered_artifacts),
+                    )
+                except Exception as exc:
+                    logger.error(
+                        "Server artifact materialization failed for task %s: %s",
+                        task.id,
+                        exc,
+                        exc_info=True,
+                    )
+                    audit_logger = SkillAuditLogger(db)
+                    await audit_logger.log(
+                        action="mcp_artifact.materialize.failed",
+                        target_id=task.id,
+                        org_id=task.org_id,
+                        actor_type="system",
+                        actor_id=self._worker_id,
+                        details={"error": str(exc)[:512], "tool_name": task.tool_name},
+                    )
+            elif not server_artifacts and discovered_artifacts:
+                await SkillAuditLogger(db).log(
+                    action="mcp_artifact.materialize.fallback.skipped",
+                    target_id=task.id,
+                    org_id=task.org_id,
+                    actor_type="system",
+                    actor_id=self._worker_id,
+                    details={"tool_name": task.tool_name, "reason": "fallback_disabled"},
+                )
+
+            if server_artifacts:
+                task.server_artifacts = server_artifacts
+                task.artifact_status = "stored"
+                task.kb_status = server_svc.resolve_task_kb_status(server_artifacts)
+                task.result_summary = server_svc.append_artifact_links(
+                    task.result_summary or content_text[:500],
+                    server_artifacts,
+                )
+                await db.flush()
+
+        await audit_logger.log(
+            action="hermes.task.completed",
+            target_id=task.id,
+            org_id=task.org_id,
+            actor_type="system",
+            actor_id=self._worker_id,
+            details={
+                "task_no": task.task_no,
+                "skill_id": task.skill_id,
+                "tool_name": task.tool_name,
+                **instance_detail,
+            },
+        )
         task.worker_id = None
         task.locked_at = None
         task.dispatch_status = "finished"

@@ -3097,6 +3097,18 @@ const enUS = {
       batchDownloadSuccess: "Batch download started",
       batchDownloadFailed: "Batch download failed",
       previewTruncated: "Content truncated; download for full file",
+      source: {
+        promoted: "Central (promoted report)",
+        materialized: "Materialized",
+        materialized_fallback: "Materialized fallback",
+        discovery: "Workspace discovery",
+      },
+      kbStatus: {
+        pending_review: "Pending review",
+        indexed: "Indexed",
+        rejected: "Rejected",
+        none: "Not ingested",
+      },
     },
     experts: {
       centerTitle: "AI Expert Center",

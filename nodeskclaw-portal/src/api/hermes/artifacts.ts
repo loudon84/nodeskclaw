@@ -21,6 +21,9 @@ export interface Artifact {
   source_run_id: string | null
   download_count: number
   created_at: string
+  source?: string
+  kb_status?: string
+  metadata_json?: Record<string, unknown> | null
 }
 
 export interface ArtifactListParams {

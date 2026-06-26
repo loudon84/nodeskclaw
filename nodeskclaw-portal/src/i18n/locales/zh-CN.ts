@@ -3097,6 +3097,18 @@ const zhCN = {
       batchDownloadSuccess: "批量下载已开始",
       batchDownloadFailed: "批量下载失败",
       previewTruncated: "内容已截断，完整文件请下载",
+      source: {
+        promoted: "中心产物（真实报告）",
+        materialized: "物化产物",
+        materialized_fallback: "物化副本",
+        discovery: "Workspace 发现",
+      },
+      kbStatus: {
+        pending_review: "待审核",
+        indexed: "已入库",
+        rejected: "已拒绝",
+        none: "未入库",
+      },
     },
     experts: {
       centerTitle: "AI 专家中心",

@@ -36,7 +36,10 @@ class KbIngestionService:
                     HermesArtifactKbIngestionJob.sha256 == artifact.sha256,
                 ).limit(1)
             )
-            if existing.scalar_one_or_none():
+            existing_job = existing.scalar_one_or_none()
+            if existing_job:
+                artifact.kb_status = existing_job.status
+                await self.db.flush()
                 return None
 
         status = str(kb.get("mode") or "pending_review")

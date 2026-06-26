@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -81,8 +81,8 @@ async def test_kb_ingestion_sha256_dedup():
     from app.services.mcp_skill_gateway.kb_ingestion_service import KbIngestionService
 
     db = AsyncMock()
-    existing_result = AsyncMock()
-    existing_result.scalar_one_or_none.return_value = SimpleNamespace(id="existing")
+    existing_result = MagicMock()
+    existing_result.scalar_one_or_none.return_value = SimpleNamespace(id="existing", status="indexed")
     db.execute = AsyncMock(return_value=existing_result)
     db.add = AsyncMock()
     db.flush = AsyncMock()
@@ -95,8 +95,10 @@ async def test_kb_ingestion_sha256_dedup():
         sha256="abc",
         file_name="x.md",
         metadata_json={},
+        kb_status="pending_review",
     )
     policy = {"kb_ingest": {"enabled": True, "mode": "pending_review", "knowledge_base": "general", "tags": []}}
     with patch.object(svc.audit, "log", new=AsyncMock()):
         job = await svc.create_job(artifact, policy)
     assert job is None
+    assert artifact.kb_status == "indexed"
