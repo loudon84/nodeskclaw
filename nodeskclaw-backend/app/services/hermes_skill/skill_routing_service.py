@@ -20,6 +20,8 @@ ROUTING_REASON_DEFAULT = "matched_by_default_installation"
 ROUTING_REASON_PRIORITY = "matched_by_priority"
 ROUTING_REASON_LATEST = "matched_by_latest_installation"
 ROUTING_REASON_SINGLE = "matched_single_installation"
+ROUTING_REASON_RUNTIME_FIXED_DEFAULT = "matched_by_runtime_fixed_default"
+ROUTING_REASON_RUNTIME_FIXED_SINGLE = "matched_by_runtime_fixed_single"
 
 
 @dataclass
@@ -74,6 +76,87 @@ class SkillRoutingService:
             routing = {}
 
         return self._select_installation(skill, installations, routing, user_workspace_id)
+
+    async def get_exposed_skill(self, tool_name: str, org_id: str) -> HermesSkill | None:
+        return await self._get_skill_by_tool_name(tool_name, org_id)
+
+    async def resolve_runtime_skill_fixed_route(
+        self,
+        tool_name: str,
+        org_id: str,
+    ) -> RoutingResult:
+        skill = await self._get_skill_by_tool_name(tool_name, org_id)
+        if not skill:
+            raise NotFoundError(
+                f"MCP Tool {tool_name} 不存在",
+                "errors.skill.tool_not_found",
+            )
+
+        if skill.source_type != "hermes_api_server":
+            raise BadRequestError(
+                "该方法仅支持 hermes_api_server Runtime Skill",
+                "errors.skill.route_config_invalid",
+            )
+
+        installations = await self._list_installed(skill.skill_id, org_id)
+        if not installations:
+            raise NotFoundError(
+                f"Skill {tool_name} 未安装到任何 Agent",
+                "errors.skill.installation_not_found",
+            )
+
+        defaults = [i for i in installations if getattr(i, "is_default", False)]
+        if len(defaults) == 1:
+            inst = defaults[0]
+            reason = ROUTING_REASON_RUNTIME_FIXED_DEFAULT
+        elif len(defaults) > 1:
+            raise BadRequestError(
+                "多个 default runtime installation 冲突",
+                "errors.skill.installation_ambiguous",
+            )
+        elif len(installations) == 1:
+            inst = installations[0]
+            reason = ROUTING_REASON_RUNTIME_FIXED_SINGLE
+        else:
+            raise BadRequestError(
+                "Runtime Skill 存在多个 installation，请设置唯一 default",
+                "errors.skill.installation_ambiguous",
+            )
+
+        self._validate_runtime_route_config(inst.routing_metadata, tool_name)
+        return self._result(skill, inst, reason)
+
+    @staticmethod
+    def _validate_runtime_route_config(route: dict | None, tool_name: str) -> None:
+        if not route:
+            raise BadRequestError(
+                f"Runtime Skill {tool_name} route_config 缺失",
+                "errors.skill.route_config_invalid",
+            )
+
+        if route.get("route_type") != "hermes_api_server":
+            raise BadRequestError(
+                "Runtime Skill route_config 缺少 hermes_api_server route_type",
+                "errors.skill.route_config_invalid",
+            )
+
+        if route.get("force_instance") is not True:
+            raise BadRequestError(
+                "Runtime Skill route_config 必须启用 force_instance",
+                "errors.skill.route_config_invalid",
+            )
+
+        required_keys = [
+            "hermes_agent_instance_id",
+            "agent_profile",
+            "runtime_skill_id",
+        ]
+        missing = [key for key in required_keys if not route.get(key)]
+        if missing:
+            raise BadRequestError(
+                f"Runtime Skill route_config 缺少字段: {', '.join(missing)}",
+                "errors.skill.route_config_invalid",
+            )
 
     async def resolve_test(
         self,

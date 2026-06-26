@@ -22,6 +22,14 @@ class McpToolMapper:
     def __init__(self, db: AsyncSession):
         self.db = db
 
+    @staticmethod
+    def _has_explicit_runtime_route_override(raw_args: dict) -> bool:
+        return (
+            "_routing" in raw_args
+            or "_execution" in raw_args
+            or "route_config" in raw_args
+        )
+
     async def list_tools(
         self,
         org_id: str,
@@ -183,20 +191,71 @@ class McpToolMapper:
             await PermissionChecker.require_permission(self.db, user_id, org_id, "skill:view")
             await PermissionChecker.require_permission(self.db, user_id, org_id, "skill:invoke")
 
-        agent_arguments, routing = SkillRoutingService.extract_routing(arguments or {})
+        raw_args = arguments or {}
+        agent_arguments, explicit_routing = SkillRoutingService.extract_routing(raw_args)
         alias_resolver = AgentAliasResolver(self.db)
-        routing = await alias_resolver.enrich_routing(org_id, routing, profile_name=profile_name)
-
         routing_service = SkillRoutingService(self.db)
-        try:
-            routing_result = await routing_service.resolve_by_tool_name(
-                tool_name=tool_name,
+        routing: dict = {}
+
+        skill = await routing_service.get_exposed_skill(tool_name, org_id)
+        if not skill:
+            from app.services.hermes_skill.skill_audit_logger import SkillAuditLogger
+            audit_logger = SkillAuditLogger(self.db)
+            await audit_logger.log(
+                action="hermes.skill.routing.failed",
+                target_id=tool_name,
                 org_id=org_id,
-                routing=routing,
+                actor_id=user_id or "",
+                details={"tool_name": tool_name, "error": "errors.skill.tool_not_found"},
             )
-            skill = routing_result.skill
+            raise NotFoundError(
+                f"MCP Tool {tool_name} 不存在",
+                "errors.skill.tool_not_found",
+            )
+
+        try:
+            if skill.source_type == "hermes_api_server":
+                if self._has_explicit_runtime_route_override(raw_args):
+                    override_keys = [
+                        key for key in ("_routing", "_execution", "route_config")
+                        if key in raw_args
+                    ]
+                    logger.warning(
+                        "MCP runtime skill route override denied tool=%s user=%s keys=%s",
+                        tool_name,
+                        user_id or "",
+                        override_keys,
+                    )
+                    raise BadRequestError(
+                        "组织级 MCP 不允许覆盖 Hermes 实例路由",
+                        "errors.skill.route_override_not_allowed",
+                    )
+
+                routing_result = await routing_service.resolve_runtime_skill_fixed_route(
+                    tool_name=tool_name,
+                    org_id=org_id,
+                )
+                routing = {}
+                logger.debug(
+                    "MCP runtime skill fixed route selected tool=%s installation=%s profile_from_token_ignored=%s",
+                    tool_name,
+                    routing_result.installation.id if routing_result.installation else "",
+                    bool(profile_name),
+                )
+            else:
+                routing = await alias_resolver.enrich_routing(
+                    org_id,
+                    explicit_routing,
+                    profile_name=profile_name,
+                )
+                routing_result = await routing_service.resolve_by_tool_name(
+                    tool_name=tool_name,
+                    org_id=org_id,
+                    routing=routing,
+                )
+
             installation = routing_result.installation
-            if not skill or not installation:
+            if not installation:
                 raise NotFoundError(
                     f"Skill {tool_name} 未安装到任何 Agent",
                     "errors.skill.installation_not_found",
@@ -220,14 +279,6 @@ class McpToolMapper:
                     details={"tool_name": tool_name, "agent_alias": routing.get("agent_alias")},
                 )
             raise
-
-        if skill.source_type == "hermes_api_server":
-            raw_args = arguments or {}
-            if routing or raw_args.get("_execution") or raw_args.get("route_config"):
-                raise BadRequestError(
-                    "组织级 MCP 不允许覆盖 Hermes 实例路由",
-                    "errors.skill.route_override_not_allowed",
-                )
 
         if user_id:
             authz_service = HermesSkillAuthorizationService(self.db)
