@@ -143,6 +143,14 @@ def _tool_call_success(jsonrpc_id: Any, result: dict[str, Any]) -> dict:
     )
 
 
+def _redact_event_stream(event_stream: str | None) -> str | None:
+    if not event_stream:
+        return None
+    if "?token=" in event_stream:
+        return event_stream.split("?token=", 1)[0] + "?token=***"
+    return event_stream
+
+
 def _build_hermes_skill_text(result: dict[str, Any]) -> str:
     task_no = result.get("task_no") or result.get("task_id") or ""
     status = result.get("status") or ""
@@ -161,6 +169,14 @@ def _build_hermes_skill_text(result: dict[str, Any]) -> str:
                 text += f" Artifact 已保存到 NoDeskClaw 中心产物库，知识库状态：{kb_status}。"
             return text
         return f"任务 {task_no} 已完成。"
+
+    if result.get("execution_mode") == "async_event":
+        return (
+            f"任务 {task_no} 已启动。"
+            "请不要重复调用该工具。"
+            "系统将通过事件流返回任务进度和最终结果。"
+            "请等待任务完成事件。"
+        )
 
     if result.get("wait_timeout"):
         return (
@@ -845,6 +861,8 @@ async def _handle_tools_call(
                 "ready": result.get("ready"),
                 "wait_timeout": result.get("wait_timeout"),
                 "deduped": result.get("deduped"),
+                "execution_mode": result.get("execution_mode"),
+                "event_stream": _redact_event_stream(result.get("event_stream")),
             },
             client_name=client_name,
         )

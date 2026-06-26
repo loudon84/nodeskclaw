@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 from app.services.mcp_skill_gateway.auth import McpAuthContext
 from app.services.mcp_skill_gateway.mcp_execution_mode import (
+    ASYNC_EVENT_MODE,
     QUEUED_MODE,
     WAIT_MODE,
     resolve_mcp_execution_mode,
@@ -27,8 +28,40 @@ def test_strip_mcp_control_args_removes_wait():
     assert wait_override is False
 
 
+def test_resolve_mode_mcp_client_token_defaults_async_event(monkeypatch):
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "MCP_TASK_SSE_ENABLED", True)
+    monkeypatch.setattr(settings, "MCP_TASK_DEFAULT_EXECUTION_MODE", "async_event")
+    monkeypatch.setattr(settings, "MCP_TASK_WAIT_FOR_MCP_CLIENT_TOKEN", False)
+    mode = resolve_mcp_execution_mode(_auth_ctx(), _skill(), {"artifact_mode": "pull_only"})
+    assert mode == ASYNC_EVENT_MODE
+
+
+def test_resolve_mode_mcp_client_token_legacy_wait(monkeypatch):
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "MCP_TASK_SSE_ENABLED", False)
+    monkeypatch.setattr(settings, "MCP_TASK_WAIT_ENABLED", True)
+    monkeypatch.setattr(settings, "MCP_TASK_WAIT_FOR_MCP_CLIENT_TOKEN", True)
+    mode = resolve_mcp_execution_mode(_auth_ctx(), _skill(), {"artifact_mode": "pull_only"})
+    assert mode == WAIT_MODE
+
+
+def test_resolve_mode_wait_override_true(monkeypatch):
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "MCP_TASK_SSE_ENABLED", True)
+    mode = resolve_mcp_execution_mode(
+        _auth_ctx(),
+        _skill(),
+        {"artifact_mode": "pull_only"},
+        wait_override=True,
+    )
+    assert mode == WAIT_MODE
+
+
 def test_resolve_mode_mcp_client_token_defaults_wait(monkeypatch):
     from app.core.config import settings
+    monkeypatch.setattr(settings, "MCP_TASK_SSE_ENABLED", True)
+    monkeypatch.setattr(settings, "MCP_TASK_DEFAULT_EXECUTION_MODE", "wait")
     monkeypatch.setattr(settings, "MCP_TASK_WAIT_ENABLED", True)
     monkeypatch.setattr(settings, "MCP_TASK_WAIT_FOR_MCP_CLIENT_TOKEN", True)
     mode = resolve_mcp_execution_mode(_auth_ctx(), _skill(), {"artifact_mode": "pull_only"})

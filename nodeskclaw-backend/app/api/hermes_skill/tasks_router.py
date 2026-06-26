@@ -19,6 +19,14 @@ from app.schemas.hermes_skill.artifact_rescan import (
 )
 from app.services.hermes_skill.task_service import TaskService
 from app.services.hermes_skill.task_event_service import TaskEventService
+from app.services.hermes_skill.task_event_stream_formatter import (
+    build_timeline_snapshot,
+    format_sse_message,
+    is_terminal_task_status,
+    should_enrich_completed,
+    unwrap_event_payload,
+)
+from app.services.hermes_skill.task_result_service import TaskResultService
 from app.services.hermes_skill.artifact_service import ArtifactService
 from app.services.hermes_skill.skill_audit_logger import SkillAuditLogger
 from app.services.hermes_skill.permission_checker import PermissionChecker
@@ -48,17 +56,6 @@ _EVENT_TITLES: dict[str, str] = {
     EventType.ARTIFACT_SCAN_COMPLETED.value: "产物扫描完成",
     EventType.ARTIFACT_SCAN_FAILED.value: "产物扫描失败",
 }
-
-
-def _unwrap_event_payload(payload: dict | None) -> dict:
-    if not payload:
-        return {}
-    if payload.get("source") == "hermes" and isinstance(payload.get("payload"), dict):
-        inner = dict(payload["payload"])
-        if payload.get("hermes_event_seq") is not None:
-            inner["hermes_event_seq"] = payload["hermes_event_seq"]
-        return inner
-    return payload
 
 
 def _ok(data: Any = None, message: str = "success") -> dict:
@@ -145,7 +142,7 @@ async def get_task_timeline(
     events = await event_service.get_events(task_id, org.id)
     items = []
     for event in events:
-        payload = _unwrap_event_payload(event.payload)
+        payload = unwrap_event_payload(event.payload)
         items.append({
             "event_seq": event.event_seq,
             "event_type": event.event_type.value,
@@ -213,38 +210,35 @@ async def stream_task_events(
         except (ValueError, IndexError):
             pass
 
+    async def _yield_event(event, enriched_result=None):
+        yield format_sse_message(event, task_id, enriched_result=enriched_result)
+
     async def _event_generator():
-        from app.models.hermes_skill.hermes_task import TaskStatus
-
-        _terminal_states = frozenset({
-            TaskStatus.COMPLETED, TaskStatus.FAILED,
-            TaskStatus.CANCELLED, TaskStatus.TIMEOUT,
-        })
-
         existing_events = await event_service.get_events(task_id, org_id, start_after_seq=last_seq)
+        all_seen_events: list = list(existing_events)
 
         for event in existing_events:
-            payload = _unwrap_event_payload(event.payload)
-            data = json.dumps({
-                "task_id": task_id,
-                "event_type": event.event_type.value,
-                "event_seq": event.event_seq,
-                "payload": payload,
-                "hermes_event_seq": payload.get("hermes_event_seq"),
-                "created_at": event.created_at.isoformat() if event.created_at else None,
-            })
-            yield f"id: {task_id}-{event.event_seq}\nevent: {event.event_type.value}\ndata: {data}\n\n"
+            enriched = None
+            if should_enrich_completed(event):
+                enriched = await TaskResultService(db).get_result(task_id, org_id)
+            async for chunk in _yield_event(event, enriched):
+                yield chunk
 
         task = await db.get(HermesTask, task_id)
-        if task and task.status in _terminal_states:
+        if task and is_terminal_task_status(task.status):
+            timeline = build_timeline_snapshot(all_seen_events)
+            if timeline:
+                yield f"event: task.timeline\ndata: {json.dumps(timeline, ensure_ascii=False)}\n\n"
             return
 
         seen_seqs = {e.event_seq for e in existing_events}
         if last_seq is not None:
             all_events = await event_service.get_events(task_id, org_id)
             seen_seqs = {e.event_seq for e in all_events}
+            all_seen_events = list(all_events)
 
         heartbeat_interval = _settings.HERMES_TASK_SSE_HEARTBEAT_SECONDS
+        progress_since_timeline = 0
 
         while True:
             waited = await event_bus.wait(task_id, timeout=heartbeat_interval)
@@ -258,20 +252,27 @@ async def stream_task_events(
                 if event.event_seq in seen_seqs:
                     continue
                 seen_seqs.add(event.event_seq)
+                all_seen_events.append(event)
 
-                payload = _unwrap_event_payload(event.payload)
-                data = json.dumps({
-                    "task_id": task_id,
-                    "event_type": event.event_type.value,
-                    "event_seq": event.event_seq,
-                    "payload": payload,
-                    "hermes_event_seq": payload.get("hermes_event_seq"),
-                    "created_at": event.created_at.isoformat() if event.created_at else None,
-                })
-                yield f"id: {task_id}-{event.event_seq}\nevent: {event.event_type.value}\ndata: {data}\n\n"
+                enriched = None
+                if should_enrich_completed(event):
+                    enriched = await TaskResultService(db).get_result(task_id, org_id)
+                async for chunk in _yield_event(event, enriched):
+                    yield chunk
+
+                if event.event_type == EventType.HERMES_RUN_DELTA:
+                    progress_since_timeline += 1
+                    if progress_since_timeline >= 3:
+                        timeline = build_timeline_snapshot(all_seen_events)
+                        if timeline:
+                            yield f"event: task.timeline\ndata: {json.dumps(timeline, ensure_ascii=False)}\n\n"
+                        progress_since_timeline = 0
 
             task = await db.get(HermesTask, task_id)
-            if task and task.status in _terminal_states:
+            if task and is_terminal_task_status(task.status):
+                timeline = build_timeline_snapshot(all_seen_events)
+                if timeline:
+                    yield f"event: task.timeline\ndata: {json.dumps(timeline, ensure_ascii=False)}\n\n"
                 event_bus.clear(task_id)
                 return
 

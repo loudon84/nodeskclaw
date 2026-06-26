@@ -15,6 +15,7 @@ from app.services.hermes_skill.permission_checker import PermissionChecker
 from app.services.hermes_skill.skill_routing_service import SkillRoutingService
 from app.services.hermes_skill.task_service import TaskService
 from app.services.mcp_skill_gateway.mcp_execution_mode import (
+    ASYNC_EVENT_MODE,
     WAIT_MODE,
     resolve_mcp_execution_mode,
     strip_mcp_control_args,
@@ -22,6 +23,8 @@ from app.services.mcp_skill_gateway.mcp_execution_mode import (
 from app.services.mcp_skill_gateway.mcp_task_dedup_service import McpTaskDedupService
 from app.services.mcp_skill_gateway.mcp_task_wait_service import McpTaskWaitService
 from app.services.mcp_skill_gateway.output_policy_service import OutputPolicyService
+from app.core.config import settings
+from app.services.hermes_skill.task_event_token_service import TaskEventTokenService
 
 logger = logging.getLogger(__name__)
 
@@ -382,6 +385,18 @@ class McpToolMapper:
                         deduped=True,
                         existing_task=existing,
                     )
+                if execution_mode == ASYNC_EVENT_MODE:
+                    return await self._finalize_async_event_response(
+                        existing,
+                        org_id,
+                        tool_name=tool_name,
+                        agent_alias=existing_alias,
+                        installation=installation,
+                        routing_result=routing_result,
+                        output_policy=existing_output,
+                        user_id=user_id or "",
+                        deduped=True,
+                    )
                 return self._build_task_response(
                     task=existing,
                     tool_name=tool_name,
@@ -471,6 +486,20 @@ class McpToolMapper:
                 existing_task=task,
             )
 
+        if execution_mode == ASYNC_EVENT_MODE:
+            await self.db.commit()
+            return await self._build_async_event_response(
+                task=task,
+                tool_name=tool_name,
+                agent_alias=agent_alias,
+                installation=installation,
+                routing_result=routing_result,
+                output_policy=output_policy,
+                org_id=org_id,
+                user_id=user_id or "",
+                deduped=False,
+            )
+
         return self._build_task_response(
             task=task,
             tool_name=tool_name,
@@ -530,6 +559,111 @@ class McpToolMapper:
             "installation_id": installation.id,
             "committed": True,
         })
+        if deduped:
+            payload["deduped"] = True
+        return payload
+
+    async def _finalize_async_event_response(
+        self,
+        existing_task: Any,
+        org_id: str,
+        *,
+        tool_name: str,
+        agent_alias: str | None,
+        installation: Any,
+        routing_result: Any,
+        output_policy: dict,
+        user_id: str,
+        deduped: bool,
+    ) -> dict[str, Any]:
+        if existing_task.status == TaskStatus.COMPLETED:
+            wait_service = McpTaskWaitService()
+            wait_result = await wait_service.build_result_for_task(existing_task)
+            return self._merge_wait_result(
+                wait_result,
+                tool_name=tool_name,
+                agent_alias=agent_alias,
+                installation=installation,
+                deduped=deduped,
+            )
+        if existing_task.status in {
+            TaskStatus.FAILED,
+            TaskStatus.TIMEOUT,
+            TaskStatus.CANCELLED,
+        }:
+            wait_service = McpTaskWaitService()
+            wait_result = wait_service._build_failed_result(existing_task)
+            merged = self._merge_wait_result(
+                wait_result,
+                tool_name=tool_name,
+                agent_alias=agent_alias,
+                installation=installation,
+                deduped=deduped,
+            )
+            merged["committed"] = True
+            return merged
+        return await self._build_async_event_response(
+            task=existing_task,
+            tool_name=tool_name,
+            agent_alias=agent_alias,
+            installation=installation,
+            routing_result=routing_result,
+            output_policy=output_policy,
+            org_id=org_id,
+            user_id=user_id,
+            deduped=deduped,
+        )
+
+    async def _build_async_event_response(
+        self,
+        *,
+        task: Any,
+        tool_name: str,
+        agent_alias: str | None,
+        installation: Any,
+        routing_result: Any,
+        output_policy: dict,
+        org_id: str,
+        user_id: str,
+        deduped: bool,
+    ) -> dict[str, Any]:
+        token_data = await TaskEventTokenService(self.db).create_token(
+            task.id,
+            user_id,
+            org_id,
+            ttl_seconds=settings.MCP_TASK_SSE_TOKEN_TTL_SECONDS,
+        )
+        status = task.status.value
+        if status in ("queued", "accepted"):
+            status = "running"
+        payload: dict[str, Any] = {
+            "tool_name": tool_name,
+            "agent_alias": agent_alias,
+            "agent_id": installation.agent_id,
+            "profile_id": installation.profile_id,
+            "workspace_id": installation.workspace_id,
+            "installation_id": installation.id,
+            "task_id": task.id,
+            "task_no": task.task_no,
+            "status": status,
+            "execution_mode": ASYNC_EVENT_MODE,
+            "event_stream": token_data["event_url"],
+            "event_url": task.event_url,
+            "event_token_url": f"/api/v1/hermes/tasks/{task.id}/events-token",
+            "artifact_url": task.artifact_url,
+            "result_url": f"/api/v1/hermes/tasks/{task.id}/result",
+            "artifact_mode": output_policy.get("artifact_mode", "pull_only"),
+            "server_artifacts": task.server_artifacts or [],
+            "routing_reason": routing_result.reason,
+            "wait_strategy": {
+                "type": "sse",
+                "fallback": "poll",
+                "poll_tool": "nodeskclaw_task_wait",
+            },
+            "message": "任务已启动，请等待事件流通知完成",
+            "retryable": False,
+            "committed": True,
+        }
         if deduped:
             payload["deduped"] = True
         return payload

@@ -17,6 +17,7 @@ from app.services.hermes_skill.hermes_run_state_resolver import HermesRunStateRe
 from app.services.hermes_skill.hermes_queue_policy_service import HermesQueuePolicyService
 from app.services.hermes_skill.hermes_runtime_control_service import HermesRuntimeControlService
 from app.services.hermes_skill.task_event_service import TaskEventService
+from app.services.hermes_skill.task_event_publisher import TaskEventPublisher
 from app.services.hermes_skill.task_service import TaskService
 from app.services.hermes_skill.skill_audit_logger import SkillAuditLogger
 
@@ -232,6 +233,18 @@ class HermesTaskWorker:
                             source="hermes",
                             source_event_seq=converted.get("source_event_seq"),
                         )
+                        if converted["event_type"] == EventType.HERMES_RUN_DELTA:
+                            progress = TaskEventPublisher.extract_progress_from_delta(
+                                converted.get("payload"),
+                            )
+                            if progress:
+                                await TaskEventPublisher(db).publish_progress(
+                                    task.id,
+                                    task.org_id,
+                                    stage=progress["stage"],
+                                    progress=progress.get("progress"),
+                                    message=progress.get("message"),
+                                )
                     except Exception as exc:
                         logger.warning("write_event failed for task %s: %s", task.id, exc)
                     await db.flush()
@@ -316,6 +329,16 @@ class HermesTaskWorker:
                     )
                     await db.flush()
                     await self._scan_artifacts(db, task)
+                    try:
+                        await TaskEventPublisher(db).publish_completed_with_result(
+                            task.id, task.org_id,
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "publish_completed_with_result failed for task %s: %s",
+                            task.id,
+                            exc,
+                        )
 
                 elif task.status == TaskStatus.FAILED:
                     await audit_logger.log(
@@ -587,6 +610,16 @@ class HermesTaskWorker:
                     server_artifacts,
                 )
                 await db.flush()
+                publisher = TaskEventPublisher(db)
+                for artifact in server_artifacts:
+                    try:
+                        await publisher.publish_artifact_ready(task.id, task.org_id, artifact)
+                    except Exception as exc:
+                        logger.warning(
+                            "publish_artifact_ready failed for task %s: %s",
+                            task.id,
+                            exc,
+                        )
 
         await audit_logger.log(
             action="hermes.task.completed",
@@ -605,6 +638,14 @@ class HermesTaskWorker:
         task.locked_at = None
         task.dispatch_status = "finished"
         await db.flush()
+        try:
+            await TaskEventPublisher(db).publish_completed_with_result(task.id, task.org_id)
+        except Exception as exc:
+            logger.warning(
+                "publish_completed_with_result failed for task %s: %s",
+                task.id,
+                exc,
+            )
 
     async def _scan_artifacts(self, db: AsyncSession, task: HermesTask) -> None:
         try:
