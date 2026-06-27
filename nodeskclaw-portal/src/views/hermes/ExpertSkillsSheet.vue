@@ -53,9 +53,15 @@ function isSkillEnabled(skill: SkillRow): boolean {
 
 async function loadSkills() {
   if (!props.expert) return
+  skills.value = (await listExpertSkills(props.expert.id)).map((item) => ({ ...item }))
+}
+
+async function bootstrapSkills() {
+  if (!props.expert) return
   loading.value = true
   try {
-    skills.value = (await listExpertSkills(props.expert.id)).map((item) => ({ ...item }))
+    await syncExpertTools(props.expert.id)
+    await loadSkills()
   } catch (e: unknown) {
     toast.error(resolveApiErrorMessage(e, t('hermes.expertCatalog.skillsLoadFailed')))
   } finally {
@@ -105,7 +111,7 @@ async function handleToggleSkill(skill: SkillRow) {
 watch(
   () => [props.open, props.expert?.id] as const,
   ([open]) => {
-    if (open && props.expert) loadSkills()
+    if (open && props.expert) bootstrapSkills()
   },
 )
 </script>

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import BadRequestError, NotFoundError
@@ -82,9 +82,31 @@ class ExpertSkillService:
         if body.sort_order is not None:
             skill.sort_order = body.sort_order
         self._apply_flag_rules(skill, body.public, body.call_enabled)
-        skill.updated_by = user_id
-        await self.db.flush()
-        return self._to_item(skill)
+        now = datetime.now(timezone.utc)
+        stmt = (
+            update(ExpertSkill)
+            .where(
+                ExpertSkill.org_id == org_id,
+                ExpertSkill.id == skill_id,
+                not_deleted(ExpertSkill),
+            )
+            .values(
+                skill_name=skill.skill_name,
+                display_name=skill.display_name,
+                description=skill.description,
+                is_public=skill.is_public,
+                call_enabled=skill.call_enabled,
+                risk_level=skill.risk_level,
+                approval_mode=skill.approval_mode,
+                output_formats=skill.output_formats,
+                sort_order=skill.sort_order,
+                updated_by=user_id,
+                updated_at=now,
+            )
+            .returning(ExpertSkill)
+        )
+        row = (await self.db.execute(stmt)).scalar_one()
+        return self._to_item(row)
 
     async def set_visibility(
         self,

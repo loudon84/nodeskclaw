@@ -21,7 +21,7 @@ class ExpertTeamSkill(BaseModel):
     display_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     input_schema: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
-    is_public: Mapped[bool] = mapped_column("public", Boolean, nullable=False, default=False, quote=True)
+    is_public: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     call_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     risk_level: Mapped[str] = mapped_column(String(32), nullable=False, default="low")
     approval_mode: Mapped[str] = mapped_column(String(32), nullable=False, default="server")
