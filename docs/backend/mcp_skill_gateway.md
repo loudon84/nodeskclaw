@@ -38,6 +38,12 @@ nodeskclaw-backend/
     ├── artifact_store_service.py    # v5.6：中心对象存储封装（storage_service）
     ├── server_artifact_service.py   # v5.6：物化→存储→HermesArtifact→KB job 编排
     ├── kb_ingestion_service.py        # v5.6：知识库入库审核队列
+    ├── mcp_execution_mode.py          # v5.7.2：执行模式解析（async_event / queued / wait）
+    ├── mcp_task_wait_service.py       # v5.7.1：阻塞 wait / task_wait 轮询等待
+    ├── mcp_task_dedup_service.py      # v5.7：MCP 任务去重（request_fingerprint）
+    ├── mcp_task_access_service.py     # v5.7：内置 task 工具访问控制
+    ├── builtin_task_tools.py          # v5.7：内置 task 查询 / wait 工具定义
+    ├── builtin_task_tool_executor.py  # v5.7：内置 task 工具执行器
     ├── constants.py                 # 端点常量与 descriptor 构建
     └── errors.py                    # MCP 错误码映射
 ```
@@ -46,7 +52,9 @@ nodeskclaw-backend/
 
 | 模块 | 路径 | 关系 |
 |------|------|------|
-| Skill 工具映射 | `app/services/hermes_skill/mcp_tool_mapper.py` | `tools/list` 合并 Skill 工具；`tools/call` 创建异步任务；v5.3 写入 `route_snapshot`；v5.6 写入 `output_policy` |
+| Skill 工具映射 | `app/services/hermes_skill/mcp_tool_mapper.py` | `tools/list` 合并 Skill 工具；`tools/call` 创建异步任务；v5.7.2 默认 `async_event` 立即返回 + SSE 订阅 |
+| SSE 事件发布 | `app/services/hermes_skill/task_event_publisher.py` | v5.7.2：任务 lifecycle 事件发布（progress / artifact.ready / completed+result） |
+| SSE 流格式化 | `app/services/hermes_skill/task_event_stream_formatter.py` | v5.7.2：DB EventType → PRD SSE 事件名映射与 result enrichment |
 | Runtime Skill 注册 | `app/services/hermes_skill/runtime_skill_registration_service.py` | 实例 runtime skill → 组织级 MCP Skill 链路 |
 | 产物发现 | `app/services/hermes_skill/artifact_discovery_service.py` | v5.3.1：`hermes_api_server` 任务完成后从 workspace 路径登记产物 |
 | 中心产物存储 | `app/services/storage_service.py` | v5.6：`upload_raw` / `download_raw`，S3 + 本地双后端 |
@@ -75,10 +83,13 @@ router.py  →  handler.dispatch()
     │   └─ McpToolMapper.list_tools()  # Skill 工具（需 skill:view + skill:invoke）
     │
     └─ tools/call
+        ├─ nodeskclaw_task_*  → BuiltinTaskToolExecutor（v5.7 内置任务工具）
         ├─ genehub.*  → GeneHubMcpToolProvider
         ├─ hermes.*   → HermesDockerToolProvider（写操作需 grant 审批）
         └─ skill.*    → McpToolMapper.call_tool() → TaskService 异步任务
             │
+            ├─ v5.7.2 async_event：立即返回 task_id + event_stream（SSE）
+            ├─ v5.7.1 wait（legacy opt-in）：Gateway 内阻塞 wait 至终态
             └─ audit_service.log_mcp_call()  # 记录每次调用
 ```
 
@@ -126,6 +137,19 @@ router.py  →  handler.dispatch()
 | `genehub.skill.register_to_hermes` | write | medium | desktop | 注册到 Desktop Hermes（需桌面确认） |
 | `genehub.registration.status` | read | low | none | 注册任务状态 |
 
+### 内置 Task 工具（v5.7，`category=task`）
+
+由 `builtin_task_tools.py` 定义、`BuiltinTaskToolExecutor` 执行，总开关 `MCP_TASK_TOOLS_ENABLED`；`nodeskclaw_task_wait` 额外受 `MCP_TASK_WAIT_ENABLED` 控制。
+
+| 工具名 | 说明 |
+|--------|------|
+| `nodeskclaw_task_timeline` | 查询任务时间线 |
+| `nodeskclaw_task_result` | 查询最终结果与 `server_artifacts` |
+| `nodeskclaw_task_artifacts` | 查询物化产物列表 |
+| `nodeskclaw_artifact_preview` | 预览产物内容 |
+| `nodeskclaw_artifact_download_info` | 获取下载信息 |
+| `nodeskclaw_task_wait` | 服务端短轮询等待（SSE 不可用时的 fallback，v5.7.2 `wait_strategy.poll_tool`） |
+
 ### tools/list 合并规则
 
 Registry 工具与 Skill 工具按 `name` 去重合并，Registry 优先。`tools/list` 支持通过请求头传递上下文：
@@ -168,6 +192,8 @@ McpToolMapper.call_tool()
     │     └─ 仅当 arguments 含 _routing / _execution / route_config 字段时拒绝覆盖
     ├─ 普通 Skill → enrich_routing(profile_name) + resolve_by_tool_name()
     ├─ OutputPolicyService.resolve()  → output_policy（v5.6）
+    ├─ resolve_mcp_execution_mode()   → async_event / queued / wait（v5.7.2）
+    ├─ McpTaskDedupService            → request_fingerprint 去重（v5.7）
     ├─ HermesSkillAuthorizationService.can_invoke()
     └─ TaskService.create_task()
            routing_metadata = {
@@ -179,8 +205,11 @@ McpToolMapper.call_tool()
            }
     │
     ▼
-返回 structuredContent：task_id、task_no、status、event_url、artifact_url、result_url、
-    artifact_mode="pull_only"、server_artifacts=[]（v5.6，completed 态由 result_url 轮询获取）
+执行模式分支（v5.7.2，默认 async_event）：
+    ├─ async_event → flush + commit → TaskEventTokenService.create_token()
+    │                 → 立即返回 event_stream + wait_strategy
+    ├─ wait（legacy）→ flush + commit → McpTaskWaitService.wait_for_task_result()
+    └─ queued        → 立即返回 task 元信息（无 SSE token 自动签发）
     │
     ▼
 hermes_task_worker
@@ -220,20 +249,132 @@ hermes_task_worker
 - 调用方 **不得** 在 `arguments` 中 **出现**（含空对象）`_routing`、`_execution`、`route_config` 字段，否则返回 `errors.skill.route_override_not_allowed`；判断标准为字段存在，而非字段是否有值。
 - Worker 执行时校验 `hermes_agent_instance_id` 与当前绑定记录一致，禁止静默切换到其他实例。
 
-### Skill 工具调用响应字段（异步任务）
+### Skill 工具调用响应字段
 
-`tools/call` 成功创建任务时，`structuredContent` 除 `task_id`、`status` 外还包含：
+`tools/call` 成功创建任务时，`structuredContent` 字段因 **执行模式** 而异（v5.7.2 默认 `async_event`）：
+
+#### async_event 模式（v5.7.2 默认，MCP Client Token）
+
+| 字段 | 说明 |
+|------|------|
+| `task_id` / `task_no` | 任务标识 |
+| `status` | 通常为 `running`（queued/accepted 归一化为 running） |
+| `execution_mode` | 固定 `async_event` |
+| `event_stream` | 带 SSE token 的完整订阅 URL，如 `/api/v1/hermes/tasks/{id}/events?token=sse_...` |
+| `event_token_url` | REST 刷新 token 路径 |
+| `wait_strategy` | `{ type: "sse", fallback: "poll", poll_tool: "nodeskclaw_task_wait" }` |
+| `message` | 强语义提示：任务已启动，勿重复调用 |
+| `retryable` | 固定 `false` |
+| `result_url` / `artifact_mode` / `server_artifacts` | 同 queued 模式 |
+| `deduped` | 去重命中时为 `true` |
+
+`content.text` 强语义（handler `_build_hermes_skill_text`）：
+
+> 任务 TASK-xxxx 已启动。请不要重复调用该工具。系统将通过事件流返回任务进度和最终结果。请等待任务完成事件。
+
+#### queued 模式
 
 | 字段 | 说明 |
 |------|------|
 | `task_no` | 任务编号 |
-| `event_url` | 任务事件 SSE 地址 |
+| `event_url` | 任务事件 SSE 地址（无 token，需 JWT 或另行申请 events-token） |
 | `event_token_url` | 事件 Token 申请路径 |
 | `artifact_url` | 产物列表快捷路径 |
-| `result_url` | 最终结果路径（completed 后含 `server_artifacts`，v5.6） |
-| `artifact_mode` | 固定 `pull_only`（v5.6） |
-| `server_artifacts` | 创建时为 `[]`；任务完成后通过 `result_url` 轮询获取（v5.6） |
+| `result_url` | 最终结果路径（completed 后含 `server_artifacts`） |
+| `artifact_mode` | 固定 `pull_only` |
+| `server_artifacts` | 创建时为 `[]`；完成后通过 `result_url` 或内置 task 工具获取 |
 | `agent_alias` / `agent_id` / `profile_id` / `workspace_id` | 路由解析结果 |
+
+#### wait 模式（v5.7.1 legacy，`_wait=true` 或配置显式开启）
+
+Gateway 在 `tools/call` HTTP 连接内阻塞等待（最长 `MCP_TASK_WAIT_TIMEOUT_SECONDS`，默认 900s），完成后直接返回 `ready=true` + 最终结果；超时返回 `wait_timeout=true` + `next_tool=nodeskclaw_task_wait`。
+
+#### dedup 命中（v5.7）
+
+| 命中状态 | async_event 行为 | wait 行为 |
+|----------|------------------|-----------|
+| running / queued / accepted | 复用已有 task，重新 mint SSE token，不创建新任务 | 阻塞 wait 已有 task |
+| completed | 直接返回 `ready=true` + result | 同左 |
+
+去重键：`build_mcp_task_dedup_key(org_id, auth_ctx, tool_name, arguments)`；窗口 `MCP_TASK_DEDUP_WINDOW_SECONDS`（默认 600s）。`arguments._wait` 不参与 fingerprint 计算。
+
+## MCP Task 执行模式与 SSE（v5.7 / v5.7.1 / v5.7.2）
+
+### 版本演进
+
+| 版本 | 能力 | 要点 |
+|------|------|------|
+| v5.7 | Task Pull 工具 | 内置 `nodeskclaw_task_*` 查询/预览/下载；dedup；`McpTaskAccessService` 访问控制 |
+| v5.7.1 | 阻塞 wait | `McpTaskWaitService`：EventBus + fresh session DB 轮询；MCP token 默认阻塞 wait（已被 v5.7.2 取代） |
+| v5.7.2 | SSE 原生模式 | 默认 `async_event`：立即返回 + SSE 订阅；消除 MCP Client 120s 超时与 Agent 乱重试 |
+
+### 执行模式解析（`mcp_execution_mode.py`）
+
+| 模式 | 触发条件 | 行为 |
+|------|----------|------|
+| `async_event` | 默认（`MCP_TASK_SSE_ENABLED=true`，MCP Client Token） | 立即返回 + 自动签发 SSE token |
+| `queued` | JWT 调用、`_wait=false`、`MCP_TASK_SSE_ENABLED=false` | 立即返回元信息，客户端自行轮询 |
+| `wait` | `_wait=true` 或 legacy 配置 | Gateway 内阻塞 wait（v5.7.1 路径，可回滚） |
+
+控制参数 `arguments._wait`（bool）在 `call_tool` 入口剥离，不参与 jsonschema 校验与 dedup fingerprint。
+
+### 配置项（`config.py`，MCP Task 段）
+
+| 配置 | 默认 | 说明 |
+|------|------|------|
+| `MCP_TASK_SSE_ENABLED` | true | SSE 模式总开关 |
+| `MCP_TASK_DEFAULT_EXECUTION_MODE` | `async_event` | 默认执行模式 |
+| `MCP_TASK_SSE_TOKEN_TTL_SECONDS` | 900 | SSE token 有效期，与长任务对齐 |
+| `MCP_TASK_SSE_INCLUDE_RESULT_ON_COMPLETE` | true | SSE 终态事件内嵌 result summary + artifacts |
+| `MCP_TASK_WAIT_ENABLED` | true | 是否暴露 `nodeskclaw_task_wait` |
+| `MCP_TASK_WAIT_TIMEOUT_SECONDS` | 900 | legacy 阻塞 wait 默认超时 |
+| `MCP_TASK_WAIT_FOR_MCP_CLIENT_TOKEN` | false | v5.7.2 后 MCP token 默认不走阻塞 wait |
+| `MCP_TASK_DEDUP_ENABLED` | true | 任务去重开关 |
+| `MCP_TASK_DEDUP_WINDOW_SECONDS` | 600 | 去重时间窗口 |
+
+### SSE 订阅流程（v5.7.2）
+
+```
+tools/call → 返回 event_stream（含 token）
+    │
+    ▼
+GET /api/v1/hermes/tasks/{task_id}/events?token=sse_...
+    Accept: text/event-stream
+    │
+    ├─ 历史事件 replay（支持 Last-Event-ID 断点续传）
+    ├─ EventBus.wait() 唤醒 + DB 补拉新事件
+    ├─ task.progress / task.timeline / task.artifact.ready
+    ├─ task.completed（含 result.summary + result.artifacts）
+    └─ heartbeat（: heartbeat，间隔 HERMES_TASK_SSE_HEARTBEAT_SECONDS）
+```
+
+SSE 事件名由 `task_event_stream_formatter.py` 从 DB `EventType` 映射，不改 DB enum：
+
+| DB EventType | SSE `event:` |
+|--------------|--------------|
+| `task.started` / `hermes.run.started` | `task.started` |
+| `hermes.run.delta` | `task.progress` |
+| （聚合） | `task.timeline` |
+| `artifact.created` | `task.artifact.ready` |
+| `task.completed` | `task.completed`（可 enrichment result） |
+| `task.failed` / `task.timeout` | `task.failed` |
+
+Worker 通过 `TaskEventPublisher` 在关键 lifecycle 节点发布 enriched 事件（progress / artifact.ready / completed+result）。
+
+### Fallback（不支持 SSE 的 Agent）
+
+`structuredContent.wait_strategy.fallback=poll` → 调用 `nodeskclaw_task_wait`（委托 `McpTaskWaitService`，单次最长 `MCP_TASK_WAIT_MAX_SECONDS=300`），**禁止**重复调用原业务 tool。Router Skill 模板（v5.7.2）已同步此规则。
+
+### Router Skill 异步规则（v5.7.2）
+
+`router_skill_template_service.py` 要求 Router Agent：
+
+- 收到 `execution_mode=async_event` → 订阅 `event_stream`，等待 `task.completed`
+- `ready=true` → 直接展示 `server_artifacts`，禁止猜 localhost/REST
+- SSE 不可用 → 仅允许 `nodeskclaw_task_wait` / `nodeskclaw_task_result`
+- 禁止重复调用原业务 tool
+
+部署后需重新同步 MCP Skill Router（`mcp-skill-router/sync`）。
 
 ## Pull-only 产物桥接（v5.6 Artifact Bridge）
 
@@ -374,9 +515,10 @@ fallback `create_from_task_result()` 内部：
 
 ### Router Skill 产物处理规则
 
-`router_skill_template_service.py` 已追加 PRD §14 规则，要求 Router Agent：
+`router_skill_template_service.py` 已追加 PRD §14 及 v5.7.2 SSE 等待规则，要求 Router Agent：
 
 - 以 `server_artifacts` 为准展示预览/下载/建议路径
+- `execution_mode=async_event` 时订阅 SSE，禁止重复调用业务 tool
 - 禁止声明或伪造「已保存到当前 Hermes workspace」
 - pull-only 模式下引导用户从中心产物库下载或按 `suggested_workspace_path` 导入
 
@@ -422,17 +564,48 @@ fallback `create_from_task_result()` 内部：
 |--------|------|----------|
 | `initialize` | MCP 握手 | `protocolVersion`、`capabilities`、`serverInfo` |
 | `tools/list` | 列出可用工具 | `{ "tools": [...] }` |
-| `tools/call` | 调用工具 | Registry 工具：文本 JSON 结果；Skill 工具：`structuredContent` 含 `task_id` |
+| `tools/call` | 调用工具 | Registry 工具：文本 JSON 结果；Skill 工具：`structuredContent` 含 `task_id`；v5.7.2 默认含 `execution_mode` + `event_stream` |
 
-### Skill 工具调用响应示例
+### Skill 工具调用响应示例（v5.7.2 async_event）
 
 ```json
 {
   "jsonrpc": "2.0",
   "id": 1,
   "result": {
-    "content": [{ "type": "text", "text": "任务已创建" }],
-    "structuredContent": { "task_id": "...", "status": "queued" },
+    "content": [{
+      "type": "text",
+      "text": "任务 TASK-001 已启动。请不要重复调用该工具。系统将通过事件流返回任务进度和最终结果。请等待任务完成事件。"
+    }],
+    "structuredContent": {
+      "task_id": "...",
+      "task_no": "TASK-001",
+      "status": "running",
+      "execution_mode": "async_event",
+      "event_stream": "/api/v1/hermes/tasks/{id}/events?token=sse_...",
+      "wait_strategy": {
+        "type": "sse",
+        "fallback": "poll",
+        "poll_tool": "nodeskclaw_task_wait"
+      },
+      "retryable": false,
+      "artifact_mode": "pull_only",
+      "server_artifacts": []
+    },
+    "isError": false
+  }
+}
+```
+
+### Skill 工具调用响应示例（queued 模式，legacy）
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "content": [{ "type": "text", "text": "任务 TASK-001 已提交，状态：queued。" }],
+    "structuredContent": { "task_id": "...", "status": "queued", "event_url": "..." },
     "isError": false
   }
 }
@@ -583,6 +756,12 @@ fallback `create_from_task_result()` 内部：
 | 审计服务 | `app/services/mcp_skill_gateway/audit_service.py` |
 | Skill 工具映射 | `app/services/hermes_skill/mcp_tool_mapper.py` |
 | 输出策略 | `app/services/mcp_skill_gateway/output_policy_service.py` |
+| 执行模式 | `app/services/mcp_skill_gateway/mcp_execution_mode.py` |
+| 阻塞 wait | `app/services/mcp_skill_gateway/mcp_task_wait_service.py` |
+| 任务去重 | `app/services/mcp_skill_gateway/mcp_task_dedup_service.py` |
+| 内置 task 工具 | `app/services/mcp_skill_gateway/builtin_task_tools.py` |
+| SSE 事件发布 | `app/services/hermes_skill/task_event_publisher.py` |
+| SSE 流格式化 | `app/services/hermes_skill/task_event_stream_formatter.py` |
 | 产物物化 | `app/services/mcp_skill_gateway/artifact_materializer.py` |
 | 中心存储 | `app/services/mcp_skill_gateway/artifact_store_service.py` |
 | 产物编排 | `app/services/mcp_skill_gateway/server_artifact_service.py` |

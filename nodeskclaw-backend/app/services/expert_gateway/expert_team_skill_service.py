@@ -93,7 +93,7 @@ class ExpertTeamSkillService:
             skill.output_formats = body.output_formats
         if body.sort_order is not None:
             skill.sort_order = body.sort_order
-        self._normalize_flags(skill)
+        self._apply_flag_rules(skill, body.public, body.call_enabled)
         skill.updated_by = user_id
         await self.db.flush()
         return self._to_item(skill)
@@ -220,8 +220,16 @@ class ExpertTeamSkillService:
         return agent.profile_name
 
     @staticmethod
-    def _normalize_flags(skill: ExpertTeamSkill) -> None:
-        if not skill.is_public:
+    def _apply_flag_rules(
+        skill: ExpertTeamSkill,
+        public: bool | None,
+        call_enabled: bool | None,
+    ) -> None:
+        if public is False:
+            skill.call_enabled = False
+        elif call_enabled is True:
+            skill.is_public = True
+        elif not skill.is_public:
             skill.call_enabled = False
 
     @staticmethod

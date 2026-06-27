@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import BadRequestError, NotFoundError
 from app.models.base import not_deleted
 from app.models.expert import Expert
+from app.models.expert_skill import ExpertSkill
 from app.models.expert_team import ExpertTeam
 from app.models.expert_team_member import ExpertTeamMember
 from app.models.expert_team_skill import ExpertTeamSkill
@@ -118,6 +119,8 @@ class ExpertTeamService:
         if body.sort_order is not None:
             team.sort_order = body.sort_order
         if body.published is not None:
+            if body.published:
+                await self.validate_publish(org_id, team)
             team.published = body.published
         if body.enabled is not None:
             team.enabled = body.enabled
@@ -157,6 +160,97 @@ class ExpertTeamService:
             .order_by(ExpertTeamMember.order_no.asc())
         )
         return list((await self.db.execute(stmt)).scalars().all())
+
+    async def validate_publish(self, org_id: str, team: ExpertTeam) -> None:
+        issues: list[str] = []
+        if not team.team_slug:
+            issues.append("missing_slug")
+        if not team.display_name:
+            issues.append("missing_display_name")
+        mode = team.orchestration_mode or "upstream_skill"
+        if mode == "sequential_gateway":
+            mode = "gateway_sequential"
+        if mode == "upstream_skill":
+            if not team.hermes_agent_id:
+                issues.append("agent_not_bound")
+            else:
+                agent = await self._get_agent(org_id, team.hermes_agent_id)
+                if agent.docker_status not in {"running", "online"}:
+                    issues.append("docker_not_running")
+                if agent.gateway_status not in {"online", "ready"}:
+                    issues.append("api_server_not_online")
+                if agent.mcp_status not in {"online", "ready", "callable"}:
+                    issues.append("agent_not_callable")
+                if agent.gateway_runtime_status not in {"online", "ready"}:
+                    issues.append("runtime_not_ready")
+            public_count = await self._count_public_team_skills(org_id, team.id)
+            if public_count <= 0:
+                issues.append("no_public_skill")
+        elif mode == "gateway_sequential":
+            members = await self.list_members(org_id, team.id)
+            if len(members) < 2:
+                issues.append("expert_team_members_required")
+            for member in members:
+                expert = await self._get_expert(org_id, member.expert_id)
+                if expert is None or not expert.enabled:
+                    issues.append("expert_team_member_not_enabled")
+                    break
+                if not expert.published:
+                    issues.append("expert_team_member_not_published")
+                    break
+                callable_count = await self._count_callable_expert_skills(org_id, expert.id)
+                if callable_count <= 0:
+                    issues.append("expert_team_member_skill_not_callable")
+                    break
+        else:
+            issues.append("unsupported_orchestration_mode")
+        if issues:
+            raise BadRequestError(
+                message=f"团队发布前置条件未满足: {', '.join(issues)}",
+                message_key="errors.expert.team_publish_precondition_failed",
+                message_params={"issues": issues},
+            )
+
+    async def _get_agent(self, org_id: str, agent_id: str) -> HermesAgentInstance:
+        stmt = select(HermesAgentInstance).where(
+            HermesAgentInstance.org_id == org_id,
+            HermesAgentInstance.id == agent_id,
+            not_deleted(HermesAgentInstance),
+        )
+        agent = (await self.db.execute(stmt)).scalar_one_or_none()
+        if agent is None:
+            raise NotFoundError(
+                message="Hermes Agent 实例不存在",
+                message_key="errors.hermes.agent_instance_not_found",
+            )
+        return agent
+
+    async def _get_expert(self, org_id: str, expert_id: str) -> Expert | None:
+        stmt = select(Expert).where(
+            Expert.org_id == org_id,
+            Expert.id == expert_id,
+            not_deleted(Expert),
+        )
+        return (await self.db.execute(stmt)).scalar_one_or_none()
+
+    async def _count_public_team_skills(self, org_id: str, team_id: str) -> int:
+        stmt = select(func.count()).select_from(ExpertTeamSkill).where(
+            ExpertTeamSkill.org_id == org_id,
+            ExpertTeamSkill.expert_team_id == team_id,
+            ExpertTeamSkill.is_public.is_(True),
+            not_deleted(ExpertTeamSkill),
+        )
+        return int((await self.db.execute(stmt)).scalar_one())
+
+    async def _count_callable_expert_skills(self, org_id: str, expert_id: str) -> int:
+        stmt = select(func.count()).select_from(ExpertSkill).where(
+            ExpertSkill.org_id == org_id,
+            ExpertSkill.expert_id == expert_id,
+            ExpertSkill.is_public.is_(True),
+            ExpertSkill.call_enabled.is_(True),
+            not_deleted(ExpertSkill),
+        )
+        return int((await self.db.execute(stmt)).scalar_one())
 
     async def _to_item(self, team: ExpertTeam) -> ExpertTeamItem:
         count_stmt = select(func.count()).select_from(ExpertTeamMember).where(

@@ -39,7 +39,10 @@ nodeskclaw-backend/
 │   ├── compat_router.py           # 旧版 API 兼容
 │   ├── runtime_skill_registration_router.py  # v5.3 Runtime Skill 注册到组织级 MCP
 │   └── artifacts_*_router.py      # EE：产物权限 / 分享 / 审计
-├── app/services/hermes_skill/     # 核心业务逻辑（37 个 service 文件）
+├── app/services/hermes_skill/     # 核心业务逻辑
+│   ├── task_event_publisher.py    # v5.7.2：SSE lifecycle 事件发布
+│   ├── task_event_stream_formatter.py  # v5.7.2：SSE 事件名映射与 enrichment
+│   └── ...（其余 37 个 service 文件）
 ├── app/services/hermes_external/  # Hermes Docker 绑定、Profile、API Server 客户端
 ├── app/models/hermes_skill/       # ORM 模型
 └── app/schemas/hermes_skill/      # Pydantic Schema
@@ -67,13 +70,16 @@ app/models/hermes_skill/*            ← PostgreSQL 持久化
 | Skill 扫描 | `skill_scanner.py` | 从 Registry / Hub 扫描 Skill 元数据入库 |
 | Skill 安装 | `skill_installer.py` | 将 Skill 安装到 Agent Profile |
 | 路由决策 | `skill_routing_service.py` | 根据 agent/profile/workspace 选择目标安装；v5.6.1 `resolve_runtime_skill_fixed_route` 固定 Runtime Skill 路由 |
-| MCP 工具映射 | `mcp_tool_mapper.py` | 将已安装且暴露的 Skill 映射为 MCP Tool；`call_tool` 创建异步任务；v5.3 复制 `route_snapshot`；v5.6 写入 `output_policy` |
+| MCP 工具映射 | `mcp_tool_mapper.py` | 将已安装且暴露的 Skill 映射为 MCP Tool；v5.7.2 默认 `async_event` 立即返回 + SSE token |
+| 任务事件发布 | `task_event_publisher.py` | v5.7.2：progress / artifact.ready / completed+result 事件发布 |
+| SSE 流格式化 | `task_event_stream_formatter.py` | v5.7.2：SSE 事件名映射与 result enrichment |
 | 中心产物物化 | `mcp_skill_gateway/server_artifact_service.py` | v5.6：任务完成后物化报告到中心产物库，写 `server_artifacts` |
 | KB 入库审核 | `mcp_skill_gateway/kb_ingestion_service.py` | v5.6：入库 job 创建、审核、sha256 去重 |
 | Runtime Skill 注册 | `runtime_skill_registration_service.py` | 将 Hermes 实例 runtime skill 注册为组织级 MCP Skill（Skill / Installation / Grant） |
 | 任务执行 | `task_service.py` + `hermes_task_worker.py` | 任务入队、执行、状态流转；`hermes_api_server` 走 API_SERVER 指定实例 |
 | Runtime 执行 | `hermes_external/hermes_runtime_skill_executor.py` | 共享 `chat/completions` 调用 Hermes API_SERVER |
-| 任务事件 | `task_event_service.py` | 任务时间线 / SSE 事件流 |
+| 任务事件 | `task_event_service.py` | 任务时间线持久化；`write_event` 触发 `EventBus.notify` |
+| SSE 事件流 | `tasks_router.py` + `task_event_stream_formatter.py` | v5.7.2：PRD 格式 SSE（task.progress / task.completed 等）；支持 token / JWT 鉴权 |
 | 授权 | `hermes_skill_authorization_service.py` | Skill 级 list/invoke/install/manage 授权 |
 | 权限检查 | `permission_checker.py` | 细粒度权限码（`skill:view`、`hermes_task:view` 等） |
 | Agent 适配 | `hermes_agent_adapter.py` | 调用 Hermes Runtime API |
@@ -122,13 +128,53 @@ Skill 工具调用链路（`mcp_tool_mapper.call_tool`）：
    - 普通 Skill：继续 `enrich_routing(profile_name)` + `resolve_by_tool_name()`
    - 显式覆盖：仅当 `arguments` 中出现 `_routing` / `_execution` / `route_config` 字段时拒绝（含空对象）
 4. `OutputPolicyService.resolve()` 写入 `routing_metadata.output_policy`（v5.6）
-5. `TaskService.create_task()`，将 `installation.routing_metadata` 复制为 `task.routing_metadata.route_snapshot`
-6. `hermes_task_worker` 异步执行：
+5. `resolve_mcp_execution_mode()` 决定 async_event / queued / wait（v5.7.2）
+6. `McpTaskDedupService` 去重（v5.7，`request_fingerprint`）
+7. `TaskService.create_task()`，将 `installation.routing_metadata` 复制为 `task.routing_metadata.route_snapshot`
+8. **async_event**（默认）：`flush + commit` → `TaskEventTokenService.create_token()` → 返回 `event_stream`
+9. `hermes_task_worker` 异步执行：
    - `route_type=hermes_api_server` → `execute_runtime_skill_via_api_server`（指定 `hermes_agent_instance_id`，不 fallback）
    - 其他 → `hermes_agent_adapter` `/v1/runs`，完成后 `artifact_service.scan_and_register`（outputs 目录）
-7. v5.3.1：`hermes_api_server` 完成后 additionally 调用 `ArtifactDiscoveryService`（从响应/workspace 路径登记产物）
-8. v5.6：Worker 用全文 `content_text` 调用 `ServerArtifactService.create_from_task_result()`，写 `task.server_artifacts` / `artifact_status` / `kb_status`（在 discovery 之前，异常隔离）
-9. 返回 `{ task_id, status, event_url, artifact_url, artifact_mode, server_artifacts: [], ... }` 作为 MCP `structuredContent`；completed 态产物通过 `result_url` 轮询
+10. v5.3.1：`hermes_api_server` 完成后 additionally 调用 `ArtifactDiscoveryService`
+11. v5.6：Worker 物化中心产物；v5.7.2：`TaskEventPublisher` 发布 SSE lifecycle 事件
+12. 客户端获取结果：
+    - **v5.7.2 推荐**：订阅 `event_stream`（SSE），等待 `task.completed`
+    - **fallback**：`nodeskclaw_task_wait` / `nodeskclaw_task_result`（v5.7 内置工具）
+    - **legacy**：轮询 `GET /tasks/{id}/result`
+
+## 任务 SSE 事件流（v5.7.2）
+
+### 端点
+
+| 方法 | 路径 | 鉴权 | 说明 |
+|------|------|------|------|
+| GET | `/tasks/{task_id}/events` | JWT Bearer **或** `?token=`（SSE token） | `text/event-stream`；支持 `Last-Event-ID` 断点续传 |
+| POST | `/tasks/{task_id}/events-token` | member + `hermes_task:view` | 手动签发 SSE token（TTL 默认 300s；MCP async_event 自动签发时用 `MCP_TASK_SSE_TOKEN_TTL_SECONDS=900`） |
+
+MCP `tools/call` 在 `async_event` 模式下自动返回带 token 的 `event_stream`，Agent 无需 JWT 即可订阅。
+
+### SSE 事件类型（PRD 映射）
+
+| SSE `event:` | 含义 | 典型 data 字段 |
+|--------------|------|----------------|
+| `task.started` | 任务开始 | `task_id`, `timestamp` |
+| `task.progress` | 阶段进度 | `stage`, `progress`, `message` |
+| `task.timeline` | 阶段快照 | `data: [{ stage, status }]` |
+| `task.artifact.ready` | 产物就绪 | `artifact: { name, type, path }` |
+| `task.completed` | 任务完成 | `result: { summary, artifacts, kb_status }` |
+| `task.failed` | 任务失败 | `error` |
+
+实现：`TaskEventService.write_event` 持久化 → `EventBus.notify(task_id)` 唤醒 SSE 连接 → `task_event_stream_formatter` 格式化输出。终态时若 payload 缺 result，SSE 层调用 `TaskResultService.get_result` enrichment（`MCP_TASK_SSE_INCLUDE_RESULT_ON_COMPLETE`）。
+
+### Worker 事件 Hook（TaskEventPublisher）
+
+| 时机 | 方法 |
+|------|------|
+| Hermes run delta 含 stage 信息 | `publish_progress()` |
+| server_artifacts 物化完成 | `publish_artifact_ready()` |
+| 任务 mark_completed + 产物就绪 | `publish_completed_with_result()` |
+
+Heartbeat：SSE 连接空闲时发送 `: heartbeat\n\n`，间隔 `HERMES_TASK_SSE_HEARTBEAT_SECONDS`（默认 30s）。
 
 ## Runtime Skill 注册到组织级 MCP（v5.3）
 
@@ -402,7 +448,7 @@ Installation 级覆盖：在 `PATCH /skill-installations/{id}` 的 `routing_meta
 | GET | `/tasks` | member + `hermes_task:view` | 任务列表 |
 | GET | `/tasks/{task_id}` | member + `hermes_task:view` | 任务详情 |
 | GET | `/tasks/{task_id}/timeline` | member + `hermes_task:view` | 任务时间线 |
-| GET | `/tasks/{task_id}/events` | member + `hermes_task:view` | 任务事件（支持 SSE） |
+| GET | `/tasks/{task_id}/events` | JWT 或 SSE token | v5.7.2：PRD 格式 SSE 事件流（task.progress / task.completed 等）；支持 `Last-Event-ID` |
 | GET | `/tasks/{task_id}/artifacts` | member + `hermes_artifact:view` | 任务产物列表；v5.6 根级追加 `server_artifacts`、`artifact_mode` |
 | POST | `/tasks/{task_id}/artifacts/rescan` | member + `hermes_task:view`（创建者或 admin/operator） | v5.3.1：重新扫描并登记 workspace 产物 |
 | POST | `/tasks/{task_id}/cancel` | member + `hermes_task:cancel` | 取消任务 |
@@ -415,8 +461,8 @@ Installation 级覆盖：在 `PATCH /skill-installations/{id}` 的 `routing_meta
 
 | 方法 | 路径 | 鉴权 | 说明 |
 |------|------|------|------|
-| POST | `/tasks/{task_id}/events-token` | member | 生成事件流 Token |
-| GET | `/tasks/{task_id}/result` | member | 获取任务最终结果；v5.6 含 `server_artifacts`、`artifact_mode`、`artifact_status`、`kb_status` |
+| POST | `/tasks/{task_id}/events-token` | member | 生成事件流 Token（MCP async_event 模式下 tools/call 会自动签发） |
+| GET | `/tasks/{task_id}/result` | member | 获取任务最终结果；v5.6 含 `server_artifacts`；v5.7 内置 `nodeskclaw_task_result` 等价封装 |
 
 ### 产物（`artifacts_router.py`）
 
@@ -561,6 +607,11 @@ Installation 级覆盖：在 `PATCH /skill-installations/{id}` 的 `routing_meta
 |------|------|
 | 路由聚合 | `app/api/hermes_skill/router.py` |
 | MCP 工具映射 | `app/services/hermes_skill/mcp_tool_mapper.py` |
+| SSE 事件发布 | `app/services/hermes_skill/task_event_publisher.py` |
+| SSE 流格式化 | `app/services/hermes_skill/task_event_stream_formatter.py` |
+| 执行模式 | `app/services/mcp_skill_gateway/mcp_execution_mode.py` |
+| 阻塞 wait / fallback | `app/services/mcp_skill_gateway/mcp_task_wait_service.py` |
+| 内置 task MCP 工具 | `app/services/mcp_skill_gateway/builtin_task_tool_executor.py` |
 | Runtime Skill 注册 | `app/services/hermes_skill/runtime_skill_registration_service.py` |
 | 产物发现 | `app/services/hermes_skill/artifact_discovery_service.py` |
 | 中心产物物化 | `app/services/mcp_skill_gateway/server_artifact_service.py` |

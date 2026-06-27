@@ -282,19 +282,29 @@ onMounted(fetchAgents)
               >
                 {{ agent.task_dispatchable ? t('hermes.agents.taskDispatchable') : t('hermes.agents.taskNotDispatchable') }}
               </Badge>
-              <McpGatewayStatusBadge :status="agent.mcp_gateway_status" />
-              <McpRouterStatusBadge
-                :status="agent.mcp_router_status"
-                :tool-count="agent.mcp_router_tool_count"
-              />
-              <Badge variant="outline" :class="expertStatusClass(expertForAgent(agent))">
-                {{ t('hermes.expertCatalog.expertBadge') }}: {{ expertStatusLabel(expertForAgent(agent)) }}
-              </Badge>
             </div>
-            <div v-if="expertForAgent(agent)" class="flex flex-wrap gap-3 mt-2 text-xs text-muted-foreground">
-              <span>{{ t('hermes.expertCatalog.publicCount', { public: expertForAgent(agent)!.public_skill_count, total: expertForAgent(agent)!.total_skill_count }) }}</span>
-              <span>{{ t('hermes.expertCatalog.callableCount', { callable: expertForAgent(agent)!.callable_skill_count, total: expertForAgent(agent)!.total_skill_count }) }}</span>
-              <span>{{ t('hermes.expertCatalog.recentInvocations', { count: expertForAgent(agent)!.recent_invocation_count_24h }) }}</span>
+            <div class="mt-3 rounded-lg border border-border/60 p-3 space-y-2">
+              <p class="text-xs font-medium text-foreground">{{ t('hermes.expertCatalog.sectionTitle') }}</p>
+              <div class="flex flex-wrap gap-2">
+                <Badge variant="outline" :class="expertStatusClass(expertForAgent(agent))">
+                  {{ t('hermes.expertCatalog.expertBadge') }}: {{ expertStatusLabel(expertForAgent(agent)) }}
+                </Badge>
+              </div>
+              <div v-if="expertForAgent(agent)" class="flex flex-wrap gap-3 text-xs text-muted-foreground">
+                <span>{{ t('hermes.expertCatalog.publicCount', { public: expertForAgent(agent)!.public_skill_count, total: expertForAgent(agent)!.total_skill_count }) }}</span>
+                <span>{{ t('hermes.expertCatalog.callableCount', { callable: expertForAgent(agent)!.callable_skill_count, total: expertForAgent(agent)!.total_skill_count }) }}</span>
+                <span>{{ t('hermes.expertCatalog.recentInvocations', { count: expertForAgent(agent)!.recent_invocation_count_24h }) }}</span>
+              </div>
+            </div>
+            <div class="mt-2 rounded-lg border border-border/60 p-3 space-y-2">
+              <p class="text-xs font-medium text-muted-foreground">{{ t('hermes.agents.legacyMcpSectionTitle') }}</p>
+              <div class="flex flex-wrap gap-2">
+                <McpGatewayStatusBadge :status="agent.mcp_gateway_status" />
+                <McpRouterStatusBadge
+                  :status="agent.mcp_router_status"
+                  :tool-count="agent.mcp_router_tool_count"
+                />
+              </div>
             </div>
             <p
               v-if="agent.mcp_gateway_token_prefix"
@@ -335,9 +345,11 @@ onMounted(fetchAgents)
             </Button>
           </template>
         </div>
-        <div class="flex flex-wrap gap-2">
+        <div class="flex flex-wrap gap-2 mb-2">
           <McpGatewayAuthorizeButton :agent="agent" :disabled="actionLoading" @changed="fetchAgents" />
           <McpRouterSyncButton :agent="agent" :disabled="actionLoading" @changed="fetchAgents" />
+        </div>
+        <div class="flex flex-wrap gap-2">
           <Button v-if="agent.webui_url" size="sm" variant="outline" as-child>
             <a :href="agent.webui_url" target="_blank" rel="noopener noreferrer" class="flex items-center gap-1">
               <ExternalLink class="w-3 h-3" />{{ t('hermes.agents.openWebui') }}

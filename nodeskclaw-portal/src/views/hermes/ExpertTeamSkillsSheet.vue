@@ -92,6 +92,12 @@ function onPublicChange(skill: ExpertTeamSkillItem, value: boolean) {
   patchSkill(skill, patch)
 }
 
+function onCallEnabledChange(skill: ExpertTeamSkillItem, value: boolean) {
+  const patch: Record<string, unknown> = { call_enabled: value }
+  if (value) patch.public = true
+  patchSkill(skill, patch)
+}
+
 watch(
   () => [props.open, props.team?.id] as const,
   ([open]) => {
@@ -146,8 +152,7 @@ watch(
               <TableCell>
                 <Switch
                   :checked="skill.call_enabled"
-                  :disabled="!skill.public"
-                  @update:checked="patchSkill(skill, { call_enabled: $event })"
+                  @update:checked="onCallEnabledChange(skill, $event)"
                 />
               </TableCell>
               <TableCell>

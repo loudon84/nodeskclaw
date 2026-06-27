@@ -173,25 +173,20 @@ class ExpertCatalogService:
         return await self._to_item(expert, ExpertInvocationLogService(self.db))
 
     async def validate_publish(self, org_id: str, expert: Expert) -> None:
-        if not expert.expert_slug or not expert.display_name:
-            raise BadRequestError(
-                message="发布专家前必须配置 slug 和名称",
-                message_key="errors.expert.publish_missing_meta",
-            )
-        agent = await self._get_agent(org_id, expert.hermes_agent_id)
         issues: list[str] = []
+        if not expert.expert_slug:
+            issues.append("missing_slug")
+        if not expert.display_name:
+            issues.append("missing_display_name")
+        agent = await self._get_agent(org_id, expert.hermes_agent_id)
         if agent.docker_status not in {"running", "online"}:
             issues.append("docker_not_running")
         if agent.gateway_status not in {"online", "ready"}:
-            issues.append("api_server_offline")
+            issues.append("api_server_not_online")
         if agent.mcp_status not in {"online", "ready", "callable"}:
             issues.append("agent_not_callable")
         if agent.gateway_runtime_status not in {"online", "ready"}:
             issues.append("runtime_not_ready")
-        if not agent.mcp_gateway_env_synced:
-            issues.append("mcp_env_not_synced")
-        if not agent.mcp_router_enabled or not agent.mcp_router_last_synced_at:
-            issues.append("router_not_synced")
         public_count = await self._count_public_skills(org_id, expert.id)
         if public_count <= 0:
             issues.append("no_public_skill")

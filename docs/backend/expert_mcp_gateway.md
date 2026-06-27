@@ -19,6 +19,31 @@ Expert MCP Gateway（v6.1）在现有 Hermes 实例级 MCP 之上，新增面向
 | 团队能力 | 硬编码 `team-run` | `expert_team_skills` 表，支持 sync-tools |
 | 调用日志 | `expert_slug` 为主 | 新增 `catalog_kind` / `catalog_slug` / `orchestration_mode` |
 
+## v6.1.1 发布前置条件（hotfix）
+
+Expert / ExpertTeam 发布到 Desktop **不再依赖**旧 MCP Skill Gateway（`mcp_env_synced`、`router_synced` 等）。
+
+### Expert 发布校验
+
+1. Docker running
+2. API Server online
+3. Agent callable
+4. Runtime ready
+5. `expert_slug` / `display_name` 非空
+6. 至少 1 个 `expert_skill.public = true`（`call_enabled` 非必需）
+
+### ExpertTeam 发布校验
+
+**upstream_skill 模式**：同上（绑定 Agent 运行时 + 至少 1 个 public team skill）。
+
+**gateway_sequential 模式**：slug/名称 + >= 2 成员 + 各成员 expert 已启用/已发布 + 各成员至少 1 个可调用 skill。
+
+### Skill 开关规则
+
+- `public=false` → 强制 `call_enabled=false`
+- `call_enabled=true` → 强制 `public=true`
+- `tools/list` 仅返回 public skill；`tools/call` 仍要求 `call_enabled=true`
+
 ## 与 MCP Skill Gateway 的关系
 
 | 维度 | MCP Skill Gateway | Expert MCP Gateway |
