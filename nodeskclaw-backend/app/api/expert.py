@@ -19,6 +19,7 @@ from app.schemas.expert import (
 from app.schemas.expert_log import ExpertInvocationLogDetail, ExpertInvocationLogListResponse
 from app.schemas.expert_mcp import ExpertHealthResponse
 from app.schemas.expert_skill import ExpertSkillItem, ExpertSkillListResponse, ExpertSkillSyncResult, ExpertSkillUpdateBody
+from app.schemas.expert_team_skill import ExpertTeamSkillItem, ExpertTeamSkillListResponse, ExpertTeamSkillUpdateBody
 from app.services.expert_gateway.expert_catalog_service import ExpertCatalogService
 from app.services.expert_gateway.expert_health_service import ExpertHealthService
 from app.services.expert_gateway.expert_invocation_log_service import ExpertInvocationLogService
@@ -26,6 +27,7 @@ from app.services.expert_gateway.expert_mcp_gateway_service import ExpertMcpGate
 from app.services.expert_gateway.expert_permission_service import ExpertPermissionService
 from app.services.expert_gateway.expert_skill_service import ExpertSkillService
 from app.services.expert_gateway.expert_team_service import ExpertTeamService
+from app.services.expert_gateway.expert_team_skill_service import ExpertTeamSkillService
 from app.services.mcp_skill_gateway.auth import McpAuthFailure, resolve_mcp_user
 
 router = APIRouter()
@@ -57,7 +59,7 @@ async def expert_health(
         return ExpertHealthResponse(
             ok=False,
             status="unauthorized",
-            gateway={"name": "expert-mcp-gateway", "version": "v6.0"},
+            gateway={"name": "expert-mcp-gateway", "version": "v6.1"},
             catalog={"publishedExperts": 0, "publicSkills": 0, "callableSkills": 0},
             runtimes=[],
         )
@@ -84,9 +86,9 @@ async def expert_mcp_root(
     return result
 
 
-@router.post("/mcp/{expert_slug}", tags=["Expert MCP Gateway"])
+@router.post("/mcp/{slug}", tags=["Expert MCP Gateway"])
 async def expert_mcp_slug(
-    expert_slug: str,
+    slug: str,
     body: dict,
     request: Request,
     authorization: str | None = Header(default=None),
@@ -95,10 +97,10 @@ async def expert_mcp_slug(
     auth, err = await _resolve_bearer_user(authorization, db)
     if err:
         return err
-    result = await ExpertMcpGatewayService(db).dispatch_slug(
+    result = await ExpertMcpGatewayService(db).dispatch_catalog_item(
         auth.org.id,
         auth.user.id,
-        expert_slug,
+        slug,
         body,
         headers=dict(request.headers),
     )
@@ -232,6 +234,8 @@ async def list_invocation_logs(
     status: str | None = Query(default=None),
     user_id: str | None = Query(default=None),
     keyword: str | None = Query(default=None),
+    catalog_kind: str | None = Query(default=None),
+    orchestration_mode: str | None = Query(default=None),
     started_from: datetime | None = Query(default=None),
     started_to: datetime | None = Query(default=None),
     page: int = Query(default=1, ge=1),
@@ -248,6 +252,8 @@ async def list_invocation_logs(
         status=status,
         user_id=user_id,
         keyword=keyword,
+        catalog_kind=catalog_kind,
+        orchestration_mode=orchestration_mode,
         started_from=started_from,
         started_to=started_to,
         page=page,
@@ -322,3 +328,42 @@ async def add_team_member(
     await ExpertTeamService(db).add_member(org.id, team_id, body)
     await db.commit()
     return _ok({"team_id": team_id, "expert_id": body.expert_id})
+
+
+@router.get("/teams/{team_id}/skills", response_model=ApiResponse[ExpertTeamSkillListResponse], tags=["Expert MCP Gateway"])
+async def list_team_skills(
+    team_id: str,
+    user_org=Depends(require_org_member),
+    db: AsyncSession = Depends(get_db),
+):
+    user, org = user_org
+    await ExpertPermissionService.require(db, user.id, org.id, "expert_skill:manage")
+    items = await ExpertTeamSkillService(db).list_skills(org.id, team_id)
+    return _ok(ExpertTeamSkillListResponse(items=items, total=len(items)))
+
+
+@router.post("/teams/{team_id}/sync-tools", response_model=ApiResponse[ExpertSkillSyncResult], tags=["Expert MCP Gateway"])
+async def sync_team_tools(
+    team_id: str,
+    user_org=Depends(require_org_member),
+    db: AsyncSession = Depends(get_db),
+):
+    user, org = user_org
+    await ExpertPermissionService.require(db, user.id, org.id, "expert_skill:manage")
+    result = await ExpertTeamSkillService(db).sync_tools(org.id, user.id, team_id)
+    await db.commit()
+    return _ok(result)
+
+
+@router.patch("/team-skills/{skill_id}", response_model=ApiResponse[ExpertTeamSkillItem], tags=["Expert MCP Gateway"])
+async def update_team_skill(
+    skill_id: str,
+    body: ExpertTeamSkillUpdateBody,
+    user_org=Depends(require_org_member),
+    db: AsyncSession = Depends(get_db),
+):
+    user, org = user_org
+    await ExpertPermissionService.require(db, user.id, org.id, "expert_skill:manage")
+    item = await ExpertTeamSkillService(db).update_skill(org.id, user.id, skill_id, body)
+    await db.commit()
+    return _ok(item)

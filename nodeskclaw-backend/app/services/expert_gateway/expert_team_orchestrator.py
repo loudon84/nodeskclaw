@@ -43,9 +43,10 @@ class ExpertTeamOrchestrator:
                 },
                 "annotations": {
                     "kind": "expert_team_skill",
-                    "teamSlug": team.team_slug,
+                    "slug": team.team_slug,
                     "displayName": team.display_name,
                     "callEnabled": True,
+                    "orchestrationMode": "gateway_sequential",
                 },
             }
         ]
@@ -73,6 +74,9 @@ class ExpertTeamOrchestrator:
             jsonrpc_id=str(jsonrpc_id),
             request_payload=arguments,
             invocation_type="expert_team",
+            catalog_kind="expert_team",
+            catalog_slug=team.team_slug,
+            orchestration_mode="gateway_sequential",
             **(client_meta or {}),
         )
 
@@ -123,6 +127,9 @@ class ExpertTeamOrchestrator:
                 request_payload=member_args,
                 parent_invocation_id=parent_log.id,
                 invocation_type="expert_skill",
+                catalog_kind="expert",
+                catalog_slug=expert.expert_slug,
+                orchestration_mode="gateway_sequential",
                 **(client_meta or {}),
             )
             response = await ExpertMcpProxyService.call_upstream_tool(
@@ -165,8 +172,10 @@ class ExpertTeamOrchestrator:
             "content": [{"type": "text", "text": merged}],
             "structuredContent": {
                 "invocationId": parent_log.id,
-                "teamSlug": team.team_slug,
+                "slug": team.team_slug,
+                "kind": "expert_team",
                 "skillName": skill_name,
+                "orchestrationMode": "gateway_sequential",
                 "status": "completed",
             },
             "isError": False,

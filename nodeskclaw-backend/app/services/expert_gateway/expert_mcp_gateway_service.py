@@ -2,17 +2,17 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
-from app.models.base import not_deleted
 from app.models.expert import Expert
 from app.models.expert_team import ExpertTeam
+from app.services.expert_gateway.catalog_resolver import CatalogItem, CatalogResolver
 from app.services.expert_gateway.errors import (
+    EXPERT_CATALOG_DISABLED,
+    EXPERT_CATALOG_NOT_FOUND,
+    EXPERT_CATALOG_NOT_PUBLISHED,
     EXPERT_DISABLED,
     EXPERT_INVALID_JSONRPC,
-    EXPERT_NOT_FOUND,
     EXPERT_NOT_PUBLISHED,
     EXPERT_PERMISSION_DENIED,
     EXPERT_ROUTE_OVERRIDE_FORBIDDEN,
@@ -20,6 +20,9 @@ from app.services.expert_gateway.errors import (
     EXPERT_SKILL_CALL_DISABLED,
     EXPERT_SKILL_NOT_FOUND,
     EXPERT_SKILL_NOT_PUBLIC,
+    EXPERT_TEAM_MEMBERS_REQUIRED,
+    EXPERT_TEAM_ORCHESTRATION_DISABLED,
+    EXPERT_UPSTREAM_MCP_ERROR,
     mcp_error_v2,
     mcp_success,
 )
@@ -31,13 +34,18 @@ from app.services.expert_gateway.expert_route_guard import find_route_override_k
 from app.services.expert_gateway.expert_skill_service import ExpertSkillService
 from app.services.expert_gateway.expert_team_orchestrator import ExpertTeamOrchestrator
 from app.services.expert_gateway.expert_team_service import ExpertTeamService
+from app.services.expert_gateway.expert_team_skill_service import ExpertTeamSkillService
+
+_GATEWAY_VERSION = "v6.1"
 
 
 class ExpertMcpGatewayService:
     def __init__(self, db: AsyncSession):
         self.db = db
+        self.resolver = CatalogResolver(db)
         self.catalog = ExpertCatalogService(db)
         self.skills = ExpertSkillService(db)
+        self.team_skills = ExpertTeamSkillService(db)
         self.teams = ExpertTeamService(db)
         self.logs = ExpertInvocationLogService(db)
         self.team_orchestrator = ExpertTeamOrchestrator(db)
@@ -65,7 +73,7 @@ class ExpertMcpGatewayService:
                     "capabilities": {"tools": {}},
                     "serverInfo": {
                         "name": "nodeskclaw-expert-mcp-gateway",
-                        "version": "v6.0",
+                        "version": _GATEWAY_VERSION,
                         "client": client_info,
                     },
                 },
@@ -82,7 +90,7 @@ class ExpertMcpGatewayService:
 
         return mcp_error_v2(jsonrpc_id, "MCP_METHOD_NOT_FOUND", f"Method not found: {method}")
 
-    async def dispatch_slug(
+    async def dispatch_catalog_item(
         self,
         org_id: str,
         user_id: str,
@@ -95,15 +103,11 @@ class ExpertMcpGatewayService:
         if body.get("jsonrpc") != "2.0":
             return mcp_error_v2(jsonrpc_id, EXPERT_INVALID_JSONRPC, "jsonrpc must be '2.0'")
 
+        item = await self.resolver.resolve(org_id, slug)
+        if item is None:
+            return mcp_error_v2(jsonrpc_id, EXPERT_CATALOG_NOT_FOUND, f"Catalog item {slug} not found")
+
         method = body.get("method", "")
-        team = await self.teams.get_by_slug(org_id, slug)
-        if team is not None:
-            return await self._dispatch_team(org_id, user_id, team, body, headers=headers)
-
-        expert = await self.catalog.get_by_slug(org_id, slug)
-        if expert is None:
-            return mcp_error_v2(jsonrpc_id, EXPERT_NOT_FOUND, f"Expert {slug} not found")
-
         if method == "initialize":
             return mcp_success(
                 jsonrpc_id,
@@ -111,8 +115,8 @@ class ExpertMcpGatewayService:
                     "protocolVersion": "2024-11-05",
                     "capabilities": {"tools": {}},
                     "serverInfo": {
-                        "name": f"expert-{slug}",
-                        "version": "v6.0",
+                        "name": "nodeskclaw-expert-mcp-gateway",
+                        "version": _GATEWAY_VERSION,
                     },
                 },
             )
@@ -121,10 +125,40 @@ class ExpertMcpGatewayService:
             return mcp_success(jsonrpc_id, {})
 
         if method == "tools/list":
-            if not await ExpertPermissionService.has(self.db, user_id, org_id, "expert_skill:view"):
-                return mcp_error_v2(jsonrpc_id, EXPERT_PERMISSION_DENIED, "expert_skill:view required")
-            if not expert.published or not expert.enabled:
-                return mcp_error_v2(jsonrpc_id, EXPERT_NOT_PUBLISHED, "Expert is not published")
+            return await self._dispatch_tools_list(org_id, user_id, item, jsonrpc_id)
+
+        if method == "tools/call":
+            return await self._dispatch_tools_call(
+                org_id,
+                user_id,
+                item,
+                body,
+                headers=headers,
+                jsonrpc_id=jsonrpc_id,
+            )
+
+        return mcp_error_v2(jsonrpc_id, "MCP_METHOD_NOT_FOUND", f"Method not found: {method}")
+
+    async def dispatch_slug(
+        self,
+        org_id: str,
+        user_id: str,
+        slug: str,
+        body: dict,
+        *,
+        headers: dict[str, str] | None = None,
+    ) -> dict:
+        return await self.dispatch_catalog_item(org_id, user_id, slug, body, headers=headers)
+
+    async def _dispatch_tools_list(self, org_id: str, user_id: str, item: CatalogItem, jsonrpc_id: Any) -> dict:
+        if not await ExpertPermissionService.has(self.db, user_id, org_id, "expert_skill:view"):
+            return mcp_error_v2(jsonrpc_id, EXPERT_PERMISSION_DENIED, "expert_skill:view required")
+        if not item.published or not item.enabled:
+            return mcp_error_v2(jsonrpc_id, EXPERT_CATALOG_NOT_PUBLISHED, "Catalog item is not published")
+
+        if item.kind == "expert":
+            expert = item.source_record
+            assert isinstance(expert, Expert)
             ready = await self.catalog.runtime_ready(org_id, expert)
             skills = await self.skills.list_public_skills(org_id, expert.id)
             tools = [
@@ -133,63 +167,69 @@ class ExpertMcpGatewayService:
             ]
             return mcp_success(jsonrpc_id, {"tools": tools})
 
-        if method == "tools/call":
+        team = item.source_record
+        assert isinstance(team, ExpertTeam)
+        if item.orchestration_mode == "gateway_sequential":
+            tools = await self.team_orchestrator.list_team_tools(org_id, team)
+            return mcp_success(jsonrpc_id, {"tools": tools})
+
+        ready = await self.catalog.runtime_ready_for_agent(org_id, team.hermes_agent_id)
+        skills = await self.team_skills.list_public_skills(org_id, team.id)
+        tools = [
+            ExpertTeamSkillService.build_tool_descriptor(
+                team,
+                skill,
+                runtime_ready=ready,
+                orchestration_mode=item.orchestration_mode,
+            )
+            for skill in skills
+        ]
+        return mcp_success(jsonrpc_id, {"tools": tools})
+
+    async def _dispatch_tools_call(
+        self,
+        org_id: str,
+        user_id: str,
+        item: CatalogItem,
+        body: dict,
+        *,
+        headers: dict[str, str] | None = None,
+        jsonrpc_id: Any = 1,
+    ) -> dict:
+        if not await ExpertPermissionService.has(self.db, user_id, org_id, "expert_skill:invoke"):
+            return mcp_error_v2(jsonrpc_id, EXPERT_PERMISSION_DENIED, "expert_skill:invoke required")
+
+        params = body.get("params") if isinstance(body.get("params"), dict) else {}
+        skill_name = str(params.get("name") or "").strip()
+        arguments = params.get("arguments") if isinstance(params.get("arguments"), dict) else {}
+        forbidden = find_route_override_keys(arguments)
+        if forbidden:
+            return mcp_error_v2(
+                jsonrpc_id,
+                EXPERT_ROUTE_OVERRIDE_FORBIDDEN,
+                data={"forbiddenKeys": forbidden},
+            )
+
+        if item.kind == "expert":
+            expert = item.source_record
+            assert isinstance(expert, Expert)
             return await self._call_expert_skill(
                 org_id,
                 user_id,
                 expert,
-                body,
+                skill_name,
+                arguments,
+                jsonrpc_id=jsonrpc_id,
                 headers=headers,
+                catalog_item=item,
             )
 
-        return mcp_error_v2(jsonrpc_id, "MCP_METHOD_NOT_FOUND", f"Method not found: {method}")
-
-    async def _dispatch_team(
-        self,
-        org_id: str,
-        user_id: str,
-        team: ExpertTeam,
-        body: dict,
-        *,
-        headers: dict[str, str] | None = None,
-    ) -> dict:
-        jsonrpc_id = body.get("id", 1)
-        method = body.get("method", "")
-
-        if method == "initialize":
-            return mcp_success(
-                jsonrpc_id,
-                {
-                    "protocolVersion": "2024-11-05",
-                    "capabilities": {"tools": {}},
-                    "serverInfo": {"name": f"expert-team-{team.team_slug}", "version": "v6.0"},
-                },
-            )
-
-        if method == "ping":
-            return mcp_success(jsonrpc_id, {})
-
-        if method == "tools/list":
-            if not await ExpertPermissionService.has(self.db, user_id, org_id, "expert_skill:view"):
-                return mcp_error_v2(jsonrpc_id, EXPERT_PERMISSION_DENIED, "expert_skill:view required")
-            if not team.published or not team.enabled:
-                return mcp_error_v2(jsonrpc_id, EXPERT_NOT_PUBLISHED, "Expert team is not published")
-            tools = await self.team_orchestrator.list_team_tools(org_id, team)
-            return mcp_success(jsonrpc_id, {"tools": tools})
-
-        if method == "tools/call":
-            if not await ExpertPermissionService.has(self.db, user_id, org_id, "expert_skill:invoke"):
-                return mcp_error_v2(jsonrpc_id, EXPERT_PERMISSION_DENIED, "expert_skill:invoke required")
-            params = body.get("params") if isinstance(body.get("params"), dict) else {}
-            skill_name = str(params.get("name") or "").strip()
-            arguments = params.get("arguments") if isinstance(params.get("arguments"), dict) else {}
-            forbidden = find_route_override_keys(arguments)
-            if forbidden:
-                return mcp_error_v2(
-                    jsonrpc_id,
-                    EXPERT_ROUTE_OVERRIDE_FORBIDDEN,
-                    data={"forbiddenKeys": forbidden},
-                )
+        team = item.source_record
+        assert isinstance(team, ExpertTeam)
+        if item.orchestration_mode == "gateway_sequential":
+            members = await self.teams.list_members(org_id, team.id)
+            if len(members) < 2:
+                return mcp_error_v2(jsonrpc_id, EXPERT_TEAM_MEMBERS_REQUIRED, "At least 2 team members required")
             return await self.team_orchestrator.call_team_skill(
                 org_id,
                 user_id,
@@ -200,20 +240,32 @@ class ExpertMcpGatewayService:
                 client_meta=self._client_meta(headers),
             )
 
-        return mcp_error_v2(jsonrpc_id, "MCP_METHOD_NOT_FOUND", f"Method not found: {method}")
+        if item.orchestration_mode != "upstream_skill":
+            return mcp_error_v2(jsonrpc_id, EXPERT_TEAM_ORCHESTRATION_DISABLED, "Unsupported orchestration mode")
+
+        return await self._call_team_upstream_skill(
+            org_id,
+            user_id,
+            team,
+            item,
+            skill_name,
+            arguments,
+            jsonrpc_id=jsonrpc_id,
+            headers=headers,
+        )
 
     async def _call_expert_skill(
         self,
         org_id: str,
         user_id: str,
         expert: Expert,
-        body: dict,
+        skill_name: str,
+        arguments: dict[str, Any],
         *,
+        jsonrpc_id: Any,
         headers: dict[str, str] | None = None,
+        catalog_item: CatalogItem | None = None,
     ) -> dict:
-        jsonrpc_id = body.get("id", 1)
-        if not await ExpertPermissionService.has(self.db, user_id, org_id, "expert_skill:invoke"):
-            return mcp_error_v2(jsonrpc_id, EXPERT_PERMISSION_DENIED, "expert_skill:invoke required")
         if not expert.published:
             return mcp_error_v2(jsonrpc_id, EXPERT_NOT_PUBLISHED, "Expert is not published")
         if not expert.enabled:
@@ -221,9 +273,6 @@ class ExpertMcpGatewayService:
         if not await self.catalog.runtime_ready(org_id, expert):
             return mcp_error_v2(jsonrpc_id, EXPERT_RUNTIME_NOT_READY, "Runtime is not ready")
 
-        params = body.get("params") if isinstance(body.get("params"), dict) else {}
-        skill_name = str(params.get("name") or "").strip()
-        arguments = params.get("arguments") if isinstance(params.get("arguments"), dict) else {}
         forbidden = find_route_override_keys(arguments)
         if forbidden:
             log = await self.logs.create_started(
@@ -234,6 +283,9 @@ class ExpertMcpGatewayService:
                 skill_name=skill_name,
                 jsonrpc_id=str(jsonrpc_id),
                 request_payload=arguments,
+                catalog_kind="expert",
+                catalog_slug=expert.expert_slug,
+                orchestration_mode="upstream_skill",
                 **self._client_meta(headers),
             )
             await self.logs.mark_rejected(
@@ -259,6 +311,7 @@ class ExpertMcpGatewayService:
             return mcp_error_v2(jsonrpc_id, EXPERT_INVALID_JSONRPC, "prompt is required")
 
         agent_profile = await self.catalog.resolve_agent_profile(org_id, expert)
+        slug = catalog_item.slug if catalog_item else expert.expert_slug
         log = await self.logs.create_started(
             org_id=org_id,
             user_id=user_id,
@@ -270,6 +323,9 @@ class ExpertMcpGatewayService:
             agent_alias=agent_profile,
             jsonrpc_id=str(jsonrpc_id),
             request_payload=arguments,
+            catalog_kind="expert",
+            catalog_slug=slug,
+            orchestration_mode="upstream_skill",
             **self._client_meta(headers),
         )
 
@@ -287,7 +343,7 @@ class ExpertMcpGatewayService:
             if error:
                 await self.logs.mark_failed(
                     log,
-                    error_code=str(error.get("error", {}).get("data", {}).get("errorCode") or "EXPERT_UPSTREAM_MCP_ERROR"),
+                    error_code=str(error.get("error", {}).get("data", {}).get("errorCode") or EXPERT_UPSTREAM_MCP_ERROR),
                     error_message=str(error.get("error", {}).get("message") or ""),
                     error_detail=error.get("error", {}).get("data") if isinstance(error.get("error"), dict) else None,
                 )
@@ -299,8 +355,10 @@ class ExpertMcpGatewayService:
                 structured["structuredContent"].update(
                     {
                         "invocationId": log.id,
-                        "expertSlug": expert.expert_slug,
+                        "slug": slug,
+                        "kind": "expert",
                         "skillName": skill.skill_name,
+                        "orchestrationMode": "upstream_skill",
                         "status": "completed",
                     }
                 )
@@ -309,10 +367,102 @@ class ExpertMcpGatewayService:
         except Exception as exc:
             await self.logs.mark_failed(
                 log,
-                error_code="EXPERT_UPSTREAM_MCP_ERROR",
+                error_code=EXPERT_UPSTREAM_MCP_ERROR,
                 error_message=str(exc),
             )
-            return mcp_error_v2(jsonrpc_id, "EXPERT_UPSTREAM_MCP_ERROR", str(exc))
+            return mcp_error_v2(jsonrpc_id, EXPERT_UPSTREAM_MCP_ERROR, str(exc))
+
+    async def _call_team_upstream_skill(
+        self,
+        org_id: str,
+        user_id: str,
+        team: ExpertTeam,
+        item: CatalogItem,
+        skill_name: str,
+        arguments: dict[str, Any],
+        *,
+        jsonrpc_id: Any,
+        headers: dict[str, str] | None = None,
+    ) -> dict:
+        if not team.published:
+            return mcp_error_v2(jsonrpc_id, EXPERT_CATALOG_NOT_PUBLISHED, "Expert team is not published")
+        if not team.enabled:
+            return mcp_error_v2(jsonrpc_id, EXPERT_CATALOG_DISABLED, "Expert team is disabled")
+        if not team.hermes_agent_id:
+            return mcp_error_v2(jsonrpc_id, EXPERT_RUNTIME_NOT_READY, "Team Hermes Agent is not configured")
+        if not await self.catalog.runtime_ready_for_agent(org_id, team.hermes_agent_id):
+            return mcp_error_v2(jsonrpc_id, EXPERT_RUNTIME_NOT_READY, "Runtime is not ready")
+
+        skill = await self.team_skills.get_skill_by_name(org_id, team.id, skill_name)
+        if skill is None:
+            return mcp_error_v2(jsonrpc_id, EXPERT_SKILL_NOT_FOUND, f"Skill {skill_name} not found")
+        if not skill.is_public:
+            return mcp_error_v2(jsonrpc_id, EXPERT_SKILL_NOT_PUBLIC, "Skill is not public")
+        if not skill.call_enabled:
+            return mcp_error_v2(jsonrpc_id, EXPERT_SKILL_CALL_DISABLED, "Skill call is disabled")
+        if not str(arguments.get("prompt") or "").strip():
+            return mcp_error_v2(jsonrpc_id, EXPERT_INVALID_JSONRPC, "prompt is required")
+
+        agent_profile = await self.catalog.resolve_agent_profile_by_id(org_id, team.hermes_agent_id)
+        log = await self.logs.create_started(
+            org_id=org_id,
+            user_id=user_id,
+            expert_team_id=team.id,
+            expert_slug=team.team_slug,
+            skill_name=skill.skill_name,
+            upstream_tool_name=skill.upstream_tool_name,
+            agent_alias=agent_profile,
+            jsonrpc_id=str(jsonrpc_id),
+            request_payload=arguments,
+            invocation_type="expert_team",
+            catalog_kind="expert_team",
+            catalog_slug=item.slug,
+            orchestration_mode=item.orchestration_mode,
+            **self._client_meta(headers),
+        )
+
+        try:
+            response = await ExpertMcpProxyService.call_upstream_tool(
+                self.db,
+                org_id,
+                user_id,
+                agent_profile,
+                skill.upstream_tool_name,
+                arguments,
+                jsonrpc_id=jsonrpc_id,
+            )
+            result, error = ExpertMcpProxyService.parse_upstream_result(response)
+            if error:
+                await self.logs.mark_failed(
+                    log,
+                    error_code=str(error.get("error", {}).get("data", {}).get("errorCode") or EXPERT_UPSTREAM_MCP_ERROR),
+                    error_message=str(error.get("error", {}).get("message") or ""),
+                    error_detail=error.get("error", {}).get("data") if isinstance(error.get("error"), dict) else None,
+                )
+                return error
+
+            structured = dict(result or {})
+            structured.setdefault("structuredContent", {})
+            if isinstance(structured["structuredContent"], dict):
+                structured["structuredContent"].update(
+                    {
+                        "invocationId": log.id,
+                        "slug": item.slug,
+                        "kind": "expert_team",
+                        "skillName": skill.skill_name,
+                        "orchestrationMode": item.orchestration_mode,
+                        "status": "completed",
+                    }
+                )
+            await self.logs.mark_completed(log, result=structured)
+            return mcp_success(jsonrpc_id, structured)
+        except Exception as exc:
+            await self.logs.mark_failed(
+                log,
+                error_code=EXPERT_UPSTREAM_MCP_ERROR,
+                error_message=str(exc),
+            )
+            return mcp_error_v2(jsonrpc_id, EXPERT_UPSTREAM_MCP_ERROR, str(exc))
 
     async def _list_catalog_tools(self, org_id: str, user_id: str) -> list[dict[str, Any]]:
         tools: list[dict[str, Any]] = []
@@ -323,6 +473,8 @@ class ExpertMcpGatewayService:
             ready = await self.catalog.runtime_ready(org_id, expert)
             public_count = await self.catalog._count_public_skills(org_id, expert.id)
             callable_count = await self.catalog._count_callable_skills(org_id, expert.id)
+            if public_count <= 0:
+                continue
             tools.append(
                 {
                     "name": expert.expert_slug,
@@ -330,7 +482,7 @@ class ExpertMcpGatewayService:
                     "inputSchema": {"type": "object", "properties": {}},
                     "annotations": {
                         "kind": "expert",
-                        "expertSlug": expert.expert_slug,
+                        "slug": expert.expert_slug,
                         "displayName": expert.display_name,
                         "category": expert.category,
                         "tags": list(expert.tags or []),
@@ -343,6 +495,20 @@ class ExpertMcpGatewayService:
 
         teams = await self.teams.list_published_teams(org_id)
         for team in teams:
+            mode = team.orchestration_mode or "upstream_skill"
+            if mode == "sequential_gateway":
+                mode = "gateway_sequential"
+            if mode == "gateway_sequential":
+                public_count = 1
+                callable_count = 1
+                status = "ready"
+            else:
+                public_count = await self.team_skills.count_public_skills(org_id, team.id)
+                callable_count = await self.team_skills.count_callable_skills(org_id, team.id)
+                ready = await self.catalog.runtime_ready_for_agent(org_id, team.hermes_agent_id)
+                status = "ready" if ready else "offline"
+            if public_count <= 0:
+                continue
             tools.append(
                 {
                     "name": team.team_slug,
@@ -350,11 +516,14 @@ class ExpertMcpGatewayService:
                     "inputSchema": {"type": "object", "properties": {}},
                     "annotations": {
                         "kind": "expert_team",
-                        "teamSlug": team.team_slug,
+                        "slug": team.team_slug,
                         "displayName": team.display_name,
                         "category": team.category,
                         "tags": list(team.tags or []),
-                        "status": "ready",
+                        "status": status,
+                        "orchestrationMode": mode,
+                        "publicSkillCount": public_count,
+                        "callableSkillCount": callable_count,
                     },
                 }
             )

@@ -8,6 +8,8 @@ from app.models.base import not_deleted
 from app.models.expert import Expert
 from app.models.expert_team import ExpertTeam
 from app.models.expert_team_member import ExpertTeamMember
+from app.models.expert_team_skill import ExpertTeamSkill
+from app.models.hermes_skill.hermes_agent_instance import HermesAgentInstance
 from app.schemas.expert import (
     ExpertTeamCreateBody,
     ExpertTeamItem,
@@ -72,6 +74,7 @@ class ExpertTeamService:
             category=body.category,
             tags=body.tags or [],
             avatar=body.avatar,
+            hermes_agent_id=body.hermes_agent_id,
             orchestration_mode=body.orchestration_mode,
             published=body.published,
             enabled=body.enabled,
@@ -108,6 +111,8 @@ class ExpertTeamService:
             team.tags = body.tags
         if body.avatar is not None:
             team.avatar = body.avatar
+        if body.hermes_agent_id is not None:
+            team.hermes_agent_id = body.hermes_agent_id
         if body.orchestration_mode is not None:
             team.orchestration_mode = body.orchestration_mode
         if body.sort_order is not None:
@@ -160,6 +165,34 @@ class ExpertTeamService:
             not_deleted(ExpertTeamMember),
         )
         member_count = int((await self.db.execute(count_stmt)).scalar_one())
+        agent_profile = None
+        if team.hermes_agent_id:
+            agent_stmt = select(HermesAgentInstance).where(
+                HermesAgentInstance.org_id == team.org_id,
+                HermesAgentInstance.id == team.hermes_agent_id,
+                not_deleted(HermesAgentInstance),
+            )
+            agent = (await self.db.execute(agent_stmt)).scalar_one_or_none()
+            if agent is not None:
+                agent_profile = agent.profile_name
+        mode = team.orchestration_mode or "upstream_skill"
+        if mode == "sequential_gateway":
+            mode = "gateway_sequential"
+        public_stmt = select(func.count()).select_from(ExpertTeamSkill).where(
+            ExpertTeamSkill.org_id == team.org_id,
+            ExpertTeamSkill.expert_team_id == team.id,
+            ExpertTeamSkill.is_public.is_(True),
+            not_deleted(ExpertTeamSkill),
+        )
+        callable_stmt = select(func.count()).select_from(ExpertTeamSkill).where(
+            ExpertTeamSkill.org_id == team.org_id,
+            ExpertTeamSkill.expert_team_id == team.id,
+            ExpertTeamSkill.is_public.is_(True),
+            ExpertTeamSkill.call_enabled.is_(True),
+            not_deleted(ExpertTeamSkill),
+        )
+        public_skill_count = int((await self.db.execute(public_stmt)).scalar_one())
+        callable_skill_count = int((await self.db.execute(callable_stmt)).scalar_one())
         return ExpertTeamItem(
             id=team.id,
             org_id=team.org_id,
@@ -169,10 +202,14 @@ class ExpertTeamService:
             category=team.category,
             tags=list(team.tags or []),
             avatar=team.avatar,
-            orchestration_mode=team.orchestration_mode,
+            hermes_agent_id=team.hermes_agent_id,
+            orchestration_mode=mode,
             published=team.published,
             enabled=team.enabled,
             sort_order=team.sort_order,
+            agent_profile=agent_profile,
+            public_skill_count=public_skill_count,
+            callable_skill_count=callable_skill_count,
             member_count=member_count,
             created_at=team.created_at,
             updated_at=team.updated_at,

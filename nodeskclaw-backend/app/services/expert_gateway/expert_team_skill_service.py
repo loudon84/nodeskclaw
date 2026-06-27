@@ -3,55 +3,67 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import and_, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import BadRequestError, NotFoundError
 from app.models.base import not_deleted
-from app.models.expert import Expert
-from app.models.expert_skill import ExpertSkill
-from app.schemas.expert_skill import ExpertSkillItem, ExpertSkillSyncResult, ExpertSkillUpdateBody
+from app.models.expert_team import ExpertTeam
+from app.models.expert_team_skill import ExpertTeamSkill
+from app.models.hermes_skill.hermes_agent_instance import HermesAgentInstance
+from app.schemas.expert_skill import ExpertSkillSyncResult
+from app.schemas.expert_team_skill import ExpertTeamSkillItem, ExpertTeamSkillUpdateBody
 from app.services.expert_gateway.expert_catalog_service import ExpertCatalogService
 from app.services.expert_gateway.expert_mcp_proxy_service import ExpertMcpProxyService
 
 
-class ExpertSkillService:
+class ExpertTeamSkillService:
     def __init__(self, db: AsyncSession):
         self.db = db
-        self.catalog = ExpertCatalogService(db)
 
-    async def list_skills(self, org_id: str, expert_id: str) -> list[ExpertSkillItem]:
+    async def _get_team(self, org_id: str, team_id: str) -> ExpertTeam:
+        stmt = select(ExpertTeam).where(
+            ExpertTeam.org_id == org_id,
+            ExpertTeam.id == team_id,
+            not_deleted(ExpertTeam),
+        )
+        team = (await self.db.execute(stmt)).scalar_one_or_none()
+        if team is None:
+            raise NotFoundError(message="专家团队不存在", message_key="errors.expert.team_not_found")
+        return team
+
+    async def list_skills(self, org_id: str, team_id: str) -> list[ExpertTeamSkillItem]:
         stmt = (
-            select(ExpertSkill)
+            select(ExpertTeamSkill)
             .where(
-                ExpertSkill.org_id == org_id,
-                ExpertSkill.expert_id == expert_id,
-                not_deleted(ExpertSkill),
+                ExpertTeamSkill.org_id == org_id,
+                ExpertTeamSkill.expert_team_id == team_id,
+                not_deleted(ExpertTeamSkill),
             )
-            .order_by(ExpertSkill.sort_order.asc(), ExpertSkill.created_at.asc())
+            .order_by(ExpertTeamSkill.sort_order.asc(), ExpertTeamSkill.created_at.asc())
         )
         rows = (await self.db.execute(stmt)).scalars().all()
         return [self._to_item(row) for row in rows]
 
-    async def list_public_skills(self, org_id: str, expert_id: str) -> list[ExpertSkill]:
+    async def list_public_skills(self, org_id: str, team_id: str) -> list[ExpertTeamSkill]:
         stmt = (
-            select(ExpertSkill)
+            select(ExpertTeamSkill)
             .where(
-                ExpertSkill.org_id == org_id,
-                ExpertSkill.expert_id == expert_id,
-                ExpertSkill.is_public.is_(True),
-                not_deleted(ExpertSkill),
+                ExpertTeamSkill.org_id == org_id,
+                ExpertTeamSkill.expert_team_id == team_id,
+                ExpertTeamSkill.is_public.is_(True),
+                not_deleted(ExpertTeamSkill),
             )
-            .order_by(ExpertSkill.sort_order.asc(), ExpertSkill.created_at.asc())
+            .order_by(ExpertTeamSkill.sort_order.asc(), ExpertTeamSkill.created_at.asc())
         )
         return list((await self.db.execute(stmt)).scalars().all())
 
-    async def get_skill_by_name(self, org_id: str, expert_id: str, skill_name: str) -> ExpertSkill | None:
-        stmt = select(ExpertSkill).where(
-            ExpertSkill.org_id == org_id,
-            ExpertSkill.expert_id == expert_id,
-            ExpertSkill.skill_name == skill_name,
-            not_deleted(ExpertSkill),
+    async def get_skill_by_name(self, org_id: str, team_id: str, skill_name: str) -> ExpertTeamSkill | None:
+        stmt = select(ExpertTeamSkill).where(
+            ExpertTeamSkill.org_id == org_id,
+            ExpertTeamSkill.expert_team_id == team_id,
+            ExpertTeamSkill.skill_name == skill_name,
+            not_deleted(ExpertTeamSkill),
         )
         return (await self.db.execute(stmt)).scalar_one_or_none()
 
@@ -60,8 +72,8 @@ class ExpertSkillService:
         org_id: str,
         user_id: str,
         skill_id: str,
-        body: ExpertSkillUpdateBody,
-    ) -> ExpertSkillItem:
+        body: ExpertTeamSkillUpdateBody,
+    ) -> ExpertTeamSkillItem:
         skill = await self._get_skill(org_id, skill_id)
         if body.skill_name is not None:
             skill.skill_name = body.skill_name.strip()
@@ -86,23 +98,21 @@ class ExpertSkillService:
         await self.db.flush()
         return self._to_item(skill)
 
-    async def sync_tools(
-        self,
-        org_id: str,
-        user_id: str,
-        expert_id: str,
-    ) -> ExpertSkillSyncResult:
-        expert = await self.catalog.get_by_id(org_id, expert_id)
-        if expert is None:
-            raise NotFoundError(message="专家不存在", message_key="errors.expert.not_found")
-        agent_profile = await self.catalog.resolve_agent_profile(org_id, expert)
+    async def sync_tools(self, org_id: str, user_id: str, team_id: str) -> ExpertSkillSyncResult:
+        team = await self._get_team(org_id, team_id)
+        if not team.hermes_agent_id:
+            raise BadRequestError(
+                message="请先绑定 Hermes Agent",
+                message_key="errors.expert.team_agent_required",
+            )
+        agent_profile = await self._resolve_agent_profile(org_id, team)
         upstream_tools = await ExpertMcpProxyService.list_upstream_tools(
             self.db, org_id, user_id, agent_profile,
         )
-        existing_stmt = select(ExpertSkill).where(
-            ExpertSkill.org_id == org_id,
-            ExpertSkill.expert_id == expert_id,
-            not_deleted(ExpertSkill),
+        existing_stmt = select(ExpertTeamSkill).where(
+            ExpertTeamSkill.org_id == org_id,
+            ExpertTeamSkill.expert_team_id == team_id,
+            not_deleted(ExpertTeamSkill),
         )
         existing_rows = list((await self.db.execute(existing_stmt)).scalars().all())
         by_upstream = {row.upstream_tool_name: row for row in existing_rows}
@@ -125,12 +135,12 @@ class ExpertSkillService:
                 skill_name = ExpertCatalogService.default_skill_name_from_upstream(upstream_name)
                 base_name = skill_name
                 suffix = 1
-                while await self.get_skill_by_name(org_id, expert_id, skill_name):
+                while await self.get_skill_by_name(org_id, team_id, skill_name):
                     suffix += 1
                     skill_name = f"{base_name}-{suffix}"
-                row = ExpertSkill(
+                row = ExpertTeamSkill(
                     org_id=org_id,
-                    expert_id=expert_id,
+                    expert_team_id=team_id,
                     skill_name=skill_name,
                     upstream_tool_name=upstream_name,
                     display_name=skill_name,
@@ -165,28 +175,61 @@ class ExpertSkillService:
             total_upstream=len(seen_upstream),
         )
 
-    async def _get_skill(self, org_id: str, skill_id: str) -> ExpertSkill:
-        stmt = select(ExpertSkill).where(
-            ExpertSkill.org_id == org_id,
-            ExpertSkill.id == skill_id,
-            not_deleted(ExpertSkill),
+    async def count_public_skills(self, org_id: str, team_id: str) -> int:
+        stmt = select(func.count()).select_from(ExpertTeamSkill).where(
+            ExpertTeamSkill.org_id == org_id,
+            ExpertTeamSkill.expert_team_id == team_id,
+            ExpertTeamSkill.is_public.is_(True),
+            not_deleted(ExpertTeamSkill),
+        )
+        return int((await self.db.execute(stmt)).scalar_one())
+
+    async def count_callable_skills(self, org_id: str, team_id: str) -> int:
+        stmt = select(func.count()).select_from(ExpertTeamSkill).where(
+            ExpertTeamSkill.org_id == org_id,
+            ExpertTeamSkill.expert_team_id == team_id,
+            ExpertTeamSkill.is_public.is_(True),
+            ExpertTeamSkill.call_enabled.is_(True),
+            not_deleted(ExpertTeamSkill),
+        )
+        return int((await self.db.execute(stmt)).scalar_one())
+
+    async def _get_skill(self, org_id: str, skill_id: str) -> ExpertTeamSkill:
+        stmt = select(ExpertTeamSkill).where(
+            ExpertTeamSkill.org_id == org_id,
+            ExpertTeamSkill.id == skill_id,
+            not_deleted(ExpertTeamSkill),
         )
         row = (await self.db.execute(stmt)).scalar_one_or_none()
         if row is None:
-            raise NotFoundError(message="专家能力不存在", message_key="errors.expert.skill_not_found")
+            raise NotFoundError(message="团队能力不存在", message_key="errors.expert.team_skill_not_found")
         return row
 
+    async def _resolve_agent_profile(self, org_id: str, team: ExpertTeam) -> str:
+        stmt = select(HermesAgentInstance).where(
+            HermesAgentInstance.org_id == org_id,
+            HermesAgentInstance.id == team.hermes_agent_id,
+            not_deleted(HermesAgentInstance),
+        )
+        agent = (await self.db.execute(stmt)).scalar_one_or_none()
+        if agent is None:
+            raise NotFoundError(
+                message="Hermes Agent 实例不存在",
+                message_key="errors.hermes.agent_instance_not_found",
+            )
+        return agent.profile_name
+
     @staticmethod
-    def _normalize_flags(skill: ExpertSkill) -> None:
+    def _normalize_flags(skill: ExpertTeamSkill) -> None:
         if not skill.is_public:
             skill.call_enabled = False
 
     @staticmethod
-    def _to_item(row: ExpertSkill) -> ExpertSkillItem:
-        return ExpertSkillItem(
+    def _to_item(row: ExpertTeamSkill) -> ExpertTeamSkillItem:
+        return ExpertTeamSkillItem(
             id=row.id,
             org_id=row.org_id,
-            expert_id=row.expert_id,
+            expert_team_id=row.expert_team_id,
             skill_name=row.skill_name,
             upstream_tool_name=row.upstream_tool_name,
             display_name=row.display_name,
@@ -205,20 +248,27 @@ class ExpertSkillService:
         )
 
     @staticmethod
-    def build_tool_descriptor(expert: Expert, skill: ExpertSkill, *, runtime_ready: bool) -> dict[str, Any]:
+    def build_tool_descriptor(
+        team: ExpertTeam,
+        skill: ExpertTeamSkill,
+        *,
+        runtime_ready: bool,
+        orchestration_mode: str,
+    ) -> dict[str, Any]:
         return {
             "name": skill.skill_name,
             "description": skill.description or skill.display_name or skill.skill_name,
             "inputSchema": skill.input_schema or {"type": "object", "properties": {}},
             "annotations": {
-                "kind": "expert_skill",
-                "slug": expert.expert_slug,
+                "kind": "expert_team_skill",
+                "slug": team.team_slug,
                 "displayName": skill.display_name or skill.skill_name,
                 "public": skill.is_public,
                 "callEnabled": skill.call_enabled,
                 "riskLevel": skill.risk_level,
                 "approvalMode": skill.approval_mode,
                 "outputFormats": list(skill.output_formats or []),
+                "orchestrationMode": orchestration_mode,
                 "status": "ready" if runtime_ready else "offline",
             },
         }

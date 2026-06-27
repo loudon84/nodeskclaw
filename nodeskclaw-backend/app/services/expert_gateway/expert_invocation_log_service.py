@@ -80,6 +80,9 @@ class ExpertInvocationLogService:
         client_device_id: str | None = None,
         parent_invocation_id: str | None = None,
         invocation_type: str = "expert_skill",
+        catalog_kind: str | None = None,
+        catalog_slug: str | None = None,
+        orchestration_mode: str | None = None,
     ) -> ExpertInvocationLog:
         now = datetime.now(timezone.utc)
         log = ExpertInvocationLog(
@@ -102,6 +105,9 @@ class ExpertInvocationLogService:
             client_device_id=client_device_id,
             parent_invocation_id=parent_invocation_id,
             invocation_type=invocation_type,
+            catalog_kind=catalog_kind,
+            catalog_slug=catalog_slug,
+            orchestration_mode=orchestration_mode,
         )
         self.db.add(log)
         await self.db.flush()
@@ -174,6 +180,8 @@ class ExpertInvocationLogService:
         keyword: str | None = None,
         started_from: datetime | None = None,
         started_to: datetime | None = None,
+        catalog_kind: str | None = None,
+        orchestration_mode: str | None = None,
         page: int = 1,
         page_size: int = 20,
     ) -> tuple[list[ExpertInvocationLogItem], int]:
@@ -190,6 +198,10 @@ class ExpertInvocationLogService:
             conditions.append(ExpertInvocationLog.started_at >= started_from)
         if started_to:
             conditions.append(ExpertInvocationLog.started_at <= started_to)
+        if catalog_kind:
+            conditions.append(ExpertInvocationLog.catalog_kind == catalog_kind)
+        if orchestration_mode:
+            conditions.append(ExpertInvocationLog.orchestration_mode == orchestration_mode)
         if keyword:
             like = f"%{keyword}%"
             conditions.append(
@@ -267,5 +279,8 @@ class ExpertInvocationLogService:
             client_device_id=row.client_device_id,
             parent_invocation_id=row.parent_invocation_id,
             invocation_type=row.invocation_type,
+            catalog_kind=row.catalog_kind,
+            catalog_slug=row.catalog_slug,
+            orchestration_mode=row.orchestration_mode,
             created_at=row.created_at,
         )

@@ -208,6 +208,20 @@ class ExpertCatalogService:
 
     async def runtime_ready(self, org_id: str, expert: Expert) -> bool:
         agent = await self._get_agent(org_id, expert.hermes_agent_id)
+        return self._agent_runtime_ready(agent)
+
+    async def runtime_ready_for_agent(self, org_id: str, agent_id: str | None) -> bool:
+        if not agent_id:
+            return False
+        agent = await self._get_agent(org_id, agent_id)
+        return self._agent_runtime_ready(agent)
+
+    async def resolve_agent_profile_by_id(self, org_id: str, agent_id: str) -> str:
+        agent = await self._get_agent(org_id, agent_id)
+        return agent.profile_name
+
+    @staticmethod
+    def _agent_runtime_ready(agent: HermesAgentInstance) -> bool:
         return (
             agent.docker_status in {"running", "online"}
             and agent.gateway_status in {"online", "ready"}

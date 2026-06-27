@@ -32,6 +32,9 @@ class ExpertInvocationLogItem(BaseModel):
     client_device_id: str | None = None
     parent_invocation_id: str | None = None
     invocation_type: str
+    catalog_kind: str | None = None
+    catalog_slug: str | None = None
+    orchestration_mode: str | None = None
     created_at: datetime | None = None
 
 

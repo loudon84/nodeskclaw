@@ -62,7 +62,8 @@ class ExpertTeamCreateBody(BaseModel):
     category: str | None = None
     tags: list[str] = Field(default_factory=list)
     avatar: str | None = None
-    orchestration_mode: str = "sequential_gateway"
+    hermes_agent_id: str | None = None
+    orchestration_mode: str = "upstream_skill"
     sort_order: int = 100
     published: bool = False
     enabled: bool = True
@@ -75,6 +76,7 @@ class ExpertTeamUpdateBody(BaseModel):
     category: str | None = None
     tags: list[str] | None = None
     avatar: str | None = None
+    hermes_agent_id: str | None = None
     orchestration_mode: str | None = None
     sort_order: int | None = None
     published: bool | None = None
@@ -98,10 +100,14 @@ class ExpertTeamItem(BaseModel):
     category: str | None = None
     tags: list[str] = Field(default_factory=list)
     avatar: str | None = None
+    hermes_agent_id: str | None = None
     orchestration_mode: str
     published: bool
     enabled: bool
     sort_order: int
+    agent_profile: str | None = None
+    public_skill_count: int = 0
+    callable_skill_count: int = 0
     member_count: int = 0
     created_at: datetime | None = None
     updated_at: datetime | None = None
