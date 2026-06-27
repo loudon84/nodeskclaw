@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { Loader2, RefreshCw } from 'lucide-vue-next'
 import {
   listExpertTeamSkills,
+  setExpertTeamSkillVisibility,
   syncExpertTeamTools,
   updateExpertTeamSkill,
   type ExpertTeamItem,
@@ -13,7 +14,7 @@ import { resolveApiErrorMessage } from '@/i18n/error'
 import { useToast } from '@/composables/useToast'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Switch } from '@/components/ui/switch'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Sheet,
   SheetContent,
@@ -30,6 +31,8 @@ import {
   TableRow,
 } from '@/components/ui/table'
 
+type SkillRow = ExpertTeamSkillItem & { _updating?: boolean }
+
 const props = defineProps<{
   open: boolean
   team: ExpertTeamItem | null
@@ -44,25 +47,20 @@ const { t } = useI18n()
 const toast = useToast()
 const loading = ref(false)
 const syncing = ref(false)
-const skills = ref<ExpertTeamSkillItem[]>([])
-const updatingSkillIds = ref<Set<string>>(new Set())
+const skills = ref<SkillRow[]>([])
 
 const riskOptions = ['low', 'medium', 'high']
 const approvalOptions = ['none', 'server', 'admin']
 
-function isSkillEnabled(skill: ExpertTeamSkillItem): boolean {
+function isSkillEnabled(skill: SkillRow): boolean {
   return skill.public === true && skill.call_enabled === true
-}
-
-function isSkillUpdating(skillId: string): boolean {
-  return updatingSkillIds.value.has(skillId)
 }
 
 async function loadSkills() {
   if (!props.team) return
   loading.value = true
   try {
-    skills.value = await listExpertTeamSkills(props.team.id)
+    skills.value = (await listExpertTeamSkills(props.team.id)).map((item) => ({ ...item }))
   } catch (e: unknown) {
     toast.error(resolveApiErrorMessage(e, t('hermes.expertTeam.skillsLoadFailed')))
   } finally {
@@ -85,38 +83,28 @@ async function syncTools() {
   }
 }
 
-async function patchSkillMeta(skill: ExpertTeamSkillItem, patch: Record<string, unknown>) {
+async function patchSkillMeta(skill: SkillRow, patch: Record<string, unknown>) {
   try {
     const updated = await updateExpertTeamSkill(skill.id, patch)
-    skills.value = skills.value.map((s) => (s.id === updated.id ? updated : s))
+    Object.assign(skill, updated)
     emit('changed')
   } catch (e: unknown) {
     toast.error(resolveApiErrorMessage(e, t('hermes.expertTeam.updateFailed')))
   }
 }
 
-async function handleToggleSkill(skill: ExpertTeamSkillItem, checked: boolean) {
-  if (isSkillUpdating(skill.id)) return
+async function handleToggleSkill(skill: SkillRow, checked: boolean) {
+  if (skill._updating) return
 
   const previousPublic = skill.public
   const previousCallEnabled = skill.call_enabled
-  updatingSkillIds.value = new Set(updatingSkillIds.value).add(skill.id)
-
-  const idx = skills.value.findIndex((s) => s.id === skill.id)
-  if (idx >= 0) {
-    skills.value[idx] = {
-      ...skills.value[idx],
-      public: checked,
-      call_enabled: checked,
-    }
-  }
+  skill._updating = true
+  skill.public = checked
+  skill.call_enabled = checked
 
   try {
-    const updated = await updateExpertTeamSkill(skill.id, {
-      public: checked,
-      call_enabled: checked,
-    })
-    skills.value = skills.value.map((s) => (s.id === updated.id ? updated : s))
+    const updated = await setExpertTeamSkillVisibility(skill.id, checked)
+    Object.assign(skill, updated)
     emit('changed')
     toast.success(
       checked
@@ -124,18 +112,11 @@ async function handleToggleSkill(skill: ExpertTeamSkillItem, checked: boolean) {
         : t('hermes.expertCatalog.skillDisabledSuccess'),
     )
   } catch (e: unknown) {
-    if (idx >= 0) {
-      skills.value[idx] = {
-        ...skills.value[idx],
-        public: previousPublic,
-        call_enabled: previousCallEnabled,
-      }
-    }
+    skill.public = previousPublic
+    skill.call_enabled = previousCallEnabled
     toast.error(resolveApiErrorMessage(e, t('hermes.expertTeam.updateFailed')))
   } finally {
-    const next = new Set(updatingSkillIds.value)
-    next.delete(skill.id)
-    updatingSkillIds.value = next
+    skill._updating = false
   }
 }
 
@@ -187,11 +168,14 @@ watch(
                 </div>
               </TableCell>
               <TableCell>
-                <Switch
-                  :checked="isSkillEnabled(skill)"
-                  :disabled="isSkillUpdating(skill.id)"
-                  @update:checked="(checked: boolean) => handleToggleSkill(skill, checked)"
-                />
+                <label class="inline-flex items-center gap-2 cursor-pointer">
+                  <Checkbox
+                    :checked="isSkillEnabled(skill)"
+                    :disabled="skill._updating"
+                    @update:checked="(checked) => handleToggleSkill(skill, checked === true)"
+                  />
+                  <Loader2 v-if="skill._updating" class="w-3 h-3 animate-spin text-muted-foreground" />
+                </label>
               </TableCell>
               <TableCell>
                 <div class="flex flex-col gap-1">

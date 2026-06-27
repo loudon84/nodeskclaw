@@ -130,11 +130,13 @@ nodeskclaw-backend/
 | POST | `/api/v1/expert/experts/{id}/publish` | `expert:manage` |
 | POST | `/api/v1/expert/experts/{id}/sync-tools` | `expert_skill:manage` |
 | PATCH | `/api/v1/expert/expert-skills/{id}` | `expert_skill:manage` |
+| POST | `/api/v1/expert/expert-skills/{id}/visibility` | `expert_skill:manage`（单开关 MVP，`{enabled}`） |
 | GET | `/api/v1/expert/admin/invocation-logs` | `expert_log:view` |
 | GET/POST/PATCH | `/api/v1/expert/teams` | `expert:manage` |
 | GET | `/api/v1/expert/teams/{id}/skills` | `expert_skill:manage` |
 | POST | `/api/v1/expert/teams/{id}/sync-tools` | `expert_skill:manage` |
 | PATCH | `/api/v1/expert/team-skills/{id}` | `expert_skill:manage` |
+| POST | `/api/v1/expert/team-skills/{id}/visibility` | `expert_skill:manage`（单开关 MVP） |
 
 ## 调用链路
 

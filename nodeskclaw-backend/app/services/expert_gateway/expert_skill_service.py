@@ -86,6 +86,20 @@ class ExpertSkillService:
         await self.db.flush()
         return self._to_item(skill)
 
+    async def set_visibility(
+        self,
+        org_id: str,
+        user_id: str,
+        skill_id: str,
+        enabled: bool,
+    ) -> ExpertSkillItem:
+        return await self.update_skill(
+            org_id,
+            user_id,
+            skill_id,
+            ExpertSkillUpdateBody(public=enabled, call_enabled=enabled),
+        )
+
     async def sync_tools(
         self,
         org_id: str,

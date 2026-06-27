@@ -18,8 +18,8 @@ from app.schemas.expert import (
 )
 from app.schemas.expert_log import ExpertInvocationLogDetail, ExpertInvocationLogListResponse
 from app.schemas.expert_mcp import ExpertHealthResponse
-from app.schemas.expert_skill import ExpertSkillItem, ExpertSkillListResponse, ExpertSkillSyncResult, ExpertSkillUpdateBody
-from app.schemas.expert_team_skill import ExpertTeamSkillItem, ExpertTeamSkillListResponse, ExpertTeamSkillUpdateBody
+from app.schemas.expert_skill import ExpertSkillItem, ExpertSkillListResponse, ExpertSkillSyncResult, ExpertSkillUpdateBody, ExpertSkillVisibilityBody
+from app.schemas.expert_team_skill import ExpertTeamSkillItem, ExpertTeamSkillListResponse, ExpertTeamSkillUpdateBody, ExpertTeamSkillVisibilityBody
 from app.services.expert_gateway.expert_catalog_service import ExpertCatalogService
 from app.services.expert_gateway.expert_health_service import ExpertHealthService
 from app.services.expert_gateway.expert_invocation_log_service import ExpertInvocationLogService
@@ -227,6 +227,20 @@ async def update_expert_skill(
     return _ok(item)
 
 
+@router.post("/expert-skills/{skill_id}/visibility", response_model=ApiResponse[ExpertSkillItem], tags=["Expert MCP Gateway"])
+async def set_expert_skill_visibility(
+    skill_id: str,
+    body: ExpertSkillVisibilityBody,
+    user_org=Depends(require_org_member),
+    db: AsyncSession = Depends(get_db),
+):
+    user, org = user_org
+    await ExpertPermissionService.require(db, user.id, org.id, "expert_skill:manage")
+    item = await ExpertSkillService(db).set_visibility(org.id, user.id, skill_id, body.enabled)
+    await db.commit()
+    return _ok(item)
+
+
 @router.get("/admin/invocation-logs", response_model=ApiResponse[ExpertInvocationLogListResponse], tags=["Expert MCP Gateway"])
 async def list_invocation_logs(
     expert_slug: str | None = Query(default=None),
@@ -365,5 +379,19 @@ async def update_team_skill(
     user, org = user_org
     await ExpertPermissionService.require(db, user.id, org.id, "expert_skill:manage")
     item = await ExpertTeamSkillService(db).update_skill(org.id, user.id, skill_id, body)
+    await db.commit()
+    return _ok(item)
+
+
+@router.post("/team-skills/{skill_id}/visibility", response_model=ApiResponse[ExpertTeamSkillItem], tags=["Expert MCP Gateway"])
+async def set_team_skill_visibility(
+    skill_id: str,
+    body: ExpertTeamSkillVisibilityBody,
+    user_org=Depends(require_org_member),
+    db: AsyncSession = Depends(get_db),
+):
+    user, org = user_org
+    await ExpertPermissionService.require(db, user.id, org.id, "expert_skill:manage")
+    item = await ExpertTeamSkillService(db).set_visibility(org.id, user.id, skill_id, body.enabled)
     await db.commit()
     return _ok(item)

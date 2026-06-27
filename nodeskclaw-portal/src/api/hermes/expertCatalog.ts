@@ -160,6 +160,11 @@ export async function syncExpertTools(expertId: string) {
   return unwrapEnvelope<{ created: number; updated: number; stale: number; total_upstream: number }>(res.data)
 }
 
+export async function setExpertSkillVisibility(skillId: string, enabled: boolean) {
+  const res = await api.post(`/expert/expert-skills/${skillId}/visibility`, { enabled })
+  return unwrapEnvelope<ExpertSkillItem>(res.data)
+}
+
 export async function updateExpertSkill(
   skillId: string,
   body: {
@@ -216,6 +221,11 @@ export async function listExpertTeamSkills(teamId: string) {
 export async function syncExpertTeamTools(teamId: string) {
   const res = await api.post(`/expert/teams/${teamId}/sync-tools`)
   return unwrapEnvelope<{ created: number; updated: number; stale: number; total_upstream: number }>(res.data)
+}
+
+export async function setExpertTeamSkillVisibility(skillId: string, enabled: boolean) {
+  const res = await api.post(`/expert/team-skills/${skillId}/visibility`, { enabled })
+  return unwrapEnvelope<ExpertTeamSkillItem>(res.data)
 }
 
 export async function updateExpertTeamSkill(

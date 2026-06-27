@@ -98,6 +98,20 @@ class ExpertTeamSkillService:
         await self.db.flush()
         return self._to_item(skill)
 
+    async def set_visibility(
+        self,
+        org_id: str,
+        user_id: str,
+        skill_id: str,
+        enabled: bool,
+    ) -> ExpertTeamSkillItem:
+        return await self.update_skill(
+            org_id,
+            user_id,
+            skill_id,
+            ExpertTeamSkillUpdateBody(public=enabled, call_enabled=enabled),
+        )
+
     async def sync_tools(self, org_id: str, user_id: str, team_id: str) -> ExpertSkillSyncResult:
         team = await self._get_team(org_id, team_id)
         if not team.hermes_agent_id:

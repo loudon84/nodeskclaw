@@ -16,6 +16,10 @@ class ExpertSkillUpdateBody(BaseModel):
     sort_order: int | None = None
 
 
+class ExpertSkillVisibilityBody(BaseModel):
+    enabled: bool
+
+
 class ExpertSkillItem(BaseModel):
     id: str
     org_id: str

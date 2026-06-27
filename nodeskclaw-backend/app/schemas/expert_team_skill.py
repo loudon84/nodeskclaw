@@ -16,6 +16,10 @@ class ExpertTeamSkillUpdateBody(BaseModel):
     sort_order: int | None = None
 
 
+class ExpertTeamSkillVisibilityBody(BaseModel):
+    enabled: bool
+
+
 class ExpertTeamSkillItem(BaseModel):
     id: str
     org_id: str
