@@ -60,6 +60,9 @@ export interface ExpertInvocationLogItem {
   finished_at?: string | null
   duration_ms?: number | null
   user_id?: string | null
+  catalog_kind?: string | null
+  catalog_slug?: string | null
+  orchestration_mode?: string | null
 }
 
 export interface ExpertInvocationLogDetail extends ExpertInvocationLogItem {
@@ -80,6 +83,30 @@ export interface ExpertTeamItem {
   published: boolean
   enabled: boolean
   member_count: number
+  hermes_agent_id?: string | null
+  orchestration_mode: string
+  agent_profile?: string | null
+  public_skill_count: number
+  callable_skill_count: number
+}
+
+export interface ExpertTeamSkillItem {
+  id: string
+  org_id: string
+  expert_team_id: string
+  skill_name: string
+  upstream_tool_name: string
+  display_name?: string | null
+  description?: string | null
+  input_schema: Record<string, unknown>
+  public: boolean
+  call_enabled: boolean
+  risk_level: string
+  approval_mode: string
+  output_formats: string[]
+  sort_order: number
+  stale: boolean
+  last_synced_at?: string | null
 }
 
 export async function listExperts() {
@@ -166,4 +193,19 @@ export async function updateExpertTeam(teamId: string, body: Record<string, unkn
 export async function addExpertTeamMember(teamId: string, body: { expert_id: string; role?: string; order_no?: number }) {
   const res = await api.post(`/expert/teams/${teamId}/members`, body)
   return unwrapEnvelope<{ team_id: string; expert_id: string }>(res.data)
+}
+
+export async function listExpertTeamSkills(teamId: string) {
+  const res = await api.get(`/expert/teams/${teamId}/skills`)
+  return unwrapEnvelope<{ items: ExpertTeamSkillItem[]; total: number }>(res.data).items
+}
+
+export async function syncExpertTeamTools(teamId: string) {
+  const res = await api.post(`/expert/teams/${teamId}/sync-tools`)
+  return unwrapEnvelope<{ created: number; updated: number; stale: number; total_upstream: number }>(res.data)
+}
+
+export async function updateExpertTeamSkill(skillId: string, body: Record<string, unknown>) {
+  const res = await api.patch(`/expert/team-skills/${skillId}`, body)
+  return unwrapEnvelope<ExpertTeamSkillItem>(res.data)
 }

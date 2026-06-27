@@ -41,6 +41,8 @@ const skillName = ref('')
 const statusFilter = ref('')
 const userIdFilter = ref('')
 const keyword = ref('')
+const catalogKindFilter = ref('')
+const orchestrationModeFilter = ref('')
 const drawerOpen = ref(false)
 const detailLoading = ref(false)
 const detail = ref<ExpertInvocationLogDetail | null>(null)
@@ -75,6 +77,8 @@ async function fetchLogs() {
       status: statusFilter.value || undefined,
       user_id: userIdFilter.value || undefined,
       keyword: keyword.value || undefined,
+      catalog_kind: catalogKindFilter.value || undefined,
+      orchestration_mode: orchestrationModeFilter.value || undefined,
     })
     items.value = res.items
     total.value = res.total
@@ -115,12 +119,14 @@ onMounted(fetchLogs)
       </Button>
     </div>
 
-    <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-5 mb-4">
+    <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-7 mb-4">
       <Input v-model="expertSlug" :placeholder="t('hermes.expertLogs.expertSlug')" />
       <Input v-model="skillName" :placeholder="t('hermes.expertLogs.skillName')" />
       <Input v-model="statusFilter" :placeholder="t('hermes.expertLogs.status')" />
       <Input v-model="userIdFilter" :placeholder="t('hermes.expertLogs.userId')" />
       <Input v-model="keyword" :placeholder="t('hermes.expertLogs.keyword')" />
+      <Input v-model="catalogKindFilter" :placeholder="t('hermes.expertLogs.catalogKind')" />
+      <Input v-model="orchestrationModeFilter" :placeholder="t('hermes.expertLogs.orchestrationMode')" />
     </div>
     <div class="mb-4">
       <Button size="sm" @click="page = 1; fetchLogs()">{{ t('hermes.expertLogs.search') }}</Button>
@@ -135,7 +141,9 @@ onMounted(fetchLogs)
           <TableRow>
             <TableHead>{{ t('hermes.expertLogs.time') }}</TableHead>
             <TableHead>{{ t('hermes.expertLogs.expert') }}</TableHead>
+            <TableHead>{{ t('hermes.expertLogs.catalogKind') }}</TableHead>
             <TableHead>{{ t('hermes.expertLogs.skillName') }}</TableHead>
+            <TableHead>{{ t('hermes.expertLogs.orchestrationMode') }}</TableHead>
             <TableHead>{{ t('hermes.expertLogs.status') }}</TableHead>
             <TableHead>{{ t('hermes.expertLogs.duration') }}</TableHead>
             <TableHead>{{ t('hermes.expertLogs.errorCode') }}</TableHead>
@@ -144,14 +152,19 @@ onMounted(fetchLogs)
         </TableHeader>
         <TableBody>
           <TableRow v-if="!items.length">
-            <TableCell colspan="7" class="text-center text-muted-foreground py-8">
+            <TableCell colspan="9" class="text-center text-muted-foreground py-8">
               {{ t('common.noData') }}
             </TableCell>
           </TableRow>
           <TableRow v-for="log in items" :key="log.id">
             <TableCell class="text-xs">{{ formatTime(log.started_at) }}</TableCell>
-            <TableCell class="font-mono text-xs">{{ log.expert_slug || '-' }}</TableCell>
+            <TableCell class="font-mono text-xs">{{ log.catalog_slug || log.expert_slug || '-' }}</TableCell>
+            <TableCell>
+              <Badge v-if="log.catalog_kind" variant="outline">{{ log.catalog_kind }}</Badge>
+              <span v-else>-</span>
+            </TableCell>
             <TableCell>{{ log.skill_name || '-' }}</TableCell>
+            <TableCell class="text-xs">{{ log.orchestration_mode || '-' }}</TableCell>
             <TableCell>
               <Badge variant="outline" :class="statusColor[log.status] || ''">{{ log.status }}</Badge>
             </TableCell>
@@ -183,6 +196,9 @@ onMounted(fetchLogs)
           <Loader2 class="w-5 h-5 animate-spin" />
         </div>
         <dl v-else-if="detail" class="mt-6 space-y-3 text-sm">
+          <div><dt class="text-muted-foreground">{{ t('hermes.expertLogs.catalogKind') }}</dt><dd>{{ detail.catalog_kind || '-' }}</dd></div>
+          <div><dt class="text-muted-foreground">{{ t('hermes.expertLogs.catalogSlug') }}</dt><dd class="font-mono text-xs">{{ detail.catalog_slug || detail.expert_slug || '-' }}</dd></div>
+          <div><dt class="text-muted-foreground">{{ t('hermes.expertLogs.orchestrationMode') }}</dt><dd>{{ detail.orchestration_mode || '-' }}</dd></div>
           <div><dt class="text-muted-foreground">{{ t('hermes.expertLogs.status') }}</dt><dd>{{ detail.status }}</dd></div>
           <div><dt class="text-muted-foreground">{{ t('hermes.expertLogs.duration') }}</dt><dd>{{ formatDuration(detail.duration_ms) }}</dd></div>
           <div><dt class="text-muted-foreground">{{ t('hermes.expertLogs.promptPreview') }}</dt><dd class="whitespace-pre-wrap break-all">{{ detail.request_prompt_preview || '-' }}</dd></div>

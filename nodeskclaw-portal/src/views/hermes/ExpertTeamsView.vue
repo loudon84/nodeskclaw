@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Loader2, Plus } from 'lucide-vue-next'
 import {
@@ -11,12 +11,14 @@ import {
   type ExpertTeamItem,
   type ExpertItem,
 } from '@/api/hermes/expertCatalog'
+import { listHermesAgentInstances, type HermesAgentInstance } from '@/api/hermes/agentInstances'
 import { resolveApiErrorMessage } from '@/i18n/error'
 import { useToast } from '@/composables/useToast'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
+import ExpertTeamSkillsSheet from '@/views/hermes/ExpertTeamSkillsSheet.vue'
 import {
   Table,
   TableBody,
@@ -32,21 +34,45 @@ const loading = ref(false)
 const saving = ref(false)
 const teams = ref<ExpertTeamItem[]>([])
 const experts = ref<ExpertItem[]>([])
+const agents = ref<HermesAgentInstance[]>([])
 const showCreate = ref(false)
 const memberTeamId = ref('')
 const memberExpertId = ref('')
+const skillsSheetOpen = ref(false)
+const selectedTeam = ref<ExpertTeamItem | null>(null)
 const form = ref({
   team_slug: '',
   display_name: '',
   description: '',
+  hermes_agent_id: '',
+  orchestration_mode: 'upstream_skill',
 })
+
+const orchestrationOptions = [
+  { value: 'upstream_skill', labelKey: 'hermes.expertTeam.modeUpstreamSkill' },
+  { value: 'gateway_sequential', labelKey: 'hermes.expertTeam.modeGatewaySequential' },
+]
+
+const isUpstreamMode = computed(() => form.value.orchestration_mode === 'upstream_skill')
+
+function orchestrationLabel(mode: string) {
+  if (mode === 'gateway_sequential' || mode === 'sequential_gateway') {
+    return t('hermes.expertTeam.modeGatewaySequential')
+  }
+  return t('hermes.expertTeam.modeUpstreamSkill')
+}
 
 async function load() {
   loading.value = true
   try {
-    const [teamItems, expertItems] = await Promise.all([listExpertTeams(), listExperts()])
+    const [teamItems, expertItems, agentItems] = await Promise.all([
+      listExpertTeams(),
+      listExperts(),
+      listHermesAgentInstances(),
+    ])
     teams.value = teamItems
     experts.value = expertItems
+    agents.value = agentItems
   } catch (e: unknown) {
     toast.error(resolveApiErrorMessage(e, t('hermes.expertTeam.loadFailed')))
   } finally {
@@ -61,10 +87,18 @@ async function createTeam() {
       team_slug: form.value.team_slug.trim(),
       display_name: form.value.display_name.trim(),
       description: form.value.description.trim() || undefined,
+      hermes_agent_id: isUpstreamMode.value ? form.value.hermes_agent_id || undefined : undefined,
+      orchestration_mode: form.value.orchestration_mode,
     })
     toast.success(t('hermes.expertTeam.createSuccess'))
     showCreate.value = false
-    form.value = { team_slug: '', display_name: '', description: '' }
+    form.value = {
+      team_slug: '',
+      display_name: '',
+      description: '',
+      hermes_agent_id: '',
+      orchestration_mode: 'upstream_skill',
+    }
     await load()
   } catch (e: unknown) {
     toast.error(resolveApiErrorMessage(e, t('hermes.expertTeam.createFailed')))
@@ -95,6 +129,11 @@ async function addMember() {
   }
 }
 
+function openTeamSkills(team: ExpertTeamItem) {
+  selectedTeam.value = team
+  skillsSheetOpen.value = true
+}
+
 onMounted(load)
 </script>
 
@@ -111,7 +150,7 @@ onMounted(load)
       </Button>
     </div>
 
-    <div v-if="showCreate" class="border rounded-lg p-4 mb-6 space-y-3">
+    <div v-if="showCreate" class="border rounded-lg p-4 mb-6 space-y-4">
       <div class="grid gap-3 sm:grid-cols-2">
         <div class="space-y-1">
           <Label>{{ t('hermes.expertTeam.teamSlug') }}</Label>
@@ -126,6 +165,36 @@ onMounted(load)
         <Label>{{ t('hermes.expertTeam.description') }}</Label>
         <Input v-model="form.description" />
       </div>
+      <div class="space-y-2">
+        <Label>{{ t('hermes.expertTeam.orchestrationMode') }}</Label>
+        <div class="flex flex-wrap gap-2">
+          <button
+            v-for="opt in orchestrationOptions"
+            :key="opt.value"
+            type="button"
+            class="text-sm px-3 py-1.5 rounded border cursor-pointer"
+            :class="form.orchestration_mode === opt.value ? 'border-primary text-primary' : 'border-border text-muted-foreground'"
+            @click="form.orchestration_mode = opt.value"
+          >
+            {{ t(opt.labelKey) }}
+          </button>
+        </div>
+      </div>
+      <div v-if="isUpstreamMode" class="space-y-1">
+        <Label>{{ t('hermes.expertTeam.bindAgent') }}</Label>
+        <div class="flex flex-wrap gap-2">
+          <button
+            v-for="agent in agents"
+            :key="agent.id"
+            type="button"
+            class="text-xs px-3 py-1 rounded border cursor-pointer"
+            :class="form.hermes_agent_id === agent.id ? 'border-primary text-primary' : 'border-border'"
+            @click="form.hermes_agent_id = agent.id"
+          >
+            {{ agent.profile_name }}
+          </button>
+        </div>
+      </div>
       <Button size="sm" :disabled="saving" @click="createTeam">{{ t('common.create') }}</Button>
     </div>
 
@@ -138,6 +207,8 @@ onMounted(load)
           <TableRow>
             <TableHead>{{ t('hermes.expertTeam.teamSlug') }}</TableHead>
             <TableHead>{{ t('hermes.expertTeam.displayName') }}</TableHead>
+            <TableHead>{{ t('hermes.expertTeam.orchestrationMode') }}</TableHead>
+            <TableHead>{{ t('hermes.expertTeam.bindAgent') }}</TableHead>
             <TableHead>{{ t('hermes.expertTeam.members') }}</TableHead>
             <TableHead>{{ t('hermes.expertTeam.published') }}</TableHead>
             <TableHead></TableHead>
@@ -145,27 +216,47 @@ onMounted(load)
         </TableHeader>
         <TableBody>
           <TableRow v-if="!teams.length">
-            <TableCell colspan="5" class="text-center text-muted-foreground py-8">{{ t('common.noData') }}</TableCell>
+            <TableCell colspan="7" class="text-center text-muted-foreground py-8">{{ t('common.noData') }}</TableCell>
           </TableRow>
           <TableRow v-for="team in teams" :key="team.id">
             <TableCell class="font-mono text-xs">{{ team.team_slug }}</TableCell>
             <TableCell>{{ team.display_name }}</TableCell>
+            <TableCell>{{ orchestrationLabel(team.orchestration_mode) }}</TableCell>
+            <TableCell class="font-mono text-xs">{{ team.agent_profile || '-' }}</TableCell>
             <TableCell>{{ team.member_count }}</TableCell>
             <TableCell>
               <Badge variant="outline">{{ team.published ? t('common.yes') : t('common.no') }}</Badge>
             </TableCell>
-            <TableCell class="flex gap-2">
+            <TableCell class="flex gap-2 flex-wrap">
               <Button size="sm" variant="outline" @click="togglePublish(team)">
                 {{ team.published ? t('hermes.expertCatalog.unpublish') : t('hermes.expertCatalog.publish') }}
               </Button>
-              <Button size="sm" variant="ghost" @click="memberTeamId = team.id">{{ t('hermes.expertTeam.addMember') }}</Button>
+              <Button
+                v-if="team.orchestration_mode === 'upstream_skill'"
+                size="sm"
+                variant="ghost"
+                @click="openTeamSkills(team)"
+              >
+                {{ t('hermes.expertTeam.teamSkills') }}
+              </Button>
+              <Button
+                v-if="team.orchestration_mode === 'gateway_sequential' || team.orchestration_mode === 'sequential_gateway'"
+                size="sm"
+                variant="ghost"
+                @click="memberTeamId = team.id"
+              >
+                {{ t('hermes.expertTeam.addMember') }}
+              </Button>
             </TableCell>
           </TableRow>
         </TableBody>
       </Table>
     </div>
 
-    <div v-if="memberTeamId" class="mt-6 border rounded-lg p-4 space-y-3">
+    <div
+      v-if="memberTeamId && teams.find((t) => t.id === memberTeamId && (t.orchestration_mode === 'gateway_sequential' || t.orchestration_mode === 'sequential_gateway'))"
+      class="mt-6 border rounded-lg p-4 space-y-3"
+    >
       <h3 class="font-medium">{{ t('hermes.expertTeam.addMember') }}</h3>
       <div class="flex flex-wrap gap-2">
         <button
@@ -181,5 +272,12 @@ onMounted(load)
       </div>
       <Button size="sm" :disabled="!memberExpertId" @click="addMember">{{ t('common.confirm') }}</Button>
     </div>
+
+    <ExpertTeamSkillsSheet
+      :open="skillsSheetOpen"
+      :team="selectedTeam"
+      @update:open="skillsSheetOpen = $event"
+      @changed="load"
+    />
   </div>
 </template>
