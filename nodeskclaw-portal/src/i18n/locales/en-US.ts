@@ -3237,6 +3237,8 @@ const enUS = {
       upstreamTool: "Upstream Tool",
       skillName: "Skill Name",
       skillEnabled: "Enabled",
+      skillEnableAction: "Enable",
+      skillDisableAction: "Disable",
       skillEnabledSuccess: "Skill is now public and callable",
       skillDisabledSuccess: "Skill is now disabled",
       public: "Public",

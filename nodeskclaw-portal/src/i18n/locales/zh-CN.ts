@@ -3237,6 +3237,8 @@ const zhCN = {
       upstreamTool: "上游 Tool",
       skillName: "能力名",
       skillEnabled: "启用",
+      skillEnableAction: "开启",
+      skillDisableAction: "关闭",
       skillEnabledSuccess: "能力已公开并启用调用",
       skillDisabledSuccess: "能力已关闭",
       public: "公开",

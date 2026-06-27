@@ -1,10 +1,9 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Loader2, RefreshCw } from 'lucide-vue-next'
+import { Loader2, Power, PowerOff, RefreshCw } from 'lucide-vue-next'
 import {
   listExpertSkills,
-  setExpertSkillVisibility,
   syncExpertTools,
   updateExpertSkill,
   type ExpertItem,
@@ -14,7 +13,6 @@ import { resolveApiErrorMessage } from '@/i18n/error'
 import { useToast } from '@/composables/useToast'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Checkbox } from '@/components/ui/checkbox'
 import {
   Sheet,
   SheetContent,
@@ -93,27 +91,24 @@ async function patchSkillMeta(skill: SkillRow, patch: Record<string, unknown>) {
   }
 }
 
-async function handleToggleSkill(skill: SkillRow, checked: boolean) {
+async function handleToggleSkill(skill: SkillRow) {
   if (skill._updating) return
 
-  const previousPublic = skill.public
-  const previousCallEnabled = skill.call_enabled
+  const next = !isSkillEnabled(skill)
   skill._updating = true
-  skill.public = checked
-  skill.call_enabled = checked
-
   try {
-    const updated = await setExpertSkillVisibility(skill.id, checked)
+    const updated = await updateExpertSkill(skill.id, {
+      public: next,
+      call_enabled: next,
+    })
     Object.assign(skill, updated)
     emit('changed')
     toast.success(
-      checked
+      next
         ? t('hermes.expertCatalog.skillEnabledSuccess')
         : t('hermes.expertCatalog.skillDisabledSuccess'),
     )
   } catch (e: unknown) {
-    skill.public = previousPublic
-    skill.call_enabled = previousCallEnabled
     toast.error(resolveApiErrorMessage(e, t('hermes.expertCatalog.saveFailed')))
   } finally {
     skill._updating = false
@@ -136,7 +131,7 @@ watch(
         <SheetDescription>{{ t('hermes.expertCatalog.skillsHint') }}</SheetDescription>
       </SheetHeader>
       <div class="mt-4 flex justify-end">
-        <Button size="sm" variant="outline" :disabled="syncing" @click="syncTools">
+        <Button type="button" size="sm" variant="outline" :disabled="syncing" @click="syncTools">
           <RefreshCw class="w-4 h-4 mr-1" :class="syncing ? 'animate-spin' : ''" />
           {{ t('hermes.expertCatalog.syncTools') }}
         </Button>
@@ -165,14 +160,23 @@ watch(
                 </div>
               </TableCell>
               <TableCell>
-                <label class="inline-flex items-center gap-2 cursor-pointer">
-                  <Checkbox
-                    :checked="isSkillEnabled(skill)"
-                    :disabled="skill._updating"
-                    @update:checked="(checked) => handleToggleSkill(skill, checked === true)"
-                  />
-                  <Loader2 v-if="skill._updating" class="w-3 h-3 animate-spin text-muted-foreground" />
-                </label>
+                <div class="flex items-center gap-2">
+                  <Badge :variant="isSkillEnabled(skill) ? 'default' : 'outline'">
+                    {{ isSkillEnabled(skill) ? t('common.yes') : t('common.no') }}
+                  </Badge>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    :disabled="!!skill._updating"
+                    @click="handleToggleSkill(skill)"
+                  >
+                    <Loader2 v-if="skill._updating" class="w-3 h-3 mr-1 animate-spin" />
+                    <Power v-else-if="!isSkillEnabled(skill)" class="w-3 h-3 mr-1" />
+                    <PowerOff v-else class="w-3 h-3 mr-1" />
+                    {{ isSkillEnabled(skill) ? t('hermes.expertCatalog.skillDisableAction') : t('hermes.expertCatalog.skillEnableAction') }}
+                  </Button>
+                </div>
               </TableCell>
               <TableCell>
                 <div class="flex flex-col gap-1">
