@@ -47,9 +47,6 @@ const loading = ref(false)
 const syncing = ref(false)
 const skills = ref<SkillRow[]>([])
 
-const riskOptions = ['low', 'medium', 'high']
-const approvalOptions = ['none', 'server', 'admin']
-
 function isSkillEnabled(skill: SkillRow): boolean {
   return skill.public === true && skill.call_enabled === true
 }
@@ -78,16 +75,6 @@ async function syncTools() {
     toast.error(resolveApiErrorMessage(e, t('hermes.expertTeam.syncFailed')))
   } finally {
     syncing.value = false
-  }
-}
-
-async function patchSkillMeta(skill: SkillRow, patch: Record<string, unknown>) {
-  try {
-    const updated = await updateExpertTeamSkill(skill.id, patch)
-    Object.assign(skill, updated)
-    emit('changed')
-  } catch (e: unknown) {
-    toast.error(resolveApiErrorMessage(e, t('hermes.expertTeam.updateFailed')))
   }
 }
 
@@ -145,14 +132,12 @@ watch(
             <TableRow>
               <TableHead>{{ t('hermes.expertCatalog.upstreamTool') }}</TableHead>
               <TableHead>{{ t('hermes.expertCatalog.skillName') }}</TableHead>
-              <TableHead>{{ t('hermes.expertCatalog.skillEnabled') }}</TableHead>
-              <TableHead>{{ t('hermes.expertCatalog.riskLevel') }}</TableHead>
-              <TableHead>{{ t('hermes.expertCatalog.approvalMode') }}</TableHead>
+              <TableHead class="text-right">{{ t('hermes.expertCatalog.skillEnabled') }}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             <TableRow v-if="!skills.length">
-              <TableCell colspan="5" class="text-center text-muted-foreground py-8">{{ t('common.noData') }}</TableCell>
+              <TableCell colspan="3" class="text-center text-muted-foreground py-8">{{ t('common.noData') }}</TableCell>
             </TableRow>
             <TableRow v-for="skill in skills" :key="skill.id">
               <TableCell class="font-mono text-xs">{{ skill.upstream_tool_name }}</TableCell>
@@ -162,52 +147,19 @@ watch(
                   <Badge v-if="skill.stale" variant="outline">{{ t('hermes.expertCatalog.stale') }}</Badge>
                 </div>
               </TableCell>
-              <TableCell>
-                <div class="flex items-center gap-2">
-                  <Badge :variant="isSkillEnabled(skill) ? 'default' : 'outline'">
-                    {{ isSkillEnabled(skill) ? t('common.yes') : t('common.no') }}
-                  </Badge>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    :disabled="!!skill._updating"
-                    @click="handleToggleSkill(skill)"
-                  >
-                    <Loader2 v-if="skill._updating" class="w-3 h-3 mr-1 animate-spin" />
-                    <Power v-else-if="!isSkillEnabled(skill)" class="w-3 h-3 mr-1" />
-                    <PowerOff v-else class="w-3 h-3 mr-1" />
-                    {{ isSkillEnabled(skill) ? t('hermes.expertCatalog.skillDisableAction') : t('hermes.expertCatalog.skillEnableAction') }}
-                  </Button>
-                </div>
-              </TableCell>
-              <TableCell>
-                <div class="flex flex-col gap-1">
-                  <button
-                    v-for="opt in riskOptions"
-                    :key="opt"
-                    type="button"
-                    class="text-left text-xs px-2 py-1 rounded border cursor-pointer"
-                    :class="skill.risk_level === opt ? 'border-primary text-primary' : 'border-border text-muted-foreground'"
-                    @click="patchSkillMeta(skill, { risk_level: opt })"
-                  >
-                    {{ opt }}
-                  </button>
-                </div>
-              </TableCell>
-              <TableCell>
-                <div class="flex flex-col gap-1">
-                  <button
-                    v-for="opt in approvalOptions"
-                    :key="opt"
-                    type="button"
-                    class="text-left text-xs px-2 py-1 rounded border cursor-pointer"
-                    :class="skill.approval_mode === opt ? 'border-primary text-primary' : 'border-border text-muted-foreground'"
-                    @click="patchSkillMeta(skill, { approval_mode: opt })"
-                  >
-                    {{ opt }}
-                  </button>
-                </div>
+              <TableCell class="text-right">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  :disabled="!!skill._updating"
+                  @click="handleToggleSkill(skill)"
+                >
+                  <Loader2 v-if="skill._updating" class="w-3 h-3 mr-1 animate-spin" />
+                  <Power v-else-if="!isSkillEnabled(skill)" class="w-3 h-3 mr-1" />
+                  <PowerOff v-else class="w-3 h-3 mr-1" />
+                  {{ isSkillEnabled(skill) ? t('hermes.expertCatalog.skillDisableAction') : t('hermes.expertCatalog.skillEnableAction') }}
+                </Button>
               </TableCell>
             </TableRow>
           </TableBody>
