@@ -45,9 +45,18 @@ const toast = useToast()
 const loading = ref(false)
 const syncing = ref(false)
 const skills = ref<ExpertSkillItem[]>([])
+const updatingSkillIds = ref<Set<string>>(new Set())
 
 const riskOptions = ['low', 'medium', 'high']
 const approvalOptions = ['none', 'server', 'admin']
+
+function isSkillEnabled(skill: ExpertSkillItem): boolean {
+  return skill.public === true && skill.call_enabled === true
+}
+
+function isSkillUpdating(skillId: string): boolean {
+  return updatingSkillIds.value.has(skillId)
+}
 
 async function loadSkills() {
   if (!props.expert) return
@@ -76,7 +85,7 @@ async function syncTools() {
   }
 }
 
-async function patchSkill(skill: ExpertSkillItem, patch: Record<string, unknown>) {
+async function patchSkillMeta(skill: ExpertSkillItem, patch: Record<string, unknown>) {
   try {
     const updated = await updateExpertSkill(skill.id, patch)
     skills.value = skills.value.map((s) => (s.id === updated.id ? updated : s))
@@ -86,16 +95,48 @@ async function patchSkill(skill: ExpertSkillItem, patch: Record<string, unknown>
   }
 }
 
-function onPublicChange(skill: ExpertSkillItem, value: boolean) {
-  const patch: Record<string, unknown> = { public: value }
-  if (!value) patch.call_enabled = false
-  patchSkill(skill, patch)
-}
+async function handleToggleSkill(skill: ExpertSkillItem, checked: boolean) {
+  if (isSkillUpdating(skill.id)) return
 
-function onCallEnabledChange(skill: ExpertSkillItem, value: boolean) {
-  const patch: Record<string, unknown> = { call_enabled: value }
-  if (value) patch.public = true
-  patchSkill(skill, patch)
+  const previousPublic = skill.public
+  const previousCallEnabled = skill.call_enabled
+  updatingSkillIds.value = new Set(updatingSkillIds.value).add(skill.id)
+
+  const idx = skills.value.findIndex((s) => s.id === skill.id)
+  if (idx >= 0) {
+    skills.value[idx] = {
+      ...skills.value[idx],
+      public: checked,
+      call_enabled: checked,
+    }
+  }
+
+  try {
+    const updated = await updateExpertSkill(skill.id, {
+      public: checked,
+      call_enabled: checked,
+    })
+    skills.value = skills.value.map((s) => (s.id === updated.id ? updated : s))
+    emit('changed')
+    toast.success(
+      checked
+        ? t('hermes.expertCatalog.skillEnabledSuccess')
+        : t('hermes.expertCatalog.skillDisabledSuccess'),
+    )
+  } catch (e: unknown) {
+    if (idx >= 0) {
+      skills.value[idx] = {
+        ...skills.value[idx],
+        public: previousPublic,
+        call_enabled: previousCallEnabled,
+      }
+    }
+    toast.error(resolveApiErrorMessage(e, t('hermes.expertCatalog.saveFailed')))
+  } finally {
+    const next = new Set(updatingSkillIds.value)
+    next.delete(skill.id)
+    updatingSkillIds.value = next
+  }
 }
 
 watch(
@@ -128,8 +169,7 @@ watch(
             <TableRow>
               <TableHead>{{ t('hermes.expertCatalog.upstreamTool') }}</TableHead>
               <TableHead>{{ t('hermes.expertCatalog.skillName') }}</TableHead>
-              <TableHead>{{ t('hermes.expertCatalog.public') }}</TableHead>
-              <TableHead>{{ t('hermes.expertCatalog.callEnabled') }}</TableHead>
+              <TableHead>{{ t('hermes.expertCatalog.skillEnabled') }}</TableHead>
               <TableHead>{{ t('hermes.expertCatalog.riskLevel') }}</TableHead>
               <TableHead>{{ t('hermes.expertCatalog.approvalMode') }}</TableHead>
             </TableRow>
@@ -144,12 +184,10 @@ watch(
                 </div>
               </TableCell>
               <TableCell>
-                <Switch :checked="skill.public" @update:checked="onPublicChange(skill, $event)" />
-              </TableCell>
-              <TableCell>
                 <Switch
-                  :checked="skill.call_enabled"
-                  @update:checked="onCallEnabledChange(skill, $event)"
+                  :checked="isSkillEnabled(skill)"
+                  :disabled="isSkillUpdating(skill.id)"
+                  @update:checked="(checked: boolean) => handleToggleSkill(skill, checked)"
                 />
               </TableCell>
               <TableCell>
@@ -160,7 +198,7 @@ watch(
                     type="button"
                     class="text-left text-xs px-2 py-1 rounded border"
                     :class="skill.risk_level === opt ? 'border-primary text-primary' : 'border-border text-muted-foreground'"
-                    @click="patchSkill(skill, { risk_level: opt })"
+                    @click="patchSkillMeta(skill, { risk_level: opt })"
                   >
                     {{ opt }}
                   </button>
@@ -174,7 +212,7 @@ watch(
                     type="button"
                     class="text-left text-xs px-2 py-1 rounded border"
                     :class="skill.approval_mode === opt ? 'border-primary text-primary' : 'border-border text-muted-foreground'"
-                    @click="patchSkill(skill, { approval_mode: opt })"
+                    @click="patchSkillMeta(skill, { approval_mode: opt })"
                   >
                     {{ opt }}
                   </button>

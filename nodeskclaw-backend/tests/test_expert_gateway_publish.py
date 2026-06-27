@@ -105,6 +105,38 @@ def test_apply_flag_rules_public_false_wins(service_cls, skill_factory):
     assert skill.call_enabled is False
 
 
+@pytest.mark.parametrize(
+    ("service_cls", "skill_factory"),
+    [
+        (ExpertSkillService, _expert_skill),
+        (ExpertTeamSkillService, _team_skill),
+    ],
+)
+def test_apply_flag_rules_mvp_enable(service_cls, skill_factory):
+    skill = skill_factory(is_public=False, call_enabled=False)
+    skill.is_public = True
+    skill.call_enabled = True
+    service_cls._apply_flag_rules(skill, True, True)
+    assert skill.is_public is True
+    assert skill.call_enabled is True
+
+
+@pytest.mark.parametrize(
+    ("service_cls", "skill_factory"),
+    [
+        (ExpertSkillService, _expert_skill),
+        (ExpertTeamSkillService, _team_skill),
+    ],
+)
+def test_apply_flag_rules_mvp_disable(service_cls, skill_factory):
+    skill = skill_factory(is_public=True, call_enabled=True)
+    skill.is_public = False
+    skill.call_enabled = False
+    service_cls._apply_flag_rules(skill, False, False)
+    assert skill.is_public is False
+    assert skill.call_enabled is False
+
+
 @pytest.mark.asyncio
 async def test_validate_publish_ignores_legacy_mcp_gateway():
     expert = Expert(

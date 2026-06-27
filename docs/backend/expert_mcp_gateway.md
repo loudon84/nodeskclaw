@@ -42,8 +42,8 @@ Expert / ExpertTeam 发布到 Desktop **不再依赖**旧 MCP Skill Gateway（`m
 
 - `public=false` → 强制 `call_enabled=false`
 - `call_enabled=true` → 强制 `public=true`
+- Portal MVP（v6.1.2）：单开关同时设置 `public` 与 `call_enabled` 为相同值
 - `tools/list` 仅返回 public skill；`tools/call` 仍要求 `call_enabled=true`
-
 ## 与 MCP Skill Gateway 的关系
 
 | 维度 | MCP Skill Gateway | Expert MCP Gateway |

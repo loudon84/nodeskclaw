@@ -160,7 +160,20 @@ export async function syncExpertTools(expertId: string) {
   return unwrapEnvelope<{ created: number; updated: number; stale: number; total_upstream: number }>(res.data)
 }
 
-export async function updateExpertSkill(skillId: string, body: Record<string, unknown>) {
+export async function updateExpertSkill(
+  skillId: string,
+  body: {
+    public?: boolean
+    call_enabled?: boolean
+    risk_level?: string
+    approval_mode?: string
+    skill_name?: string
+    display_name?: string
+    description?: string
+    output_formats?: string[]
+    sort_order?: number
+  },
+) {
   const res = await api.patch(`/expert/expert-skills/${skillId}`, body)
   return unwrapEnvelope<ExpertSkillItem>(res.data)
 }
@@ -205,7 +218,20 @@ export async function syncExpertTeamTools(teamId: string) {
   return unwrapEnvelope<{ created: number; updated: number; stale: number; total_upstream: number }>(res.data)
 }
 
-export async function updateExpertTeamSkill(skillId: string, body: Record<string, unknown>) {
+export async function updateExpertTeamSkill(
+  skillId: string,
+  body: {
+    public?: boolean
+    call_enabled?: boolean
+    risk_level?: string
+    approval_mode?: string
+    skill_name?: string
+    display_name?: string
+    description?: string
+    output_formats?: string[]
+    sort_order?: number
+  },
+) {
   const res = await api.patch(`/expert/team-skills/${skillId}`, body)
   return unwrapEnvelope<ExpertTeamSkillItem>(res.data)
 }

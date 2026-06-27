@@ -183,9 +183,11 @@ class ExpertSkillService:
         call_enabled: bool | None,
     ) -> None:
         if public is False:
+            skill.is_public = False
             skill.call_enabled = False
         elif call_enabled is True:
             skill.is_public = True
+            skill.call_enabled = True
         elif not skill.is_public:
             skill.call_enabled = False
 
