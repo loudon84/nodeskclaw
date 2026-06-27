@@ -104,6 +104,7 @@ from app.models.hermes_skill.hermes_mcp_router_sync_log import HermesMcpRouterSy
 from app.models.expert import Expert  # noqa: F401
 from app.models.expert_skill import ExpertSkill  # noqa: F401
 from app.models.expert_team import ExpertTeam  # noqa: F401
+from app.models.expert_team_skill import ExpertTeamSkill  # noqa: F401
 from app.models.expert_team_member import ExpertTeamMember  # noqa: F401
 from app.models.expert_invocation_log import ExpertInvocationLog  # noqa: F401
 

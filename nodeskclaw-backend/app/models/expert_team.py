@@ -17,7 +17,10 @@ class ExpertTeam(BaseModel):
     category: Mapped[str | None] = mapped_column(String(64), nullable=True)
     tags: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
     avatar: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    orchestration_mode: Mapped[str] = mapped_column(String(64), nullable=False, default="sequential_gateway")
+    hermes_agent_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("hermes_agent_instances.id", ondelete="SET NULL"), nullable=True, index=True,
+    )
+    orchestration_mode: Mapped[str] = mapped_column(String(64), nullable=False, default="upstream_skill")
     published: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
