@@ -59,6 +59,7 @@ class HermesAgentInstance(BaseModel):
         DateTime(timezone=True), nullable=True,
     )
     mcp_router_last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    expert_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     __table_args__ = (
         Index(

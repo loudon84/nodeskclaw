@@ -2,6 +2,7 @@
 
 from fastapi import APIRouter, Depends, Request
 
+from app.api.expert import router as expert_router
 from app.api.audit import router as audit_router
 from app.api.agent_file_grants import router as agent_file_grants_router
 from app.api.auth import router as auth_router
@@ -195,6 +196,7 @@ api_router.include_router(gateway_proxy_router, prefix="/gateway", tags=["Gatewa
 api_router.include_router(gateway_sse_router, prefix="/gateway", tags=["Gateway SSE"])
 api_router.include_router(hermes_skill_router, prefix="/hermes", tags=["Hermes Skill"])
 api_router.include_router(hermes_experts_router, prefix="/hermes-experts", tags=["Hermes Expert"])
+api_router.include_router(expert_router, prefix="/expert", tags=["Expert MCP Gateway"])
 api_router.include_router(desktop_genehub_router, tags=["Desktop GeneHub"])
 
 # ── 管理平台 Admin API（/api/v1/admin）─────────────────────

@@ -316,6 +316,10 @@ class Settings(BaseSettings):
     HERMES_ARTIFACT_MATERIALIZE_FALLBACK_ENABLED: bool = True
     HERMES_ARTIFACT_PROMOTE_MODE: str = "all_documents"
 
+    EXPERT_HEALTH_CACHE_TTL: int = 30
+    EXPERT_RESPONSE_PREVIEW_MAX_CHARS: int = 4000
+    EXPERT_UPSTREAM_TIMEOUT_SECONDS: int = 900
+
     # ── Hermes WebUI Expert ───────────────────────────────
     HERMES_EXPERT_DEFAULT_IMAGE: str = ""
     HERMES_AGENT_REPO: str = ""

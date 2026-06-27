@@ -1,0 +1,71 @@
+from typing import Any
+
+EXPERT_NOT_FOUND = "EXPERT_NOT_FOUND"
+EXPERT_NOT_PUBLISHED = "EXPERT_NOT_PUBLISHED"
+EXPERT_DISABLED = "EXPERT_DISABLED"
+EXPERT_RUNTIME_NOT_READY = "EXPERT_RUNTIME_NOT_READY"
+EXPERT_SKILL_NOT_FOUND = "EXPERT_SKILL_NOT_FOUND"
+EXPERT_SKILL_NOT_PUBLIC = "EXPERT_SKILL_NOT_PUBLIC"
+EXPERT_SKILL_CALL_DISABLED = "EXPERT_SKILL_CALL_DISABLED"
+EXPERT_PERMISSION_DENIED = "EXPERT_PERMISSION_DENIED"
+EXPERT_ROUTE_OVERRIDE_FORBIDDEN = "EXPERT_ROUTE_OVERRIDE_FORBIDDEN"
+EXPERT_UPSTREAM_MCP_ERROR = "EXPERT_UPSTREAM_MCP_ERROR"
+EXPERT_UPSTREAM_TIMEOUT = "EXPERT_UPSTREAM_TIMEOUT"
+EXPERT_INVALID_JSONRPC = "EXPERT_INVALID_JSONRPC"
+EXPERT_TEAM_NOT_FOUND = "EXPERT_TEAM_NOT_FOUND"
+
+_ERROR_CODES: dict[str, int] = {
+    EXPERT_NOT_FOUND: -32602,
+    EXPERT_NOT_PUBLISHED: -32602,
+    EXPERT_DISABLED: -32602,
+    EXPERT_RUNTIME_NOT_READY: -32603,
+    EXPERT_SKILL_NOT_FOUND: -32602,
+    EXPERT_SKILL_NOT_PUBLIC: -32602,
+    EXPERT_SKILL_CALL_DISABLED: -32602,
+    EXPERT_PERMISSION_DENIED: -32022,
+    EXPERT_ROUTE_OVERRIDE_FORBIDDEN: -32602,
+    EXPERT_UPSTREAM_MCP_ERROR: -32603,
+    EXPERT_UPSTREAM_TIMEOUT: -32603,
+    EXPERT_INVALID_JSONRPC: -32602,
+    EXPERT_TEAM_NOT_FOUND: -32602,
+}
+
+_DEFAULT_MESSAGES: dict[str, str] = {
+    EXPERT_NOT_FOUND: "Expert not found",
+    EXPERT_NOT_PUBLISHED: "Expert is not published",
+    EXPERT_DISABLED: "Expert is disabled",
+    EXPERT_RUNTIME_NOT_READY: "Bound Hermes Agent runtime is not ready",
+    EXPERT_SKILL_NOT_FOUND: "Expert skill not found",
+    EXPERT_SKILL_NOT_PUBLIC: "Expert skill is not public",
+    EXPERT_SKILL_CALL_DISABLED: "Expert skill call is disabled",
+    EXPERT_PERMISSION_DENIED: "Permission denied",
+    EXPERT_ROUTE_OVERRIDE_FORBIDDEN: "Expert MCP Gateway does not allow route override.",
+    EXPERT_UPSTREAM_MCP_ERROR: "Upstream Hermes MCP returned an error",
+    EXPERT_UPSTREAM_TIMEOUT: "Upstream Hermes runtime timed out",
+    EXPERT_INVALID_JSONRPC: "Invalid JSON-RPC request",
+    EXPERT_TEAM_NOT_FOUND: "Expert team not found",
+}
+
+
+def mcp_success(jsonrpc_id: Any, result: dict) -> dict:
+    return {"jsonrpc": "2.0", "id": jsonrpc_id, "result": result}
+
+
+def mcp_error_v2(
+    jsonrpc_id: Any,
+    error_code: str,
+    message: str | None = None,
+    *,
+    data: dict[str, Any] | None = None,
+) -> dict:
+    payload = dict(data or {})
+    payload.setdefault("errorCode", error_code)
+    return {
+        "jsonrpc": "2.0",
+        "id": jsonrpc_id,
+        "error": {
+            "code": _ERROR_CODES.get(error_code, -32603),
+            "message": message or _DEFAULT_MESSAGES.get(error_code, error_code),
+            "data": payload,
+        },
+    }
