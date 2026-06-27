@@ -21,6 +21,14 @@ import McpGatewayStatusBadge from '@/views/hermes/McpGatewayStatusBadge.vue'
 import McpGatewayAuthorizeButton from '@/views/hermes/McpGatewayAuthorizeButton.vue'
 import McpRouterStatusBadge from '@/views/hermes/McpRouterStatusBadge.vue'
 import McpRouterSyncButton from '@/views/hermes/McpRouterSyncButton.vue'
+import ExpertConfigSheet from '@/views/hermes/ExpertConfigSheet.vue'
+import ExpertSkillsSheet from '@/views/hermes/ExpertSkillsSheet.vue'
+import {
+  listExperts,
+  publishExpert,
+  unpublishExpert,
+  type ExpertItem,
+} from '@/api/hermes/expertCatalog'
 
 const { t } = useI18n()
 const router = useRouter()
@@ -28,6 +36,11 @@ const toast = useToast()
 const loading = ref(false)
 const actionLoading = ref(false)
 const agents = ref<HermesAgentInstance[]>([])
+const expertsByAgentId = ref<Record<string, ExpertItem>>({})
+const configSheetOpen = ref(false)
+const skillsSheetOpen = ref(false)
+const selectedAgent = ref<HermesAgentInstance | null>(null)
+const selectedExpert = ref<ExpertItem | null>(null)
 const diagnosticsOpen = ref(false)
 const diagnosticsProfile = ref('')
 const diagnosticsChecks = ref<DiagnosticCheck[]>([])
@@ -59,15 +72,80 @@ function formatTime(iso: string | null | undefined) {
   return new Date(iso).toLocaleString()
 }
 
+async function fetchExperts() {
+  try {
+    const items = await listExperts()
+    expertsByAgentId.value = Object.fromEntries(items.map((item) => [item.hermes_agent_id, item]))
+  } catch {
+    expertsByAgentId.value = {}
+  }
+}
+
 async function fetchAgents() {
   loading.value = true
   try {
     agents.value = await listHermesAgentInstances()
+    await fetchExperts()
   } catch (e: unknown) {
     toast.error(resolveApiErrorMessage(e, t('hermes.agents.loadFailed')))
   } finally {
     loading.value = false
   }
+}
+
+function expertForAgent(agent: HermesAgentInstance) {
+  return expertsByAgentId.value[agent.id] || null
+}
+
+function expertStatusLabel(expert: ExpertItem | null) {
+  if (!expert) return t('hermes.expertCatalog.statusNotSet')
+  if (!expert.enabled) return t('hermes.expertCatalog.statusDisabled')
+  if (expert.published) return t('hermes.expertCatalog.statusPublished')
+  return t('hermes.expertCatalog.statusDraft')
+}
+
+function expertStatusClass(expert: ExpertItem | null) {
+  if (!expert) return 'bg-muted text-muted-foreground'
+  if (!expert.enabled) return 'bg-red-500/15 text-red-400'
+  if (expert.published) return 'bg-emerald-500/15 text-emerald-400'
+  return 'bg-yellow-500/15 text-yellow-400'
+}
+
+function openSetExpert(agent: HermesAgentInstance) {
+  selectedAgent.value = agent
+  selectedExpert.value = expertForAgent(agent)
+  configSheetOpen.value = true
+}
+
+function openSkills(agent: HermesAgentInstance) {
+  const expert = expertForAgent(agent)
+  if (!expert) return
+  selectedExpert.value = expert
+  skillsSheetOpen.value = true
+}
+
+async function togglePublish(agent: HermesAgentInstance) {
+  const expert = expertForAgent(agent)
+  if (!expert) return
+  actionLoading.value = true
+  try {
+    if (expert.published) {
+      await unpublishExpert(expert.id)
+      toast.success(t('hermes.expertCatalog.unpublishSuccess'))
+    } else {
+      await publishExpert(expert.id)
+      toast.success(t('hermes.expertCatalog.publishSuccess'))
+    }
+    await fetchAgents()
+  } catch (e: unknown) {
+    toast.error(resolveApiErrorMessage(e, t('hermes.expertCatalog.publishFailed')))
+  } finally {
+    actionLoading.value = false
+  }
+}
+
+function goExpertLogs(expert: ExpertItem) {
+  router.push({ name: 'HermesExpertLogs', query: { expert_slug: expert.expert_slug } })
 }
 
 async function refreshAll() {
@@ -209,6 +287,14 @@ onMounted(fetchAgents)
                 :status="agent.mcp_router_status"
                 :tool-count="agent.mcp_router_tool_count"
               />
+              <Badge variant="outline" :class="expertStatusClass(expertForAgent(agent))">
+                {{ t('hermes.expertCatalog.expertBadge') }}: {{ expertStatusLabel(expertForAgent(agent)) }}
+              </Badge>
+            </div>
+            <div v-if="expertForAgent(agent)" class="flex flex-wrap gap-3 mt-2 text-xs text-muted-foreground">
+              <span>{{ t('hermes.expertCatalog.publicCount', { public: expertForAgent(agent)!.public_skill_count, total: expertForAgent(agent)!.total_skill_count }) }}</span>
+              <span>{{ t('hermes.expertCatalog.callableCount', { callable: expertForAgent(agent)!.callable_skill_count, total: expertForAgent(agent)!.total_skill_count }) }}</span>
+              <span>{{ t('hermes.expertCatalog.recentInvocations', { count: expertForAgent(agent)!.recent_invocation_count_24h }) }}</span>
             </div>
             <p
               v-if="agent.mcp_gateway_token_prefix"
@@ -228,6 +314,27 @@ onMounted(fetchAgents)
         <p v-if="agent.last_error || agent.mcp_gateway_last_error || agent.mcp_router_last_error" class="text-xs text-red-400 mb-3 break-all">
           {{ agent.mcp_router_last_error || agent.mcp_gateway_last_error || agent.last_error }}
         </p>
+        <div class="flex flex-wrap gap-2 mb-2">
+          <template v-if="!expertForAgent(agent)">
+            <Button size="sm" variant="secondary" :disabled="actionLoading" @click="openSetExpert(agent)">
+              {{ t('hermes.expertCatalog.setExpert') }}
+            </Button>
+          </template>
+          <template v-else>
+            <Button size="sm" variant="secondary" :disabled="actionLoading" @click="openSetExpert(agent)">
+              {{ t('hermes.expertCatalog.editExpert') }}
+            </Button>
+            <Button size="sm" variant="outline" :disabled="actionLoading" @click="openSkills(agent)">
+              {{ t('hermes.expertCatalog.viewSkills') }}
+            </Button>
+            <Button size="sm" variant="outline" :disabled="actionLoading" @click="togglePublish(agent)">
+              {{ expertForAgent(agent)!.published ? t('hermes.expertCatalog.unpublish') : t('hermes.expertCatalog.publish') }}
+            </Button>
+            <Button size="sm" variant="outline" @click="goExpertLogs(expertForAgent(agent)!)">
+              {{ t('hermes.expertCatalog.viewLogs') }}
+            </Button>
+          </template>
+        </div>
         <div class="flex flex-wrap gap-2">
           <McpGatewayAuthorizeButton :agent="agent" :disabled="actionLoading" @changed="fetchAgents" />
           <McpRouterSyncButton :agent="agent" :disabled="actionLoading" @changed="fetchAgents" />
@@ -252,6 +359,20 @@ onMounted(fetchAgents)
         </div>
       </div>
     </div>
+
+    <ExpertConfigSheet
+      :open="configSheetOpen"
+      :agent="selectedAgent"
+      :expert="selectedExpert"
+      @update:open="configSheetOpen = $event"
+      @saved="fetchAgents"
+    />
+    <ExpertSkillsSheet
+      :open="skillsSheetOpen"
+      :expert="selectedExpert"
+      @update:open="skillsSheetOpen = $event"
+      @changed="fetchAgents"
+    />
 
     <div v-if="diagnosticsOpen" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" @click.self="diagnosticsOpen = false">
       <div class="bg-background border border-border rounded-xl max-w-lg w-full p-4 space-y-3">

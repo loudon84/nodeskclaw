@@ -67,6 +67,16 @@ const hermesRoutes: RouteRecordRaw[] = [
     component: () => import('@/views/hermes/DiagnosticsView.vue'),
   },
   {
+    path: '/hermes/expert-logs',
+    name: 'HermesExpertLogs',
+    component: () => import('@/views/hermes/ExpertLogsView.vue'),
+  },
+  {
+    path: '/hermes/expert-teams',
+    name: 'HermesExpertTeams',
+    component: () => import('@/views/hermes/ExpertTeamsView.vue'),
+  },
+  {
     path: '/hermes/experts',
     name: 'HermesExpertInstances',
     component: () => import('@/views/hermes/ExpertInstancesView.vue'),

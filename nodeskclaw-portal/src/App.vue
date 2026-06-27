@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAuthStore } from '@/stores/auth'
 import { getCurrentLocale, setCurrentLocale } from '@/i18n'
-import { Settings, LogOut, Boxes, Server, FlaskConical, User, Loader2, BarChart3, Bot, Users, ListTodo, FileArchive, Activity, Gauge, Shield, ChevronDown, ListOrdered, Puzzle, Package, Upload, BookOpen } from 'lucide-vue-next'
+import { Settings, LogOut, Boxes, Server, FlaskConical, User, Loader2, BarChart3, Bot, Users, ListTodo, FileArchive, Activity, Gauge, Shield, ChevronDown, ListOrdered, Puzzle, Package, Upload, BookOpen, ScrollText } from 'lucide-vue-next'
 import { useFeature } from '@/composables/useFeature'
 import LocaleSelect from '@/components/shared/LocaleSelect.vue'
 import ToastContainer from '@/components/shared/ToastContainer.vue'
@@ -81,6 +81,8 @@ const hermesNavItems: HermesNavItem[] = [
   { path: '/hermes/diagnostics', labelKey: 'nav.hermesDiagnostics', icon: Activity },
   { path: '/hermes/runtime', labelKey: 'nav.hermesRuntime', icon: Gauge, adminOnly: true },
   { path: '/hermes/agents', labelKey: 'nav.hermesAgents', icon: Bot, adminOnly: true },
+  { path: '/hermes/expert-logs', labelKey: 'nav.hermesExpertLogs', icon: ScrollText, adminOnly: true },
+  { path: '/hermes/expert-teams', labelKey: 'nav.hermesExpertTeams', icon: Users, adminOnly: true },
   { path: '/hermes/queue', labelKey: 'nav.hermesQueue', icon: ListOrdered, adminOnly: true },
   { path: '/hermes/metrics', labelKey: 'nav.hermesMetrics', icon: BarChart3, adminOnly: true },
   { path: '/hermes/skill-authorizations', labelKey: 'nav.hermesAuthorizations', icon: Shield, adminOnly: true },
