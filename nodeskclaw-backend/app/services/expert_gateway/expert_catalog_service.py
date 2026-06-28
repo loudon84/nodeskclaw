@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from datetime import datetime, timezone
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import BadRequestError, NotFoundError
@@ -149,8 +149,39 @@ class ExpertCatalogService:
             expert.enabled = body.enabled
         expert.updated_by = user_id
         agent = await self._get_agent(org_id, expert.hermes_agent_id)
-        agent.expert_enabled = True
-        await self.db.flush()
+        now = datetime.now(timezone.utc)
+        stmt = (
+            update(Expert)
+            .where(
+                Expert.org_id == org_id,
+                Expert.id == expert_id,
+                not_deleted(Expert),
+            )
+            .values(
+                expert_slug=expert.expert_slug,
+                display_name=expert.display_name,
+                description=expert.description,
+                category=expert.category,
+                tags=expert.tags,
+                avatar=expert.avatar,
+                published=expert.published,
+                enabled=expert.enabled,
+                sort_order=expert.sort_order,
+                updated_by=user_id,
+                updated_at=now,
+            )
+            .returning(Expert)
+        )
+        expert = (await self.db.execute(stmt)).scalar_one()
+        await self.db.execute(
+            update(HermesAgentInstance)
+            .where(
+                HermesAgentInstance.org_id == org_id,
+                HermesAgentInstance.id == agent.id,
+                not_deleted(HermesAgentInstance),
+            )
+            .values(expert_enabled=True, updated_at=now)
+        )
         return await self._to_item(expert, ExpertInvocationLogService(self.db))
 
     async def publish_expert(self, org_id: str, user_id: str, expert_id: str) -> ExpertItem:
@@ -158,18 +189,36 @@ class ExpertCatalogService:
         if expert is None:
             raise NotFoundError(message="专家不存在", message_key="errors.expert.not_found")
         await self.validate_publish(org_id, expert)
-        expert.published = True
-        expert.updated_by = user_id
-        await self.db.flush()
+        now = datetime.now(timezone.utc)
+        stmt = (
+            update(Expert)
+            .where(
+                Expert.org_id == org_id,
+                Expert.id == expert_id,
+                not_deleted(Expert),
+            )
+            .values(published=True, updated_by=user_id, updated_at=now)
+            .returning(Expert)
+        )
+        expert = (await self.db.execute(stmt)).scalar_one()
         return await self._to_item(expert, ExpertInvocationLogService(self.db))
 
     async def unpublish_expert(self, org_id: str, user_id: str, expert_id: str) -> ExpertItem:
         expert = await self.get_by_id(org_id, expert_id)
         if expert is None:
             raise NotFoundError(message="专家不存在", message_key="errors.expert.not_found")
-        expert.published = False
-        expert.updated_by = user_id
-        await self.db.flush()
+        now = datetime.now(timezone.utc)
+        stmt = (
+            update(Expert)
+            .where(
+                Expert.org_id == org_id,
+                Expert.id == expert_id,
+                not_deleted(Expert),
+            )
+            .values(published=False, updated_by=user_id, updated_at=now)
+            .returning(Expert)
+        )
+        expert = (await self.db.execute(stmt)).scalar_one()
         return await self._to_item(expert, ExpertInvocationLogService(self.db))
 
     async def validate_publish(self, org_id: str, expert: Expert) -> None:
