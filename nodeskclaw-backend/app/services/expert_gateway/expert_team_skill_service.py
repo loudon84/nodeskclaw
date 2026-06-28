@@ -316,5 +316,15 @@ class ExpertTeamSkillService:
                 "outputFormats": list(skill.output_formats or []),
                 "orchestrationMode": orchestration_mode,
                 "status": "ready" if runtime_ready else "offline",
+                "callMode": "async_sse",
+                "streaming": True,
+                "eventStream": {
+                    "transport": "sse",
+                    "authMode": "bearer_or_sse_token",
+                    "resume": True,
+                },
+                "artifactMode": "pull_only",
+                "resultMode": "task_result",
+                "memberStream": orchestration_mode == "upstream_skill",
             },
         }

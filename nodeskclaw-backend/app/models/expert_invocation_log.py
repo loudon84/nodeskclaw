@@ -43,9 +43,17 @@ class ExpertInvocationLog(BaseModel):
     client_device_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     parent_invocation_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     invocation_type: Mapped[str] = mapped_column(String(32), nullable=False, default="expert_skill")
+    task_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    task_no: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    event_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    artifact_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    hermes_run_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    stream_mode: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     __table_args__ = (
         Index("ix_expert_invocation_org_created", "org_id", "created_at"),
         Index("ix_expert_invocation_org_expert", "org_id", "expert_id"),
         Index("ix_expert_invocation_org_status", "org_id", "status"),
+        Index("ix_expert_invocation_logs_task_id", "task_id"),
+        Index("ix_expert_invocation_logs_stream_mode", "stream_mode"),
     )

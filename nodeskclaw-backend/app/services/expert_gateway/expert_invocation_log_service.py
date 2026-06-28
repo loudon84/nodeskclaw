@@ -113,6 +113,65 @@ class ExpertInvocationLogService:
         await self.db.flush()
         return log
 
+    async def attach_task(
+        self,
+        log: ExpertInvocationLog,
+        task: Any,
+        *,
+        stream_mode: str = "event_stream",
+    ) -> ExpertInvocationLog:
+        log.task_id = task.id
+        log.task_no = task.task_no
+        log.event_url = task.event_url
+        log.artifact_url = task.artifact_url
+        log.stream_mode = stream_mode
+        log.orchestration_mode = "agent_event_stream"
+        log.status = "running"
+        await self.db.flush()
+        return log
+
+    async def sync_from_task(self, task_id: str) -> ExpertInvocationLog | None:
+        from app.models.hermes_skill.hermes_task import HermesTask, TaskStatus
+
+        stmt = select(ExpertInvocationLog).where(
+            ExpertInvocationLog.task_id == task_id,
+            not_deleted(ExpertInvocationLog),
+        )
+        log = (await self.db.execute(stmt)).scalar_one_or_none()
+        if log is None:
+            return None
+
+        task_stmt = select(HermesTask).where(
+            HermesTask.id == task_id,
+            not_deleted(HermesTask),
+        )
+        task = (await self.db.execute(task_stmt)).scalar_one_or_none()
+        if task is None:
+            return log
+
+        if task.hermes_run_id:
+            log.hermes_run_id = task.hermes_run_id
+
+        now = datetime.now(timezone.utc)
+        if task.status == TaskStatus.COMPLETED:
+            log.status = "completed"
+            log.finished_at = now
+            if log.started_at:
+                log.duration_ms = int((now - log.started_at).total_seconds() * 1000)
+            if task.result_summary:
+                log.response_preview = task.result_summary[: settings.EXPERT_RESPONSE_PREVIEW_MAX_CHARS]
+                log.response_content_type = "text/markdown"
+        elif task.status in (TaskStatus.FAILED, TaskStatus.TIMEOUT, TaskStatus.CANCELLED):
+            log.status = "failed" if task.status != TaskStatus.CANCELLED else "cancelled"
+            log.finished_at = now
+            if log.started_at:
+                log.duration_ms = int((now - log.started_at).total_seconds() * 1000)
+            log.error_code = task.error_code
+            log.error_message = task.error_message
+
+        await self.db.flush()
+        return log
+
     async def mark_completed(
         self,
         log: ExpertInvocationLog,
@@ -282,5 +341,11 @@ class ExpertInvocationLogService:
             catalog_kind=row.catalog_kind,
             catalog_slug=row.catalog_slug,
             orchestration_mode=row.orchestration_mode,
+            task_id=row.task_id,
+            task_no=row.task_no,
+            event_url=row.event_url,
+            artifact_url=row.artifact_url,
+            hermes_run_id=row.hermes_run_id,
+            stream_mode=row.stream_mode,
             created_at=row.created_at,
         )

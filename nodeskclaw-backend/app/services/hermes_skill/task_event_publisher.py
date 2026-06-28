@@ -40,6 +40,7 @@ class TaskEventPublisher:
         stage: str,
         progress: float | None = None,
         message: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> HermesTaskEvent:
         payload: dict[str, Any] = {
             "mcp_event": "task.progress",
@@ -49,6 +50,8 @@ class TaskEventPublisher:
             payload["progress"] = progress
         if message:
             payload["message"] = message
+        if metadata:
+            payload.update(metadata)
         return await self.publish(
             task_id,
             org_id,

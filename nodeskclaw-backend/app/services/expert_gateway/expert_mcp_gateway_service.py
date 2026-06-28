@@ -30,13 +30,26 @@ from app.services.expert_gateway.expert_catalog_service import ExpertCatalogServ
 from app.services.expert_gateway.expert_invocation_log_service import ExpertInvocationLogService
 from app.services.expert_gateway.expert_mcp_proxy_service import ExpertMcpProxyService
 from app.services.expert_gateway.expert_permission_service import ExpertPermissionService
+from app.services.expert_gateway.expert_run_service import ExpertRunService
 from app.services.expert_gateway.expert_route_guard import find_route_override_keys
 from app.services.expert_gateway.expert_skill_service import ExpertSkillService
 from app.services.expert_gateway.expert_team_orchestrator import ExpertTeamOrchestrator
 from app.services.expert_gateway.expert_team_service import ExpertTeamService
 from app.services.expert_gateway.expert_team_skill_service import ExpertTeamSkillService
 
-_GATEWAY_VERSION = "v6.1"
+_GATEWAY_VERSION = "v6.2"
+
+_EVENT_STREAM_ANNOTATIONS: dict[str, Any] = {
+    "callMode": "async_sse",
+    "streaming": True,
+    "eventStream": {
+        "transport": "sse",
+        "authMode": "bearer_or_sse_token",
+        "resume": True,
+    },
+    "artifactMode": "pull_only",
+    "resultMode": "task_result",
+}
 
 
 class ExpertMcpGatewayService:
@@ -310,6 +323,7 @@ class ExpertMcpGatewayService:
         if not str(arguments.get("prompt") or "").strip():
             return mcp_error_v2(jsonrpc_id, EXPERT_INVALID_JSONRPC, "prompt is required")
 
+        run_mode = self._resolve_run_mode(headers)
         agent_profile = await self.catalog.resolve_agent_profile(org_id, expert)
         slug = catalog_item.slug if catalog_item else expert.expert_slug
         log = await self.logs.create_started(
@@ -325,9 +339,30 @@ class ExpertMcpGatewayService:
             request_payload=arguments,
             catalog_kind="expert",
             catalog_slug=slug,
-            orchestration_mode="upstream_skill",
+            orchestration_mode="agent_event_stream" if run_mode == "event_stream" else "upstream_skill",
             **self._client_meta(headers),
         )
+
+        if run_mode == "event_stream":
+            try:
+                return await ExpertRunService(self.db).start_expert_skill_run(
+                    org_id,
+                    user_id,
+                    expert,
+                    skill,
+                    arguments,
+                    catalog_slug=slug,
+                    headers=headers,
+                    log=log,
+                    jsonrpc_id=jsonrpc_id,
+                )
+            except Exception as exc:
+                await self.logs.mark_failed(
+                    log,
+                    error_code=EXPERT_UPSTREAM_MCP_ERROR,
+                    error_message=str(exc),
+                )
+                return mcp_error_v2(jsonrpc_id, EXPERT_UPSTREAM_MCP_ERROR, str(exc))
 
         try:
             response = await ExpertMcpProxyService.call_upstream_tool(
@@ -403,6 +438,7 @@ class ExpertMcpGatewayService:
         if not str(arguments.get("prompt") or "").strip():
             return mcp_error_v2(jsonrpc_id, EXPERT_INVALID_JSONRPC, "prompt is required")
 
+        run_mode = self._resolve_run_mode(headers)
         agent_profile = await self.catalog.resolve_agent_profile_by_id(org_id, team.hermes_agent_id)
         log = await self.logs.create_started(
             org_id=org_id,
@@ -417,9 +453,31 @@ class ExpertMcpGatewayService:
             invocation_type="expert_team",
             catalog_kind="expert_team",
             catalog_slug=item.slug,
-            orchestration_mode=item.orchestration_mode,
+            orchestration_mode="agent_event_stream" if run_mode == "event_stream" else item.orchestration_mode,
             **self._client_meta(headers),
         )
+
+        if run_mode == "event_stream":
+            try:
+                return await ExpertRunService(self.db).start_team_skill_run(
+                    org_id,
+                    user_id,
+                    team,
+                    skill,
+                    arguments,
+                    catalog_slug=item.slug,
+                    orchestration_mode=item.orchestration_mode,
+                    headers=headers,
+                    log=log,
+                    jsonrpc_id=jsonrpc_id,
+                )
+            except Exception as exc:
+                await self.logs.mark_failed(
+                    log,
+                    error_code=EXPERT_UPSTREAM_MCP_ERROR,
+                    error_message=str(exc),
+                )
+                return mcp_error_v2(jsonrpc_id, EXPERT_UPSTREAM_MCP_ERROR, str(exc))
 
         try:
             response = await ExpertMcpProxyService.call_upstream_tool(
@@ -489,6 +547,7 @@ class ExpertMcpGatewayService:
                         "status": "ready" if ready else "offline",
                         "publicSkillCount": public_count,
                         "callableSkillCount": callable_count,
+                        **_EVENT_STREAM_ANNOTATIONS,
                     },
                 }
             )
@@ -509,25 +568,44 @@ class ExpertMcpGatewayService:
                 status = "ready" if ready else "offline"
             if public_count <= 0:
                 continue
+            team_annotations: dict[str, Any] = {
+                "kind": "expert_team",
+                "slug": team.team_slug,
+                "displayName": team.display_name,
+                "category": team.category,
+                "tags": list(team.tags or []),
+                "status": status,
+                "orchestrationMode": mode,
+                "publicSkillCount": public_count,
+                "callableSkillCount": callable_count,
+                **_EVENT_STREAM_ANNOTATIONS,
+            }
+            if mode == "gateway_sequential":
+                team_annotations["memberStream"] = True
+            elif mode == "upstream_skill":
+                team_annotations["memberStream"] = True
             tools.append(
                 {
                     "name": team.team_slug,
                     "description": team.description or team.display_name,
                     "inputSchema": {"type": "object", "properties": {}},
-                    "annotations": {
-                        "kind": "expert_team",
-                        "slug": team.team_slug,
-                        "displayName": team.display_name,
-                        "category": team.category,
-                        "tags": list(team.tags or []),
-                        "status": status,
-                        "orchestrationMode": mode,
-                        "publicSkillCount": public_count,
-                        "callableSkillCount": callable_count,
-                    },
+                    "annotations": team_annotations,
                 }
             )
         return tools
+
+    @staticmethod
+    def _resolve_run_mode(headers: dict[str, str] | None) -> str:
+        headers = headers or {}
+        raw = (
+            headers.get("x-nodeskclaw-expert-run-mode")
+            or headers.get("X-NoDeskClaw-Expert-Run-Mode")
+            or "event_stream"
+        )
+        mode = str(raw).strip().lower()
+        if mode == "sync_legacy":
+            return "sync_legacy"
+        return "event_stream"
 
     @staticmethod
     def _client_meta(headers: dict[str, str] | None) -> dict[str, str | None]:

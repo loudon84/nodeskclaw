@@ -3280,6 +3280,12 @@ const enUS = {
       catalogKind: "Kind",
       catalogSlug: "Catalog Slug",
       orchestrationMode: "Orchestration Mode",
+      streamMode: "Stream Mode",
+      taskNo: "Task No",
+      taskId: "Task ID",
+      eventUrl: "Event URL",
+      artifactUrl: "Artifact URL",
+      hermesRunId: "Hermes Run ID",
     },
     expertTeam: {
       title: "Expert Teams",

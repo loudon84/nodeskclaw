@@ -266,5 +266,14 @@ class ExpertSkillService:
                 "approvalMode": skill.approval_mode,
                 "outputFormats": list(skill.output_formats or []),
                 "status": "ready" if runtime_ready else "offline",
+                "callMode": "async_sse",
+                "streaming": True,
+                "eventStream": {
+                    "transport": "sse",
+                    "authMode": "bearer_or_sse_token",
+                    "resume": True,
+                },
+                "artifactMode": "pull_only",
+                "resultMode": "task_result",
             },
         }

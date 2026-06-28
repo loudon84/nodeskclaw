@@ -63,6 +63,12 @@ export interface ExpertInvocationLogItem {
   catalog_kind?: string | null
   catalog_slug?: string | null
   orchestration_mode?: string | null
+  task_id?: string | null
+  task_no?: string | null
+  event_url?: string | null
+  artifact_url?: string | null
+  hermes_run_id?: string | null
+  stream_mode?: string | null
 }
 
 export interface ExpertInvocationLogDetail extends ExpertInvocationLogItem {

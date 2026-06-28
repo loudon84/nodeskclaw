@@ -54,6 +54,13 @@ const statusColor: Record<string, string> = {
   failed: 'bg-red-500/15 text-red-400',
   rejected: 'bg-orange-500/15 text-orange-400',
   running: 'bg-blue-500/15 text-blue-400',
+  cancelled: 'bg-orange-500/15 text-orange-400',
+}
+
+function displayStatus(log: ExpertInvocationLogItem) {
+  if (log.status === 'running') return 'running'
+  if (log.stream_mode === 'event_stream' && log.status === 'started') return 'running'
+  return log.status
 }
 
 function formatTime(iso: string | null | undefined) {
@@ -144,6 +151,8 @@ onMounted(fetchLogs)
             <TableHead>{{ t('hermes.expertLogs.catalogKind') }}</TableHead>
             <TableHead>{{ t('hermes.expertLogs.skillName') }}</TableHead>
             <TableHead>{{ t('hermes.expertLogs.orchestrationMode') }}</TableHead>
+            <TableHead>{{ t('hermes.expertLogs.streamMode') }}</TableHead>
+            <TableHead>{{ t('hermes.expertLogs.taskNo') }}</TableHead>
             <TableHead>{{ t('hermes.expertLogs.status') }}</TableHead>
             <TableHead>{{ t('hermes.expertLogs.duration') }}</TableHead>
             <TableHead>{{ t('hermes.expertLogs.errorCode') }}</TableHead>
@@ -152,7 +161,7 @@ onMounted(fetchLogs)
         </TableHeader>
         <TableBody>
           <TableRow v-if="!items.length">
-            <TableCell colspan="9" class="text-center text-muted-foreground py-8">
+            <TableCell colspan="11" class="text-center text-muted-foreground py-8">
               {{ t('common.noData') }}
             </TableCell>
           </TableRow>
@@ -165,8 +174,10 @@ onMounted(fetchLogs)
             </TableCell>
             <TableCell>{{ log.skill_name || '-' }}</TableCell>
             <TableCell class="text-xs">{{ log.orchestration_mode || '-' }}</TableCell>
+            <TableCell class="text-xs">{{ log.stream_mode || '-' }}</TableCell>
+            <TableCell class="font-mono text-xs">{{ log.task_no || '-' }}</TableCell>
             <TableCell>
-              <Badge variant="outline" :class="statusColor[log.status] || ''">{{ log.status }}</Badge>
+              <Badge variant="outline" :class="statusColor[displayStatus(log)] || ''">{{ displayStatus(log) }}</Badge>
             </TableCell>
             <TableCell>{{ formatDuration(log.duration_ms) }}</TableCell>
             <TableCell class="font-mono text-xs">{{ log.error_code || '-' }}</TableCell>
@@ -199,7 +210,13 @@ onMounted(fetchLogs)
           <div><dt class="text-muted-foreground">{{ t('hermes.expertLogs.catalogKind') }}</dt><dd>{{ detail.catalog_kind || '-' }}</dd></div>
           <div><dt class="text-muted-foreground">{{ t('hermes.expertLogs.catalogSlug') }}</dt><dd class="font-mono text-xs">{{ detail.catalog_slug || detail.expert_slug || '-' }}</dd></div>
           <div><dt class="text-muted-foreground">{{ t('hermes.expertLogs.orchestrationMode') }}</dt><dd>{{ detail.orchestration_mode || '-' }}</dd></div>
-          <div><dt class="text-muted-foreground">{{ t('hermes.expertLogs.status') }}</dt><dd>{{ detail.status }}</dd></div>
+          <div><dt class="text-muted-foreground">{{ t('hermes.expertLogs.streamMode') }}</dt><dd>{{ detail.stream_mode || '-' }}</dd></div>
+          <div><dt class="text-muted-foreground">{{ t('hermes.expertLogs.taskId') }}</dt><dd class="font-mono text-xs break-all">{{ detail.task_id || '-' }}</dd></div>
+          <div><dt class="text-muted-foreground">{{ t('hermes.expertLogs.taskNo') }}</dt><dd class="font-mono text-xs">{{ detail.task_no || '-' }}</dd></div>
+          <div><dt class="text-muted-foreground">{{ t('hermes.expertLogs.eventUrl') }}</dt><dd class="font-mono text-xs break-all">{{ detail.event_url || '-' }}</dd></div>
+          <div><dt class="text-muted-foreground">{{ t('hermes.expertLogs.artifactUrl') }}</dt><dd class="font-mono text-xs break-all">{{ detail.artifact_url || '-' }}</dd></div>
+          <div><dt class="text-muted-foreground">{{ t('hermes.expertLogs.hermesRunId') }}</dt><dd class="font-mono text-xs break-all">{{ detail.hermes_run_id || '-' }}</dd></div>
+          <div><dt class="text-muted-foreground">{{ t('hermes.expertLogs.status') }}</dt><dd>{{ displayStatus(detail) }}</dd></div>
           <div><dt class="text-muted-foreground">{{ t('hermes.expertLogs.duration') }}</dt><dd>{{ formatDuration(detail.duration_ms) }}</dd></div>
           <div><dt class="text-muted-foreground">{{ t('hermes.expertLogs.promptPreview') }}</dt><dd class="whitespace-pre-wrap break-all">{{ detail.request_prompt_preview || '-' }}</dd></div>
           <div><dt class="text-muted-foreground">{{ t('hermes.expertLogs.responsePreview') }}</dt><dd class="whitespace-pre-wrap break-all">{{ detail.response_preview || '-' }}</dd></div>

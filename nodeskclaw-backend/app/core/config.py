@@ -319,6 +319,7 @@ class Settings(BaseSettings):
     EXPERT_HEALTH_CACHE_TTL: int = 30
     EXPERT_RESPONSE_PREVIEW_MAX_CHARS: int = 4000
     EXPERT_UPSTREAM_TIMEOUT_SECONDS: int = 900
+    EXPERT_EVENT_TOKEN_TTL_SECONDS: int = 7200
 
     # ── Hermes WebUI Expert ───────────────────────────────
     HERMES_EXPERT_DEFAULT_IMAGE: str = ""

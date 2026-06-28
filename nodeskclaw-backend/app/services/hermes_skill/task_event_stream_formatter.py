@@ -69,6 +69,9 @@ def build_sse_data(
             data["progress"] = payload.get("progress")
         if payload.get("message"):
             data["message"] = payload.get("message")
+        for key in ("expert", "team", "agent", "tool_call", "delta", "team_step"):
+            if payload.get(key) is not None:
+                data[key] = payload.get(key)
     elif sse_name == "task.artifact.ready":
         artifact = payload.get("artifact") or payload
         data["artifact"] = {
@@ -77,6 +80,9 @@ def build_sse_data(
             "type": artifact.get("type") or artifact.get("artifact_type") or "report",
             "path": artifact.get("path") or artifact.get("suggested_workspace_path"),
         }
+        for key in ("expert", "team", "agent"):
+            if payload.get(key) is not None:
+                data[key] = payload.get(key)
     elif sse_name == "task.completed":
         result = payload.get("result") or {}
         if enriched_result:
@@ -87,6 +93,12 @@ def build_sse_data(
                 "kb_status": enriched_result.get("kb_status"),
             }
         data["result"] = result
+        if enriched_result:
+            data["artifact_mode"] = enriched_result.get("artifact_mode")
+            data["kb_status"] = enriched_result.get("kb_status")
+        for key in ("expert", "team", "agent"):
+            if payload.get(key) is not None:
+                data[key] = payload.get(key)
     elif sse_name == "task.failed":
         data["error"] = (
             payload.get("error")

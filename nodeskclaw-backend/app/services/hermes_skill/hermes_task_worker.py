@@ -185,180 +185,250 @@ class HermesTaskWorker:
                 )
                 return
 
-            adapter = HermesAgentAdapter(db)
-            try:
-                await adapter.submit_run(task, task.arguments or {})
-            except Exception as exc:
-                await task_service.mark_failed(
-                    task,
-                    error_code="AGENT_UNREACHABLE",
-                    error_message=str(exc)[:1024],
-                )
-                task.worker_id = None
-                task.locked_at = None
-                task.dispatch_status = "failed"
-                await db.flush()
-                return
-
-            if not await event_service.has_event(task.id, EventType.HERMES_RUN_CREATED):
-                await event_service.write_event(
-                    task_id=task.id,
-                    org_id=task.org_id,
-                    event_type=EventType.HERMES_RUN_CREATED,
-                    payload={"hermes_run_id": task.hermes_run_id},
-                )
-            await db.flush()
-
-            stream_interrupted = False
-            state_tracker = RunStateTracker()
-            try:
-                async for event_data in adapter.read_run_events(task):
-                    try:
-                        converted = HermesRunStateResolver.convert_hermes_event(event_data)
-                    except Exception as exc:
-                        logger.warning("convert_events failed for task %s: %s", task.id, exc)
-                        continue
-                    if not converted:
-                        continue
-                    state_tracker.observe_event_type(
-                        converted["event_type"],
-                        converted.get("payload"),
-                    )
-                    try:
-                        await event_service.write_event(
-                            task_id=task.id,
-                            org_id=task.org_id,
-                            event_type=converted["event_type"],
-                            payload=converted.get("payload"),
-                            source="hermes",
-                            source_event_seq=converted.get("source_event_seq"),
-                        )
-                        if converted["event_type"] == EventType.HERMES_RUN_DELTA:
-                            progress = TaskEventPublisher.extract_progress_from_delta(
-                                converted.get("payload"),
-                            )
-                            if progress:
-                                await TaskEventPublisher(db).publish_progress(
-                                    task.id,
-                                    task.org_id,
-                                    stage=progress["stage"],
-                                    progress=progress.get("progress"),
-                                    message=progress.get("message"),
-                                )
-                    except Exception as exc:
-                        logger.warning("write_event failed for task %s: %s", task.id, exc)
-                    await db.flush()
-            except Exception as exc:
-                logger.warning("read_run_events stream error for task %s: %s", task.id, exc)
-                stream_interrupted = True
-
-            await db.refresh(task)
-
-            if task.status == TaskStatus.RUNNING:
-                run_status_value: str | None = None
-                resolved = state_tracker.resolve_after_stream(
-                    stream_interrupted=stream_interrupted,
-                    run_status=None,
-                )
-
-                if resolved is None:
-                    try:
-                        run_status = await adapter.get_run_status(task)
-                        run_status_value = run_status.get("status", "unknown")
-                    except Exception as exc:
-                        logger.error("get_run_status failed for task %s: %s", task.id, exc)
-                        run_status_value = "unknown"
-
-                    resolved = state_tracker.resolve_after_stream(
-                        stream_interrupted=stream_interrupted,
-                        run_status=run_status_value,
-                    )
-                    if resolved is None and run_status_value:
-                        resolved = state_tracker.map_hermes_run_status(run_status_value)
-
-                if resolved is None and (
-        run_status_value in (None, "unknown", "running", "in_progress", "created", "queued")
-        or state_tracker.map_hermes_run_status(str(run_status_value or "unknown")) == TaskStatus.RUNNING
-    ):
-                    task.worker_id = None
-                    task.locked_at = None
-                    task.dispatch_status = "running"
-                    await db.flush()
-                    return
-
-                if resolved == TaskStatus.FAILED:
-                    await task_service.mark_failed(
-                        task,
-                        error_code="RUN_FAILED",
-                        error_message=state_tracker.last_error or "Run failed",
-                    )
-                elif resolved == TaskStatus.CANCELLED:
-                    task.status = TaskStatus.CANCELLED
-                    task.run_finished_at = datetime.now(timezone.utc)
-                    await task_service.update_status(task.id, task.org_id, TaskStatus.CANCELLED)
-                elif resolved == TaskStatus.COMPLETED:
-                    task.status = TaskStatus.COMPLETED
-                    task.run_finished_at = datetime.now(timezone.utc)
-                    task.completed_at = datetime.now(timezone.utc)
-                elif resolved == TaskStatus.TIMEOUT:
-                    await task_service.mark_timeout(
-                        task,
-                        (datetime.now(timezone.utc) - task.run_started_at).total_seconds()
-                        if task.run_started_at else 0,
-                    )
-                elif resolved is None:
-                    await task_service.mark_failed(
-                        task,
-                        error_code="RUN_STATUS_UNKNOWN",
-                        error_message=f"Unknown run status: {run_status_value}",
-                    )
-
-                if task.status == TaskStatus.COMPLETED:
-                    await task_service.mark_completed(task)
-                    await audit_logger.log(
-                        action="hermes.task.completed",
-                        target_id=task.id,
-                        org_id=task.org_id,
-                        actor_type="system",
-                        actor_id=self._worker_id,
-                        details={
-                            "task_no": task.task_no,
-                            "skill_id": task.skill_id,
-                            "hermes_run_id": task.hermes_run_id,
-                        },
-                    )
-                    await db.flush()
-                    await self._scan_artifacts(db, task)
-                    try:
-                        await TaskEventPublisher(db).publish_completed_with_result(
-                            task.id, task.org_id,
-                        )
-                    except Exception as exc:
-                        logger.warning(
-                            "publish_completed_with_result failed for task %s: %s",
-                            task.id,
-                            exc,
-                        )
-
-                elif task.status == TaskStatus.FAILED:
-                    await audit_logger.log(
-                        action="hermes.task.failed",
-                        target_id=task.id,
-                        org_id=task.org_id,
-                        actor_type="system",
-                        actor_id=self._worker_id,
-                        details={
-                            "task_no": task.task_no,
-                            "error_code": task.error_code,
-                            "error_message": task.error_message,
-                        },
-                    )
+            is_expert_stream = route_snapshot.get("route_type") == "expert_agent_event_stream"
+            await self._execute_agent_run_stream(
+                db,
+                task,
+                route_snapshot,
+                task_service,
+                event_service,
+                audit_logger,
+                enrich_expert_metadata=is_expert_stream,
+            )
+            if is_expert_stream:
+                await self._sync_expert_invocation_log(db, task.id)
         finally:
             task.worker_id = None
             task.locked_at = None
             if task.status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.TIMEOUT, TaskStatus.CANCELLED):
                 task.dispatch_status = "finished"
             await db.flush()
+
+    async def _execute_agent_run_stream(
+        self,
+        db: AsyncSession,
+        task: HermesTask,
+        route_snapshot: dict,
+        task_service: TaskService,
+        event_service: TaskEventService,
+        audit_logger: SkillAuditLogger,
+        *,
+        enrich_expert_metadata: bool = False,
+    ) -> None:
+        if enrich_expert_metadata:
+            await event_service.write_event(
+                task_id=task.id,
+                org_id=task.org_id,
+                event_type=EventType.HERMES_RUN_STARTED,
+                payload=self._enrich_expert_event_payload({}, route_snapshot),
+                source="worker",
+            )
+            await db.flush()
+
+        adapter = HermesAgentAdapter(db)
+        try:
+            await adapter.submit_run(task, task.arguments or {})
+        except Exception as exc:
+            await task_service.mark_failed(
+                task,
+                error_code="AGENT_UNREACHABLE",
+                error_message=str(exc)[:1024],
+            )
+            task.worker_id = None
+            task.locked_at = None
+            task.dispatch_status = "failed"
+            await db.flush()
+            return
+
+        created_payload: dict = {"hermes_run_id": task.hermes_run_id}
+        if enrich_expert_metadata:
+            created_payload = self._enrich_expert_event_payload(created_payload, route_snapshot)
+        if not await event_service.has_event(task.id, EventType.HERMES_RUN_CREATED):
+            await event_service.write_event(
+                task_id=task.id,
+                org_id=task.org_id,
+                event_type=EventType.HERMES_RUN_CREATED,
+                payload=created_payload,
+            )
+        await db.flush()
+
+        stream_interrupted = False
+        state_tracker = RunStateTracker()
+        try:
+            async for event_data in adapter.read_run_events(task):
+                try:
+                    converted = HermesRunStateResolver.convert_hermes_event(event_data)
+                except Exception as exc:
+                    logger.warning("convert_events failed for task %s: %s", task.id, exc)
+                    continue
+                if not converted:
+                    continue
+                payload = converted.get("payload")
+                if enrich_expert_metadata and isinstance(payload, dict):
+                    payload = self._enrich_expert_event_payload(payload, route_snapshot)
+                    converted["payload"] = payload
+                state_tracker.observe_event_type(
+                    converted["event_type"],
+                    payload,
+                )
+                try:
+                    await event_service.write_event(
+                        task_id=task.id,
+                        org_id=task.org_id,
+                        event_type=converted["event_type"],
+                        payload=payload,
+                        source="hermes",
+                        source_event_seq=converted.get("source_event_seq"),
+                    )
+                    if converted["event_type"] == EventType.HERMES_RUN_DELTA:
+                        progress = TaskEventPublisher.extract_progress_from_delta(payload)
+                        if progress:
+                            metadata = (
+                                self._enrich_expert_event_payload({}, route_snapshot)
+                                if enrich_expert_metadata
+                                else None
+                            )
+                            await TaskEventPublisher(db).publish_progress(
+                                task.id,
+                                task.org_id,
+                                stage=progress["stage"],
+                                progress=progress.get("progress"),
+                                message=progress.get("message"),
+                                metadata=metadata,
+                            )
+                except Exception as exc:
+                    logger.warning("write_event failed for task %s: %s", task.id, exc)
+                await db.flush()
+        except Exception as exc:
+            logger.warning("read_run_events stream error for task %s: %s", task.id, exc)
+            stream_interrupted = True
+
+        await db.refresh(task)
+
+        if task.status == TaskStatus.RUNNING:
+            run_status_value: str | None = None
+            resolved = state_tracker.resolve_after_stream(
+                stream_interrupted=stream_interrupted,
+                run_status=None,
+            )
+
+            if resolved is None:
+                try:
+                    run_status = await adapter.get_run_status(task)
+                    run_status_value = run_status.get("status", "unknown")
+                except Exception as exc:
+                    logger.error("get_run_status failed for task %s: %s", task.id, exc)
+                    run_status_value = "unknown"
+
+                resolved = state_tracker.resolve_after_stream(
+                    stream_interrupted=stream_interrupted,
+                    run_status=run_status_value,
+                )
+                if resolved is None and run_status_value:
+                    resolved = state_tracker.map_hermes_run_status(run_status_value)
+
+            if resolved is None and (
+                run_status_value in (None, "unknown", "running", "in_progress", "created", "queued")
+                or state_tracker.map_hermes_run_status(str(run_status_value or "unknown")) == TaskStatus.RUNNING
+            ):
+                task.worker_id = None
+                task.locked_at = None
+                task.dispatch_status = "running"
+                await db.flush()
+                return
+
+            if resolved == TaskStatus.FAILED:
+                await task_service.mark_failed(
+                    task,
+                    error_code="RUN_FAILED",
+                    error_message=state_tracker.last_error or "Run failed",
+                )
+            elif resolved == TaskStatus.CANCELLED:
+                task.status = TaskStatus.CANCELLED
+                task.run_finished_at = datetime.now(timezone.utc)
+                await task_service.update_status(task.id, task.org_id, TaskStatus.CANCELLED)
+            elif resolved == TaskStatus.COMPLETED:
+                task.status = TaskStatus.COMPLETED
+                task.run_finished_at = datetime.now(timezone.utc)
+                task.completed_at = datetime.now(timezone.utc)
+            elif resolved == TaskStatus.TIMEOUT:
+                await task_service.mark_timeout(
+                    task,
+                    (datetime.now(timezone.utc) - task.run_started_at).total_seconds()
+                    if task.run_started_at else 0,
+                )
+            elif resolved is None:
+                await task_service.mark_failed(
+                    task,
+                    error_code="RUN_STATUS_UNKNOWN",
+                    error_message=f"Unknown run status: {run_status_value}",
+                )
+
+            if task.status == TaskStatus.COMPLETED:
+                await task_service.mark_completed(task)
+                await audit_logger.log(
+                    action="hermes.task.completed",
+                    target_id=task.id,
+                    org_id=task.org_id,
+                    actor_type="system",
+                    actor_id=self._worker_id,
+                    details={
+                        "task_no": task.task_no,
+                        "skill_id": task.skill_id,
+                        "hermes_run_id": task.hermes_run_id,
+                    },
+                )
+                await db.flush()
+                await self._scan_artifacts(db, task)
+                try:
+                    await TaskEventPublisher(db).publish_completed_with_result(
+                        task.id, task.org_id,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "publish_completed_with_result failed for task %s: %s",
+                        task.id,
+                        exc,
+                    )
+
+            elif task.status == TaskStatus.FAILED:
+                await audit_logger.log(
+                    action="hermes.task.failed",
+                    target_id=task.id,
+                    org_id=task.org_id,
+                    actor_type="system",
+                    actor_id=self._worker_id,
+                    details={
+                        "task_no": task.task_no,
+                        "error_code": task.error_code,
+                        "error_message": task.error_message,
+                    },
+                )
+
+    @staticmethod
+    def _enrich_expert_event_payload(payload: dict, route_snapshot: dict) -> dict:
+        enriched = dict(payload or {})
+        expert = route_snapshot.get("expert")
+        if isinstance(expert, dict):
+            enriched["expert"] = expert
+        team = route_snapshot.get("team")
+        if isinstance(team, dict):
+            enriched["team"] = team
+        enriched["agent"] = {
+            "agent_profile": route_snapshot.get("agent_profile"),
+            "hermes_agent_instance_id": route_snapshot.get("hermes_agent_instance_id"),
+        }
+        if enriched.get("stage") or enriched.get("message") or enriched.get("progress") is not None:
+            enriched.setdefault("mcp_event", "task.progress")
+        return enriched
+
+    async def _sync_expert_invocation_log(self, db: AsyncSession, task_id: str) -> None:
+        from app.services.expert_gateway.expert_invocation_log_service import ExpertInvocationLogService
+
+        try:
+            await ExpertInvocationLogService(db).sync_from_task(task_id)
+        except Exception as exc:
+            logger.warning("sync expert invocation log failed for task %s: %s", task_id, exc)
 
     async def _maybe_auto_retry(
         self,

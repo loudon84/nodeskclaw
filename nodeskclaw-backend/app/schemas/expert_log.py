@@ -35,6 +35,12 @@ class ExpertInvocationLogItem(BaseModel):
     catalog_kind: str | None = None
     catalog_slug: str | None = None
     orchestration_mode: str | None = None
+    task_id: str | None = None
+    task_no: str | None = None
+    event_url: str | None = None
+    artifact_url: str | None = None
+    hermes_run_id: str | None = None
+    stream_mode: str | None = None
     created_at: datetime | None = None
 
 

@@ -3280,6 +3280,12 @@ const zhCN = {
       catalogKind: "类型",
       catalogSlug: "目录 Slug",
       orchestrationMode: "编排模式",
+      streamMode: "流式模式",
+      taskNo: "任务编号",
+      taskId: "任务 ID",
+      eventUrl: "事件 URL",
+      artifactUrl: "成果 URL",
+      hermesRunId: "Hermes Run ID",
     },
     expertTeam: {
       title: "专家团队",
