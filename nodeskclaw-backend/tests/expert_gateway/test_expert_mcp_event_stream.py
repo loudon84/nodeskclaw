@@ -3,11 +3,18 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from app.core.exceptions import BadRequestError
 from app.models.expert import Expert
 from app.models.expert_skill import ExpertSkill
-from app.services.expert_gateway.expert_mcp_gateway_service import ExpertMcpGatewayService
+from app.services.expert_gateway.expert_mcp_gateway_service import (
+    ExpertMcpGatewayService,
+    _map_event_stream_error,
+)
 from app.services.expert_gateway.expert_skill_service import ExpertSkillService
-from app.services.expert_gateway.errors import EXPERT_ROUTE_OVERRIDE_FORBIDDEN
+from app.services.expert_gateway.errors import (
+    EXPERT_AGENT_INSTANCE_NOT_BOUND,
+    EXPERT_ROUTE_OVERRIDE_FORBIDDEN,
+)
 
 
 def test_resolve_run_mode_defaults_to_event_stream():
@@ -137,3 +144,13 @@ async def test_dispatch_tools_call_rejects_route_override():
         )
 
     assert result["error"]["data"]["errorCode"] == EXPERT_ROUTE_OVERRIDE_FORBIDDEN
+
+
+def test_map_event_stream_error_agent_not_bound():
+    exc = BadRequestError(
+        "Expert 绑定的 Hermes Agent 尚未关联 AI 员工实例",
+        "errors.expert.agent_instance_not_bound",
+    )
+    error_code, message = _map_event_stream_error(exc)
+    assert error_code == EXPERT_AGENT_INSTANCE_NOT_BOUND
+    assert "AI 员工实例" in message

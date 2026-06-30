@@ -4,10 +4,12 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.exceptions import BadRequestError
 from app.models.expert import Expert
 from app.models.expert_team import ExpertTeam
 from app.services.expert_gateway.catalog_resolver import CatalogItem, CatalogResolver
 from app.services.expert_gateway.errors import (
+    EXPERT_AGENT_INSTANCE_NOT_BOUND,
     EXPERT_CATALOG_DISABLED,
     EXPERT_CATALOG_NOT_FOUND,
     EXPERT_CATALOG_NOT_PUBLISHED,
@@ -22,6 +24,8 @@ from app.services.expert_gateway.errors import (
     EXPERT_SKILL_NOT_PUBLIC,
     EXPERT_TEAM_MEMBERS_REQUIRED,
     EXPERT_TEAM_ORCHESTRATION_DISABLED,
+    EXPERT_EVENT_TOKEN_CREATE_FAILED,
+    EXPERT_TASK_CREATE_FAILED,
     EXPERT_UPSTREAM_MCP_ERROR,
     mcp_error_v2,
     mcp_success,
@@ -36,6 +40,23 @@ from app.services.expert_gateway.expert_skill_service import ExpertSkillService
 from app.services.expert_gateway.expert_team_orchestrator import ExpertTeamOrchestrator
 from app.services.expert_gateway.expert_team_service import ExpertTeamService
 from app.services.expert_gateway.expert_team_skill_service import ExpertTeamSkillService
+
+_EVENT_STREAM_ERROR_KEY_MAP: dict[str, str] = {
+    "errors.expert.agent_instance_not_bound": EXPERT_AGENT_INSTANCE_NOT_BOUND,
+    "errors.expert.event_token_create_failed": EXPERT_EVENT_TOKEN_CREATE_FAILED,
+    "errors.hermes.cannot_enqueue": EXPERT_TASK_CREATE_FAILED,
+}
+
+
+def _map_event_stream_error(exc: Exception) -> tuple[str, str]:
+    if isinstance(exc, BadRequestError):
+        error_code = _EVENT_STREAM_ERROR_KEY_MAP.get(
+            exc.message_key or "",
+            EXPERT_TASK_CREATE_FAILED,
+        )
+        return error_code, exc.message
+    return EXPERT_UPSTREAM_MCP_ERROR, str(exc)
+
 
 _GATEWAY_VERSION = "v6.2"
 
@@ -357,12 +378,13 @@ class ExpertMcpGatewayService:
                     jsonrpc_id=jsonrpc_id,
                 )
             except Exception as exc:
+                error_code, error_message = _map_event_stream_error(exc)
                 await self.logs.mark_failed(
                     log,
-                    error_code=EXPERT_UPSTREAM_MCP_ERROR,
-                    error_message=str(exc),
+                    error_code=error_code,
+                    error_message=error_message,
                 )
-                return mcp_error_v2(jsonrpc_id, EXPERT_UPSTREAM_MCP_ERROR, str(exc))
+                return mcp_error_v2(jsonrpc_id, error_code, error_message)
 
         try:
             response = await ExpertMcpProxyService.call_upstream_tool(
@@ -472,12 +494,13 @@ class ExpertMcpGatewayService:
                     jsonrpc_id=jsonrpc_id,
                 )
             except Exception as exc:
+                error_code, error_message = _map_event_stream_error(exc)
                 await self.logs.mark_failed(
                     log,
-                    error_code=EXPERT_UPSTREAM_MCP_ERROR,
-                    error_message=str(exc),
+                    error_code=error_code,
+                    error_message=error_message,
                 )
-                return mcp_error_v2(jsonrpc_id, EXPERT_UPSTREAM_MCP_ERROR, str(exc))
+                return mcp_error_v2(jsonrpc_id, error_code, error_message)
 
         try:
             response = await ExpertMcpProxyService.call_upstream_tool(

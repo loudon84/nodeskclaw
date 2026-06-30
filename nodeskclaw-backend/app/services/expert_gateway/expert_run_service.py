@@ -12,6 +12,7 @@ from app.models.expert_invocation_log import ExpertInvocationLog
 from app.models.expert_skill import ExpertSkill
 from app.models.expert_team import ExpertTeam
 from app.models.expert_team_skill import ExpertTeamSkill
+from app.models.hermes_skill.hermes_agent_instance import HermesAgentInstance
 from app.services.expert_gateway.errors import (
     EXPERT_EVENT_TOKEN_CREATE_FAILED,
     EXPERT_TASK_CREATE_FAILED,
@@ -67,6 +68,24 @@ class ExpertRunService:
         self.logs = ExpertInvocationLogService(db)
         self.tasks = TaskService(db)
 
+    async def _resolve_execution_agent(
+        self,
+        org_id: str,
+        hermes_agent_id: str | None,
+    ) -> HermesAgentInstance:
+        if not hermes_agent_id:
+            raise BadRequestError(
+                "Expert 绑定的 Hermes Agent 尚未关联 AI 员工实例",
+                "errors.expert.agent_instance_not_bound",
+            )
+        agent = await self.catalog._get_agent(org_id, hermes_agent_id)
+        if not agent.instance_id:
+            raise BadRequestError(
+                "Expert 绑定的 Hermes Agent 尚未关联 AI 员工实例",
+                "errors.expert.agent_instance_not_bound",
+            )
+        return agent
+
     async def start_expert_skill_run(
         self,
         org_id: str,
@@ -80,7 +99,8 @@ class ExpertRunService:
         log: ExpertInvocationLog,
         jsonrpc_id: Any,
     ) -> dict:
-        agent_profile = await self.catalog.resolve_agent_profile(org_id, expert)
+        agent = await self._resolve_execution_agent(org_id, expert.hermes_agent_id)
+        agent_profile = agent.profile_name
         route_snapshot = self._build_expert_route_snapshot(
             expert=expert,
             skill=skill,
@@ -103,7 +123,7 @@ class ExpertRunService:
             org_id=org_id,
             user_id=user_id,
             skill=skill,
-            agent_id=expert.hermes_agent_id,
+            agent_id=agent.instance_id,
             agent_profile=agent_profile,
             arguments=arguments,
             client_context=client_context,
@@ -133,7 +153,8 @@ class ExpertRunService:
         log: ExpertInvocationLog,
         jsonrpc_id: Any,
     ) -> dict:
-        agent_profile = await self.catalog.resolve_agent_profile_by_id(org_id, team.hermes_agent_id)
+        agent = await self._resolve_execution_agent(org_id, team.hermes_agent_id)
+        agent_profile = agent.profile_name
         route_snapshot = self._build_team_route_snapshot(
             team=team,
             skill=skill,
@@ -157,7 +178,7 @@ class ExpertRunService:
             org_id=org_id,
             user_id=user_id,
             skill=skill,
-            agent_id=team.hermes_agent_id,
+            agent_id=agent.instance_id,
             agent_profile=agent_profile,
             arguments=arguments,
             client_context=client_context,
