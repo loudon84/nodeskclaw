@@ -174,7 +174,52 @@ class HermesTaskWorker:
                 return
 
             route_snapshot = self._get_route_snapshot(task)
-            if route_snapshot.get("route_type") == "hermes_api_server":
+
+            metadata = task.routing_metadata or {}
+            contract = metadata.get("execution_contract") or {}
+            route_type = route_snapshot.get("route_type")
+
+            if contract.get("runtime_invocation") == "chat_completions" and route_type != "hermes_api_server":
+                logger.error(
+                    "worker.dispatch.route_contract_violation trace_id=%s task_id=%s task_no=%s "
+                    "tool=%s expected=hermes_api_server actual=%s blocked=/v1/runs",
+                    getattr(task, "request_trace_id", None),
+                    task.id, task.task_no, task.tool_name,
+                    route_type or "<empty>",
+                )
+                await task_service.mark_failed(
+                    task,
+                    error_code="RUNTIME_ROUTE_CONTRACT_VIOLATION",
+                    error_message=(
+                        "Runtime Skill 执行契约要求 chat_completions，"
+                        f"但 route_snapshot.route_type={route_type or '<empty>'}，已阻止进入 /v1/runs"
+                    ),
+                )
+                await event_service.write_event(
+                    task_id=task.id,
+                    org_id=task.org_id,
+                    event_type="task.failed",
+                    payload={
+                        "error_code": "RUNTIME_ROUTE_CONTRACT_VIOLATION",
+                        "route_type": route_type,
+                        "expected_route_type": "hermes_api_server",
+                        "request_trace_id": getattr(task, "request_trace_id", None),
+                    },
+                    source="worker",
+                )
+                await db.flush()
+                return
+
+            logger.info(
+                "worker.dispatch.begin trace_id=%s task_id=%s task_no=%s tool=%s route_type=%s "
+                "runtime_invocation=%s execution_mode=%s",
+                getattr(task, "request_trace_id", None),
+                task.id, task.task_no, task.tool_name,
+                route_type, contract.get("runtime_invocation"),
+                contract.get("mode"),
+            )
+
+            if route_type == "hermes_api_server":
                 await self._execute_api_server_task(
                     db,
                     task,
@@ -185,7 +230,16 @@ class HermesTaskWorker:
                 )
                 return
 
-            is_expert_stream = route_snapshot.get("route_type") == "expert_agent_event_stream"
+            is_expert_stream = route_type == "expert_agent_event_stream"
+            logger.warning(
+                "worker.dispatch.legacy_run_stream_entered trace_id=%s task_id=%s task_no=%s "
+                "tool=%s route_type=%s source=%s contract=%s",
+                getattr(task, "request_trace_id", None),
+                task.id, task.task_no, task.tool_name,
+                route_type,
+                (task.client_context or {}).get("source"),
+                contract or None,
+            )
             await self._execute_agent_run_stream(
                 db,
                 task,

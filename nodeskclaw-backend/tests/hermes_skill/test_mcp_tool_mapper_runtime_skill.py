@@ -80,7 +80,8 @@ async def test_mcp_client_token_profile_does_not_override_runtime_route():
          patch(
              "app.services.hermes_skill.mcp_tool_mapper.TaskEventTokenService.create_token",
              new=AsyncMock(return_value={"event_url": "/api/v1/hermes/tasks/task-uuid/events?token=sse_test"}),
-         ):
+         ), \
+         patch.object(mapper, "_resolve_runtime_route_health", AsyncMock(return_value={"ok": True})):
         mock_alias_cls.return_value.enrich_routing = AsyncMock()
         mock_alias_cls.return_value.resolve = AsyncMock(return_value=None)
         mock_authz_cls.return_value.can_invoke = AsyncMock(return_value=True)

@@ -105,6 +105,28 @@ class HermesAgentAdapter:
             "Content-Type": "application/json",
         }
 
+    def _build_request_timeout(read_timeout: float | None = None) -> httpx.Timeout:
+        read_value = (
+            settings.HERMES_AGENT_READ_TIMEOUT_SECONDS
+            if read_timeout is None
+            else read_timeout
+        )
+        return httpx.Timeout(
+            connect=settings.HERMES_AGENT_CONNECT_TIMEOUT_SECONDS,
+            read=read_value,
+            write=settings.HERMES_AGENT_READ_TIMEOUT_SECONDS,
+            pool=settings.HERMES_AGENT_READ_TIMEOUT_SECONDS,
+        )
+
+
+    def _build_stream_timeout() -> httpx.Timeout:
+        return httpx.Timeout(
+            connect=settings.HERMES_AGENT_CONNECT_TIMEOUT_SECONDS,
+            read=None,
+            write=settings.HERMES_AGENT_READ_TIMEOUT_SECONDS,
+            pool=settings.HERMES_AGENT_READ_TIMEOUT_SECONDS,
+        )
+
     @staticmethod
     def _resolve_run_input(arguments: dict) -> str:
         if not isinstance(arguments, dict):
@@ -167,7 +189,7 @@ class HermesAgentAdapter:
                 "Hermes Agent Run 缺少 input",
                 "errors.task.agent_run_input_missing",
             )
-            
+
         output_dir = await self.compute_output_dir_for_task(task)
 
         payload = {
@@ -265,10 +287,7 @@ class HermesAgentAdapter:
         if not base_url:
             return
 
-        timeout = httpx.Timeout(
-            connect=settings.HERMES_AGENT_CONNECT_TIMEOUT_SECONDS,
-            read=settings.HERMES_AGENT_DEFAULT_TIMEOUT_SECONDS,
-        )
+        timeout = self._build_stream_timeout()
         headers = self._get_auth_headers(instance, require_key=False)
         async with httpx.AsyncClient(timeout=timeout, headers=headers) as client:
             async with client.stream(
@@ -296,10 +315,7 @@ class HermesAgentAdapter:
         if not base_url:
             raise BadRequestError("Hermes Agent 地址未配置", "errors.task.agent_no_base_url")
 
-        timeout = httpx.Timeout(
-            connect=settings.HERMES_AGENT_CONNECT_TIMEOUT_SECONDS,
-            read=settings.HERMES_AGENT_READ_TIMEOUT_SECONDS,
-        )
+        timeout = self._build_request_timeout()
         headers = self._get_auth_headers(instance, require_key=False)
         async with httpx.AsyncClient(timeout=timeout, headers=headers) as client:
             response = await client.get(f"{base_url}/v1/runs/{task.hermes_run_id}")

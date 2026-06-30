@@ -275,6 +275,8 @@ class McpToolMapper:
         client_context: dict | None = None,
         profile_name: str | None = None,
         auth_ctx: Any = None,
+        request_trace_id: str | None = None,
+        request_snapshot: dict | None = None,
     ) -> dict[str, Any]:
         if user_id:
             await PermissionChecker.require_permission(self.db, user_id, org_id, "skill:view")
@@ -439,6 +441,7 @@ class McpToolMapper:
             output_policy,
             wait_override=wait_override,
         )
+        route_diagnostics: dict[str, Any] | None = None
         if skill.source_type == RUNTIME_SKILL_ROUTE_TYPE:
             routing_metadata["execution_contract"] = {
                 "mode": execution_mode,
@@ -446,6 +449,30 @@ class McpToolMapper:
                 "runtime_invocation": "chat_completions",
                 "desktop_route_override_allowed": False,
             }
+            route_health = await self._resolve_runtime_route_health(
+                org_id,
+                installation.routing_metadata or {},
+                installation.profile_id,
+            )
+            route_diagnostics = {
+                "skill_source_type": skill.source_type,
+                "selected_installation_id": installation.id if installation else None,
+                "route_type": (installation.routing_metadata or {}).get("route_type"),
+                "routing_reason": routing_result.reason,
+                "execution_contract": routing_metadata["execution_contract"],
+                "route_override_keys": [],
+                "route_health": route_health,
+            }
+            logger.info(
+                "mcp.tools_call.route_resolved trace_id=%s tool=%s source_type=%s route_type=%s "
+                "runtime_invocation=chat_completions execution_mode=%s client_source=%s",
+                request_trace_id or "",
+                tool_name,
+                skill.source_type,
+                route_diagnostics["route_type"],
+                execution_mode,
+                (client_context or {}).get("source", ""),
+            )
 
         fingerprint = (client_context or {}).get("request_fingerprint")
         if fingerprint:
@@ -500,6 +527,11 @@ class McpToolMapper:
                     deduped=True,
                 )
 
+        logger.info(
+            "hermes_task.create.begin trace_id=%s tool=%s source_type=%s execution_mode=%s",
+            request_trace_id or "", tool_name,
+            skill.source_type or "", execution_mode,
+        )
         task = await TaskService(self.db).create_task(
             org_id=org_id,
             skill_id=skill.skill_id,
@@ -512,6 +544,14 @@ class McpToolMapper:
             arguments=agent_arguments,
             client_context=client_context,
             routing_metadata=routing_metadata,
+        )
+        task.request_trace_id = request_trace_id
+        task.request_snapshot = request_snapshot
+        task.route_diagnostics = route_diagnostics
+        await self.db.flush()
+        logger.info(
+            "hermes_task.create.done trace_id=%s task_id=%s task_no=%s tool=%s",
+            request_trace_id or "", task.id, task.task_no, tool_name,
         )
 
         from app.services.hermes_skill.skill_audit_logger import SkillAuditLogger

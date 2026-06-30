@@ -98,6 +98,9 @@ class HermesTask(BaseModel):
     server_artifacts: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     artifact_status: Mapped[str] = mapped_column(String(32), nullable=False, default="none")
     kb_status: Mapped[str] = mapped_column(String(32), nullable=False, default="none")
+    request_trace_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    request_snapshot: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    route_diagnostics: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
     __table_args__ = (
         Index("ix_hermes_tasks_org_status", "org_id", "status"),
@@ -106,6 +109,8 @@ class HermesTask(BaseModel):
         Index("ix_hermes_tasks_queue_status_created_at", "org_id", "status", "created_at"),
         Index("ix_hermes_tasks_queue_priority", "org_id", "status", "priority", "created_at"),
         Index("ix_hermes_tasks_worker_lock", "status", "locked_at"),
+        Index("ix_hermes_tasks_request_trace_id", "request_trace_id"),
+        Index("ix_hermes_tasks_tool_status_created", "tool_name", "status", "created_at"),
         Index(
             "uq_hermes_tasks_task_no_alive", "task_no",
             unique=True,

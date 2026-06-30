@@ -566,3 +566,53 @@ async def mark_task_failed(
     )
     await db.commit()
     return _ok(TaskRead.model_validate(task).model_dump())
+
+
+@router.get("/tasks/{task_id}/debug")
+async def debug_task(
+    task_id: str,
+    user_org=Depends(require_org_member),
+    db: AsyncSession = Depends(get_db),
+):
+    user, org = user_org
+    if user:
+        await PermissionChecker.require_permission(db, user.id, org.id, "hermes_task:view")
+    service = TaskService(db)
+    task = await service.get_task(task_id, org.id)
+
+    metadata = task.routing_metadata or {}
+    contract = metadata.get("execution_contract") or {}
+    route_snapshot = metadata.get("route_snapshot") or {}
+
+    event_service = TaskEventService(db)
+    events = await event_service.get_events(task_id, org.id)
+    last_events = [
+        {
+            "event_seq": e.event_seq,
+            "event_type": e.event_type.value,
+            "timestamp": e.created_at.isoformat() if e.created_at else None,
+            "payload": e.payload,
+        }
+        for e in events[-10:]
+    ]
+
+    return _ok({
+        "task_id": task.id,
+        "task_no": task.task_no,
+        "status": task.status.value if hasattr(task.status, "value") else task.status,
+        "request_trace_id": getattr(task, "request_trace_id", None),
+        "tool_name": task.tool_name,
+        "arguments_keys": sorted(task.arguments.keys()) if task.arguments else [],
+        "request_snapshot": getattr(task, "request_snapshot", None),
+        "client_context": task.client_context,
+        "routing_metadata": metadata,
+        "route_diagnostics": getattr(task, "route_diagnostics", None),
+        "worker": {
+            "hermes_run_id": task.hermes_run_id,
+            "entered_legacy_run_stream": bool(
+                task.hermes_run_id and route_snapshot.get("route_type") != "hermes_api_server"
+            ),
+            "runtime_invocation": contract.get("runtime_invocation"),
+        },
+        "last_events": last_events,
+    })

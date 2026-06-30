@@ -91,6 +91,80 @@ def _build_client_context(
     return cleaned or None
 
 
+_REQUEST_SNAPSHOT_MAX_BYTES = 32 * 1024
+_SAFE_HEADER_PREFIXES = ("x-client", "x-proxy", "x-device", "x-nodeskclaw")
+
+
+def _generate_request_trace_id() -> str:
+    import secrets
+    return f"req_{secrets.token_urlsafe(16)}"
+
+
+def _build_request_snapshot(
+    *,
+    trace_id: str,
+    tool_name: str,
+    arguments: dict[str, Any],
+    headers: dict[str, str] | None,
+    auth_ctx: McpAuthContext | None,
+) -> dict[str, Any]:
+    import hashlib
+    from datetime import datetime, timezone
+
+    prompt = str(arguments.get("prompt") or "")
+    prompt_preview = prompt[:200]
+    prompt_sha256 = hashlib.sha256(prompt.encode()).hexdigest() if prompt else ""
+    context = arguments.get("context") if isinstance(arguments.get("context"), dict) else {}
+    forbidden_keys = [k for k in arguments if k in ("_routing", "_execution", "route_config")]
+
+    client_info: dict[str, Any] = {}
+    if auth_ctx:
+        client_info["auth_type"] = auth_ctx.auth_type
+        if hasattr(auth_ctx, "mcp_client_token_id"):
+            client_info["token_id"] = auth_ctx.mcp_client_token_id
+        if hasattr(auth_ctx, "mcp_client_token_prefix"):
+            client_info["token_prefix"] = auth_ctx.mcp_client_token_prefix
+
+    normalized = _normalize_headers(headers)
+    safe_headers = {
+        k: v for k, v in normalized.items()
+        if any(k.startswith(p) for p in _SAFE_HEADER_PREFIXES)
+    }
+    source = normalized.get("x-client") or safe_headers.get("x-client-name") or ""
+    client_info.update({
+        "source": source or (auth_ctx.auth_type if auth_ctx else ""),
+        "client_name": normalized.get("x-client") or "",
+        "device_id": normalized.get("x-device-id") or "",
+    })
+
+    snapshot: dict[str, Any] = {
+        "trace_id": trace_id,
+        "received_at": datetime.now(timezone.utc).isoformat(),
+        "entrypoint": "mcp_skill_gateway",
+        "jsonrpc_method": "tools/call",
+        "tool_name": tool_name,
+        "client": client_info,
+        "auth": {
+            "auth_type": auth_ctx.auth_type if auth_ctx else None,
+        },
+        "arguments": {
+            "prompt_preview": prompt_preview,
+            "prompt_sha256": prompt_sha256,
+            "context": context,
+            "argument_keys": sorted(arguments.keys()),
+            "forbidden_keys": forbidden_keys,
+        },
+        "headers_safe": safe_headers,
+    }
+
+    encoded = json.dumps(snapshot, ensure_ascii=False, default=str)
+    if len(encoded.encode()) > _REQUEST_SNAPSHOT_MAX_BYTES:
+        snapshot["arguments"]["context"] = {"truncated": True}
+        snapshot["truncated"] = True
+
+    return snapshot
+
+
 def _inject_request_fingerprint(
     client_context: dict | None,
     *,
@@ -843,6 +917,21 @@ async def _handle_tools_call(
         tool_name=tool_name,
         arguments=arguments,
     )
+
+    request_trace_id = _generate_request_trace_id()
+    request_snapshot = _build_request_snapshot(
+        trace_id=request_trace_id,
+        tool_name=tool_name,
+        arguments=arguments,
+        headers=request_headers,
+        auth_ctx=auth_ctx,
+    )
+    logger.info(
+        "mcp.tools_call.received trace_id=%s tool=%s client_source=%s",
+        request_trace_id,
+        tool_name,
+        (request_snapshot.get("client") or {}).get("source", ""),
+    )
     try:
         result = await mapper.call_tool(
             tool_name,
@@ -853,6 +942,8 @@ async def _handle_tools_call(
             client_context=client_context,
             profile_name=profile_name,
             auth_ctx=auth_ctx,
+            request_trace_id=request_trace_id,
+            request_snapshot=request_snapshot,
         )
         duration_ms = int((time.perf_counter() - started) * 1000)
         await log_mcp_call(
