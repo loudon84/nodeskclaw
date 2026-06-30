@@ -150,8 +150,18 @@ class HermesAgentAdapter:
             response = await client.post(f"{base_url}/v1/runs", json=payload)
 
         if response.status_code >= 400:
+            body = response.text[:2000]
+            logger.warning(
+                "Hermes Agent /v1/runs failed: status=%s base_url=%s task_id=%s skill_id=%s tool_name=%s body=%s",
+                response.status_code,
+                base_url,
+                task.id,
+                task.skill_id,
+                task.tool_name,
+                body,
+            )
             raise BadRequestError(
-                f"Agent 返回错误: {response.status_code}",
+                f"Agent 返回错误: {response.status_code}; body={body[:500]}",
                 "errors.task.agent_run_error",
             )
 
