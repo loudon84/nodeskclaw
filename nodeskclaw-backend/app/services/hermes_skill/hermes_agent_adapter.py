@@ -105,6 +105,39 @@ class HermesAgentAdapter:
             "Content-Type": "application/json",
         }
 
+    @staticmethod
+    def _resolve_run_input(arguments: dict) -> str:
+        if not isinstance(arguments, dict):
+            return ""
+
+        prompt = str(arguments.get("prompt") or "").strip()
+        if prompt:
+            return prompt
+
+        messages = arguments.get("messages")
+        if isinstance(messages, list):
+            for msg in reversed(messages):
+                if not isinstance(msg, dict):
+                    continue
+                if msg.get("role") == "user":
+                    content = str(msg.get("content") or "").strip()
+                    if content:
+                        return content
+
+        context = arguments.get("context")
+        if isinstance(context, dict):
+            messages = context.get("messages")
+            if isinstance(messages, list):
+                for msg in reversed(messages):
+                    if not isinstance(msg, dict):
+                        continue
+                    if msg.get("role") == "user":
+                        content = str(msg.get("content") or "").strip()
+                        if content:
+                            return content
+
+        return ""
+
     async def submit_run(
         self,
         task: HermesTask,
@@ -125,17 +158,30 @@ class HermesAgentAdapter:
         base_url = self._get_base_url(instance)
         if not base_url:
             raise BadRequestError("Hermes Agent 地址未配置", "errors.task.agent_no_base_url")
+        
 
+        run_input = self._resolve_run_input(arguments)
+
+        if not run_input:
+            raise BadRequestError(
+                "Hermes Agent Run 缺少 input",
+                "errors.task.agent_run_input_missing",
+            )
+            
         output_dir = await self.compute_output_dir_for_task(task)
 
         payload = {
-            "task_id": task.id,
-            "skill_id": task.skill_id,
-            "tool_name": task.tool_name,
-            "profile_id": task.profile_id,
-            "workspace_id": task.workspace_id,
-            "arguments": arguments,
-            "output_dir": output_dir,
+            "input": run_input,
+            "metadata": {
+                "source": "nodeskclaw",
+                "task_id": task.id,
+                "skill_id": task.skill_id,
+                "tool_name": task.tool_name,
+                "profile_id": task.profile_id,
+                "workspace_id": task.workspace_id,
+                "output_dir": output_dir,
+                "arguments": arguments,
+            },
         }
 
         timeout = httpx.Timeout(
