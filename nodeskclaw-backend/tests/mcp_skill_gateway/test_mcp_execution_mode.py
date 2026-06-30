@@ -76,13 +76,25 @@ def test_resolve_mode_user_jwt_defaults_queued(monkeypatch):
     assert mode == QUEUED_MODE
 
 
-def test_resolve_mode_wait_override_false(monkeypatch):
+def test_resolve_mode_wait_override_false_runtime_desktop_async_event(monkeypatch):
     from app.core.config import settings
-    monkeypatch.setattr(settings, "MCP_TASK_WAIT_ENABLED", True)
+    monkeypatch.setattr(settings, "MCP_TASK_SSE_ENABLED", True)
     mode = resolve_mcp_execution_mode(
         _auth_ctx(),
         _skill(),
         {"artifact_mode": "pull_only"},
+        wait_override=False,
+    )
+    assert mode == ASYNC_EVENT_MODE
+
+
+def test_resolve_mode_wait_override_false_non_runtime_queued(monkeypatch):
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "MCP_TASK_WAIT_ENABLED", True)
+    mode = resolve_mcp_execution_mode(
+        _auth_ctx(),
+        _skill("docker"),
+        {},
         wait_override=False,
     )
     assert mode == QUEUED_MODE

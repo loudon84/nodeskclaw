@@ -50,6 +50,8 @@ async def test_build_async_event_response_includes_event_stream():
     assert result["execution_mode"] == "async_event"
     assert result["event_stream"] == token_data["event_url"]
     assert result["wait_strategy"]["type"] == "sse"
+    assert result["wait_strategy"]["poll_url"] == "/api/v1/hermes/tasks/task-1"
+    assert result["wait_strategy"]["result_url"] == "/api/v1/hermes/tasks/task-1/result"
     assert result["retryable"] is False
     assert result["committed"] is True
     assert result["status"] == "running"

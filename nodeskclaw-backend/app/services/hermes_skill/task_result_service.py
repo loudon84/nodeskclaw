@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import NotFoundError
 from app.models.base import not_deleted
 from app.models.hermes_skill.hermes_artifact import HermesArtifact
-from app.models.hermes_skill.hermes_task import HermesTask, HermesTaskEvent
+from app.models.hermes_skill.hermes_task import HermesTask, HermesTaskEvent, TaskStatus
 from app.models.hermes_skill.skill import HermesSkill
 from app.services.hermes_skill.agent_alias_resolver import AgentAliasResolver
 from app.services.hermes_skill.task_event_service import TaskEventService
@@ -18,12 +18,48 @@ _PREFERRED_FILENAMES = ("article.md", "output.md", "result.md")
 _TEXT_CONTENT_PREFIXES = ("text/", "application/json", "application/markdown")
 
 
+_TERMINAL_STATUSES = frozenset({
+    TaskStatus.COMPLETED,
+    TaskStatus.FAILED,
+    TaskStatus.TIMEOUT,
+    TaskStatus.CANCELLED,
+})
+
+
 class TaskResultService:
     def __init__(self, db: AsyncSession):
         self.db = db
 
     async def get_result(self, task_id: str, org_id: str) -> dict:
         task = await self._get_task(task_id, org_id)
+        if task.status not in _TERMINAL_STATUSES:
+            return {
+                "ready": False,
+                "status": task.status.value,
+                "task_id": task.id,
+                "task_no": task.task_no,
+                "message": "任务仍在执行中",
+                "result_summary": None,
+                "content": None,
+                "server_artifacts": [],
+            }
+
+        if task.status in {TaskStatus.FAILED, TaskStatus.TIMEOUT, TaskStatus.CANCELLED}:
+            return {
+                "ready": True,
+                "status": task.status.value,
+                "task_id": task.id,
+                "task_no": task.task_no,
+                "isError": True,
+                "error": {
+                    "code": task.error_code or task.status.value.upper(),
+                    "message": task.error_message or "任务未完成",
+                },
+                "result_summary": task.result_summary,
+                "content": None,
+                "server_artifacts": task.server_artifacts or [],
+            }
+
         artifacts = await self._list_task_artifacts(task_id, org_id)
         skill = await self._get_skill(task)
         primary_policy = None
@@ -39,6 +75,10 @@ class TaskResultService:
                 agent_alias = resolution.agent_alias
 
         return {
+            "ready": True,
+            "status": task.status.value,
+            "task_id": task.id,
+            "task_no": task.task_no,
             "task": {
                 "id": task.id,
                 "task_no": task.task_no,
@@ -55,10 +95,90 @@ class TaskResultService:
             "artifacts": [self._artifact_to_dict(a) for a in artifacts if primary is None or a.id != primary.id],
             "timeline": timeline,
             "result_summary": task.result_summary,
+            "content": task.result_summary,
             "artifact_mode": "pull_only",
             "server_artifacts": task.server_artifacts or self._materialized_server_artifacts(artifacts),
             "artifact_status": task.artifact_status,
             "kb_status": task.kb_status,
+        }
+
+    async def get_snapshot(self, task_id: str, org_id: str) -> dict:
+        task = await self._get_task(task_id, org_id)
+        timeline = await self._build_timeline(task_id, org_id)
+        artifacts = await self._list_task_artifacts(task_id, org_id)
+        server_artifacts = task.server_artifacts or []
+        if not server_artifacts and task.status == TaskStatus.COMPLETED:
+            server_artifacts = self._materialized_server_artifacts(artifacts)
+
+        result_ready = task.status == TaskStatus.COMPLETED
+        artifacts_ready = task.status == TaskStatus.COMPLETED and bool(server_artifacts)
+
+        agent_alias = task.routing_metadata.get("agent_alias") if task.routing_metadata else None
+        if not agent_alias and task.agent_id:
+            resolution = await AgentAliasResolver(self.db).resolve(org_id, task.agent_id)
+            if resolution:
+                agent_alias = resolution.agent_alias
+
+        result_section: dict
+        if result_ready:
+            result_section = {
+                "ready": True,
+                "summary": task.result_summary,
+                "content": task.result_summary,
+            }
+        elif task.status in {TaskStatus.FAILED, TaskStatus.TIMEOUT, TaskStatus.CANCELLED}:
+            result_section = {
+                "ready": True,
+                "summary": task.result_summary,
+                "content": None,
+                "isError": True,
+                "error": {
+                    "code": task.error_code or task.status.value.upper(),
+                    "message": task.error_message or "任务未完成",
+                },
+            }
+        else:
+            result_section = {
+                "ready": False,
+                "summary": None,
+                "content": None,
+                "message": "任务仍在执行中",
+            }
+
+        last_events = []
+        if task.status in {TaskStatus.FAILED, TaskStatus.TIMEOUT}:
+            last_events = timeline[-5:]
+
+        return {
+            "task": {
+                "id": task.id,
+                "task_no": task.task_no,
+                "status": task.status.value,
+                "tool_name": task.tool_name,
+                "agent_alias": agent_alias,
+                "agent_id": task.agent_id,
+                "profile_id": task.profile_id,
+                "workspace_id": task.workspace_id,
+                "routing_metadata": task.routing_metadata,
+                "created_at": task.created_at.isoformat() if task.created_at else None,
+                "completed_at": task.completed_at.isoformat() if task.completed_at else None,
+            },
+            "status": task.status.value,
+            "timeline": timeline,
+            "result": result_section,
+            "artifacts": {
+                "ready": artifacts_ready,
+                "items": [self._artifact_to_dict(a) for a in artifacts],
+                "server_artifacts": server_artifacts if artifacts_ready else [],
+            },
+            "links": {
+                "event_stream": f"/api/v1/hermes/tasks/{task.id}/events",
+                "result_url": f"/api/v1/hermes/tasks/{task.id}/result",
+                "artifact_url": f"/api/v1/hermes/tasks/{task.id}/artifacts",
+            },
+            "last_events": last_events,
+            "error_code": task.error_code if task.status in {TaskStatus.FAILED, TaskStatus.TIMEOUT} else None,
+            "error_message": task.error_message if task.status in {TaskStatus.FAILED, TaskStatus.TIMEOUT} else None,
         }
 
     async def _get_task(self, task_id: str, org_id: str) -> HermesTask:

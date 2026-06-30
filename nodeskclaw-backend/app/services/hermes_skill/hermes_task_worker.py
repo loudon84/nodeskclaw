@@ -483,9 +483,27 @@ class HermesTaskWorker:
         hermes_instance_name = str(route_snapshot.get("hermes_instance_name") or agent_profile)
         timeout_seconds = route_snapshot.get("timeout_seconds")
 
+        instance_detail = {
+            "hermes_instance_name": hermes_instance_name,
+            "hermes_agent_instance_id": hermes_agent_instance_id,
+            "runtime_skill_id": runtime_skill_id,
+            "agent_profile": agent_profile,
+        }
+
         binding = HermesDockerBindingService(db)
         record = await binding.get_by_profile(task.org_id, agent_profile)
         if not record or record.id != hermes_agent_instance_id:
+            await event_service.write_event(
+                task_id=task.id,
+                org_id=task.org_id,
+                event_type=EventType.HERMES_RUN_FAILED,
+                payload={
+                    **instance_detail,
+                    "error_code": "hermes_instance_unavailable",
+                    "error_message": "指定 Hermes 实例绑定记录不存在或已变更",
+                },
+                source="worker",
+            )
             await task_service.mark_failed(
                 task,
                 error_code="hermes_instance_unavailable",
@@ -505,6 +523,13 @@ class HermesTaskWorker:
                     task.org_id, task.agent_id,
                 )
         except Exception as exc:
+            await event_service.write_event(
+                task_id=task.id,
+                org_id=task.org_id,
+                event_type=EventType.HERMES_RUN_FAILED,
+                payload={**instance_detail, "error": str(exc)[:512]},
+                source="worker",
+            )
             await task_service.mark_failed(
                 task,
                 error_code="hermes_instance_unavailable",
@@ -519,13 +544,6 @@ class HermesTaskWorker:
         arguments = task.arguments or {}
         prompt = str(arguments.get("prompt") or "").strip()
         context = arguments.get("context") if isinstance(arguments.get("context"), dict) else None
-
-        instance_detail = {
-            "hermes_instance_name": hermes_instance_name,
-            "hermes_agent_instance_id": hermes_agent_instance_id,
-            "runtime_skill_id": runtime_skill_id,
-            "agent_profile": agent_profile,
-        }
 
         await event_service.write_event(
             task_id=task.id,
@@ -555,6 +573,13 @@ class HermesTaskWorker:
                 timeout_seconds=int(timeout_seconds) if timeout_seconds else None,
             )
         except Exception as exc:
+            await event_service.write_event(
+                task_id=task.id,
+                org_id=task.org_id,
+                event_type=EventType.HERMES_RUN_FAILED,
+                payload={**instance_detail, "error": str(exc)[:512]},
+                source="worker",
+            )
             await task_service.mark_failed(
                 task,
                 error_code="HERMES_API_SERVER_CALL_FAILED",

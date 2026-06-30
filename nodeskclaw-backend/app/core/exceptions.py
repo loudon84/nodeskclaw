@@ -47,10 +47,12 @@ class BadRequestError(AppException):
         message: str = "请求参数错误",
         message_key: str = "errors.common.bad_request",
         message_params: dict[str, str] | None = None,
+        details: dict[str, Any] | None = None,
     ):
         super().__init__(
             code=40000, message=message, status_code=400,
             message_key=message_key, message_params=message_params,
+            details=details,
         )
 
 

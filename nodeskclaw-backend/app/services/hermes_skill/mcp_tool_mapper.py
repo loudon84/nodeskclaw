@@ -28,6 +28,9 @@ from app.services.hermes_skill.task_event_token_service import TaskEventTokenSer
 
 logger = logging.getLogger(__name__)
 
+RUNTIME_SKILL_ROUTE_TYPE = "hermes_api_server"
+RUNTIME_SKILL_FORBIDDEN_ARGUMENT_KEYS = ("_routing", "_execution", "route_config")
+
 
 class McpToolMapper:
     def __init__(self, db: AsyncSession):
@@ -134,20 +137,20 @@ class McpToolMapper:
         resolved_agent_id = agent_id
         profile_id = None
         workspace_id = None
-        if not resolved_agent_id:
-            inst_result = await self.db.execute(
-                select(HermesSkillInstallation).where(
-                    not_deleted(HermesSkillInstallation),
-                    HermesSkillInstallation.org_id == org_id,
-                    HermesSkillInstallation.skill_id == skill.skill_id,
-                    HermesSkillInstallation.status == "installed",
-                ).limit(1)
-            )
-            inst = inst_result.scalar_one_or_none()
-            if inst:
-                resolved_agent_id = inst.agent_id
-                profile_id = inst.profile_id
-                workspace_id = inst.workspace_id
+        installation = None
+        inst_result = await self.db.execute(
+            select(HermesSkillInstallation).where(
+                not_deleted(HermesSkillInstallation),
+                HermesSkillInstallation.org_id == org_id,
+                HermesSkillInstallation.skill_id == skill.skill_id,
+                HermesSkillInstallation.status == "installed",
+            ).limit(1)
+        )
+        installation = inst_result.scalar_one_or_none()
+        if installation:
+            resolved_agent_id = resolved_agent_id or installation.agent_id
+            profile_id = installation.profile_id
+            workspace_id = installation.workspace_id
         if resolved_agent_id and not resolved_alias:
             resolution = await alias_resolver.resolve(org_id, resolved_agent_id)
             if resolution:
@@ -185,7 +188,81 @@ class McpToolMapper:
             tool["examples"] = extra["examples"]
         if extra.get("primary_artifact_policy"):
             tool["primaryArtifactPolicy"] = extra["primary_artifact_policy"]
+        if skill.source_type == RUNTIME_SKILL_ROUTE_TYPE:
+            tool.update(
+                await self._build_runtime_skill_tool_metadata(
+                    skill,
+                    org_id,
+                    installation,
+                    profile_id,
+                )
+            )
         return tool
+
+    async def _build_runtime_skill_tool_metadata(
+        self,
+        skill: HermesSkill,
+        org_id: str,
+        installation: HermesSkillInstallation | None,
+        profile_id: str | None,
+    ) -> dict[str, Any]:
+        route_meta = {}
+        if installation and isinstance(installation.routing_metadata, dict):
+            route_meta = installation.routing_metadata
+        runtime_profile = route_meta.get("agent_profile") or profile_id
+        route_health = await self._resolve_runtime_route_health(
+            org_id,
+            route_meta,
+            runtime_profile,
+        )
+        return {
+            "sourceType": RUNTIME_SKILL_ROUTE_TYPE,
+            "routeType": route_meta.get("route_type") or RUNTIME_SKILL_ROUTE_TYPE,
+            "serverManagedRoute": True,
+            "runtimeSkillId": route_meta.get("runtime_skill_id") or skill.skill_id,
+            "runtimeInstanceId": route_meta.get("hermes_agent_instance_id"),
+            "runtimeInstanceName": runtime_profile,
+            "runtimeProfile": runtime_profile,
+            "executionModes": [ASYNC_EVENT_MODE],
+            "defaultExecutionMode": ASYNC_EVENT_MODE,
+            "sseTimelineEnabled": True,
+            "eventStreamProvider": "nodeskclaw_task_events",
+            "artifactMode": "pull_only",
+            "resultMode": "pull_on_complete",
+            "routeOverrideAllowed": False,
+            "requiresRouteOverride": False,
+            "forbiddenArgumentKeys": list(RUNTIME_SKILL_FORBIDDEN_ARGUMENT_KEYS),
+            "routeHealth": route_health,
+        }
+
+    async def _resolve_runtime_route_health(
+        self,
+        org_id: str,
+        route_meta: dict[str, Any],
+        profile_name: str | None,
+    ) -> dict[str, bool]:
+        from app.services.hermes_external.hermes_docker_binding_service import HermesDockerBindingService
+
+        profile = profile_name or route_meta.get("agent_profile")
+        instance_id = route_meta.get("hermes_agent_instance_id")
+        if not profile:
+            return {
+                "ok": False,
+                "instance_bound": False,
+                "api_server_enabled": False,
+            }
+        record = await HermesDockerBindingService(self.db).get_by_profile(org_id, str(profile))
+        instance_bound = bool(record and instance_id and record.id == instance_id)
+        api_server_enabled = bool(
+            instance_bound
+            and record.gateway_url
+            and record.gateway_runtime_status not in {"stopped", "error"}
+        )
+        return {
+            "ok": instance_bound and api_server_enabled,
+            "instance_bound": instance_bound,
+            "api_server_enabled": api_server_enabled,
+        }
 
     async def call_tool(
         self,
@@ -241,6 +318,15 @@ class McpToolMapper:
                     raise BadRequestError(
                         "组织级 MCP 不允许覆盖 Hermes 实例路由",
                         "errors.skill.route_override_not_allowed",
+                        details={
+                            "tool_name": tool_name,
+                            "override_keys": override_keys,
+                            "expected_mode": "server_managed_fixed_route",
+                            "suggested_arguments": {
+                                "prompt": "string",
+                                "context": "object",
+                            },
+                        },
                     )
 
                 routing_result = await routing_service.resolve_runtime_skill_fixed_route(
@@ -353,6 +439,13 @@ class McpToolMapper:
             output_policy,
             wait_override=wait_override,
         )
+        if skill.source_type == RUNTIME_SKILL_ROUTE_TYPE:
+            routing_metadata["execution_contract"] = {
+                "mode": execution_mode,
+                "timeline_provider": "nodeskclaw_task_events",
+                "runtime_invocation": "chat_completions",
+                "desktop_route_override_allowed": False,
+            }
 
         fingerprint = (client_context or {}).get("request_fingerprint")
         if fingerprint:
@@ -658,7 +751,9 @@ class McpToolMapper:
             "wait_strategy": {
                 "type": "sse",
                 "fallback": "poll",
+                "poll_url": f"/api/v1/hermes/tasks/{task.id}",
                 "poll_tool": "nodeskclaw_task_wait",
+                "result_url": f"/api/v1/hermes/tasks/{task.id}/result",
             },
             "message": "任务已启动，请等待事件流通知完成",
             "retryable": False,

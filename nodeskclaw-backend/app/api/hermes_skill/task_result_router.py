@@ -36,6 +36,27 @@ async def create_task_events_token(
     return _ok(data)
 
 
+@router.get("/tasks/{task_id}/snapshot")
+async def get_task_snapshot(
+    task_id: str,
+    user_org=Depends(require_org_member),
+    db: AsyncSession = Depends(get_db),
+):
+    user, org = user_org
+    await PermissionChecker.require_permission(db, user.id, org.id, "hermes_task:view")
+    service = TaskResultService(db)
+    data = await service.get_snapshot(task_id, org.id)
+    audit = SkillAuditLogger(db)
+    await audit.log(
+        action="hermes.task.snapshot.viewed",
+        target_id=task_id,
+        org_id=org.id,
+        actor_id=user.id,
+        details={"task_id": task_id},
+    )
+    return _ok(data)
+
+
 @router.get("/tasks/{task_id}/result")
 async def get_task_result(
     task_id: str,

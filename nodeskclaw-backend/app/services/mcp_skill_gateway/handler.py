@@ -211,6 +211,9 @@ def _extra_error_data(exc: Exception, arguments: dict[str, Any]) -> dict[str, An
         data["instance_ref"] = ref
     if isinstance(exc, BadRequestError) and exc.message_key == "errors.external_docker.instance_ambiguous":
         data["reason"] = "multiple_instances_matched"
+    details = getattr(exc, "details", None)
+    if isinstance(details, dict):
+        data.update(details)
     return data
 
 
@@ -751,7 +754,12 @@ async def _handle_tools_call(
             )
             return mcp_success(jsonrpc_id, result)
         except (NotFoundError, BadRequestError, ForbiddenError) as exc:
-            error_response = map_app_error(jsonrpc_id, exc.message_key, exc.message)
+            error_response = map_app_error(
+                jsonrpc_id,
+                exc.message_key,
+                exc.message,
+                extra_data=_extra_error_data(exc, arguments),
+            )
             duration_ms = int((time.perf_counter() - started) * 1000)
             error_data = error_response.get("error", {}).get("data", {})
             await log_mcp_call(
@@ -868,7 +876,12 @@ async def _handle_tools_call(
         )
         await db.commit()
     except (NotFoundError, BadRequestError, ForbiddenError) as exc:
-        error_response = map_app_error(jsonrpc_id, exc.message_key, exc.message)
+        error_response = map_app_error(
+            jsonrpc_id,
+            exc.message_key,
+            exc.message,
+            extra_data=_extra_error_data(exc, arguments),
+        )
         duration_ms = int((time.perf_counter() - started) * 1000)
         error_data = error_response.get("error", {}).get("data", {})
         await log_mcp_call(
