@@ -13,6 +13,8 @@ from app.services.hermes_skill.agent_alias_resolver import AgentAliasResolver
 from app.services.hermes_skill.hermes_skill_authorization_service import HermesSkillAuthorizationService
 from app.services.hermes_skill.permission_checker import PermissionChecker
 from app.services.hermes_skill.skill_routing_service import SkillRoutingService
+from app.schemas.hermes_skill.runtime_skill_run import StartRuntimeSkillRunRequest
+from app.services.hermes_skill.runtime_skill_run_service import RuntimeSkillRunService
 from app.services.hermes_skill.task_service import TaskService
 from app.services.mcp_skill_gateway.mcp_execution_mode import (
     ASYNC_EVENT_MODE,
@@ -532,23 +534,67 @@ class McpToolMapper:
             request_trace_id or "", tool_name,
             skill.source_type or "", execution_mode,
         )
-        task = await TaskService(self.db).create_task(
-            org_id=org_id,
-            skill_id=skill.skill_id,
-            tool_name=tool_name,
-            agent_id=installation.agent_id,
-            profile_id=installation.profile_id,
-            workspace_id=installation.workspace_id,
-            installation_id=installation.id,
-            user_id=user_id or None,
-            arguments=agent_arguments,
-            client_context=client_context,
-            routing_metadata=routing_metadata,
-        )
-        task.request_trace_id = request_trace_id
-        task.request_snapshot = request_snapshot
-        task.route_diagnostics = route_diagnostics
-        await self.db.flush()
+
+        runtime_run_result = None
+        if skill.source_type == RUNTIME_SKILL_ROUTE_TYPE:
+            route_meta = installation.routing_metadata or {}
+            run_request = StartRuntimeSkillRunRequest(
+                org_id=org_id,
+                user_id=user_id or "",
+                tool_name=tool_name,
+                runtime_skill_id=str(route_meta.get("runtime_skill_id") or skill.skill_id),
+                agent_profile=str(route_meta.get("agent_profile") or installation.profile_id or ""),
+                hermes_agent_instance_id=str(route_meta.get("hermes_agent_instance_id") or ""),
+                agent_id=installation.agent_id,
+                arguments=agent_arguments,
+                client_context=client_context or {},
+                output_policy=output_policy,
+                task_source="org_mcp",
+                skill_id=skill.skill_id,
+                installation_id=installation.id,
+                workspace_id=installation.workspace_id,
+                request_trace_id=request_trace_id,
+                request_snapshot=request_snapshot,
+                route_diagnostics=route_diagnostics,
+                execution_mode=execution_mode,
+                entrypoint="mcp_skill_gateway",
+                routing_metadata_extras={
+                    "agent_alias": agent_alias,
+                    "agent_id": installation.agent_id,
+                    "profile_id": installation.profile_id,
+                    "workspace_id": installation.workspace_id,
+                    "routing_reason": routing_result.reason,
+                },
+            )
+            logger.info(
+                "mcp.tools_call.delegated_to_runtime_skill_run trace_id=%s tool=%s "
+                "entrypoint=mcp_skill_gateway task_source=org_mcp route_type=%s "
+                "runtime_invocation=chat_completions",
+                request_trace_id or "",
+                tool_name,
+                RUNTIME_SKILL_ROUTE_TYPE,
+            )
+            runtime_run_result = await RuntimeSkillRunService(self.db).start(run_request)
+            task = runtime_run_result.task
+        else:
+            task = await TaskService(self.db).create_task(
+                org_id=org_id,
+                skill_id=skill.skill_id,
+                tool_name=tool_name,
+                agent_id=installation.agent_id,
+                profile_id=installation.profile_id,
+                workspace_id=installation.workspace_id,
+                installation_id=installation.id,
+                user_id=user_id or None,
+                arguments=agent_arguments,
+                client_context=client_context,
+                routing_metadata=routing_metadata,
+            )
+            task.request_trace_id = request_trace_id
+            task.request_snapshot = request_snapshot
+            task.route_diagnostics = route_diagnostics
+            await self.db.flush()
+
         logger.info(
             "hermes_task.create.done trace_id=%s task_id=%s task_no=%s tool=%s",
             request_trace_id or "", task.id, task.task_no, tool_name,
@@ -621,6 +667,15 @@ class McpToolMapper:
 
         if execution_mode == ASYNC_EVENT_MODE:
             await self.db.commit()
+            if runtime_run_result is not None:
+                return self._merge_org_mcp_async_payload(
+                    runtime_run_result.structured_content,
+                    tool_name=tool_name,
+                    agent_alias=agent_alias,
+                    installation=installation,
+                    routing_result=routing_result,
+                    deduped=False,
+                )
             return await self._build_async_event_response(
                 task=task,
                 tool_name=tool_name,
@@ -746,6 +801,31 @@ class McpToolMapper:
             user_id=user_id,
             deduped=deduped,
         )
+
+    @staticmethod
+    def _merge_org_mcp_async_payload(
+        structured_content: dict[str, Any],
+        *,
+        tool_name: str,
+        agent_alias: str | None,
+        installation: Any,
+        routing_result: Any,
+        deduped: bool,
+    ) -> dict[str, Any]:
+        payload = dict(structured_content)
+        payload.update({
+            "tool_name": tool_name,
+            "agent_alias": agent_alias,
+            "agent_id": installation.agent_id,
+            "profile_id": installation.profile_id,
+            "workspace_id": installation.workspace_id,
+            "installation_id": installation.id,
+            "routing_reason": routing_result.reason,
+            "retryable": False,
+        })
+        if deduped:
+            payload["deduped"] = True
+        return payload
 
     async def _build_async_event_response(
         self,

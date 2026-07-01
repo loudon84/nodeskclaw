@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from app.core.exceptions import BadRequestError
 from app.models.hermes_skill.hermes_task import TaskStatus
 from app.services.hermes_skill.mcp_tool_mapper import McpToolMapper
+from app.services.hermes_skill.runtime_skill_run_service import RuntimeSkillRunResult
 from app.services.hermes_skill.permission_checker import PermissionChecker
 from app.services.hermes_skill.skill_routing_service import (
     ROUTING_REASON_RUNTIME_FIXED_DEFAULT,
@@ -74,20 +75,30 @@ async def test_mcp_client_token_profile_does_not_override_runtime_route():
              AsyncMock(return_value=routing_result),
          ) as mock_fixed_route, \
          patch("app.services.hermes_skill.mcp_tool_mapper.AgentAliasResolver") as mock_alias_cls, \
-         patch("app.services.hermes_skill.mcp_tool_mapper.TaskService") as mock_task_svc_cls, \
+         patch("app.services.hermes_skill.mcp_tool_mapper.RuntimeSkillRunService") as mock_run_svc_cls, \
          patch("app.services.hermes_skill.mcp_tool_mapper.HermesSkillAuthorizationService") as mock_authz_cls, \
          patch("app.services.hermes_skill.skill_audit_logger.SkillAuditLogger") as mock_audit_cls, \
-         patch(
-             "app.services.hermes_skill.mcp_tool_mapper.TaskEventTokenService.create_token",
-             new=AsyncMock(return_value={"event_url": "/api/v1/hermes/tasks/task-uuid/events?token=sse_test"}),
-         ), \
          patch.object(mapper, "_resolve_runtime_route_health", AsyncMock(return_value={"ok": True})):
         mock_alias_cls.return_value.enrich_routing = AsyncMock()
         mock_alias_cls.return_value.resolve = AsyncMock(return_value=None)
         mock_authz_cls.return_value.can_invoke = AsyncMock(return_value=True)
-        mock_task_svc = AsyncMock()
-        mock_task_svc.create_task.return_value = created_task
-        mock_task_svc_cls.return_value = mock_task_svc
+        mock_run_svc = AsyncMock()
+        mock_run_svc.start.return_value = RuntimeSkillRunResult(
+            task=created_task,
+            sse_token="sse_test",
+            structured_content={
+                "task_id": "task-uuid",
+                "task_no": "TASK-org1-abc",
+                "status": "running",
+                "execution_mode": "async_event",
+                "event_stream": "/api/v1/hermes/tasks/task-uuid/events?token=sse_test",
+                "event_url": created_task.event_url,
+                "artifact_url": created_task.artifact_url,
+                "result_url": "/api/v1/hermes/tasks/task-uuid/result",
+                "committed": True,
+            },
+        )
+        mock_run_svc_cls.return_value = mock_run_svc
         mock_audit_cls.return_value = AsyncMock()
 
         result = await mapper.call_tool(

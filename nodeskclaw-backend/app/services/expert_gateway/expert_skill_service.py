@@ -275,5 +275,9 @@ class ExpertSkillService:
                 },
                 "artifactMode": "pull_only",
                 "resultMode": "task_result",
+                "executionMode": "async_event",
+                "routeType": "hermes_api_server",
+                "upstreamToolName": skill.upstream_tool_name,
+                "sseTimelineEnabled": True,
             },
         }

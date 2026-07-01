@@ -9,6 +9,18 @@ Expert MCP Gateway（v6.2）在现有 Hermes 实例级 MCP 之上，新增面向
 - **OpenAPI Tag**：`Expert MCP Gateway`
 - **鉴权**：Desktop 端 `resolve_mcp_user`（JWT 或 `ndsk_mcp_` Client Token）；Portal 管理端 Session + `expert:*` 权限码
 
+## v6.3.2 核心变化（Hotfix）
+
+| 维度 | v6.2 | v6.3.2 |
+|------|------|--------|
+| 执行路由 | `route_type=expert_agent_event_stream` → Worker `/v1/runs` | `route_type=hermes_api_server` → Worker `/v1/chat/completions` |
+| 任务创建 | `ExpertRunService._create_task_run` 内联 | 委托 `RuntimeSkillRunService.start()`（与组织 MCP 共用） |
+| `structuredContent` | camelCase（`taskId` / `eventSseUrl`） | snake_case（`task_id` / `event_stream`），与组织 MCP 对齐 |
+| SSE Timeline | Agent Event Stream delta | 与组织 MCP 相同：`nodeskclaw_task_events` 阶段级事件 |
+| tools/list annotations | 仅 `callMode` / `streaming` | 新增 `executionMode` / `routeType` / `upstreamToolName` |
+
+`sync_legacy` 与 `gateway_sequential` **不变**。
+
 ## v6.2 核心变化
 
 | 维度 | v6.1 | v6.2 |
@@ -36,8 +48,8 @@ Expert MCP Gateway（v6.2）在现有 Hermes 实例级 MCP 之上，新增面向
 |------|-------------------|---------------------------|
 | 调用方 | Desktop / Router / Portal Session | copilot-desktop（Bearer） |
 | 工具来源 | Registry + 组织 Skill DB | 已发布 Expert / ExpertTeam 目录 |
-| 上游转发 | 创建 HermesTask 异步队列 | v6.2 同样创建 HermesTask，Worker 走 Agent Event Stream |
-| 任务模型 | HermesTask | HermesTask（`expert_agent_event_stream` 路由） |
+| 上游转发 | 创建 HermesTask 异步队列 | v6.3.2 同样创建 HermesTask，Worker 走 `hermes_api_server` + chat_completions |
+| 任务模型 | HermesTask | HermesTask（`hermes_api_server` 路由，与组织 MCP 一致） |
 | 调试 | — | `sync_legacy` 仍可用进程内 `dispatch_agent_mcp` 同步 RPC |
 
 ## 代码结构
@@ -66,7 +78,7 @@ nodeskclaw-backend/
     ├── expert_health_service.py
     ├── expert_mcp_gateway_service.py # v6.2: 默认 event_stream
     ├── expert_mcp_proxy_service.py   # sync_legacy 仍使用
-    ├── expert_run_service.py         # v6.2 新增
+    ├── expert_run_service.py         # v6.3.2: 委托 RuntimeSkillRunService
     ├── expert_invocation_log_service.py
     ├── expert_permission_service.py
     ├── expert_route_guard.py
@@ -75,9 +87,9 @@ nodeskclaw-backend/
     └── errors.py
 ```
 
-Worker 侧：`app/services/hermes_skill/hermes_task_worker.py` 识别 `route_type == expert_agent_event_stream`。
+Worker 侧：`app/services/hermes_skill/hermes_task_worker.py` 对 `route_type == hermes_api_server` 走 `_execute_api_server_task`；Expert 来源任务（`client_context.source=expert_mcp_gateway`）结束时调用 `ExpertInvocationLogService.sync_from_task`。
 
-## 调用链路（v6.2 默认 event_stream）
+## 调用链路（v6.3.2 默认 event_stream）
 
 ```
 copilot-desktop
@@ -89,15 +101,15 @@ POST /api/v1/expert/mcp/{slug}  tools/call
 ExpertMcpGatewayService
   ├─ ExpertRouteGuard / ExpertPermissionService
   └─ ExpertRunService.start_expert_skill_run / start_team_skill_run
-         ├─ TaskService.create_task（routing_metadata.route_snapshot）
-         ├─ TaskEventTokenService.create_token
-         └─ 返回 structuredContent: taskId, eventSseUrl, artifactUrl
+         └─ RuntimeSkillRunService.start()
+                ├─ TaskService.create_task（route_snapshot + execution_contract）
+                ├─ TaskEventTokenService.create_token
+                └─ 返回 structuredContent: task_id, event_stream, artifact_url, result_url
   ▼
 Desktop 订阅 GET /api/v1/hermes/tasks/{task_id}/events?token=...
   ▼
-HermesTaskWorker._execute_agent_run_stream
-  ├─ HermesAgentAdapter.submit_run
-  ├─ HermesAgentAdapter.read_run_events
+HermesTaskWorker._execute_api_server_task
+  ├─ execute_runtime_skill_via_api_server（/v1/chat/completions）
   └─ Task SSE: task.progress / task.completed / task.artifact.ready
   ▼
 ExpertInvocationLogService.sync_from_task（任务结束时回写日志）
@@ -111,25 +123,29 @@ ExpertInvocationLogService.sync_from_task（任务结束时回写日志）
 
 `gateway_sequential` 模式本版仍使用 `ExpertTeamOrchestrator` 同步顺序编排；tools/list 已标注 `memberStream: true` 预留后续多成员 Event Stream。
 
-## tools/call 返回契约（event_stream）
+## tools/call 返回契约（event_stream，v6.3.2 snake_case）
 
 ```json
 {
   "structuredContent": {
-    "invocationId": "log-id",
-    "taskId": "task-uuid",
-    "taskNo": "TASK-xxxx",
-    "status": "queued",
-    "kind": "expert",
-    "slug": "call-prep",
-    "skillName": "customer-profiling",
-    "orchestrationMode": "agent_event_stream",
-    "eventUrl": "/api/v1/hermes/tasks/{task_id}/events",
-    "eventToken": "sse_...",
-    "eventSseUrl": "/api/v1/hermes/tasks/{task_id}/events?token=sse_...",
-    "artifactUrl": "/api/v1/hermes/tasks/{task_id}/artifacts",
-    "artifactMode": "pull_only",
-    "streaming": true
+    "invocation_id": "log-id",
+    "task_id": "task-uuid",
+    "task_no": "TASK-xxxx",
+    "status": "running",
+    "execution_mode": "async_event",
+    "entrypoint": "expert_mcp_gateway",
+    "task_source": "expert_mcp",
+    "catalog_kind": "expert",
+    "catalog_slug": "call-prep",
+    "skill_name": "customer-profiling",
+    "tool_name": "hermes_market-profiling__customer-profiling",
+    "event_stream": "/api/v1/hermes/tasks/{task_id}/events?token=sse_...",
+    "event_url": "/api/v1/hermes/tasks/{task_id}/events",
+    "artifact_url": "/api/v1/hermes/tasks/{task_id}/artifacts",
+    "result_url": "/api/v1/hermes/tasks/{task_id}/result",
+    "artifact_mode": "pull_only",
+    "committed": true,
+    "wait_strategy": { "type": "sse", "fallback": "poll" }
   }
 }
 ```
@@ -146,7 +162,7 @@ ExpertInvocationLogService.sync_from_task（任务结束时回写日志）
 | `expert_invocation_logs` | 调用审计；v6.2 新增 `task_id` / `task_no` / `event_url` / `artifact_url` / `hermes_run_id` / `stream_mode` |
 | `hermes_tasks` | Expert Run 任务载体（复用现有表） |
 
-`routing_metadata.route_snapshot.route_type` 固定为 `expert_agent_event_stream`。
+`routing_metadata.route_snapshot.route_type` 固定为 `hermes_api_server`；`execution_contract.runtime_invocation` 为 `chat_completions`。
 
 ## 配置项
 
@@ -160,7 +176,7 @@ ExpertInvocationLogService.sync_from_task（任务结束时回写日志）
 ## copilot-desktop 对接摘要
 
 1. `tools/list` 读取 `annotations.streaming` / `callMode` 判断是否支持任务窗口。
-2. `tools/call` 解析 `structuredContent.eventSseUrl`，用 EventSource 订阅 SSE。
+2. `tools/call` 解析 `structuredContent.event_stream`，用 EventSource 订阅 SSE。
 3. 监听 `task.started` / `task.progress` / `task.artifact.ready` / `task.completed` / `task.failed`。
 4. 成果通过 `artifactUrl` pull-only 拉取；取消/重试复用 Hermes Task API。
 

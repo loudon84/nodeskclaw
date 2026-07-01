@@ -52,7 +52,8 @@ nodeskclaw-backend/
 
 | 模块 | 路径 | 关系 |
 |------|------|------|
-| Skill 工具映射 | `app/services/hermes_skill/mcp_tool_mapper.py` | `tools/list` 合并 Skill 工具；`tools/call` 创建异步任务；v5.7.2 默认 `async_event` 立即返回 + SSE 订阅 |
+| Skill 工具映射 | `app/services/hermes_skill/mcp_tool_mapper.py` | `tools/list` 合并 Skill 工具；`tools/call` 创建异步任务；v6.3.2 `hermes_api_server` 委托 `RuntimeSkillRunService` |
+| Runtime Skill 统一执行 | `app/services/hermes_skill/runtime_skill_run_service.py` | v6.3.2：与 Expert 入口共用 route_snapshot / execution_contract / structuredContent |
 | SSE 事件发布 | `app/services/hermes_skill/task_event_publisher.py` | v5.7.2：任务 lifecycle 事件发布（progress / artifact.ready / completed+result） |
 | SSE 流格式化 | `app/services/hermes_skill/task_event_stream_formatter.py` | v5.7.2：DB EventType → PRD SSE 事件名映射与 result enrichment |
 | Runtime Skill 注册 | `app/services/hermes_skill/runtime_skill_registration_service.py` | 实例 runtime skill → 组织级 MCP Skill 链路 |
@@ -86,8 +87,9 @@ router.py  →  handler.dispatch()
         ├─ nodeskclaw_task_*  → BuiltinTaskToolExecutor（v5.7 内置任务工具）
         ├─ genehub.*  → GeneHubMcpToolProvider
         ├─ hermes.*   → HermesDockerToolProvider（写操作需 grant 审批）
-        └─ skill.*    → McpToolMapper.call_tool() → TaskService 异步任务
+        └─ skill.*    → McpToolMapper.call_tool()
             │
+            ├─ hermes_api_server → RuntimeSkillRunService.start()（v6.3.2）
             ├─ v5.7.2 async_event：立即返回 task_id + event_stream（SSE）
             ├─ v5.7.1 wait（legacy opt-in）：Gateway 内阻塞 wait 至终态
             └─ audit_service.log_mcp_call()  # 记录每次调用
@@ -195,14 +197,11 @@ McpToolMapper.call_tool()
     ├─ resolve_mcp_execution_mode()   → async_event / queued / wait（v5.7.2）
     ├─ McpTaskDedupService            → request_fingerprint 去重（v5.7）
     ├─ HermesSkillAuthorizationService.can_invoke()
-    └─ TaskService.create_task()
-           routing_metadata = {
-             agent_alias, agent_id, profile_id, workspace_id, installation_id,
-             routing_reason,
-             route_snapshot: installation.routing_metadata,   # 即注册时的 route_config
-             output_policy: OutputPolicyService.resolve(...),  # v5.6
-             task_source: "org_mcp"   # 仅 hermes_api_server
-           }
+    └─ hermes_api_server → RuntimeSkillRunService.start()（v6.3.2）
+           ├─ route_snapshot.route_type = hermes_api_server
+           ├─ execution_contract.runtime_invocation = chat_completions
+           └─ structuredContent（snake_case）+ SSE token
+    └─ 普通 Skill → TaskService.create_task()
     │
     ▼
 执行模式分支（v5.7.2，默认 async_event）：

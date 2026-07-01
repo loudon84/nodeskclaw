@@ -47,6 +47,10 @@ def test_build_tool_descriptor_includes_streaming_annotations():
     assert descriptor["annotations"]["callMode"] == "async_sse"
     assert descriptor["annotations"]["streaming"] is True
     assert descriptor["annotations"]["artifactMode"] == "pull_only"
+    assert descriptor["annotations"]["executionMode"] == "async_event"
+    assert descriptor["annotations"]["routeType"] == "hermes_api_server"
+    assert descriptor["annotations"]["upstreamToolName"] == "tool.a"
+    assert descriptor["annotations"]["sseTimelineEnabled"] is True
 
 
 @pytest.mark.asyncio
@@ -76,8 +80,8 @@ async def test_call_expert_skill_event_stream_returns_task_info():
         "id": "1",
         "result": {
             "structuredContent": {
-                "taskId": "task-1",
-                "eventSseUrl": "/api/v1/hermes/tasks/task-1/events?token=abc",
+                "task_id": "task-1",
+                "event_stream": "/api/v1/hermes/tasks/task-1/events?token=abc",
             }
         },
     }
@@ -102,7 +106,7 @@ async def test_call_expert_skill_event_stream_returns_task_info():
         )
 
     mock_start.assert_awaited_once()
-    assert result["result"]["structuredContent"]["taskId"] == "task-1"
+    assert result["result"]["structuredContent"]["task_id"] == "task-1"
 
 
 @pytest.mark.asyncio

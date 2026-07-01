@@ -212,11 +212,12 @@ class HermesTaskWorker:
 
             logger.info(
                 "worker.dispatch.begin trace_id=%s task_id=%s task_no=%s tool=%s route_type=%s "
-                "runtime_invocation=%s execution_mode=%s",
+                "runtime_invocation=%s execution_mode=%s client_source=%s",
                 getattr(task, "request_trace_id", None),
                 task.id, task.task_no, task.tool_name,
                 route_type, contract.get("runtime_invocation"),
                 contract.get("mode"),
+                (task.client_context or {}).get("source", ""),
             )
 
             if route_type == "hermes_api_server":
@@ -484,6 +485,17 @@ class HermesTaskWorker:
         except Exception as exc:
             logger.warning("sync expert invocation log failed for task %s: %s", task_id, exc)
 
+    async def _sync_expert_log_if_terminal(self, db: AsyncSession, task: HermesTask) -> None:
+        if (task.client_context or {}).get("source") != "expert_mcp_gateway":
+            return
+        if task.status in (
+            TaskStatus.COMPLETED,
+            TaskStatus.FAILED,
+            TaskStatus.TIMEOUT,
+            TaskStatus.CANCELLED,
+        ):
+            await self._sync_expert_invocation_log(db, task.id)
+
     async def _maybe_auto_retry(
         self,
         db: AsyncSession,
@@ -567,6 +579,7 @@ class HermesTaskWorker:
             task.locked_at = None
             task.dispatch_status = "failed"
             await db.flush()
+            await self._sync_expert_log_if_terminal(db, task)
             return
 
         from app.services.hermes_external.hermes_bound_agent_scope_service import HermesBoundAgentScopeService
@@ -593,6 +606,7 @@ class HermesTaskWorker:
             task.locked_at = None
             task.dispatch_status = "failed"
             await db.flush()
+            await self._sync_expert_log_if_terminal(db, task)
             return
 
         arguments = task.arguments or {}
@@ -651,6 +665,7 @@ class HermesTaskWorker:
             task.locked_at = None
             task.dispatch_status = "failed"
             await db.flush()
+            await self._sync_expert_log_if_terminal(db, task)
             return
 
         await event_service.write_event(
@@ -795,6 +810,9 @@ class HermesTaskWorker:
                 task.id,
                 exc,
             )
+        client_source = (task.client_context or {}).get("source")
+        if client_source == "expert_mcp_gateway":
+            await self._sync_expert_log_if_terminal(db, task)
 
     async def _scan_artifacts(self, db: AsyncSession, task: HermesTask) -> None:
         try:

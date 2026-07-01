@@ -599,7 +599,7 @@ Installation 级覆盖：在 `PATCH /skill-installations/{id}` 的 `routing_meta
 - `mcp_skill_gateway` 提供 **全局 MCP Gateway**（Bearer Token 鉴权），合并 Registry 内置工具与 Skill 工具。
 - `hermes_skill/mcp_router.py` 提供 **Session 鉴权** 的 MCP 入口，内部调用同一套 `handler.dispatch_authenticated`。
 - `hermes_skill/agent_mcp_gateway_router.py` 提供 **按 Agent Profile** 的 MCP 代理，走 `hermes_external` 服务。
-- Skill 工具的 `tools/call` 最终都通过 `McpToolMapper` → `TaskService` 创建异步任务。
+- Skill 工具的 `tools/call` 最终都通过 `McpToolMapper` 创建异步任务；`hermes_api_server` 路径委托 `RuntimeSkillRunService`（v6.3.2，Expert 入口共用）。
 
 ## 相关文件速查
 
@@ -607,6 +607,7 @@ Installation 级覆盖：在 `PATCH /skill-installations/{id}` 的 `routing_meta
 |------|------|
 | 路由聚合 | `app/api/hermes_skill/router.py` |
 | MCP 工具映射 | `app/services/hermes_skill/mcp_tool_mapper.py` |
+| Runtime Skill 统一执行（v6.3.2） | `app/services/hermes_skill/runtime_skill_run_service.py` |
 | SSE 事件发布 | `app/services/hermes_skill/task_event_publisher.py` |
 | SSE 流格式化 | `app/services/hermes_skill/task_event_stream_formatter.py` |
 | 执行模式 | `app/services/mcp_skill_gateway/mcp_execution_mode.py` |
