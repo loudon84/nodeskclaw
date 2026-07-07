@@ -85,6 +85,7 @@ Thumbs.db
 *.sqlite3
 data/
 !nodeskclaw-backend/app/data/
+!nodeskclaw-task/app/data/
 scripts/git_stats/code_lines.png
 scripts/git_stats/commit_counts.png
 scripts/git_stats/code_breakdown.png
