@@ -1,0 +1,18 @@
+[
+  {
+    "id": "task-001",
+    "tenantId": "seed-tenant-001",
+    "title": "拉取 PO-20260703-001",
+    "taskType": "fetch_po",
+    "portalAccountId": "portal-001",
+    "workflowBindingId": "binding-001",
+    "entityType": "CUSTOMER",
+    "erpEntityCode": "CUST-001",
+    "erpEntityName": "示例客户 A",
+    "status": "READY",
+    "priority": "NORMAL",
+    "input": {"poNo": "PO-20260703-001"},
+    "progress": 0,
+    "createdBy": "seed-user-001"
+  }
+]

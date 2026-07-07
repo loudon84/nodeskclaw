@@ -1,0 +1,21 @@
+[
+  {
+    "id": "wf-template-001",
+    "tenantId": "seed-tenant-001",
+    "name": "拉取采购订单",
+    "code": "fetch_po",
+    "description": "从客户门户拉取 PO",
+    "entityType": "CUSTOMER",
+    "category": "procurement",
+    "status": "ENABLED",
+    "version": "1.0.0",
+    "inputSchema": [
+      {"name": "poNo", "label": "PO 编号", "type": "string", "required": true}
+    ],
+    "businessSteps": [
+      {"id": "login", "name": "登录门户"},
+      {"id": "fetch_po", "name": "拉取 PO"}
+    ],
+    "createdBy": "seed-user-001"
+  }
+]

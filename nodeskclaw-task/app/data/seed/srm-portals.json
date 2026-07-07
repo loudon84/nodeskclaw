@@ -1,0 +1,16 @@
+[
+  {
+    "id": "portal-001",
+    "tenantId": "seed-tenant-001",
+    "entityType": "CUSTOMER",
+    "erpEntityCode": "CUST-001",
+    "erpEntityName": "示例客户 A",
+    "portalName": "客户 SRM 门户",
+    "portalUrl": "https://portal.example.com/srm",
+    "loginAccount": "buyer@example.com",
+    "clientOpenMode": "webcontents",
+    "clientSessionPartition": "persist:portal-001",
+    "status": "ENABLED",
+    "createdBy": "seed-user-001"
+  }
+]

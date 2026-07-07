@@ -1,0 +1,12 @@
+{
+  "runs": [
+    {
+      "id": "run-001",
+      "taskId": "task-001",
+      "rpaFlowId": "rpa_flow_customer_a_fetch_po",
+      "status": "QUEUED"
+    }
+  ],
+  "stepRuns": [],
+  "events": []
+}

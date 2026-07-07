@@ -1,0 +1,13 @@
+[
+  {
+    "id": "local-001",
+    "workerType": "LOCAL_AGENT",
+    "deviceName": "SMC-AI-PC",
+    "userId": "seed-user-001",
+    "status": "ONLINE",
+    "capabilities": ["playwright", "chromium", "screenshot", "human_takeover"],
+    "appVersion": "0.2.0",
+    "agentVersion": "0.1.0",
+    "os": "Windows 11"
+  }
+]
