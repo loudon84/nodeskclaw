@@ -63,3 +63,40 @@ class TaskMessageResponse(CamelModel):
     role: str
     content: str
     created_at: datetime = Field(serialization_alias="createdAt")
+
+
+class TaskListItemResponse(CamelModel):
+    id: str
+    title: str
+    task_type: str = Field(serialization_alias="taskType")
+    customer_name: str = Field(serialization_alias="customerName")
+    portal_id: str = Field(serialization_alias="portalId")
+    srm_portal_name: str = Field(serialization_alias="srmPortalName")
+    workflow_template_id: str = Field(serialization_alias="workflowTemplateId")
+    workflow_template_name: str = Field(serialization_alias="workflowTemplateName")
+    status: str
+    priority: str
+    owner: str
+    input: dict[str, Any]
+    current_step: str | None = Field(None, serialization_alias="currentStep")
+    progress: int
+    created_at: datetime = Field(serialization_alias="createdAt")
+    updated_at: datetime = Field(serialization_alias="updatedAt")
+
+
+class TaskListPageResponse(CamelModel):
+    items: list[TaskListItemResponse] = Field(default_factory=list)
+    total: int = 0
+    page: int = 1
+    page_size: int = Field(20, serialization_alias="pageSize")
+
+
+class TaskHumanActionStatusResponse(CamelModel):
+    task_id: str = Field(serialization_alias="taskId")
+    status: str
+
+
+class TaskConfirmHumanResponse(CamelModel):
+    task_id: str = Field(serialization_alias="taskId")
+    status: str
+    confirmed_at: datetime = Field(serialization_alias="confirmedAt")

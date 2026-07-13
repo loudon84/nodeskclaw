@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.router import api_router, mcp_router, worker_api_router
+from app.core.access_log import AutotaskAccessLogMiddleware
 from app.core.config import settings
 from app.core.deps import engine
 from app.core.exceptions import register_exception_handlers
@@ -73,6 +74,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.add_middleware(NoCacheAPIMiddleware)
+app.add_middleware(AutotaskAccessLogMiddleware)
 register_exception_handlers(app)
 
 app.include_router(api_router, prefix="/api/v1/autotask")

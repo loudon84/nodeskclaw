@@ -1,0 +1,3878 @@
+{
+  "info": {
+    "_postman_id": "65de6bf8-5736-4df6-9be0-0e86d6c556d8",
+    "name": "NoDeskClaw AutoTask",
+    "description": "Postman collection for nodeskclaw-task AutoTask APIs. Run 01 Auth first (nodeskclaw-backend JWT), then Client REST / MCP folders. Worker Dispatch folder has no JWT. See docs/backend/nodeskclaw_task.md.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "backend_base_url",
+      "value": "http://localhost:4510"
+    },
+    {
+      "key": "task_base_url",
+      "value": "http://localhost:4520"
+    },
+    {
+      "key": "autotask_prefix",
+      "value": "/api/v1/autotask"
+    },
+    {
+      "key": "worker_api_prefix",
+      "value": "/api/v1/autotask/worker-api"
+    },
+    {
+      "key": "mcp_prefix",
+      "value": "/api/v1/autotask/mcp"
+    },
+    {
+      "key": "account",
+      "value": "user@example.com"
+    },
+    {
+      "key": "email",
+      "value": "user@example.com"
+    },
+    {
+      "key": "password",
+      "value": "password"
+    },
+    {
+      "key": "access_token",
+      "value": "",
+      "type": "secret"
+    },
+    {
+      "key": "refresh_token",
+      "value": "",
+      "type": "secret"
+    },
+    {
+      "key": "user_id",
+      "value": ""
+    },
+    {
+      "key": "current_org_id",
+      "value": ""
+    },
+    {
+      "key": "portal_account_id",
+      "value": "portal-001"
+    },
+    {
+      "key": "workflow_template_id",
+      "value": ""
+    },
+    {
+      "key": "workflow_binding_id",
+      "value": "binding-001"
+    },
+    {
+      "key": "task_id",
+      "value": "task-001"
+    },
+    {
+      "key": "run_id",
+      "value": ""
+    },
+    {
+      "key": "lease_id",
+      "value": ""
+    },
+    {
+      "key": "worker_id",
+      "value": "worker-dev-001"
+    },
+    {
+      "key": "human_action_id",
+      "value": ""
+    },
+    {
+      "key": "artifact_id",
+      "value": ""
+    },
+    {
+      "key": "storage_key",
+      "value": ""
+    },
+    {
+      "key": "download_expires",
+      "value": ""
+    },
+    {
+      "key": "download_sig",
+      "value": ""
+    },
+    {
+      "key": "artifact_download_url",
+      "value": ""
+    }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{access_token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "packages": {},
+        "requests": {},
+        "exec": [
+          ""
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "packages": {},
+        "requests": {},
+        "exec": [
+          ""
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "00 Health - 健康检查",
+      "item": [
+        {
+          "name": "Root health - GET /health",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/health",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
+            "description": "根健康检查，无需鉴权。",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "API health - GET /api/v1/autotask/health",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/health",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "health"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "01 Auth - 登录与令牌 (backend)",
+      "item": [
+        {
+          "name": "Account login - /auth/account-login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{backend_base_url}}/api/v1/auth/account-login",
+              "host": [
+                "{{backend_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "account-login"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"account\": \"{{account}}\",\n  \"password\": \"{{password}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "从 nodeskclaw-backend 获取 JWT。task 服务不提供登录。"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"login success\", function () { pm.expect(json.code).to.eql(0); });",
+                  "if (json.data) {",
+                  "  pm.collectionVariables.set(\"access_token\", json.data.access_token);",
+                  "  pm.collectionVariables.set(\"refresh_token\", json.data.refresh_token);",
+                  "  if (json.data.user) {",
+                  "    pm.collectionVariables.set(\"user_id\", json.data.user.id || \"\");",
+                  "    pm.collectionVariables.set(\"current_org_id\", json.data.user.current_org_id || \"\");",
+                  "  }",
+                  "}"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "Email login - /auth/login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{backend_base_url}}/api/v1/auth/login",
+              "host": [
+                "{{backend_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "login"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "邮箱密码登录备选。"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"login success\", function () { pm.expect(json.code).to.eql(0); });",
+                  "if (json.data) {",
+                  "  pm.collectionVariables.set(\"access_token\", json.data.access_token);",
+                  "  pm.collectionVariables.set(\"refresh_token\", json.data.refresh_token);",
+                  "  if (json.data.user) {",
+                  "    pm.collectionVariables.set(\"user_id\", json.data.user.id || \"\");",
+                  "    pm.collectionVariables.set(\"current_org_id\", json.data.user.current_org_id || \"\");",
+                  "  }",
+                  "}"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "Refresh token",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{backend_base_url}}/api/v1/auth/refresh",
+              "host": [
+                "{{backend_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "refresh"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refresh_token\": \"{{refresh_token}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "Me - current user/org",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{backend_base_url}}/api/v1/auth/me",
+              "host": [
+                "{{backend_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "me"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"me success\", function () { pm.expect(json.code).to.eql(0); });",
+                  "if (json.data) {",
+                  "  pm.collectionVariables.set(\"user_id\", json.data.id || \"\");",
+                  "  pm.collectionVariables.set(\"current_org_id\", json.data.current_org_id || \"\");",
+                  "}"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "02 Dashboard - 仪表盘",
+      "item": [
+        {
+          "name": "Dashboard summary",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/dashboard/summary",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "dashboard",
+                "summary"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "03 Portal Account - 门户账号",
+      "item": [
+        {
+          "name": "List portal accounts",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/portal-accounts",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "portal-accounts"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });",
+                  "const arr = Array.isArray(json.data) ? json.data : [];",
+                  "if (arr.length > 0) {",
+                  "  pm.collectionVariables.set(\"portal_account_id\", arr[0].id);",
+                  "}"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create portal account",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/portal-accounts",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "portal-accounts"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"entityType\": \"CUSTOMER\",\n  \"erpEntityCode\": \"CUST-DEMO\",\n  \"erpEntityName\": \"示例客户\",\n  \"portalName\": \"SRM 门户\",\n  \"portalUrl\": \"https://portal.example.com/srm\",\n  \"loginAccount\": \"buyer@example.com\",\n  \"clientOpenMode\": \"webcontents\",\n  \"clientSessionPartition\": \"persist:portal-demo\",\n  \"status\": \"ENABLED\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });",
+                  "if (json.data && json.data.id) {",
+                  "  pm.collectionVariables.set(\"portal_account_id\", json.data.id);",
+                  "}"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get portal account detail",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/portal-accounts/{{portal_account_id}}",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "portal-accounts",
+                "{{portal_account_id}}"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update portal account",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/portal-accounts/{{portal_account_id}}",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "portal-accounts",
+                "{{portal_account_id}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"portalName\": \"SRM 门户（已更新）\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "Test open portal",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/portal-accounts/{{portal_account_id}}/test-open",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "portal-accounts",
+                "{{portal_account_id}}",
+                "test-open"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "List access grants",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/portal-accounts/{{portal_account_id}}/access-grants",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "portal-accounts",
+                "{{portal_account_id}}",
+                "access-grants"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create access grant",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/portal-accounts/{{portal_account_id}}/access-grants",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "portal-accounts",
+                "{{portal_account_id}}",
+                "access-grants"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subjectType\": \"USER\",\n  \"subjectId\": \"{{user_id}}\",\n  \"permissions\": [\"PORTAL_VIEW\", \"PORTAL_VIEW_TASKS\", \"PORTAL_USE_CREDENTIAL\"]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete portal account",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/portal-accounts/{{portal_account_id}}",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "portal-accounts",
+                "{{portal_account_id}}"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "04 Workflow Template - 工作流模板",
+      "item": [
+        {
+          "name": "List workflow templates",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/workflow-templates",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "workflow-templates"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });",
+                  "const arr = Array.isArray(json.data) ? json.data : [];",
+                  "if (arr.length > 0) {",
+                  "  pm.collectionVariables.set(\"workflow_template_id\", arr[0].id);",
+                  "}"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create workflow template",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/workflow-templates",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "workflow-templates"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"拉取 PO\",\n  \"code\": \"fetch_po\",\n  \"description\": \"从 SRM 拉取采购订单\",\n  \"entityType\": \"CUSTOMER\",\n  \"category\": \"procurement\",\n  \"status\": \"DRAFT\",\n  \"version\": \"1.0.0\",\n  \"inputSchema\": [\n    {\"name\": \"poNo\", \"type\": \"string\", \"required\": true}\n  ],\n  \"businessSteps\": []\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });",
+                  "if (json.data && json.data.id) {",
+                  "  pm.collectionVariables.set(\"workflow_template_id\", json.data.id);",
+                  "}"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get workflow template detail",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/workflow-templates/{{workflow_template_id}}",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "workflow-templates",
+                "{{workflow_template_id}}"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update workflow template",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/workflow-templates/{{workflow_template_id}}",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "workflow-templates",
+                "{{workflow_template_id}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"description\": \"更新描述\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "Enable workflow template",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/workflow-templates/{{workflow_template_id}}/enable",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "workflow-templates",
+                "{{workflow_template_id}}",
+                "enable"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "Disable workflow template",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/workflow-templates/{{workflow_template_id}}/disable",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "workflow-templates",
+                "{{workflow_template_id}}",
+                "disable"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "05 Workflow Binding - 工作流绑定",
+      "item": [
+        {
+          "name": "List workflow bindings",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/workflow-bindings",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "workflow-bindings"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });",
+                  "const arr = Array.isArray(json.data) ? json.data : [];",
+                  "if (arr.length > 0) {",
+                  "  pm.collectionVariables.set(\"workflow_binding_id\", arr[0].id);",
+                  "}"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create workflow binding",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/workflow-bindings",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "workflow-bindings"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"portalAccountId\": \"{{portal_account_id}}\",\n  \"workflowTemplateId\": \"{{workflow_template_id}}\",\n  \"workflowTemplateVersion\": \"1.0.0\",\n  \"rpaEngineType\": \"PLAYWRIGHT_CDP\",\n  \"rpaFlowId\": \"flow-fetch-po\",\n  \"rpaFlowVersion\": \"1.0.0\",\n  \"status\": \"ENABLED\",\n  \"config\": {}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });",
+                  "if (json.data && json.data.id) {",
+                  "  pm.collectionVariables.set(\"workflow_binding_id\", json.data.id);",
+                  "}"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get workflow binding detail",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/workflow-bindings/{{workflow_binding_id}}",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "workflow-bindings",
+                "{{workflow_binding_id}}"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update workflow binding",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/workflow-bindings/{{workflow_binding_id}}",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "workflow-bindings",
+                "{{workflow_binding_id}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rpaFlowVersion\": \"1.0.1\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "Enable workflow binding",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/workflow-bindings/{{workflow_binding_id}}/enable",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "workflow-bindings",
+                "{{workflow_binding_id}}",
+                "enable"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "Disable workflow binding",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/workflow-bindings/{{workflow_binding_id}}/disable",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "workflow-bindings",
+                "{{workflow_binding_id}}",
+                "disable"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "06 Automation Task - 自动化任务",
+      "item": [
+        {
+          "name": "List tasks",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/tasks",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "tasks"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });",
+                  "const arr = Array.isArray(json.data) ? json.data : [];",
+                  "if (arr.length > 0) {",
+                  "  pm.collectionVariables.set(\"task_id\", arr[0].id);",
+                  "}"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "List tasks by status",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/tasks?status=READY",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "tasks"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "READY"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create task",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/tasks",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "tasks"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"拉取 PO-20260708-001\",\n  \"taskType\": \"fetch_po\",\n  \"portalAccountId\": \"{{portal_account_id}}\",\n  \"workflowBindingId\": \"{{workflow_binding_id}}\",\n  \"entityType\": \"CUSTOMER\",\n  \"erpEntityCode\": \"CUST-001\",\n  \"erpEntityName\": \"示例客户 A\",\n  \"priority\": \"NORMAL\",\n  \"input\": {\"poNo\": \"PO-20260708-001\"}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });",
+                  "if (json.data && json.data.id) {",
+                  "  pm.collectionVariables.set(\"task_id\", json.data.id);",
+                  "}"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get task detail",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/tasks/{{task_id}}",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "tasks",
+                "{{task_id}}"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update task",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/tasks/{{task_id}}",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "tasks",
+                "{{task_id}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"拉取 PO（已更新）\",\n  \"priority\": \"HIGH\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "Submit task",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/tasks/{{task_id}}/submit",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "tasks",
+                "{{task_id}}",
+                "submit"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "Start task",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/tasks/{{task_id}}/start",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "tasks",
+                "{{task_id}}",
+                "start"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cancel task",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/tasks/{{task_id}}/cancel",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "tasks",
+                "{{task_id}}",
+                "cancel"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "Retry task",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/tasks/{{task_id}}/retry",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "tasks",
+                "{{task_id}}",
+                "retry"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "Mark success manual",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/tasks/{{task_id}}/mark-success-manual",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "tasks",
+                "{{task_id}}",
+                "mark-success-manual"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "List task messages",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/tasks/{{task_id}}/messages",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "tasks",
+                "{{task_id}}",
+                "messages"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "List task runs",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/tasks/{{task_id}}/runs",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "tasks",
+                "{{task_id}}",
+                "runs"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });",
+                  "const arr = Array.isArray(json.data) ? json.data : [];",
+                  "if (arr.length > 0) {",
+                  "  pm.collectionVariables.set(\"run_id\", arr[0].id);",
+                  "}"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "List task artifacts",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/tasks/{{task_id}}/artifacts",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "tasks",
+                "{{task_id}}",
+                "artifacts"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });",
+                  "const arr = Array.isArray(json.data) ? json.data : [];",
+                  "if (arr.length > 0) {",
+                  "  pm.collectionVariables.set(\"artifact_id\", arr[0].id);",
+                  "}"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "07 RPA Run - 执行记录",
+      "item": [
+        {
+          "name": "List runs",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/runs",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "runs"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });",
+                  "const arr = Array.isArray(json.data) ? json.data : [];",
+                  "if (arr.length > 0) {",
+                  "  pm.collectionVariables.set(\"run_id\", arr[0].id);",
+                  "}"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "List runs by taskId",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/runs?taskId={{task_id}}",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "runs"
+              ],
+              "query": [
+                {
+                  "key": "taskId",
+                  "value": "{{task_id}}"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get run detail",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/runs/{{run_id}}",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "runs",
+                "{{run_id}}"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "List run events",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/runs/{{run_id}}/events",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "runs",
+                "{{run_id}}",
+                "events"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "List step runs",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/runs/{{run_id}}/step-runs",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "runs",
+                "{{run_id}}",
+                "step-runs"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "08 Human Action - 人工介入",
+      "item": [
+        {
+          "name": "List pending human actions",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/human-actions/pending",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "human-actions",
+                "pending"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });",
+                  "const arr = Array.isArray(json.data) ? json.data : [];",
+                  "if (arr.length > 0) {",
+                  "  pm.collectionVariables.set(\"human_action_id\", arr[0].id);",
+                  "}"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get human action detail",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/human-actions/{{human_action_id}}",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "human-actions",
+                "{{human_action_id}}"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "Open human action",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/human-actions/{{human_action_id}}/open",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "human-actions",
+                "{{human_action_id}}",
+                "open"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "Confirm human action",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/human-actions/{{human_action_id}}/confirm",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "human-actions",
+                "{{human_action_id}}",
+                "confirm"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"resumeRunning\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cancel human action",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/human-actions/{{human_action_id}}/cancel",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "human-actions",
+                "{{human_action_id}}",
+                "cancel"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "09 Artifact - 产物",
+      "item": [
+        {
+          "name": "List artifacts",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/artifacts",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "artifacts"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });",
+                  "const arr = Array.isArray(json.data) ? json.data : [];",
+                  "if (arr.length > 0) {",
+                  "  pm.collectionVariables.set(\"artifact_id\", arr[0].id);",
+                  "}"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "List artifacts by taskId",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/artifacts?taskId={{task_id}}",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "artifacts"
+              ],
+              "query": [
+                {
+                  "key": "taskId",
+                  "value": "{{task_id}}"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "List artifacts by runId",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/artifacts?runId={{run_id}}",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "artifacts"
+              ],
+              "query": [
+                {
+                  "key": "runId",
+                  "value": "{{run_id}}"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get artifact detail",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/artifacts/{{artifact_id}}",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "artifacts",
+                "{{artifact_id}}"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });",
+                  "if (json.data) {",
+                  "  if (json.data.id) pm.collectionVariables.set(\"artifact_id\", json.data.id);",
+                  "  if (json.data.storageKey) pm.collectionVariables.set(\"storage_key\", json.data.storageKey);",
+                  "}"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get artifact download URL",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/artifacts/{{artifact_id}}/download-url",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "artifacts",
+                "{{artifact_id}}",
+                "download-url"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });",
+                  "if (json.data && json.data.downloadUrl) {",
+                  "  const u = json.data.downloadUrl;",
+                  "  pm.collectionVariables.set('artifact_download_url', u);",
+                  "  const q = u.split('?')[1] || '';",
+                  "  q.split('&').forEach(function (p) {",
+                  "    const kv = p.split('=');",
+                  "    if (kv[0] === 'expires') pm.collectionVariables.set('download_expires', kv[1]);",
+                  "    if (kv[0] === 'sig') pm.collectionVariables.set('download_sig', kv[1]);",
+                  "  });",
+                  "}"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "Request artifact upload URL",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/artifacts/upload-url",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "artifacts",
+                "upload-url"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"taskId\": \"{{task_id}}\",\n  \"runId\": \"{{run_id}}\",\n  \"name\": \"upload-demo.png\",\n  \"mimeType\": \"image/png\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });",
+                  "if (json.data && json.data.storageKey) {",
+                  "  pm.collectionVariables.set(\"storage_key\", json.data.storageKey);",
+                  "}"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "Download artifact (signed URL)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}{{artifact_download_url}}",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": []
+            },
+            "description": "先执行 Get artifact download URL，自动写入 artifact_download_url（含 storageKey 路径与签名参数）。",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "10 RPA Worker - Client 只读",
+      "item": [
+        {
+          "name": "List RPA workers",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/rpa-workers",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "rpa-workers"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get RPA worker detail",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/rpa-workers/{{worker_id}}",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "rpa-workers",
+                "{{worker_id}}"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "11 Worker Dispatch API - RPA Engine (无 JWT)",
+      "item": [
+        {
+          "name": "Register worker",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/worker-api/workers/register",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "worker-api",
+                "workers",
+                "register"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"workerId\": \"{{worker_id}}\",\n  \"workerType\": \"LOCAL_AGENT\",\n  \"deviceName\": \"dev-laptop\",\n  \"capabilities\": [\"PLAYWRIGHT_CDP\", \"fetch_po\"]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "Worker heartbeat",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/worker-api/workers/{{worker_id}}/heartbeat",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "worker-api",
+                "workers",
+                "{{worker_id}}",
+                "heartbeat"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "Lease task",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/worker-api/tasks/lease",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "worker-api",
+                "tasks",
+                "lease"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"workerId\": \"{{worker_id}}\",\n  \"capabilities\": [\"fetch_po\"],\n  \"limit\": 1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });",
+                  "if (json.data) {",
+                  "  if (json.data.taskId) pm.collectionVariables.set(\"task_id\", json.data.taskId);",
+                  "  if (json.data.runId) pm.collectionVariables.set(\"run_id\", json.data.runId);",
+                  "  if (json.data.leaseId) pm.collectionVariables.set(\"lease_id\", json.data.leaseId);",
+                  "}"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "Renew lease",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/worker-api/tasks/{{task_id}}/lease/renew",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "worker-api",
+                "tasks",
+                "{{task_id}}",
+                "lease",
+                "renew"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"workerId\": \"{{worker_id}}\",\n  \"leaseId\": \"{{lease_id}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "Report run event",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/worker-api/runs/{{run_id}}/events",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "worker-api",
+                "runs",
+                "{{run_id}}",
+                "events"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"workerId\": \"{{worker_id}}\",\n  \"type\": \"RUN_STARTED\",\n  \"level\": \"INFO\",\n  \"message\": \"Run started\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "Register run artifact",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/worker-api/runs/{{run_id}}/artifacts",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "worker-api",
+                "runs",
+                "{{run_id}}",
+                "artifacts"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"SCREENSHOT\",\n  \"name\": \"login-page.png\",\n  \"storageKey\": \"runs/{{run_id}}/login-page.png\",\n  \"size\": 102400,\n  \"mimeType\": \"image/png\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "Finish run",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/worker-api/runs/{{run_id}}/finish",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "worker-api",
+                "runs",
+                "{{run_id}}",
+                "finish"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"SUCCESS\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "12 MCP Tools API",
+      "item": [
+        {
+          "name": "MCP tools/list",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/mcp/tools/list",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "mcp",
+                "tools",
+                "list"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "MCP tools/call - autotask.portal.search",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/mcp/tools/call",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "mcp",
+                "tools",
+                "call"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"autotask.portal.search\",\n  \"arguments\": {\"keyword\": \"SRM\"}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "MCP tools/call - autotask.portal.get",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/mcp/tools/call",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "mcp",
+                "tools",
+                "call"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"autotask.portal.get\",\n  \"arguments\": {\"portalAccountId\": \"{{portal_account_id}}\"}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "MCP tools/call - autotask.workflow.list",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/mcp/tools/call",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "mcp",
+                "tools",
+                "call"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"autotask.workflow.list\",\n  \"arguments\": {}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "MCP tools/call - autotask.task.create",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/mcp/tools/call",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "mcp",
+                "tools",
+                "call"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"autotask.task.create\",\n  \"arguments\": {\n    \"title\": \"MCP 创建任务\",\n    \"taskType\": \"fetch_po\",\n    \"portalAccountId\": \"{{portal_account_id}}\",\n    \"workflowBindingId\": \"{{workflow_binding_id}}\",\n    \"entityType\": \"CUSTOMER\",\n    \"erpEntityCode\": \"CUST-001\",\n    \"erpEntityName\": \"示例客户 A\",\n    \"input\": {\"poNo\": \"PO-MCP-001\"}\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "MCP tools/call - autotask.task.get",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/mcp/tools/call",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "mcp",
+                "tools",
+                "call"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"autotask.task.get\",\n  \"arguments\": {\"taskId\": \"{{task_id}}\"}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "MCP tools/call - autotask.task.get_status",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/mcp/tools/call",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "mcp",
+                "tools",
+                "call"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"autotask.task.get_status\",\n  \"arguments\": {\"taskId\": \"{{task_id}}\"}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "MCP tools/call - autotask.task.list_messages",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/mcp/tools/call",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "mcp",
+                "tools",
+                "call"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"autotask.task.list_messages\",\n  \"arguments\": {\"taskId\": \"{{task_id}}\"}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "MCP tools/call - autotask.human_action.list_pending",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/mcp/tools/call",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "mcp",
+                "tools",
+                "call"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"autotask.human_action.list_pending\",\n  \"arguments\": {}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "MCP tools/call - autotask.human_action.confirm",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/mcp/tools/call",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "mcp",
+                "tools",
+                "call"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"autotask.human_action.confirm\",\n  \"arguments\": {\"humanActionId\": \"{{human_action_id}}\", \"resumeRunning\": true}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "MCP tools/call - autotask.artifact.list",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/mcp/tools/call",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "mcp",
+                "tools",
+                "call"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"autotask.artifact.list\",\n  \"arguments\": {\"taskId\": \"{{task_id}}\"}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

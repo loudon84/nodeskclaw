@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     ARTIFACT_STORAGE: str = "local"
     ARTIFACT_LOCAL_DIR: str = "./storage/artifacts"
 
-    CORS_ORIGINS: list[str] = ["http://127.0.0.1:5173", "http://localhost:5173"]
+    CORS_ORIGINS: list[str] = ["http://127.0.0.1:5173", "http://localhost:5173", "http://127.0.0.1:3000"]
 
     WORKER_LEASE_TTL_SECONDS: int = 120
     WORKER_HEARTBEAT_TIMEOUT_SECONDS: int = 60

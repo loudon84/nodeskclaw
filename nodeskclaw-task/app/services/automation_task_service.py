@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import BadRequestError, NotFoundError
+from app.core.exceptions import BadRequestError, TaskNotFoundError
 from app.models.automation_task import AutomationTask
 from app.models.base import not_deleted
 from app.models.enums import BindingStatus, TaskStatus
@@ -41,7 +41,7 @@ async def get_task(db: AsyncSession, tenant_id: str, task_id: str) -> Automation
         )
     ).scalar_one_or_none()
     if task is None:
-        raise NotFoundError(message="任务不存在", message_key="errors.autotask.task_not_found")
+        raise TaskNotFoundError()
     return task
 
 

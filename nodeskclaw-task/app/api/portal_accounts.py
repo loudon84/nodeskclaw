@@ -1,8 +1,13 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_db
-from app.core.security import get_current_user, require_permission, require_tenant_access
+from app.core.security import (
+    get_current_user,
+    require_permission,
+    require_portal_manage_access,
+    require_tenant_access,
+)
 from app.models.enums import PortalPermission
 from app.models.user_cache import UserCache
 from app.schemas.common import ApiResponse
@@ -12,6 +17,7 @@ from app.schemas.portal_account import (
     PortalAccountCreate,
     PortalAccountResponse,
     PortalAccountUpdate,
+    PortalListPageResponse,
     PortalTestOpenResponse,
 )
 from app.services import portal_account_service
@@ -19,14 +25,28 @@ from app.services import portal_account_service
 router = APIRouter()
 
 
-@router.get("", response_model=ApiResponse[list[PortalAccountResponse]])
+@router.get("", response_model=ApiResponse[PortalListPageResponse])
 async def list_portal_accounts(
+    entity_type: str | None = Query(None, alias="entityType"),
+    status: str | None = None,
+    keyword: str | None = None,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100, alias="pageSize"),
     db: AsyncSession = Depends(get_db),
     user: UserCache = Depends(get_current_user),
 ):
     tenant_id = require_tenant_access(user)
-    accounts = await portal_account_service.list_portal_accounts(db, tenant_id)
-    return ApiResponse(data=[PortalAccountResponse.model_validate(a) for a in accounts])
+    result = await portal_account_service.list_portal_accounts(
+        db,
+        tenant_id,
+        user,
+        entity_type=entity_type,
+        status=status,
+        keyword=keyword,
+        page=page,
+        page_size=page_size,
+    )
+    return ApiResponse(data=result)
 
 
 @router.post("", response_model=ApiResponse[PortalAccountResponse])
@@ -35,6 +55,7 @@ async def create_portal_account(
     db: AsyncSession = Depends(get_db),
     user: UserCache = Depends(get_current_user),
 ):
+    # require_portal_manage_access(user)
     tenant_id = require_tenant_access(user)
     account = await portal_account_service.create_portal_account(db, tenant_id, user, body)
     return ApiResponse(data=PortalAccountResponse.model_validate(account))
@@ -61,7 +82,7 @@ async def update_portal_account(
 ):
     tenant_id = require_tenant_access(user)
     await require_permission(db, user, account_id, PortalPermission.PORTAL_EDIT)
-    account = await portal_account_service.update_portal_account(db, tenant_id, account_id, body)
+    account = await portal_account_service.update_portal_account(db, tenant_id, account_id, body, user)
     return ApiResponse(data=PortalAccountResponse.model_validate(account))
 
 
@@ -73,7 +94,7 @@ async def delete_portal_account(
 ):
     tenant_id = require_tenant_access(user)
     await require_permission(db, user, account_id, PortalPermission.PORTAL_EDIT)
-    await portal_account_service.delete_portal_account(db, tenant_id, account_id)
+    await portal_account_service.delete_portal_account(db, tenant_id, account_id, user)
     return ApiResponse(data=None, message="已删除")
 
 
@@ -85,16 +106,8 @@ async def test_open_portal_account(
 ):
     tenant_id = require_tenant_access(user)
     await require_permission(db, user, account_id, PortalPermission.PORTAL_OPEN_WEB)
-    account = await portal_account_service.get_portal_account(db, tenant_id, account_id)
-    return ApiResponse(
-        data=PortalTestOpenResponse(
-            portal_account_id=account.id,
-            portal_url=account.portal_url,
-            client_open_mode=account.client_open_mode,
-            client_session_partition=account.client_session_partition,
-            can_open=True,
-        )
-    )
+    result = await portal_account_service.test_open_portal_account(db, tenant_id, account_id, user)
+    return ApiResponse(data=result)
 
 
 @router.get("/{account_id}/access-grants", response_model=ApiResponse[list[PortalAccessGrantResponse]])

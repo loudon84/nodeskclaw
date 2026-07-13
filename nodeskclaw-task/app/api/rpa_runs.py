@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_db
@@ -13,12 +13,13 @@ router = APIRouter()
 
 @router.get("", response_model=ApiResponse[list[RpaRunResponse]])
 async def list_runs(
-    task_id: str | None = None,
+    task_id: str | None = Query(None, alias="taskId"),
+    task_id_snake: str | None = Query(None, alias="task_id"),
     db: AsyncSession = Depends(get_db),
     user: UserCache = Depends(get_current_user),
 ):
     tenant_id = require_tenant_access(user)
-    runs = await rpa_run_service.list_runs(db, tenant_id, task_id=task_id)
+    runs = await rpa_run_service.list_runs(db, tenant_id, task_id=task_id or task_id_snake)
     return ApiResponse(data=[RpaRunResponse.model_validate(r) for r in runs])
 
 

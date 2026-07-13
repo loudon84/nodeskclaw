@@ -5,6 +5,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import IntegrityError
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,11 @@ class AppException(Exception):
         self.message_params = message_params
         self.details = details
         self.status_code = status_code
+
+
+class TaskNotFoundError(AppException):
+    def __init__(self, message: str = "Task not found", message_key: str = "autotask.task.not_found"):
+        super().__init__(code=40401, message=message, status_code=404, message_key=message_key, error_code=40401)
 
 
 class NotFoundError(AppException):
@@ -127,6 +133,26 @@ def register_exception_handlers(app: FastAPI) -> None:
             content={
                 "code": error_code,
                 "error_code": error_code,
+                "message_key": message_key,
+                "message": message,
+                "data": None,
+            },
+        )
+
+    @app.exception_handler(IntegrityError)
+    async def integrity_error_handler(_request: Request, exc: IntegrityError) -> JSONResponse:
+        logger.warning("Database integrity error: %s", exc)
+        message_key = "errors.autotask.portal_account.duplicate"
+        if "uq_portal_accounts_tenant_entity_url_login" in str(exc.orig):
+            message = "门户账号已存在"
+        else:
+            message_key = "errors.common.conflict"
+            message = "资源冲突"
+        return JSONResponse(
+            status_code=409,
+            content={
+                "code": 40900,
+                "error_code": 40900,
                 "message_key": message_key,
                 "message": message,
                 "data": None,

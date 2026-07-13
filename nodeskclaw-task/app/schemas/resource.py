@@ -117,7 +117,18 @@ class ArtifactUploadUrlResponse(CamelModel):
 
 
 class ArtifactDownloadUrlResponse(CamelModel):
-    download_url: str = Field(serialization_alias="downloadUrl")
+    url: str = ""
+
+
+class RpaWorkerClientResponse(CamelModel):
+    id: str
+    name: str
+    status: str
+    current_task_count: int = Field(0, serialization_alias="currentTaskCount")
+    browser_count: int = Field(0, serialization_alias="browserCount")
+    cpu_usage: int = Field(0, serialization_alias="cpuUsage")
+    memory_usage: int = Field(0, serialization_alias="memoryUsage")
+    last_heartbeat_at: datetime = Field(serialization_alias="lastHeartbeatAt")
 
 
 class RpaWorkerResponse(CamelModel):

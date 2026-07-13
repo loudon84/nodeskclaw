@@ -13,6 +13,7 @@ from app.models.audit_log import AuditLog
 from app.models.automation_task import AutomationTask
 from app.models.autotask_setting import AutotaskSetting
 from app.models.base import not_deleted
+from app.models.portal_access_grant import PortalAccessGrant
 from app.models.portal_account import PortalAccount
 from app.models.rpa_component import RpaComponent
 from app.models.rpa_run import RpaRun
@@ -73,6 +74,20 @@ async def run_seed(session_factory: async_sessionmaker) -> None:
                     status=item.get("status", "ENABLED"),
                     owner_dept_id=item.get("ownerDeptId"),
                     created_by=item.get("createdBy", DEFAULT_USER_ID),
+                )
+            )
+
+        grants = _load_json("portal-access-grants.json")
+        for item in grants:
+            db.add(
+                PortalAccessGrant(
+                    id=item.get("id"),
+                    portal_account_id=item["portalAccountId"],
+                    subject_type=item["subjectType"],
+                    subject_id=item["subjectId"],
+                    permissions=dumps_json(item.get("permissions", [])),
+                    granted_by=item.get("grantedBy", DEFAULT_USER_ID),
+                    granted_at=item.get("grantedAt", datetime.now(UTC).isoformat()),
                 )
             )
 

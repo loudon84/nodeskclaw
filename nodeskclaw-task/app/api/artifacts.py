@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,13 +22,19 @@ router = APIRouter()
 
 @router.get("", response_model=ApiResponse[list[ArtifactResponse]])
 async def list_artifacts(
-    task_id: str | None = None,
-    run_id: str | None = None,
+    task_id: str | None = Query(None, alias="taskId"),
+    run_id: str | None = Query(None, alias="runId"),
+    task_id_snake: str | None = Query(None, alias="task_id"),
+    run_id_snake: str | None = Query(None, alias="run_id"),
     db: AsyncSession = Depends(get_db),
     user: UserCache = Depends(get_current_user),
 ):
     tenant_id = require_tenant_access(user)
-    artifacts = await artifact_service.list_artifacts(db, tenant_id, task_id=task_id, run_id=run_id)
+    resolved_task_id = task_id or task_id_snake
+    resolved_run_id = run_id or run_id_snake
+    artifacts = await artifact_service.list_artifacts(
+        db, tenant_id, task_id=resolved_task_id, run_id=resolved_run_id
+    )
     return ApiResponse(data=[ArtifactResponse.model_validate(a) for a in artifacts])
 
 
@@ -51,7 +57,7 @@ async def get_download_url(
 ):
     tenant_id = require_tenant_access(user)
     artifact = await artifact_service.get_artifact(db, tenant_id, artifact_id)
-    return ApiResponse(data=ArtifactDownloadUrlResponse(download_url=artifact_service.get_download_url(artifact.storage_key)))
+    return ApiResponse(data=ArtifactDownloadUrlResponse(url=artifact_service.get_download_url(artifact.storage_key)))
 
 
 @router.post("/upload-url", response_model=ApiResponse[ArtifactUploadUrlResponse])

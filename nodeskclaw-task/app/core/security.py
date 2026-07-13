@@ -97,5 +97,20 @@ async def require_permission(
         )
 
 
+_PORTAL_MANAGE_ROLES = {"admin", "operator"}
+
+
+def require_portal_manage_access(user: UserCache) -> None:
+    require_tenant_access(user)
+    if user.is_super_admin:
+        return
+    if (user.org_role or "") in _PORTAL_MANAGE_ROLES:
+        return
+    raise ForbiddenError(
+        message="无权限管理 Portal 账号",
+        message_key="errors.autotask.permission_denied",
+    )
+
+
 def utcnow() -> datetime:
     return datetime.now(UTC)

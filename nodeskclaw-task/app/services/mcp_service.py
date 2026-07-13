@@ -90,15 +90,25 @@ async def call_tool(db: AsyncSession, user: UserCache, request: McpToolCallReque
     args = request.arguments
 
     if request.name == "autotask.portal.search":
-        keyword = (args.get("keyword") or "").lower()
-        accounts = await portal_account_service.list_portal_accounts(db, tenant_id)
-        filtered = [
-            a for a in accounts
-            if keyword in a.portal_name.lower()
-            or keyword in a.login_account.lower()
-            or keyword in a.erp_entity_name.lower()
-        ]
-        return {"items": [{"id": a.id, "portalName": a.portal_name, "loginAccount": a.login_account} for a in filtered]}
+        keyword = args.get("keyword")
+        page = await portal_account_service.list_portal_accounts(
+            db,
+            tenant_id,
+            user,
+            keyword=keyword,
+            page=1,
+            page_size=100,
+        )
+        return {
+            "items": [
+                {
+                    "id": item.id,
+                    "portalName": item.portal_name,
+                    "loginAccount": item.login_account,
+                }
+                for item in page.items
+            ]
+        }
 
     if request.name == "autotask.portal.get":
         portal_id = args["portalAccountId"]

@@ -135,3 +135,63 @@ async def cancel_human_action(db: AsyncSession, tenant_id: str, action_id: str, 
     await db.commit()
     await db.refresh(action)
     return action
+
+
+async def get_active_human_action_for_task(
+    db: AsyncSession,
+    tenant_id: str,
+    task_id: str,
+) -> HumanAction | None:
+    await _get_task_in_tenant(db, tenant_id, task_id)
+    result = await db.execute(
+        select(HumanAction)
+        .join(AutomationTask, HumanAction.task_id == AutomationTask.id)
+        .where(
+            HumanAction.task_id == task_id,
+            AutomationTask.tenant_id == tenant_id,
+            HumanAction.status.in_([HumanActionStatus.PENDING, HumanActionStatus.OPENED]),
+            not_deleted(HumanAction),
+            not_deleted(AutomationTask),
+        )
+        .order_by(HumanAction.created_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def _get_task_in_tenant(db: AsyncSession, tenant_id: str, task_id: str) -> AutomationTask:
+    from app.services.automation_task_service import get_task
+
+    return await get_task(db, tenant_id, task_id)
+
+
+async def open_human_action_for_task(
+    db: AsyncSession,
+    tenant_id: str,
+    task_id: str,
+    user: UserCache,
+) -> tuple[HumanAction, AutomationTask]:
+    action = await get_active_human_action_for_task(db, tenant_id, task_id)
+    if action is None:
+        raise NotFoundError(message="当前任务无待处理人工操作", message_key="errors.autotask.human_action_not_found")
+    action = await open_human_action(db, tenant_id, action.id, user)
+    task = (
+        await db.execute(select(AutomationTask).where(AutomationTask.id == task_id, not_deleted(AutomationTask)))
+    ).scalar_one()
+    return action, task
+
+
+async def confirm_human_action_for_task(
+    db: AsyncSession,
+    tenant_id: str,
+    task_id: str,
+    user: UserCache,
+) -> tuple[HumanAction, AutomationTask]:
+    action = await get_active_human_action_for_task(db, tenant_id, task_id)
+    if action is None:
+        raise NotFoundError(message="当前任务无待处理人工操作", message_key="errors.autotask.human_action_not_found")
+    action = await confirm_human_action(db, tenant_id, action.id, user, resume_running=False)
+    task = (
+        await db.execute(select(AutomationTask).where(AutomationTask.id == task_id, not_deleted(AutomationTask)))
+    ).scalar_one()
+    return action, task
