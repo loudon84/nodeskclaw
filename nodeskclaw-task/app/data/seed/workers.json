@@ -1,13 +1,13 @@
 [
   {
-    "id": "local-001",
-    "workerType": "LOCAL_AGENT",
-    "deviceName": "SMC-AI-PC",
-    "userId": "seed-user-001",
+    "id": "server-worker-001",
+    "workerType": "SERVER_WORKER",
+    "deviceName": "rpa-engine-worker-01",
+    "userId": null,
     "status": "ONLINE",
-    "capabilities": ["playwright", "chromium", "screenshot", "human_takeover"],
-    "appVersion": "0.2.0",
-    "agentVersion": "0.1.0",
-    "os": "Windows 11"
+    "capabilities": ["PLAYWRIGHT_CDP", "BROWSER_SESSION_MANAGED"],
+    "appVersion": "0.3.0",
+    "agentVersion": "0.2.0",
+    "os": "Linux"
   }
 ]

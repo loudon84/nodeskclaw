@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     HOST: str = "0.0.0.0"
     PORT: int = 4520
+    PUBLIC_BASE_URL: str = "http://127.0.0.1:4520"
 
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/nodeskclaw_task"
     DB_POOL_SIZE: int = 10
@@ -26,10 +27,20 @@ class Settings(BaseSettings):
 
     ARTIFACT_STORAGE: str = "local"
     ARTIFACT_LOCAL_DIR: str = "./storage/artifacts"
+    S3_ENDPOINT: str = ""
+    S3_REGION: str = ""
+    S3_BUCKET: str = ""
+    S3_ACCESS_KEY_ID: str = ""
+    S3_SECRET_ACCESS_KEY: str = ""
+    S3_KEY_PREFIX: str = "autotask"
+    S3_PRESIGN_EXPIRES_SECONDS: int = 3600
+
+    RPA_ENGINE_BASE_URL: str = ""
+    RPA_ENGINE_VALIDATE_BINDING: bool = True
 
     CORS_ORIGINS: list[str] = ["http://127.0.0.1:5173", "http://localhost:5173", "http://127.0.0.1:3000"]
 
-    WORKER_LEASE_TTL_SECONDS: int = 120
+    WORKER_LEASE_TTL_SECONDS: int = 60
     WORKER_HEARTBEAT_TIMEOUT_SECONDS: int = 60
 
     SEED_DATA_ENABLED: bool = True

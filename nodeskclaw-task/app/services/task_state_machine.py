@@ -10,16 +10,21 @@ TRANSITIONS: dict[str, set[str]] = {
     TaskStatus.QUEUED: {TaskStatus.LEASED, TaskStatus.CANCELLED},
     TaskStatus.LEASED: {TaskStatus.RUNNING, TaskStatus.QUEUED, TaskStatus.CANCELLED},
     TaskStatus.RUNNING: {
+        TaskStatus.QUEUED,
         TaskStatus.WAITING_HUMAN,
         TaskStatus.SUCCESS,
         TaskStatus.PARTIAL_SUCCESS,
         TaskStatus.FAILED,
         TaskStatus.CANCELLED,
     },
-    TaskStatus.WAITING_HUMAN: {TaskStatus.HUMAN_OPERATING, TaskStatus.FAILED, TaskStatus.CANCELLED},
+    TaskStatus.WAITING_HUMAN: {
+        TaskStatus.HUMAN_OPERATING,
+        TaskStatus.SUCCESS_MANUAL,
+        TaskStatus.FAILED,
+        TaskStatus.CANCELLED,
+    },
     TaskStatus.HUMAN_OPERATING: {
         TaskStatus.SUCCESS_MANUAL,
-        TaskStatus.RUNNING,
         TaskStatus.FAILED,
         TaskStatus.CANCELLED,
     },

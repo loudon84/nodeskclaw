@@ -121,6 +121,8 @@ async def run_seed(session_factory: async_sessionmaker) -> None:
                     rpa_engine_type=item.get("rpaEngineType", "PLAYWRIGHT_CDP"),
                     rpa_flow_id=item["rpaFlowId"],
                     rpa_flow_version=item.get("rpaFlowVersion", "1.0.0"),
+                    rpa_flow_version_id=item.get("rpaFlowVersionId"),
+                    flow_checksum_snapshot=item.get("flowChecksumSnapshot"),
                     status=item.get("status", "ENABLED"),
                     config=dumps_json(item.get("config", {})),
                     created_by=item.get("createdBy", DEFAULT_USER_ID),

@@ -1,26 +1,17 @@
 """Artifact storage and metadata."""
 
-import hashlib
-import hmac
-import time
-from pathlib import Path
-
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
 from app.core.exceptions import NotFoundError
 from app.models.artifact import Artifact
 from app.models.automation_task import AutomationTask
 from app.models.base import not_deleted
+from app.models.rpa_run import RpaRun
 from app.models.user_cache import UserCache
+from app.schemas.dispatch import WorkerArtifactUploadUrlRequest
 from app.schemas.resource import ArtifactUploadUrlRequest
-
-
-def _artifact_root() -> Path:
-    root = Path(settings.ARTIFACT_LOCAL_DIR)
-    root.mkdir(parents=True, exist_ok=True)
-    return root
+from app.services import s3_storage
 
 
 def build_storage_key(tenant_id: str, task_id: str, run_id: str | None, name: str) -> str:
@@ -30,11 +21,6 @@ def build_storage_key(tenant_id: str, task_id: str, run_id: str | None, name: st
         parts.append(run_id)
     parts.append(safe_name)
     return "/".join(parts)
-
-
-def _sign_download(storage_key: str, expires: int) -> str:
-    payload = f"{storage_key}:{expires}"
-    return hmac.new(settings.JWT_SECRET.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
 async def list_artifacts(
@@ -85,24 +71,77 @@ async def create_upload_url(
     if task is None:
         raise NotFoundError(message="任务不存在", message_key="errors.autotask.task_not_found")
 
+    if body.run_id:
+        run = (
+            await db.execute(
+                select(RpaRun).where(
+                    RpaRun.id == body.run_id,
+                    RpaRun.task_id == task.id,
+                    not_deleted(RpaRun),
+                )
+            )
+        ).scalar_one_or_none()
+        if run is None:
+            raise NotFoundError(message="Run 不存在或不属于该任务", message_key="errors.autotask.run_not_found")
+
     storage_key = build_storage_key(tenant_id, body.task_id, body.run_id, body.name)
-    target = _artifact_root() / storage_key
-    target.parent.mkdir(parents=True, exist_ok=True)
-    upload_url = f"/api/v1/autotask/artifacts/upload/{storage_key}"
+    upload_url = s3_storage.create_upload_target(storage_key, body.mime_type)
+    return upload_url, storage_key
+
+
+async def create_worker_upload_url(
+    db: AsyncSession,
+    body: WorkerArtifactUploadUrlRequest,
+) -> tuple[str, str]:
+    run = (
+        await db.execute(
+            select(RpaRun).where(
+                RpaRun.id == body.run_id,
+                RpaRun.task_id == body.task_id,
+                not_deleted(RpaRun),
+            )
+        )
+    ).scalar_one_or_none()
+    if run is None:
+        raise NotFoundError(message="Run 不存在或不属于该任务", message_key="errors.autotask.run_not_found")
+    if run.rpa_worker_id and run.rpa_worker_id != body.worker_id:
+        raise NotFoundError(message="Worker 与 Run 不匹配", message_key="errors.autotask.worker_run_mismatch")
+
+    task = (
+        await db.execute(
+            select(AutomationTask).where(AutomationTask.id == body.task_id, not_deleted(AutomationTask))
+        )
+    ).scalar_one_or_none()
+    if task is None:
+        raise NotFoundError(message="任务不存在", message_key="errors.autotask.task_not_found")
+
+    storage_key = build_storage_key(task.tenant_id, body.task_id, body.run_id, body.name)
+    upload_url = s3_storage.create_upload_target(storage_key, body.mime_type)
     return upload_url, storage_key
 
 
 def get_download_url(storage_key: str) -> str:
-    expires = int(time.time()) + 3600
-    sig = _sign_download(storage_key, expires)
-    return f"/api/v1/autotask/artifacts/download/{storage_key}?expires={expires}&sig={sig}"
+    return s3_storage.create_download_target(storage_key)
 
 
 def verify_download_signature(storage_key: str, expires: int, sig: str) -> bool:
-    if expires < int(time.time()):
-        return False
-    expected = _sign_download(storage_key, expires)
-    return hmac.compare_digest(expected, sig)
+    return s3_storage.verify_local_download_signature(storage_key, expires, sig)
+
+
+def _artifact_root():
+    return s3_storage.local_artifact_root()
+
+
+async def find_artifact_by_storage_key(db: AsyncSession, *, run_id: str, storage_key: str) -> Artifact | None:
+    return (
+        await db.execute(
+            select(Artifact).where(
+                Artifact.run_id == run_id,
+                Artifact.storage_key == storage_key,
+                not_deleted(Artifact),
+            )
+        )
+    ).scalar_one_or_none()
 
 
 async def create_artifact_record(

@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, Index, String, Text
+from sqlalchemy import DateTime, Index, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import BaseModel
@@ -11,6 +11,14 @@ class HumanAction(BaseModel):
     __table_args__ = (
         Index("ix_human_actions_status_created", "status", "created_at"),
         Index("ix_human_actions_task_id", "task_id"),
+        Index(
+            "uq_human_actions_run_id_active",
+            "run_id",
+            unique=True,
+            postgresql_where=text(
+                "deleted_at IS NULL AND run_id IS NOT NULL AND status IN ('PENDING', 'OPENED')"
+            ),
+        ),
     )
 
     task_id: Mapped[str] = mapped_column(String(36), nullable=False)

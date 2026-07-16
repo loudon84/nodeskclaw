@@ -101,23 +101,20 @@ async def confirm_human_action(
     action = await get_human_action(db, tenant_id, action_id)
     if action.status not in {HumanActionStatus.PENDING, HumanActionStatus.OPENED}:
         raise BadRequestError(message="人工操作状态不允许确认", message_key="errors.autotask.human_action_invalid_state")
+    if resume_running:
+        raise BadRequestError(
+            message="不支持恢复原浏览器会话继续运行",
+            message_key="errors.autotask.human_resume_not_supported",
+            details={"error_code": "HUMAN_RESUME_NOT_SUPPORTED"},
+        )
     task = (
         await db.execute(select(AutomationTask).where(AutomationTask.id == action.task_id, not_deleted(AutomationTask)))
     ).scalar_one()
     action.status = HumanActionStatus.CONFIRMED
     action.confirmed_by = user.user_id
     action.confirmed_at = datetime.now(UTC)
-    if resume_running:
-        transition(task, TaskStatus.RUNNING)
-        if action.run_id:
-            run = (
-                await db.execute(select(RpaRun).where(RpaRun.id == action.run_id, not_deleted(RpaRun)))
-            ).scalar_one_or_none()
-            if run:
-                run.status = TaskStatus.RUNNING
-    else:
-        transition(task, TaskStatus.SUCCESS_MANUAL)
-        task.progress = 100
+    transition(task, TaskStatus.SUCCESS_MANUAL)
+    task.progress = 100
     await db.commit()
     await db.refresh(action)
     return action
@@ -131,7 +128,7 @@ async def cancel_human_action(db: AsyncSession, tenant_id: str, action_id: str, 
         await db.execute(select(AutomationTask).where(AutomationTask.id == action.task_id, not_deleted(AutomationTask)))
     ).scalar_one()
     action.status = HumanActionStatus.CANCELLED
-    transition(task, TaskStatus.FAILED)
+    transition(task, TaskStatus.CANCELLED)
     await db.commit()
     await db.refresh(action)
     return action

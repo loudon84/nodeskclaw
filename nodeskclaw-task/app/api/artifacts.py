@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -69,6 +69,15 @@ async def create_upload_url(
     tenant_id = require_tenant_access(user)
     upload_url, storage_key = await artifact_service.create_upload_url(db, tenant_id, user, body)
     return ApiResponse(data=ArtifactUploadUrlResponse(upload_url=upload_url, storage_key=storage_key))
+
+
+@router.put("/upload/{storage_key:path}")
+async def upload_artifact_local(storage_key: str, request: Request):
+    body = await request.body()
+    file_path = Path(artifact_service._artifact_root()) / storage_key
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    file_path.write_bytes(body)
+    return ApiResponse(data={"storageKey": storage_key, "size": len(body)}, message="上传成功")
 
 
 @router.get("/download/{storage_key:path}")

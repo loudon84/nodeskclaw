@@ -2,7 +2,7 @@ import json
 from datetime import datetime
 from typing import Any
 
-from pydantic import Field, field_validator
+from pydantic import AliasChoices, Field, field_validator
 
 from app.schemas.common import CamelModel
 
@@ -87,7 +87,11 @@ class HumanActionResponse(CamelModel):
 
 
 class HumanActionConfirmRequest(CamelModel):
-    resume_running: bool = Field(False, serialization_alias="resumeRunning")
+    resume_running: bool = Field(
+        False,
+        validation_alias=AliasChoices("resume_running", "resumeRunning"),
+        serialization_alias="resumeRunning",
+    )
 
 
 class ArtifactResponse(CamelModel):
@@ -105,10 +109,14 @@ class ArtifactResponse(CamelModel):
 
 
 class ArtifactUploadUrlRequest(CamelModel):
-    task_id: str = Field(serialization_alias="taskId")
-    run_id: str | None = Field(None, serialization_alias="runId")
+    task_id: str = Field(validation_alias=AliasChoices("task_id", "taskId"), serialization_alias="taskId")
+    run_id: str | None = Field(
+        None, validation_alias=AliasChoices("run_id", "runId"), serialization_alias="runId"
+    )
     name: str
-    mime_type: str | None = Field(None, serialization_alias="mimeType")
+    mime_type: str | None = Field(
+        None, validation_alias=AliasChoices("mime_type", "mimeType"), serialization_alias="mimeType"
+    )
 
 
 class ArtifactUploadUrlResponse(CamelModel):

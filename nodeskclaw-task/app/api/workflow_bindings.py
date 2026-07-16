@@ -51,7 +51,7 @@ async def update_workflow_binding(
     user: UserCache = Depends(get_current_user),
 ):
     tenant_id = require_tenant_access(user)
-    binding = await workflow_binding_service.update_workflow_binding(db, tenant_id, binding_id, body)
+    binding = await workflow_binding_service.update_workflow_binding(db, tenant_id, binding_id, body, user)
     return ApiResponse(data=WorkflowBindingResponse.model_validate(binding))
 
 

@@ -7,13 +7,15 @@ from app.schemas.dispatch import (
     RunArtifactCreate,
     RunEventCreate,
     RunFinishRequest,
+    WorkerArtifactUploadUrlRequest,
     WorkerLeaseRenewRequest,
+    WorkerLeaseRenewResponse,
     WorkerLeaseRequest,
     WorkerLeaseResponse,
     WorkerRegisterRequest,
 )
-from app.schemas.resource import RpaRunResponse, RpaWorkerResponse, RunEventResponse
-from app.services import dispatch_service, rpa_worker_service
+from app.schemas.resource import ArtifactUploadUrlResponse, RpaRunResponse, RpaWorkerResponse, RunEventResponse
+from app.services import artifact_service, dispatch_service, rpa_worker_service
 
 router = APIRouter()
 
@@ -52,10 +54,16 @@ async def lease_task(body: WorkerLeaseRequest, db: AsyncSession = Depends(get_db
     return ApiResponse(data=lease)
 
 
-@router.post("/tasks/{task_id}/lease/renew", response_model=ApiResponse[None])
+@router.post("/tasks/{task_id}/lease/renew", response_model=ApiResponse[WorkerLeaseRenewResponse])
 async def renew_lease(task_id: str, body: WorkerLeaseRenewRequest, db: AsyncSession = Depends(get_db)):
-    await dispatch_service.renew_lease(db, task_id, body)
-    return ApiResponse(data=None, message="续租成功")
+    data = await dispatch_service.renew_lease(db, task_id, body)
+    return ApiResponse(data=data, message="续租成功")
+
+
+@router.post("/artifacts/upload-url", response_model=ApiResponse[ArtifactUploadUrlResponse])
+async def create_worker_upload_url(body: WorkerArtifactUploadUrlRequest, db: AsyncSession = Depends(get_db)):
+    upload_url, storage_key = await artifact_service.create_worker_upload_url(db, body)
+    return ApiResponse(data=ArtifactUploadUrlResponse(upload_url=upload_url, storage_key=storage_key))
 
 
 @router.post("/runs/{run_id}/events", response_model=ApiResponse[RunEventResponse])

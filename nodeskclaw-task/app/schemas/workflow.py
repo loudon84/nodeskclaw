@@ -82,6 +82,8 @@ class WorkflowBindingResponse(CamelModel):
     rpa_engine_type: str = Field(serialization_alias="rpaEngineType")
     rpa_flow_id: str = Field(serialization_alias="rpaFlowId")
     rpa_flow_version: str = Field(serialization_alias="rpaFlowVersion")
+    rpa_flow_version_id: str | None = Field(None, serialization_alias="rpaFlowVersionId")
+    flow_checksum_snapshot: str | None = Field(None, serialization_alias="flowChecksumSnapshot")
     status: str
     config: dict[str, Any]
     created_by: str = Field(serialization_alias="createdBy")

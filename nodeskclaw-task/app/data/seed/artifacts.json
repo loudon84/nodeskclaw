@@ -1,14 +1,1 @@
-[
-  {
-    "id": "artifact-001",
-    "tenantId": "seed-tenant-001",
-    "taskId": "task-001",
-    "runId": "run-001",
-    "type": "SCREENSHOT",
-    "name": "login-page.png",
-    "storageKey": "seed-tenant-001/task-001/run-001/login-page.png",
-    "size": 102400,
-    "mimeType": "image/png",
-    "createdBy": "seed-user-001"
-  }
-]
+[]
