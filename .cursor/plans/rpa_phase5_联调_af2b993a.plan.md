@@ -7,25 +7,25 @@ todos:
     status: completed
   - id: lease-snapshot
     content: Lease 完整快照响应 + command_snapshot 首次写入/重投复用 + 过期重入队
-    status: in_progress
+    status: completed
   - id: renew-expires
     content: Renew 校验过期并返回 data.leaseExpiresAt
-    status: pending
+    status: completed
   - id: events-steprun
     content: STEP_* 事件 upsert 投影到 StepRun
-    status: pending
+    status: completed
   - id: finish-human-a2
     content: finish 三态+HumanAction；A2 保留 SUCCESS_MANUAL；拒绝 resume
-    status: pending
+    status: completed
   - id: artifact-s3
     content: boto3 MinIO 预签名 PUT/GET + 幂等登记 + worker upload-url
-    status: pending
+    status: completed
   - id: validate-binding-seed
     content: Engine validate-binding 客户端 + Binding CRUD 接入 + 联调 seed
-    status: pending
+    status: completed
   - id: tests-postman
     content: Phase5 契约/并发/快照/幂等测试 + Postman snake_case 修复
-    status: pending
+    status: completed
 isProject: false
 ---
 

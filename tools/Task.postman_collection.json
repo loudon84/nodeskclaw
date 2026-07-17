@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "65de6bf8-5736-4df6-9be0-0e86d6c556d8",
     "name": "NoDeskClaw AutoTask",
-    "description": "Postman collection for nodeskclaw-task AutoTask APIs. Run 01 Auth first (nodeskclaw-backend JWT), then Client REST / MCP folders. Worker Dispatch folder has no JWT. See docs/backend/nodeskclaw_task.md.",
+    "description": "Postman collection for nodeskclaw-task AutoTask APIs (PRD v7.2 / RPA Phase 5).\n\n契约约定：\n- Client REST / MCP：Bearer JWT（先跑 01 Auth）\n- Worker Dispatch：无 JWT；请求体 snake_case，响应 data camelCase，成功 code=0\n- Lease 返回完整执行快照（含 tenantId/workflowCode/credentialRef/config/leaseExpiresAt）\n- Renew 返回 data.leaseExpiresAt（RFC3339）\n- Events 投影 STEP_* 到 StepRun；finish 支持 SUCCESS/FAILED/WAITING_HUMAN\n- HumanAction（实现 A2）：confirm resumeRunning=true 返回 HUMAN_RESUME_NOT_SUPPORTED；false 时 Task=SUCCESS_MANUAL，Run 保持 WAITING_HUMAN\n- Artifact：upload-url 返回 MinIO/S3 预签名 PUT（或 local 绝对 URL）；Worker 可用 worker-api/artifacts/upload-url\n- 联调 seed：template code=srm_fetch_po，flow=rpa_flow_mock_srm_fetch_po，input 使用 po_no（不要改成 poNo）\n参考：docs_task/v7.2_RPA-Phase-5-联调改造单.md",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -62,7 +62,7 @@
     },
     {
       "key": "workflow_template_id",
-      "value": ""
+      "value": "wf-template-001"
     },
     {
       "key": "workflow_binding_id",
@@ -70,7 +70,7 @@
     },
     {
       "key": "task_id",
-      "value": "task-001"
+      "value": "task-phase5-success"
     },
     {
       "key": "run_id",
@@ -82,7 +82,7 @@
     },
     {
       "key": "worker_id",
-      "value": "worker-dev-001"
+      "value": "server-worker-001"
     },
     {
       "key": "human_action_id",
@@ -107,6 +107,22 @@
     {
       "key": "artifact_download_url",
       "value": ""
+    },
+    {
+      "key": "tenant_id",
+      "value": "seed-tenant-001"
+    },
+    {
+      "key": "upload_url",
+      "value": ""
+    },
+    {
+      "key": "rpa_flow_id",
+      "value": "rpa_flow_mock_srm_fetch_po"
+    },
+    {
+      "key": "workflow_code",
+      "value": "srm_fetch_po"
     }
   ],
   "auth": {
@@ -550,13 +566,14 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"entityType\": \"CUSTOMER\",\n  \"erpEntityCode\": \"CUST-DEMO\",\n  \"erpEntityName\": \"示例客户\",\n  \"portalName\": \"SRM 门户\",\n  \"portalUrl\": \"https://portal.example.com/srm\",\n  \"loginAccount\": \"buyer@example.com\",\n  \"clientOpenMode\": \"webcontents\",\n  \"clientSessionPartition\": \"persist:portal-demo\",\n  \"status\": \"ENABLED\"\n}",
+              "raw": "{\n  \"entityType\": \"CUSTOMER\",\n  \"erpEntityCode\": \"CUST-DEMO\",\n  \"erpEntityName\": \"示例客户\",\n  \"portalName\": \"SRM 门户\",\n  \"portalUrl\": \"https://portal.example.com/srm\",\n  \"loginAccount\": \"buyer@example.com\",\n  \"clientOpenMode\": \"webcontents\",\n  \"clientSessionPartition\": \"persist:portal-demo\",\n  \"status\": \"ENABLED\",\n  \"credentialRef\": \"credential-ref-mock-srm\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
-            }
+            },
+            "description": "v7.2 Lease 需要 portal_accounts.credentialRef 与 portalUrl。联调 seed 使用 credential-ref-mock-srm。"
           },
           "response": [],
           "event": [
@@ -930,13 +947,14 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"拉取 PO\",\n  \"code\": \"fetch_po\",\n  \"description\": \"从 SRM 拉取采购订单\",\n  \"entityType\": \"CUSTOMER\",\n  \"category\": \"procurement\",\n  \"status\": \"DRAFT\",\n  \"version\": \"1.0.0\",\n  \"inputSchema\": [\n    {\"name\": \"poNo\", \"type\": \"string\", \"required\": true}\n  ],\n  \"businessSteps\": []\n}",
+              "raw": "{\n  \"name\": \"SRM 拉取采购订单\",\n  \"code\": \"srm_fetch_po\",\n  \"description\": \"从客户 Mock SRM 门户拉取 PO\",\n  \"entityType\": \"CUSTOMER\",\n  \"category\": \"procurement\",\n  \"status\": \"DRAFT\",\n  \"version\": \"1.0.0\",\n  \"inputSchema\": [\n    {\n      \"name\": \"po_no\",\n      \"label\": \"PO 编号\",\n      \"type\": \"string\",\n      \"required\": true\n    }\n  ],\n  \"businessSteps\": [\n    {\n      \"id\": \"login\",\n      \"name\": \"登录门户\"\n    },\n    {\n      \"id\": \"srm.search_po\",\n      \"name\": \"搜索采购订单\"\n    },\n    {\n      \"id\": \"srm.fetch_po\",\n      \"name\": \"拉取 PO 详情\"\n    }\n  ]\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
-            }
+            },
+            "description": "v7.2：联调模板 code 必须为 srm_fetch_po；inputSchema 使用 po_no（禁止 poNo）。"
           },
           "response": [],
           "event": [
@@ -1214,13 +1232,14 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"portalAccountId\": \"{{portal_account_id}}\",\n  \"workflowTemplateId\": \"{{workflow_template_id}}\",\n  \"workflowTemplateVersion\": \"1.0.0\",\n  \"rpaEngineType\": \"PLAYWRIGHT_CDP\",\n  \"rpaFlowId\": \"flow-fetch-po\",\n  \"rpaFlowVersion\": \"1.0.0\",\n  \"status\": \"ENABLED\",\n  \"config\": {}\n}",
+              "raw": "{\n  \"portalAccountId\": \"{{portal_account_id}}\",\n  \"workflowTemplateId\": \"{{workflow_template_id}}\",\n  \"workflowTemplateVersion\": \"1.0.0\",\n  \"rpaEngineType\": \"PLAYWRIGHT_CDP\",\n  \"rpaFlowId\": \"{{rpa_flow_id}}\",\n  \"rpaFlowVersion\": \"1.0.0\",\n  \"status\": \"ENABLED\",\n  \"config\": {\n    \"browserSession\": {\n      \"mode\": \"MANAGED\",\n      \"headless\": true,\n      \"channel\": \"chrome\",\n      \"profileRef\": null,\n      \"cdpEndpointRef\": null,\n      \"closePolicy\": \"CLOSE_ON_FINISH\"\n    }\n  }\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
-            }
+            },
+            "description": "v7.2：创建/更新会调用 Engine validate-binding，回填 rpaFlowVersionId 与 flowChecksumSnapshot。config.browserSession.mode 必须为 MANAGED。响应可能包含 rpaFlowVersionId / flowChecksumSnapshot。"
           },
           "response": [],
           "event": [
@@ -1312,13 +1331,14 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"rpaFlowVersion\": \"1.0.1\"\n}",
+              "raw": "{\n  \"rpaFlowVersion\": \"1.0.0\",\n  \"config\": {\n    \"browserSession\": {\n      \"mode\": \"MANAGED\",\n      \"headless\": true,\n      \"channel\": \"chrome\",\n      \"closePolicy\": \"CLOSE_ON_FINISH\"\n    }\n  }\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
-            }
+            },
+            "description": "更新 rpaFlowId/rpaFlowVersion 时会再次 validate-binding 并刷新版本快照字段。"
           },
           "response": [],
           "event": [
@@ -1544,13 +1564,14 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"title\": \"拉取 PO-20260708-001\",\n  \"taskType\": \"fetch_po\",\n  \"portalAccountId\": \"{{portal_account_id}}\",\n  \"workflowBindingId\": \"{{workflow_binding_id}}\",\n  \"entityType\": \"CUSTOMER\",\n  \"erpEntityCode\": \"CUST-001\",\n  \"erpEntityName\": \"示例客户 A\",\n  \"priority\": \"NORMAL\",\n  \"input\": {\"poNo\": \"PO-20260708-001\"}\n}",
+              "raw": "{\n  \"title\": \"Mock SRM 拉取 PO 成功\",\n  \"taskType\": \"srm_fetch_po\",\n  \"portalAccountId\": \"{{portal_account_id}}\",\n  \"workflowBindingId\": \"{{workflow_binding_id}}\",\n  \"entityType\": \"CUSTOMER\",\n  \"erpEntityCode\": \"CUST-001\",\n  \"erpEntityName\": \"示例客户 A\",\n  \"priority\": \"NORMAL\",\n  \"input\": {\n    \"po_no\": \"PO-20260708-001\"\n  }\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
-            }
+            },
+            "description": "v7.2 Phase5 联调三条任务 input 必须使用 po_no：\n- PO-20260708-001 成功\n- PO-NOT-FOUND 失败\n- PO-MANUAL-001 人工\n不要转换成 poNo。seed 任务 ID：task-phase5-success / failed / manual。"
           },
           "response": [],
           "event": [
@@ -2345,7 +2366,8 @@
                 "{{human_action_id}}",
                 "open"
               ]
-            }
+            },
+            "description": "A2：Action=OPENED，Task 进入 HUMAN_OPERATING（保留门户语义，非纯类型 A 的保持 WAITING_HUMAN）。"
           },
           "response": [],
           "event": [
@@ -2394,13 +2416,14 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"resumeRunning\": true\n}",
+              "raw": "{\n  \"resumeRunning\": false\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
-            }
+            },
+            "description": "A2：resumeRunning=false → Action=CONFIRMED，Task=SUCCESS_MANUAL，原 Run 保持 WAITING_HUMAN，不创建新 Run、不入队。\nresumeRunning=true → 业务错误 HUMAN_RESUME_NOT_SUPPORTED（不恢复 Playwright 会话）。"
           },
           "response": [],
           "event": [
@@ -2411,7 +2434,11 @@
                 "exec": [
                   "",
                   "const json = pm.response.json();",
-                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                  "pm.test(\"success or resume rejected\", function () {",
+                  "  const ok = json.code === 0;",
+                  "  const rejected = json.message_key === 'errors.autotask.human_resume_not_supported';",
+                  "  pm.expect(ok || rejected).to.eql(true);",
+                  "});"
                 ],
                 "packages": {},
                 "requests": {}
@@ -2442,7 +2469,8 @@
                 "{{human_action_id}}",
                 "cancel"
               ]
-            }
+            },
+            "description": "A2：Action=CANCELLED，Task=CANCELLED。"
           },
           "response": [],
           "event": [
@@ -2734,7 +2762,8 @@
                   "language": "json"
                 }
               }
-            }
+            },
+            "description": "JWT 版 upload-url。\nv7.2：返回 Engine 可访问的 MinIO/S3 预签名 PUT URL（ARTIFACT_STORAGE=s3），或 local 模式下的绝对 URL。storageKey 按 tenant/task/run 隔离。\nEngine 无 JWT 时请改用 11 Worker Dispatch 中的 Worker request artifact upload URL。"
           },
           "response": [],
           "event": [
@@ -2746,8 +2775,9 @@
                   "",
                   "const json = pm.response.json();",
                   "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });",
-                  "if (json.data && json.data.storageKey) {",
-                  "  pm.collectionVariables.set(\"storage_key\", json.data.storageKey);",
+                  "if (json.data) {",
+                  "  if (json.data.storageKey) pm.collectionVariables.set(\"storage_key\", json.data.storageKey);",
+                  "  if (json.data.uploadUrl) pm.collectionVariables.set(\"upload_url\", json.data.uploadUrl);",
                   "}"
                 ],
                 "packages": {},
@@ -2899,9 +2929,10 @@
                 "register"
               ]
             },
+            "description": "capabilities 表示 Worker 能力，必须使用 PLAYWRIGHT_CDP / BROWSER_SESSION_MANAGED，禁止再用 fetch_po。",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"workerId\": \"{{worker_id}}\",\n  \"workerType\": \"LOCAL_AGENT\",\n  \"deviceName\": \"dev-laptop\",\n  \"capabilities\": [\"PLAYWRIGHT_CDP\", \"fetch_po\"]\n}",
+              "raw": "{\n  \"worker_id\": \"{{worker_id}}\",\n  \"worker_type\": \"SERVER_WORKER\",\n  \"device_name\": \"rpa-engine-worker-01\",\n  \"capabilities\": [\n    \"PLAYWRIGHT_CDP\",\n    \"BROWSER_SESSION_MANAGED\"\n  ]\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -2954,6 +2985,7 @@
                 "heartbeat"
               ]
             },
+            "description": "心跳保活。",
             "auth": {
               "type": "noauth"
             }
@@ -3003,9 +3035,10 @@
                 "lease"
               ]
             },
+            "description": "领取 QUEUED 任务。无可执行任务时 data=null。\n有任务时 data 含完整执行快照：tenantId/workflowTemplateId/workflowCode/rpaEngineType/rpaFlowVersion/credentialRef/config{portalUrl,browserSession}/leaseExpiresAt。\n首次 lease 写入 command_snapshot；租约过期重投复用原 runId + snapshot，换新 leaseId。\n绑定缺版本快照返回 BINDING_FLOW_SNAPSHOT_MISSING。",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"workerId\": \"{{worker_id}}\",\n  \"capabilities\": [\"fetch_po\"],\n  \"limit\": 1\n}",
+              "raw": "{\n  \"worker_id\": \"{{worker_id}}\",\n  \"capabilities\": [\n    \"PLAYWRIGHT_CDP\",\n    \"BROWSER_SESSION_MANAGED\"\n  ],\n  \"limit\": 1\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -3027,9 +3060,16 @@
                   "const json = pm.response.json();",
                   "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });",
                   "if (json.data) {",
+                  "  const required = ['taskId','runId','leaseId','workflowBindingId','portalAccountId','rpaFlowId','input','tenantId','workflowTemplateId','workflowCode','rpaEngineType','rpaFlowVersion','credentialRef','config','leaseExpiresAt'];",
+                  "  pm.test(\"lease snapshot fields\", function () {",
+                  "    required.forEach(function (k) { pm.expect(json.data).to.have.property(k); });",
+                  "    pm.expect(json.data.config).to.have.property('portalUrl');",
+                  "    pm.expect(json.data.config).to.have.property('browserSession');",
+                  "  });",
                   "  if (json.data.taskId) pm.collectionVariables.set(\"task_id\", json.data.taskId);",
                   "  if (json.data.runId) pm.collectionVariables.set(\"run_id\", json.data.runId);",
                   "  if (json.data.leaseId) pm.collectionVariables.set(\"lease_id\", json.data.leaseId);",
+                  "  if (json.data.tenantId) pm.collectionVariables.set(\"tenant_id\", json.data.tenantId);",
                   "}"
                 ],
                 "packages": {},
@@ -3068,9 +3108,73 @@
                 "renew"
               ]
             },
+            "description": "续租：校验 taskId+workerId+leaseId，租约未过期。\n成功响应 data.leaseExpiresAt（RFC3339 带时区）。错 Worker/错 lease/已过期必须拒绝。",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"workerId\": \"{{worker_id}}\",\n  \"leaseId\": \"{{lease_id}}\"\n}",
+              "raw": "{\n  \"worker_id\": \"{{worker_id}}\",\n  \"lease_id\": \"{{lease_id}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });",
+                  "pm.test(\"leaseExpiresAt present\", function () {",
+                  "  pm.expect(json.data).to.have.property(\"leaseExpiresAt\");",
+                  "});"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "Report run event - STEP_STARTED",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/worker-api/runs/{{run_id}}/events",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "worker-api",
+                "runs",
+                "{{run_id}}",
+                "events"
+              ]
+            },
+            "description": "投影 StepRun=RUNNING；缺 stepName 时用 stepId 作为显示名；更新 Run/Task 当前步骤。",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"worker_id\": \"{{worker_id}}\",\n  \"type\": \"STEP_STARTED\",\n  \"level\": \"INFO\",\n  \"message\": \"Searching for purchase order\",\n  \"payload\": {\n    \"stepId\": \"srm.search_po\",\n    \"stepType\": \"srm.search_po\"\n  }\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -3099,7 +3203,7 @@
           ]
         },
         {
-          "name": "Report run event",
+          "name": "Report run event - STEP_SUCCEEDED",
           "request": {
             "method": "POST",
             "header": [
@@ -3127,9 +3231,10 @@
                 "events"
               ]
             },
+            "description": "投影 StepRun=SUCCESS。",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"workerId\": \"{{worker_id}}\",\n  \"type\": \"RUN_STARTED\",\n  \"level\": \"INFO\",\n  \"message\": \"Run started\"\n}",
+              "raw": "{\n  \"worker_id\": \"{{worker_id}}\",\n  \"type\": \"STEP_SUCCEEDED\",\n  \"level\": \"INFO\",\n  \"message\": \"PO found\",\n  \"payload\": {\n    \"stepId\": \"srm.search_po\",\n    \"stepName\": \"搜索采购订单\"\n  }\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -3150,6 +3255,249 @@
                   "",
                   "const json = pm.response.json();",
                   "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "Report run event - STEP_FAILED",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/worker-api/runs/{{run_id}}/events",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "worker-api",
+                "runs",
+                "{{run_id}}",
+                "events"
+              ]
+            },
+            "description": "投影 StepRun=FAILED。",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"worker_id\": \"{{worker_id}}\",\n  \"type\": \"STEP_FAILED\",\n  \"level\": \"ERROR\",\n  \"message\": \"PO not found\",\n  \"payload\": {\n    \"stepId\": \"srm.search_po\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "Report run event - STEP_WAITING_HUMAN",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/worker-api/runs/{{run_id}}/events",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "worker-api",
+                "runs",
+                "{{run_id}}",
+                "events"
+              ]
+            },
+            "description": "投影 StepRun=WAITING_HUMAN。HumanAction 由 finish(WAITING_HUMAN) 创建，事件侧不再单独建 Action（避免双建）。",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"worker_id\": \"{{worker_id}}\",\n  \"type\": \"STEP_WAITING_HUMAN\",\n  \"level\": \"WARN\",\n  \"message\": \"CAPTCHA required\",\n  \"payload\": {\n    \"stepId\": \"srm.search_po\",\n    \"stepName\": \"搜索采购订单\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "Report run event - FLOW_LOG",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/worker-api/runs/{{run_id}}/events",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "worker-api",
+                "runs",
+                "{{run_id}}",
+                "events"
+              ]
+            },
+            "description": "FLOW_LOG / RUNTIME_* 只保存 RunEvent，不创建 StepRun。",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"worker_id\": \"{{worker_id}}\",\n  \"type\": \"FLOW_LOG\",\n  \"level\": \"INFO\",\n  \"message\": \"navigated to search page\",\n  \"payload\": {\n    \"logger\": \"engine\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "Worker request artifact upload URL",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/worker-api/artifacts/upload-url",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "worker-api",
+                "artifacts",
+                "upload-url"
+              ]
+            },
+            "description": "Engine 无 JWT 时使用本接口。响应 uploadUrl（预签名 PUT）+ storageKey。\n随后对 uploadUrl 直接 PUT 文件内容，再调用 Register run artifact。",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"worker_id\": \"{{worker_id}}\",\n  \"task_id\": \"{{task_id}}\",\n  \"run_id\": \"{{run_id}}\",\n  \"name\": \"login-page.png\",\n  \"mime_type\": \"image/png\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });",
+                  "if (json.data) {",
+                  "  if (json.data.storageKey) pm.collectionVariables.set(\"storage_key\", json.data.storageKey);",
+                  "  if (json.data.uploadUrl) pm.collectionVariables.set(\"upload_url\", json.data.uploadUrl);",
+                  "}"
                 ],
                 "packages": {},
                 "requests": {}
@@ -3186,9 +3534,10 @@
                 "artifacts"
               ]
             },
+            "description": "登记 metadata。校验 run 属于 task、storageKey 在 tenant/task/run 范围内。同一 runId+storageKey 重复回调幂等成功。",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"type\": \"SCREENSHOT\",\n  \"name\": \"login-page.png\",\n  \"storageKey\": \"runs/{{run_id}}/login-page.png\",\n  \"size\": 102400,\n  \"mimeType\": \"image/png\"\n}",
+              "raw": "{\n  \"type\": \"SCREENSHOT\",\n  \"name\": \"login-page.png\",\n  \"storage_key\": \"{{storage_key}}\",\n  \"size\": 102400,\n  \"mime_type\": \"image/png\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -3217,7 +3566,7 @@
           ]
         },
         {
-          "name": "Finish run",
+          "name": "Finish run - SUCCESS",
           "request": {
             "method": "POST",
             "header": [
@@ -3245,6 +3594,7 @@
                 "finish"
               ]
             },
+            "description": "Run=SUCCESS + ended_at；Task=SUCCESS + progress=100。同状态重复 finish 幂等成功。",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"status\": \"SUCCESS\"\n}",
@@ -3274,8 +3624,129 @@
               }
             }
           ]
+        },
+        {
+          "name": "Finish run - FAILED",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/worker-api/runs/{{run_id}}/finish",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "worker-api",
+                "runs",
+                "{{run_id}}",
+                "finish"
+              ]
+            },
+            "description": "Run=FAILED 保存 error；Task=FAILED。不同 terminal 覆盖返回冲突。",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"FAILED\",\n  \"error_code\": \"PO_NOT_FOUND\",\n  \"error_message\": \"Purchase order not found\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
+        },
+        {
+          "name": "Finish run - WAITING_HUMAN",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{task_base_url}}/api/v1/autotask/worker-api/runs/{{run_id}}/finish",
+              "host": [
+                "{{task_base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "autotask",
+                "worker-api",
+                "runs",
+                "{{run_id}}",
+                "finish"
+              ]
+            },
+            "description": "Run/Task=WAITING_HUMAN，创建 PENDING HumanAction：\ntype=CAPTCHA_OR_MFA，targetUrl=portal_url，payload 含 runId/stepId/errorCode。\n重复同状态 finish 不重复创建 HumanAction。",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"WAITING_HUMAN\",\n  \"error_code\": \"HUMAN_VERIFICATION_REQUIRED\",\n  \"error_message\": \"Mock SRM requires CAPTCHA or MFA verification\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"success\", function () { pm.expect(json.code).to.eql(0); });"
+                ],
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ]
         }
-      ]
+      ],
+      "description": "RPA Engine Worker API（无 JWT）。请求 snake_case，响应 data camelCase。\n推荐联调顺序：Register → Lease → Renew → Events(STEP_*) → Upload-url → PUT 文件 → Register artifact → Finish(SUCCESS|FAILED|WAITING_HUMAN)。"
     },
     {
       "name": "12 MCP Tools API",
@@ -3517,13 +3988,14 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"autotask.task.create\",\n  \"arguments\": {\n    \"title\": \"MCP 创建任务\",\n    \"taskType\": \"fetch_po\",\n    \"portalAccountId\": \"{{portal_account_id}}\",\n    \"workflowBindingId\": \"{{workflow_binding_id}}\",\n    \"entityType\": \"CUSTOMER\",\n    \"erpEntityCode\": \"CUST-001\",\n    \"erpEntityName\": \"示例客户 A\",\n    \"input\": {\"poNo\": \"PO-MCP-001\"}\n  }\n}",
+              "raw": "{\n  \"name\": \"autotask.task.create\",\n  \"arguments\": {\n    \"title\": \"MCP 创建 Mock SRM 任务\",\n    \"taskType\": \"srm_fetch_po\",\n    \"portalAccountId\": \"{{portal_account_id}}\",\n    \"workflowBindingId\": \"{{workflow_binding_id}}\",\n    \"entityType\": \"CUSTOMER\",\n    \"erpEntityCode\": \"CUST-001\",\n    \"erpEntityName\": \"示例客户 A\",\n    \"input\": {\n      \"po_no\": \"PO-20260708-001\"\n    }\n  }\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
-            }
+            },
+            "description": "v7.2：input 使用 po_no，不要 poNo。"
           },
           "response": [],
           "event": [
@@ -3792,13 +4264,14 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"autotask.human_action.confirm\",\n  \"arguments\": {\"humanActionId\": \"{{human_action_id}}\", \"resumeRunning\": true}\n}",
+              "raw": "{\n  \"name\": \"autotask.human_action.confirm\",\n  \"arguments\": {\n    \"humanActionId\": \"{{human_action_id}}\",\n    \"resumeRunning\": false\n  }\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
-            }
+            },
+            "description": "A2：resumeRunning 必须为 false；true 会返回 HUMAN_RESUME_NOT_SUPPORTED。"
           },
           "response": [],
           "event": [

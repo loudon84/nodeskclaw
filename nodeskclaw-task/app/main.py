@@ -23,16 +23,33 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def _restore_logging_after_alembic(saved_handlers: list, saved_level: int) -> None:
+    root_log = logging.getLogger()
+    root_log.handlers = saved_handlers
+    root_log.level = saved_level
+    for name in logging.Logger.manager.loggerDict:
+        obj = logging.Logger.manager.loggerDict[name]
+        if isinstance(obj, logging.Logger) and obj.disabled:
+            obj.disabled = False
+
+
 async def _auto_migrate() -> None:
     from alembic.config import Config
 
     from alembic import command
 
     def _run() -> None:
+        root_log = logging.getLogger()
+        saved_handlers = root_log.handlers[:]
+        saved_level = root_log.level
+
         backend_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
         cfg = Config(os.path.join(backend_root, "alembic.ini"))
         cfg.set_main_option("script_location", os.path.join(backend_root, "alembic"))
-        command.upgrade(cfg, "head")
+        try:
+            command.upgrade(cfg, "head")
+        finally:
+            _restore_logging_after_alembic(saved_handlers, saved_level)
 
     await asyncio.to_thread(_run)
 
@@ -43,17 +60,25 @@ async def lifespan(app: FastAPI):
 
     if os.environ.get("SKIP_AUTO_MIGRATE") != "1":
         try:
+            logger.info("正在执行数据库迁移 (alembic upgrade head) ...")
             await _auto_migrate()
             logger.info("数据库迁移完成")
         except Exception:
             logger.exception("数据库迁移失败")
             raise
+    else:
+        logger.info("SKIP_AUTO_MIGRATE=1，跳过自动迁移")
 
     if settings.SEED_DATA_ENABLED:
         from app.core.deps import async_session_factory
         from app.startup.seed import run_seed
 
-        await run_seed(async_session_factory)
+        try:
+            await run_seed(async_session_factory)
+        except Exception:
+            logger.exception("种子数据同步失败（不影响服务启动）")
+    else:
+        logger.info("SEED_DATA_ENABLED=false，跳过种子数据")
 
     yield
     await engine.dispose()
