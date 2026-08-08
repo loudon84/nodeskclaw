@@ -3,15 +3,17 @@
 import logging
 
 import httpx
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 
 from app.api.router import api_router
 from app.core.config import settings
+from app.core.deps import async_session_factory
 from app.core.exceptions import register_exception_handlers
 from app.integrations.nodeskclaw_backend.client import NodeskclawBackendClient
 from app.integrations.ragflow.client import RagflowClient
-from contextlib import asynccontextmanager
 
 logging.basicConfig(
     level=logging.INFO,
@@ -21,6 +23,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+# @lat: [[knowledge#Shared Http Clients]]
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("%s %s starting", settings.APP_NAME, settings.APP_VERSION)
@@ -40,19 +43,15 @@ async def lifespan(app: FastAPI):
     app.state.backend_client = backend_client
     app.state.ragflow_client = ragflow_client
 
-    try:
-        from app.integrations.llm_proxy.client import LlmProxyClient
+    from app.integrations.llm_proxy.client import LlmProxyClient
 
-        app.state.llm_proxy_client = LlmProxyClient(http_client=llm_http)
-    except Exception:
-        app.state.llm_proxy_client = None
+    app.state.llm_proxy_client = LlmProxyClient(http_client=llm_http)
 
     yield
 
     await backend_client.aclose()
     await ragflow_client.aclose()
-    if app.state.llm_proxy_client is not None:
-        await app.state.llm_proxy_client.aclose()
+    await app.state.llm_proxy_client.aclose()
     await backend_http.aclose()
     await ragflow_http.aclose()
     await llm_http.aclose()
@@ -74,6 +73,35 @@ app.include_router(api_router, prefix="/api/v1")
 @app.get("/health/live")
 async def health_live():
     return {"status": "ok"}
+
+
+@app.get("/health/ready")
+async def health_ready():
+    checks: dict[str, bool] = {}
+    try:
+        async with async_session_factory() as session:
+            await session.execute(text("SELECT 1"))
+        checks["database"] = True
+    except Exception:
+        checks["database"] = False
+
+    ragflow = RagflowClient()
+    try:
+        checks["ragflow"] = await ragflow.system_health()
+    finally:
+        await ragflow.aclose()
+
+    backend = NodeskclawBackendClient()
+    try:
+        checks["backend"] = await backend.health_check()
+    finally:
+        await backend.aclose()
+
+    ready = all(checks.values())
+    return {
+        "status": "ok" if ready else "degraded",
+        "checks": checks,
+    }
 
 
 @app.get("/health")

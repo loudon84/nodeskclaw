@@ -21,6 +21,7 @@ from app.integrations.ragflow.models import (
 logger = logging.getLogger(__name__)
 
 
+# @lat: [[knowledge#Isolation From Ragflow]]
 class RagflowClient:
     def __init__(
         self,
@@ -72,11 +73,12 @@ class RagflowClient:
         attempts = 3 if retry else 1
         last_exc: Exception | None = None
         client = await self._ensure_client()
+        request_url = path if str(client.base_url) else f"{self.base_url}{path}"
         for attempt in range(attempts):
             try:
                 resp = await client.request(
                     method,
-                    path if self._http_client and str(getattr(client, "base_url", "")) else f"{self.base_url}{path}",
+                    request_url,
                     headers=self._headers(),
                     json=json,
                     params=params,

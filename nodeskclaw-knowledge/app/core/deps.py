@@ -32,6 +32,7 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
         yield session
 
 
+# @lat: [[knowledge#Shared Http Clients]]
 def get_backend_client(request: Request) -> NodeskclawBackendClient:
     client = getattr(request.app.state, "backend_client", None)
     if client is None:
@@ -57,6 +58,7 @@ def get_llm_proxy_client(request: Request):
     return LlmProxyClient()
 
 
+# @lat: [[knowledge#Auth Integration]]
 async def get_member_context(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),

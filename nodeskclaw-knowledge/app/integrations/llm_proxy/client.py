@@ -16,6 +16,7 @@ from app.integrations.llm_proxy.models import ChatCompletionRequest, ChatComplet
 logger = logging.getLogger(__name__)
 
 
+# @lat: [[decisions/knowledge-ragflow-split#Llm Proxy Boundary]]
 class LlmProxyClient:
     def __init__(
         self,
