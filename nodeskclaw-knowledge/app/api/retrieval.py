@@ -1,0 +1,32 @@
+"""Retrieval route."""
+
+from fastapi import APIRouter, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.deps import get_db, get_member_context, get_ragflow_client
+from app.integrations.ragflow.client import RagflowClient
+from app.schemas.common import ApiResponse
+from app.schemas.knowledge import RetrievalRequest, RetrievalResponse
+from app.schemas.principal import KnowledgePrincipal
+from app.services import retrieval_service
+
+router = APIRouter(tags=["retrieval"])
+
+
+@router.post("/retrieval", response_model=ApiResponse[RetrievalResponse])
+async def retrieve(
+    body: RetrievalRequest,
+    member: KnowledgePrincipal = Depends(get_member_context),
+    db: AsyncSession = Depends(get_db),
+    ragflow: RagflowClient = Depends(get_ragflow_client),
+):
+    data = await retrieval_service.retrieve(
+        db,
+        member,
+        ragflow,
+        knowledge_set_id=body.knowledge_set_id,
+        query=body.query,
+        top_k=body.top_k,
+        similarity_threshold=body.similarity_threshold,
+    )
+    return ApiResponse(data=RetrievalResponse.model_validate(data))

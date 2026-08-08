@@ -8,13 +8,13 @@
 
 Knowledge 作为兄弟服务包落在仓库根目录 `nodeskclaw-knowledge/`，与 Backend / LLM Proxy / Task 并列，不并入 `nodeskclaw-backend` 进程。
 
-脚手架对齐 `nodeskclaw-task`：`app/api`（`router.py` 聚合，域文件平铺，不用 `api/v1/` 子目录）、`schemas`、`services`、`models`、`core`、`integrations/`、自管 `alembic/` 与独立 `DATABASE_URL`。默认不建强制 `repositories/` 层；复杂查询可局部抽取。首版不引入 Redis。环境变量至少含 JWT 共享密钥、`NODESKCLAW_BACKEND_URL`、`RAGFLOW_BASE_URL` / `RAGFLOW_API_KEY`。
+脚手架对齐 `nodeskclaw-task`：`app/api`（`router.py` 聚合，域文件平铺）、`schemas`、`services`、`models`、`core`、`integrations/`、自管 `alembic/` 与独立 `DATABASE_URL`。入口：[[nodeskclaw-knowledge/app/main.py]]。默认不建强制 `repositories/` 层。首版不引入 Redis。环境变量至少含 JWT 共享密钥、`NODESKCLAW_BACKEND_URL`、`RAGFLOW_BASE_URL` / `RAGFLOW_API_KEY`。
 
 ## Auth Integration
 
 桌面端与调用方携带 nodeskclaw JWT；Knowledge 不校验组织成员表本身，而是调用 Backend 的 Knowledge Context 接口换取实时 Principal。
 
-Principal 以 `OrgMembership.id`（`member_id`）为准，不是裸 `user_id`。JWT 只承载 Identity；部门 / 角色等 Authorization Context 必须实时拉取，避免旧 Token 固化权限。Backend 需提供如 `GET /api/v1/auth/knowledge-context` 的薄接口，而不是让 Knowledge 直连 Backend DB。
+Principal 以 `OrgMembership.id`（`member_id`）为准，不是裸 `user_id`。Backend 提供 `GET /api/v1/auth/knowledge-context`：[[nodeskclaw-backend/app/api/auth.py#knowledge_context]]。Knowledge 侧依赖：[[nodeskclaw-knowledge/app/core/deps.py#get_member_context]]。
 
 ## Secure Retrieval Pipeline
 
