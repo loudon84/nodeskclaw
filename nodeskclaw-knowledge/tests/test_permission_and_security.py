@@ -9,7 +9,7 @@ from app.integrations.ragflow.models import RagflowChunk
 from app.models.enums import AccessPlanKind, AclEffect, SubjectType
 from app.schemas.principal import KnowledgePrincipal
 from app.services import permission_service
-from app.services.chunk_security_service import clean_chunks
+from app.services.chunk_security_service import ActiveDocumentIdentity, clean_chunks
 from app.services.ingestion_service import build_meta_fields
 
 
@@ -102,7 +102,23 @@ async def test_clean_chunks_drops_unauthorized_and_missing_identity():
         RagflowChunk(id="c3", content="c", document_id="d3", document_metadata={}),
     ]
 
-    with patch("app.services.chunk_security_service._lookup_version_by_document", new=AsyncMock(return_value=None)):
+    identity_ok = SimpleNamespace(
+        source_file_id="sf_ok",
+        file_version_id="v1",
+        knowledge_base_id="kb1",
+        org_id="o1",
+        active_version_id="v1",
+    )
+
+    async def fake_build_map(_db, document_ids):
+        if "d1" in document_ids:
+            return {"d1": identity_ok}
+        return {}
+
+    with patch(
+        "app.services.chunk_security_service._build_active_document_map",
+        new=AsyncMock(side_effect=fake_build_map),
+    ):
         safe, filtered = await clean_chunks(
             db,
             ragflow,
@@ -117,7 +133,7 @@ async def test_clean_chunks_drops_unauthorized_and_missing_identity():
 async def test_build_access_plan_no_access(monkeypatch):
     db = AsyncMock()
     member = _member()
-    kb = SimpleNamespace(id="kb1", ragflow_dataset_id="ds1", org_id="o1")
+    kb = SimpleNamespace(id="kb1", ragflow_dataset_id="ds1", org_id="o1", status="active")
 
     async def fake_has_kb(*_args, **_kwargs):
         return False
