@@ -28,6 +28,7 @@ class ServiceType(str, Enum):
     load_balancer = "LoadBalancer"
 
 
+# @lat: [[core-concepts#Instance]]
 class Instance(BaseModel):
     __tablename__ = "instances"
     __table_args__ = (

@@ -92,6 +92,7 @@ class MessageData:
     priority: Priority = Priority.NORMAL
 
 
+# @lat: [[collaboration#Message Envelope]]
 @dataclass
 class MessageEnvelope:
     """CloudEvents-aligned message envelope with DeskClaw extensions."""

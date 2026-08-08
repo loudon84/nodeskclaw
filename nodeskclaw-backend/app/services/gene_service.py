@@ -62,6 +62,7 @@ _REGISTRY_DISPLAY_NAMES = {
 }
 
 
+# @lat: [[core-concepts#Gene Installation]]
 def _get_gene_install_adapter(runtime: str) -> GeneInstallAdapter:
     """Get the GeneInstallAdapter for a given runtime, falling back to NoopGeneInstallAdapter."""
     from app.services.runtime.registries.runtime_registry import RUNTIME_REGISTRY

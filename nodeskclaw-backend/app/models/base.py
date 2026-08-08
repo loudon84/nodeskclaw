@@ -22,6 +22,7 @@ class TimestampMixin:
     )
 
 
+# @lat: [[decisions/soft-delete]]
 class BaseModel(Base, TimestampMixin):
     """Abstract base with UUID pk + timestamps + soft delete."""
 

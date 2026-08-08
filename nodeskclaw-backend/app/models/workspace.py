@@ -7,6 +7,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.models.base import BaseModel
 
 
+# @lat: [[core-concepts#Workspace]]
 class Workspace(BaseModel):
     __tablename__ = "workspaces"
 

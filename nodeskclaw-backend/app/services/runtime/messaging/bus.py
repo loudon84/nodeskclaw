@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+# @lat: [[collaboration#Message Bus]]
 class MessageBus:
     def __init__(self) -> None:
         self._pipeline = MessagePipeline()

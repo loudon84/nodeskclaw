@@ -1113,6 +1113,7 @@ async def internal_test_connection(request: Request):
     "/{provider}/{path:path}",
     methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"],
 )
+# @lat: [[llm-proxy#Request Pipeline]]
 async def llm_proxy(provider: str, path: str, request: Request):
     proxy_token = _extract_proxy_token(request)
     if not proxy_token:

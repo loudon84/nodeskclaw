@@ -67,6 +67,7 @@ class EffectMetricType(str, Enum):
     agent_self_eval = "agent_self_eval"
 
 
+# @lat: [[core-concepts#Gene]]
 class Gene(BaseModel):
     __tablename__ = "genes"
     __table_args__ = (

@@ -30,6 +30,7 @@ _EE_DIR = _PROJECT_ROOT / "ee"
 _EE_FEATURES_YAML = _EE_DIR / "features.yaml"
 
 
+# @lat: [[decisions/ce-ee-split]]
 class FeatureGate:
     def __init__(self) -> None:
         self._edition: str = "ce"
