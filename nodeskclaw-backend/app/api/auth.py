@@ -97,6 +97,7 @@ async def me(
     return ApiResponse(data=info)
 
 
+# @lat: [[knowledge#Auth Integration]]
 @router.get("/knowledge-context", response_model=ApiResponse[KnowledgeContextInfo])
 async def knowledge_context(
     current_user: User = Depends(get_current_user),
