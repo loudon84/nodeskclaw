@@ -107,6 +107,35 @@ class RetrievalConfig(BaseModel):
     highlight: bool = False
     cross_languages: list[str] = Field(default_factory=list)
     answer_model: str = ""
+    failure_policy: str = "fail_closed"
+    context_max_chunks: int = 8
+    context_max_chars: int = 24000
+
+
+class RetrievalProfileCreate(BaseModel):
+    config: RetrievalConfig | None = None
+
+
+class RetrievalProfileUpdate(BaseModel):
+    config: RetrievalConfig
+
+
+class RetrievalProfileRollback(BaseModel):
+    publish: bool = False
+
+
+class RetrievalProfileOut(BaseModel):
+    id: str
+    knowledge_set_id: str
+    version: int
+    config: dict[str, Any]
+    status: str
+    created_by_member_id: str
+    activated_at: Any = None
+    created_at: Any = None
+    updated_at: Any = None
+
+    model_config = {"from_attributes": True}
 
 
 class KnowledgeSetCreate(BaseModel):
@@ -301,6 +330,22 @@ class ChatMessageOut(BaseModel):
     completion_tokens: int | None = None
 
     model_config = {"from_attributes": True}
+
+
+class CitationResolveOut(BaseModel):
+    citation_id: str
+    message_id: str
+    knowledge_base_id: str
+    source_file_id: str
+    file_version_id: str
+    document_id: str | None = None
+    chunk_id: str | None = None
+    page: int | None = None
+    positions: list | None = None
+    score: float | None = None
+    quote: str | None = None
+    accessible: bool
+    reason: str
 
 
 class AuditLogOut(BaseModel):
