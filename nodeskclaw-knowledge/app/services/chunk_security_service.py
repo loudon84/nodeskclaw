@@ -97,9 +97,6 @@ async def clean_chunks(
                 metadata_mismatch += 1
             else:
                 unknown += 1
-            from app.services import metrics_service
-
-            metrics_service.observe_security_chunk_drop(reason=reason)
             if reason == "unknown":
                 logger.warning("drop unknown document chunk_id=%s document_id=%s", chunk.id, chunk.document_id)
             elif reason == "metadata_mismatch":

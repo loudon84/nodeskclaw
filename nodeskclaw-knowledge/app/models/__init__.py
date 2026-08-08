@@ -10,7 +10,6 @@ from app.models.knowledge_base_acl import KnowledgeBaseAcl
 from app.models.knowledge_set import KnowledgeSet
 from app.models.knowledge_set_acl import KnowledgeSetAcl
 from app.models.knowledge_set_item import KnowledgeSetItem
-from app.models.reconciliation_run import ReconciliationRun
 from app.models.retrieval_audit import RetrievalAudit
 from app.models.retrieval_profile import RetrievalProfile
 from app.models.retrieval_trace import RetrievalTrace
@@ -34,7 +33,6 @@ __all__ = [
     "RetrievalAudit",
     "RetrievalProfile",
     "RetrievalTrace",
-    "ReconciliationRun",
     "ChatSession",
     "ChatMessage",
     "ChatCitation",
