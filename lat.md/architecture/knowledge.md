@@ -22,6 +22,12 @@ Principal 以 `OrgMembership.id`（`member_id`）为准。Backend `GET /api/v1/a
 
 入口：[[nodeskclaw-knowledge/app/main.py#lifespan]]。依赖从 `app.state` 取客户端：[[nodeskclaw-knowledge/app/core/deps.py#get_backend_client]]。
 
+## Health Probes
+
+`/health/live` 只表示进程存活；`/health/ready` 检查 PostgreSQL、RAGFlow、Backend，任一失败返回 HTTP 503。
+
+实现：[[nodeskclaw-knowledge/app/main.py#health_ready]]。Compose 中 API 以 live 作 healthcheck；Worker `depends_on` API healthy，确保先完成 `alembic upgrade` 再建连接。
+
 ## Secure Retrieval Pipeline
 
 检索必须先算 ACL AccessPlan，再按 KB 拆 Slice 调 RAGFlow，再经 Active Version + SourceFile ACL 清洗；未授权 / 非 active 版本 Chunk 不得进入 LLM Context。
@@ -38,25 +44,25 @@ AccessPlan 分 `FULL_ACCESS` / `FILTERED_ACCESS` / `NO_ACCESS`，并保留 `full
 
 v1.1 在 v1.0 八域表之上增加 Set ACL、Chat、Audit 与入库/检索运行时字段，支撑 Worker 与安全边界。
 
-模型包：[[nodeskclaw-knowledge/app/models/__init__.py]]。迁移：`alembic/versions/1acf2f9a5d24_knowledge_v1_1_runtime.py`。新增表含 `knowledge_set_acl`、`knowledge_chat_sessions` / `messages` / `citations`、`knowledge_audit_logs`；扩展 ACL version、retrieval_config、Job lease、Document progress 等。详见 [[knowledge-objects#Runtime Extensions]]。
+模型包：[[nodeskclaw-knowledge/app/models/__init__.py]]。迁移：`alembic/versions/1acf2f9a5d24_knowledge_v1_1_runtime.py`、`e220c8d0ee88_source_file_last_error.py`。新增表含 `knowledge_set_acl`、`knowledge_chat_sessions` / `messages` / `citations`、`knowledge_audit_logs`；扩展 ACL version、retrieval_config、Job lease、Document progress、`source_files.last_error` 等。详见 [[knowledge-objects#Runtime Extensions]]。
 
 ## Ingestion Worker
 
 上传 API 只推进到 `parse_dispatched`；真正的 DONE→ACTIVE 由无 Redis 的 PostgreSQL Job Leasing Worker 完成。
 
-Worker：[[nodeskclaw-knowledge/app/workers/ingestion_worker.py]]。状态映射与激活：[[nodeskclaw-knowledge/app/services/ingestion_service.py]]。仅 RAGFlow `run=FAIL` 记失败；网络异常退避重试。蓝绿切换后 best-effort `enabled=0` 旧文档。
+上传走 SpooledTemporaryFile 流式读入（`KNOWLEDGE_UPLOAD_MAX_MB` 限流），再交给 `RagflowClient.upload_document(file_obj=...)`：[[nodeskclaw-knowledge/app/services/ingestion_service.py#read_upload_spooled]]。Worker：[[nodeskclaw-knowledge/app/workers/ingestion_worker.py]]。状态映射与激活：[[nodeskclaw-knowledge/app/services/ingestion_service.py#process_leased_job]]。仅 RAGFlow `run=FAIL`（及明确校验失败）将 version 标 `failed`；网络异常 / Poll 超限只失败 Job，不把 version 标 FAILED。蓝绿切换后 best-effort `enabled=0` 旧文档。
 
 ## Active Version Security
 
-`source_file.active_version_id` 是检索安全 Authority；Cleaner 按 document→version→active 映射批量拦截 superseded / 未知 / metadata mismatch Chunk。
+`source_file.active_version_id` 是检索安全 Authority；Cleaner 批量拦截 superseded / 未知 / metadata mismatch / 未授权 Chunk。
 
-实现：[[nodeskclaw-knowledge/app/services/chunk_security_service.py]]。RAGFlow `enabled` 只是优化，不能替代本地 Active Check。
+drop 必须写审计：`METADATA_MISMATCH` 或 `CHUNK_SECURITY_DROP`。实现：[[nodeskclaw-knowledge/app/services/chunk_security_service.py#clean_chunks]]。RAGFlow `enabled` 只是优化，不能替代本地 Active Check。
 
 ## Retrieval Planner
 
 多 KB 不能合并为一个错误的 `dataset_ids+document_ids` 请求；必须按 KB 拆 `full_dataset` / `filtered_documents` Slice，并行检索后再加权合并。
 
-Planner：[[nodeskclaw-knowledge/app/services/retrieval_planner.py]]。Merge：[[nodeskclaw-knowledge/app/services/retrieval_merge_service.py]]。最终 `score = similarity × set_item.weight`，再取 top_n。
+`build_retrieval_plan(access, kbs, set_items)` 第三参是 Set 绑定项列表（取 weight），禁止传 `kb_weights` dict：[[nodeskclaw-knowledge/app/services/retrieval_planner.py#build_retrieval_plan]]。入口：[[nodeskclaw-knowledge/app/services/retrieval_service.py#retrieve]]。Merge：[[nodeskclaw-knowledge/app/services/retrieval_merge_service.py]]。最终 `score = similarity × set_item.weight`，再取 top_n。
 
 ## Secure Chat
 

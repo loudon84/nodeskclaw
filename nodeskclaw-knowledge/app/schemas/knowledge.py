@@ -160,6 +160,7 @@ class SourceFileOut(BaseModel):
     active_version_id: str | None = None
     status: str
     acl_version: int = 1
+    last_error: str | None = None
     parse_status: str | None = None
     chunk_count: int | None = None
     version_no: int | None = None

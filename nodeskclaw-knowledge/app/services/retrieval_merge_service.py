@@ -65,6 +65,8 @@ async def execute_and_merge(
     highlight: bool,
     rerank_id: str | None,
     cross_languages: list[str] | None,
+    audit_org_id: str | None = None,
+    audit_member_id: str | None = None,
 ) -> tuple[list[MergedChunk], int, int, int]:
     if not plan.slices:
         return [], 0, 0, 0
@@ -101,6 +103,8 @@ async def execute_and_merge(
         ragflow,
         candidate_chunks,
         allowed_source_file_ids=allowed_source_file_ids,
+        audit_org_id=audit_org_id,
+        audit_member_id=audit_member_id,
     )
 
     deduped: dict[tuple[str, str], MergedChunk] = {}

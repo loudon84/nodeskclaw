@@ -14,7 +14,7 @@ KnowledgeBase 是一个物理知识库，一对一映射 RAGFlow Dataset（`ragf
 
 SourceFile 是稳定逻辑源文件；权限挂在 SourceFile 上，不挂在 Chunk 上。
 
-每个实际上传版本是 FileVersion，对应一个 RAGFlow Document；新版本失败不得覆盖旧 ACTIVE。`source_file.active_version_id` 是检索安全 Authority；superseded 版本 Chunk 必须被 Cleaner DROP。写入 RAGFlow 的 `meta_fields` 必须含 `nk_source_file_id`、`nk_file_version_id`、`nk_knowledge_base_id`、`nk_org_id`。Version 运行时字段见 [[nodeskclaw-knowledge/app/models/source_file_version.py#SourceFileVersion]]。
+每个实际上传版本是 FileVersion，对应一个 RAGFlow Document；新版本失败不得覆盖旧 ACTIVE。`source_file.active_version_id` 是检索安全 Authority；superseded 版本 Chunk 必须被 Cleaner DROP。删除 RAGFlow 文档失败时保留 `deleting` 并写入 `last_error`：[[nodeskclaw-knowledge/app/models/source_file.py#SourceFile]]。写入 RAGFlow 的 `meta_fields` 必须含 `nk_source_file_id`、`nk_file_version_id`、`nk_knowledge_base_id`、`nk_org_id`。Version 运行时字段见 [[nodeskclaw-knowledge/app/models/source_file_version.py#SourceFileVersion]]。
 
 ## Knowledge Set
 
@@ -33,6 +33,7 @@ Knowledge 不维护 `knowledge_users` 表。成员上下文来自 Backend opaque
 v1.1 扩展支持异步入库、Secure Chat 与审计，全部落在 Knowledge 自有库。
 
 - IngestionJob：lease_owner / lease_until / next_run_at / attempt_count，供无 Redis 的 PG Job Leasing：[[nodeskclaw-knowledge/app/models/ingestion_job.py#IngestionJob]]
+- SourceFile：`last_error` 记录删除等可恢复失败，供对账与运营可见：[[nodeskclaw-knowledge/app/models/source_file.py#SourceFile]]
 - Chat：session / message / citation，Session 仅 Owner 可访问：[[nodeskclaw-knowledge/app/models/chat_session.py#ChatSession]]
-- Audit：通用 `knowledge_audit_logs` + 增强的 retrieval_audits：[[nodeskclaw-knowledge/app/models/audit_log.py#AuditLog]]
+- Audit：通用 `knowledge_audit_logs`（含 `METADATA_MISMATCH` / `CHUNK_SECURITY_DROP`）+ 增强的 retrieval_audits：[[nodeskclaw-knowledge/app/models/audit_log.py#AuditLog]]
 - ACL 模板：UI Role / Visibility 仅作模板展开，最终 Authority 仍是 granular ACL：[[nodeskclaw-knowledge/app/services/acl_templates.py]]

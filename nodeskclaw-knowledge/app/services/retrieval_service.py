@@ -98,8 +98,7 @@ async def retrieve(
         raise ForbiddenError(message="无权检索该知识集合", message_key="errors.knowledge.retrieval_denied")
 
     set_items = await knowledge_set_service.list_set_items(db, member, knowledge_set_id)
-    kb_weights = {item.knowledge_base_id: float(item.weight) for item in set_items}
-    plan = retrieval_planner.build_retrieval_plan(plan_access, kbs, kb_weights=kb_weights)
+    plan = retrieval_planner.build_retrieval_plan(plan_access, kbs, set_items)
 
     if not plan.slices:
         query_id = str(uuid.uuid4())
@@ -138,6 +137,8 @@ async def retrieve(
         highlight=effective_highlight,
         rerank_id=config.get("rerank_id"),
         cross_languages=config.get("cross_languages") or [],
+        audit_org_id=member.org_id,
+        audit_member_id=member.member_id,
     )
 
     query_id = str(uuid.uuid4())

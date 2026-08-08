@@ -11,9 +11,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.integrations.ragflow.client import RagflowClient
 from app.integrations.ragflow.models import RagflowChunk
 from app.models.base import not_deleted
-from app.models.enums import ParseStatus
+from app.models.enums import AuditAction
 from app.models.source_file import SourceFile
 from app.models.source_file_version import SourceFileVersion
+from app.services.audit_service import write_audit
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,8 @@ async def clean_chunks(
     *,
     allowed_source_file_ids: set[str],
     dataset_id_by_document: dict[str, str] | None = None,
+    audit_org_id: str | None = None,
+    audit_member_id: str | None = None,
 ) -> tuple[list[RagflowChunk], int]:
     if not chunks:
         return [], 0
@@ -62,10 +65,52 @@ async def clean_chunks(
                 logger.warning("drop metadata mismatch chunk_id=%s document_id=%s", chunk.id, chunk.document_id)
             elif reason == "superseded":
                 logger.warning("drop superseded chunk_id=%s document_id=%s", chunk.id, chunk.document_id)
+            await _audit_security_drop(
+                db,
+                chunk=chunk,
+                reason=reason,
+                identity_map=identity_map,
+                audit_org_id=audit_org_id,
+                audit_member_id=audit_member_id,
+            )
             continue
         safe.append(chunk)
 
     return safe, filtered
+
+
+async def _audit_security_drop(
+    db: AsyncSession,
+    *,
+    chunk: RagflowChunk,
+    reason: str,
+    identity_map: dict[str, ActiveDocumentIdentity],
+    audit_org_id: str | None,
+    audit_member_id: str | None,
+) -> None:
+    identity = identity_map.get(chunk.document_id or "")
+    org_id = (identity.org_id if identity else None) or audit_org_id
+    if not org_id:
+        return
+    action = (
+        AuditAction.metadata_mismatch.value
+        if reason == "metadata_mismatch"
+        else AuditAction.chunk_security_drop.value
+    )
+    await write_audit(
+        db,
+        org_id=org_id,
+        member_id=audit_member_id,
+        action=action,
+        resource_type="chunk",
+        resource_id=chunk.id,
+        details={
+            "reason": reason,
+            "document_id": chunk.document_id,
+            "source_file_id": (chunk.document_metadata or {}).get("nk_source_file_id"),
+            "file_version_id": (chunk.document_metadata or {}).get("nk_file_version_id"),
+        },
+    )
 
 
 def _evaluate_chunk(

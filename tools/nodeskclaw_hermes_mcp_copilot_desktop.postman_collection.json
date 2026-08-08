@@ -1,0 +1,1001 @@
+{
+  "info": {
+    "_postman_id": "7f14470b-0828-4e99-b9f1-5780354aa2c9",
+    "name": "NoDeskClaw Hermes MCP - copilot-desktop common-writer writing skill",
+    "description": "Postman collection for copilot-desktop login through nodeskclaw-backend auth, listing Hermes MCP tools, calling common-writer writing skill, reading task status/events, and downloading generated artifacts. Update variables before running.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8000"
+    },
+    {
+      "key": "api_prefix",
+      "value": "/api/v1"
+    },
+    {
+      "key": "account",
+      "value": "user@example.com"
+    },
+    {
+      "key": "email",
+      "value": "user@example.com"
+    },
+    {
+      "key": "password",
+      "value": "password"
+    },
+    {
+      "key": "access_token",
+      "value": ""
+    },
+    {
+      "key": "refresh_token",
+      "value": ""
+    },
+    {
+      "key": "current_org_id",
+      "value": ""
+    },
+    {
+      "key": "user_id",
+      "value": ""
+    },
+    {
+      "key": "tool_name",
+      "value": "writing"
+    },
+    {
+      "key": "agent_id",
+      "value": "common-writer"
+    },
+    {
+      "key": "profile_id",
+      "value": "common-writer"
+    },
+    {
+      "key": "workspace_id",
+      "value": ""
+    },
+    {
+      "key": "skill_id",
+      "value": "writing"
+    },
+    {
+      "key": "skill_db_id",
+      "value": ""
+    },
+    {
+      "key": "installation_id",
+      "value": ""
+    },
+    {
+      "key": "task_id",
+      "value": ""
+    },
+    {
+      "key": "task_no",
+      "value": ""
+    },
+    {
+      "key": "event_url",
+      "value": ""
+    },
+    {
+      "key": "artifact_url",
+      "value": ""
+    },
+    {
+      "key": "artifact_id",
+      "value": ""
+    }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{access_token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "item": [
+    {
+      "name": "01 Auth - 登录与令牌",
+      "item": [
+        {
+          "name": "Account login - /auth/account-login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/auth/account-login",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "auth",
+                "account-login"
+              ]
+            },
+            "description": "统一账号登录。源码中 account-login 接收 account/password，返回 access_token/refresh_token。",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"account\": \"{{account}}\",\n  \"password\": \"{{password}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"login success\", function () { pm.expect(json.code).to.eql(0); });",
+                  "if (json.data) {",
+                  "  pm.collectionVariables.set(\"access_token\", json.data.access_token);",
+                  "  pm.collectionVariables.set(\"refresh_token\", json.data.refresh_token);",
+                  "  if (json.data.user) {",
+                  "    pm.collectionVariables.set(\"user_id\", json.data.user.id || \"\");",
+                  "    pm.collectionVariables.set(\"current_org_id\", json.data.user.current_org_id || \"\");",
+                  "  }",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Email login - /auth/login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/auth/login",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "auth",
+                "login"
+              ]
+            },
+            "description": "邮箱密码登录。若 copilot-desktop 只支持 email，可用此接口。",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"login success\", function () { pm.expect(json.code).to.eql(0); });",
+                  "if (json.data) {",
+                  "  pm.collectionVariables.set(\"access_token\", json.data.access_token);",
+                  "  pm.collectionVariables.set(\"refresh_token\", json.data.refresh_token);",
+                  "  if (json.data.user) {",
+                  "    pm.collectionVariables.set(\"user_id\", json.data.user.id || \"\");",
+                  "    pm.collectionVariables.set(\"current_org_id\", json.data.user.current_org_id || \"\");",
+                  "  }",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Refresh token",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/auth/refresh",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "auth",
+                "refresh"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refresh_token\": \"{{refresh_token}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"refresh success\", function () { pm.expect(json.code).to.eql(0); });",
+                  "if (json.data) {",
+                  "  pm.collectionVariables.set(\"access_token\", json.data.access_token);",
+                  "  pm.collectionVariables.set(\"refresh_token\", json.data.refresh_token);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Me - current user/org",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/auth/me",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "auth",
+                "me"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"me success\", function () { pm.expect(json.code).to.eql(0); });",
+                  "if (json.data) {",
+                  "  pm.collectionVariables.set(\"user_id\", json.data.id || \"\");",
+                  "  pm.collectionVariables.set(\"current_org_id\", json.data.current_org_id || \"\");",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "02 Hermes MCP - tools/list 与 tools/call",
+      "item": [
+        {
+          "name": "MCP initialize",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/hermes/mcp",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "hermes",
+                "mcp"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"init-1\",\n  \"method\": \"initialize\",\n  \"params\": {\n    \"clientInfo\": {\n      \"name\": \"copilot-desktop\",\n      \"version\": \"0.1.0\"\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "MCP tools/list",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/hermes/mcp",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "hermes",
+                "mcp"
+              ]
+            },
+            "description": "先执行此请求，从返回 tools 中确认 writing skill 的真实 tool_name。必要时更新 collection 变量 tool_name。",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"tools-1\",\n  \"method\": \"tools/list\",\n  \"params\": {}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"tools/list ok\", function () { pm.expect(json.result || json.data || json.error).to.exist; });",
+                  "console.log(JSON.stringify(json, null, 2));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "MCP tools/call - common-writer writing",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/hermes/mcp",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "hermes",
+                "mcp"
+              ]
+            },
+            "description": "通过 _routing 指定 common-writer。_routing 会被 backend 剥离，不传给 Hermes Agent。",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"call-writing-1\",\n  \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"{{tool_name}}\",\n    \"arguments\": {\n      \"requirement\": \"请生成一篇 800 字中文文章，主题：企业 AI 员工如何提升运营效率。\",\n      \"title\": \"企业 AI 员工提效说明\",\n      \"format\": \"markdown\",\n      \"_routing\": {\n        \"agent_id\": \"{{agent_id}}\",\n        \"profile_id\": \"{{profile_id}}\",\n        \"workspace_id\": \"{{workspace_id}}\"\n      }\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"tools/call accepted or error returned\", function () { pm.expect(json.result || json.error).to.exist; });",
+                  "const sc = json?.result?.structuredContent || json?.data?.structuredContent || {};",
+                  "if (sc.task_id) {",
+                  "  pm.collectionVariables.set(\"task_id\", sc.task_id);",
+                  "  pm.collectionVariables.set(\"task_no\", sc.task_no || \"\");",
+                  "  pm.collectionVariables.set(\"event_url\", sc.event_url || \"\");",
+                  "  pm.collectionVariables.set(\"artifact_url\", sc.artifact_url || \"\");",
+                  "  pm.collectionVariables.set(\"installation_id\", sc.installation_id || \"\");",
+                  "}",
+                  "console.log(JSON.stringify(json, null, 2));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "03 Hermes Task - 状态、事件、产物",
+      "item": [
+        {
+          "name": "List tasks - common-writer",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/hermes/tasks?agent_id={{agent_id}}&page=1&page_size=20",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "hermes",
+                "tasks?agent_id={{agent_id}}&page=1&page_size=20"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Get task detail",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/hermes/tasks/{{task_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "hermes",
+                "tasks",
+                "{{task_id}}"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Get task timeline",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/hermes/tasks/{{task_id}}/timeline",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "hermes",
+                "tasks",
+                "{{task_id}}",
+                "timeline"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "SSE task events - manual open",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "text/event-stream"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/hermes/tasks/{{task_id}}/events",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "hermes",
+                "tasks",
+                "{{task_id}}",
+                "events"
+              ]
+            },
+            "description": "Postman 对 SSE 支持有限。copilot-desktop 应用中建议用 EventSource/fetch stream 读取。"
+          }
+        },
+        {
+          "name": "List task artifacts",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/hermes/tasks/{{task_id}}/artifacts",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "hermes",
+                "tasks",
+                "{{task_id}}",
+                "artifacts"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "const arr = Array.isArray(json.data) ? json.data : (json.data?.items || []);",
+                  "if (arr.length > 0) {",
+                  "  pm.collectionVariables.set(\"artifact_id\", arr[0].id);",
+                  "}",
+                  "console.log(JSON.stringify(json, null, 2));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "04 Hermes Artifact - 预览与下载",
+      "item": [
+        {
+          "name": "List artifacts by task_id",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/hermes/artifacts?task_id={{task_id}}&page=1&page_size=20",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "hermes",
+                "artifacts?task_id={{task_id}}&page=1&page_size=20"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "const arr = json.data?.items || [];",
+                  "if (arr.length > 0) {",
+                  "  pm.collectionVariables.set(\"artifact_id\", arr[0].id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get artifact detail",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/hermes/artifacts/{{artifact_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "hermes",
+                "artifacts",
+                "{{artifact_id}}"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Preview artifact",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/hermes/artifacts/{{artifact_id}}/preview",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "hermes",
+                "artifacts",
+                "{{artifact_id}}",
+                "preview"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Download artifact",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/octet-stream"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/hermes/artifacts/{{artifact_id}}/download",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "hermes",
+                "artifacts",
+                "{{artifact_id}}",
+                "download"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Batch download task artifacts",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/zip"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/hermes/tasks/{{task_id}}/artifacts/download",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "hermes",
+                "tasks",
+                "{{task_id}}",
+                "artifacts",
+                "download"
+              ]
+            },
+            "description": "当前源码 batch_download_artifacts 直接接收 list[str] body，不是 {artifact_ids: []}。",
+            "body": {
+              "mode": "raw",
+              "raw": "[\n  \"{{artifact_id}}\"\n]",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "05 Admin/Setup - Skill、安装、授权、路由检查",
+      "item": [
+        {
+          "name": "List skills - keyword writing",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/hermes/skills?keyword=writing&is_mcp_exposed=true&page=1&page_size=20",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "hermes",
+                "skills?keyword=writing&is_mcp_exposed=true&page=1&page_size=20"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "const items = json.data?.items || [];",
+                  "if (items.length > 0) {",
+                  "  pm.collectionVariables.set(\"skill_id\", items[0].skill_id || \"\");",
+                  "  pm.collectionVariables.set(\"skill_db_id\", items[0].id || \"\");",
+                  "  if (items[0].tool_name) pm.collectionVariables.set(\"tool_name\", items[0].tool_name);",
+                  "}",
+                  "console.log(JSON.stringify(json, null, 2));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List installations - skill_id",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/hermes/skill-installations?skill_id={{skill_id}}&agent_id={{agent_id}}&status=installed&page=1&page_size=20",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "hermes",
+                "skill-installations?skill_id={{skill_id}}&agent_id={{agent_id}}&status=installed&page=1&page_size=20"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "",
+                  "const json = pm.response.json();",
+                  "const items = json.data?.items || [];",
+                  "if (items.length > 0) {",
+                  "  pm.collectionVariables.set(\"installation_id\", items[0].id || \"\");",
+                  "  pm.collectionVariables.set(\"profile_id\", items[0].profile_id || pm.collectionVariables.get(\"profile_id\"));",
+                  "  pm.collectionVariables.set(\"workspace_id\", items[0].workspace_id || pm.collectionVariables.get(\"workspace_id\"));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Routing test - common-writer",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/hermes/skill-installations/routing-test",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "hermes",
+                "skill-installations",
+                "routing-test"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tool_name\": \"{{tool_name}}\",\n  \"workspace_id\": \"{{workspace_id}}\",\n  \"routing\": {\n    \"agent_id\": \"{{agent_id}}\",\n    \"profile_id\": \"{{profile_id}}\",\n    \"workspace_id\": \"{{workspace_id}}\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "console.log(JSON.stringify(pm.response.json(), null, 2));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Agent runtime - common-writer",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/hermes/agents/{{agent_id}}/runtime",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "hermes",
+                "agents",
+                "{{agent_id}}",
+                "runtime"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Agent health check - common-writer",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/hermes/agents/{{agent_id}}/health-check",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "hermes",
+                "agents",
+                "{{agent_id}}",
+                "health-check"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "console.log(JSON.stringify(pm.response.json(), null, 2));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Grant current user writing skill invoke",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/hermes/skill-authorizations",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "hermes",
+                "skill-authorizations"
+              ]
+            },
+            "description": "需要 skill:authorize 权限。普通用户不可执行。",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"skill_id\": \"{{skill_id}}\",\n  \"skill_db_id\": \"{{skill_db_id}}\",\n  \"subject_type\": \"user\",\n  \"subject_id\": \"{{user_id}}\",\n  \"workspace_id\": \"{{workspace_id}}\",\n  \"can_list\": true,\n  \"can_invoke\": true,\n  \"can_install\": false,\n  \"can_manage\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

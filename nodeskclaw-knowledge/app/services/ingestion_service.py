@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import tempfile
 from datetime import UTC, datetime, timedelta
+from typing import BinaryIO
 
+from fastapi import UploadFile
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,6 +31,8 @@ logger = logging.getLogger(__name__)
 
 BACKOFF_SECONDS = [2, 4, 8, 16, 30]
 LEASE_SECONDS = 30
+UPLOAD_CHUNK_SIZE = 1024 * 1024
+SPOOL_MAX_SIZE = 8 * 1024 * 1024
 
 
 def build_meta_fields(
@@ -53,14 +59,45 @@ def _backoff_seconds(attempt_count: int) -> int:
     return BACKOFF_SECONDS[idx]
 
 
-def _validate_upload_size(content: bytes) -> None:
-    max_bytes = settings.KNOWLEDGE_UPLOAD_MAX_MB * 1024 * 1024
-    if len(content) > max_bytes:
+def _max_upload_bytes() -> int:
+    return settings.KNOWLEDGE_UPLOAD_MAX_MB * 1024 * 1024
+
+
+def _validate_upload_size(size: int) -> None:
+    max_bytes = _max_upload_bytes()
+    if size > max_bytes:
         raise BadRequestError(
             message=f"文件大小超过 {settings.KNOWLEDGE_UPLOAD_MAX_MB}MB 限制",
             message_key="errors.knowledge.upload_too_large",
             message_params={"max_mb": str(settings.KNOWLEDGE_UPLOAD_MAX_MB)},
         )
+
+
+# @lat: [[knowledge#Ingestion Worker]]
+async def read_upload_spooled(upload: UploadFile) -> tuple[tempfile.SpooledTemporaryFile, int, str]:
+    max_bytes = _max_upload_bytes()
+    spool = tempfile.SpooledTemporaryFile(max_size=SPOOL_MAX_SIZE)
+    hasher = hashlib.sha256()
+    total = 0
+    try:
+        while True:
+            chunk = await upload.read(UPLOAD_CHUNK_SIZE)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > max_bytes:
+                raise BadRequestError(
+                    message=f"文件大小超过 {settings.KNOWLEDGE_UPLOAD_MAX_MB}MB 限制",
+                    message_key="errors.knowledge.upload_too_large",
+                    message_params={"max_mb": str(settings.KNOWLEDGE_UPLOAD_MAX_MB)},
+                )
+            hasher.update(chunk)
+            spool.write(chunk)
+        spool.seek(0)
+        return spool, total, hasher.hexdigest()
+    except Exception:
+        spool.close()
+        raise
 
 
 def _sync_document_runtime(version: SourceFileVersion, doc) -> None:
@@ -93,11 +130,24 @@ async def ingest_upload(
     *,
     knowledge_base_id: str,
     file_name: str,
-    content: bytes,
     mime_type: str | None,
+    content: bytes | None = None,
+    file_obj: BinaryIO | None = None,
+    file_size: int | None = None,
+    sha256: str | None = None,
     source_file_id: str | None = None,
 ) -> tuple[SourceFile, SourceFileVersion, IngestionJob]:
-    _validate_upload_size(content)
+    if file_obj is not None:
+        size = int(file_size or 0)
+        digest = sha256 or ""
+        if not digest:
+            raise BadRequestError(message="缺少文件摘要", message_key="errors.knowledge.upload_invalid")
+    else:
+        payload = content or b""
+        _validate_upload_size(len(payload))
+        size = len(payload)
+        digest = sha256_bytes(payload)
+        file_obj = None
 
     kb = await knowledge_base_service.get_knowledge_base(db, member, knowledge_base_id)
     if not kb.ragflow_dataset_id or kb.status != "active":
@@ -138,8 +188,8 @@ async def ingest_upload(
     version = SourceFileVersion(
         source_file_id=sf.id,
         version_no=await next_version_no(db, sf.id),
-        file_size=len(content),
-        sha256=sha256_bytes(content),
+        file_size=size,
+        sha256=digest,
         uploaded_by_member_id=member.member_id,
         parse_status="pending",
         ragflow_status="UNSTART",
@@ -161,12 +211,20 @@ async def ingest_upload(
         job.progress = 10
         await db.flush()
 
-        document_id = await ragflow.upload_document(
-            kb.ragflow_dataset_id,
-            content,
-            file_name,
-            mime_type,
-        )
+        if file_obj is not None:
+            document_id = await ragflow.upload_document(
+                kb.ragflow_dataset_id,
+                filename=file_name,
+                mime=mime_type,
+                file_obj=file_obj,
+            )
+        else:
+            document_id = await ragflow.upload_document(
+                kb.ragflow_dataset_id,
+                content or b"",
+                file_name,
+                mime_type,
+            )
         version.ragflow_document_id = document_id
         job.ragflow_document_id = document_id
         job.status = IngestionJobStatus.ragflow_uploaded.value
@@ -462,9 +520,6 @@ async def process_leased_job(
             job.error_code = exc.message_key
             job.error_message = exc.message
             job.finished_at = _now()
-            version.parse_status = "failed"
-            if sf.active_version_id != version.id:
-                sf.status = SourceFileStatus.error.value if not sf.active_version_id else SourceFileStatus.active.value
         else:
             job.next_run_at = _now() + timedelta(seconds=_backoff_seconds(job.attempt_count))
         return
@@ -474,7 +529,6 @@ async def process_leased_job(
             job.status = IngestionJobStatus.failed.value
             job.error_message = str(exc)
             job.finished_at = _now()
-            version.parse_status = "failed"
         else:
             job.next_run_at = _now() + timedelta(seconds=_backoff_seconds(job.attempt_count))
         return
@@ -485,7 +539,6 @@ async def process_leased_job(
             job.status = IngestionJobStatus.failed.value
             job.error_message = "document not found in RAGFlow"
             job.finished_at = _now()
-            version.parse_status = "failed"
         else:
             job.next_run_at = _now() + timedelta(seconds=_backoff_seconds(job.attempt_count))
         return

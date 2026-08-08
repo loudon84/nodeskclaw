@@ -65,13 +65,21 @@ async def test_chunk_cleaner_drops_superseded_unknown_mismatch_unauthorized():
     with patch(
         "app.services.chunk_security_service._build_active_document_map",
         new=AsyncMock(return_value=identity_map),
-    ):
+    ), patch(
+        "app.services.chunk_security_service.write_audit",
+        new=AsyncMock(),
+    ) as write_audit:
         safe, filtered = await clean_chunks(
             db,
             ragflow,
             chunks,
             allowed_source_file_ids={"sf_ok"},
+            audit_org_id="o1",
         )
 
     assert [c.id for c in safe] == ["c_ok"]
     assert filtered == 4
+    assert write_audit.await_count == 4
+    actions = [call.kwargs["action"] for call in write_audit.await_args_list]
+    assert "METADATA_MISMATCH" in actions
+    assert "CHUNK_SECURITY_DROP" in actions

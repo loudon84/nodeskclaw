@@ -6,6 +6,7 @@ import httpx
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from app.api.router import api_router
@@ -75,6 +76,7 @@ async def health_live():
     return {"status": "ok"}
 
 
+# @lat: [[knowledge#Health Probes]]
 @app.get("/health/ready")
 async def health_ready():
     checks: dict[str, bool] = {}
@@ -98,10 +100,13 @@ async def health_ready():
         await backend.aclose()
 
     ready = all(checks.values())
-    return {
-        "status": "ok" if ready else "degraded",
+    payload = {
+        "status": "ok" if ready else "not_ready",
         "checks": checks,
     }
+    if not ready:
+        return JSONResponse(status_code=503, content=payload)
+    return payload
 
 
 @app.get("/health")

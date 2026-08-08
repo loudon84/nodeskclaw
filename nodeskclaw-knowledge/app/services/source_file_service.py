@@ -66,6 +66,7 @@ async def delete_source_file(
         raise ForbiddenError()
     kb = await knowledge_base_service.get_knowledge_base(db, member, sf.knowledge_base_id)
     sf.status = SourceFileStatus.deleting.value
+    sf.last_error = None
     await db.flush()
 
     versions = list(
@@ -82,7 +83,8 @@ async def delete_source_file(
     if kb.ragflow_dataset_id and doc_ids:
         try:
             await ragflow.delete_documents(kb.ragflow_dataset_id, doc_ids)
-        except Exception:
+        except Exception as exc:
+            sf.last_error = str(exc)
             await db.commit()
             return
     for version in versions:

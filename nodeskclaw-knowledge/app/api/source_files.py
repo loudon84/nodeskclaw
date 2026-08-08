@@ -33,16 +33,21 @@ async def upload_file(
     db: AsyncSession = Depends(get_db),
     ragflow: RagflowClient = Depends(get_ragflow_client),
 ):
-    content = await file.read()
-    sf, version, job = await ingestion_service.ingest_upload(
-        db,
-        member,
-        ragflow,
-        knowledge_base_id=kb_id,
-        file_name=file.filename or "upload.bin",
-        content=content,
-        mime_type=file.content_type,
-    )
+    spool, size, digest = await ingestion_service.read_upload_spooled(file)
+    try:
+        sf, version, job = await ingestion_service.ingest_upload(
+            db,
+            member,
+            ragflow,
+            knowledge_base_id=kb_id,
+            file_name=file.filename or "upload.bin",
+            mime_type=file.content_type,
+            file_obj=spool,
+            file_size=size,
+            sha256=digest,
+        )
+    finally:
+        spool.close()
     return ApiResponse(
         message="upload accepted, parsing in background",
         data={
@@ -105,17 +110,22 @@ async def upload_version(
     ragflow: RagflowClient = Depends(get_ragflow_client),
 ):
     sf = await source_file_service.get_source_file(db, member, source_file_id)
-    content = await file.read()
-    sf2, version, job = await ingestion_service.ingest_upload(
-        db,
-        member,
-        ragflow,
-        knowledge_base_id=sf.knowledge_base_id,
-        file_name=file.filename or sf.file_name,
-        content=content,
-        mime_type=file.content_type,
-        source_file_id=source_file_id,
-    )
+    spool, size, digest = await ingestion_service.read_upload_spooled(file)
+    try:
+        sf2, version, job = await ingestion_service.ingest_upload(
+            db,
+            member,
+            ragflow,
+            knowledge_base_id=sf.knowledge_base_id,
+            file_name=file.filename or sf.file_name,
+            mime_type=file.content_type,
+            file_obj=spool,
+            file_size=size,
+            sha256=digest,
+            source_file_id=source_file_id,
+        )
+    finally:
+        spool.close()
     return ApiResponse(
         message="upload accepted, parsing in background",
         data={

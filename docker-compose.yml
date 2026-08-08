@@ -122,6 +122,20 @@ services:
       TZ: ${TZ:-Asia/Shanghai}
     ports:
       - "${KNOWLEDGE_PORT:-4530}:4530"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "uv",
+          "run",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:4530/health/live')",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
     restart: unless-stopped
 
   nodeskclaw-knowledge-worker:
@@ -135,6 +149,8 @@ services:
         APT_MIRROR: ${APT_MIRROR:-}
     depends_on:
       postgres:
+        condition: service_healthy
+      nodeskclaw-knowledge:
         condition: service_healthy
     command: ["uv", "run", "python", "-m", "app.workers.ingestion_worker", "--with-reconciliation"]
     environment:
