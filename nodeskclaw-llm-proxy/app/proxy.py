@@ -1120,58 +1120,15 @@ async def llm_proxy(provider: str, path: str, request: Request):
         return JSONResponse(status_code=401, content={"error": "Missing proxy token"})
 
     async with get_session() as db:
-        result = await db.execute(
-            select(Instance).where(
-                Instance.wp_api_key == proxy_token,
-                Instance.deleted_at.is_(None),
-            )
-        )
-        instance = result.scalar_one_or_none()
-        if instance is None:
-            result = await db.execute(
-                select(Instance).where(
-                    Instance.proxy_token == proxy_token,
-                    Instance.deleted_at.is_(None),
-                )
-            )
-            instance = result.scalar_one_or_none()
-        if instance is None:
-            return JSONResponse(status_code=401, content={"error": "Invalid proxy token"})
+        if settings.KNOWLEDGE_SERVICE_TOKEN and proxy_token == settings.KNOWLEDGE_SERVICE_TOKEN:
+            org_id = request.headers.get("X-NoDeskClaw-Org-Id", "").strip()
+            if not org_id:
+                return JSONResponse(status_code=401, content={"error": "Missing org id"})
+            member_id = request.headers.get("X-NoDeskClaw-Member-Id", "").strip() or None
 
-        ipc_result = await db.execute(
-            select(InstanceProviderConfig).where(
-                InstanceProviderConfig.instance_id == instance.id,
-                InstanceProviderConfig.provider == provider,
-                not_deleted(InstanceProviderConfig),
-            )
-        )
-        ipc = ipc_result.scalar_one_or_none()
-
-        if ipc is None:
-            fallback_result = await db.execute(
-                select(UserLlmConfig).where(
-                    UserLlmConfig.user_id == instance.created_by,
-                    UserLlmConfig.org_id == instance.org_id,
-                    UserLlmConfig.provider == provider,
-                    not_deleted(UserLlmConfig),
-                )
-            )
-            fallback_config = fallback_result.scalar_one_or_none()
-            key_source = fallback_config.key_source if fallback_config else "org"
-        else:
-            key_source = ipc.key_source
-
-        is_org_key = key_source == "org"
-        real_key: str | None = None
-        base_url: str | None = None
-        api_type: str | None = None
-        org_key_id: str | None = None
-        skip_ssl_verify: bool = False
-
-        if is_org_key:
             key_result = await db.execute(
                 select(OrgLlmKey).where(
-                    OrgLlmKey.org_id == instance.org_id,
+                    OrgLlmKey.org_id == org_id,
                     OrgLlmKey.provider == provider,
                     OrgLlmKey.is_active.is_(True),
                     not_deleted(OrgLlmKey),
@@ -1182,34 +1139,115 @@ async def llm_proxy(provider: str, path: str, request: Request):
                 return JSONResponse(status_code=404, content={
                     "error": f"当前组织未配置 {provider} 的 Working Plan Key，请联系管理员"
                 })
+
+            ok, msg = await _check_quota(org_key.id, org_key.org_token_limit, org_key.system_token_limit, db)
+            if not ok:
+                return JSONResponse(status_code=429, content={"error": msg})
+
             real_key = org_key.api_key
             base_url = org_key.base_url
             api_type = org_key.api_type
             org_key_id = org_key.id
             skip_ssl_verify = org_key.skip_ssl_verify
-
-            ok, msg = await _check_quota(org_key.id, org_key.org_token_limit, org_key.system_token_limit, db)
-            if not ok:
-                return JSONResponse(status_code=429, content={"error": msg})
+            key_source = "org"
+            workspace_id = None
+            attribution_source = "knowledge"
+            knowledge_org_id = org_id
+            knowledge_user_id = member_id
+            instance = None
         else:
-            key_result = await db.execute(
-                select(UserLlmKey).where(
-                    UserLlmKey.user_id == instance.created_by,
-                    UserLlmKey.provider == provider,
-                    not_deleted(UserLlmKey),
+            result = await db.execute(
+                select(Instance).where(
+                    Instance.wp_api_key == proxy_token,
+                    Instance.deleted_at.is_(None),
                 )
             )
-            user_key = key_result.scalar_one_or_none()
-            if user_key is None:
-                return JSONResponse(status_code=404, content={
-                    "error": f"未找到 {provider} 的个人 Key"
-                })
-            real_key = user_key.api_key
-            base_url = user_key.base_url
-            api_type = user_key.api_type
-            skip_ssl_verify = user_key.skip_ssl_verify
+            instance = result.scalar_one_or_none()
+            if instance is None:
+                result = await db.execute(
+                    select(Instance).where(
+                        Instance.proxy_token == proxy_token,
+                        Instance.deleted_at.is_(None),
+                    )
+                )
+                instance = result.scalar_one_or_none()
+            if instance is None:
+                return JSONResponse(status_code=401, content={"error": "Invalid proxy token"})
 
-        workspace_id, attribution_source = await _resolve_usage_attribution(request, db, instance)
+            ipc_result = await db.execute(
+                select(InstanceProviderConfig).where(
+                    InstanceProviderConfig.instance_id == instance.id,
+                    InstanceProviderConfig.provider == provider,
+                    not_deleted(InstanceProviderConfig),
+                )
+            )
+            ipc = ipc_result.scalar_one_or_none()
+
+            if ipc is None:
+                fallback_result = await db.execute(
+                    select(UserLlmConfig).where(
+                        UserLlmConfig.user_id == instance.created_by,
+                        UserLlmConfig.org_id == instance.org_id,
+                        UserLlmConfig.provider == provider,
+                        not_deleted(UserLlmConfig),
+                    )
+                )
+                fallback_config = fallback_result.scalar_one_or_none()
+                key_source = fallback_config.key_source if fallback_config else "org"
+            else:
+                key_source = ipc.key_source
+
+            is_org_key = key_source == "org"
+            real_key: str | None = None
+            base_url: str | None = None
+            api_type: str | None = None
+            org_key_id: str | None = None
+            skip_ssl_verify: bool = False
+
+            if is_org_key:
+                key_result = await db.execute(
+                    select(OrgLlmKey).where(
+                        OrgLlmKey.org_id == instance.org_id,
+                        OrgLlmKey.provider == provider,
+                        OrgLlmKey.is_active.is_(True),
+                        not_deleted(OrgLlmKey),
+                    ).order_by(OrgLlmKey.created_at).limit(1)
+                )
+                org_key = key_result.scalar_one_or_none()
+                if org_key is None:
+                    return JSONResponse(status_code=404, content={
+                        "error": f"当前组织未配置 {provider} 的 Working Plan Key，请联系管理员"
+                    })
+                real_key = org_key.api_key
+                base_url = org_key.base_url
+                api_type = org_key.api_type
+                org_key_id = org_key.id
+                skip_ssl_verify = org_key.skip_ssl_verify
+
+                ok, msg = await _check_quota(org_key.id, org_key.org_token_limit, org_key.system_token_limit, db)
+                if not ok:
+                    return JSONResponse(status_code=429, content={"error": msg})
+            else:
+                key_result = await db.execute(
+                    select(UserLlmKey).where(
+                        UserLlmKey.user_id == instance.created_by,
+                        UserLlmKey.provider == provider,
+                        not_deleted(UserLlmKey),
+                    )
+                )
+                user_key = key_result.scalar_one_or_none()
+                if user_key is None:
+                    return JSONResponse(status_code=404, content={
+                        "error": f"未找到 {provider} 的个人 Key"
+                    })
+                real_key = user_key.api_key
+                base_url = user_key.base_url
+                api_type = user_key.api_type
+                skip_ssl_verify = user_key.skip_ssl_verify
+
+            workspace_id, attribution_source = await _resolve_usage_attribution(request, db, instance)
+            knowledge_org_id = instance.org_id
+            knowledge_user_id = instance.created_by
 
     raw_body = await request.body()
     body = _maybe_inject_stream_options(raw_body, provider)
@@ -1231,6 +1269,8 @@ async def llm_proxy(provider: str, path: str, request: Request):
         request_path=f"/{path}",
         is_stream=is_stream,
         raw_body=raw_body,
+        org_id=knowledge_org_id,
+        user_id=knowledge_user_id,
     )
 
     if provider == CODEX_PROVIDER:
@@ -1260,12 +1300,16 @@ async def llm_proxy(provider: str, path: str, request: Request):
 
 
 class _RequestContext:
-    __slots__ = ("instance", "provider", "key_source", "org_key_id",
-                 "workspace_id", "attribution_source", "request_path", "is_stream", "raw_body")
+    __slots__ = (
+        "instance", "provider", "key_source", "org_key_id",
+        "workspace_id", "attribution_source", "request_path", "is_stream", "raw_body",
+        "org_id", "user_id",
+    )
 
-    def __init__(self, *, instance: Instance, provider: str, key_source: str,
+    def __init__(self, *, instance: Instance | None, provider: str, key_source: str,
                  org_key_id: str | None, workspace_id: str | None,
-                 attribution_source: str, request_path: str, is_stream: bool, raw_body: bytes):
+                 attribution_source: str, request_path: str, is_stream: bool, raw_body: bytes,
+                 org_id: str | None = None, user_id: str | None = None):
         self.instance = instance
         self.provider = provider
         self.key_source = key_source
@@ -1275,6 +1319,8 @@ class _RequestContext:
         self.request_path = request_path
         self.is_stream = is_stream
         self.raw_body = raw_body
+        self.org_id = org_id
+        self.user_id = user_id
 
 
 async def _handle_non_stream(
@@ -1447,8 +1493,8 @@ async def _record_usage(
         async with get_session() as db:
             log = LlmUsageLog(
                 org_llm_key_id=ctx.org_key_id,
-                user_id=ctx.instance.created_by,
-                instance_id=ctx.instance.id,
+                user_id=ctx.user_id or (ctx.instance.created_by if ctx.instance else None),
+                instance_id=ctx.instance.id if ctx.instance else None,
                 workspace_id=ctx.workspace_id,
                 attribution_source=ctx.attribution_source,
                 provider=ctx.provider,
@@ -1456,7 +1502,7 @@ async def _record_usage(
                 prompt_tokens=usage.get("prompt_tokens", 0),
                 completion_tokens=usage.get("completion_tokens", 0),
                 total_tokens=usage.get("total_tokens", 0),
-                org_id=ctx.instance.org_id,
+                org_id=ctx.org_id or (ctx.instance.org_id if ctx.instance else None),
                 key_source=ctx.key_source,
                 request_path=ctx.request_path,
                 is_stream=ctx.is_stream,

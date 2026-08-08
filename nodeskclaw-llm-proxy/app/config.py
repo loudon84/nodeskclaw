@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     HTTPS_PROXY: str = ""
     LLM_LOG_CONTENT: bool = False
     LLM_ATTRIBUTION_SECRET: str = ""
+    KNOWLEDGE_SERVICE_TOKEN: str = ""
     CODEX_COMMAND: str = "codex"
     CODEX_HOME: str = ""
     CODEX_SKIP_GIT_REPO_CHECK: bool = True
