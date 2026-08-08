@@ -140,6 +140,8 @@ class AuditAction(str, Enum):
     file_upload = "FILE_UPLOAD"
     file_version_create = "FILE_VERSION_CREATE"
     file_version_activate = "FILE_VERSION_ACTIVATE"
+    file_archive = "FILE_ARCHIVE"
+    file_unarchive = "FILE_UNARCHIVE"
     file_reparse = "FILE_REPARSE"
     file_delete = "FILE_DELETE"
     file_download = "FILE_DOWNLOAD"
@@ -155,6 +157,9 @@ class AuditAction(str, Enum):
     retrieval_denied = "RETRIEVAL_DENIED"
     chunk_security_drop = "CHUNK_SECURITY_DROP"
     metadata_mismatch = "METADATA_MISMATCH"
+    metadata_repaired = "METADATA_REPAIRED"
+    metadata_update = "METADATA_UPDATE"
+    metadata_schema_update = "METADATA_SCHEMA_UPDATE"
     chat_create = "CHAT_CREATE"
     chat_query = "CHAT_QUERY"
 

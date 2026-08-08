@@ -2,16 +2,24 @@
 
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, File, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_db, get_member_context, get_ragflow_client
 from app.integrations.ragflow.client import RagflowClient
 from app.schemas.common import ApiResponse, PageData
-from app.schemas.knowledge import AclOut, FileAclCreate, IngestionJobOut, SourceFileOut, SourceFileVersionOut
+from app.schemas.knowledge import (
+    AclOut,
+    FileAclCreate,
+    IngestionJobOut,
+    SourceFileMetadataOut,
+    SourceFileMetadataPatch,
+    SourceFileOut,
+    SourceFileVersionOut,
+)
 from app.schemas.principal import KnowledgePrincipal
-from app.services import ingestion_service, source_file_service
+from app.services import ingestion_service, metadata_service, source_file_service
 
 kb_files_router = APIRouter(prefix="/knowledge-bases", tags=["source-files"])
 router = APIRouter(prefix="/source-files", tags=["source-files"])
@@ -90,14 +98,17 @@ async def list_global_files(
         )
     )
 
+
 @kb_files_router.post("/{kb_id}/files", response_model=ApiResponse)
 async def upload_file(
     kb_id: str,
     file: UploadFile = File(...),
+    metadata: str = Form("{}"),
     member: KnowledgePrincipal = Depends(get_member_context),
     db: AsyncSession = Depends(get_db),
     ragflow: RagflowClient = Depends(get_ragflow_client),
 ):
+    parsed_metadata = metadata_service.parse_metadata_form(metadata)
     spool, size, digest = await ingestion_service.read_upload_spooled(file)
     try:
         sf, version, job = await ingestion_service.ingest_upload(
@@ -110,6 +121,7 @@ async def upload_file(
             file_obj=spool,
             file_size=size,
             sha256=digest,
+            metadata=parsed_metadata,
         )
     finally:
         spool.close()
@@ -121,6 +133,34 @@ async def upload_file(
             "job": IngestionJobOut.model_validate(job).model_dump(),
         },
     )
+
+
+@router.get("/{source_file_id}/metadata", response_model=ApiResponse[SourceFileMetadataOut])
+async def get_metadata(
+    source_file_id: str,
+    member: KnowledgePrincipal = Depends(get_member_context),
+    db: AsyncSession = Depends(get_db),
+):
+    data = await metadata_service.get_source_file_metadata(db, member, source_file_id)
+    return ApiResponse(data=SourceFileMetadataOut.model_validate(data))
+
+
+@router.patch("/{source_file_id}/metadata", response_model=ApiResponse[SourceFileMetadataOut])
+async def patch_metadata(
+    source_file_id: str,
+    body: SourceFileMetadataPatch,
+    member: KnowledgePrincipal = Depends(get_member_context),
+    db: AsyncSession = Depends(get_db),
+    ragflow: RagflowClient = Depends(get_ragflow_client),
+):
+    data = await metadata_service.patch_source_file_metadata(
+        db,
+        member,
+        ragflow,
+        source_file_id,
+        body.metadata,
+    )
+    return ApiResponse(data=SourceFileMetadataOut.model_validate(data))
 
 
 @router.get("/{source_file_id}/versions", response_model=ApiResponse[list[SourceFileVersionOut]])
@@ -170,11 +210,13 @@ async def delete_file(
 async def upload_version(
     source_file_id: str,
     file: UploadFile = File(...),
+    metadata: str | None = Form(None),
     member: KnowledgePrincipal = Depends(get_member_context),
     db: AsyncSession = Depends(get_db),
     ragflow: RagflowClient = Depends(get_ragflow_client),
 ):
     sf = await source_file_service.get_source_file(db, member, source_file_id)
+    parsed_metadata = metadata_service.parse_metadata_form(metadata) if metadata is not None else None
     spool, size, digest = await ingestion_service.read_upload_spooled(file)
     try:
         sf2, version, job = await ingestion_service.ingest_upload(
@@ -188,6 +230,7 @@ async def upload_version(
             file_size=size,
             sha256=digest,
             source_file_id=source_file_id,
+            metadata=parsed_metadata,
         )
     finally:
         spool.close()

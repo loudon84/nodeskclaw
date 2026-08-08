@@ -15,7 +15,7 @@ from app.models.knowledge_base import KnowledgeBase
 from app.models.source_file import SourceFile
 from app.models.source_file_version import SourceFileVersion
 from app.services.audit_service import write_audit
-from app.services.ingestion_service import build_meta_fields
+from app.services.metadata_service import build_meta_fields
 
 logger = logging.getLogger(__name__)
 
@@ -112,7 +112,7 @@ async def _retry_deleting_knowledge_bases(db: AsyncSession, ragflow: RagflowClie
     return completed
 
 
-async def _detect_metadata_drift(db: AsyncSession, ragflow: RagflowClient) -> int:
+async def _repair_metadata_drift(db: AsyncSession, ragflow: RagflowClient) -> tuple[int, int]:
     result = await db.execute(
         select(SourceFileVersion, SourceFile, KnowledgeBase)
         .join(SourceFile, SourceFile.id == SourceFileVersion.source_file_id)
@@ -128,6 +128,7 @@ async def _detect_metadata_drift(db: AsyncSession, ragflow: RagflowClient) -> in
         .limit(200)
     )
     drift_count = 0
+    repaired_count = 0
     for version, sf, kb in result.all():
         if not kb.ragflow_dataset_id or not version.ragflow_document_id:
             continue
@@ -142,16 +143,78 @@ async def _detect_metadata_drift(db: AsyncSession, ragflow: RagflowClient) -> in
             file_version_id=version.id,
             knowledge_base_id=kb.id,
             org_id=sf.org_id,
+            metadata=sf.metadata_,
+            metadata_revision=sf.metadata_revision,
         )
         actual = docs[0].meta_fields or {}
         mismatch = any(str(actual.get(k, "")) != v for k, v in expected.items())
-        if mismatch:
-            drift_count += 1
+        remote_revision = str(actual.get("nk_metadata_revision", ""))
+        local_revision = str(int(sf.metadata_revision or 0))
+        if remote_revision != local_revision:
+            mismatch = True
+        if not mismatch:
+            continue
+        drift_count += 1
+        logger.warning(
+            "metadata drift detected source_file=%s version=%s document=%s local_rev=%s remote_rev=%s",
+            sf.id,
+            version.id,
+            version.ragflow_document_id,
+            local_revision,
+            remote_revision,
+        )
+        try:
+            await ragflow.update_document_metadata(kb.ragflow_dataset_id, version.ragflow_document_id, expected)
+            verify_docs = await ragflow.list_documents(
+                kb.ragflow_dataset_id,
+                id=version.ragflow_document_id,
+                page_size=1,
+            )
+            verified = False
+            if verify_docs:
+                repaired_meta = verify_docs[0].meta_fields or {}
+                verified = all(str(repaired_meta.get(k, "")) == v for k, v in expected.items())
+            if verified:
+                repaired_count += 1
+                await write_audit(
+                    db,
+                    org_id=sf.org_id,
+                    member_id=None,
+                    action=AuditAction.metadata_repaired.value,
+                    resource_type="source_file_version",
+                    resource_id=version.id,
+                    details={
+                        "source_file_id": sf.id,
+                        "ragflow_document_id": version.ragflow_document_id,
+                        "strategy": "LOCAL_WINS",
+                        "expected": expected,
+                        "actual": {k: actual.get(k) for k in expected},
+                        "status": "REPAIRED",
+                    },
+                )
+            else:
+                await write_audit(
+                    db,
+                    org_id=sf.org_id,
+                    member_id=None,
+                    action=AuditAction.metadata_mismatch.value,
+                    resource_type="source_file_version",
+                    resource_id=version.id,
+                    details={
+                        "source_file_id": sf.id,
+                        "ragflow_document_id": version.ragflow_document_id,
+                        "strategy": "LOCAL_WINS",
+                        "expected": expected,
+                        "actual": {k: actual.get(k) for k in expected},
+                        "status": "REPAIR_FAILED",
+                    },
+                )
+        except RagflowError as exc:
             logger.warning(
-                "metadata drift detected source_file=%s version=%s document=%s",
+                "metadata repair failed source_file=%s version=%s err=%s",
                 sf.id,
                 version.id,
-                version.ragflow_document_id,
+                exc.message_key,
             )
             await write_audit(
                 db,
@@ -163,21 +226,26 @@ async def _detect_metadata_drift(db: AsyncSession, ragflow: RagflowClient) -> in
                 details={
                     "source_file_id": sf.id,
                     "ragflow_document_id": version.ragflow_document_id,
+                    "strategy": "LOCAL_WINS",
                     "expected": expected,
                     "actual": {k: actual.get(k) for k in expected},
+                    "status": "REPAIR_FAILED",
+                    "error": exc.message_key,
                 },
             )
-    return drift_count
+    return drift_count, repaired_count
 
 
 async def run_reconciliation(db: AsyncSession, ragflow: RagflowClient) -> dict[str, int]:
     disabled = await _disable_superseded_enabled_documents(db, ragflow)
     deleted_files = await _retry_deleting_source_files(db, ragflow)
     deleted_kbs = await _retry_deleting_knowledge_bases(db, ragflow)
-    drift = await _detect_metadata_drift(db, ragflow)
+    drift, repaired = await _repair_metadata_drift(db, ragflow)
+    await db.commit()
     return {
         "superseded_disabled": disabled,
         "source_files_deleted": deleted_files,
         "knowledge_bases_deleted": deleted_kbs,
         "metadata_drift": drift,
+        "metadata_repaired": repaired,
     }

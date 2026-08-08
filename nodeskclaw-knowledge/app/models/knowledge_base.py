@@ -42,3 +42,4 @@ class KnowledgeBase(BaseModel):
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     tags: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     visibility: Mapped[str] = mapped_column(String(32), nullable=False, default="private")
+    metadata_schema: Mapped[dict | None] = mapped_column(JSONB, nullable=True)

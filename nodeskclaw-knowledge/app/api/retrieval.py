@@ -29,5 +29,6 @@ async def retrieve(
         options=body.options,
         top_k=body.top_k or (body.options.top_k if body.options else None),
         similarity_threshold=body.similarity_threshold,
+        filters=body.filters,
     )
     return ApiResponse(data=RetrievalResponse.model_validate(data))

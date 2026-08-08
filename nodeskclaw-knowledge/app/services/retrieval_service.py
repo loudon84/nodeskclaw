@@ -67,6 +67,7 @@ async def retrieve(
     options: RetrievalOptions | None = None,
     top_k: int | None = None,
     similarity_threshold: float | None = None,
+    filters: dict[str, list] | None = None,
     origin: str = RetrievalOrigin.direct_retrieval.value,
 ) -> dict:
     started = time.perf_counter()
@@ -77,6 +78,13 @@ async def retrieve(
     kbs = await knowledge_set_service.list_bound_knowledge_bases(db, member, knowledge_set_id)
     if not kbs:
         raise BadRequestError(message="知识集合未绑定知识库", message_key="errors.knowledge.set_empty")
+
+    from app.services import metadata_service
+
+    normalized_filters = metadata_service.validate_retrieval_filters(
+        filters,
+        [getattr(kb, "metadata_schema", None) for kb in kbs],
+    )
 
     config = dict(ks.retrieval_config or DEFAULT_RETRIEVAL_CONFIG)
     effective_top_k = top_k if top_k is not None else int(config.get("top_k", 1024))
@@ -123,10 +131,18 @@ async def retrieve(
         await db.commit()
         raise ForbiddenError(message="无权检索该知识集合", message_key="errors.knowledge.retrieval_denied")
 
+    if normalized_filters:
+        plan_access = await metadata_service.apply_metadata_filters_to_access_plan(
+            db,
+            plan_access,
+            normalized_filters,
+            kbs,
+        )
+
     set_items = await knowledge_set_service.list_set_items(db, member, knowledge_set_id)
     plan = retrieval_planner.build_retrieval_plan(plan_access, kbs, set_items)
 
-    if not plan.slices:
+    if plan_access.kind == AccessPlanKind.no_access or not plan.slices:
         query_id = str(uuid.uuid4())
         latency_ms = int((time.perf_counter() - started) * 1000)
         audit = RetrievalAudit(

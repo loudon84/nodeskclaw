@@ -32,7 +32,7 @@ Principal 以 `OrgMembership.id`（`member_id`）为准。Backend `GET /api/v1/a
 
 检索必须先算 ACL AccessPlan，再按 KB 拆 Slice 调 RAGFlow，再经 Active Version + SourceFile ACL 清洗；未授权 / 非 active 版本 Chunk 不得进入 LLM Context。
 
-AccessPlan 分 `FULL_ACCESS` / `FILTERED_ACCESS` / `NO_ACCESS`，并保留 `full_dataset_ids` 与 `partial_slices` 以支持 Full+Partial 混合。Citation 下载必须重新鉴权。RAGFlow API Key 仅留 Knowledge Adapter；Desktop 永不接触。按 `failure_policy`（默认 `fail_closed`）处理 Slice 失败：fail_closed 返回 503，`degraded` 允许部分结果并写 `execution_status=degraded`。实现：[[nodeskclaw-knowledge/app/services/retrieval_service.py#retrieve]]、[[nodeskclaw-knowledge/app/services/retrieval_merge_service.py#execute_and_merge]]。
+AccessPlan 分 `FULL_ACCESS` / `FILTERED_ACCESS` / `NO_ACCESS`，并保留 `full_dataset_ids` 与 `partial_slices` 以支持 Full+Partial 混合。可选 `filters` 在 AccessPlan 之后按本地 SourceFile.metadata 收窄候选（非 ACL）。Citation 下载必须重新鉴权。RAGFlow API Key 仅留 Knowledge Adapter；Desktop 永不接触。按 `failure_policy`（默认 `fail_closed`）处理 Slice 失败：fail_closed 返回 503，`degraded` 允许部分结果并写 `execution_status=degraded`。实现：[[nodeskclaw-knowledge/app/services/retrieval_service.py#retrieve]]、[[nodeskclaw-knowledge/app/services/retrieval_merge_service.py#execute_and_merge]]。
 
 ## Isolation From Ragflow
 

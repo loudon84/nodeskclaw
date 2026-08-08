@@ -1,6 +1,9 @@
 """SourceFile ORM model."""
 
-from sqlalchemy import Index, Integer, String, Text, text
+from datetime import datetime
+
+from sqlalchemy import DateTime, Index, Integer, String, Text, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import BaseModel
@@ -28,3 +31,6 @@ class SourceFile(BaseModel):
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
     acl_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    metadata_: Mapped[dict] = mapped_column("metadata", JSONB, nullable=False, default=dict)
+    metadata_revision: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

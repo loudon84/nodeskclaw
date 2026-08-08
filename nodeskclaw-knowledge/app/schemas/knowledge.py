@@ -52,6 +52,7 @@ class KnowledgeBaseOut(BaseModel):
     tags: list[str] | None = None
     last_synced_at: Any = None
     last_error: str | None = None
+    metadata_schema: dict[str, Any] | None = None
     document_count: int | None = None
     chunk_count: int | None = None
     ui_role: str | None = None
@@ -161,11 +162,14 @@ class SourceFileOut(BaseModel):
     status: str
     acl_version: int = 1
     last_error: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict, validation_alias="metadata_")
+    metadata_revision: int = 0
+    archived_at: Any = None
     parse_status: str | None = None
     chunk_count: int | None = None
     version_no: int | None = None
 
-    model_config = {"from_attributes": True}
+    model_config = {"from_attributes": True, "populate_by_name": True}
 
 
 class SourceFileVersionOut(BaseModel):
@@ -221,6 +225,20 @@ class RetrievalRequest(BaseModel):
     options: RetrievalOptions | None = None
     top_k: int | None = None
     similarity_threshold: float | None = None
+    filters: dict[str, list] | None = None
+
+
+class MetadataSchemaPut(BaseModel):
+    fields: list[dict[str, Any]]
+
+
+class SourceFileMetadataPatch(BaseModel):
+    metadata: dict[str, Any]
+
+
+class SourceFileMetadataOut(BaseModel):
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    metadata_revision: int = 0
 
 
 class RetrievalChunkOut(BaseModel):

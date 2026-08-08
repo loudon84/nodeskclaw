@@ -24,6 +24,7 @@ from app.models.source_file import SourceFile
 from app.models.source_file_version import SourceFileVersion
 from app.schemas.principal import KnowledgePrincipal
 from app.services import knowledge_base_service, source_file_service
+from app.services.metadata_service import build_meta_fields, validate_metadata_values
 from app.services.permission_service import has_kb_permission
 from app.services.source_file_service import activate_version, next_version_no, sha256_bytes
 
@@ -33,21 +34,6 @@ BACKOFF_SECONDS = [2, 4, 8, 16, 30]
 LEASE_SECONDS = 30
 UPLOAD_CHUNK_SIZE = 1024 * 1024
 SPOOL_MAX_SIZE = 8 * 1024 * 1024
-
-
-def build_meta_fields(
-    *,
-    source_file_id: str,
-    file_version_id: str,
-    knowledge_base_id: str,
-    org_id: str,
-) -> dict[str, str]:
-    return {
-        "nk_source_file_id": source_file_id,
-        "nk_file_version_id": file_version_id,
-        "nk_knowledge_base_id": knowledge_base_id,
-        "nk_org_id": org_id,
-    }
 
 
 def _now() -> datetime:
@@ -116,6 +102,8 @@ def _metadata_consistent(meta: dict, *, sf: SourceFile, version: SourceFileVersi
         file_version_id=version.id,
         knowledge_base_id=kb.id,
         org_id=sf.org_id,
+        metadata=sf.metadata_,
+        metadata_revision=sf.metadata_revision,
     )
     for key, value in expected.items():
         if str(meta.get(key, "")) != value:
@@ -136,6 +124,7 @@ async def ingest_upload(
     file_size: int | None = None,
     sha256: str | None = None,
     source_file_id: str | None = None,
+    metadata: dict | None = None,
 ) -> tuple[SourceFile, SourceFileVersion, IngestionJob]:
     if file_obj is not None:
         size = int(file_size or 0)
@@ -163,6 +152,10 @@ async def ingest_upload(
             raise BadRequestError(message="源文件不属于该知识库", message_key="errors.knowledge.source_file_mismatch")
         old_version = await db.get(SourceFileVersion, sf.active_version_id) if sf.active_version_id else None
         sf.status = SourceFileStatus.updating.value
+        if metadata is not None:
+            validated_metadata = validate_metadata_values(metadata, kb.metadata_schema, partial=False)
+            sf.metadata_ = validated_metadata
+            sf.metadata_revision = int(sf.metadata_revision or 0) + 1
     else:
         existing = await db.execute(
             select(SourceFile).where(
@@ -173,6 +166,7 @@ async def ingest_upload(
         )
         if existing.scalar_one_or_none():
             raise BadRequestError(message="同名文件已存在，请走版本更新", message_key="errors.knowledge.file_exists")
+        validated_metadata = validate_metadata_values(metadata or {}, kb.metadata_schema, partial=False)
         sf = SourceFile(
             org_id=member.org_id,
             knowledge_base_id=knowledge_base_id,
@@ -180,6 +174,8 @@ async def ingest_upload(
             mime_type=mime_type,
             owner_member_id=member.member_id,
             status=SourceFileStatus.pending.value,
+            metadata_=validated_metadata,
+            metadata_revision=0,
         )
         db.add(sf)
         await db.flush()
@@ -236,6 +232,8 @@ async def ingest_upload(
             file_version_id=version.id,
             knowledge_base_id=kb.id,
             org_id=member.org_id,
+            metadata=sf.metadata_,
+            metadata_revision=sf.metadata_revision,
         )
         await ragflow.update_document_metadata(kb.ragflow_dataset_id, document_id, meta)
         job.status = IngestionJobStatus.metadata_synced.value
@@ -298,6 +296,8 @@ async def reparse_source_file(
             file_version_id=version.id,
             knowledge_base_id=kb.id,
             org_id=member.org_id,
+            metadata=sf.metadata_,
+            metadata_revision=sf.metadata_revision,
         )
         await ragflow.update_document_metadata(kb.ragflow_dataset_id, version.ragflow_document_id, meta)
         await ragflow.parse_documents(kb.ragflow_dataset_id, [version.ragflow_document_id])
@@ -415,6 +415,8 @@ async def retry_job(
         file_version_id=version.id,
         knowledge_base_id=kb.id,
         org_id=sf.org_id,
+        metadata=sf.metadata_,
+        metadata_revision=sf.metadata_revision,
     )
     await ragflow.update_document_metadata(kb.ragflow_dataset_id, version.ragflow_document_id, meta)
     await ragflow.parse_documents(kb.ragflow_dataset_id, [version.ragflow_document_id])

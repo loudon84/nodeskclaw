@@ -12,9 +12,10 @@ from app.schemas.knowledge import (
     KnowledgeBaseCreate,
     KnowledgeBaseOut,
     KnowledgeBaseUpdate,
+    MetadataSchemaPut,
 )
 from app.schemas.principal import KnowledgePrincipal
-from app.services import knowledge_base_service
+from app.services import knowledge_base_service, metadata_service
 
 router = APIRouter(prefix="/knowledge-bases", tags=["knowledge-bases"])
 
@@ -110,6 +111,27 @@ async def delete_kb(
 ):
     await knowledge_base_service.delete_knowledge_base(db, member, ragflow, kb_id)
     return ApiResponse(message="deleted")
+
+
+@router.get("/{kb_id}/metadata-schema", response_model=ApiResponse)
+async def get_metadata_schema(
+    kb_id: str,
+    member: KnowledgePrincipal = Depends(get_member_context),
+    db: AsyncSession = Depends(get_db),
+):
+    schema = await metadata_service.get_metadata_schema(db, member, kb_id)
+    return ApiResponse(data=schema)
+
+
+@router.put("/{kb_id}/metadata-schema", response_model=ApiResponse)
+async def put_metadata_schema(
+    kb_id: str,
+    body: MetadataSchemaPut,
+    member: KnowledgePrincipal = Depends(get_member_context),
+    db: AsyncSession = Depends(get_db),
+):
+    schema = await metadata_service.put_metadata_schema(db, member, kb_id, body.model_dump())
+    return ApiResponse(data=schema)
 
 
 @router.get("/{kb_id}/acl", response_model=ApiResponse[list[AclOut]])

@@ -40,8 +40,10 @@ def test_build_meta_fields_identity_only():
         "nk_file_version_id": "sfv1",
         "nk_knowledge_base_id": "kb1",
         "nk_org_id": "o1",
+        "nk_metadata_revision": "0",
     }
     assert "allowed_users" not in meta
+    assert not any(k.startswith("biz_") for k in meta)
 
 
 def test_subject_match_member_and_department():
