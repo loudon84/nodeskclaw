@@ -70,10 +70,15 @@ class RagflowClient:
         retry: bool = False,
         timeout: float | None = None,
     ) -> Any:
+        import time
+
+        from app.services import metrics_service
+
         attempts = 3 if retry else 1
         last_exc: Exception | None = None
         client = await self._ensure_client()
         request_url = path if str(client.base_url) else f"{self.base_url}{path}"
+        started = time.perf_counter()
         for attempt in range(attempts):
             try:
                 resp = await client.request(
@@ -88,7 +93,19 @@ class RagflowClient:
                 )
                 payload = resp.json() if resp.content else {"code": resp.status_code, "message": resp.text}
                 if isinstance(payload, dict) and payload.get("code", 0) != 0:
+                    metrics_service.observe_ragflow_request(
+                        method=method,
+                        path=path,
+                        status="error",
+                        duration_seconds=time.perf_counter() - started,
+                    )
                     raise map_ragflow_payload(int(payload.get("code", -1)), str(payload.get("message", "")))
+                metrics_service.observe_ragflow_request(
+                    method=method,
+                    path=path,
+                    status="ok",
+                    duration_seconds=time.perf_counter() - started,
+                )
                 return payload.get("data") if isinstance(payload, dict) else payload
             except RagflowError:
                 raise
@@ -97,6 +114,12 @@ class RagflowClient:
                 logger.warning("RAGFlow request failed attempt=%s path=%s err=%s", attempt + 1, path, type(exc).__name__)
                 if attempt + 1 < attempts:
                     await asyncio.sleep(0.2 * (2**attempt))
+        metrics_service.observe_ragflow_request(
+            method=method,
+            path=path,
+            status="error",
+            duration_seconds=time.perf_counter() - started,
+        )
         raise map_transport_error(last_exc or RuntimeError("unknown"))
 
     async def create_dataset(

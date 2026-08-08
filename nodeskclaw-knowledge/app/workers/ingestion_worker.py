@@ -11,16 +11,33 @@ import uuid
 
 from app.core.deps import async_session_factory
 from app.integrations.ragflow.client import RagflowClient
-from app.services import ingestion_service, reconciliation_service
+from app.services import ingestion_service, metrics_service, reconciliation_service
 
 logger = logging.getLogger(__name__)
 
 POLL_INTERVAL_SECONDS = 2.0
 RECONCILIATION_EVERY_LOOPS = 30
+_TERMINAL_JOB_STATUSES = {
+    "active",
+    "failed",
+    "cancelled",
+}
 
 
 def _lease_owner() -> str:
     return f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
+
+
+def _observe_job_metrics(job) -> None:
+    if job.status not in _TERMINAL_JOB_STATUSES:
+        return
+    duration = None
+    if job.finished_at is not None and getattr(job, "created_at", None) is not None:
+        try:
+            duration = (job.finished_at - job.created_at).total_seconds()
+        except Exception:
+            duration = None
+    metrics_service.observe_ingestion_job(status=job.status, duration_seconds=duration)
 
 
 # @lat: [[knowledge#Ingestion Worker]]
@@ -36,6 +53,7 @@ async def _run_loop(*, with_reconciliation: bool) -> None:
                 job = await ingestion_service.claim_next_job(db, lease_owner=lease_owner)
                 if job:
                     await ingestion_service.process_leased_job(db, ragflow, job)
+                    _observe_job_metrics(job)
                     await db.commit()
                     processed = True
 

@@ -60,10 +60,12 @@ async def test_metadata_drift_local_wins_repair():
     ragflow.update_document_metadata = AsyncMock()
 
     with patch("app.services.reconciliation_service.write_audit", new=AsyncMock()) as write_audit:
-        drift, repaired_count = await reconciliation_service._repair_metadata_drift(db, ragflow)
+        checked, drift, repaired_count, failed = await reconciliation_service._repair_metadata_drift(db, ragflow)
 
+    assert checked == 1
     assert drift == 1
     assert repaired_count == 1
+    assert failed == 0
     ragflow.update_document_metadata.assert_awaited_once()
     assert write_audit.await_args.kwargs["action"] == "METADATA_REPAIRED"
     assert write_audit.await_args.kwargs["details"]["status"] == "REPAIRED"

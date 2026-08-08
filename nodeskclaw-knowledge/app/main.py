@@ -6,21 +6,20 @@ import httpx
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from sqlalchemy import text
 
 from app.api.router import api_router
 from app.core.config import settings
 from app.core.deps import async_session_factory
 from app.core.exceptions import register_exception_handlers
+from app.core.logging import configure_structured_logging
 from app.integrations.nodeskclaw_backend.client import NodeskclawBackendClient
 from app.integrations.ragflow.client import RagflowClient
+from app.middleware.correlation import CorrelationIdMiddleware
+from app.services import metrics_service
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)-5s [%(name)s] %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
+configure_structured_logging(logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -67,8 +66,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(CorrelationIdMiddleware)
 register_exception_handlers(app)
 app.include_router(api_router, prefix="/api/v1")
+
+
+# @lat: [[knowledge#Observability Metrics]]
+@app.get("/metrics")
+async def metrics():
+    return Response(content=metrics_service.render_metrics(), media_type=metrics_service.METRICS_CONTENT_TYPE)
 
 
 @app.get("/health/live")

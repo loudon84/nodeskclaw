@@ -23,6 +23,7 @@ from app.schemas.knowledge import RetrievalOptions
 from app.schemas.principal import KnowledgePrincipal
 from app.services import (
     knowledge_set_service,
+    metrics_service,
     retrieval_merge_service,
     retrieval_planner,
     retrieval_profile_service,
@@ -30,6 +31,10 @@ from app.services import (
 )
 from app.services.permission_service import build_access_plan, has_set_permission
 from app.services.retrieval_profile_service import merge_profile_config
+
+
+def _observe_retrieval(status: str, started: float) -> None:
+    metrics_service.observe_retrieval(status=status, duration_seconds=time.perf_counter() - started)
 
 
 def _extract_page(positions: list | None) -> int | None:
@@ -150,6 +155,7 @@ async def retrieve(
         )
         db.add(audit)
         await db.commit()
+        _observe_retrieval("denied", started)
         raise ForbiddenError(message="无权检索该知识集合", message_key="errors.knowledge.retrieval_denied")
 
     if normalized_filters:
@@ -188,6 +194,7 @@ async def retrieve(
         ks.usage_count += 1
         ks.last_used_at = datetime.now(UTC)
         await db.commit()
+        _observe_retrieval("empty", started)
         return {"query_id": query_id, "chunks": [], "status": "empty", "diagnostics": {"slice_count": 0}}
 
     merge_result = await retrieval_merge_service.execute_and_merge(
@@ -249,6 +256,7 @@ async def retrieve(
         )
         db.add(audit)
         await db.commit()
+        _observe_retrieval("failed", started)
         raise ServiceUnavailableError(
             message="知识检索暂时不可用",
             message_key="errors.knowledge.retrieval_unavailable",
@@ -309,6 +317,7 @@ async def retrieve(
             }
         )
 
+    _observe_retrieval(execution_status, started)
     return {
         "query_id": query_id,
         "chunks": chunks_out,

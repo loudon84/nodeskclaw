@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import uuid
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,6 +14,7 @@ from app.integrations.ragflow.exceptions import RagflowError
 from app.models.base import not_deleted
 from app.models.enums import AuditAction, KnowledgeBaseStatus, SourceFileStatus
 from app.models.knowledge_base import KnowledgeBase
+from app.models.reconciliation_run import ReconciliationRun
 from app.models.source_file import SourceFile
 from app.models.source_file_version import SourceFileVersion
 from app.services.audit_service import write_audit
@@ -20,7 +23,7 @@ from app.services.metadata_service import build_meta_fields
 logger = logging.getLogger(__name__)
 
 
-async def _disable_superseded_enabled_documents(db: AsyncSession, ragflow: RagflowClient) -> int:
+async def _disable_superseded_enabled_documents(db: AsyncSession, ragflow: RagflowClient) -> tuple[int, int]:
     result = await db.execute(
         select(SourceFileVersion, SourceFile, KnowledgeBase)
         .join(SourceFile, SourceFile.id == SourceFileVersion.source_file_id)
@@ -35,6 +38,7 @@ async def _disable_superseded_enabled_documents(db: AsyncSession, ragflow: Ragfl
         )
     )
     disabled = 0
+    failed = 0
     for version, sf, kb in result.all():
         if not kb.ragflow_dataset_id or not version.ragflow_document_id:
             continue
@@ -47,15 +51,16 @@ async def _disable_superseded_enabled_documents(db: AsyncSession, ragflow: Ragfl
             await ragflow.set_document_enabled(kb.ragflow_dataset_id, version.ragflow_document_id, False)
             disabled += 1
         except RagflowError as exc:
+            failed += 1
             logger.warning(
                 "reconciliation disable superseded failed version=%s err=%s",
                 version.id,
                 exc.message_key,
             )
-    return disabled
+    return disabled, failed
 
 
-async def _retry_deleting_source_files(db: AsyncSession, ragflow: RagflowClient) -> int:
+async def _retry_deleting_source_files(db: AsyncSession, ragflow: RagflowClient) -> tuple[int, int]:
     result = await db.execute(
         select(SourceFile).where(
             SourceFile.status == SourceFileStatus.deleting.value,
@@ -64,6 +69,7 @@ async def _retry_deleting_source_files(db: AsyncSession, ragflow: RagflowClient)
         )
     )
     completed = 0
+    failed = 0
     for sf in result.scalars().all():
         kb = await db.get(KnowledgeBase, sf.knowledge_base_id)
         if kb is None or not kb.ragflow_dataset_id:
@@ -84,11 +90,12 @@ async def _retry_deleting_source_files(db: AsyncSession, ragflow: RagflowClient)
             sf.soft_delete()
             completed += 1
         except RagflowError as exc:
+            failed += 1
             logger.warning("reconciliation delete source file failed id=%s err=%s", sf.id, exc.message_key)
-    return completed
+    return completed, failed
 
 
-async def _retry_deleting_knowledge_bases(db: AsyncSession, ragflow: RagflowClient) -> int:
+async def _retry_deleting_knowledge_bases(db: AsyncSession, ragflow: RagflowClient) -> tuple[int, int]:
     result = await db.execute(
         select(KnowledgeBase).where(
             KnowledgeBase.status == KnowledgeBaseStatus.deleting.value,
@@ -97,6 +104,7 @@ async def _retry_deleting_knowledge_bases(db: AsyncSession, ragflow: RagflowClie
         )
     )
     completed = 0
+    failed = 0
     for kb in result.scalars().all():
         if not kb.ragflow_dataset_id:
             kb.soft_delete()
@@ -107,12 +115,13 @@ async def _retry_deleting_knowledge_bases(db: AsyncSession, ragflow: RagflowClie
             kb.soft_delete()
             completed += 1
         except RagflowError as exc:
+            failed += 1
             kb.last_error = exc.message
             logger.warning("reconciliation delete kb failed id=%s err=%s", kb.id, exc.message_key)
-    return completed
+    return completed, failed
 
 
-async def _repair_metadata_drift(db: AsyncSession, ragflow: RagflowClient) -> tuple[int, int]:
+async def _repair_metadata_drift(db: AsyncSession, ragflow: RagflowClient) -> tuple[int, int, int, int]:
     result = await db.execute(
         select(SourceFileVersion, SourceFile, KnowledgeBase)
         .join(SourceFile, SourceFile.id == SourceFileVersion.source_file_id)
@@ -127,14 +136,18 @@ async def _repair_metadata_drift(db: AsyncSession, ragflow: RagflowClient) -> tu
         )
         .limit(200)
     )
+    checked_count = 0
     drift_count = 0
     repaired_count = 0
+    failed_count = 0
     for version, sf, kb in result.all():
         if not kb.ragflow_dataset_id or not version.ragflow_document_id:
             continue
+        checked_count += 1
         try:
             docs = await ragflow.list_documents(kb.ragflow_dataset_id, id=version.ragflow_document_id, page_size=1)
         except RagflowError:
+            failed_count += 1
             continue
         if not docs:
             continue
@@ -193,6 +206,7 @@ async def _repair_metadata_drift(db: AsyncSession, ragflow: RagflowClient) -> tu
                     },
                 )
             else:
+                failed_count += 1
                 await write_audit(
                     db,
                     org_id=sf.org_id,
@@ -210,6 +224,7 @@ async def _repair_metadata_drift(db: AsyncSession, ragflow: RagflowClient) -> tu
                     },
                 )
         except RagflowError as exc:
+            failed_count += 1
             logger.warning(
                 "metadata repair failed source_file=%s version=%s err=%s",
                 sf.id,
@@ -233,19 +248,60 @@ async def _repair_metadata_drift(db: AsyncSession, ragflow: RagflowClient) -> tu
                     "error": exc.message_key,
                 },
             )
-    return drift_count, repaired_count
+    return checked_count, drift_count, repaired_count, failed_count
 
 
-async def run_reconciliation(db: AsyncSession, ragflow: RagflowClient) -> dict[str, int]:
-    disabled = await _disable_superseded_enabled_documents(db, ragflow)
-    deleted_files = await _retry_deleting_source_files(db, ragflow)
-    deleted_kbs = await _retry_deleting_knowledge_bases(db, ragflow)
-    drift, repaired = await _repair_metadata_drift(db, ragflow)
-    await db.commit()
-    return {
-        "superseded_disabled": disabled,
-        "source_files_deleted": deleted_files,
-        "knowledge_bases_deleted": deleted_kbs,
-        "metadata_drift": drift,
-        "metadata_repaired": repaired,
-    }
+# @lat: [[knowledge#Reconciliation Runs]]
+async def run_reconciliation(db: AsyncSession, ragflow: RagflowClient) -> dict[str, int | str]:
+    started_at = datetime.now(UTC)
+    run = ReconciliationRun(
+        id=str(uuid.uuid4()),
+        started_at=started_at,
+        status="running",
+        checked_count=0,
+        drifted_count=0,
+        repaired_count=0,
+        failed_count=0,
+    )
+    db.add(run)
+    await db.flush()
+
+    try:
+        disabled, disabled_failed = await _disable_superseded_enabled_documents(db, ragflow)
+        deleted_files, files_failed = await _retry_deleting_source_files(db, ragflow)
+        deleted_kbs, kbs_failed = await _retry_deleting_knowledge_bases(db, ragflow)
+        checked, drift, repaired, meta_failed = await _repair_metadata_drift(db, ragflow)
+
+        repaired_total = disabled + deleted_files + deleted_kbs + repaired
+        failed_total = disabled_failed + files_failed + kbs_failed + meta_failed
+        run.checked_count = checked + disabled + deleted_files + deleted_kbs
+        run.drifted_count = drift
+        run.repaired_count = repaired_total
+        run.failed_count = failed_total
+        run.status = "success"
+        run.finished_at = datetime.now(UTC)
+        await db.commit()
+        return {
+            "superseded_disabled": disabled,
+            "source_files_deleted": deleted_files,
+            "knowledge_bases_deleted": deleted_kbs,
+            "metadata_drift": drift,
+            "metadata_repaired": repaired,
+            "checked": run.checked_count,
+            "failed": failed_total,
+            "reconciliation_run_id": run.id,
+        }
+    except Exception as exc:
+        logger.exception(
+            "reconciliation failed run_id=%s message_key=%s",
+            run.id,
+            "errors.knowledge.reconciliation_failed",
+        )
+        run.status = "failed"
+        run.error_message = str(exc)[:2000]
+        run.finished_at = datetime.now(UTC)
+        try:
+            await db.commit()
+        except Exception:
+            await db.rollback()
+        raise

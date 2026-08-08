@@ -83,3 +83,21 @@ Chat 只能消费 SafeChunks：Session Owner → Set USE → Secure Retrieval �
 `GET /api/v1/citations/{id}` 返回历史 citation 元数据与当前可访问性，历史 citation 不是权限凭证。
 
 Session owner 或同 org 且对 SourceFile 有 READ 的成员可查；跨 org 返回 404 防 enumeration。`accessible`/`reason` 按当前 `deleted_at`/`archived_at`/`has_file_permission(READ)` 计算：`ok` / `permission_revoked` / `archived` / `deleted` / `not_found`。实现：[[nodeskclaw-knowledge/app/services/citation_service.py#resolve_citation]]、[[nodeskclaw-knowledge/app/api/citations.py]]。
+
+## Observability Metrics
+
+`/metrics` 以 Prometheus exposition 暴露 HTTP / RAGFlow / Retrieval / Security Drop / Ingestion / LLM 核心指标，不经鉴权，供 scrape。
+
+指标集中于 [[nodeskclaw-knowledge/app/services/metrics_service.py]]；埋点：Correlation 中间件记 HTTP、Ragflow/LlmProxy Client 记外部调用、retrieve 记 retrieval、Cleaner 记 drop reason、ingestion worker 记 job 终态。路径 UUID 归一为 `:id`。入口：[[nodeskclaw-knowledge/app/main.py#metrics]]。
+
+## Correlation Id Logging
+
+每个外部请求读或生成 `X-Request-Id`，响应回写；结构化 JSON 日志经 contextvars 附带 `request_id`，可扩展 query/session/message/job/member/org。
+
+禁止记录 Bearer Token、RAGFlow Key、LLM Service Token、文档全文；敏感键名在 formatter 中脱敏。实现：[[nodeskclaw-knowledge/app/middleware/correlation.py#CorrelationIdMiddleware]]、[[nodeskclaw-knowledge/app/core/request_context.py]]、[[nodeskclaw-knowledge/app/core/logging.py]]。
+
+## Reconciliation Runs
+
+每轮 Reconciliation 写入 `reconciliation_runs`（checked/drifted/repaired/failed、started/finished、status、error），失败标记 `errors.knowledge.reconciliation_failed`。
+
+模型：[[nodeskclaw-knowledge/app/models/reconciliation_run.py#ReconciliationRun]]。Runner：[[nodeskclaw-knowledge/app/services/reconciliation_service.py#run_reconciliation]]。迁移：`alembic/versions/fd64182b8bad_knowledge_v1_2_reconciliation_runs.py`。
