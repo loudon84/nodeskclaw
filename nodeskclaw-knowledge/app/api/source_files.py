@@ -19,7 +19,7 @@ from app.schemas.knowledge import (
     SourceFileVersionOut,
 )
 from app.schemas.principal import KnowledgePrincipal
-from app.services import ingestion_service, metadata_service, source_file_service
+from app.services import ingestion_service, metadata_service, source_file_service, source_lifecycle_service
 
 kb_files_router = APIRouter(prefix="/knowledge-bases", tags=["source-files"])
 router = APIRouter(prefix="/source-files", tags=["source-files"])
@@ -171,6 +171,42 @@ async def list_versions(
 ):
     versions = await source_file_service.list_source_file_versions(db, member, source_file_id)
     return ApiResponse(data=[SourceFileVersionOut.model_validate(v) for v in versions])
+
+
+@router.post("/{source_file_id}/versions/{version_id}/activate", response_model=ApiResponse[SourceFileOut])
+async def activate_version(
+    source_file_id: str,
+    version_id: str,
+    member: KnowledgePrincipal = Depends(get_member_context),
+    db: AsyncSession = Depends(get_db),
+    ragflow: RagflowClient = Depends(get_ragflow_client),
+):
+    sf = await source_lifecycle_service.activate_source_file_version(
+        db, member, ragflow, source_file_id, version_id
+    )
+    return ApiResponse(data=SourceFileOut.model_validate(sf))
+
+
+@router.post("/{source_file_id}/archive", response_model=ApiResponse[SourceFileOut])
+async def archive_file(
+    source_file_id: str,
+    member: KnowledgePrincipal = Depends(get_member_context),
+    db: AsyncSession = Depends(get_db),
+    ragflow: RagflowClient = Depends(get_ragflow_client),
+):
+    sf = await source_lifecycle_service.archive_source_file(db, member, ragflow, source_file_id)
+    return ApiResponse(data=SourceFileOut.model_validate(sf))
+
+
+@router.post("/{source_file_id}/unarchive", response_model=ApiResponse[SourceFileOut])
+async def unarchive_file(
+    source_file_id: str,
+    member: KnowledgePrincipal = Depends(get_member_context),
+    db: AsyncSession = Depends(get_db),
+    ragflow: RagflowClient = Depends(get_ragflow_client),
+):
+    sf = await source_lifecycle_service.unarchive_source_file(db, member, ragflow, source_file_id)
+    return ApiResponse(data=SourceFileOut.model_validate(sf))
 
 
 @router.get("/{source_file_id}/versions/{version_id}", response_model=ApiResponse[SourceFileVersionOut])

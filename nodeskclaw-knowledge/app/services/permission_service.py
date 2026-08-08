@@ -225,6 +225,7 @@ async def build_access_plan(
                 SourceFile.knowledge_base_id == kb.id,
                 SourceFile.org_id == member.org_id,
                 SourceFile.status != "deleting",
+                SourceFile.archived_at.is_(None),
                 not_deleted(SourceFile),
             )
         )

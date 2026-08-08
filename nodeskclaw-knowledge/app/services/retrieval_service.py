@@ -11,7 +11,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import BadRequestError, ForbiddenError, ServiceUnavailableError
 from app.integrations.ragflow.client import RagflowClient
-from app.models.enums import AccessPlanKind, DEFAULT_RETRIEVAL_CONFIG, RetrievalOrigin, SetPermission
+from app.models.enums import (
+    AccessPlanKind,
+    DEFAULT_RETRIEVAL_CONFIG,
+    KnowledgeSetStatus,
+    RetrievalOrigin,
+    SetPermission,
+)
 from app.models.retrieval_audit import RetrievalAudit
 from app.schemas.knowledge import RetrievalOptions
 from app.schemas.principal import KnowledgePrincipal
@@ -72,6 +78,8 @@ async def retrieve(
 ) -> dict:
     started = time.perf_counter()
     ks = await knowledge_set_service.get_knowledge_set(db, member, knowledge_set_id)
+    if ks.status == KnowledgeSetStatus.disabled.value:
+        raise ForbiddenError(message="知识集合已禁用", message_key="errors.knowledge.set_disabled")
     if not await has_set_permission(db, member, ks, SetPermission.use.value):
         raise ForbiddenError(message="无权检索该知识集合", message_key="errors.knowledge.retrieval_denied")
 

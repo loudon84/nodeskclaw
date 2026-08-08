@@ -32,7 +32,7 @@ Principal 以 `OrgMembership.id`（`member_id`）为准。Backend `GET /api/v1/a
 
 检索必须先算 ACL AccessPlan，再按 KB 拆 Slice 调 RAGFlow，再经 Active Version + SourceFile ACL 清洗；未授权 / 非 active 版本 Chunk 不得进入 LLM Context。
 
-AccessPlan 分 `FULL_ACCESS` / `FILTERED_ACCESS` / `NO_ACCESS`，并保留 `full_dataset_ids` 与 `partial_slices` 以支持 Full+Partial 混合。可选 `filters` 在 AccessPlan 之后按本地 SourceFile.metadata 收窄候选（非 ACL）。Citation 下载必须重新鉴权。RAGFlow API Key 仅留 Knowledge Adapter；Desktop 永不接触。按 `failure_policy`（默认 `fail_closed`）处理 Slice 失败：fail_closed 返回 503，`degraded` 允许部分结果并写 `execution_status=degraded`。实现：[[nodeskclaw-knowledge/app/services/retrieval_service.py#retrieve]]、[[nodeskclaw-knowledge/app/services/retrieval_merge_service.py#execute_and_merge]]。
+AccessPlan 分 `FULL_ACCESS` / `FILTERED_ACCESS` / `NO_ACCESS`，并保留 `full_dataset_ids` 与 `partial_slices` 以支持 Full+Partial 混合。已归档 SourceFile（`archived_at` 非空）不进入 AccessPlan，即使有 ACL。可选 `filters` 在 AccessPlan 之后按本地 SourceFile.metadata 收窄候选（非 ACL）。Citation 下载必须重新鉴权。RAGFlow API Key 仅留 Knowledge Adapter；Desktop 永不接触。按 `failure_policy`（默认 `fail_closed`）处理 Slice 失败：fail_closed 返回 503，`degraded` 允许部分结果并写 `execution_status=degraded`。KnowledgeSet `disabled` 在入口拒绝检索。实现：[[nodeskclaw-knowledge/app/services/retrieval_service.py#retrieve]]、[[nodeskclaw-knowledge/app/services/retrieval_merge_service.py#execute_and_merge]]。
 
 ## Isolation From Ragflow
 
@@ -58,6 +58,8 @@ v1.1 在 v1.0 八域表之上增加 Set ACL、Chat、Audit 与入库/检索运�
 
 drop 必须写审计：`METADATA_MISMATCH` 或 `CHUNK_SECURITY_DROP`。实现：[[nodeskclaw-knowledge/app/services/chunk_security_service.py#clean_chunks]]。RAGFlow `enabled` 只是优化，不能替代本地 Active Check。
 
+版本回滚：先 RAGFlow 目标 `enabled=1`，再本地事务切 `active_version_id` 并将旧版标 superseded，最后 best-effort 旧版 `enabled=0`；切换窗口即使双 enabled，Cleaner 仍只认 `active_version_id`：[[nodeskclaw-knowledge/app/services/source_lifecycle_service.py#activate_source_file_version]]。
+
 ## Retrieval Planner
 
 多 KB 不能合并为一个错误的 `dataset_ids+document_ids` 请求；必须按 KB 拆 `full_dataset` / `filtered_documents` Slice，并行检索后再加权合并。
@@ -68,4 +70,4 @@ drop 必须写审计：`METADATA_MISMATCH` 或 `CHUNK_SECURITY_DROP`。实现：
 
 Chat 只能消费 SafeChunks：Session Owner → Set USE → Secure Retrieval → Context Builder → LLM Proxy → Citation 与本轮 SafeChunkSet 校验。
 
-服务：[[nodeskclaw-knowledge/app/services/chat_service.py]]、[[nodeskclaw-knowledge/app/services/context_builder.py]]。SSE 事件含 retrieval/generation/delta/citation/error；degraded 时额外 `retrieval_degraded`，fail_closed 失败不调 LLM。LLM 经服务身份 `KNOWLEDGE_SERVICE_TOKEN`，见 [[decisions/knowledge-ragflow-split#Llm Proxy Boundary]]。
+服务：[[nodeskclaw-knowledge/app/services/chat_service.py]]、[[nodeskclaw-knowledge/app/services/context_builder.py]]。SSE 事件含 retrieval/generation/delta/citation/error；degraded 时额外 `retrieval_degraded`，fail_closed 失败不调 LLM。`disabled` KnowledgeSet 拒绝 create_session / send_message，但 get_session / list_messages 历史可读。LLM 经服务身份 `KNOWLEDGE_SERVICE_TOKEN`，见 [[decisions/knowledge-ragflow-split#Llm Proxy Boundary]]。

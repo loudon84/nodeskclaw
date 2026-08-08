@@ -16,6 +16,8 @@ SourceFile 是稳定逻辑源文件；权限挂在 SourceFile 上，不挂在 Ch
 
 每个实际上传版本是 FileVersion，对应一个 RAGFlow Document；新版本失败不得覆盖旧 ACTIVE。`source_file.active_version_id` 是检索安全 Authority；superseded 版本 Chunk 必须被 Cleaner DROP。删除 RAGFlow 文档失败时保留 `deleting` 并写入 `last_error`：[[nodeskclaw-knowledge/app/models/source_file.py#SourceFile]]。写入 RAGFlow 的 `meta_fields` 必须含 `nk_source_file_id`、`nk_file_version_id`、`nk_knowledge_base_id`、`nk_org_id`、`nk_metadata_revision`，业务字段映射为 `biz_*`：[[nodeskclaw-knowledge/app/services/metadata_service.py#build_meta_fields]]。Version 运行时字段见 [[nodeskclaw-knowledge/app/models/source_file_version.py#SourceFileVersion]]。
 
+v1.2 生命周期：`archived_at` 归档后不参与新 Retrieval（AccessPlan 过滤 + RAGFlow `enabled=0`），历史 Citation 仍可追溯；`POST .../versions/{id}/activate` 支持回滚，流程见 [[knowledge#Active Version Security]]：[[nodeskclaw-knowledge/app/services/source_lifecycle_service.py]]。
+
 ## Metadata Governance
 
 v1.2 将企业业务 Metadata 与系统 `nk_*` 分离：KB 持有 `metadata_schema`，SourceFile 持有 `metadata` / `metadata_revision`；客户端不得写入 `nk_*` 或 ACL 字段。
@@ -27,6 +29,8 @@ v1.2 将企业业务 Metadata 与系统 `nk_*` 分离：KB 持有 `metadata_sche
 KnowledgeSet 是多 KnowledgeBase 的逻辑检索集合，不是 RAGFlow 物理对象。
 
 绑定关系仅存 Knowledge 库；检索时展开为多个 Slice 调用 RAGFlow。禁止为聚合检索在 RAGFlow 复制文档。v1.1 拥有独立 Set ACL（READ/USE/UPDATE/DELETE/MANAGE/MANAGE_ACL）与 `retrieval_config` JSONB；Set USE 不得提升底层 KB/File 权限：[[nodeskclaw-knowledge/app/models/knowledge_set.py#KnowledgeSet]]、[[nodeskclaw-knowledge/app/models/knowledge_set_acl.py#KnowledgeSetAcl]]。
+
+v1.2 强制闸：`status=disabled` 时 Retrieval、Chat 发消息与新建 Session 返回 403（`errors.knowledge.set_disabled`）；MANAGE、历史 Chat 查看、配置编辑、Evaluation 仍放行。
 
 ## Knowledge Principal
 

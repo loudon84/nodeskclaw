@@ -19,10 +19,26 @@ from app.models.base import not_deleted
 from app.models.chat_citation import ChatCitation
 from app.models.chat_message import ChatMessage
 from app.models.chat_session import ChatSession
-from app.models.enums import ChatMessageRole, ChatMessageStatus, ChatSessionStatus, RetrievalOrigin, SetPermission
+from app.models.enums import (
+    ChatMessageRole,
+    ChatMessageStatus,
+    ChatSessionStatus,
+    KnowledgeSetStatus,
+    RetrievalOrigin,
+    SetPermission,
+)
+from app.models.knowledge_set import KnowledgeSet
 from app.schemas.principal import KnowledgePrincipal
-from app.services import context_builder, retrieval_service
+from app.services import context_builder, knowledge_set_service, retrieval_service
 from app.services.permission_service import has_set_permission
+
+
+async def _ensure_set_usable(db: AsyncSession, member: KnowledgePrincipal, knowledge_set_id: str) -> KnowledgeSet:
+    ks = await knowledge_set_service.get_knowledge_set(db, member, knowledge_set_id)
+    if ks.status == KnowledgeSetStatus.disabled.value:
+        raise ForbiddenError(message="知识集合已禁用", message_key="errors.knowledge.set_disabled")
+    return ks
+
 
 _SOURCE_REF_RE = re.compile(r"\[Source\s+(\d+)\]")
 
@@ -63,6 +79,7 @@ async def create_session(
     show_citations: bool = True,
     answer_model: str | None = None,
 ) -> ChatSession:
+    await _ensure_set_usable(db, member, knowledge_set_id)
     if not await has_set_permission(db, member, knowledge_set_id, SetPermission.use.value):
         raise ForbiddenError(message="无权使用该知识集合", message_key="errors.knowledge.set_use_denied")
     row = ChatSession(
@@ -127,6 +144,7 @@ async def send_message_stream(
     content: str,
 ) -> AsyncIterator[dict]:
     session = await get_session(db, member, session_id)
+    await _ensure_set_usable(db, member, session.knowledge_set_id)
     if not await has_set_permission(db, member, session.knowledge_set_id, SetPermission.use.value):
         raise ForbiddenError(message="无权使用该知识集合", message_key="errors.knowledge.set_use_denied")
 

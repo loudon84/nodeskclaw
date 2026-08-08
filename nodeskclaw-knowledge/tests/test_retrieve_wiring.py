@@ -21,6 +21,7 @@ async def test_retrieve_passes_set_items_to_planner():
     ks = SimpleNamespace(
         id="set1",
         org_id="o1",
+        status="active",
         retrieval_config={},
         usage_count=0,
         last_used_at=None,
