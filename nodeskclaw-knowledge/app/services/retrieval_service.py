@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import BadRequestError, ForbiddenError
 from app.integrations.ragflow.client import RagflowClient
-from app.models.enums import AccessPlanKind, DEFAULT_RETRIEVAL_CONFIG, SetPermission
+from app.models.enums import AccessPlanKind, DEFAULT_RETRIEVAL_CONFIG, RetrievalOrigin, SetPermission
 from app.models.retrieval_audit import RetrievalAudit
 from app.schemas.knowledge import RetrievalOptions
 from app.schemas.principal import KnowledgePrincipal
@@ -47,6 +47,7 @@ async def retrieve(
     options: RetrievalOptions | None = None,
     top_k: int | None = None,
     similarity_threshold: float | None = None,
+    origin: str = RetrievalOrigin.direct_retrieval.value,
 ) -> dict:
     started = time.perf_counter()
     ks = await knowledge_set_service.get_knowledge_set(db, member, knowledge_set_id)
@@ -92,6 +93,10 @@ async def retrieve(
             plan_kind=plan_access.kind.value,
             ragflow_call_count=0,
             error_code="errors.knowledge.retrieval_denied",
+            origin=origin,
+            execution_status="denied",
+            successful_slice_count=0,
+            failed_slice_count=0,
         )
         db.add(audit)
         await db.commit()
@@ -116,12 +121,16 @@ async def retrieve(
             status="ok",
             plan_kind=plan.plan_kind,
             ragflow_call_count=0,
+            origin=origin,
+            execution_status="empty",
+            successful_slice_count=0,
+            failed_slice_count=0,
         )
         db.add(audit)
         ks.usage_count += 1
         ks.last_used_at = datetime.now(UTC)
         await db.commit()
-        return {"query_id": query_id, "chunks": []}
+        return {"query_id": query_id, "chunks": [], "status": "empty", "diagnostics": {"slice_count": 0}}
 
     merged, candidate_count, filtered_count, ragflow_call_count = await retrieval_merge_service.execute_and_merge(
         db,
@@ -150,6 +159,7 @@ async def retrieve(
             if item.chunk.document_metadata.get("nk_source_file_id")
         }
     )
+    execution_status = "empty" if not merged else "success"
     audit = RetrievalAudit(
         member_id=member.member_id,
         org_id=member.org_id,
@@ -163,6 +173,10 @@ async def retrieve(
         status="ok",
         plan_kind=plan.plan_kind,
         ragflow_call_count=ragflow_call_count,
+        origin=origin,
+        execution_status=execution_status,
+        successful_slice_count=len(plan.slices),
+        failed_slice_count=0,
     )
     db.add(audit)
     ks.usage_count += 1
@@ -192,4 +206,13 @@ async def retrieve(
             }
         )
 
-    return {"query_id": query_id, "chunks": chunks_out}
+    return {
+        "query_id": query_id,
+        "chunks": chunks_out,
+        "status": execution_status,
+        "diagnostics": {
+            "slice_count": len(plan.slices),
+            "successful_slice_count": len(plan.slices),
+            "failed_slice_count": 0,
+        },
+    }

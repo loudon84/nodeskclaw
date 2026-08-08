@@ -58,14 +58,41 @@ def _seed_visibility_acl(
         )
 
 
-async def list_knowledge_sets(db: AsyncSession, member: KnowledgePrincipal) -> list[KnowledgeSet]:
+async def list_knowledge_sets(
+    db: AsyncSession,
+    member: KnowledgePrincipal,
+    *,
+    page: int = 1,
+    page_size: int = 20,
+    q: str | None = None,
+    sort_by: str = "created_at",
+    sort_order: str = "desc",
+) -> tuple[list[KnowledgeSet], int]:
     result = await db.execute(
         select(KnowledgeSet).where(
             KnowledgeSet.org_id == member.org_id,
             not_deleted(KnowledgeSet),
-        ).order_by(KnowledgeSet.created_at.desc())
+        )
     )
-    return list(result.scalars().all())
+    visible: list[KnowledgeSet] = []
+    for row in result.scalars().all():
+        if row.owner_member_id == member.member_id:
+            visible.append(row)
+            continue
+        if await has_set_permission(db, member, row, SetPermission.read.value):
+            visible.append(row)
+            continue
+        if await has_set_permission(db, member, row, SetPermission.use.value):
+            visible.append(row)
+    if q:
+        q_lower = q.lower()
+        visible = [row for row in visible if q_lower in (row.name or "").lower()]
+    sort_attr = sort_by if hasattr(KnowledgeSet, sort_by) else "created_at"
+    reverse = sort_order.lower() != "asc"
+    visible.sort(key=lambda row: getattr(row, sort_attr) or "", reverse=reverse)
+    total = len(visible)
+    start = (page - 1) * page_size
+    return visible[start : start + page_size], total
 
 
 async def get_knowledge_set(db: AsyncSession, member: KnowledgePrincipal, set_id: str) -> KnowledgeSet:

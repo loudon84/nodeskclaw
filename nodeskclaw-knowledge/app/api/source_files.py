@@ -1,12 +1,14 @@
 """Source file and ingestion routes."""
 
-from fastapi import APIRouter, Depends, File, UploadFile
+from datetime import datetime
+
+from fastapi import APIRouter, Depends, File, Query, UploadFile
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_db, get_member_context, get_ragflow_client
 from app.integrations.ragflow.client import RagflowClient
-from app.schemas.common import ApiResponse
+from app.schemas.common import ApiResponse, PageData
 from app.schemas.knowledge import AclOut, FileAclCreate, IngestionJobOut, SourceFileOut, SourceFileVersionOut
 from app.schemas.principal import KnowledgePrincipal
 from app.services import ingestion_service, source_file_service
@@ -15,15 +17,78 @@ kb_files_router = APIRouter(prefix="/knowledge-bases", tags=["source-files"])
 router = APIRouter(prefix="/source-files", tags=["source-files"])
 
 
-@kb_files_router.get("/{kb_id}/files", response_model=ApiResponse[list[SourceFileOut]])
+@kb_files_router.get("/{kb_id}/files", response_model=ApiResponse[PageData[SourceFileOut]])
 async def list_files(
     kb_id: str,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    q: str | None = None,
+    sort_by: str = Query("created_at"),
+    sort_order: str = Query("desc"),
     member: KnowledgePrincipal = Depends(get_member_context),
     db: AsyncSession = Depends(get_db),
 ):
-    items = await source_file_service.list_source_files(db, member, kb_id)
-    return ApiResponse(data=[SourceFileOut.model_validate(i) for i in items])
+    items, total = await source_file_service.list_source_files(
+        db,
+        member,
+        kb_id,
+        page=page,
+        page_size=page_size,
+        q=q,
+        sort_by=sort_by,
+        sort_order=sort_order,
+    )
+    return ApiResponse(
+        data=PageData(
+            items=[SourceFileOut.model_validate(i) for i in items],
+            total=total,
+            page=page,
+            page_size=page_size,
+        )
+    )
 
+
+@router.get("", response_model=ApiResponse[PageData[SourceFileOut]])
+async def list_global_files(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    q: str | None = None,
+    knowledge_base_id: str | None = None,
+    parse_status: str | None = None,
+    status: str | None = None,
+    mime_type: str | None = None,
+    owner_member_id: str | None = None,
+    created_from: datetime | None = None,
+    created_to: datetime | None = None,
+    sort_by: str = Query("created_at"),
+    sort_order: str = Query("desc"),
+    member: KnowledgePrincipal = Depends(get_member_context),
+    db: AsyncSession = Depends(get_db),
+):
+    items, total = await source_file_service.list_global_source_files(
+        db,
+        member,
+        page=page,
+        page_size=page_size,
+        q=q,
+        knowledge_base_id=knowledge_base_id,
+        parse_status=parse_status,
+        status=status,
+        mime_type=mime_type,
+        owner_member_id=owner_member_id,
+        created_from=created_from,
+        created_to=created_to,
+        sort_by=sort_by,
+        sort_order=sort_order,
+    )
+    return ApiResponse(
+        data=PageData(
+            items=[SourceFileOut.model_validate(i) for i in items],
+            total=total,
+            page=page,
+            page_size=page_size,
+        )
+    )
 
 @kb_files_router.post("/{kb_id}/files", response_model=ApiResponse)
 async def upload_file(

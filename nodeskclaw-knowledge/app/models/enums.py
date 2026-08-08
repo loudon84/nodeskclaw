@@ -159,6 +159,13 @@ class AuditAction(str, Enum):
     chat_query = "CHAT_QUERY"
 
 
+class RetrievalOrigin(str, Enum):
+    direct_retrieval = "direct_retrieval"
+    chat = "chat"
+    agent = "agent"
+    evaluation = "evaluation"
+
+
 DEFAULT_RETRIEVAL_CONFIG = {
     "top_k": 1024,
     "top_n": 8,
@@ -169,4 +176,5 @@ DEFAULT_RETRIEVAL_CONFIG = {
     "highlight": False,
     "cross_languages": [],
     "answer_model": "",
+    "failure_policy": "fail_closed",
 }

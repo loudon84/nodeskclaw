@@ -23,3 +23,7 @@ class RetrievalAudit(BaseModel):
     plan_kind: Mapped[str | None] = mapped_column(String(64), nullable=True)
     ragflow_call_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    origin: Mapped[str] = mapped_column(String(32), nullable=False, default="direct_retrieval", index=True)
+    execution_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    successful_slice_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failed_slice_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

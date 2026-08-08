@@ -12,6 +12,7 @@ from app.core.exceptions import ForbiddenError, NotFoundError
 from app.integrations.ragflow.client import RagflowClient
 from app.models.base import not_deleted
 from app.models.enums import AclEffect, AuditAction, FilePermission, KbPermission, SourceFileStatus
+from app.models.knowledge_base import KnowledgeBase
 from app.models.source_file import SourceFile
 from app.models.source_file_acl import SourceFileAcl
 from app.models.source_file_version import SourceFileVersion
@@ -29,21 +30,114 @@ async def list_source_files(
     db: AsyncSession,
     member: KnowledgePrincipal,
     knowledge_base_id: str,
-) -> list[SourceFile]:
+    *,
+    page: int = 1,
+    page_size: int = 20,
+    q: str | None = None,
+    sort_by: str = "created_at",
+    sort_order: str = "desc",
+) -> tuple[list[SourceFile], int]:
     await knowledge_base_service.get_knowledge_base(db, member, knowledge_base_id)
     result = await db.execute(
         select(SourceFile).where(
             SourceFile.knowledge_base_id == knowledge_base_id,
             SourceFile.org_id == member.org_id,
             not_deleted(SourceFile),
-        ).order_by(SourceFile.created_at.desc())
+        )
     )
-    files = list(result.scalars().all())
     out: list[SourceFile] = []
-    for sf in files:
+    for sf in result.scalars().all():
         if await has_file_permission(db, member, sf, FilePermission.read.value):
             out.append(sf)
-    return out
+    if q:
+        q_lower = q.lower()
+        out = [sf for sf in out if q_lower in (sf.file_name or "").lower()]
+    sort_attr = sort_by if hasattr(SourceFile, sort_by) else "created_at"
+    reverse = sort_order.lower() != "asc"
+    out.sort(key=lambda sf: getattr(sf, sort_attr) or "", reverse=reverse)
+    total = len(out)
+    start = (page - 1) * page_size
+    return out[start : start + page_size], total
+
+
+async def list_global_source_files(
+    db: AsyncSession,
+    member: KnowledgePrincipal,
+    *,
+    page: int = 1,
+    page_size: int = 20,
+    q: str | None = None,
+    knowledge_base_id: str | None = None,
+    parse_status: str | None = None,
+    status: str | None = None,
+    mime_type: str | None = None,
+    owner_member_id: str | None = None,
+    created_from: datetime | None = None,
+    created_to: datetime | None = None,
+    sort_by: str = "created_at",
+    sort_order: str = "desc",
+) -> tuple[list[SourceFile], int]:
+    kb_rows = await db.execute(
+        select(KnowledgeBase.id).where(
+            KnowledgeBase.org_id == member.org_id,
+            not_deleted(KnowledgeBase),
+        )
+    )
+    readable_kb_ids: list[str] = []
+    for kb_id in kb_rows.scalars().all():
+        if await has_kb_permission(db, member, kb_id, KbPermission.read.value):
+            readable_kb_ids.append(kb_id)
+
+    if knowledge_base_id:
+        if knowledge_base_id not in readable_kb_ids:
+            return [], 0
+        readable_kb_ids = [knowledge_base_id]
+
+    if not readable_kb_ids:
+        return [], 0
+
+    filters = [
+        SourceFile.org_id == member.org_id,
+        SourceFile.knowledge_base_id.in_(readable_kb_ids),
+        not_deleted(SourceFile),
+    ]
+    if status:
+        filters.append(SourceFile.status == status)
+    if mime_type:
+        filters.append(SourceFile.mime_type == mime_type)
+    if owner_member_id:
+        filters.append(SourceFile.owner_member_id == owner_member_id)
+    if created_from:
+        filters.append(SourceFile.created_at >= created_from)
+    if created_to:
+        filters.append(SourceFile.created_at <= created_to)
+    if q:
+        filters.append(SourceFile.file_name.ilike(f"%{q}%"))
+
+    result = await db.execute(select(SourceFile).where(*filters))
+    out: list[SourceFile] = []
+    for sf in result.scalars().all():
+        if await has_file_permission(db, member, sf, FilePermission.read.value):
+            out.append(sf)
+
+    if parse_status:
+        filtered: list[SourceFile] = []
+        for sf in out:
+            if not sf.active_version_id:
+                if parse_status == "pending":
+                    filtered.append(sf)
+                continue
+            version = await db.get(SourceFileVersion, sf.active_version_id)
+            if version and version.deleted_at is None and version.parse_status == parse_status:
+                filtered.append(sf)
+        out = filtered
+
+    sort_attr = sort_by if hasattr(SourceFile, sort_by) else "created_at"
+    reverse = sort_order.lower() != "asc"
+    out.sort(key=lambda sf: getattr(sf, sort_attr) or "", reverse=reverse)
+    total = len(out)
+    start = (page - 1) * page_size
+    return out[start : start + page_size], total
 
 
 async def get_source_file(db: AsyncSession, member: KnowledgePrincipal, source_file_id: str) -> SourceFile:

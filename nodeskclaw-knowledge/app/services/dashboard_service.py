@@ -8,8 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.base import not_deleted
-from app.models.chat_message import ChatMessage
-from app.models.enums import FilePermission, KbPermission, SetPermission
+from app.models.enums import FilePermission, KbPermission, RetrievalOrigin, SetPermission
 from app.models.knowledge_base import KnowledgeBase
 from app.models.knowledge_set import KnowledgeSet
 from app.models.retrieval_audit import RetrievalAudit
@@ -84,19 +83,19 @@ async def get_dashboard(db: AsyncSession, member: KnowledgePrincipal) -> dict:
                 total_chunks += int(version.chunk_count or 0)
 
     week_start = datetime.now(UTC) - timedelta(days=7)
-    retrieval_count = await db.scalar(
+    weekly_query_count = await db.scalar(
         select(func.count()).select_from(RetrievalAudit).where(
             RetrievalAudit.org_id == member.org_id,
             RetrievalAudit.member_id == member.member_id,
             RetrievalAudit.created_at >= week_start,
+            RetrievalAudit.origin.in_(
+                [
+                    RetrievalOrigin.direct_retrieval.value,
+                    RetrievalOrigin.chat.value,
+                    RetrievalOrigin.agent.value,
+                ]
+            ),
             not_deleted(RetrievalAudit),
-        )
-    ) or 0
-    chat_count = await db.scalar(
-        select(func.count()).select_from(ChatMessage).where(
-            ChatMessage.role == "user",
-            ChatMessage.created_at >= week_start,
-            not_deleted(ChatMessage),
         )
     ) or 0
 
@@ -106,7 +105,7 @@ async def get_dashboard(db: AsyncSession, member: KnowledgePrincipal) -> dict:
             "knowledge_set_count": len(readable_sets),
             "document_count": len(readable_files),
             "chunk_count": total_chunks,
-            "weekly_query_count": int(retrieval_count) + int(chat_count),
+            "weekly_query_count": int(weekly_query_count),
         },
         "parse_status_summary": parse_status_summary,
         "recent_knowledge_sets": readable_sets[:5],

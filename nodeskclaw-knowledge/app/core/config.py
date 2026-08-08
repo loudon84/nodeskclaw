@@ -32,6 +32,13 @@ class Settings(BaseSettings):
 
     KNOWLEDGE_UPLOAD_MAX_MB: int = 200
 
+    CHAT_HISTORY_MAX_MESSAGES: int = 20
+    CHAT_HISTORY_MAX_TOKENS: int = 8000
+
+    RETRIEVAL_DOCUMENT_BATCH_SIZE: int = 500
+    RETRIEVAL_MAX_PARALLEL_SLICES: int = 8
+    DEBUG_CONTENT_LOGGING: bool = False
+
     CORS_ORIGINS: list[str] = ["http://127.0.0.1:5173", "http://localhost:5173", "http://127.0.0.1:3000"]
 
     @field_validator("CORS_ORIGINS", mode="before")

@@ -9,7 +9,7 @@ from datetime import UTC, datetime, timedelta
 from typing import BinaryIO
 
 from fastapi import UploadFile
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -344,12 +344,14 @@ async def list_jobs(
             SourceFile.org_id == member.org_id,
             not_deleted(SourceFile),
         )
+    else:
+        base = base.join(SourceFile, SourceFile.id == IngestionJob.source_file_id).where(
+            SourceFile.org_id == member.org_id,
+            not_deleted(SourceFile),
+        )
     base = base.where(*filters)
 
-    total = await db.scalar(select(func.count()).select_from(base.subquery())) or 0
-    result = await db.execute(
-        base.order_by(IngestionJob.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
-    )
+    result = await db.execute(base.order_by(IngestionJob.created_at.desc()))
     jobs = list(result.scalars().all())
     visible: list[IngestionJob] = []
     for job in jobs:
@@ -361,7 +363,9 @@ async def list_jobs(
             db, member, sf.knowledge_base_id, KbPermission.read.value
         ):
             visible.append(job)
-    return visible, int(total)
+    total = len(visible)
+    start = (page - 1) * page_size
+    return visible[start : start + page_size], total
 
 
 async def get_job(db: AsyncSession, member: KnowledgePrincipal, job_id: str) -> IngestionJob:

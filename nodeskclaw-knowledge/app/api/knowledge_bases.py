@@ -1,11 +1,11 @@
 """Knowledge base routes."""
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_db, get_member_context, get_ragflow_client
 from app.integrations.ragflow.client import RagflowClient
-from app.schemas.common import ApiResponse
+from app.schemas.common import ApiResponse, PageData
 from app.schemas.knowledge import (
     AclOut,
     KbAclCreate,
@@ -19,13 +19,35 @@ from app.services import knowledge_base_service
 router = APIRouter(prefix="/knowledge-bases", tags=["knowledge-bases"])
 
 
-@router.get("", response_model=ApiResponse[list[KnowledgeBaseOut]])
+@router.get("", response_model=ApiResponse[PageData[KnowledgeBaseOut]])
 async def list_kbs(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    q: str | None = None,
+    status: str | None = None,
+    sort_by: str = Query("created_at"),
+    sort_order: str = Query("desc"),
     member: KnowledgePrincipal = Depends(get_member_context),
     db: AsyncSession = Depends(get_db),
 ):
-    items = await knowledge_base_service.list_knowledge_bases(db, member)
-    return ApiResponse(data=[KnowledgeBaseOut.model_validate(i) for i in items])
+    items, total = await knowledge_base_service.list_knowledge_bases(
+        db,
+        member,
+        page=page,
+        page_size=page_size,
+        q=q,
+        status=status,
+        sort_by=sort_by,
+        sort_order=sort_order,
+    )
+    return ApiResponse(
+        data=PageData(
+            items=[KnowledgeBaseOut.model_validate(i) for i in items],
+            total=total,
+            page=page,
+            page_size=page_size,
+        )
+    )
 
 
 @router.post("", response_model=ApiResponse[KnowledgeBaseOut])

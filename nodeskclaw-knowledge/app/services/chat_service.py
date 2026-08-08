@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,7 +19,7 @@ from app.models.base import not_deleted
 from app.models.chat_citation import ChatCitation
 from app.models.chat_message import ChatMessage
 from app.models.chat_session import ChatSession
-from app.models.enums import ChatMessageRole, ChatMessageStatus, ChatSessionStatus, SetPermission
+from app.models.enums import ChatMessageRole, ChatMessageStatus, ChatSessionStatus, RetrievalOrigin, SetPermission
 from app.schemas.principal import KnowledgePrincipal
 from app.services import context_builder, retrieval_service
 from app.services.permission_service import has_set_permission
@@ -28,7 +27,7 @@ from app.services.permission_service import has_set_permission
 _SOURCE_REF_RE = re.compile(r"\[Source\s+(\d+)\]")
 
 # @lat: [[knowledge#Secure Chat]]
-CHAT_PIPELINE_VERSION = "v1.1"
+CHAT_PIPELINE_VERSION = "v1.2"
 
 
 async def list_sessions(
@@ -159,6 +158,7 @@ async def send_message_stream(
             ragflow,
             knowledge_set_id=session.knowledge_set_id,
             query=content,
+            origin=RetrievalOrigin.chat.value,
         )
         raw_chunks = retrieval.get("chunks") or []
         from app.integrations.ragflow.models import RagflowChunk
@@ -175,6 +175,7 @@ async def send_message_stream(
                     "nk_file_version_id": c.get("file_version_id"),
                     "nk_knowledge_base_id": c.get("knowledge_base_id"),
                 },
+                positions=c.get("positions"),
             )
             for c in raw_chunks
         ]
@@ -193,12 +194,14 @@ async def send_message_stream(
                 ChatMessage.id != user_message.id,
                 not_deleted(ChatMessage),
             )
-            .order_by(ChatMessage.created_at.asc())
-            .limit(20)
+            .order_by(ChatMessage.created_at.desc())
+            .limit(settings.CHAT_HISTORY_MAX_MESSAGES)
         )
+        recent_history = list(history_rows.scalars().all())
+        recent_history.reverse()
         history = [
             LlmChatMessage(role=row.role, content=row.content)
-            for row in history_rows.scalars().all()
+            for row in recent_history
             if row.role in {ChatMessageRole.user.value, ChatMessageRole.assistant.value}
         ]
 
@@ -241,6 +244,7 @@ async def send_message_stream(
                 continue
             safe = next(item for item in safe_chunks if item.index == idx)
             meta = safe.chunk.document_metadata or {}
+            page = retrieval_service._extract_page(safe.chunk.positions)
             citation_payload = {
                 "index": idx,
                 "source_file_id": meta.get("nk_source_file_id"),
@@ -250,6 +254,8 @@ async def send_message_stream(
                 "chunk_id": safe.chunk.id,
                 "quote": (safe.chunk.content or "")[:500],
                 "score": safe.chunk.similarity,
+                "page": page,
+                "positions": safe.chunk.positions,
             }
             citations.append(citation_payload)
             if session.show_citations:
@@ -272,15 +278,10 @@ async def send_message_stream(
                     ragflow_chunk_id=cit.get("chunk_id"),
                     score=float(cit.get("score") or 0),
                     quote=cit.get("quote"),
+                    page=cit.get("page"),
+                    positions=cit.get("positions"),
                 )
             )
-
-        from app.models.knowledge_set import KnowledgeSet
-
-        ks = await db.get(KnowledgeSet, session.knowledge_set_id)
-        if ks and ks.deleted_at is None:
-            ks.usage_count = int(ks.usage_count or 0) + 1
-            ks.last_used_at = datetime.now(UTC)
 
         await db.commit()
 

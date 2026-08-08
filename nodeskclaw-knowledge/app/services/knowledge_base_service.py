@@ -56,19 +56,43 @@ def expand_kb_role_permissions(role: str) -> list[str]:
     return KB_ROLE_PERMISSIONS[role]
 
 
-async def list_knowledge_bases(db: AsyncSession, member: KnowledgePrincipal) -> list[KnowledgeBase]:
+async def list_knowledge_bases(
+    db: AsyncSession,
+    member: KnowledgePrincipal,
+    *,
+    page: int = 1,
+    page_size: int = 20,
+    q: str | None = None,
+    status: str | None = None,
+    sort_by: str = "created_at",
+    sort_order: str = "desc",
+) -> tuple[list[KnowledgeBase], int]:
     result = await db.execute(
         select(KnowledgeBase).where(
             KnowledgeBase.org_id == member.org_id,
             not_deleted(KnowledgeBase),
-        ).order_by(KnowledgeBase.created_at.desc())
+        )
     )
-    items = list(result.scalars().all())
     out: list[KnowledgeBase] = []
-    for kb in items:
+    for kb in result.scalars().all():
         if await has_kb_permission(db, member, kb.id, KbPermission.read.value):
             out.append(kb)
-    return out
+    if status:
+        out = [kb for kb in out if kb.status == status]
+    if q:
+        q_lower = q.lower()
+        out = [
+            kb
+            for kb in out
+            if q_lower in (kb.name or "").lower()
+            or q_lower in (kb.description or "").lower()
+        ]
+    sort_attr = sort_by if hasattr(KnowledgeBase, sort_by) else "created_at"
+    reverse = sort_order.lower() != "asc"
+    out.sort(key=lambda kb: getattr(kb, sort_attr) or "", reverse=reverse)
+    total = len(out)
+    start = (page - 1) * page_size
+    return out[start : start + page_size], total
 
 
 async def get_knowledge_base(db: AsyncSession, member: KnowledgePrincipal, kb_id: str) -> KnowledgeBase:
