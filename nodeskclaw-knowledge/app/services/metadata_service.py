@@ -99,6 +99,10 @@ def parse_metadata_form(raw: str | None) -> dict[str, Any]:
     return parsed
 
 
+def validate_schema_definition(schema: dict[str, Any] | None) -> dict[str, Any] | None:
+    return normalize_metadata_schema(schema)
+
+
 def normalize_metadata_schema(schema: dict[str, Any] | None) -> dict[str, Any] | None:
     if schema is None:
         return None
@@ -195,6 +199,15 @@ def _validate_field_value(field: dict[str, Any], value: Any) -> None:
                 raise _metadata_invalid("metadata multi_enum 取值非法", details={"key": key, "value": item})
         return
     raise _metadata_invalid("不支持的 metadata field.type", details={"key": key, "type": field_type})
+
+
+def validate_metadata(
+    metadata: dict[str, Any] | None,
+    schema: dict[str, Any] | None,
+    *,
+    partial: bool = False,
+) -> dict[str, Any]:
+    return validate_metadata_values(metadata, schema, partial=partial)
 
 
 def validate_metadata_values(
@@ -294,9 +307,11 @@ async def put_metadata_schema(
     schema: dict[str, Any] | None,
 ) -> dict[str, Any] | None:
     kb = await knowledge_base_service.get_knowledge_base(db, member, kb_id)
-    if not await has_kb_permission(db, member, kb.id, KbPermission.manage.value):
+    if not await has_kb_permission(db, member, kb.id, KbPermission.update.value) and not await has_kb_permission(
+        db, member, kb.id, KbPermission.manage.value
+    ):
         raise ForbiddenError()
-    normalized = normalize_metadata_schema(schema)
+    normalized = validate_schema_definition(schema)
     kb.metadata_schema = normalized
     await write_audit(
         db,
