@@ -1,16 +1,17 @@
 """FastAPI application entry point."""
 
-import asyncio
 import logging
-import os
-from contextlib import asynccontextmanager
 
+import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.router import api_router
 from app.core.config import settings
 from app.core.exceptions import register_exception_handlers
+from app.integrations.nodeskclaw_backend.client import NodeskclawBackendClient
+from app.integrations.ragflow.client import RagflowClient
+from contextlib import asynccontextmanager
 
 logging.basicConfig(
     level=logging.INFO,
@@ -20,50 +21,42 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def _restore_logging_after_alembic(saved_handlers: list, saved_level: int) -> None:
-    root_log = logging.getLogger()
-    root_log.handlers = saved_handlers
-    root_log.level = saved_level
-    for name in logging.Logger.manager.loggerDict:
-        obj = logging.Logger.manager.loggerDict[name]
-        if isinstance(obj, logging.Logger) and obj.disabled:
-            obj.disabled = False
-
-
-async def _auto_migrate() -> None:
-    from alembic.config import Config
-
-    from alembic import command
-
-    def _run() -> None:
-        root_log = logging.getLogger()
-        saved_handlers = root_log.handlers[:]
-        saved_level = root_log.level
-        backend_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-        cfg = Config(os.path.join(backend_root, "alembic.ini"))
-        cfg.set_main_option("script_location", os.path.join(backend_root, "alembic"))
-        try:
-            command.upgrade(cfg, "head")
-        finally:
-            _restore_logging_after_alembic(saved_handlers, saved_level)
-
-    await asyncio.to_thread(_run)
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("%s %s starting", settings.APP_NAME, settings.APP_VERSION)
-    if os.environ.get("SKIP_AUTO_MIGRATE") != "1":
-        try:
-            logger.info("running alembic upgrade head")
-            await _auto_migrate()
-            logger.info("migration complete")
-        except Exception:
-            logger.exception("migration failed")
-            raise
-    else:
-        logger.info("SKIP_AUTO_MIGRATE=1")
+    backend_http = httpx.AsyncClient(timeout=10.0)
+    ragflow_http = httpx.AsyncClient(
+        base_url=settings.RAGFLOW_BASE_URL.rstrip("/"),
+        timeout=settings.RAGFLOW_TIMEOUT_SECONDS,
+        headers={"Authorization": f"Bearer {settings.RAGFLOW_API_KEY}"},
+    )
+    llm_http = httpx.AsyncClient(timeout=120.0)
+
+    backend_client = NodeskclawBackendClient(http_client=backend_http)
+    ragflow_client = RagflowClient(http_client=ragflow_http)
+    app.state.backend_http = backend_http
+    app.state.ragflow_http = ragflow_http
+    app.state.llm_http = llm_http
+    app.state.backend_client = backend_client
+    app.state.ragflow_client = ragflow_client
+
+    try:
+        from app.integrations.llm_proxy.client import LlmProxyClient
+
+        app.state.llm_proxy_client = LlmProxyClient(http_client=llm_http)
+    except Exception:
+        app.state.llm_proxy_client = None
+
     yield
+
+    await backend_client.aclose()
+    await ragflow_client.aclose()
+    if app.state.llm_proxy_client is not None:
+        await app.state.llm_proxy_client.aclose()
+    await backend_http.aclose()
+    await ragflow_http.aclose()
+    await llm_http.aclose()
+    logger.info("%s stopped", settings.APP_NAME)
 
 
 app = FastAPI(title=settings.APP_NAME, version=settings.APP_VERSION, lifespan=lifespan)
@@ -76,3 +69,13 @@ app.add_middleware(
 )
 register_exception_handlers(app)
 app.include_router(api_router, prefix="/api/v1")
+
+
+@app.get("/health/live")
+async def health_live():
+    return {"status": "ok"}
+
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}

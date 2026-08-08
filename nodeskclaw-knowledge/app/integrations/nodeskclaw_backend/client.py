@@ -14,15 +14,37 @@ logger = logging.getLogger(__name__)
 
 
 class NodeskclawBackendClient:
-    def __init__(self, base_url: str | None = None, path: str | None = None):
+    def __init__(
+        self,
+        base_url: str | None = None,
+        path: str | None = None,
+        http_client: httpx.AsyncClient | None = None,
+    ):
         self.base_url = (base_url or settings.NODESKCLAW_BACKEND_URL).rstrip("/")
         self.path = path or settings.NODESKCLAW_KNOWLEDGE_CONTEXT_PATH
+        self._http_client = http_client
+        self._owns_client = http_client is None
+
+    async def aclose(self) -> None:
+        if self._owns_client and self._http_client is not None:
+            await self._http_client.aclose()
+            self._http_client = None
+
+    def bind_http_client(self, client: httpx.AsyncClient) -> None:
+        self._http_client = client
+        self._owns_client = False
+
+    async def _client(self) -> httpx.AsyncClient:
+        if self._http_client is None:
+            self._http_client = httpx.AsyncClient(timeout=10.0)
+            self._owns_client = True
+        return self._http_client
 
     async def fetch_knowledge_context(self, bearer_token: str) -> KnowledgePrincipal:
         url = f"{self.base_url}{self.path}"
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.get(url, headers={"Authorization": f"Bearer {bearer_token}"})
+            client = await self._client()
+            resp = await client.get(url, headers={"Authorization": f"Bearer {bearer_token}"})
         except Exception as exc:
             logger.warning("knowledge-context call failed: %s", type(exc).__name__)
             raise BackendUnavailableError() from exc
@@ -47,3 +69,12 @@ class NodeskclawBackendClient:
         if not isinstance(data, dict):
             raise BackendUnavailableError(message="Backend 返回格式异常")
         return KnowledgePrincipal.model_validate(data)
+
+    async def health_check(self) -> bool:
+        url = f"{self.base_url}/health"
+        try:
+            client = await self._client()
+            resp = await client.get(url, timeout=5.0)
+            return resp.status_code < 500
+        except Exception:
+            return False
