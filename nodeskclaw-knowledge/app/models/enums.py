@@ -94,6 +94,12 @@ class KnowledgeSetStatus(str, Enum):
     disabled = "disabled"
 
 
+class ProfileStatus(str, Enum):
+    draft = "draft"
+    active = "active"
+    archived = "archived"
+
+
 class AnswerMode(str, Enum):
     concise = "concise"
     detailed = "detailed"
@@ -153,6 +159,10 @@ class AuditAction(str, Enum):
     set_unbind = "SET_UNBIND"
     set_delete = "SET_DELETE"
     set_acl_change = "SET_ACL_CHANGE"
+    profile_create = "PROFILE_CREATE"
+    profile_update = "PROFILE_UPDATE"
+    profile_publish = "PROFILE_PUBLISH"
+    profile_rollback = "PROFILE_ROLLBACK"
     retrieval = "RETRIEVAL"
     retrieval_denied = "RETRIEVAL_DENIED"
     chunk_security_drop = "CHUNK_SECURITY_DROP"
@@ -182,4 +192,6 @@ DEFAULT_RETRIEVAL_CONFIG = {
     "cross_languages": [],
     "answer_model": "",
     "failure_policy": "fail_closed",
+    "context_max_chunks": 8,
+    "context_max_chars": 24000,
 }

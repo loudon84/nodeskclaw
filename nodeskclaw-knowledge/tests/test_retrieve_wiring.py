@@ -22,12 +22,17 @@ async def test_retrieve_passes_set_items_to_planner():
         id="set1",
         org_id="o1",
         status="active",
-        retrieval_config={},
         usage_count=0,
         last_used_at=None,
     )
     set_items = [SimpleNamespace(knowledge_base_id="kb1", weight=1.5)]
     kbs = [SimpleNamespace(id="kb1", ragflow_dataset_id="ds1")]
+    profile = SimpleNamespace(
+        id="p1",
+        knowledge_set_id="set1",
+        config={},
+        status="active",
+    )
     plan_access = AccessPlan(
         kind=AccessPlanKind.full_access,
         dataset_ids=["ds1"],
@@ -44,6 +49,10 @@ async def test_retrieve_passes_set_items_to_planner():
         patch(
             "app.services.retrieval_service.knowledge_set_service.list_bound_knowledge_bases",
             new=AsyncMock(return_value=kbs),
+        ),
+        patch(
+            "app.services.retrieval_service.retrieval_profile_service.get_active_profile",
+            new=AsyncMock(return_value=profile),
         ),
         patch("app.services.retrieval_service.build_access_plan", new=AsyncMock(return_value=plan_access)),
         patch(

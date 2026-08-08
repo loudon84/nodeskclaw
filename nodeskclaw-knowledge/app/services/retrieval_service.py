@@ -13,7 +13,6 @@ from app.core.exceptions import BadRequestError, ForbiddenError, ServiceUnavaila
 from app.integrations.ragflow.client import RagflowClient
 from app.models.enums import (
     AccessPlanKind,
-    DEFAULT_RETRIEVAL_CONFIG,
     KnowledgeSetStatus,
     RetrievalOrigin,
     SetPermission,
@@ -21,8 +20,9 @@ from app.models.enums import (
 from app.models.retrieval_audit import RetrievalAudit
 from app.schemas.knowledge import RetrievalOptions
 from app.schemas.principal import KnowledgePrincipal
-from app.services import knowledge_set_service, retrieval_merge_service, retrieval_planner
+from app.services import knowledge_set_service, retrieval_merge_service, retrieval_planner, retrieval_profile_service
 from app.services.permission_service import build_access_plan, has_set_permission
+from app.services.retrieval_profile_service import merge_profile_config
 
 
 def _extract_page(positions: list | None) -> int | None:
@@ -94,7 +94,13 @@ async def retrieve(
         [getattr(kb, "metadata_schema", None) for kb in kbs],
     )
 
-    config = dict(ks.retrieval_config or DEFAULT_RETRIEVAL_CONFIG)
+    profile = await retrieval_profile_service.get_active_profile(db, knowledge_set_id)
+    if profile is None:
+        raise BadRequestError(
+            message="知识集合缺少生效的检索配置",
+            message_key="errors.knowledge.profile_not_active",
+        )
+    config = merge_profile_config(profile.config)
     effective_top_k = top_k if top_k is not None else int(config.get("top_k", 1024))
     effective_top_n = int(config.get("top_n", 8))
     effective_threshold = similarity_threshold

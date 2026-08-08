@@ -143,6 +143,14 @@ async def create_knowledge_set(
     db.add(row)
     await db.flush()
     _seed_visibility_acl(db, knowledge_set_id=row.id, visibility=visibility, member=member)
+    from app.services.retrieval_profile_service import seed_active_profile
+
+    await seed_active_profile(
+        db,
+        knowledge_set_id=row.id,
+        created_by_member_id=member.member_id,
+        config=row.retrieval_config,
+    )
     await write_audit(
         db,
         org_id=member.org_id,
