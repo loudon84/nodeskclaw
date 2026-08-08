@@ -1,6 +1,8 @@
 """KnowledgeBase ORM model."""
 
-from sqlalchemy import Index, String, Text, text
+from datetime import datetime
+
+from sqlalchemy import DateTime, Index, Integer, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -34,3 +36,8 @@ class KnowledgeBase(BaseModel):
     parser_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     owner_member_id: Mapped[str] = mapped_column(String(36), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="provisioning")
+    acl_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tags: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    visibility: Mapped[str] = mapped_column(String(32), nullable=False, default="private")

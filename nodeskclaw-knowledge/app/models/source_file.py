@@ -1,6 +1,6 @@
 """SourceFile ORM model."""
 
-from sqlalchemy import Index, String, text
+from sqlalchemy import Index, Integer, String, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import BaseModel
@@ -25,3 +25,4 @@ class SourceFile(BaseModel):
     owner_member_id: Mapped[str] = mapped_column(String(36), nullable=False)
     active_version_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    acl_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)

@@ -56,11 +56,21 @@ class FilePermission(str, Enum):
     manage_acl = "manage_acl"
 
 
+class SetPermission(str, Enum):
+    read = "read"
+    use = "use"
+    update = "update"
+    delete = "delete"
+    manage = "manage"
+    manage_acl = "manage_acl"
+
+
 class IngestionJobStatus(str, Enum):
     pending = "pending"
     uploading = "uploading"
     ragflow_uploaded = "ragflow_uploaded"
     metadata_synced = "metadata_synced"
+    parse_dispatched = "parse_dispatched"
     parsing = "parsing"
     validating = "validating"
     active = "active"
@@ -74,6 +84,89 @@ class AccessPlanKind(str, Enum):
     no_access = "no_access"
 
 
+class RetrievalSliceKind(str, Enum):
+    full_dataset = "full_dataset"
+    filtered_documents = "filtered_documents"
+
+
 class KnowledgeSetStatus(str, Enum):
     active = "active"
     disabled = "disabled"
+
+
+class AnswerMode(str, Enum):
+    concise = "concise"
+    detailed = "detailed"
+    structured = "structured"
+
+
+class ChatMessageRole(str, Enum):
+    user = "user"
+    assistant = "assistant"
+    system = "system"
+
+
+class ChatMessageStatus(str, Enum):
+    pending = "pending"
+    streaming = "streaming"
+    completed = "completed"
+    failed = "failed"
+
+
+class ChatSessionStatus(str, Enum):
+    active = "active"
+    archived = "archived"
+
+
+class UiRole(str, Enum):
+    owner = "owner"
+    manager = "manager"
+    editor = "editor"
+    viewer = "viewer"
+
+
+class Visibility(str, Enum):
+    private = "private"
+    department = "department"
+    organization = "organization"
+
+
+class AuditAction(str, Enum):
+    kb_create = "KB_CREATE"
+    kb_update = "KB_UPDATE"
+    kb_delete = "KB_DELETE"
+    kb_acl_add = "KB_ACL_ADD"
+    kb_acl_delete = "KB_ACL_DELETE"
+    file_upload = "FILE_UPLOAD"
+    file_version_create = "FILE_VERSION_CREATE"
+    file_version_activate = "FILE_VERSION_ACTIVATE"
+    file_reparse = "FILE_REPARSE"
+    file_delete = "FILE_DELETE"
+    file_download = "FILE_DOWNLOAD"
+    file_acl_add = "FILE_ACL_ADD"
+    file_acl_delete = "FILE_ACL_DELETE"
+    set_create = "SET_CREATE"
+    set_update = "SET_UPDATE"
+    set_bind = "SET_BIND"
+    set_unbind = "SET_UNBIND"
+    set_delete = "SET_DELETE"
+    set_acl_change = "SET_ACL_CHANGE"
+    retrieval = "RETRIEVAL"
+    retrieval_denied = "RETRIEVAL_DENIED"
+    chunk_security_drop = "CHUNK_SECURITY_DROP"
+    metadata_mismatch = "METADATA_MISMATCH"
+    chat_create = "CHAT_CREATE"
+    chat_query = "CHAT_QUERY"
+
+
+DEFAULT_RETRIEVAL_CONFIG = {
+    "top_k": 1024,
+    "top_n": 8,
+    "similarity_threshold": 0.2,
+    "vector_similarity_weight": 0.7,
+    "keyword": False,
+    "rerank_id": None,
+    "highlight": False,
+    "cross_languages": [],
+    "answer_model": "",
+}

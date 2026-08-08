@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, Index, Integer, String, text
+from sqlalchemy import BigInteger, DateTime, Float, Index, Integer, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import BaseModel
@@ -36,3 +36,9 @@ class SourceFileVersion(BaseModel):
     parse_status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
     activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     superseded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    ragflow_run: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    ragflow_progress: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ragflow_progress_msg: Mapped[str | None] = mapped_column(Text, nullable=True)
+    chunk_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    token_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    process_duration: Mapped[float | None] = mapped_column(Float, nullable=True)

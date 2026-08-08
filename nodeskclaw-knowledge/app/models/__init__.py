@@ -1,8 +1,13 @@
+from app.models.audit_log import AuditLog
 from app.models.base import Base, BaseModel, not_deleted
+from app.models.chat_citation import ChatCitation
+from app.models.chat_message import ChatMessage
+from app.models.chat_session import ChatSession
 from app.models.ingestion_job import IngestionJob
 from app.models.knowledge_base import KnowledgeBase
 from app.models.knowledge_base_acl import KnowledgeBaseAcl
 from app.models.knowledge_set import KnowledgeSet
+from app.models.knowledge_set_acl import KnowledgeSetAcl
 from app.models.knowledge_set_item import KnowledgeSetItem
 from app.models.retrieval_audit import RetrievalAudit
 from app.models.source_file import SourceFile
@@ -20,6 +25,11 @@ __all__ = [
     "SourceFileAcl",
     "KnowledgeSet",
     "KnowledgeSetItem",
+    "KnowledgeSetAcl",
     "IngestionJob",
     "RetrievalAudit",
+    "ChatSession",
+    "ChatMessage",
+    "ChatCitation",
+    "AuditLog",
 ]
