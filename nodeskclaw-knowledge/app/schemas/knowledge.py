@@ -257,6 +257,35 @@ class RetrievalRequest(BaseModel):
     filters: dict[str, list] | None = None
 
 
+class PlaygroundRequest(BaseModel):
+    knowledge_set_id: str
+    query: str = Field(min_length=1)
+    profile_id: str | None = None
+    include_trace: bool = False
+    filters: dict[str, list] | None = None
+
+
+class PlaygroundPlanOut(BaseModel):
+    knowledge_bases: int
+    slices: int
+
+
+class PlaygroundTimingOut(BaseModel):
+    acl_ms: int
+    ragflow_ms: int
+    security_ms: int
+    merge_ms: int
+    total_ms: int
+
+
+class PlaygroundFilterSummaryOut(BaseModel):
+    candidates: int
+    unauthorized: int
+    superseded: int
+    metadata_mismatch: int
+    returned: int
+
+
 class MetadataSchemaPut(BaseModel):
     fields: list[dict[str, Any]]
 
@@ -290,6 +319,14 @@ class RetrievalChunkOut(BaseModel):
 class RetrievalResponse(BaseModel):
     query_id: str
     chunks: list[RetrievalChunkOut]
+
+
+class PlaygroundResponse(BaseModel):
+    query: str
+    plan: PlaygroundPlanOut
+    timing: PlaygroundTimingOut
+    results: list[RetrievalChunkOut]
+    filter_summary: PlaygroundFilterSummaryOut
 
 
 class ChatSessionCreate(BaseModel):

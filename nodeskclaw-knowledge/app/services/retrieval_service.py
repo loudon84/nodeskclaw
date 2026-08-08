@@ -9,18 +9,25 @@ from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import BadRequestError, ForbiddenError, ServiceUnavailableError
+from app.core.exceptions import BadRequestError, ForbiddenError, NotFoundError, ServiceUnavailableError
 from app.integrations.ragflow.client import RagflowClient
 from app.models.enums import (
     AccessPlanKind,
     KnowledgeSetStatus,
+    ProfileStatus,
     RetrievalOrigin,
     SetPermission,
 )
 from app.models.retrieval_audit import RetrievalAudit
 from app.schemas.knowledge import RetrievalOptions
 from app.schemas.principal import KnowledgePrincipal
-from app.services import knowledge_set_service, retrieval_merge_service, retrieval_planner, retrieval_profile_service
+from app.services import (
+    knowledge_set_service,
+    retrieval_merge_service,
+    retrieval_planner,
+    retrieval_profile_service,
+    retrieval_trace_service,
+)
 from app.services.permission_service import build_access_plan, has_set_permission
 from app.services.retrieval_profile_service import merge_profile_config
 
@@ -307,4 +314,213 @@ async def retrieve(
         "chunks": chunks_out,
         "status": execution_status,
         "diagnostics": diagnostics,
+    }
+
+
+def _chunks_to_results(merged: list) -> list[dict]:
+    results = []
+    for item in merged:
+        chunk = item.chunk
+        meta = chunk.document_metadata or {}
+        results.append(
+            {
+                "chunk_id": chunk.id,
+                "knowledge_base_id": meta.get("nk_knowledge_base_id"),
+                "source_file_id": meta.get("nk_source_file_id"),
+                "file_version_id": meta.get("nk_file_version_id"),
+                "document_id": chunk.document_id,
+                "file_name": chunk.document_name or chunk.document_keyword,
+                "content": chunk.content,
+                "similarity": chunk.similarity,
+                "weighted_score": item.weighted_score,
+                "page": _extract_page(chunk.positions),
+                "positions": chunk.positions,
+                "term_similarity": chunk.term_similarity,
+                "vector_similarity": chunk.vector_similarity,
+                "highlight": chunk.highlight,
+            }
+        )
+    return results
+
+
+async def _resolve_playground_profile(
+    db: AsyncSession,
+    knowledge_set_id: str,
+    profile_id: str | None,
+):
+    from app.models.retrieval_profile import RetrievalProfile
+
+    if profile_id:
+        profile = await db.get(RetrievalProfile, profile_id)
+        if profile is None or profile.deleted_at is not None:
+            raise NotFoundError(message="检索配置不存在", message_key="errors.knowledge.profile_not_found")
+        if profile.knowledge_set_id != knowledge_set_id:
+            raise BadRequestError(
+                message="检索配置不属于该知识集合",
+                message_key="errors.knowledge.profile_not_found",
+            )
+        if profile.status not in (ProfileStatus.draft.value, ProfileStatus.active.value):
+            raise BadRequestError(
+                message="Playground 仅允许 DRAFT 或 ACTIVE 配置",
+                message_key="errors.knowledge.profile_not_active",
+            )
+        return profile
+    profile = await retrieval_profile_service.get_active_profile(db, knowledge_set_id)
+    if profile is None:
+        raise BadRequestError(
+            message="知识集合缺少生效的检索配置",
+            message_key="errors.knowledge.profile_not_active",
+        )
+    return profile
+
+
+# @lat: [[knowledge#Retrieval Playground And Trace]]
+async def playground_retrieve(
+    db: AsyncSession,
+    member: KnowledgePrincipal,
+    ragflow: RagflowClient,
+    *,
+    knowledge_set_id: str,
+    query: str,
+    profile_id: str | None = None,
+    include_trace: bool = False,
+    filters: dict[str, list] | None = None,
+) -> dict:
+    started = time.perf_counter()
+    ks = await knowledge_set_service.get_knowledge_set(db, member, knowledge_set_id)
+    if not await has_set_permission(db, member, ks, SetPermission.manage.value):
+        raise ForbiddenError(message="无权使用检索调试台", message_key="errors.knowledge.retrieval_denied")
+
+    kbs = await knowledge_set_service.list_bound_knowledge_bases(db, member, knowledge_set_id)
+    if not kbs:
+        raise BadRequestError(message="知识集合未绑定知识库", message_key="errors.knowledge.set_empty")
+
+    from app.services import metadata_service
+
+    normalized_filters = metadata_service.validate_retrieval_filters(
+        filters,
+        [getattr(kb, "metadata_schema", None) for kb in kbs],
+    )
+
+    profile = await _resolve_playground_profile(db, knowledge_set_id, profile_id)
+    config = merge_profile_config(profile.config)
+    effective_top_k = int(config.get("top_k", 1024))
+    effective_top_n = int(config.get("top_n", 8))
+    effective_threshold = float(config.get("similarity_threshold", 0.2))
+    effective_keyword = bool(config.get("keyword", False))
+    effective_highlight = bool(config.get("highlight", False))
+
+    acl_started = time.perf_counter()
+    plan_access = await build_access_plan(db, member, kbs)
+    if normalized_filters and plan_access.kind != AccessPlanKind.no_access and plan_access.dataset_ids:
+        plan_access = await metadata_service.apply_metadata_filters_to_access_plan(
+            db,
+            plan_access,
+            normalized_filters,
+            kbs,
+        )
+    set_items = await knowledge_set_service.list_set_items(db, member, knowledge_set_id)
+    plan = retrieval_planner.build_retrieval_plan(plan_access, kbs, set_items)
+    acl_ms = int((time.perf_counter() - acl_started) * 1000)
+
+    plan_out = {
+        "knowledge_bases": len({kb.id for kb in kbs}),
+        "slices": len(plan.slices),
+    }
+    empty_timing = {
+        "acl_ms": acl_ms,
+        "ragflow_ms": 0,
+        "security_ms": 0,
+        "merge_ms": 0,
+        "total_ms": int((time.perf_counter() - started) * 1000),
+    }
+    empty_summary = retrieval_trace_service.build_filter_summary(
+        candidates=0,
+        filter_counts=None,
+        returned=0,
+    )
+
+    if plan_access.kind == AccessPlanKind.no_access or not plan.slices:
+        latency_ms = empty_timing["total_ms"]
+        if include_trace:
+            await retrieval_trace_service.persist_trace(
+                db,
+                member,
+                query_hash=hashlib.sha256(query.encode("utf-8")).hexdigest(),
+                knowledge_set_id=knowledge_set_id,
+                profile_id=profile.id,
+                profile_version=profile.version,
+                slice_results=[],
+                timing=empty_timing,
+                filter_summary=empty_summary,
+                chunk_traces=[],
+                latency_ms=latency_ms,
+            )
+            await db.commit()
+        return {
+            "query": query,
+            "plan": plan_out,
+            "timing": empty_timing,
+            "results": [],
+            "filter_summary": empty_summary,
+        }
+
+    merge_result = await retrieval_merge_service.execute_and_merge(
+        db,
+        ragflow,
+        plan,
+        allowed_source_file_ids=set(plan_access.source_file_ids),
+        query=query,
+        top_k=effective_top_k,
+        top_n=effective_top_n,
+        similarity_threshold=effective_threshold,
+        vector_similarity_weight=float(config.get("vector_similarity_weight", 0.7)),
+        keyword=effective_keyword,
+        highlight=effective_highlight,
+        rerank_id=config.get("rerank_id"),
+        cross_languages=config.get("cross_languages") or [],
+        audit_org_id=member.org_id,
+        audit_member_id=member.member_id,
+    )
+
+    merge_timing = merge_result.timing
+    timing = {
+        "acl_ms": acl_ms,
+        "ragflow_ms": int(getattr(merge_timing, "ragflow_ms", 0) or 0),
+        "security_ms": int(getattr(merge_timing, "security_ms", 0) or 0),
+        "merge_ms": int(getattr(merge_timing, "merge_ms", 0) or 0),
+        "total_ms": int((time.perf_counter() - started) * 1000),
+    }
+    filter_summary = retrieval_trace_service.build_filter_summary(
+        candidates=merge_result.candidate_count,
+        filter_counts=merge_result.filter_counts,
+        returned=len(merge_result.merged),
+    )
+    results = _chunks_to_results(merge_result.merged)
+
+    if include_trace:
+        await retrieval_trace_service.persist_trace(
+            db,
+            member,
+            query_hash=hashlib.sha256(query.encode("utf-8")).hexdigest(),
+            knowledge_set_id=knowledge_set_id,
+            profile_id=profile.id,
+            profile_version=profile.version,
+            slice_results=retrieval_trace_service.build_slice_results_summary(merge_result.slice_results),
+            timing=timing,
+            filter_summary=filter_summary,
+            chunk_traces=retrieval_trace_service.build_chunk_traces(
+                merged=merge_result.merged,
+                dropped_chunks=merge_result.dropped_chunks,
+            ),
+            latency_ms=timing["total_ms"],
+        )
+        await db.commit()
+
+    return {
+        "query": query,
+        "plan": plan_out,
+        "timing": timing,
+        "results": results,
+        "filter_summary": filter_summary,
     }

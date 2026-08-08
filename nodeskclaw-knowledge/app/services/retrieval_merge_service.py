@@ -39,12 +39,22 @@ class MergedChunk:
 
 
 @dataclass
+class MergeTiming:
+    ragflow_ms: int = 0
+    security_ms: int = 0
+    merge_ms: int = 0
+
+
+@dataclass
 class MergeExecutionResult:
     merged: list[MergedChunk]
     candidate_count: int
     filtered_count: int
     ragflow_call_count: int
     slice_results: list[RetrievalSliceResult]
+    timing: MergeTiming | None = None
+    filter_counts: dict[str, int] | None = None
+    dropped_chunks: list[tuple] | None = None
 
 
 def _slice_error_code(exc: BaseException) -> str:
@@ -146,6 +156,13 @@ async def execute_and_merge(
     audit_org_id: str | None = None,
     audit_member_id: str | None = None,
 ) -> MergeExecutionResult:
+    empty_timing = MergeTiming()
+    empty_counts = {
+        "unauthorized": 0,
+        "superseded": 0,
+        "metadata_mismatch": 0,
+        "unknown": 0,
+    }
     if not plan.slices:
         return MergeExecutionResult(
             merged=[],
@@ -153,9 +170,13 @@ async def execute_and_merge(
             filtered_count=0,
             ragflow_call_count=0,
             slice_results=[],
+            timing=empty_timing,
+            filter_counts=empty_counts,
+            dropped_chunks=[],
         )
 
     semaphore = asyncio.Semaphore(max(1, int(settings.RETRIEVAL_MAX_PARALLEL_SLICES)))
+    ragflow_started = time.perf_counter()
     tasks = [
         _retrieve_slice(
             ragflow,
@@ -173,6 +194,7 @@ async def execute_and_merge(
         for slice_ in plan.slices
     ]
     results = await asyncio.gather(*tasks)
+    ragflow_ms = int((time.perf_counter() - ragflow_started) * 1000)
 
     slice_results: list[RetrievalSliceResult] = []
     candidate_chunks: list[RagflowChunk] = []
@@ -184,7 +206,8 @@ async def execute_and_merge(
             candidate_chunks.extend(chunks)
 
     candidate_count = len(candidate_chunks)
-    safe_chunks, filtered_count = await chunk_security_service.clean_chunks(
+    security_started = time.perf_counter()
+    clean_result = await chunk_security_service.clean_chunks(
         db,
         ragflow,
         candidate_chunks,
@@ -192,11 +215,15 @@ async def execute_and_merge(
         audit_org_id=audit_org_id,
         audit_member_id=audit_member_id,
     )
+    security_ms = int((time.perf_counter() - security_started) * 1000)
+    safe_chunks = clean_result.safe_chunks
+    filtered_count = clean_result.filtered_count
 
     for index, slice_ in enumerate(plan.slices):
         if slice_results[index].status == "success":
             slice_results[index].safe_count = _safe_count_for_slice(slice_, safe_chunks)
 
+    merge_started = time.perf_counter()
     deduped: dict[tuple[str, str], MergedChunk] = {}
     slice_weight_by_dataset: dict[str, float] = {s.dataset_id: s.weight for s in plan.slices}
     for chunk in safe_chunks:
@@ -209,10 +236,14 @@ async def execute_and_merge(
             deduped[key] = MergedChunk(chunk=chunk, weighted_score=weighted_score, weight=weight)
 
     ranked = sorted(deduped.values(), key=lambda item: item.weighted_score, reverse=True)[:top_n]
+    merge_ms = int((time.perf_counter() - merge_started) * 1000)
     return MergeExecutionResult(
         merged=ranked,
         candidate_count=candidate_count,
         filtered_count=filtered_count,
         ragflow_call_count=ragflow_call_count,
         slice_results=slice_results,
+        timing=MergeTiming(ragflow_ms=ragflow_ms, security_ms=security_ms, merge_ms=merge_ms),
+        filter_counts=clean_result.filter_counts(),
+        dropped_chunks=list(clean_result.dropped),
     )

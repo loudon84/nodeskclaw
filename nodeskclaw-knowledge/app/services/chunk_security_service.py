@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from collections.abc import Iterator
+from dataclasses import dataclass, field
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,6 +30,29 @@ class ActiveDocumentIdentity:
     active_version_id: str | None
 
 
+@dataclass
+class ChunkCleanResult:
+    safe_chunks: list[RagflowChunk]
+    filtered_count: int
+    unauthorized: int = 0
+    superseded: int = 0
+    metadata_mismatch: int = 0
+    unknown: int = 0
+    dropped: list[tuple[RagflowChunk, str]] = field(default_factory=list)
+
+    def __iter__(self) -> Iterator[list[RagflowChunk] | int]:
+        yield self.safe_chunks
+        yield self.filtered_count
+
+    def filter_counts(self) -> dict[str, int]:
+        return {
+            "unauthorized": self.unauthorized,
+            "superseded": self.superseded,
+            "metadata_mismatch": self.metadata_mismatch,
+            "unknown": self.unknown,
+        }
+
+
 async def clean_chunks(
     db: AsyncSession,
     ragflow: RagflowClient,
@@ -38,15 +62,20 @@ async def clean_chunks(
     dataset_id_by_document: dict[str, str] | None = None,
     audit_org_id: str | None = None,
     audit_member_id: str | None = None,
-) -> tuple[list[RagflowChunk], int]:
+) -> ChunkCleanResult:
     if not chunks:
-        return [], 0
+        return ChunkCleanResult(safe_chunks=[], filtered_count=0)
 
     document_ids = [c.document_id for c in chunks if c.document_id]
     identity_map = await _build_active_document_map(db, document_ids)
 
     safe: list[RagflowChunk] = []
     filtered = 0
+    unauthorized = 0
+    superseded = 0
+    metadata_mismatch = 0
+    unknown = 0
+    dropped: list[tuple[RagflowChunk, str]] = []
     doc_meta_cache: dict[str, dict] = {}
 
     for chunk in chunks:
@@ -59,6 +88,15 @@ async def clean_chunks(
         )
         if reason:
             filtered += 1
+            dropped.append((chunk, reason))
+            if reason == "unauthorized":
+                unauthorized += 1
+            elif reason == "superseded":
+                superseded += 1
+            elif reason == "metadata_mismatch":
+                metadata_mismatch += 1
+            else:
+                unknown += 1
             if reason == "unknown":
                 logger.warning("drop unknown document chunk_id=%s document_id=%s", chunk.id, chunk.document_id)
             elif reason == "metadata_mismatch":
@@ -76,8 +114,15 @@ async def clean_chunks(
             continue
         safe.append(chunk)
 
-    return safe, filtered
-
+    return ChunkCleanResult(
+        safe_chunks=safe,
+        filtered_count=filtered,
+        unauthorized=unauthorized,
+        superseded=superseded,
+        metadata_mismatch=metadata_mismatch,
+        unknown=unknown,
+        dropped=dropped,
+    )
 
 async def _audit_security_drop(
     db: AsyncSession,

@@ -12,6 +12,7 @@ from app.models.knowledge_set_acl import KnowledgeSetAcl
 from app.models.knowledge_set_item import KnowledgeSetItem
 from app.models.retrieval_audit import RetrievalAudit
 from app.models.retrieval_profile import RetrievalProfile
+from app.models.retrieval_trace import RetrievalTrace
 from app.models.source_file import SourceFile
 from app.models.source_file_acl import SourceFileAcl
 from app.models.source_file_version import SourceFileVersion
@@ -31,6 +32,7 @@ __all__ = [
     "IngestionJob",
     "RetrievalAudit",
     "RetrievalProfile",
+    "RetrievalTrace",
     "ChatSession",
     "ChatMessage",
     "ChatCitation",
