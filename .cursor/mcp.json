@@ -1,3 +1,10 @@
 {
-  "mcpServers": {}
+  "mcpServers": {
+    "lat": {
+      "command": "lat",
+      "args": [
+        "mcp"
+      ]
+    }
+  }
 }
