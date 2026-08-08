@@ -15,6 +15,7 @@ from app.schemas.auth import (
     AccountLoginRequest,
     ChangePasswordRequest,
     EmailLoginRequest,
+    KnowledgeContextInfo,
     LoginResponse,
     RefreshTokenRequest,
     SmsLoginRequest,
@@ -94,6 +95,54 @@ async def me(
         )
         info.portal_org_role = result.scalar_one_or_none()
     return ApiResponse(data=info)
+
+
+@router.get("/knowledge-context", response_model=ApiResponse[KnowledgeContextInfo])
+async def knowledge_context(
+    current_user: User = Depends(get_current_user_unchecked),
+    db: AsyncSession = Depends(get_db),
+):
+    """Knowledge service principal: OrgMembership identity for ACL."""
+    from app.models.org_membership import OrgMembership
+    from app.services.org.factory import get_org_provider
+
+    provider = get_org_provider()
+    org = await provider.resolve_org_for_user(current_user, db)
+    if org is None:
+        raise BadRequestError(
+            message="用户未加入任何组织",
+            message_key="errors.org.user_has_no_org",
+        )
+
+    result = await db.execute(
+        select(OrgMembership).where(
+            OrgMembership.user_id == current_user.id,
+            OrgMembership.org_id == org.id,
+            OrgMembership.deleted_at.is_(None),
+        )
+    )
+    membership = result.scalar_one_or_none()
+    if membership is None:
+        raise BadRequestError(
+            message="用户未加入任何组织",
+            message_key="errors.org.user_has_no_org",
+        )
+
+    return ApiResponse(
+        data=KnowledgeContextInfo(
+            user_id=current_user.id,
+            member_id=membership.id,
+            org_id=org.id,
+            name=current_user.name or "",
+            employee_no=membership.employee_no,
+            department=membership.department,
+            job_title=membership.job_title,
+            member_role=membership.role,
+            supervisor_member_id=membership.supervisor_membership_id,
+            is_active=bool(current_user.is_active),
+            is_super_admin=bool(current_user.is_super_admin),
+        )
+    )
 
 
 @router.put("/me/password", response_model=ApiResponse)
