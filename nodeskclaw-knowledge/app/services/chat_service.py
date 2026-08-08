@@ -10,7 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.exceptions import ForbiddenError, NotFoundError
+from app.core.exceptions import AppException, ForbiddenError, NotFoundError
 from app.integrations.llm_proxy.client import LlmProxyClient
 from app.integrations.llm_proxy.exceptions import LlmProxyError
 from app.integrations.llm_proxy.models import ChatCompletionRequest, ChatMessage as LlmChatMessage
@@ -181,6 +181,16 @@ async def send_message_stream(
         ]
         safe_chunks = context_builder.build_safe_chunks(ragflow_chunks)
 
+        if retrieval.get("status") == "degraded":
+            yield {
+                "event": "retrieval_degraded",
+                "data": {
+                    "message": "部分知识源当前不可用，本回答基于可用知识生成。",
+                    "message_key": "errors.knowledge.retrieval_partial_failure",
+                    "diagnostics": retrieval.get("diagnostics") or {},
+                },
+            }
+
         yield {
             "event": "retrieval_completed",
             "data": {"chunk_count": len(safe_chunks), "query_id": retrieval.get("query_id")},
@@ -298,6 +308,17 @@ async def send_message_stream(
         assistant.error_message = str(exc)
         await db.commit()
         yield {"event": "error", "data": {"message": str(exc), "message_key": "errors.knowledge.llm_proxy_failed"}}
+    except AppException as exc:
+        assistant.status = ChatMessageStatus.failed.value
+        assistant.error_message = exc.message
+        await db.commit()
+        yield {
+            "event": "error",
+            "data": {
+                "message": exc.message,
+                "message_key": exc.message_key or "errors.system.internal_error",
+            },
+        }
     except Exception as exc:
         assistant.status = ChatMessageStatus.failed.value
         assistant.error_message = str(exc)

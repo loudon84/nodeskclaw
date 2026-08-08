@@ -44,3 +44,27 @@ def test_retrieval_planner_full_plus_partial():
     assert partial_slice.dataset_id == "ds_b"
     assert partial_slice.document_ids == ["doc_b1", "doc_b2"]
     assert partial_slice.weight == 2.0
+
+
+def test_retrieval_planner_batches_partial_document_ids(monkeypatch):
+    monkeypatch.setattr("app.services.retrieval_planner.settings.RETRIEVAL_DOCUMENT_BATCH_SIZE", 2)
+    access = AccessPlan(
+        kind=AccessPlanKind.filtered_access,
+        dataset_ids=["ds_b"],
+        full_dataset_ids=[],
+        partial_slices=[
+            {
+                "kind": "filtered_documents",
+                "dataset_id": "ds_b",
+                "knowledge_base_id": "kb_b",
+                "document_ids": ["d1", "d2", "d3", "d4", "d5"],
+            }
+        ],
+        source_file_ids=["sf1"],
+        knowledge_base_ids=["kb_b"],
+    )
+    plan = build_retrieval_plan(access, [_kb("kb_b", "ds_b")], [_item("kb_b", 1.0)])
+    assert len(plan.slices) == 3
+    assert plan.slices[0].document_ids == ["d1", "d2"]
+    assert plan.slices[1].document_ids == ["d3", "d4"]
+    assert plan.slices[2].document_ids == ["d5"]

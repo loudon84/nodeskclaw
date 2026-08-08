@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import BadRequestError, ForbiddenError
+from app.core.exceptions import BadRequestError, ForbiddenError, ServiceUnavailableError
 from app.integrations.ragflow.client import RagflowClient
 from app.models.enums import AccessPlanKind, DEFAULT_RETRIEVAL_CONFIG, RetrievalOrigin, SetPermission
 from app.models.retrieval_audit import RetrievalAudit
@@ -34,6 +34,26 @@ def _extract_page(positions: list | None) -> int | None:
         except (TypeError, ValueError):
             return None
     return None
+
+
+def _diagnostics_from_slices(slice_results: list) -> dict:
+    return {
+        "slice_count": len(slice_results),
+        "successful_slice_count": sum(1 for item in slice_results if item.status == "success"),
+        "failed_slice_count": sum(1 for item in slice_results if item.status == "failed"),
+        "slices": [
+            {
+                "knowledge_base_id": item.knowledge_base_id,
+                "dataset_id": item.dataset_id,
+                "status": item.status,
+                "latency_ms": item.latency_ms,
+                "candidate_count": item.candidate_count,
+                "safe_count": item.safe_count,
+                "error_code": item.error_code,
+            }
+            for item in slice_results
+        ],
+    }
 
 
 # @lat: [[knowledge#Secure Retrieval Pipeline]]
@@ -66,6 +86,7 @@ async def retrieve(
         effective_threshold = float(config.get("similarity_threshold", 0.2))
     effective_keyword = bool(config.get("keyword", False))
     effective_highlight = bool(config.get("highlight", False))
+    failure_policy = str(config.get("failure_policy") or "fail_closed")
 
     if options:
         if options.top_n is not None:
@@ -132,7 +153,7 @@ async def retrieve(
         await db.commit()
         return {"query_id": query_id, "chunks": [], "status": "empty", "diagnostics": {"slice_count": 0}}
 
-    merged, candidate_count, filtered_count, ragflow_call_count = await retrieval_merge_service.execute_and_merge(
+    merge_result = await retrieval_merge_service.execute_and_merge(
         db,
         ragflow,
         plan,
@@ -150,6 +171,15 @@ async def retrieve(
         audit_member_id=member.member_id,
     )
 
+    merged = merge_result.merged
+    candidate_count = merge_result.candidate_count
+    filtered_count = merge_result.filtered_count
+    ragflow_call_count = merge_result.ragflow_call_count
+    slice_results = merge_result.slice_results
+    successful_slice_count = sum(1 for item in slice_results if item.status == "success")
+    failed_slice_count = sum(1 for item in slice_results if item.status == "failed")
+    diagnostics = _diagnostics_from_slices(slice_results)
+
     query_id = str(uuid.uuid4())
     latency_ms = int((time.perf_counter() - started) * 1000)
     source_file_ids = sorted(
@@ -159,7 +189,42 @@ async def retrieve(
             if item.chunk.document_metadata.get("nk_source_file_id")
         }
     )
-    execution_status = "empty" if not merged else "success"
+
+    if failed_slice_count > 0 and failure_policy != "degraded":
+        audit = RetrievalAudit(
+            member_id=member.member_id,
+            org_id=member.org_id,
+            knowledge_set_id=knowledge_set_id,
+            query_hash=hashlib.sha256(query.encode("utf-8")).hexdigest(),
+            candidate_chunk_count=candidate_count,
+            filtered_chunk_count=filtered_count,
+            returned_chunk_count=0,
+            source_file_ids=[],
+            latency_ms=latency_ms,
+            status="error",
+            plan_kind=plan.plan_kind,
+            ragflow_call_count=ragflow_call_count,
+            error_code="errors.knowledge.retrieval_unavailable",
+            origin=origin,
+            execution_status="failed",
+            successful_slice_count=successful_slice_count,
+            failed_slice_count=failed_slice_count,
+        )
+        db.add(audit)
+        await db.commit()
+        raise ServiceUnavailableError(
+            message="知识检索暂时不可用",
+            message_key="errors.knowledge.retrieval_unavailable",
+            details=diagnostics,
+        )
+
+    if failed_slice_count > 0:
+        execution_status = "degraded"
+    elif not merged:
+        execution_status = "empty"
+    else:
+        execution_status = "success"
+
     audit = RetrievalAudit(
         member_id=member.member_id,
         org_id=member.org_id,
@@ -173,10 +238,11 @@ async def retrieve(
         status="ok",
         plan_kind=plan.plan_kind,
         ragflow_call_count=ragflow_call_count,
+        error_code="errors.knowledge.retrieval_partial_failure" if failed_slice_count > 0 else None,
         origin=origin,
         execution_status=execution_status,
-        successful_slice_count=len(plan.slices),
-        failed_slice_count=0,
+        successful_slice_count=successful_slice_count,
+        failed_slice_count=failed_slice_count,
     )
     db.add(audit)
     ks.usage_count += 1
@@ -210,9 +276,5 @@ async def retrieve(
         "query_id": query_id,
         "chunks": chunks_out,
         "status": execution_status,
-        "diagnostics": {
-            "slice_count": len(plan.slices),
-            "successful_slice_count": len(plan.slices),
-            "failed_slice_count": 0,
-        },
+        "diagnostics": diagnostics,
     }

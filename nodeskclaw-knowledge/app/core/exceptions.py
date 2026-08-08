@@ -94,6 +94,22 @@ class RagflowUnavailableError(AppException):
         )
 
 
+class ServiceUnavailableError(AppException):
+    def __init__(
+        self,
+        message: str = "服务暂时不可用",
+        message_key: str = "errors.knowledge.retrieval_unavailable",
+        details: dict[str, Any] | None = None,
+    ):
+        super().__init__(
+            code=50300,
+            message=message,
+            status_code=503,
+            message_key=message_key,
+            details=details,
+        )
+
+
 HTTP_STATUS_DEFAULT_CODES: dict[int, int] = {
     400: 40000,
     401: 40100,
@@ -103,6 +119,7 @@ HTTP_STATUS_DEFAULT_CODES: dict[int, int] = {
     422: 42200,
     500: 50000,
     502: 50200,
+    503: 50300,
 }
 
 
