@@ -10,6 +10,7 @@ from app.models.base import BaseModel
 from app.models.enums import DEFAULT_RETRIEVAL_CONFIG
 
 
+# @lat: [[knowledge-objects#Knowledge Set]]
 class KnowledgeSet(BaseModel):
     __tablename__ = "knowledge_sets"
     __table_args__ = (

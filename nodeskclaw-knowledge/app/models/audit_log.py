@@ -7,6 +7,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.models.base import BaseModel
 
 
+# @lat: [[knowledge-objects#Runtime Extensions]]
 class AuditLog(BaseModel):
     __tablename__ = "knowledge_audit_logs"
 

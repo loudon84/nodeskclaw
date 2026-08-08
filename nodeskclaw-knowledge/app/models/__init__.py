@@ -1,3 +1,4 @@
+# @lat: [[knowledge#Runtime Schema V11]]
 from app.models.audit_log import AuditLog
 from app.models.base import Base, BaseModel, not_deleted
 from app.models.chat_citation import ChatCitation

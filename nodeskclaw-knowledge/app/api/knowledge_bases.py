@@ -7,8 +7,8 @@ from app.core.deps import get_db, get_member_context, get_ragflow_client
 from app.integrations.ragflow.client import RagflowClient
 from app.schemas.common import ApiResponse
 from app.schemas.knowledge import (
-    AclCreate,
     AclOut,
+    KbAclCreate,
     KnowledgeBaseCreate,
     KnowledgeBaseOut,
     KnowledgeBaseUpdate,
@@ -44,6 +44,8 @@ async def create_kb(
         embedding_model=body.embedding_model,
         chunk_method=body.chunk_method,
         parser_config=body.parser_config,
+        visibility=body.visibility.value,
+        tags=body.tags,
     )
     return ApiResponse(data=KnowledgeBaseOut.model_validate(kb))
 
@@ -64,9 +66,15 @@ async def patch_kb(
     body: KnowledgeBaseUpdate,
     member: KnowledgePrincipal = Depends(get_member_context),
     db: AsyncSession = Depends(get_db),
+    ragflow: RagflowClient = Depends(get_ragflow_client),
 ):
     kb = await knowledge_base_service.update_knowledge_base(
-        db, member, kb_id, name=body.name, description=body.description
+        db,
+        member,
+        ragflow,
+        kb_id,
+        name=body.name,
+        description=body.description,
     )
     return ApiResponse(data=KnowledgeBaseOut.model_validate(kb))
 
@@ -95,7 +103,7 @@ async def list_acl(
 @router.post("/{kb_id}/acl", response_model=ApiResponse[AclOut])
 async def create_acl(
     kb_id: str,
-    body: AclCreate,
+    body: KbAclCreate,
     member: KnowledgePrincipal = Depends(get_member_context),
     db: AsyncSession = Depends(get_db),
 ):
@@ -103,10 +111,10 @@ async def create_acl(
         db,
         member,
         kb_id,
-        subject_type=body.subject_type,
+        subject_type=body.subject_type.value,
         subject_id=body.subject_id,
-        permission=body.permission,
-        effect=body.effect,
+        permission=body.permission.value,
+        effect=body.effect.value,
     )
     return ApiResponse(data=AclOut.model_validate(row))
 

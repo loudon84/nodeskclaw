@@ -6,6 +6,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.models.base import BaseModel
 
 
+# @lat: [[knowledge-objects#Source File]]
 class SourceFile(BaseModel):
     __tablename__ = "source_files"
     __table_args__ = (

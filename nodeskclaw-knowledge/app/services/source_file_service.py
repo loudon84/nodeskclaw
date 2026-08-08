@@ -11,13 +11,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import ForbiddenError, NotFoundError
 from app.integrations.ragflow.client import RagflowClient
 from app.models.base import not_deleted
-from app.models.enums import AclEffect, FilePermission, KbPermission, SourceFileStatus
+from app.models.enums import AclEffect, AuditAction, FilePermission, KbPermission, SourceFileStatus
 from app.models.source_file import SourceFile
 from app.models.source_file_acl import SourceFileAcl
 from app.models.source_file_version import SourceFileVersion
 from app.schemas.principal import KnowledgePrincipal
 from app.services import knowledge_base_service
-from app.services.permission_service import has_file_permission, has_kb_permission
+from app.services.audit_service import write_audit
+from app.services.permission_service import has_file_permission, has_kb_permission, validate_acl_subject
+
+
+def _bump_file_acl_version(sf: SourceFile) -> None:
+    sf.acl_version = (sf.acl_version or 1) + 1
 
 
 async def list_source_files(
@@ -60,26 +65,28 @@ async def delete_source_file(
     if not await has_file_permission(db, member, sf, FilePermission.delete.value):
         raise ForbiddenError()
     kb = await knowledge_base_service.get_knowledge_base(db, member, sf.knowledge_base_id)
-    versions = await db.execute(
-        select(SourceFileVersion).where(
-            SourceFileVersion.source_file_id == sf.id,
-            not_deleted(SourceFileVersion),
-        )
+    sf.status = SourceFileStatus.deleting.value
+    await db.flush()
+
+    versions = list(
+        (
+            await db.execute(
+                select(SourceFileVersion).where(
+                    SourceFileVersion.source_file_id == sf.id,
+                    not_deleted(SourceFileVersion),
+                )
+            )
+        ).scalars().all()
     )
-    doc_ids = [v.ragflow_document_id for v in versions.scalars().all() if v.ragflow_document_id]
+    doc_ids = [v.ragflow_document_id for v in versions if v.ragflow_document_id]
     if kb.ragflow_dataset_id and doc_ids:
         try:
             await ragflow.delete_documents(kb.ragflow_dataset_id, doc_ids)
         except Exception:
-            pass
-    for version in (await db.execute(
-        select(SourceFileVersion).where(
-            SourceFileVersion.source_file_id == sf.id,
-            not_deleted(SourceFileVersion),
-        )
-    )).scalars().all():
+            await db.commit()
+            return
+    for version in versions:
         version.soft_delete()
-    sf.status = SourceFileStatus.deleting.value
     sf.soft_delete()
     await db.commit()
 
@@ -97,6 +104,58 @@ async def next_version_no(db: AsyncSession, source_file_id: str) -> int:
 
 def sha256_bytes(content: bytes) -> str:
     return hashlib.sha256(content).hexdigest()
+
+
+async def list_source_file_versions(
+    db: AsyncSession,
+    member: KnowledgePrincipal,
+    source_file_id: str,
+) -> list[SourceFileVersion]:
+    await get_source_file(db, member, source_file_id)
+    result = await db.execute(
+        select(SourceFileVersion).where(
+            SourceFileVersion.source_file_id == source_file_id,
+            not_deleted(SourceFileVersion),
+        ).order_by(SourceFileVersion.version_no.desc())
+    )
+    return list(result.scalars().all())
+
+
+async def get_source_file_version(
+    db: AsyncSession,
+    member: KnowledgePrincipal,
+    source_file_id: str,
+    version_id: str,
+) -> SourceFileVersion:
+    await get_source_file(db, member, source_file_id)
+    version = await db.get(SourceFileVersion, version_id)
+    if version is None or version.deleted_at is not None or version.source_file_id != source_file_id:
+        raise NotFoundError(message="版本不存在", message_key="errors.knowledge.version_not_found")
+    return version
+
+
+async def enrich_source_file(sf: SourceFile, db: AsyncSession) -> dict:
+    data = {
+        "id": sf.id,
+        "org_id": sf.org_id,
+        "knowledge_base_id": sf.knowledge_base_id,
+        "file_name": sf.file_name,
+        "mime_type": sf.mime_type,
+        "owner_member_id": sf.owner_member_id,
+        "active_version_id": sf.active_version_id,
+        "status": sf.status,
+        "acl_version": sf.acl_version,
+        "parse_status": None,
+        "chunk_count": None,
+        "version_no": None,
+    }
+    if sf.active_version_id:
+        version = await db.get(SourceFileVersion, sf.active_version_id)
+        if version and version.deleted_at is None:
+            data["parse_status"] = version.parse_status
+            data["chunk_count"] = version.chunk_count
+            data["version_no"] = version.version_no
+    return data
 
 
 async def download_source_file(
@@ -146,6 +205,7 @@ async def add_file_acl(
         db, member, sf.knowledge_base_id, KbPermission.manage_acl.value
     ):
         raise ForbiddenError()
+    validate_acl_subject(member, subject_type=subject_type, subject_id=subject_id)
     row = SourceFileAcl(
         source_file_id=source_file_id,
         subject_type=subject_type,
@@ -155,6 +215,22 @@ async def add_file_acl(
         created_by_member_id=member.member_id,
     )
     db.add(row)
+    _bump_file_acl_version(sf)
+    await write_audit(
+        db,
+        org_id=member.org_id,
+        member_id=member.member_id,
+        action=AuditAction.file_acl_add.value,
+        resource_type="source_file",
+        resource_id=source_file_id,
+        details={
+            "subject_type": subject_type,
+            "subject_id": subject_id,
+            "permission": permission,
+            "effect": effect,
+            "acl_version": sf.acl_version,
+        },
+    )
     await db.commit()
     await db.refresh(row)
     return row
@@ -175,6 +251,22 @@ async def delete_file_acl(
     if acl is None or acl.deleted_at is not None or acl.source_file_id != source_file_id:
         raise NotFoundError(message="ACL 不存在", message_key="errors.knowledge.acl_not_found")
     acl.soft_delete()
+    _bump_file_acl_version(sf)
+    await write_audit(
+        db,
+        org_id=member.org_id,
+        member_id=member.member_id,
+        action=AuditAction.file_acl_delete.value,
+        resource_type="source_file",
+        resource_id=source_file_id,
+        details={
+            "acl_id": acl_id,
+            "subject_type": acl.subject_type,
+            "subject_id": acl.subject_id,
+            "permission": acl.permission,
+            "acl_version": sf.acl_version,
+        },
+    )
     await db.commit()
 
 

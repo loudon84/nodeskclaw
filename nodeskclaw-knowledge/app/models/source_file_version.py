@@ -8,6 +8,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.models.base import BaseModel
 
 
+# @lat: [[knowledge-objects#Source File]]
 class SourceFileVersion(BaseModel):
     __tablename__ = "source_file_versions"
     __table_args__ = (

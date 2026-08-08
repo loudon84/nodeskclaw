@@ -5,7 +5,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_db, get_member_context
 from app.schemas.common import ApiResponse
-from app.schemas.knowledge import KnowledgeSetBind, KnowledgeSetCreate, KnowledgeSetOut, KnowledgeSetUpdate
+from app.schemas.knowledge import (
+    AclOut,
+    KnowledgeSetBind,
+    KnowledgeSetCreate,
+    KnowledgeSetOut,
+    KnowledgeSetUpdate,
+    SetAclCreate,
+)
 from app.schemas.principal import KnowledgePrincipal
 from app.services import knowledge_set_service
 
@@ -27,12 +34,15 @@ async def create_set(
     member: KnowledgePrincipal = Depends(get_member_context),
     db: AsyncSession = Depends(get_db),
 ):
+    retrieval_config = body.retrieval_config.model_dump() if body.retrieval_config else None
     row = await knowledge_set_service.create_knowledge_set(
         db,
         member,
         name=body.name,
         description=body.description,
         embedding_model=body.embedding_model,
+        visibility=body.visibility.value,
+        retrieval_config=retrieval_config,
     )
     return ApiResponse(data=KnowledgeSetOut.model_validate(row))
 
@@ -54,8 +64,16 @@ async def patch_set(
     member: KnowledgePrincipal = Depends(get_member_context),
     db: AsyncSession = Depends(get_db),
 ):
+    retrieval_config = body.retrieval_config.model_dump() if body.retrieval_config else None
     row = await knowledge_set_service.update_knowledge_set(
-        db, member, set_id, name=body.name, description=body.description, status=body.status
+        db,
+        member,
+        set_id,
+        name=body.name,
+        description=body.description,
+        status=body.status,
+        visibility=body.visibility.value if body.visibility is not None else None,
+        retrieval_config=retrieval_config,
     )
     return ApiResponse(data=KnowledgeSetOut.model_validate(row))
 
@@ -67,6 +85,46 @@ async def delete_set(
     db: AsyncSession = Depends(get_db),
 ):
     await knowledge_set_service.delete_knowledge_set(db, member, set_id)
+    return ApiResponse(message="deleted")
+
+
+@router.get("/{set_id}/acl", response_model=ApiResponse[list[AclOut]])
+async def list_acl(
+    set_id: str,
+    member: KnowledgePrincipal = Depends(get_member_context),
+    db: AsyncSession = Depends(get_db),
+):
+    rows = await knowledge_set_service.list_set_acl(db, member, set_id)
+    return ApiResponse(data=[AclOut.model_validate(r) for r in rows])
+
+
+@router.post("/{set_id}/acl", response_model=ApiResponse[AclOut])
+async def create_acl(
+    set_id: str,
+    body: SetAclCreate,
+    member: KnowledgePrincipal = Depends(get_member_context),
+    db: AsyncSession = Depends(get_db),
+):
+    row = await knowledge_set_service.add_set_acl(
+        db,
+        member,
+        set_id,
+        subject_type=body.subject_type.value,
+        subject_id=body.subject_id,
+        permission=body.permission.value,
+        effect=body.effect.value,
+    )
+    return ApiResponse(data=AclOut.model_validate(row))
+
+
+@router.delete("/{set_id}/acl/{acl_id}", response_model=ApiResponse)
+async def delete_acl(
+    set_id: str,
+    acl_id: str,
+    member: KnowledgePrincipal = Depends(get_member_context),
+    db: AsyncSession = Depends(get_db),
+):
+    await knowledge_set_service.delete_set_acl(db, member, set_id, acl_id)
     return ApiResponse(message="deleted")
 
 

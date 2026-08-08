@@ -8,6 +8,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.models.base import BaseModel
 
 
+# @lat: [[knowledge-objects#Runtime Extensions]]
 class IngestionJob(BaseModel):
     __tablename__ = "knowledge_ingestion_jobs"
 

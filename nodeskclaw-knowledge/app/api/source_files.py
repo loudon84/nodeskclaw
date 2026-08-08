@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.deps import get_db, get_member_context, get_ragflow_client
 from app.integrations.ragflow.client import RagflowClient
 from app.schemas.common import ApiResponse
-from app.schemas.knowledge import AclCreate, AclOut, IngestionJobOut, SourceFileOut
+from app.schemas.knowledge import AclOut, FileAclCreate, IngestionJobOut, SourceFileOut, SourceFileVersionOut
 from app.schemas.principal import KnowledgePrincipal
 from app.services import ingestion_service, source_file_service
 
@@ -44,12 +44,34 @@ async def upload_file(
         mime_type=file.content_type,
     )
     return ApiResponse(
+        message="upload accepted, parsing in background",
         data={
             "source_file": SourceFileOut.model_validate(sf).model_dump(),
             "file_version_id": version.id,
             "job": IngestionJobOut.model_validate(job).model_dump(),
-        }
+        },
     )
+
+
+@router.get("/{source_file_id}/versions", response_model=ApiResponse[list[SourceFileVersionOut]])
+async def list_versions(
+    source_file_id: str,
+    member: KnowledgePrincipal = Depends(get_member_context),
+    db: AsyncSession = Depends(get_db),
+):
+    versions = await source_file_service.list_source_file_versions(db, member, source_file_id)
+    return ApiResponse(data=[SourceFileVersionOut.model_validate(v) for v in versions])
+
+
+@router.get("/{source_file_id}/versions/{version_id}", response_model=ApiResponse[SourceFileVersionOut])
+async def get_version(
+    source_file_id: str,
+    version_id: str,
+    member: KnowledgePrincipal = Depends(get_member_context),
+    db: AsyncSession = Depends(get_db),
+):
+    version = await source_file_service.get_source_file_version(db, member, source_file_id, version_id)
+    return ApiResponse(data=SourceFileVersionOut.model_validate(version))
 
 
 @router.get("/{source_file_id}", response_model=ApiResponse[SourceFileOut])
@@ -59,7 +81,8 @@ async def get_file(
     db: AsyncSession = Depends(get_db),
 ):
     sf = await source_file_service.get_source_file(db, member, source_file_id)
-    return ApiResponse(data=SourceFileOut.model_validate(sf))
+    enriched = await source_file_service.enrich_source_file(sf, db)
+    return ApiResponse(data=SourceFileOut.model_validate(enriched))
 
 
 @router.delete("/{source_file_id}", response_model=ApiResponse)
@@ -94,11 +117,12 @@ async def upload_version(
         source_file_id=source_file_id,
     )
     return ApiResponse(
+        message="upload accepted, parsing in background",
         data={
             "source_file": SourceFileOut.model_validate(sf2).model_dump(),
             "file_version_id": version.id,
             "job": IngestionJobOut.model_validate(job).model_dump(),
-        }
+        },
     )
 
 
@@ -141,7 +165,7 @@ async def list_acl(
 @router.post("/{source_file_id}/acl", response_model=ApiResponse[AclOut])
 async def create_acl(
     source_file_id: str,
-    body: AclCreate,
+    body: FileAclCreate,
     member: KnowledgePrincipal = Depends(get_member_context),
     db: AsyncSession = Depends(get_db),
 ):
@@ -149,10 +173,10 @@ async def create_acl(
         db,
         member,
         source_file_id,
-        subject_type=body.subject_type,
+        subject_type=body.subject_type.value,
         subject_id=body.subject_id,
-        permission=body.permission,
-        effect=body.effect,
+        permission=body.permission.value,
+        effect=body.effect.value,
     )
     return ApiResponse(data=AclOut.model_validate(row))
 

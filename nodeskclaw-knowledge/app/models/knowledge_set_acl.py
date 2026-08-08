@@ -6,6 +6,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.models.base import BaseModel
 
 
+# @lat: [[knowledge-objects#Knowledge Set]]
 class KnowledgeSetAcl(BaseModel):
     __tablename__ = "knowledge_set_acl"
     __table_args__ = (

@@ -9,6 +9,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.models.base import BaseModel
 
 
+# @lat: [[knowledge-objects#Knowledge Base]]
 class KnowledgeBase(BaseModel):
     __tablename__ = "knowledge_bases"
     __table_args__ = (

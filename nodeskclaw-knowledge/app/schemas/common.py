@@ -1,6 +1,6 @@
 """Common response schemas."""
 
-from typing import Any, Generic, TypeVar
+from typing import Generic, TypeVar
 
 from pydantic import BaseModel, Field
 
@@ -15,6 +15,13 @@ class ApiResponse(BaseModel, Generic[T]):
     data: T | None = None
 
 
+class PageData(BaseModel, Generic[T]):
+    items: list[T] = Field(default_factory=list)
+    total: int = 0
+    page: int = 1
+    page_size: int = 20
+
+
 class Pagination(BaseModel):
     page: int = 1
     page_size: int = 20
@@ -26,5 +33,4 @@ class PaginatedResponse(BaseModel, Generic[T]):
     error_code: int | None = None
     message_key: str | None = None
     message: str = "success"
-    data: list[Any] = Field(default_factory=list)
-    pagination: Pagination = Field(default_factory=Pagination)
+    data: PageData[T] = Field(default_factory=PageData)
