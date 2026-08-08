@@ -26,7 +26,8 @@ async def retrieve(
         ragflow,
         knowledge_set_id=body.knowledge_set_id,
         query=body.query,
-        top_k=body.top_k,
+        options=body.options,
+        top_k=body.top_k or (body.options.top_k if body.options else None),
         similarity_threshold=body.similarity_threshold,
     )
     return ApiResponse(data=RetrievalResponse.model_validate(data))
