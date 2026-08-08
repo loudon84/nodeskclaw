@@ -99,7 +99,7 @@ async def me(
 
 @router.get("/knowledge-context", response_model=ApiResponse[KnowledgeContextInfo])
 async def knowledge_context(
-    current_user: User = Depends(get_current_user_unchecked),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Knowledge service principal: OrgMembership identity for ACL."""
