@@ -12,7 +12,6 @@ from app.core.exceptions import ForbiddenError, NotFoundError
 from app.integrations.ragflow.client import RagflowClient
 from app.models.base import not_deleted
 from app.models.enums import AclEffect, AuditAction, FilePermission, KbPermission, SourceFileStatus
-from app.models.knowledge_base import KnowledgeBase
 from app.models.source_file import SourceFile
 from app.models.source_file_acl import SourceFileAcl
 from app.models.source_file_version import SourceFileVersion
@@ -37,6 +36,8 @@ async def list_source_files(
     sort_by: str = "created_at",
     sort_order: str = "desc",
 ) -> tuple[list[SourceFile], int]:
+    from app.services.permission_snapshot_service import load_permission_snapshot
+
     await knowledge_base_service.get_knowledge_base(db, member, knowledge_base_id)
     result = await db.execute(
         select(SourceFile).where(
@@ -45,10 +46,15 @@ async def list_source_files(
             not_deleted(SourceFile),
         )
     )
-    out: list[SourceFile] = []
-    for sf in result.scalars().all():
-        if await has_file_permission(db, member, sf, FilePermission.read.value):
-            out.append(sf)
+    files = list(result.scalars().all())
+    snapshot = await load_permission_snapshot(
+        db,
+        member,
+        knowledge_base_ids=[knowledge_base_id],
+        source_file_ids=[sf.id for sf in files],
+        knowledge_set_ids=[],
+    )
+    out = [sf for sf in files if snapshot.has_file_permission(sf.id, FilePermission.read.value)]
     if q:
         q_lower = q.lower()
         out = [sf for sf in out if q_lower in (sf.file_name or "").lower()]
@@ -77,16 +83,12 @@ async def list_global_source_files(
     sort_by: str = "created_at",
     sort_order: str = "desc",
 ) -> tuple[list[SourceFile], int]:
-    kb_rows = await db.execute(
-        select(KnowledgeBase.id).where(
-            KnowledgeBase.org_id == member.org_id,
-            not_deleted(KnowledgeBase),
-        )
-    )
-    readable_kb_ids: list[str] = []
-    for kb_id in kb_rows.scalars().all():
-        if await has_kb_permission(db, member, kb_id, KbPermission.read.value):
-            readable_kb_ids.append(kb_id)
+    from app.services.permission_snapshot_service import load_permission_snapshot
+
+    snapshot = await load_permission_snapshot(db, member, knowledge_set_ids=[])
+    readable_kb_ids = [
+        kb_id for kb_id in snapshot.kb_owners if snapshot.has_kb_permission(kb_id, KbPermission.read.value)
+    ]
 
     if knowledge_base_id:
         if knowledge_base_id not in readable_kb_ids:
@@ -115,10 +117,8 @@ async def list_global_source_files(
         filters.append(SourceFile.file_name.ilike(f"%{q}%"))
 
     result = await db.execute(select(SourceFile).where(*filters))
-    out: list[SourceFile] = []
-    for sf in result.scalars().all():
-        if await has_file_permission(db, member, sf, FilePermission.read.value):
-            out.append(sf)
+    candidates = list(result.scalars().all())
+    out = [sf for sf in candidates if snapshot.has_file_permission(sf.id, FilePermission.read.value)]
 
     if parse_status:
         filtered: list[SourceFile] = []

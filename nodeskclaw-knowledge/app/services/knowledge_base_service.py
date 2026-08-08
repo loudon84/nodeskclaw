@@ -67,16 +67,23 @@ async def list_knowledge_bases(
     sort_by: str = "created_at",
     sort_order: str = "desc",
 ) -> tuple[list[KnowledgeBase], int]:
+    from app.services.permission_snapshot_service import load_permission_snapshot
+
     result = await db.execute(
         select(KnowledgeBase).where(
             KnowledgeBase.org_id == member.org_id,
             not_deleted(KnowledgeBase),
         )
     )
-    out: list[KnowledgeBase] = []
-    for kb in result.scalars().all():
-        if await has_kb_permission(db, member, kb.id, KbPermission.read.value):
-            out.append(kb)
+    items = list(result.scalars().all())
+    snapshot = await load_permission_snapshot(
+        db,
+        member,
+        knowledge_base_ids=[kb.id for kb in items],
+        knowledge_set_ids=[],
+        source_file_ids=[],
+    )
+    out = [kb for kb in items if snapshot.has_kb_permission(kb.id, KbPermission.read.value)]
     if status:
         out = [kb for kb in out if kb.status == status]
     if q:

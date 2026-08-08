@@ -198,12 +198,15 @@ async def build_access_plan(
     member: KnowledgePrincipal,
     knowledge_bases: list[KnowledgeBase],
 ) -> AccessPlan:
-    readable_kbs: list[KnowledgeBase] = []
-    for kb in knowledge_bases:
-        if kb.status == "deleting":
-            continue
-        if await has_kb_permission(db, member, kb.id, KbPermission.read.value):
-            readable_kbs.append(kb)
+    from app.services.permission_snapshot_service import load_permission_snapshot
+
+    candidate_kbs = [kb for kb in knowledge_bases if kb.status != "deleting"]
+    snapshot = await load_permission_snapshot(
+        db,
+        member,
+        knowledge_base_ids=[kb.id for kb in candidate_kbs],
+    )
+    readable_kbs = [kb for kb in candidate_kbs if snapshot.has_kb_permission(kb.id, KbPermission.read.value)]
 
     if not readable_kbs:
         return AccessPlan(kind=AccessPlanKind.no_access)
@@ -229,7 +232,7 @@ async def build_access_plan(
         denied_or_partial = False
         kb_allowed_files: list[SourceFile] = []
         for sf in files:
-            if await has_file_permission(db, member, sf, FilePermission.read.value):
+            if snapshot.has_file_permission(sf.id, FilePermission.read.value):
                 kb_allowed_files.append(sf)
             else:
                 denied_or_partial = True

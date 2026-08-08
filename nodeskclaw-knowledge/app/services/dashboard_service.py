@@ -15,7 +15,7 @@ from app.models.retrieval_audit import RetrievalAudit
 from app.models.source_file import SourceFile
 from app.models.source_file_version import SourceFileVersion
 from app.schemas.principal import KnowledgePrincipal
-from app.services.permission_service import has_file_permission, has_kb_permission, has_set_permission
+from app.services.permission_snapshot_service import load_permission_snapshot
 
 
 def _parse_status_bucket(parse_status: str | None) -> str:
@@ -31,6 +31,8 @@ def _parse_status_bucket(parse_status: str | None) -> str:
 
 
 async def get_dashboard(db: AsyncSession, member: KnowledgePrincipal) -> dict:
+    snapshot = await load_permission_snapshot(db, member)
+
     kb_rows = await db.execute(
         select(KnowledgeBase).where(
             KnowledgeBase.org_id == member.org_id,
@@ -39,7 +41,7 @@ async def get_dashboard(db: AsyncSession, member: KnowledgePrincipal) -> dict:
     )
     readable_kbs = [
         kb for kb in kb_rows.scalars().all()
-        if await has_kb_permission(db, member, kb.id, KbPermission.read.value)
+        if snapshot.has_kb_permission(kb.id, KbPermission.read.value)
     ]
     kb_ids = {kb.id for kb in readable_kbs}
 
@@ -51,8 +53,8 @@ async def get_dashboard(db: AsyncSession, member: KnowledgePrincipal) -> dict:
     )
     readable_sets = [
         ks for ks in set_rows.scalars().all()
-        if await has_set_permission(db, member, ks, SetPermission.read.value)
-        or await has_set_permission(db, member, ks, SetPermission.use.value)
+        if snapshot.has_set_permission(ks.id, SetPermission.read.value)
+        or snapshot.has_set_permission(ks.id, SetPermission.use.value)
     ]
 
     file_filters = [
@@ -72,7 +74,7 @@ async def get_dashboard(db: AsyncSession, member: KnowledgePrincipal) -> dict:
     total_chunks = 0
 
     for sf in file_rows.scalars().all():
-        if not await has_file_permission(db, member, sf, FilePermission.read.value):
+        if not snapshot.has_file_permission(sf.id, FilePermission.read.value):
             continue
         readable_files.append(sf)
         if sf.active_version_id:

@@ -68,21 +68,27 @@ async def list_knowledge_sets(
     sort_by: str = "created_at",
     sort_order: str = "desc",
 ) -> tuple[list[KnowledgeSet], int]:
+    from app.services.permission_snapshot_service import load_permission_snapshot
+
     result = await db.execute(
         select(KnowledgeSet).where(
             KnowledgeSet.org_id == member.org_id,
             not_deleted(KnowledgeSet),
         )
     )
+    rows = list(result.scalars().all())
+    snapshot = await load_permission_snapshot(
+        db,
+        member,
+        knowledge_set_ids=[row.id for row in rows],
+        knowledge_base_ids=[],
+        source_file_ids=[],
+    )
     visible: list[KnowledgeSet] = []
-    for row in result.scalars().all():
-        if row.owner_member_id == member.member_id:
-            visible.append(row)
-            continue
-        if await has_set_permission(db, member, row, SetPermission.read.value):
-            visible.append(row)
-            continue
-        if await has_set_permission(db, member, row, SetPermission.use.value):
+    for row in rows:
+        if snapshot.has_set_permission(row.id, SetPermission.read.value) or snapshot.has_set_permission(
+            row.id, SetPermission.use.value
+        ):
             visible.append(row)
     if q:
         q_lower = q.lower()

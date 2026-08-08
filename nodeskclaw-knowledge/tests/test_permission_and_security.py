@@ -135,9 +135,16 @@ async def test_build_access_plan_no_access(monkeypatch):
     member = _member()
     kb = SimpleNamespace(id="kb1", ragflow_dataset_id="ds1", org_id="o1", status="active")
 
-    async def fake_has_kb(*_args, **_kwargs):
-        return False
+    class FakeSnapshot:
+        def has_kb_permission(self, _kb_id, _permission):
+            return False
 
-    monkeypatch.setattr(permission_service, "has_kb_permission", fake_has_kb)
+    async def fake_load(*_args, **_kwargs):
+        return FakeSnapshot()
+
+    monkeypatch.setattr(
+        "app.services.permission_snapshot_service.load_permission_snapshot",
+        fake_load,
+    )
     plan = await permission_service.build_access_plan(db, member, [kb])
     assert plan.kind == AccessPlanKind.no_access
