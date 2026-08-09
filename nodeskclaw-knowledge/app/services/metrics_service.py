@@ -83,6 +83,55 @@ LLM_COMPLETION_TOKENS = Counter(
     "LLM completion tokens consumed",
 )
 
+CONNECTOR_SYNC_TOTAL = Counter(
+    "knowledge_connector_sync_total",
+    "Connector sync runs finished",
+    ["connector_type", "status"],
+)
+CONNECTOR_SYNC_DURATION = Histogram(
+    "knowledge_connector_sync_duration_seconds",
+    "Connector sync duration in seconds",
+    ["connector_type"],
+    buckets=(1.0, 5.0, 15.0, 30.0, 60.0, 120.0, 300.0, 600.0, 1800.0, 3600.0),
+)
+CONNECTOR_OBJECTS_DISCOVERED = Counter(
+    "knowledge_connector_objects_discovered_total",
+    "Objects discovered during connector sync",
+    ["connector_type"],
+)
+CONNECTOR_OBJECTS_CHANGED = Counter(
+    "knowledge_connector_objects_changed_total",
+    "Objects changed (create/update/archive/restore) during connector sync",
+    ["connector_type"],
+)
+CONNECTOR_FETCH_TOTAL = Counter(
+    "knowledge_connector_fetch_total",
+    "Connector fetch attempts",
+    ["connector_type", "status"],
+)
+CONNECTOR_FETCH_DURATION = Histogram(
+    "knowledge_connector_fetch_duration_seconds",
+    "Connector fetch duration in seconds",
+    ["connector_type"],
+    buckets=(0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 15.0, 30.0, 60.0, 120.0),
+)
+CONNECTOR_FETCH_FAILED = Counter(
+    "knowledge_connector_fetch_failed_total",
+    "Connector fetch failures",
+    ["connector_type"],
+)
+CONNECTOR_SYNC_LAG = Histogram(
+    "knowledge_connector_sync_lag_seconds",
+    "Lag between interval due time and sync start",
+    ["connector_type"],
+    buckets=(1.0, 5.0, 15.0, 30.0, 60.0, 300.0, 900.0, 3600.0, 21600.0),
+)
+CONNECTOR_AUTH_ERROR = Counter(
+    "knowledge_connector_auth_error_total",
+    "Connector authentication errors",
+    ["connector_type"],
+)
+
 METRICS_CONTENT_TYPE = CONTENT_TYPE_LATEST
 
 
@@ -151,3 +200,37 @@ def observe_llm_request(
         LLM_PROMPT_TOKENS.inc(prompt_tokens)
     if completion_tokens > 0:
         LLM_COMPLETION_TOKENS.inc(completion_tokens)
+
+
+def observe_connector_sync(
+    *,
+    connector_type: str,
+    status: str,
+    duration_seconds: float | None = None,
+    objects_discovered: int = 0,
+    objects_changed: int = 0,
+    sync_lag_seconds: float | None = None,
+) -> None:
+    ctype = connector_type or "unknown"
+    CONNECTOR_SYNC_TOTAL.labels(connector_type=ctype, status=status or "unknown").inc()
+    if duration_seconds is not None and duration_seconds >= 0:
+        CONNECTOR_SYNC_DURATION.labels(connector_type=ctype).observe(duration_seconds)
+    if objects_discovered > 0:
+        CONNECTOR_OBJECTS_DISCOVERED.labels(connector_type=ctype).inc(objects_discovered)
+    if objects_changed > 0:
+        CONNECTOR_OBJECTS_CHANGED.labels(connector_type=ctype).inc(objects_changed)
+    if sync_lag_seconds is not None and sync_lag_seconds >= 0:
+        CONNECTOR_SYNC_LAG.labels(connector_type=ctype).observe(sync_lag_seconds)
+
+
+def observe_connector_fetch(*, connector_type: str, status: str, duration_seconds: float | None = None) -> None:
+    ctype = connector_type or "unknown"
+    CONNECTOR_FETCH_TOTAL.labels(connector_type=ctype, status=status or "unknown").inc()
+    if status == "failed":
+        CONNECTOR_FETCH_FAILED.labels(connector_type=ctype).inc()
+    if duration_seconds is not None and duration_seconds >= 0:
+        CONNECTOR_FETCH_DURATION.labels(connector_type=ctype).observe(duration_seconds)
+
+
+def observe_connector_auth_error(*, connector_type: str) -> None:
+    CONNECTOR_AUTH_ERROR.labels(connector_type=connector_type or "unknown").inc()

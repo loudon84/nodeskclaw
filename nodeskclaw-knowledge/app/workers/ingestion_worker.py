@@ -91,6 +91,9 @@ async def _run_loop(*, with_reconciliation: bool) -> None:
             if with_reconciliation and loop_count % RECONCILIATION_EVERY_LOOPS == 0:
                 async with async_session_factory() as db:
                     await reconciliation_service.run_reconciliation(db, ragflow)
+                    from app.services import connector_reconciliation_service
+
+                    await connector_reconciliation_service.reconcile_connector_links(db)
                     await db.commit()
 
             if not processed:

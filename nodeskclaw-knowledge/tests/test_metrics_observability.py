@@ -24,6 +24,15 @@ def test_metrics_registry_exports_core_names():
         "knowledge_llm_duration_seconds",
         "knowledge_llm_prompt_tokens_total",
         "knowledge_llm_completion_tokens_total",
+        "knowledge_connector_sync_total",
+        "knowledge_connector_sync_duration_seconds",
+        "knowledge_connector_objects_discovered_total",
+        "knowledge_connector_objects_changed_total",
+        "knowledge_connector_fetch_total",
+        "knowledge_connector_fetch_duration_seconds",
+        "knowledge_connector_fetch_failed_total",
+        "knowledge_connector_sync_lag_seconds",
+        "knowledge_connector_auth_error_total",
     ):
         assert f"# HELP {name}" in payload or f"# TYPE {name}" in payload or name in payload
 
@@ -51,10 +60,23 @@ def test_observe_helpers_increment():
         prompt_tokens=10,
         completion_tokens=3,
     )
+    metrics_service.observe_connector_sync(
+        connector_type="filesystem",
+        status="completed",
+        duration_seconds=1.2,
+        objects_discovered=3,
+        objects_changed=1,
+    )
+    metrics_service.observe_connector_fetch(connector_type="s3_compatible", status="failed", duration_seconds=0.3)
+    metrics_service.observe_connector_auth_error(connector_type="http_manifest")
     payload = metrics_service.render_metrics().decode("utf-8")
     assert "knowledge_retrieval_degraded_total" in payload
     assert 'reason="unauthorized"' in payload
     assert "knowledge_llm_prompt_tokens_total" in payload
+    assert 'connector_type="filesystem"' in payload
+    assert "connector_id=" not in payload
+    assert "external_object_id" not in payload
+    assert "source_uri" not in payload
 
 
 def test_normalize_http_path_redacts_uuid():

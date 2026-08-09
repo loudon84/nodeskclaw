@@ -154,6 +154,16 @@ async def _run_loop() -> None:
                     created = await connector_service.schedule_due_connectors(db)
                     if created:
                         logger.info("scheduled sync runs count=%s", len(created))
+                    from app.services import connector_reconciliation_service
+
+                    report = await connector_reconciliation_service.reconcile_connector_links(db)
+                    if report.drifted:
+                        logger.warning(
+                            "connector reconciliation drifted=%s repaired=%s",
+                            report.drifted,
+                            report.repaired,
+                        )
+                    await db.commit()
 
             async with async_session_factory() as db:
                 claimed = await claim_next_sync_run(db, lease_owner=lease_owner)

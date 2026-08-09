@@ -23,6 +23,7 @@ from app.models.connector import (
 )
 from app.models.enums import (
     ArchiveReason,
+    AuditAction,
     ConnectorSourceObjectState,
     ConnectorSyncItemAction,
     ConnectorSyncItemStatus,
@@ -33,9 +34,11 @@ from app.models.enums import (
 from app.models.knowledge_base import KnowledgeBase
 from app.models.source_file import SourceFile
 from app.models.source_file_version import SourceFileVersion
-from app.services import ingestion_facade, source_registry_service
+from app.services import ingestion_facade, metrics_service, source_registry_service
+from app.services.audit_service import write_audit
 from app.services.ingestion_facade import actor_from_connector
 from app.services.metadata_service import validate_metadata_values
+from app.core.request_context import bind_connector_context
 
 logger = logging.getLogger(__name__)
 
@@ -166,6 +169,7 @@ async def run_sync(
     sync_run.status = ConnectorSyncRunStatus.discovering.value
     sync_run.started_at = sync_run.started_at or _now()
     await db.flush()
+    started = sync_run.started_at
 
     seen_ids: set[str] = set()
     cursor = dict(sync_run.cursor_before or connector.sync_cursor or {}) or None
@@ -173,7 +177,8 @@ async def run_sync(
     last_cursor_after: dict[str, Any] | None = None
     incremental = bool(getattr(adapter.capabilities, "incremental_cursor", False) and cursor)
 
-    try:
+    with bind_connector_context(connector_id=connector.id, sync_run_id=sync_run.id):
+      try:
         while True:
             page = await adapter.discover(cursor=cursor)
             for descriptor in page.objects:
@@ -229,9 +234,42 @@ async def run_sync(
         connector.last_sync_succeeded_at = sync_run.finished_at
         connector.last_error = None
         connector.last_error_code = None
+        await write_audit(
+            db,
+            org_id=connector.org_id,
+            member_id=sync_run.created_by_member_id,
+            action=AuditAction.connector_sync_complete.value,
+            resource_type="connector_sync_run",
+            resource_id=sync_run.id,
+            details={
+                "connector_type": connector.connector_type,
+                "status": sync_run.status,
+                "discovered": metrics.get("discovered_count", 0),
+                "changed": (
+                    metrics.get("created_count", 0)
+                    + metrics.get("updated_count", 0)
+                    + metrics.get("archived_count", 0)
+                    + metrics.get("restored_count", 0)
+                ),
+            },
+        )
+        duration = (sync_run.finished_at - started).total_seconds() if started else None
+        changed = (
+            metrics.get("created_count", 0)
+            + metrics.get("updated_count", 0)
+            + metrics.get("archived_count", 0)
+            + metrics.get("restored_count", 0)
+        )
+        metrics_service.observe_connector_sync(
+            connector_type=connector.connector_type,
+            status=sync_run.status,
+            duration_seconds=duration,
+            objects_discovered=int(metrics.get("discovered_count") or 0),
+            objects_changed=int(changed),
+        )
         await db.flush()
         return sync_run
-    except Exception as exc:
+      except Exception as exc:
         sync_run.status = ConnectorSyncRunStatus.failed.value
         sync_run.error_message = str(exc)
         sync_run.error_code = "errors.knowledge.connector_sync_failed"
@@ -239,6 +277,25 @@ async def run_sync(
         sync_run.metrics = metrics
         connector.last_error = str(exc)
         connector.last_error_code = sync_run.error_code
+        await write_audit(
+            db,
+            org_id=connector.org_id,
+            member_id=sync_run.created_by_member_id,
+            action=AuditAction.connector_sync_failed.value,
+            resource_type="connector_sync_run",
+            resource_id=sync_run.id,
+            details={"connector_type": connector.connector_type, "error_code": sync_run.error_code},
+        )
+        duration = (sync_run.finished_at - started).total_seconds() if started else None
+        metrics_service.observe_connector_sync(
+            connector_type=connector.connector_type,
+            status=sync_run.status,
+            duration_seconds=duration,
+            objects_discovered=int(metrics.get("discovered_count") or 0),
+            objects_changed=0,
+        )
+        if "auth" in str(exc).lower() or "credential" in str(exc).lower() or "401" in str(exc):
+            metrics_service.observe_connector_auth_error(connector_type=connector.connector_type)
         await db.flush()
         raise
 
@@ -277,6 +334,15 @@ async def _process_descriptor(
         restored = await restore_source_deleted(db, ragflow, sf=sf, kb=kb)
         if restored:
             metrics["restored_count"] += 1
+            await write_audit(
+                db,
+                org_id=connector.org_id,
+                member_id=sync_run.created_by_member_id,
+                action=AuditAction.source_restored.value,
+                resource_type="source_file",
+                resource_id=sf.id,
+                details={"connector_type": connector.connector_type},
+            )
             await _add_sync_item(
                 db,
                 sync_run_id=sync_run.id,
@@ -355,7 +421,15 @@ async def _process_descriptor(
         status=ConnectorSyncItemStatus.fetching.value,
     )
     try:
+        import time
+
+        fetch_started = time.perf_counter()
         fetched = await adapter.fetch(descriptor)
+        metrics_service.observe_connector_fetch(
+            connector_type=connector.connector_type,
+            status="ok",
+            duration_seconds=time.perf_counter() - fetch_started,
+        )
         metrics["fetch_count"] += 1
         stream = fetched.stream
         if isinstance(stream, (bytes, bytearray)):
@@ -442,10 +516,29 @@ async def _process_descriptor(
         metrics["ingestion_dispatched_count"] += 1
         if sf is None:
             metrics["created_count"] += 1
+            await write_audit(
+                db,
+                org_id=connector.org_id,
+                member_id=sync_run.created_by_member_id,
+                action=AuditAction.source_discovered.value,
+                resource_type="source_file",
+                resource_id=sf2.id,
+                details={"connector_type": connector.connector_type},
+            )
         else:
             metrics["updated_count"] += 1
+            await write_audit(
+                db,
+                org_id=connector.org_id,
+                member_id=sync_run.created_by_member_id,
+                action=AuditAction.source_changed.value,
+                resource_type="source_file",
+                resource_id=sf2.id,
+                details={"connector_type": connector.connector_type},
+            )
         del version  # kept for clarity of ingest return
     except Exception as exc:
+        metrics_service.observe_connector_fetch(connector_type=connector.connector_type, status="failed")
         item.status = ConnectorSyncItemStatus.failed.value
         item.error = str(exc)
         metrics["failed_count"] += 1
@@ -474,6 +567,15 @@ async def _handle_deleted_descriptor(
         return
     await archive_for_source_deleted(db, ragflow, sf=sf, kb=kb)
     metrics["archived_count"] += 1
+    await write_audit(
+        db,
+        org_id=connector.org_id,
+        member_id=sync_run.created_by_member_id,
+        action=AuditAction.source_deleted.value,
+        resource_type="source_file",
+        resource_id=sf.id,
+        details={"connector_type": connector.connector_type},
+    )
     await _add_sync_item(
         db,
         sync_run_id=sync_run.id,
