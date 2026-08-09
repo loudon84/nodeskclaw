@@ -4,6 +4,7 @@ from app.models.base import Base, BaseModel, not_deleted
 from app.models.chat_citation import ChatCitation
 from app.models.chat_message import ChatMessage
 from app.models.chat_session import ChatSession
+from app.models.evaluation import EvaluationCase, EvaluationResult, EvaluationRun, EvaluationSet
 from app.models.ingestion_job import IngestionJob
 from app.models.knowledge_base import KnowledgeBase
 from app.models.knowledge_base_acl import KnowledgeBaseAcl
@@ -35,6 +36,10 @@ __all__ = [
     "RetrievalProfile",
     "RetrievalTrace",
     "ReconciliationRun",
+    "EvaluationSet",
+    "EvaluationCase",
+    "EvaluationRun",
+    "EvaluationResult",
     "ChatSession",
     "ChatMessage",
     "ChatCitation",

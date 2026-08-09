@@ -6,6 +6,7 @@ from app.api.audit import router as audit_router
 from app.api.chat import router as chat_router
 from app.api.citations import router as citations_router
 from app.api.dashboard import router as dashboard_router
+from app.api.evaluation import router as evaluation_router
 from app.api.ingestion_jobs import router as ingestion_jobs_router
 from app.api.knowledge_bases import router as knowledge_bases_router
 from app.api.knowledge_sets import router as knowledge_sets_router
@@ -18,6 +19,7 @@ api_router.include_router(dashboard_router)
 api_router.include_router(audit_router)
 api_router.include_router(chat_router)
 api_router.include_router(citations_router)
+api_router.include_router(evaluation_router)
 api_router.include_router(knowledge_bases_router)
 api_router.include_router(kb_files_router)
 api_router.include_router(knowledge_sets_router)

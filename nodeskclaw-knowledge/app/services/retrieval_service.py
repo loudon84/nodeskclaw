@@ -87,10 +87,14 @@ async def retrieve(
     similarity_threshold: float | None = None,
     filters: dict[str, list] | None = None,
     origin: str = RetrievalOrigin.direct_retrieval.value,
+    profile_id: str | None = None,
 ) -> dict:
     started = time.perf_counter()
     ks = await knowledge_set_service.get_knowledge_set(db, member, knowledge_set_id)
-    if ks.status == KnowledgeSetStatus.disabled.value:
+    if (
+        ks.status == KnowledgeSetStatus.disabled.value
+        and origin != RetrievalOrigin.evaluation.value
+    ):
         raise ForbiddenError(message="知识集合已禁用", message_key="errors.knowledge.set_disabled")
     if not await has_set_permission(db, member, ks, SetPermission.use.value):
         raise ForbiddenError(message="无权检索该知识集合", message_key="errors.knowledge.retrieval_denied")
@@ -106,12 +110,33 @@ async def retrieve(
         [getattr(kb, "metadata_schema", None) for kb in kbs],
     )
 
-    profile = await retrieval_profile_service.get_active_profile(db, knowledge_set_id)
-    if profile is None:
-        raise BadRequestError(
-            message="知识集合缺少生效的检索配置",
-            message_key="errors.knowledge.profile_not_active",
-        )
+    if profile_id:
+        from app.models.retrieval_profile import RetrievalProfile
+
+        profile = await db.get(RetrievalProfile, profile_id)
+        if profile is None or profile.deleted_at is not None:
+            raise NotFoundError(message="检索配置不存在", message_key="errors.knowledge.profile_not_found")
+        if profile.knowledge_set_id != knowledge_set_id:
+            raise BadRequestError(
+                message="检索配置不属于该知识集合",
+                message_key="errors.knowledge.profile_not_found",
+            )
+        if profile.status not in (
+            ProfileStatus.draft.value,
+            ProfileStatus.active.value,
+            ProfileStatus.archived.value,
+        ):
+            raise BadRequestError(
+                message="检索配置状态不可用",
+                message_key="errors.knowledge.profile_not_active",
+            )
+    else:
+        profile = await retrieval_profile_service.get_active_profile(db, knowledge_set_id)
+        if profile is None:
+            raise BadRequestError(
+                message="知识集合缺少生效的检索配置",
+                message_key="errors.knowledge.profile_not_active",
+            )
     config = merge_profile_config(profile.config)
     effective_top_k = top_k if top_k is not None else int(config.get("top_k", 1024))
     effective_top_n = int(config.get("top_n", 8))
@@ -290,8 +315,9 @@ async def retrieve(
         failed_slice_count=failed_slice_count,
     )
     db.add(audit)
-    ks.usage_count += 1
-    ks.last_used_at = datetime.now(UTC)
+    if origin != RetrievalOrigin.evaluation.value:
+        ks.usage_count += 1
+        ks.last_used_at = datetime.now(UTC)
     await db.commit()
 
     chunks_out = []
@@ -323,6 +349,7 @@ async def retrieve(
         "chunks": chunks_out,
         "status": execution_status,
         "diagnostics": diagnostics,
+        "latency_ms": latency_ms,
     }
 
 

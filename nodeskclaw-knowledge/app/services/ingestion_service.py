@@ -468,30 +468,24 @@ async def cancel_job(
 
 
 async def claim_next_job(db: AsyncSession, *, lease_owner: str) -> IngestionJob | None:
-    now = _now()
+    from app.workers.job_leasing import claim_next
+
     statuses = [
         IngestionJobStatus.parse_dispatched.value,
         IngestionJobStatus.parsing.value,
         IngestionJobStatus.validating.value,
     ]
-    result = await db.execute(
-        select(IngestionJob)
-        .where(
-            IngestionJob.status.in_(statuses),
-            IngestionJob.deleted_at.is_(None),
-            (IngestionJob.next_run_at.is_(None)) | (IngestionJob.next_run_at <= now),
-            (IngestionJob.lease_until.is_(None)) | (IngestionJob.lease_until < now),
-        )
-        .order_by(IngestionJob.next_run_at.asc().nullsfirst(), IngestionJob.created_at.asc())
-        .with_for_update(skip_locked=True)
-        .limit(1)
+    job = await claim_next(
+        db,
+        IngestionJob,
+        statuses=statuses,
+        lease_owner=lease_owner,
+        lease_seconds=LEASE_SECONDS,
+        order_by=(IngestionJob.next_run_at.asc().nullsfirst(), IngestionJob.created_at.asc()),
     )
-    job = result.scalar_one_or_none()
     if job is None:
         return None
-    job.lease_owner = lease_owner
-    job.lease_until = now + timedelta(seconds=LEASE_SECONDS)
-    job.last_polled_at = now
+    job.last_polled_at = _now()
     await db.flush()
     return job
 

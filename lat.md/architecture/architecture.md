@@ -6,5 +6,5 @@
 - [[backend]] — FastAPI 后端、双前缀 API、租户鉴权与 Hermes/MCP
 - [[portal]] — 用户门户页面域、API 客户端、i18n 与可视化
 - [[llm-proxy]] — LLM 转发、HMAC 归因、额度预检与用量记录
-- [[knowledge]] — 知识治理、ACL、安全检索与 RAGFlow Adapter
+- [[knowledge]] — 知识治理、ACL、安全检索、评测与 RAGFlow Adapter
 - [[runtime]] — 计算 Provider、实例生命周期、Channel 与外部运行时

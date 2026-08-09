@@ -11,7 +11,7 @@ import uuid
 
 from app.core.deps import async_session_factory
 from app.integrations.ragflow.client import RagflowClient
-from app.services import ingestion_service, metrics_service, reconciliation_service
+from app.services import evaluation_runner, evaluation_service, ingestion_service, metrics_service, reconciliation_service
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +54,13 @@ async def _run_loop(*, with_reconciliation: bool) -> None:
                 if job:
                     await ingestion_service.process_leased_job(db, ragflow, job)
                     _observe_job_metrics(job)
+                    await db.commit()
+                    processed = True
+
+            async with async_session_factory() as db:
+                eval_run = await evaluation_service.claim_next_evaluation_run(db, lease_owner=lease_owner)
+                if eval_run:
+                    await evaluation_runner.process_evaluation_run(db, ragflow, eval_run)
                     await db.commit()
                     processed = True
 

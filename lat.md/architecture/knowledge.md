@@ -1,8 +1,8 @@
 # Knowledge Architecture
 
-`nodeskclaw-knowledge` 是 monorepo 内独立 FastAPI 服务：知识库治理、ACL、源文件注册、安全检索、异步入库与 Secure Chat；不替代 RAGFlow，也不自建员工账号。
+`nodeskclaw-knowledge` 是 monorepo 内独立 FastAPI 服务：知识库治理、ACL、安全检索、异步入库、评测与 Secure Chat；不替代 RAGFlow，也不自建员工账号。
 
-定位与脚手架对齐 `nodeskclaw-task`：Python 3.12、SQLAlchemy asyncio、PostgreSQL、Alembic、`error_code` + `message_key` + `message`、软删除 `BaseModel`。产品规格见 `docs_knowledge/v1.1.md`（v1.0 为初始化基线）。
+定位与脚手架对齐 `nodeskclaw-task`：Python 3.12、SQLAlchemy asyncio、PostgreSQL、Alembic、`error_code` + `message_key` + `message`、软删除 `BaseModel`。产品规格见 `docs_knowledge/v1.2.md`（v1.0/v1.1 为基线）。
 
 ## Package Placement
 
@@ -32,7 +32,7 @@ Principal 以 `OrgMembership.id`（`member_id`）为准。Backend `GET /api/v1/a
 
 检索必须先算 ACL AccessPlan，再按 KB 拆 Slice 调 RAGFlow，再经 Active Version + SourceFile ACL 清洗；未授权 / 非 active 版本 Chunk 不得进入 LLM Context。
 
-AccessPlan 分 `FULL_ACCESS` / `FILTERED_ACCESS` / `NO_ACCESS`，并保留 `full_dataset_ids` 与 `partial_slices` 以支持 Full+Partial 混合。已归档 SourceFile（`archived_at` 非空）不进入 AccessPlan，即使有 ACL。可选 `filters` 在 AccessPlan 之后按本地 SourceFile.metadata 收窄候选（非 ACL）。Citation 下载必须重新鉴权。RAGFlow API Key 仅留 Knowledge Adapter；Desktop 永不接触。按 `failure_policy`（默认 `fail_closed`）处理 Slice 失败：fail_closed 返回 503，`degraded` 允许部分结果并写 `execution_status=degraded`。KnowledgeSet `disabled` 在入口拒绝检索。运行时 top_k/top_n/阈值/failure_policy 等来自 ACTIVE Retrieval Profile（合并 DEFAULT），非 `KnowledgeSet.retrieval_config`；无 ACTIVE 时报 `errors.knowledge.profile_not_active`。实现：[[nodeskclaw-knowledge/app/services/retrieval_service.py#retrieve]]、[[nodeskclaw-knowledge/app/services/retrieval_merge_service.py#execute_and_merge]]、[[nodeskclaw-knowledge/app/services/retrieval_profile_service.py#get_active_profile]]。Playground 与 Trace 见 [[knowledge#Retrieval Playground And Trace]]。
+AccessPlan 分 `FULL_ACCESS` / `FILTERED_ACCESS` / `NO_ACCESS`，并保留 `full_dataset_ids` 与 `partial_slices` 以支持 Full+Partial 混合。已归档 SourceFile（`archived_at` 非空）不进入 AccessPlan，即使有 ACL。可选 `filters` 在 AccessPlan 之后按本地 SourceFile.metadata 收窄候选（非 ACL）。Citation 下载必须重新鉴权。RAGFlow API Key 仅留 Knowledge Adapter；Desktop 永不接触。按 `failure_policy`（默认 `fail_closed`）处理 Slice 失败：fail_closed 返回 503，`degraded` 允许部分结果并写 `execution_status=degraded`。KnowledgeSet `disabled` 在用户入口拒绝检索；`origin=evaluation` 例外以支持离线回归。运行时默认读 ACTIVE Retrieval Profile；评测可传 `profile_id` 指定 DRAFT/ACTIVE/ARCHIVED。`origin=evaluation` 不累加 `usage_count`。实现：[[nodeskclaw-knowledge/app/services/retrieval_service.py#retrieve]]、[[nodeskclaw-knowledge/app/services/retrieval_merge_service.py#execute_and_merge]]、[[nodeskclaw-knowledge/app/services/retrieval_profile_service.py#get_active_profile]]。Playground 见 [[knowledge#Retrieval Playground And Trace]]；评测见 [[knowledge#Retrieval Evaluation]]。
 
 ## Retrieval Playground And Trace
 
@@ -56,7 +56,13 @@ v1.1 在 v1.0 八域表之上增加 Set ACL、Chat、Audit 与入库/检索运�
 
 上传 API 只推进到 `parse_dispatched`；真正的 DONE→ACTIVE 由无 Redis 的 PostgreSQL Job Leasing Worker 完成。
 
-上传走 SpooledTemporaryFile 流式读入（`KNOWLEDGE_UPLOAD_MAX_MB` 限流），再交给 `RagflowClient.upload_document(file_obj=...)`：[[nodeskclaw-knowledge/app/services/ingestion_service.py#read_upload_spooled]]。Worker：[[nodeskclaw-knowledge/app/workers/ingestion_worker.py]]。状态映射与激活：[[nodeskclaw-knowledge/app/services/ingestion_service.py#process_leased_job]]。仅 RAGFlow `run=FAIL`（及明确校验失败）将 version 标 `failed`；网络异常 / Poll 超限只失败 Job，不把 version 标 FAILED。蓝绿切换后 best-effort `enabled=0` 旧文档。
+上传走 SpooledTemporaryFile 流式读入（`KNOWLEDGE_UPLOAD_MAX_MB` 限流），再交给 `RagflowClient.upload_document(file_obj=...)`：[[nodeskclaw-knowledge/app/services/ingestion_service.py#read_upload_spooled]]。通用租赁：[[nodeskclaw-knowledge/app/workers/job_leasing.py#claim_next]]（`FOR UPDATE SKIP LOCKED`），Ingestion 与 Evaluation Run 共用；Worker 同进程轮询入库、评测与周期 Reconciliation：[[nodeskclaw-knowledge/app/workers/ingestion_worker.py]]。状态映射与激活：[[nodeskclaw-knowledge/app/services/ingestion_service.py#process_leased_job]]。仅 RAGFlow `run=FAIL`（及明确校验失败）将 version 标 `failed`；网络异常 / Poll 超限只失败 Job，不把 version 标 FAILED。蓝绿切换后 best-effort `enabled=0` 旧文档。
+
+## Retrieval Evaluation
+
+v1.2 离线评测：Evaluation Set/Case + 异步 Run，用确定性 Retrieval Metrics（Hit@K / Recall@K / MRR）比较 Profile，禁止未授权 Source 进入结果。
+
+表：[[nodeskclaw-knowledge/app/models/evaluation.py#EvaluationSet]] 等。CRUD/Run/Compare：[[nodeskclaw-knowledge/app/services/evaluation_service.py]]、API [[nodeskclaw-knowledge/app/api/evaluation.py]]。执行：[[nodeskclaw-knowledge/app/services/evaluation_runner.py]]（`origin=evaluation` 走 Secure Retrieval）。Run 自带 lease 字段作 Job 表；`No Unauthorized Source` 非 100% 则整 Run FAIL（`errors.knowledge.evaluation_failed`）。Compare：Hit@8 / MRR / 平均延迟 / Empty rate / Degraded rate。
 
 ## Active Version Security
 

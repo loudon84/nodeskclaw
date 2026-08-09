@@ -403,3 +403,122 @@ class DashboardOut(BaseModel):
     parse_status_summary: dict[str, int]
     recent_knowledge_sets: list[KnowledgeSetOut] = Field(default_factory=list)
     recent_documents: list[SourceFileOut] = Field(default_factory=list)
+
+
+class EvaluationSetCreate(BaseModel):
+    knowledge_set_id: str
+    name: str = Field(min_length=1, max_length=128)
+    description: str | None = None
+
+
+class EvaluationSetUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=128)
+    description: str | None = None
+
+
+class EvaluationSetOut(BaseModel):
+    id: str
+    org_id: str
+    knowledge_set_id: str
+    name: str
+    description: str | None = None
+    created_by_member_id: str
+    created_at: Any = None
+    updated_at: Any = None
+
+    model_config = {"from_attributes": True}
+
+
+class EvaluationCaseCreate(BaseModel):
+    query: str = Field(min_length=1)
+    expected_source_file_ids: list[str] = Field(min_length=1)
+    expected_keywords: list[str] | None = None
+    expected_answer: str | None = None
+
+
+class EvaluationCaseUpdate(BaseModel):
+    query: str | None = Field(default=None, min_length=1)
+    expected_source_file_ids: list[str] | None = None
+    expected_keywords: list[str] | None = None
+    expected_answer: str | None = None
+
+
+class EvaluationCaseOut(BaseModel):
+    id: str
+    evaluation_set_id: str
+    query: str
+    expected_source_file_ids: list[Any] = Field(default_factory=list)
+    expected_keywords: list[Any] | None = None
+    expected_answer: str | None = None
+    created_at: Any = None
+    updated_at: Any = None
+
+    model_config = {"from_attributes": True}
+
+
+class EvaluationRunCreate(BaseModel):
+    evaluation_set_id: str
+    retrieval_profile_id: str
+
+
+class EvaluationRunOut(BaseModel):
+    id: str
+    evaluation_set_id: str
+    retrieval_profile_id: str
+    status: str
+    metrics: dict[str, Any] | None = None
+    created_by_member_id: str
+    attempt_count: int = 0
+    max_attempts: int = 5
+    next_run_at: Any = None
+    last_error: str | None = None
+    finished_at: Any = None
+    created_at: Any = None
+    updated_at: Any = None
+
+    model_config = {"from_attributes": True}
+
+
+class EvaluationResultOut(BaseModel):
+    id: str
+    run_id: str
+    case_id: str
+    hit_at_k: float
+    recall_at_k: float
+    mrr: float
+    latency_ms: int
+    returned_source_file_ids: list[Any] = Field(default_factory=list)
+    unauthorized_hit: bool = False
+    details: dict[str, Any] | None = None
+    created_at: Any = None
+
+    model_config = {"from_attributes": True}
+
+
+class EvaluationCompareRequest(BaseModel):
+    evaluation_set_id: str
+    profile_a_id: str | None = None
+    profile_b_id: str | None = None
+    run_a_id: str | None = None
+    run_b_id: str | None = None
+
+
+class EvaluationCompareMetricsOut(BaseModel):
+    hit_at_8: float = 0.0
+    mrr: float = 0.0
+    avg_latency_ms: float = 0.0
+    empty_rate: float = 0.0
+    degraded_rate: float = 0.0
+
+
+class EvaluationCompareSideOut(BaseModel):
+    run_id: str
+    retrieval_profile_id: str
+    metrics: EvaluationCompareMetricsOut
+
+
+class EvaluationCompareOut(BaseModel):
+    evaluation_set_id: str
+    profile_a: EvaluationCompareSideOut
+    profile_b: EvaluationCompareSideOut
+    delta: EvaluationCompareMetricsOut

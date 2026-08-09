@@ -1,8 +1,8 @@
 # Knowledge Objects
 
-知识域描述企业可治理的知识对象与权限主体：KnowledgeBase、SourceFile、KnowledgeSet、ACL，以及 Chat / Audit 运行时扩展。
+知识域描述企业可治理的知识对象与权限主体：KnowledgeBase、SourceFile、KnowledgeSet、ACL，以及 Chat / Audit / Evaluation 运行时扩展。
 
-UI 可称「知识库 / 数据集」，代码内部禁止用 `dataset` 表示 nodeskclaw 领域对象，以免与 `ragflow_dataset_id` 混淆。映射见 [[knowledge]] 与 `docs_knowledge/v1.1.md`。
+UI 可称「知识库 / 数据集」，代码内部禁止用 `dataset` 表示 nodeskclaw 领域对象，以免与 `ragflow_dataset_id` 混淆。映射见 [[knowledge]] 与 `docs_knowledge/v1.2.md`。
 
 ## Knowledge Base
 
@@ -30,9 +30,15 @@ KnowledgeSet 是多 KnowledgeBase 的逻辑检索集合，不是 RAGFlow 物理�
 
 绑定关系仅存 Knowledge 库；检索时展开为多个 Slice 调用 RAGFlow。禁止为聚合检索在 RAGFlow 复制文档。v1.1 拥有独立 Set ACL（READ/USE/UPDATE/DELETE/MANAGE/MANAGE_ACL）与 `retrieval_config` JSONB；Set USE 不得提升底层 KB/File 权限：[[nodeskclaw-knowledge/app/models/knowledge_set.py#KnowledgeSet]]、[[nodeskclaw-knowledge/app/models/knowledge_set_acl.py#KnowledgeSetAcl]]。
 
-v1.2 强制闸：`status=disabled` 时 Retrieval、Chat 发消息与新建 Session 返回 403（`errors.knowledge.set_disabled`）；MANAGE、历史 Chat 查看、配置编辑、Evaluation 仍放行。
+v1.2 强制闸：`status=disabled` 时用户 Retrieval、Chat 发消息与新建 Session 返回 403（`errors.knowledge.set_disabled`）；MANAGE、历史 Chat 查看、配置编辑、Evaluation 仍放行。
 
 运行时检索配置改为 ACTIVE Retrieval Profile，见 [[knowledge-objects#Retrieval Profile]]；`retrieval_config` 字段保留但不再作为运行时权威。
+
+## Evaluation Objects
+
+评测集绑定 KnowledgeSet：Case 声明 query 与 expected_source_file_ids；Run 异步执行并对齐某 Retrieval Profile。
+
+四表：`knowledge_evaluation_sets` / `cases` / `runs` / `results`：[[nodeskclaw-knowledge/app/models/evaluation.py]]。Run 状态 pending/running/completed/failed，并带 attempt/lease 字段供 Worker 租赁。指标与执行见 [[knowledge#Retrieval Evaluation]]。
 
 ## Retrieval Profile
 
@@ -50,11 +56,13 @@ Knowledge 不维护 `knowledge_users` 表。成员上下文来自 Backend opaque
 
 v1.1 扩展支持异步入库、Secure Chat 与审计，全部落在 Knowledge 自有库。
 
-- IngestionJob：lease_owner / lease_until / next_run_at / attempt_count，供无 Redis 的 PG Job Leasing：[[nodeskclaw-knowledge/app/models/ingestion_job.py#IngestionJob]]
+- IngestionJob：lease_owner / lease_until / next_run_at / attempt_count；租赁逻辑经 [[nodeskclaw-knowledge/app/workers/job_leasing.py#claim_next]]：[[nodeskclaw-knowledge/app/models/ingestion_job.py#IngestionJob]]
+- Evaluation：Set/Case/Run/Result；Run 复用同一 Job Leasing：见 [[knowledge-objects#Evaluation Objects]]
 - SourceFile：`last_error` 记录删除等可恢复失败，供对账与运营可见：[[nodeskclaw-knowledge/app/models/source_file.py#SourceFile]]
 - Chat：session / message / citation，Session 仅 Owner 可访问：[[nodeskclaw-knowledge/app/models/chat_session.py#ChatSession]]
-- Audit：通用 `knowledge_audit_logs`（含 `METADATA_MISMATCH` / `METADATA_REPAIRED` / `CHUNK_SECURITY_DROP`）+ 增强的 retrieval_audits：[[nodeskclaw-knowledge/app/models/audit_log.py#AuditLog]]
+- Audit：通用 `knowledge_audit_logs`（含 `METADATA_MISMATCH` / `METADATA_REPAIRED` / `CHUNK_SECURITY_DROP`）+ 增强的 retrieval_audits（含 `origin`）：[[nodeskclaw-knowledge/app/models/audit_log.py#AuditLog]]
 - Metadata：KB `metadata_schema` + SourceFile `metadata` / `metadata_revision` / `archived_at`；见 [[knowledge-objects#Metadata Governance]]
 - Retrieval Profile：DRAFT/ACTIVE/ARCHIVED 版本化配置；见 [[knowledge-objects#Retrieval Profile]]
 - Retrieval Trace：Playground 诊断落库（默认无全文）；见 [[knowledge#Retrieval Playground And Trace]]
+- ReconciliationRun：每轮对账计数；见 [[knowledge#Reconciliation Runs]]
 - ACL 模板：UI Role / Visibility 仅作模板展开，最终 Authority 仍是 granular ACL：[[nodeskclaw-knowledge/app/services/acl_templates.py]]

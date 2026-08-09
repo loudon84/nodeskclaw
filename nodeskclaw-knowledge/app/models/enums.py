@@ -181,6 +181,13 @@ class RetrievalOrigin(str, Enum):
     evaluation = "evaluation"
 
 
+class EvaluationRunStatus(str, Enum):
+    pending = "pending"
+    running = "running"
+    completed = "completed"
+    failed = "failed"
+
+
 DEFAULT_RETRIEVAL_CONFIG = {
     "top_k": 1024,
     "top_n": 8,
