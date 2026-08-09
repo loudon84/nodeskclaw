@@ -109,6 +109,42 @@ async def test_process_run_fails_on_unauthorized_source():
 
 
 @pytest.mark.asyncio
+async def test_create_run_writes_pending():
+    db = MagicMock()
+    db.add = MagicMock()
+    db.commit = AsyncMock()
+    db.refresh = AsyncMock()
+    member = SimpleNamespace(member_id="m1", org_id="o1", is_super_admin=False)
+    eval_set = SimpleNamespace(id="es1", knowledge_set_id="set1", org_id="o1")
+    profile = SimpleNamespace(id="p1", knowledge_set_id="set1", deleted_at=None)
+
+    class ScalarResult:
+        def scalar_one(self):
+            return 2
+
+    db.get = AsyncMock(return_value=profile)
+    db.execute = AsyncMock(return_value=ScalarResult())
+
+    with patch(
+        "app.services.evaluation_service._require_eval_set_manage",
+        new=AsyncMock(return_value=eval_set),
+    ):
+        row = await evaluation_service.create_run(
+            db,
+            member,
+            evaluation_set_id="es1",
+            retrieval_profile_id="p1",
+        )
+
+    assert row.status == EvaluationRunStatus.pending.value
+    assert row.evaluation_set_id == "es1"
+    assert row.retrieval_profile_id == "p1"
+    assert row.next_run_at is not None
+    db.add.assert_called_once()
+    db.commit.assert_awaited()
+
+
+@pytest.mark.asyncio
 async def test_compare_profiles_delta_from_completed_runs():
     db = MagicMock()
     member = SimpleNamespace(member_id="m1", org_id="o1")
