@@ -1,4 +1,4 @@
-"""Ingestion job polling worker."""
+"""Ingestion job polling worker with Job Leasing v2."""
 
 from __future__ import annotations
 
@@ -50,18 +50,41 @@ async def _run_loop(*, with_reconciliation: bool) -> None:
         while True:
             processed = False
             async with async_session_factory() as db:
-                job = await ingestion_service.claim_next_job(db, lease_owner=lease_owner)
-                if job:
-                    await ingestion_service.process_leased_job(db, ragflow, job)
-                    _observe_job_metrics(job)
-                    await db.commit()
+                claimed = await ingestion_service.claim_next_job(db, lease_owner=lease_owner)
+                if claimed:
+                    job, lease_token = claimed
+                    await ingestion_service.process_leased_job(
+                        db,
+                        ragflow,
+                        job,
+                        lease_owner=lease_owner,
+                        lease_token=lease_token,
+                    )
+                    owned = await ingestion_service.finalize_leased_job(
+                        db,
+                        job,
+                        lease_owner=lease_owner,
+                        lease_token=lease_token,
+                    )
+                    if owned:
+                        _observe_job_metrics(job)
+                    else:
+                        logger.warning("lease stolen, discard mutations job_id=%s", job.id)
                     processed = True
 
             async with async_session_factory() as db:
-                eval_run = await evaluation_service.claim_next_evaluation_run(db, lease_owner=lease_owner)
-                if eval_run:
+                claimed_eval = await evaluation_service.claim_next_evaluation_run(db, lease_owner=lease_owner)
+                if claimed_eval:
+                    eval_run, lease_token = claimed_eval
                     await evaluation_runner.process_evaluation_run(db, ragflow, eval_run)
-                    await db.commit()
+                    owned = await evaluation_service.finalize_evaluation_run(
+                        db,
+                        eval_run,
+                        lease_owner=lease_owner,
+                        lease_token=lease_token,
+                    )
+                    if not owned:
+                        logger.warning("evaluation lease stolen run_id=%s", eval_run.id)
                     processed = True
 
             loop_count += 1

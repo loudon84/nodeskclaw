@@ -471,18 +471,56 @@ async def compare_profiles(
     }
 
 
-async def claim_next_evaluation_run(db: AsyncSession, *, lease_owner: str) -> EvaluationRun | None:
-    run = await claim_next(
+async def claim_next_evaluation_run(
+    db: AsyncSession, *, lease_owner: str
+) -> tuple[EvaluationRun, str] | None:
+    claimed = await claim_next(
         db,
         EvaluationRun,
         statuses=[EvaluationRunStatus.pending.value, EvaluationRunStatus.running.value],
         lease_owner=lease_owner,
         lease_seconds=LEASE_SECONDS,
         order_by=(EvaluationRun.next_run_at.asc().nullsfirst(), EvaluationRun.created_at.asc()),
+        commit=True,
     )
-    if run is None:
+    if claimed is None:
         return None
+    run, lease_token = claimed
     if run.status == EvaluationRunStatus.pending.value:
         run.status = EvaluationRunStatus.running.value
-    await db.flush()
-    return run
+        await db.commit()
+        await db.refresh(run)
+    return run, lease_token
+
+
+async def finalize_evaluation_run(
+    db: AsyncSession,
+    run: EvaluationRun,
+    *,
+    lease_owner: str,
+    lease_token: str,
+) -> bool:
+    from sqlalchemy import text as sql_text
+
+    result = await db.execute(
+        sql_text(
+            """
+            UPDATE knowledge_evaluation_runs
+            SET last_heartbeat_at = NOW()
+            WHERE id = :id
+              AND lease_owner = :owner
+              AND lease_token = :token
+              AND deleted_at IS NULL
+            """
+        ),
+        {"id": run.id, "owner": lease_owner, "token": lease_token},
+    )
+    if result.rowcount == 0:
+        await db.rollback()
+        return False
+    if run.status in {EvaluationRunStatus.completed.value, EvaluationRunStatus.failed.value}:
+        run.lease_owner = None
+        run.lease_token = None
+        run.lease_until = None
+    await db.commit()
+    return True

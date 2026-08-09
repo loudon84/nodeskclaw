@@ -408,7 +408,9 @@ async def retry_job(
     job.attempt_count = 0
     job.next_run_at = None
     job.lease_owner = None
+    job.lease_token = None
     job.lease_until = None
+    job.last_heartbeat_at = None
 
     meta = build_meta_fields(
         source_file_id=sf.id,
@@ -456,7 +458,9 @@ async def cancel_job(
     job.status = IngestionJobStatus.cancelled.value
     job.finished_at = _now()
     job.lease_owner = None
+    job.lease_token = None
     job.lease_until = None
+    job.last_heartbeat_at = None
     if version:
         version.parse_status = "failed"
         version.ragflow_status = "CANCEL"
@@ -467,7 +471,7 @@ async def cancel_job(
     return job
 
 
-async def claim_next_job(db: AsyncSession, *, lease_owner: str) -> IngestionJob | None:
+async def claim_next_job(db: AsyncSession, *, lease_owner: str) -> tuple[IngestionJob, str] | None:
     from app.workers.job_leasing import claim_next
 
     statuses = [
@@ -475,19 +479,22 @@ async def claim_next_job(db: AsyncSession, *, lease_owner: str) -> IngestionJob 
         IngestionJobStatus.parsing.value,
         IngestionJobStatus.validating.value,
     ]
-    job = await claim_next(
+    claimed = await claim_next(
         db,
         IngestionJob,
         statuses=statuses,
         lease_owner=lease_owner,
         lease_seconds=LEASE_SECONDS,
         order_by=(IngestionJob.next_run_at.asc().nullsfirst(), IngestionJob.created_at.asc()),
+        commit=True,
     )
-    if job is None:
+    if claimed is None:
         return None
+    job, lease_token = claimed
     job.last_polled_at = _now()
-    await db.flush()
-    return job
+    await db.commit()
+    await db.refresh(job)
+    return job, lease_token
 
 
 # @lat: [[knowledge#Ingestion Worker]]
@@ -495,21 +502,30 @@ async def process_leased_job(
     db: AsyncSession,
     ragflow: RagflowClient,
     job: IngestionJob,
-) -> None:
+    *,
+    lease_owner: str | None = None,
+    lease_token: str | None = None,
+) -> bool:
+    from app.workers.job_leasing import ownership_matches
+
+    if lease_owner and lease_token and not ownership_matches(job, lease_owner=lease_owner, lease_token=lease_token):
+        await db.rollback()
+        return False
+
     sf = await db.get(SourceFile, job.source_file_id)
     version = await db.get(SourceFileVersion, job.file_version_id)
     if sf is None or version is None or not version.ragflow_document_id:
         job.status = IngestionJobStatus.failed.value
         job.error_message = "missing source file or version"
         job.finished_at = _now()
-        return
+        return True
 
     kb = await db.get(KnowledgeBase, sf.knowledge_base_id)
     if kb is None or not kb.ragflow_dataset_id:
         job.status = IngestionJobStatus.failed.value
         job.error_message = "knowledge base not ready"
         job.finished_at = _now()
-        return
+        return True
 
     try:
         docs = await ragflow.list_documents(kb.ragflow_dataset_id, id=version.ragflow_document_id, page_size=1)
@@ -522,7 +538,7 @@ async def process_leased_job(
             job.finished_at = _now()
         else:
             job.next_run_at = _now() + timedelta(seconds=_backoff_seconds(job.attempt_count))
-        return
+        return True
     except Exception as exc:
         job.attempt_count += 1
         if job.attempt_count >= job.max_attempts:
@@ -531,7 +547,7 @@ async def process_leased_job(
             job.finished_at = _now()
         else:
             job.next_run_at = _now() + timedelta(seconds=_backoff_seconds(job.attempt_count))
-        return
+        return True
 
     if not docs:
         job.attempt_count += 1
@@ -541,7 +557,7 @@ async def process_leased_job(
             job.finished_at = _now()
         else:
             job.next_run_at = _now() + timedelta(seconds=_backoff_seconds(job.attempt_count))
-        return
+        return True
 
     doc = docs[0]
     _sync_document_runtime(version, doc)
@@ -552,14 +568,14 @@ async def process_leased_job(
         job.progress = max(job.progress, 70)
         version.parse_status = "parsing"
         job.next_run_at = _now() + timedelta(seconds=2)
-        return
+        return True
 
     if run == "RUNNING":
         job.status = IngestionJobStatus.parsing.value
         job.progress = max(job.progress, 80)
         version.parse_status = "parsing"
         job.next_run_at = _now() + timedelta(seconds=2)
-        return
+        return True
 
     if run == "CANCEL":
         job.status = IngestionJobStatus.cancelled.value
@@ -568,7 +584,7 @@ async def process_leased_job(
         version.ragflow_status = "CANCEL"
         if sf.active_version_id != version.id:
             sf.status = SourceFileStatus.active.value if sf.active_version_id else SourceFileStatus.error.value
-        return
+        return True
 
     if run == "FAIL":
         job.status = IngestionJobStatus.failed.value
@@ -578,11 +594,11 @@ async def process_leased_job(
         version.ragflow_status = "FAIL"
         if sf.active_version_id != version.id:
             sf.status = SourceFileStatus.error.value if not sf.active_version_id else SourceFileStatus.active.value
-        return
+        return True
 
     if run != "DONE":
         job.next_run_at = _now() + timedelta(seconds=2)
-        return
+        return True
 
     job.status = IngestionJobStatus.validating.value
     job.progress = max(job.progress, 90)
@@ -595,7 +611,7 @@ async def process_leased_job(
         version.parse_status = "failed"
         if sf.active_version_id != version.id:
             sf.status = SourceFileStatus.error.value if not sf.active_version_id else SourceFileStatus.active.value
-        return
+        return True
 
     meta = doc.meta_fields or {}
     if not _metadata_consistent(meta, sf=sf, version=version, kb=kb):
@@ -606,7 +622,7 @@ async def process_leased_job(
         version.parse_status = "failed"
         if sf.active_version_id != version.id:
             sf.status = SourceFileStatus.error.value if not sf.active_version_id else SourceFileStatus.active.value
-        return
+        return True
 
     old_version = None
     if sf.active_version_id and sf.active_version_id != version.id:
@@ -617,8 +633,6 @@ async def process_leased_job(
     job.progress = 100
     job.finished_at = _now()
     job.next_run_at = None
-    job.lease_owner = None
-    job.lease_until = None
 
     if old_version and old_version.ragflow_document_id:
         try:
@@ -629,3 +643,43 @@ async def process_leased_job(
                 kb.ragflow_dataset_id,
                 old_version.ragflow_document_id,
             )
+    return True
+
+
+async def finalize_leased_job(
+    db: AsyncSession,
+    job: IngestionJob,
+    *,
+    lease_owner: str,
+    lease_token: str,
+    clear_lease: bool = True,
+) -> bool:
+    """Commit job mutations only when the worker still owns the lease token."""
+    from sqlalchemy import text as sql_text
+
+    result = await db.execute(
+        sql_text(
+            """
+            UPDATE knowledge_ingestion_jobs
+            SET last_heartbeat_at = NOW()
+            WHERE id = :id
+              AND lease_owner = :owner
+              AND lease_token = :token
+              AND deleted_at IS NULL
+            """
+        ),
+        {"id": job.id, "owner": lease_owner, "token": lease_token},
+    )
+    if result.rowcount == 0:
+        await db.rollback()
+        return False
+    if clear_lease and job.status in {
+        IngestionJobStatus.active.value,
+        IngestionJobStatus.failed.value,
+        IngestionJobStatus.cancelled.value,
+    }:
+        job.lease_owner = None
+        job.lease_token = None
+        job.lease_until = None
+    await db.commit()
+    return True

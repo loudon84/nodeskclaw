@@ -209,8 +209,6 @@ async def process_evaluation_run(
             else:
                 run.status = EvaluationRunStatus.pending.value
                 run.next_run_at = utc_now()
-                run.lease_owner = None
-                run.lease_until = None
             return
 
         unauthorized = has_unauthorized_source(returned_ids, allowed_ids)
@@ -236,8 +234,6 @@ async def process_evaluation_run(
             run.status = EvaluationRunStatus.failed.value
             run.last_error = "errors.knowledge.evaluation_failed"
             run.finished_at = utc_now()
-            run.lease_owner = None
-            run.lease_until = None
             return
 
     run.metrics = _aggregate_metrics(results, k=k)
@@ -245,5 +241,3 @@ async def process_evaluation_run(
     run.last_error = None
     run.finished_at = utc_now()
     run.next_run_at = None
-    run.lease_owner = None
-    run.lease_until = None
