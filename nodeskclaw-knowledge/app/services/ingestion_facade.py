@@ -14,11 +14,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import BadRequestError, ConflictError, ForbiddenError, NotFoundError
 from app.integrations.ragflow.client import RagflowClient
-from app.integrations.ragflow.exceptions import RagflowError
+from app.integrations.ragflow.exceptions import RagflowError, RagflowUploadUnknownError
+from app.integrations.ragflow.upload_token import build_upload_token, deterministic_upload_filename
 from app.models.base import not_deleted
 from app.models.connector import ConnectorSourceObject
 from app.models.enums import (
     ArchiveReason,
+    AuditAction,
     IngestionJobStatus,
     KnowledgeActorType,
     KbPermission,
@@ -32,6 +34,7 @@ from app.models.source_file import SourceFile
 from app.models.source_file_version import SourceFileVersion
 from app.schemas.principal import KnowledgePrincipal
 from app.services import knowledge_base_service, source_file_service
+from app.services.audit_service import write_audit
 from app.services.metadata_service import build_meta_fields, validate_metadata_values
 from app.services.permission_service import has_kb_permission
 from app.services.source_file_service import next_version_no, sha256_bytes
@@ -325,20 +328,51 @@ async def ingest_core(
         job.progress = 10
         await db.flush()
 
-        if file_obj is not None:
-            document_id = await ragflow.upload_document(
-                kb.ragflow_dataset_id,
-                filename=file_name,
-                mime=mime_type,
-                file_obj=file_obj,
-            )
-        else:
-            document_id = await ragflow.upload_document(
-                kb.ragflow_dataset_id,
-                content or b"",
-                file_name,
-                mime_type,
-            )
+        upload_token = build_upload_token(source_file_id=sf.id, file_version_id=version.id)
+        upload_name = deterministic_upload_filename(
+            source_file_id=sf.id,
+            file_version_id=version.id,
+            original_name=file_name,
+        )
+
+        document_id: str | None = None
+        try:
+            if file_obj is not None:
+                document_id = await ragflow.upload_document(
+                    kb.ragflow_dataset_id,
+                    filename=upload_name,
+                    mime=mime_type,
+                    file_obj=file_obj,
+                    upload_token=upload_token,
+                )
+            else:
+                document_id = await ragflow.upload_document(
+                    kb.ragflow_dataset_id,
+                    content or b"",
+                    upload_name,
+                    mime_type,
+                    upload_token=upload_token,
+                )
+        except RagflowUploadUnknownError as exc:
+            job.status = IngestionJobStatus.upload_unknown.value
+            job.error_code = exc.message_key
+            job.error_message = exc.message
+            await db.flush()
+            recovered = await ragflow.recover_uploaded_document(kb.ragflow_dataset_id, upload_token)
+            if not recovered:
+                job.status = IngestionJobStatus.failed.value
+                job.finished_at = _now()
+                version.parse_status = "failed"
+                if old_version is None:
+                    sf.status = SourceFileStatus.error.value
+                else:
+                    sf.status = SourceFileStatus.active.value
+                await db.commit()
+                raise BadRequestError(message=exc.message, message_key=exc.message_key) from exc
+            document_id = recovered
+            job.error_code = None
+            job.error_message = None
+
         version.ragflow_document_id = document_id
         job.ragflow_document_id = document_id
         job.status = IngestionJobStatus.ragflow_uploaded.value
@@ -357,6 +391,7 @@ async def ingest_core(
             external_object_id=sf.external_object_id,
             source_revision=sf.source_revision,
         )
+        meta["nk_upload_token"] = upload_token
         await ragflow.update_document_metadata(kb.ragflow_dataset_id, document_id, meta)
         job.status = IngestionJobStatus.metadata_synced.value
         job.progress = 60
@@ -374,6 +409,8 @@ async def ingest_core(
         await db.refresh(job)
         return sf, version, job
     except RagflowError as exc:
+        if isinstance(exc, RagflowUploadUnknownError):
+            raise
         job.status = IngestionJobStatus.failed.value
         job.error_code = exc.message_key
         job.error_message = exc.message
@@ -433,6 +470,15 @@ async def detach_source_file(
     sf.external_object_id = None
     sf.sync_state = SourceSyncState.detached.value
     sf.archive_reason = ArchiveReason.detached.value
+    await write_audit(
+        db,
+        org_id=member.org_id,
+        member_id=member.member_id,
+        action=AuditAction.source_detached.value,
+        resource_type="source_file",
+        resource_id=sf.id,
+        details={},
+    )
     await db.commit()
     await db.refresh(sf)
     return sf

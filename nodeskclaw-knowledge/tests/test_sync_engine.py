@@ -109,7 +109,6 @@ async def test_full_sync_missing_to_deleted_only_after_complete():
     missing_obj.source_file_id = "sf-gone"
     missing_obj.state = ConnectorSourceObjectState.active.value
 
-    seen_obj = MagicMock()
     upserted = MagicMock()
     upserted.id = "obj-a"
     upserted.source_file_id = None

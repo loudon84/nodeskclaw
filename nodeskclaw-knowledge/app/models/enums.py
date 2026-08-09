@@ -68,6 +68,7 @@ class SetPermission(str, Enum):
 class IngestionJobStatus(str, Enum):
     pending = "pending"
     uploading = "uploading"
+    upload_unknown = "upload_unknown"
     ragflow_uploaded = "ragflow_uploaded"
     metadata_synced = "metadata_synced"
     parse_dispatched = "parse_dispatched"
@@ -179,6 +180,11 @@ class AuditAction(str, Enum):
     connector_sync_start = "CONNECTOR_SYNC_START"
     connector_sync_complete = "CONNECTOR_SYNC_COMPLETE"
     connector_sync_failed = "CONNECTOR_SYNC_FAILED"
+    source_discovered = "SOURCE_DISCOVERED"
+    source_changed = "SOURCE_CHANGED"
+    source_deleted = "SOURCE_DELETED"
+    source_restored = "SOURCE_RESTORED"
+    source_detached = "SOURCE_DETACHED"
     file_detach = "FILE_DETACH"
 
 

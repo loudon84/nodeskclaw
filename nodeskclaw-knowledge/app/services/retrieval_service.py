@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.exceptions import BadRequestError, ForbiddenError, NotFoundError, ServiceUnavailableError
 from app.integrations.ragflow.client import RagflowClient
 from app.models.enums import (
@@ -17,8 +18,10 @@ from app.models.enums import (
     ProfileStatus,
     RetrievalOrigin,
     SetPermission,
+    SourceSyncState,
 )
 from app.models.retrieval_audit import RetrievalAudit
+from app.models.source_file import SourceFile
 from app.schemas.knowledge import RetrievalOptions
 from app.schemas.principal import KnowledgePrincipal
 from app.services import (
@@ -52,6 +55,25 @@ def _extract_page(positions: list | None) -> int | None:
         except (TypeError, ValueError):
             return None
     return None
+
+
+def _compute_source_freshness(source_file) -> str:
+    if source_file is None:
+        return "unknown"
+    sync_state = getattr(source_file, "sync_state", None)
+    if sync_state in {SourceSyncState.stale.value, SourceSyncState.error.value}:
+        return "stale"
+    last_synced = getattr(source_file, "last_synced_at", None)
+    if last_synced is None:
+        if getattr(source_file, "source_kind", None) == "connector":
+            return "unknown"
+        return "fresh"
+    if last_synced.tzinfo is None:
+        last_synced = last_synced.replace(tzinfo=UTC)
+    age = (datetime.now(UTC) - last_synced).total_seconds()
+    if age > int(settings.SOURCE_FRESHNESS_MAX_AGE_SECONDS):
+        return "stale"
+    return "fresh"
 
 
 def _diagnostics_from_slices(slice_results: list) -> dict:
@@ -192,7 +214,17 @@ async def retrieve(
         )
 
     set_items = await knowledge_set_service.list_set_items(db, member, knowledge_set_id)
-    plan = retrieval_planner.build_retrieval_plan(plan_access, kbs, set_items)
+    metadata_condition = (
+        retrieval_planner.build_metadata_condition(normalized_filters)
+        if settings.RAGFLOW_METADATA_PUSHDOWN_ENABLED
+        else None
+    )
+    plan = retrieval_planner.build_retrieval_plan(
+        plan_access,
+        kbs,
+        set_items,
+        metadata_condition=metadata_condition,
+    )
 
     if plan_access.kind == AccessPlanKind.no_access or not plan.slices:
         query_id = str(uuid.uuid4())
@@ -324,6 +356,9 @@ async def retrieve(
     for item in merged:
         chunk = item.chunk
         meta = chunk.document_metadata or {}
+        sf_id = meta.get("nk_source_file_id")
+        source_file = await db.get(SourceFile, sf_id) if sf_id else None
+        last_synced_at = getattr(source_file, "last_synced_at", None) if source_file else None
         chunks_out.append(
             {
                 "chunk_id": chunk.id,
@@ -340,10 +375,13 @@ async def retrieve(
                 "term_similarity": chunk.term_similarity,
                 "vector_similarity": chunk.vector_similarity,
                 "highlight": chunk.highlight,
+                "source_freshness": _compute_source_freshness(source_file),
+                "last_synced_at": last_synced_at.isoformat() if last_synced_at else None,
             }
         )
 
     _observe_retrieval(execution_status, started)
+    diagnostics["metadata_pushdown"] = bool(getattr(plan, "metadata_pushdown", False))
     return {
         "query_id": query_id,
         "chunks": chunks_out,
@@ -456,7 +494,17 @@ async def playground_retrieve(
             kbs,
         )
     set_items = await knowledge_set_service.list_set_items(db, member, knowledge_set_id)
-    plan = retrieval_planner.build_retrieval_plan(plan_access, kbs, set_items)
+    metadata_condition = (
+        retrieval_planner.build_metadata_condition(normalized_filters)
+        if settings.RAGFLOW_METADATA_PUSHDOWN_ENABLED
+        else None
+    )
+    plan = retrieval_planner.build_retrieval_plan(
+        plan_access,
+        kbs,
+        set_items,
+        metadata_condition=metadata_condition,
+    )
     acl_ms = int((time.perf_counter() - acl_started) * 1000)
 
     plan_out = {

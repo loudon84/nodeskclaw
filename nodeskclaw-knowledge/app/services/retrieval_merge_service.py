@@ -79,8 +79,9 @@ async def _retrieve_slice(
 ) -> tuple[RetrievalSliceResult, list[RagflowChunk]]:
     started = time.perf_counter()
     async with semaphore:
+        document_ids = slice_.document_ids if slice_.kind == RetrievalSliceKind.filtered_documents else None
+        metadata_condition = slice_.metadata_condition
         try:
-            document_ids = slice_.document_ids if slice_.kind == RetrievalSliceKind.filtered_documents else None
             result = await ragflow.retrieve(
                 question=query,
                 dataset_ids=[slice_.dataset_id],
@@ -92,6 +93,7 @@ async def _retrieve_slice(
                 highlight=highlight,
                 rerank_id=rerank_id,
                 cross_languages=cross_languages,
+                metadata_condition=metadata_condition,
             )
             chunks = result.chunks
             return (
@@ -107,11 +109,43 @@ async def _retrieve_slice(
                 chunks,
             )
         except Exception as exc:
+            failure = exc
+            # Metadata pushdown is optimization only; fall back to ACL document_ids.
+            if metadata_condition:
+                try:
+                    result = await ragflow.retrieve(
+                        question=query,
+                        dataset_ids=[slice_.dataset_id],
+                        document_ids=document_ids,
+                        top_k=top_k,
+                        similarity_threshold=similarity_threshold,
+                        vector_similarity_weight=vector_similarity_weight,
+                        keyword=keyword,
+                        highlight=highlight,
+                        rerank_id=rerank_id,
+                        cross_languages=cross_languages,
+                        metadata_condition=None,
+                    )
+                    chunks = result.chunks
+                    return (
+                        RetrievalSliceResult(
+                            knowledge_base_id=slice_.knowledge_base_id,
+                            dataset_id=slice_.dataset_id,
+                            status="success",
+                            latency_ms=int((time.perf_counter() - started) * 1000),
+                            candidate_count=len(chunks),
+                            safe_count=0,
+                            error_code=None,
+                        ),
+                        chunks,
+                    )
+                except Exception as retry_exc:
+                    failure = retry_exc
             logger.warning(
                 "retrieval slice failed dataset_id=%s knowledge_base_id=%s: %s",
                 slice_.dataset_id,
                 slice_.knowledge_base_id,
-                exc,
+                failure,
             )
             return (
                 RetrievalSliceResult(
@@ -121,7 +155,7 @@ async def _retrieve_slice(
                     latency_ms=int((time.perf_counter() - started) * 1000),
                     candidate_count=0,
                     safe_count=0,
-                    error_code=_slice_error_code(exc),
+                    error_code=_slice_error_code(failure),
                 ),
                 [],
             )

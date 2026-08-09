@@ -1,6 +1,8 @@
 """Map RAGFlow transport errors to RagflowError."""
 
-from app.integrations.ragflow.exceptions import RagflowError
+import httpx
+
+from app.integrations.ragflow.exceptions import RagflowError, RagflowUploadUnknownError
 
 
 def map_ragflow_payload(code: int, message: str) -> RagflowError:
@@ -27,7 +29,12 @@ def map_ragflow_payload(code: int, message: str) -> RagflowError:
     )
 
 
-def map_transport_error(exc: Exception) -> RagflowError:
+def map_transport_error(exc: Exception, *, upload: bool = False, upload_token: str | None = None) -> RagflowError:
+    if upload and isinstance(exc, (httpx.TimeoutException, TimeoutError)):
+        return RagflowUploadUnknownError(
+            "RAGFlow upload timed out with unknown outcome",
+            upload_token=upload_token,
+        )
     return RagflowError(
         message="RAGFlow 不可用",
         ragflow_code=None,

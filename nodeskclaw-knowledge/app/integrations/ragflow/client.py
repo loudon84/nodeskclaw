@@ -9,7 +9,7 @@ from typing import Any
 import httpx
 
 from app.core.config import settings
-from app.integrations.ragflow.exceptions import RagflowError
+from app.integrations.ragflow.exceptions import RagflowError, RagflowUploadUnknownError
 from app.integrations.ragflow.mapper import map_ragflow_payload, map_transport_error
 from app.integrations.ragflow.models import (
     RagflowChunk,
@@ -69,8 +69,12 @@ class RagflowClient:
         data: Any = None,
         retry: bool = False,
         timeout: float | None = None,
+        upload: bool = False,
+        upload_token: str | None = None,
     ) -> Any:
         import time
+
+        import httpx
 
         from app.services import metrics_service
 
@@ -109,6 +113,19 @@ class RagflowClient:
                 return payload.get("data") if isinstance(payload, dict) else payload
             except RagflowError:
                 raise
+            except (httpx.TimeoutException, TimeoutError) as exc:
+                last_exc = exc
+                if upload:
+                    metrics_service.observe_ragflow_request(
+                        method=method,
+                        path=path,
+                        status="unknown",
+                        duration_seconds=time.perf_counter() - started,
+                    )
+                    raise map_transport_error(exc, upload=True, upload_token=upload_token) from exc
+                logger.warning("RAGFlow request failed attempt=%s path=%s err=%s", attempt + 1, path, type(exc).__name__)
+                if attempt + 1 < attempts:
+                    await asyncio.sleep(0.2 * (2**attempt))
             except Exception as exc:
                 last_exc = exc
                 logger.warning("RAGFlow request failed attempt=%s path=%s err=%s", attempt + 1, path, type(exc).__name__)
@@ -120,7 +137,7 @@ class RagflowClient:
             status="error",
             duration_seconds=time.perf_counter() - started,
         )
-        raise map_transport_error(last_exc or RuntimeError("unknown"))
+        raise map_transport_error(last_exc or RuntimeError("unknown"), upload=upload, upload_token=upload_token)
 
     async def create_dataset(
         self,
@@ -170,6 +187,7 @@ class RagflowClient:
         mime: str | None = None,
         *,
         file_obj: Any = None,
+        upload_token: str | None = None,
     ) -> str:
         if file_obj is not None:
             files = {"file": (filename, file_obj, mime or "application/octet-stream")}
@@ -180,12 +198,63 @@ class RagflowClient:
             f"/api/v1/datasets/{dataset_id}/documents",
             files=files,
             timeout=self.upload_timeout,
+            upload=True,
+            upload_token=upload_token,
         )
         if isinstance(data, list) and data:
             return str(data[0].get("id"))
         if isinstance(data, dict) and data.get("id"):
             return str(data["id"])
         raise RagflowError("RAGFlow upload_document 返回异常", message_key="errors.knowledge.ragflow_error")
+
+    async def find_documents_by_upload_token(
+        self,
+        dataset_id: str,
+        upload_token: str,
+        *,
+        page_size: int = 100,
+        max_pages: int = 20,
+    ) -> list[RagflowDocument]:
+        """List documents whose name contains the deterministic upload token (never blind re-POST)."""
+        if not upload_token:
+            return []
+        matches: list[RagflowDocument] = []
+        for page in range(1, max_pages + 1):
+            docs = await self.list_documents(
+                dataset_id,
+                page=page,
+                page_size=page_size,
+                keywords=upload_token,
+            )
+            for doc in docs:
+                if upload_token in (doc.name or ""):
+                    matches.append(doc)
+            if len(docs) < page_size:
+                break
+            if not docs and page > 1:
+                break
+        if matches:
+            return matches
+        # Fallback: scan without keywords filter when API ignores keywords
+        for page in range(1, max_pages + 1):
+            docs = await self.list_documents(dataset_id, page=page, page_size=page_size)
+            for doc in docs:
+                if upload_token in (doc.name or ""):
+                    matches.append(doc)
+            if len(docs) < page_size:
+                break
+        return matches
+
+    async def recover_uploaded_document(
+        self,
+        dataset_id: str,
+        upload_token: str,
+    ) -> str | None:
+        docs = await self.find_documents_by_upload_token(dataset_id, upload_token)
+        if not docs:
+            return None
+        docs_sorted = sorted(docs, key=lambda d: d.id)
+        return docs_sorted[0].id
 
     async def update_document(self, dataset_id: str, document_id: str, **fields: Any) -> None:
         await self._request(
@@ -233,12 +302,18 @@ class RagflowClient:
         page: int = 1,
         page_size: int = 100,
         run: str | None = None,
+        keywords: str | None = None,
+        name: str | None = None,
     ) -> list[RagflowDocument]:
         params: dict[str, Any] = {"page": page, "page_size": page_size}
         if id:
             params["id"] = id
         if run:
             params["run"] = run
+        if keywords:
+            params["keywords"] = keywords
+        if name:
+            params["name"] = name
         data = await self._request(
             "GET",
             f"/api/v1/datasets/{dataset_id}/documents",
@@ -278,6 +353,7 @@ class RagflowClient:
         highlight: bool = False,
         rerank_id: str | None = None,
         cross_languages: list[str] | None = None,
+        metadata_condition: dict[str, Any] | None = None,
     ) -> RagflowRetrievalResult:
         body: dict[str, Any] = {
             "question": question,
@@ -298,6 +374,8 @@ class RagflowClient:
             body["rerank_id"] = rerank_id
         if cross_languages:
             body["cross_languages"] = cross_languages
+        if metadata_condition:
+            body["metadata_condition"] = metadata_condition
         data = await self._request("POST", "/api/v1/retrieval", json=body)
         chunks_raw = (data or {}).get("chunks") or []
         chunks: list[RagflowChunk] = []

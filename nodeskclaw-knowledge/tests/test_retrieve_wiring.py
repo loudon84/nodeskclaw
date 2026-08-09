@@ -63,5 +63,5 @@ async def test_retrieve_passes_set_items_to_planner():
     ):
         result = await retrieve(db, member, ragflow, knowledge_set_id="set1", query="hello")
 
-    build.assert_called_once_with(plan_access, kbs, set_items)
+    build.assert_called_once_with(plan_access, kbs, set_items, metadata_condition=None)
     assert result["chunks"] == []
