@@ -26,7 +26,9 @@ v1.3 引入 Knowledge Source Connector：一个 Connector 属于单个 Org 与�
 
 五表（soft delete + Partial Unique Index）：`knowledge_source_connectors`、`knowledge_connector_credentials`（仅 ciphertext/nonce/key_version，API 只暴露 credential_configured）、`knowledge_connector_source_objects`、`knowledge_connector_sync_runs`、`knowledge_connector_sync_items`：[[nodeskclaw-knowledge/app/models/connector.py]]。Sync Engine 只理解 Protocol（test_connection/discover/fetch/close）与 Capabilities，不按 type 硬编码：[[nodeskclaw-knowledge/app/connectors/base.py]]、[[nodeskclaw-knowledge/app/connectors/registry.py]]。迁移 `e2f5a8b03c16`。
 
-入库统一走 [[nodeskclaw-knowledge/app/services/ingestion_facade.py]]（Member/Connector Actor 分离，禁止伪造 Member）；参考实现 filesystem / http_manifest；凭据 AES-GCM、HTTP SSRF 防护、Sync Engine（full/incremental/delete/restore）与 `knowledge-connector-worker` 见 connector_service / connector_sync_service / connector_worker。
+入库统一走 [[nodeskclaw-knowledge/app/services/ingestion_facade.py]]（Member/Connector Actor 分离，禁止伪造 Member）；内置适配器 filesystem / http_manifest / s3_compatible（静态注册，禁止上传自定义 Python Connector）：[[nodeskclaw-knowledge/app/connectors/filesystem/connector.py]]、[[nodeskclaw-knowledge/app/connectors/http_manifest/connector.py]]、[[nodeskclaw-knowledge/app/connectors/s3/connector.py]]。S3 身份为 `bucket/key`，revision 优先 VersionId 否则 ETag，内容以 sha256 为变更权威。凭据 AES-GCM、HTTP SSRF 防护、Sync Engine（full/incremental/delete/restore）与 `knowledge-connector-worker` 见 connector_service / connector_sync_service / connector_worker。
+
+RAGFlow Upload Hardening：确定性 upload token 文件名 + `UPLOAD_UNKNOWN`；超时后先按名称/token 对账再禁止盲重传：[[nodeskclaw-knowledge/app/integrations/ragflow/client.py#RagflowClient]]、[[nodeskclaw-knowledge/app/integrations/ragflow/upload_token.py]]。Connector Reconciliation 对齐 SourceObject↔SourceFile、SyncItem↔IngestionJob、卡住的 WAITING_INGESTION：[[nodeskclaw-knowledge/app/services/connector_reconciliation_service.py]]。Obs：connector_* Prometheus 指标禁止 `connector_id`/`external_object_id`/`source_uri` 作 label；Audit 含 CONNECTOR_* / SOURCE_*。
 
 ## Metadata Governance
 

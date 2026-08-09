@@ -1,0 +1,74 @@
+name: Knowledge CI
+
+on:
+  pull_request:
+    paths:
+      - "nodeskclaw-knowledge/**"
+      - ".github/workflows/knowledge-ci.yml"
+  push:
+    branches:
+      - main
+      - "feat/knowledge-*"
+    paths:
+      - "nodeskclaw-knowledge/**"
+      - ".github/workflows/knowledge-ci.yml"
+  workflow_dispatch:
+
+jobs:
+  knowledge:
+    name: Knowledge Ruff / Pytest / Alembic
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: nodeskclaw-knowledge
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: knowledge
+          POSTGRES_PASSWORD: knowledge
+          POSTGRES_DB: nodeskclaw_knowledge_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U knowledge -d nodeskclaw_knowledge_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql+asyncpg://knowledge:knowledge@127.0.0.1:5432/nodeskclaw_knowledge_test
+      KNOWLEDGE_CONNECTOR_MASTER_KEY: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+      RAGFLOW_BASE_URL: http://127.0.0.1:9
+      RAGFLOW_API_KEY: unused-in-unit-tests
+      LLM_PROXY_URL: http://127.0.0.1:9
+      KNOWLEDGE_SERVICE_TOKEN: unused-in-unit-tests
+      NODESKCLAW_BACKEND_URL: http://127.0.0.1:9
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Ruff
+        run: uv run ruff check app tests
+
+      - name: Alembic upgrade head
+        run: uv run alembic upgrade head
+
+      - name: Import smoke
+        run: uv run python -c "from app.main import app; from app.connectors.registry import list_types; assert 's3_compatible' in list_types(); print('ok', app.title)"
+
+      - name: Pytest
+        run: uv run pytest

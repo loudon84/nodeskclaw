@@ -58,7 +58,7 @@ v1.1 在 v1.0 八域表之上增加 Set ACL、Chat、Audit 与入库/检索运�
 
 v1.3 增加独立 `knowledge-connector-worker`：调度 interval/manual SyncRun、leasing v2 + heartbeat、编排 discover/fetch 并经 Ingestion Facade 入库：[[nodeskclaw-knowledge/app/workers/connector_worker.py]]。
 
-上传走 SpooledTemporaryFile 流式读入（`KNOWLEDGE_UPLOAD_MAX_MB` 限流），再交给 `RagflowClient.upload_document(file_obj=...)`：[[nodeskclaw-knowledge/app/services/ingestion_service.py#read_upload_spooled]]。通用租赁：[[nodeskclaw-knowledge/app/workers/job_leasing.py#claim_next]]（`FOR UPDATE SKIP LOCKED` + `lease_token` + heartbeat，claim 后立即 commit，禁止外部 I/O 持有 row lock），Ingestion 与 Evaluation Run 共用；终态写回必须 `lease_owner+lease_token` 所有权校验，旧 Worker 不得覆盖新 Worker。Worker 同进程轮询入库、评测与周期 Reconciliation：[[nodeskclaw-knowledge/app/workers/ingestion_worker.py]]。状态映射与激活：[[nodeskclaw-knowledge/app/services/ingestion_service.py#process_leased_job]]。仅 RAGFlow `run=FAIL`（及明确校验失败）将 version 标 `failed`；网络异常 / Poll 超限只失败 Job，不把 version 标 FAILED。蓝绿切换后 best-effort `enabled=0` 旧文档。
+上传走 SpooledTemporaryFile 流式读入（`KNOWLEDGE_UPLOAD_MAX_MB` 限流），再交给 `RagflowClient.upload_document(file_obj=...)`：[[nodeskclaw-knowledge/app/services/ingestion_service.py#read_upload_spooled]]。网络超时后进入 `upload_unknown`，先按确定性 upload token 对账恢复，禁止盲重传：[[nodeskclaw-knowledge/app/services/ingestion_facade.py]]。通用租赁：[[nodeskclaw-knowledge/app/workers/job_leasing.py#claim_next]]（`FOR UPDATE SKIP LOCKED` + `lease_token` + heartbeat，claim 后立即 commit，禁止外部 I/O 持有 row lock），Ingestion 与 Evaluation Run 共用；终态写回必须 `lease_owner+lease_token` 所有权校验，旧 Worker 不得覆盖新 Worker。Worker 同进程轮询入库、评测与周期 Reconciliation（含 Connector Reconciliation）：[[nodeskclaw-knowledge/app/workers/ingestion_worker.py]]。状态映射与激活：[[nodeskclaw-knowledge/app/services/ingestion_service.py#process_leased_job]]。仅 RAGFlow `run=FAIL`（及明确校验失败）将 version 标 `failed`；网络异常 / Poll 超限只失败 Job，不把 version 标 FAILED。蓝绿切换后 best-effort `enabled=0` 旧文档。
 
 ## Retrieval Evaluation
 
@@ -84,23 +84,23 @@ drop 必须写审计：`METADATA_MISMATCH` 或 `CHUNK_SECURITY_DROP`。实现：
 
 Chat 只能消费 SafeChunks：Session Owner → Set USE → Secure Retrieval → Context Builder → LLM Proxy → Citation 与本轮 SafeChunkSet 校验。
 
-服务：[[nodeskclaw-knowledge/app/services/chat_service.py]]、[[nodeskclaw-knowledge/app/services/context_builder.py]]。SSE 事件含 retrieval/generation/delta/citation/error；degraded 时额外 `retrieval_degraded`，fail_closed 失败不调 LLM。`disabled` KnowledgeSet 拒绝 create_session / send_message，但 get_session / list_messages 历史可读。LLM 经服务身份 `KNOWLEDGE_SERVICE_TOKEN`，见 [[decisions/knowledge-ragflow-split#Llm Proxy Boundary]]。Citation 持久化含 `page`/`positions`；解析见 [[knowledge#Citation Resolve]]。
+服务：[[nodeskclaw-knowledge/app/services/chat_service.py]]、[[nodeskclaw-knowledge/app/services/context_builder.py]]。Context Builder 将检索内容视为 data，system prompt 声明不得覆盖指令，并用 `<knowledge_source>` 隔离。SSE 事件含 retrieval/generation/delta/citation/error；degraded 时额外 `retrieval_degraded`，fail_closed 失败不调 LLM。`disabled` KnowledgeSet 拒绝 create_session / send_message，但 get_session / list_messages 历史可读。LLM 经服务身份 `KNOWLEDGE_SERVICE_TOKEN`，见 [[decisions/knowledge-ragflow-split#Llm Proxy Boundary]]。Citation 持久化含 `page`/`positions`；解析见 [[knowledge#Citation Resolve]]。
 
 ## Citation Resolve
 
 `GET /api/v1/citations/{id}` 返回历史 citation 元数据与当前可访问性，历史 citation 不是权限凭证。
 
-Session owner 或同 org 且对 SourceFile 有 READ 的成员可查；跨 org 返回 404 防 enumeration。`accessible`/`reason` 按当前 `deleted_at`/`archived_at`/`has_file_permission(READ)` 计算：`ok` / `permission_revoked` / `archived` / `deleted` / `not_found`。实现：[[nodeskclaw-knowledge/app/services/citation_service.py#resolve_citation]]、[[nodeskclaw-knowledge/app/api/citations.py]]。
+Session owner 或同 org 且对 SourceFile 有 READ 的成员可查；跨 org 返回 404 防 enumeration。`accessible`/`reason` 按当前 `deleted_at`/`archived_at`/`has_file_permission(READ)` 计算：`ok` / `permission_revoked` / `archived` / `deleted` / `not_found`。v1.3 增加 provenance（`source_kind` / `connector_type` / `connector_name` / `source_path` / `source_revision` / `source_modified_at` / `last_synced_at` / `sync_state` / `source_freshness`），禁止暴露 credential 与签名 URL。STALE 仅诊断，不等于拒绝访问。实现：[[nodeskclaw-knowledge/app/services/citation_service.py#resolve_citation]]、[[nodeskclaw-knowledge/app/api/citations.py]]。
 
 ## Observability Metrics
 
-`/metrics` 以 Prometheus exposition 暴露 HTTP / RAGFlow / Retrieval / Security Drop / Ingestion / LLM 核心指标，不经鉴权，供 scrape。
+`/metrics` 以 Prometheus exposition 暴露 HTTP / RAGFlow / Retrieval / Security Drop / Ingestion / LLM / Connector Sync 核心指标，不经鉴权，供 scrape。
 
-指标集中于 [[nodeskclaw-knowledge/app/services/metrics_service.py]]；埋点：Correlation 中间件记 HTTP、Ragflow/LlmProxy Client 记外部调用、retrieve 记 retrieval、Cleaner 记 drop reason、ingestion worker 记 job 终态。路径 UUID 归一为 `:id`。入口：[[nodeskclaw-knowledge/app/main.py#metrics]]。
+指标集中于 [[nodeskclaw-knowledge/app/services/metrics_service.py]]；埋点：Correlation 中间件记 HTTP、Ragflow/LlmProxy Client 记外部调用、retrieve 记 retrieval、Cleaner 记 drop reason、ingestion worker 记 job 终态、connector sync/fetch 记 `connector_type`+`status`（禁止 `connector_id`/`external_object_id`/`source_uri` label）。路径 UUID 归一为 `:id`。入口：[[nodeskclaw-knowledge/app/main.py#metrics]]。
 
 ## Correlation Id Logging
 
-每个外部请求读或生成 `X-Request-Id`，响应回写；结构化 JSON 日志经 contextvars 附带 `request_id`，可扩展 query/session/message/job/member/org。
+每个外部请求读或生成 `X-Request-Id`，响应回写；结构化 JSON 日志经 contextvars 附带 `request_id`，可扩展 query/session/message/job/member/org/connector_id/sync_run_id/sync_item_id/source_object_id/ingestion_job_id。
 
 禁止记录 Bearer Token、RAGFlow Key、LLM Service Token、文档全文；敏感键名在 formatter 中脱敏。实现：[[nodeskclaw-knowledge/app/middleware/correlation.py#CorrelationIdMiddleware]]、[[nodeskclaw-knowledge/app/core/request_context.py]]、[[nodeskclaw-knowledge/app/core/logging.py]]。
 

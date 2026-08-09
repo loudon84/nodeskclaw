@@ -1,0 +1,41 @@
+name: Knowledge RAGFlow Contract (manual / nightly stub)
+
+# Optional integration checks against a real RAGFlow instance.
+# Unit CI (knowledge-ci.yml) does NOT require RAGFlow.
+#
+# Manual checklist before enabling live calls:
+# 1. Confirm Dataset / Document upload / list-by-name / metadata_condition API contracts
+# 2. Verify upload timeout recovery via deterministic upload token filename
+# 3. Verify retrieve with metadata_condition falls back cleanly when unsupported
+# 4. Never commit real API keys; use repository secrets only
+
+on:
+  workflow_dispatch:
+    inputs:
+      ragflow_base_url:
+        description: "RAGFlow base URL (Chinese: RAGFlow 服务地址)"
+        required: false
+        default: ""
+  schedule:
+    - cron: "0 3 * * *"
+
+jobs:
+  contract-stub:
+    name: Document RAGFlow contract gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Skip live RAGFlow (stub)
+        run: |
+          echo "This workflow is a stub for manual/nightly RAGFlow contract checks."
+          echo "Live calls are intentionally disabled until RAGFlow Wiki contracts are confirmed."
+          echo "Primary automated coverage lives in nodeskclaw-knowledge unit tests:"
+          echo "  - tests/test_ragflow_recovery.py"
+          echo "  - tests/test_connector_e2e_v13.py"
+          if [ -z "${{ secrets.RAGFLOW_API_KEY }}" ]; then
+            echo "RAGFLOW_API_KEY secret not configured; exiting successfully as stub."
+          else
+            echo "RAGFLOW_API_KEY is present but live contract runner is not enabled yet."
+          fi
