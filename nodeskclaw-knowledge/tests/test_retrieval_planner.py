@@ -68,3 +68,63 @@ def test_retrieval_planner_batches_partial_document_ids(monkeypatch):
     assert plan.slices[0].document_ids == ["d1", "d2"]
     assert plan.slices[1].document_ids == ["d3", "d4"]
     assert plan.slices[2].document_ids == ["d5"]
+
+
+def test_retrieval_planner_partial_plus_partial():
+    access = AccessPlan(
+        kind=AccessPlanKind.filtered_access,
+        dataset_ids=["ds_a", "ds_b"],
+        full_dataset_ids=[],
+        partial_slices=[
+            {
+                "kind": "filtered_documents",
+                "dataset_id": "ds_a",
+                "knowledge_base_id": "kb_a",
+                "document_ids": ["da1"],
+            },
+            {
+                "kind": "filtered_documents",
+                "dataset_id": "ds_b",
+                "knowledge_base_id": "kb_b",
+                "document_ids": ["db1", "db2"],
+            },
+        ],
+        source_file_ids=["sf_a", "sf_b"],
+        knowledge_base_ids=["kb_a", "kb_b"],
+    )
+    plan = build_retrieval_plan(
+        access,
+        [_kb("kb_a", "ds_a"), _kb("kb_b", "ds_b")],
+        [_item("kb_a", 1.0), _item("kb_b", 1.5)],
+    )
+    assert plan.plan_kind == AccessPlanKind.filtered_access
+    assert len(plan.slices) == 2
+    assert all(s.kind == RetrievalSliceKind.filtered_documents for s in plan.slices)
+    assert plan.slices[0].document_ids == ["da1"]
+    assert plan.slices[1].document_ids == ["db1", "db2"]
+    assert plan.slices[1].weight == 1.5
+
+
+def test_retrieval_planner_batches_5000_document_ids(monkeypatch):
+    monkeypatch.setattr("app.services.retrieval_planner.settings.RETRIEVAL_DOCUMENT_BATCH_SIZE", 500)
+    doc_ids = [f"d{i}" for i in range(5000)]
+    access = AccessPlan(
+        kind=AccessPlanKind.filtered_access,
+        dataset_ids=["ds_b"],
+        full_dataset_ids=[],
+        partial_slices=[
+            {
+                "kind": "filtered_documents",
+                "dataset_id": "ds_b",
+                "knowledge_base_id": "kb_b",
+                "document_ids": doc_ids,
+            }
+        ],
+        source_file_ids=["sf1"],
+        knowledge_base_ids=["kb_b"],
+    )
+    plan = build_retrieval_plan(access, [_kb("kb_b", "ds_b")], [_item("kb_b", 1.0)])
+    assert len(plan.slices) == 10
+    assert plan.slices[0].document_ids == doc_ids[:500]
+    assert plan.slices[-1].document_ids == doc_ids[4500:]
+    assert sum(len(s.document_ids) for s in plan.slices) == 5000
