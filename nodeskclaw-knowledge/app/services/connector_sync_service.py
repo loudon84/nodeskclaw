@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import logging
 from datetime import UTC, datetime
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from sqlalchemy import select
@@ -157,6 +158,7 @@ async def run_sync(
     *,
     connector: ConnectorRow,
     sync_run: ConnectorSyncRun,
+    on_heartbeat: Callable[[], Awaitable[None]] | None = None,
 ) -> ConnectorSyncRun:
     kb = await db.get(KnowledgeBase, connector.knowledge_base_id)
     if kb is None or kb.deleted_at is not None:
@@ -180,6 +182,8 @@ async def run_sync(
     with bind_connector_context(connector_id=connector.id, sync_run_id=sync_run.id):
       try:
         while True:
+            if on_heartbeat is not None:
+                await on_heartbeat()
             page = await adapter.discover(cursor=cursor)
             for descriptor in page.objects:
                 seen_ids.add(descriptor.external_object_id)
@@ -206,6 +210,8 @@ async def run_sync(
                 discovery_complete = True
                 break
 
+        if on_heartbeat is not None:
+            await on_heartbeat()
         sync_run.status = ConnectorSyncRunStatus.applying.value
         await db.flush()
 

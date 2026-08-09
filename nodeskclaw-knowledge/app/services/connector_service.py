@@ -409,6 +409,17 @@ async def delete_connector(
             sf.sync_state = SourceSyncState.detached.value
     elif policy == "delete_sources":
         for sf in files:
+            if kb and kb.ragflow_dataset_id and sf.active_version_id:
+                from app.models.source_file_version import SourceFileVersion
+
+                version = await db.get(SourceFileVersion, sf.active_version_id)
+                if version and version.ragflow_document_id:
+                    try:
+                        await ragflow.set_document_enabled(
+                            kb.ragflow_dataset_id, version.ragflow_document_id, False
+                        )
+                    except Exception:
+                        pass
             sf.soft_delete()
 
     objs = await db.execute(
