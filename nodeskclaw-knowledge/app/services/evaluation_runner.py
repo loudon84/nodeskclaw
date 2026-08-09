@@ -139,6 +139,27 @@ async def process_evaluation_run(
     config = merge_profile_config(profile.config)
     k = int(config.get("top_n", DEFAULT_K))
 
+    snapshot = run.principal_snapshot if isinstance(getattr(run, "principal_snapshot", None), dict) else None
+    if not snapshot:
+        run.status = EvaluationRunStatus.failed.value
+        run.last_error = "principal_snapshot missing"
+        run.finished_at = utc_now()
+        return
+
+    member = KnowledgePrincipal(
+        user_id=str(snapshot.get("user_id") or snapshot.get("member_id") or run.created_by_member_id),
+        member_id=str(snapshot.get("member_id") or run.created_by_member_id),
+        org_id=str(snapshot.get("org_id") or eval_set.org_id),
+        name=str(snapshot.get("name") or ""),
+        employee_no=snapshot.get("employee_no"),
+        department=snapshot.get("department"),
+        job_title=snapshot.get("job_title"),
+        member_role=str(snapshot.get("member_role") or "member"),
+        supervisor_member_id=snapshot.get("supervisor_member_id"),
+        is_active=bool(snapshot.get("is_active", True)),
+        is_super_admin=bool(snapshot.get("is_super_admin", False)),
+    )
+
     cases_result = await db.execute(
         select(EvaluationCase)
         .where(
@@ -153,16 +174,6 @@ async def process_evaluation_run(
         run.last_error = "no evaluation cases"
         run.finished_at = utc_now()
         return
-
-    member = KnowledgePrincipal(
-        user_id=run.created_by_member_id,
-        member_id=run.created_by_member_id,
-        org_id=eval_set.org_id,
-        name="",
-        member_role="member",
-        is_active=True,
-        is_super_admin=False,
-    )
 
     kbs = await knowledge_set_service.list_bound_knowledge_bases(db, member, eval_set.knowledge_set_id)
     access_plan = await build_access_plan(db, member, kbs)

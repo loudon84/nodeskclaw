@@ -71,6 +71,16 @@ async def test_process_run_fails_on_unauthorized_source():
         evaluation_set_id="es1",
         retrieval_profile_id="p1",
         created_by_member_id="m1",
+        principal_snapshot={
+            "user_id": "u1",
+            "member_id": "m1",
+            "org_id": "o1",
+            "name": "Finance Operator",
+            "department": "finance",
+            "member_role": "operator",
+            "is_active": True,
+            "is_super_admin": False,
+        },
         attempt_count=0,
         max_attempts=5,
         status=EvaluationRunStatus.running.value,
@@ -114,7 +124,19 @@ async def test_create_run_writes_pending():
     db.add = MagicMock()
     db.commit = AsyncMock()
     db.refresh = AsyncMock()
-    member = SimpleNamespace(member_id="m1", org_id="o1", is_super_admin=False)
+    member = SimpleNamespace(
+        user_id="u1",
+        member_id="m1",
+        org_id="o1",
+        name="Finance Operator",
+        employee_no=None,
+        department="finance",
+        job_title=None,
+        member_role="operator",
+        supervisor_member_id=None,
+        is_active=True,
+        is_super_admin=False,
+    )
     eval_set = SimpleNamespace(id="es1", knowledge_set_id="set1", org_id="o1")
     profile = SimpleNamespace(id="p1", knowledge_set_id="set1", deleted_at=None)
 
@@ -140,8 +162,127 @@ async def test_create_run_writes_pending():
     assert row.evaluation_set_id == "es1"
     assert row.retrieval_profile_id == "p1"
     assert row.next_run_at is not None
+    assert row.principal_snapshot["department"] == "finance"
+    assert row.principal_snapshot["member_role"] == "operator"
+    assert row.principal_snapshot["member_id"] == "m1"
     db.add.assert_called_once()
     db.commit.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_process_run_uses_principal_snapshot_department():
+    db = MagicMock()
+    db.add = MagicMock()
+    db.get = AsyncMock(
+        side_effect=[
+            SimpleNamespace(id="es1", org_id="o1", knowledge_set_id="set1", deleted_at=None),
+            SimpleNamespace(id="p1", deleted_at=None, config={"top_n": 8}),
+        ]
+    )
+    cases = [
+        SimpleNamespace(
+            id="c1",
+            query="q",
+            expected_source_file_ids=["sf_expected"],
+            created_at=None,
+        )
+    ]
+
+    class Scalars:
+        def all(self):
+            return cases
+
+    class Result:
+        def scalars(self):
+            return Scalars()
+
+    db.execute = AsyncMock(return_value=Result())
+    run = SimpleNamespace(
+        id="run1",
+        evaluation_set_id="es1",
+        retrieval_profile_id="p1",
+        created_by_member_id="m1",
+        principal_snapshot={
+            "user_id": "u1",
+            "member_id": "m1",
+            "org_id": "o1",
+            "name": "Finance Operator",
+            "department": "finance",
+            "member_role": "operator",
+            "is_active": True,
+            "is_super_admin": False,
+        },
+        attempt_count=0,
+        max_attempts=5,
+        status=EvaluationRunStatus.running.value,
+        metrics=None,
+        last_error=None,
+        finished_at=None,
+        lease_owner="w1",
+        lease_until=None,
+        next_run_at=None,
+    )
+    ragflow = AsyncMock()
+    captured: dict = {}
+
+    async def fake_build_access_plan(_db, member, *_args, **_kwargs):
+        captured["department"] = member.department
+        captured["member_role"] = member.member_role
+        return SimpleNamespace(source_file_ids=["sf_expected"])
+
+    async def fake_retrieve(*_args, **_kwargs):
+        return {
+            "chunks": [{"source_file_id": "sf_expected", "chunk_id": "x"}],
+            "status": "success",
+            "latency_ms": 12,
+        }
+
+    with (
+        patch(
+            "app.services.evaluation_runner.knowledge_set_service.list_bound_knowledge_bases",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch(
+            "app.services.evaluation_runner.build_access_plan",
+            new=fake_build_access_plan,
+        ),
+        patch("app.services.evaluation_runner.retrieval_service.retrieve", new=fake_retrieve),
+    ):
+        await process_evaluation_run(db, ragflow, run)
+
+    assert run.status == EvaluationRunStatus.completed.value
+    assert captured["department"] == "finance"
+    assert captured["member_role"] == "operator"
+
+
+@pytest.mark.asyncio
+async def test_process_run_fails_without_principal_snapshot():
+    db = MagicMock()
+    db.get = AsyncMock(
+        side_effect=[
+            SimpleNamespace(id="es1", org_id="o1", knowledge_set_id="set1", deleted_at=None),
+            SimpleNamespace(id="p1", deleted_at=None, config={"top_n": 8}),
+        ]
+    )
+    run = SimpleNamespace(
+        id="run1",
+        evaluation_set_id="es1",
+        retrieval_profile_id="p1",
+        created_by_member_id="m1",
+        principal_snapshot=None,
+        attempt_count=0,
+        max_attempts=5,
+        status=EvaluationRunStatus.running.value,
+        metrics=None,
+        last_error=None,
+        finished_at=None,
+        lease_owner="w1",
+        lease_until=None,
+        next_run_at=None,
+    )
+    await process_evaluation_run(db, AsyncMock(), run)
+    assert run.status == EvaluationRunStatus.failed.value
+    assert run.last_error == "principal_snapshot missing"
 
 
 @pytest.mark.asyncio

@@ -467,6 +467,7 @@ class EvaluationRunOut(BaseModel):
     retrieval_profile_id: str
     status: str
     metrics: dict[str, Any] | None = None
+    principal_snapshot: dict[str, Any] | None = None
     created_by_member_id: str
     attempt_count: int = 0
     max_attempts: int = 5

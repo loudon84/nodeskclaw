@@ -22,6 +22,22 @@ LEASE_SECONDS = 120
 DEFAULT_K = 8
 
 
+def build_principal_snapshot(member: KnowledgePrincipal) -> dict[str, Any]:
+    return {
+        "user_id": member.user_id,
+        "member_id": member.member_id,
+        "org_id": member.org_id,
+        "name": member.name,
+        "employee_no": member.employee_no,
+        "department": member.department,
+        "job_title": member.job_title,
+        "member_role": member.member_role,
+        "supervisor_member_id": member.supervisor_member_id,
+        "is_active": member.is_active,
+        "is_super_admin": member.is_super_admin,
+    }
+
+
 async def _require_set_manage(
     db: AsyncSession,
     member: KnowledgePrincipal,
@@ -290,6 +306,7 @@ async def create_run(
         retrieval_profile_id=retrieval_profile_id,
         status=EvaluationRunStatus.pending.value,
         metrics=None,
+        principal_snapshot=build_principal_snapshot(member),
         created_by_member_id=member.member_id,
         attempt_count=0,
         max_attempts=5,

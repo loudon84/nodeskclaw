@@ -37,6 +37,7 @@ class EvaluationRun(BaseModel):
     retrieval_profile_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending", index=True)
     metrics: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    principal_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     created_by_member_id: Mapped[str] = mapped_column(String(36), nullable=False)
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
