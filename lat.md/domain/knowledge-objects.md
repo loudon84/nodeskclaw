@@ -18,6 +18,14 @@ SourceFile 是稳定逻辑源文件；权限挂在 SourceFile 上，不挂在 Ch
 
 v1.2 生命周期：`archived_at` 归档后不参与新 Retrieval（AccessPlan 过滤 + RAGFlow `enabled=0`），历史 Citation 仍可追溯；`POST .../versions/{id}/activate` 支持回滚，流程见 [[knowledge#Active Version Security]]：[[nodeskclaw-knowledge/app/services/source_lifecycle_service.py]]。
 
+v1.3 来源溯源：`source_kind`（manual/connector）与 `source_metadata`（外部源元数据，与业务 `metadata` 分离）；Connector 身份为 `connector_id`+`external_object_id`。Partial Unique Index：manual 按 `(knowledge_base_id, file_name)`，connector 按 `(connector_id, external_object_id)`。Version 增加 actor/provenance 字段，`uploaded_by_member_id` 在 connector 入库时可 null：迁移 `d1e4f7a92b05`。
+
+## Connector Domain
+
+v1.3 引入 Knowledge Source Connector：一个 Connector 属于单个 Org 与单个 KnowledgeBase，负责发现/拉取外部对象并经 Ingestion Facade 入库。
+
+五表（soft delete + Partial Unique Index）：`knowledge_source_connectors`、`knowledge_connector_credentials`（仅 ciphertext/nonce/key_version，API 只暴露 credential_configured）、`knowledge_connector_source_objects`、`knowledge_connector_sync_runs`、`knowledge_connector_sync_items`：[[nodeskclaw-knowledge/app/models/connector.py]]。Sync Engine 只理解 Protocol（test_connection/discover/fetch/close）与 Capabilities，不按 type 硬编码：[[nodeskclaw-knowledge/app/connectors/base.py]]、[[nodeskclaw-knowledge/app/connectors/registry.py]]。迁移 `e2f5a8b03c16`。
+
 ## Metadata Governance
 
 v1.2 将企业业务 Metadata 与系统 `nk_*` 分离：KB 持有 `metadata_schema`，SourceFile 持有 `metadata` / `metadata_revision`；客户端不得写入 `nk_*` 或 ACL 字段。

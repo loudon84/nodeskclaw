@@ -197,6 +197,18 @@ class SourceFileOut(BaseModel):
     parse_status: str | None = None
     chunk_count: int | None = None
     version_no: int | None = None
+    source_kind: str = "manual"
+    connector_id: str | None = None
+    external_object_id: str | None = None
+    source_uri: str | None = None
+    source_path: str | None = None
+    source_revision: str | None = None
+    source_etag: str | None = None
+    source_modified_at: Any = None
+    source_metadata: dict[str, Any] = Field(default_factory=dict)
+    last_synced_at: Any = None
+    sync_state: str | None = None
+    archive_reason: str | None = None
 
     model_config = {"from_attributes": True, "populate_by_name": True}
 
@@ -214,10 +226,16 @@ class SourceFileVersionOut(BaseModel):
     chunk_count: int | None = None
     token_count: int | None = None
     process_duration: float | None = None
-    uploaded_by_member_id: str
+    uploaded_by_member_id: str | None = None
     activated_at: Any = None
     superseded_at: Any = None
     created_at: Any = None
+    origin_connector_id: str | None = None
+    origin_external_revision: str | None = None
+    origin_etag: str | None = None
+    source_snapshot_at: Any = None
+    created_by_actor_type: str | None = None
+    created_by_actor_id: str | None = None
 
     model_config = {"from_attributes": True}
 

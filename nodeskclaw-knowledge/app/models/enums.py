@@ -188,6 +188,86 @@ class EvaluationRunStatus(str, Enum):
     failed = "failed"
 
 
+class SourceKind(str, Enum):
+    manual = "manual"
+    connector = "connector"
+
+
+class SourceSyncState(str, Enum):
+    in_sync = "in_sync"
+    stale = "stale"
+    error = "error"
+    detached = "detached"
+
+
+class KnowledgeActorType(str, Enum):
+    member = "member"
+    connector = "connector"
+    system = "system"
+
+
+class ArchiveReason(str, Enum):
+    user = "user"
+    source_deleted = "source_deleted"
+    connector_deleted = "connector_deleted"
+    detached = "detached"
+
+
+class ConnectorStatus(str, Enum):
+    provisioning = "provisioning"
+    active = "active"
+    paused = "paused"
+    auth_error = "auth_error"
+    error = "error"
+    deleting = "deleting"
+
+
+class ConnectorSyncMode(str, Enum):
+    manual = "manual"
+    interval = "interval"
+
+
+class ConnectorSyncRunStatus(str, Enum):
+    pending = "pending"
+    discovering = "discovering"
+    applying = "applying"
+    waiting_ingestion = "waiting_ingestion"
+    completed = "completed"
+    partial = "partial"
+    failed = "failed"
+    cancelled = "cancelled"
+
+
+class ConnectorSyncTrigger(str, Enum):
+    manual = "manual"
+    interval = "interval"
+
+
+class ConnectorSyncItemAction(str, Enum):
+    create = "create"
+    update_content = "update_content"
+    update_metadata = "update_metadata"
+    archive = "archive"
+    restore = "restore"
+
+
+class ConnectorSyncItemStatus(str, Enum):
+    pending = "pending"
+    fetching = "fetching"
+    ingestion_dispatched = "ingestion_dispatched"
+    waiting_parse = "waiting_parse"
+    applied = "applied"
+    failed = "failed"
+
+
+class ConnectorSourceObjectState(str, Enum):
+    active = "active"
+    missing = "missing"
+    deleted = "deleted"
+    error = "error"
+    detached = "detached"
+
+
 DEFAULT_RETRIEVAL_CONFIG = {
     "top_k": 1024,
     "top_n": 8,
