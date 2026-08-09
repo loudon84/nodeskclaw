@@ -26,6 +26,8 @@ v1.3 引入 Knowledge Source Connector：一个 Connector 属于单个 Org 与�
 
 五表（soft delete + Partial Unique Index）：`knowledge_source_connectors`、`knowledge_connector_credentials`（仅 ciphertext/nonce/key_version，API 只暴露 credential_configured）、`knowledge_connector_source_objects`、`knowledge_connector_sync_runs`、`knowledge_connector_sync_items`：[[nodeskclaw-knowledge/app/models/connector.py]]。Sync Engine 只理解 Protocol（test_connection/discover/fetch/close）与 Capabilities，不按 type 硬编码：[[nodeskclaw-knowledge/app/connectors/base.py]]、[[nodeskclaw-knowledge/app/connectors/registry.py]]。迁移 `e2f5a8b03c16`。
 
+入库统一走 [[nodeskclaw-knowledge/app/services/ingestion_facade.py]]（Member/Connector Actor 分离，禁止伪造 Member）；参考实现 filesystem / http_manifest；凭据 AES-GCM、HTTP SSRF 防护、Sync Engine（full/incremental/delete/restore）与 `knowledge-connector-worker` 见 connector_service / connector_sync_service / connector_worker。
+
 ## Metadata Governance
 
 v1.2 将企业业务 Metadata 与系统 `nk_*` 分离：KB 持有 `metadata_schema`，SourceFile 持有 `metadata` / `metadata_revision`；客户端不得写入 `nk_*` 或 ACL 字段。

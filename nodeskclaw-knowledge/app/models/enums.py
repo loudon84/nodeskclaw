@@ -172,6 +172,14 @@ class AuditAction(str, Enum):
     metadata_schema_update = "METADATA_SCHEMA_UPDATE"
     chat_create = "CHAT_CREATE"
     chat_query = "CHAT_QUERY"
+    connector_create = "CONNECTOR_CREATE"
+    connector_update = "CONNECTOR_UPDATE"
+    connector_delete = "CONNECTOR_DELETE"
+    connector_credential_update = "CONNECTOR_CREDENTIAL_UPDATE"
+    connector_sync_start = "CONNECTOR_SYNC_START"
+    connector_sync_complete = "CONNECTOR_SYNC_COMPLETE"
+    connector_sync_failed = "CONNECTOR_SYNC_FAILED"
+    file_detach = "FILE_DETACH"
 
 
 class RetrievalOrigin(str, Enum):
