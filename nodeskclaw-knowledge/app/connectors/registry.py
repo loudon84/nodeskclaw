@@ -45,3 +45,5 @@ def _ensure_builtin_connectors_loaded() -> None:
         from app.connectors.filesystem import connector as _fs  # noqa: F401
     if CONNECTOR_REGISTRY.get("http_manifest") is None:
         from app.connectors.http_manifest import connector as _http  # noqa: F401
+    if CONNECTOR_REGISTRY.get("s3_compatible") is None:
+        from app.connectors.s3 import connector as _s3  # noqa: F401
