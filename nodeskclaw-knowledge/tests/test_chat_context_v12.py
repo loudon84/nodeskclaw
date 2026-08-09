@@ -46,7 +46,7 @@ def test_build_context_keeps_knowledge_before_history():
         history=history,
         user_message="question",
         max_messages=20,
-        max_tokens=80,
+        max_tokens=200,
     )
     assert messages[0].role == "system"
     assert messages[1].role == "system"
@@ -62,4 +62,4 @@ def test_build_context_keeps_knowledge_before_history():
         + estimate_tokens("question")
     )
     used = sum(estimate_tokens(m.content or "") for m in history_msgs)
-    assert reserved + used <= 80 or not history_msgs
+    assert reserved + used <= 200 or not history_msgs

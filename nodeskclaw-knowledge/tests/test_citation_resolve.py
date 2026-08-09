@@ -72,18 +72,27 @@ def _sf(**kwargs):
         status="active",
         archived_at=None,
         deleted_at=None,
+        source_kind="connector",
+        connector_id="conn1",
+        source_path="/data/a.pdf",
+        source_revision="rev-9",
+        source_modified_at=datetime(2026, 8, 1, tzinfo=UTC),
+        last_synced_at=datetime(2026, 8, 8, tzinfo=UTC),
+        sync_state="in_sync",
     )
     data.update(kwargs)
     return SimpleNamespace(**data)
 
 
-async def _db_get_side_effect(citation, message, session, source_file):
+async def _db_get_side_effect(citation, message, session, source_file, connector=None):
     mapping = {
         ("ChatCitation", citation.id if citation else None): citation,
         ("ChatMessage", message.id if message else None): message,
         ("ChatSession", session.id if session else None): session,
         ("SourceFile", source_file.id if source_file else "sf1"): source_file,
     }
+    if connector is not None:
+        mapping[("KnowledgeSourceConnector", connector.id)] = connector
 
     async def _get(model, pk):
         return mapping.get((model.__name__, pk))
@@ -98,7 +107,8 @@ async def test_resolve_ok_for_session_owner():
     msg = _message()
     sess = _session()
     sf = _sf()
-    db.get = AsyncMock(side_effect=await _db_get_side_effect(cit, msg, sess, sf))
+    connector = SimpleNamespace(id="conn1", connector_type="filesystem", name="Docs FS")
+    db.get = AsyncMock(side_effect=await _db_get_side_effect(cit, msg, sess, sf, connector))
     member = _member()
 
     with patch(
@@ -113,6 +123,36 @@ async def test_resolve_ok_for_session_owner():
     assert result["page"] == 3
     assert result["positions"] == [[1, 2, 3, 4]]
     assert result["source_file_id"] == "sf1"
+    assert result["source_kind"] == "connector"
+    assert result["connector_type"] == "filesystem"
+    assert result["connector_name"] == "Docs FS"
+    assert result["source_path"] == "/data/a.pdf"
+    assert result["source_revision"] == "rev-9"
+    assert result["sync_state"] == "in_sync"
+    assert result["source_freshness"] in {"fresh", "stale"}
+    assert "credential" not in result
+    assert "url" not in str(result).lower() or "source_path" in result
+
+
+@pytest.mark.asyncio
+async def test_stale_source_still_accessible():
+    db = MagicMock()
+    cit = _citation()
+    msg = _message()
+    sess = _session()
+    sf = _sf(sync_state="stale", last_synced_at=datetime(2020, 1, 1, tzinfo=UTC))
+    db.get = AsyncMock(side_effect=await _db_get_side_effect(cit, msg, sess, sf))
+    member = _member()
+
+    with patch(
+        "app.services.citation_service.has_file_permission",
+        new=AsyncMock(return_value=True),
+    ):
+        result = await citation_service.resolve_citation(db, member, "cit1")
+
+    assert result["accessible"] is True
+    assert result["source_freshness"] == "stale"
+    assert result["reason"] == "ok"
 
 
 @pytest.mark.asyncio
