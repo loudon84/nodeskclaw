@@ -50,6 +50,10 @@ def build_meta_fields(
     org_id: str,
     metadata: dict[str, Any] | None = None,
     metadata_revision: int = 0,
+    source_kind: str | None = None,
+    connector_id: str | None = None,
+    external_object_id: str | None = None,
+    source_revision: str | None = None,
 ) -> dict[str, str]:
     fields: dict[str, str] = {
         "nk_source_file_id": source_file_id,
@@ -58,6 +62,14 @@ def build_meta_fields(
         "nk_org_id": org_id,
         "nk_metadata_revision": str(int(metadata_revision or 0)),
     }
+    if source_kind:
+        fields["nk_source_kind"] = source_kind
+    if connector_id:
+        fields["nk_connector_id"] = connector_id
+    if external_object_id:
+        fields["nk_external_object_id"] = external_object_id
+    if source_revision:
+        fields["nk_source_revision"] = source_revision
     for key, value in (metadata or {}).items():
         if key.startswith("nk_") or key in ACL_RESERVED_KEYS or key.startswith("acl_"):
             continue
@@ -70,6 +82,18 @@ def build_meta_fields(
         else:
             fields[f"biz_{key}"] = str(value)
     return fields
+
+
+def resolve_connector_managed_metadata_keys(connector_config: dict[str, Any] | None) -> set[str]:
+    config = connector_config or {}
+    explicit = config.get("connector_managed_metadata_keys")
+    keys: set[str] = set()
+    if isinstance(explicit, list):
+        keys.update(str(k) for k in explicit if k)
+    mapping = config.get("metadata_mapping")
+    if isinstance(mapping, dict):
+        keys.update(str(v) for v in mapping.values() if v)
+    return keys
 
 
 def _metadata_invalid(message: str, *, details: dict[str, Any] | None = None) -> ValidationError:
@@ -352,6 +376,21 @@ async def patch_source_file_metadata(
     ):
         raise ForbiddenError()
     kb = await knowledge_base_service.get_knowledge_base(db, member, sf.knowledge_base_id)
+
+    if sf.source_kind == "connector" and sf.connector_id and metadata_patch:
+        from app.models.connector import KnowledgeSourceConnector
+
+        connector = await db.get(KnowledgeSourceConnector, sf.connector_id)
+        managed = resolve_connector_managed_metadata_keys(connector.config if connector else None)
+        if managed:
+            conflicts = sorted(k for k in metadata_patch.keys() if k in managed)
+            if conflicts:
+                raise ValidationError(
+                    message="禁止覆盖 Connector 托管 metadata 字段",
+                    message_key="errors.knowledge.connector_managed_metadata",
+                    details={"keys": conflicts},
+                )
+
     merged = {**(sf.metadata_ or {}), **(metadata_patch or {})}
     for key, value in list(merged.items()):
         if value is None:
@@ -372,6 +411,10 @@ async def patch_source_file_metadata(
                 org_id=sf.org_id,
                 metadata=validated,
                 metadata_revision=next_revision,
+                source_kind=sf.source_kind,
+                connector_id=sf.connector_id,
+                external_object_id=sf.external_object_id,
+                source_revision=sf.source_revision,
             )
             try:
                 await ragflow.update_document_metadata(kb.ragflow_dataset_id, version.ragflow_document_id, meta)

@@ -19,7 +19,7 @@ from app.schemas.knowledge import (
     SourceFileVersionOut,
 )
 from app.schemas.principal import KnowledgePrincipal
-from app.services import ingestion_service, metadata_service, source_file_service, source_lifecycle_service
+from app.services import ingestion_facade, ingestion_service, metadata_service, source_file_service, source_lifecycle_service
 
 kb_files_router = APIRouter(prefix="/knowledge-bases", tags=["source-files"])
 router = APIRouter(prefix="/source-files", tags=["source-files"])
@@ -111,7 +111,7 @@ async def upload_file(
     parsed_metadata = metadata_service.parse_metadata_form(metadata)
     spool, size, digest = await ingestion_service.read_upload_spooled(file)
     try:
-        sf, version, job = await ingestion_service.ingest_upload(
+        sf, version, job = await ingestion_facade.ingest_from_member(
             db,
             member,
             ragflow,
@@ -255,7 +255,7 @@ async def upload_version(
     parsed_metadata = metadata_service.parse_metadata_form(metadata) if metadata is not None else None
     spool, size, digest = await ingestion_service.read_upload_spooled(file)
     try:
-        sf2, version, job = await ingestion_service.ingest_upload(
+        sf2, version, job = await ingestion_facade.ingest_from_member(
             db,
             member,
             ragflow,
@@ -278,6 +278,16 @@ async def upload_version(
             "job": IngestionJobOut.model_validate(job).model_dump(),
         },
     )
+
+
+@router.post("/{source_file_id}/detach", response_model=ApiResponse[SourceFileOut])
+async def detach_file(
+    source_file_id: str,
+    member: KnowledgePrincipal = Depends(get_member_context),
+    db: AsyncSession = Depends(get_db),
+):
+    sf = await ingestion_facade.detach_source_file(db, member, source_file_id)
+    return ApiResponse(data=SourceFileOut.model_validate(sf))
 
 
 @router.post("/{source_file_id}/reparse", response_model=ApiResponse[IngestionJobOut])

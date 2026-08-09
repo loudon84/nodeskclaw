@@ -126,144 +126,22 @@ async def ingest_upload(
     source_file_id: str | None = None,
     metadata: dict | None = None,
 ) -> tuple[SourceFile, SourceFileVersion, IngestionJob]:
-    if file_obj is not None:
-        size = int(file_size or 0)
-        digest = sha256 or ""
-        if not digest:
-            raise BadRequestError(message="缺少文件摘要", message_key="errors.knowledge.upload_invalid")
-    else:
-        payload = content or b""
-        _validate_upload_size(len(payload))
-        size = len(payload)
-        digest = sha256_bytes(payload)
-        file_obj = None
+    from app.services.ingestion_facade import ingest_from_member
 
-    kb = await knowledge_base_service.get_knowledge_base(db, member, knowledge_base_id)
-    if not kb.ragflow_dataset_id or kb.status != "active":
-        raise BadRequestError(message="知识库未就绪", message_key="errors.knowledge.kb_not_ready")
-    if not await has_kb_permission(db, member, kb.id, KbPermission.upload.value) and not await has_kb_permission(
-        db, member, kb.id, KbPermission.manage.value
-    ):
-        raise ForbiddenError()
-
-    if source_file_id:
-        sf = await source_file_service.get_source_file(db, member, source_file_id)
-        if sf.knowledge_base_id != knowledge_base_id:
-            raise BadRequestError(message="源文件不属于该知识库", message_key="errors.knowledge.source_file_mismatch")
-        old_version = await db.get(SourceFileVersion, sf.active_version_id) if sf.active_version_id else None
-        sf.status = SourceFileStatus.updating.value
-        if metadata is not None:
-            validated_metadata = validate_metadata_values(metadata, kb.metadata_schema, partial=False)
-            sf.metadata_ = validated_metadata
-            sf.metadata_revision = int(sf.metadata_revision or 0) + 1
-    else:
-        existing = await db.execute(
-            select(SourceFile).where(
-                SourceFile.knowledge_base_id == knowledge_base_id,
-                SourceFile.file_name == file_name,
-                not_deleted(SourceFile),
-            )
-        )
-        if existing.scalar_one_or_none():
-            raise BadRequestError(message="同名文件已存在，请走版本更新", message_key="errors.knowledge.file_exists")
-        validated_metadata = validate_metadata_values(metadata or {}, kb.metadata_schema, partial=False)
-        sf = SourceFile(
-            org_id=member.org_id,
-            knowledge_base_id=knowledge_base_id,
-            file_name=file_name,
-            mime_type=mime_type,
-            owner_member_id=member.member_id,
-            status=SourceFileStatus.pending.value,
-            metadata_=validated_metadata,
-            metadata_revision=0,
-        )
-        db.add(sf)
-        await db.flush()
-        old_version = None
-
-    version = SourceFileVersion(
-        source_file_id=sf.id,
-        version_no=await next_version_no(db, sf.id),
-        file_size=size,
-        sha256=digest,
-        uploaded_by_member_id=member.member_id,
-        parse_status="pending",
-        ragflow_status="UNSTART",
+    return await ingest_from_member(
+        db,
+        member,
+        ragflow,
+        knowledge_base_id=knowledge_base_id,
+        file_name=file_name,
+        mime_type=mime_type,
+        content=content,
+        file_obj=file_obj,
+        file_size=file_size,
+        sha256=sha256,
+        source_file_id=source_file_id,
+        metadata=metadata,
     )
-    db.add(version)
-    await db.flush()
-
-    job = IngestionJob(
-        source_file_id=sf.id,
-        file_version_id=version.id,
-        status=IngestionJobStatus.pending.value,
-        created_by_member_id=member.member_id,
-    )
-    db.add(job)
-    await db.flush()
-
-    try:
-        job.status = IngestionJobStatus.uploading.value
-        job.progress = 10
-        await db.flush()
-
-        if file_obj is not None:
-            document_id = await ragflow.upload_document(
-                kb.ragflow_dataset_id,
-                filename=file_name,
-                mime=mime_type,
-                file_obj=file_obj,
-            )
-        else:
-            document_id = await ragflow.upload_document(
-                kb.ragflow_dataset_id,
-                content or b"",
-                file_name,
-                mime_type,
-            )
-        version.ragflow_document_id = document_id
-        job.ragflow_document_id = document_id
-        job.status = IngestionJobStatus.ragflow_uploaded.value
-        job.progress = 40
-        await db.flush()
-
-        meta = build_meta_fields(
-            source_file_id=sf.id,
-            file_version_id=version.id,
-            knowledge_base_id=kb.id,
-            org_id=member.org_id,
-            metadata=sf.metadata_,
-            metadata_revision=sf.metadata_revision,
-        )
-        await ragflow.update_document_metadata(kb.ragflow_dataset_id, document_id, meta)
-        job.status = IngestionJobStatus.metadata_synced.value
-        job.progress = 60
-        await db.flush()
-
-        await ragflow.parse_documents(kb.ragflow_dataset_id, [document_id])
-        version.parse_status = "parsing"
-        version.ragflow_status = "UNSTART"
-        job.status = IngestionJobStatus.parse_dispatched.value
-        job.progress = 70
-        job.next_run_at = _now()
-        await db.commit()
-        await db.refresh(sf)
-        await db.refresh(version)
-        await db.refresh(job)
-        return sf, version, job
-    except RagflowError as exc:
-        job.status = IngestionJobStatus.failed.value
-        job.error_code = exc.message_key
-        job.error_message = exc.message
-        job.finished_at = _now()
-        version.parse_status = "failed"
-        if old_version is None:
-            sf.status = SourceFileStatus.error.value
-        else:
-            sf.status = SourceFileStatus.active.value
-        await db.commit()
-        raise BadRequestError(message=exc.message, message_key=exc.message_key) from exc
-
 
 async def reparse_source_file(
     db: AsyncSession,
