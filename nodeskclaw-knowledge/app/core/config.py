@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     RETRIEVAL_MAX_PARALLEL_SLICES: int = 8
     DEBUG_CONTENT_LOGGING: bool = False
 
+    KNOWLEDGE_CONNECTOR_FS_ROOTS: str = ""
+    KNOWLEDGE_CONNECTOR_MASTER_KEY: str = ""
+    KNOWLEDGE_HTTP_PRIVATE_NETWORK_ALLOWLIST: str = ""
+
     CORS_ORIGINS: list[str] = ["http://127.0.0.1:5173", "http://localhost:5173", "http://127.0.0.1:3000"]
 
     @field_validator("CORS_ORIGINS", mode="before")
@@ -47,6 +51,28 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return [item.strip() for item in value.split(",") if item.strip()]
         return value
+
+
+def parse_connector_fs_roots(raw: str | None = None) -> dict[str, str]:
+    value = raw if raw is not None else settings.KNOWLEDGE_CONNECTOR_FS_ROOTS
+    roots: dict[str, str] = {}
+    for part in (value or "").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "=" not in part:
+            continue
+        alias, path = part.split("=", 1)
+        alias = alias.strip()
+        path = path.strip()
+        if alias and path:
+            roots[alias] = path
+    return roots
+
+
+def parse_private_network_allowlist(raw: str | None = None) -> set[str]:
+    value = raw if raw is not None else settings.KNOWLEDGE_HTTP_PRIVATE_NETWORK_ALLOWLIST
+    return {item.strip() for item in (value or "").split(",") if item.strip()}
 
 
 settings = Settings()
