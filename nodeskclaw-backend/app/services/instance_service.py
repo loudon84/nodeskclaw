@@ -457,6 +457,38 @@ def _compute_endpoint_url(instance: Instance, *, tls_enabled: bool = True) -> st
     return None
 
 
+def _resolve_webui_port(instance: Instance) -> int | None:
+    """Resolve WebUI host port from advanced_config / env_vars."""
+    advanced: dict = {}
+    if instance.advanced_config:
+        try:
+            parsed = json.loads(instance.advanced_config)
+            if isinstance(parsed, dict):
+                advanced = parsed
+        except (json.JSONDecodeError, TypeError):
+            advanced = {}
+    webui = advanced.get("webui") or {}
+    if not isinstance(webui, dict):
+        webui = {}
+
+    env_vars: dict = {}
+    if instance.env_vars:
+        try:
+            parsed_env = json.loads(instance.env_vars)
+            if isinstance(parsed_env, dict):
+                env_vars = parsed_env
+        except (json.JSONDecodeError, TypeError):
+            env_vars = {}
+
+    raw = webui.get("host_port") or webui.get("port") or env_vars.get("DOCKER_HOST_PORT")
+    if raw is None or raw == "":
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
 def _normalize_gateway_env_vars(env_vars: dict[str, str], token: str) -> dict[str, str]:
     """统一实例访问令牌相关环境变量。"""
     normalized = dict(env_vars)
@@ -544,6 +576,7 @@ async def list_instances(
         info = InstanceInfo.model_validate(i)
         info.workspaces = workspaces
         info.endpoint_url = _compute_endpoint_url(i, tls_enabled=tls_enabled)
+        info.webui_port = _resolve_webui_port(i)
         bt = get_instance_binding_type(i)
         info.binding_type = bt
         info.binding_type_label = get_binding_type_label(bt)
@@ -713,6 +746,7 @@ async def get_instance_detail(instance_id: str, db: AsyncSession, org_id: str | 
 
     info_base = InstanceInfo.model_validate(instance)
     info_base.endpoint_url = _compute_endpoint_url(instance, tls_enabled=tls_enabled)
+    info_base.webui_port = _resolve_webui_port(instance)
     bt = get_instance_binding_type(instance)
     info_base.binding_type = bt
     info_base.binding_type_label = get_binding_type_label(bt)

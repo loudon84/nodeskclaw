@@ -36,6 +36,7 @@ interface InstanceInfo {
   compute_provider?: string
   binding_type?: string
   binding_type_label?: string
+  webui_port?: number | null
 }
 
 const roleLabels: Record<string, string> = {
@@ -61,6 +62,7 @@ const hasCluster = computed(() => clusterStore.clusters.length > 0)
 const loading = ref(true)
 const instances = ref<InstanceInfo[]>([])
 const error = ref('')
+const portFilter = ref('')
 
 const templateSelectorOpen = ref(false)
 const templateLoading = ref(false)
@@ -113,6 +115,16 @@ const sortedInstances = computed(() =>
   ),
 )
 
+const filteredInstances = computed(() => {
+  const raw = portFilter.value.trim()
+  if (!raw) return sortedInstances.value
+  if (!/^\d+$/.test(raw)) return []
+  const port = Number(raw)
+  return sortedInstances.value.filter((inst) => inst.webui_port === port)
+})
+
+const hasActivePortFilter = computed(() => portFilter.value.trim().length > 0)
+
 async function fetchInstances() {
   loading.value = true
   error.value = ''
@@ -153,6 +165,13 @@ onMounted(() => {
         <p class="text-sm text-muted-foreground mt-1">{{ t('instanceList.subtitle') }}</p>
       </div>
       <div class="flex items-center gap-2">
+        <input
+          v-model="portFilter"
+          type="text"
+          inputmode="numeric"
+          :placeholder="t('instanceList.portFilterPlaceholder')"
+          class="w-44 px-3 py-2 rounded-lg border border-border bg-background text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+        />
         <Button variant="unstyled" size="unstyled"
           class="flex items-center gap-2 px-3 py-2 rounded-lg border border-border text-sm text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
           @click="fetchInstances"
@@ -290,61 +309,73 @@ onMounted(() => {
     </div>
 
     <!-- Instance table -->
-    <div v-else class="rounded-xl border border-border overflow-hidden">
-      <Table class="w-full text-sm">
-        <TableHeader>
-          <TableRow class="border-b border-border bg-card/60">
-            <TableHead class="text-left px-4 py-3 font-medium text-muted-foreground">{{ t('instanceList.tableName') }}</TableHead>
-            <TableHead class="text-left px-4 py-3 font-medium text-muted-foreground">{{ t('instanceList.tableStatus') }}</TableHead>
-            <TableHead class="text-left px-4 py-3 font-medium text-muted-foreground">{{ t('instanceList.tableImageVersion') }}</TableHead>
-            <TableHead class="text-left px-4 py-3 font-medium text-muted-foreground">{{ t('instanceList.tableCreatedAt') }}</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          <TableRow
-            v-for="inst in sortedInstances"
-            :key="inst.id"
-            class="border-b border-border last:border-b-0 hover:bg-accent/50 cursor-pointer transition-colors"
-            @click="router.push(`/instances/${inst.id}`)"
-          >
-            <TableCell class="px-4 py-3 font-medium">
-              <span class="inline-flex items-center gap-1.5">
-                {{ getInstanceDisplayName(inst) }}
-                <span
-                  v-if="inst.compute_provider === 'docker'"
-                  class="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-sky-500/15 text-sky-400"
-                >
-                  <Container class="w-3 h-3" />
-                  Docker
+    <div v-else class="space-y-3">
+      <div
+        v-if="hasActivePortFilter && filteredInstances.length === 0"
+        class="rounded-xl border border-border px-4 py-10 text-center text-sm text-muted-foreground"
+      >
+        {{ t('instanceList.portFilterEmpty') }}
+      </div>
+      <div v-else class="rounded-xl border border-border overflow-hidden">
+        <Table class="w-full text-sm">
+          <TableHeader>
+            <TableRow class="border-b border-border bg-card/60">
+              <TableHead class="text-left px-4 py-3 font-medium text-muted-foreground">{{ t('instanceList.tableName') }}</TableHead>
+              <TableHead class="text-left px-4 py-3 font-medium text-muted-foreground">{{ t('instanceList.tableStatus') }}</TableHead>
+              <TableHead class="text-left px-4 py-3 font-medium text-muted-foreground">{{ t('instanceList.tableWebuiPort') }}</TableHead>
+              <TableHead class="text-left px-4 py-3 font-medium text-muted-foreground">{{ t('instanceList.tableImageVersion') }}</TableHead>
+              <TableHead class="text-left px-4 py-3 font-medium text-muted-foreground">{{ t('instanceList.tableCreatedAt') }}</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            <TableRow
+              v-for="inst in filteredInstances"
+              :key="inst.id"
+              class="border-b border-border last:border-b-0 hover:bg-accent/50 cursor-pointer transition-colors"
+              @click="router.push(`/instances/${inst.id}`)"
+            >
+              <TableCell class="px-4 py-3 font-medium">
+                <span class="inline-flex items-center gap-1.5">
+                  {{ getInstanceDisplayName(inst) }}
+                  <span
+                    v-if="inst.compute_provider === 'docker'"
+                    class="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-sky-500/15 text-sky-400"
+                  >
+                    <Container class="w-3 h-3" />
+                    Docker
+                  </span>
+                  <span
+                    v-if="inst.binding_type"
+                    class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold"
+                    :class="getBindingTypeClass(inst.binding_type)"
+                  >
+                    {{ getBindingTypeLabel(inst) }}
+                  </span>
                 </span>
-                <span
-                  v-if="inst.binding_type"
-                  class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold"
-                  :class="getBindingTypeClass(inst.binding_type)"
-                >
-                  {{ getBindingTypeLabel(inst) }}
+              </TableCell>
+              <TableCell class="px-4 py-3">
+                <span class="inline-flex items-center gap-1.5">
+                  <span
+                    class="w-2 h-2 rounded-full"
+                    :class="[
+                      getStatus(inst).bgColor,
+                      getStatus(inst).pulse ? 'animate-pulse' : '',
+                    ]"
+                  />
+                  <span :class="getStatus(inst).color">
+                    {{ getStatusLabel(inst) }}
+                  </span>
                 </span>
-              </span>
-            </TableCell>
-            <TableCell class="px-4 py-3">
-              <span class="inline-flex items-center gap-1.5">
-                <span
-                  class="w-2 h-2 rounded-full"
-                  :class="[
-                    getStatus(inst).bgColor,
-                    getStatus(inst).pulse ? 'animate-pulse' : '',
-                  ]"
-                />
-                <span :class="getStatus(inst).color">
-                  {{ getStatusLabel(inst) }}
-                </span>
-              </span>
-            </TableCell>
-            <TableCell class="px-4 py-3 text-muted-foreground font-mono text-xs">{{ inst.image_version }}</TableCell>
-            <TableCell class="px-4 py-3 text-muted-foreground">{{ formatTime(inst.created_at) }}</TableCell>
-          </TableRow>
-        </TableBody>
-      </Table>
+              </TableCell>
+              <TableCell class="px-4 py-3 text-muted-foreground font-mono text-xs">
+                {{ inst.webui_port ?? '-' }}
+              </TableCell>
+              <TableCell class="px-4 py-3 text-muted-foreground font-mono text-xs">{{ inst.image_version }}</TableCell>
+              <TableCell class="px-4 py-3 text-muted-foreground">{{ formatTime(inst.created_at) }}</TableCell>
+            </TableRow>
+          </TableBody>
+        </Table>
+      </div>
     </div>
   </div>
 </template>

@@ -161,7 +161,7 @@ API 路由同时挂载在两个前缀下：
 | `/api/v1/orgs` | 组织 | 组织 CRUD、成员管理、管理员重置成员密码 |
 | `/api/v1/clusters` | 集群 | 集群 CRUD、KubeConfig 管理 |
 | `/api/v1/deploy` | 部署 | 创建部署、YAML 预览 |
-| `/api/v1/instances` | 实例 | 实例列表、详情、日志、删除 |
+| `/api/v1/instances` | 实例 | 实例列表、详情、日志、删除；列表/详情含派生字段 `webui_port`（WebUI host_port，无则 null） |
 | `/api/v1/instances/{id}/available-channels` | Channel 配置 | 扫描 Pod 返回可用 Channel |
 | `/api/v1/instances/{id}/channel-configs` | Channel 配置 | 读写 Channel 配置 + 重启 |
 | `/api/v1/instances/{id}/channels/install` | Channel 配置 | 安装 npm 第三方 Channel |

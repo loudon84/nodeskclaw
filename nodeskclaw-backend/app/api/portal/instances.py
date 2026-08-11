@@ -91,6 +91,7 @@ async def list_instances(
             if await _is_org_admin(current_user.id, inst.org_id, db)
             else None
         )
+        info.webui_port = instance_service._resolve_webui_port(inst)
         bt = get_instance_binding_type(inst)
         info.binding_type = bt
         info.binding_type_label = get_binding_type_label(bt)

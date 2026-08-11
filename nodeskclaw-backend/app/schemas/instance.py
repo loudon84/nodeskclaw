@@ -32,6 +32,7 @@ class InstanceInfo(BaseModel):
     compute_provider: str = "k8s"
     runtime: str = "openclaw"
     endpoint_url: str | None = None
+    webui_port: int | None = None
     storage_class: str | None = None
     storage_size: str = "80Gi"
     advanced_config: str | None = None
