@@ -82,3 +82,11 @@ class AvailableMcpSkillItem(BaseModel):
 
 class CreateHumanMemberResponse(BaseModel):
     member: MemberInfo
+
+
+class OaPersonInfo(BaseModel):
+    fd_no: str
+    fd_name: str
+    fd_email: str | None = None
+    fd_department: str | None = None
+    fd_staff: str | None = None

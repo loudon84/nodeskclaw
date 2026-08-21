@@ -165,6 +165,9 @@ class Settings(BaseSettings):
     DESKHUB_API_KEY: str = ""
     DESKHUB_WEB_URL: str = ""
 
+    # ── OA 人员搜索（创建人类成员快选）────────────────────
+    OA_PERSON_API_URL: str = ""
+
     # ── GeneHub Desktop ──────────────────────────────────
     GENEHUB_BUNDLE_SIGNING_SECRET: str = ""
     GENEHUB_BUNDLE_SIGNATURE_ENABLED: bool = True

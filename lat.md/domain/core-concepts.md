@@ -12,6 +12,8 @@ NoDeskClaw 的核心领域实体是组织、集群、实例、工作区与基因
 
 权威模型：[[nodeskclaw-backend/app/models/organization.py#Organization]]。
 
+快速创建人类成员支持 OA 姓名搜索快选：Portal 点「搜索」调用 `GET /orgs/{org_id}/members/oa-persons?q=`，后端代理 `OA_PERSON_API_URL`（`fd_name`）；未配置或失败不阻断手工填写。映射与代理见 [[nodeskclaw-backend/app/services/org_service.py#search_oa_persons]]。
+
 ## Cluster
 
 集群保存可编排的计算目标（KubeConfig 加密、健康状态），供实例部署与巡检使用。
@@ -27,6 +29,8 @@ NoDeskClaw 的核心领域实体是组织、集群、实例、工作区与基因
 状态机覆盖 creating → deploying → running → failed / deleting 等。部署按 `compute_provider` 分发到 k8s / docker / process（见 [[decisions/compute-providers]]）。
 
 Working Plan 认证用 `wp_api_key`；Control UI / WebSocket 用 `proxy_token`。权威模型：[[nodeskclaw-backend/app/models/instance.py#Instance]]。
+
+列表/详情响应用派生字段 `webui_port` 暴露 WebUI host_port（非 Gateway）：优先 `advanced_config.webui.host_port`，其次 `webui.port`，再回退 `env_vars.DOCKER_HOST_PORT`；解析逻辑见 [[nodeskclaw-backend/app/services/instance_service.py#_resolve_webui_port]]。Portal `/instances` 据此展示并做精确端口筛选。
 
 ### Instance Status
 

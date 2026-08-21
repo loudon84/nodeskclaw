@@ -158,7 +158,7 @@ API 路由同时挂载在两个前缀下：
 | `POST /api/v1/hermes/mcp` | Hermes Skill | 与 `/api/v1/mcp` 行为一致的兼容入口 |
 | `/api/v1/auth` | 认证 | 统一账号/验证码登录、token 刷新、密码管理 |
 | `PUT /api/v1/auth/me/password` | 认证 | 修改/设置密码 |
-| `/api/v1/orgs` | 组织 | 组织 CRUD、成员管理、管理员重置成员密码 |
+| `/api/v1/orgs` | 组织 | 组织 CRUD、成员管理、管理员重置成员密码；`GET .../members/oa-persons?q=` 代理 OA 人员搜索（需 `OA_PERSON_API_URL`） |
 | `/api/v1/clusters` | 集群 | 集群 CRUD、KubeConfig 管理 |
 | `/api/v1/deploy` | 部署 | 创建部署、YAML 预览 |
 | `/api/v1/instances` | 实例 | 实例列表、详情、日志、删除；列表/详情含派生字段 `webui_port`（WebUI host_port，无则 null） |
@@ -520,6 +520,7 @@ NetworkPolicy 相关配置项（通过「组织设置 > 网络」页面管理，
 | `DESKHUB_REGISTRY_URL` | DeskHub Registry 地址。非空时自动注册为 type=deskhub 的 adapter |
 | `DESKHUB_API_KEY` | DeskHub Registry API Key |
 | `DESKHUB_WEB_URL` | DeskHub Web UI 地址，用于缺失技能基因弹窗中的外链 |
+| `OA_PERSON_API_URL` | OA 人员搜索完整 URL（如 `http://api.example.com/oa/person`）。Portal「快速创建成员」点搜索时由后端代理调用，查询参数 `fd_name`；未配置时搜索返回明确错误，不影响手工填写创建
 
 支持的 adapter 类型：`deskhub`（DeskHub/DeskHub 协议）、`clawhub`（ClawHub，当前 stub）。系统始终包含本地 LocalAdapter，无外部 Registry 时纯本地运行。
 

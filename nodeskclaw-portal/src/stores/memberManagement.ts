@@ -68,6 +68,14 @@ export interface CreateHumanMemberPayload {
   skill_ids: string[]
 }
 
+export interface OaPersonInfo {
+  fd_no: string
+  fd_name: string
+  fd_email?: string | null
+  fd_department?: string | null
+  fd_staff?: string | null
+}
+
 export interface UpdateMemberProfilePayload {
   name?: string | null
   username?: string | null
@@ -192,6 +200,13 @@ export const useMemberManagementStore = defineStore('memberManagement', () => {
     availableSkills.value = res.data.data ?? []
   }
 
+  async function searchOaPersons(q: string): Promise<OaPersonInfo[]> {
+    const id = orgId()
+    if (!id) return []
+    const res = await api.get(`/orgs/${id}/members/oa-persons`, { params: { q } })
+    return res.data.data ?? []
+  }
+
   async function fetchMemberSkillGrants(membershipId: string) {
     const id = orgId()
     if (!id) return
@@ -229,6 +244,7 @@ export const useMemberManagementStore = defineStore('memberManagement', () => {
     fetchPendingInvitations,
     inviteMembers,
     fetchAvailableMcpSkills,
+    searchOaPersons,
     fetchMemberSkillGrants,
     replaceMemberSkillGrants,
   }

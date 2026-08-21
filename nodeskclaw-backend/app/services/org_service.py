@@ -3,21 +3,84 @@
 import logging
 import re
 
+import httpx
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import BadRequestError, ConflictError, ForbiddenError, NotFoundError
+from app.core.config import settings
+from app.core.exceptions import AppException, BadRequestError, ConflictError, ForbiddenError, NotFoundError
 from app.models.admin_membership import AdminMembership
 from app.models.base import not_deleted
 from app.models.org_membership import OrgMembership, OrgRole
 from app.models.organization import Organization
 from app.models.user import User
-from app.schemas.member import CreateHumanMemberRequest, UpdateMemberProfileRequest
+from app.schemas.member import CreateHumanMemberRequest, OaPersonInfo, UpdateMemberProfileRequest
 from app.schemas.organization import MemberInfo, OrgCreate, OrgInfo, OrgUpdate
 
 logger = logging.getLogger(__name__)
 
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9\-]{1,62}[a-z0-9]$")
+_OA_PERSON_TIMEOUT = httpx.Timeout(10.0, connect=5.0)
+
+
+# @lat: [[core-concepts#Organization]]
+async def search_oa_persons(q: str) -> list[OaPersonInfo]:
+    """Proxy OA person search by name keyword. Empty q returns []."""
+    keyword = (q or "").strip()
+    if not keyword:
+        return []
+
+    api_url = (settings.OA_PERSON_API_URL or "").strip()
+    if not api_url:
+        raise BadRequestError(
+            message="OA 人员搜索未配置，请在环境变量中设置 OA_PERSON_API_URL",
+            message_key="errors.org.oa_person_not_configured",
+        )
+
+    try:
+        async with httpx.AsyncClient(timeout=_OA_PERSON_TIMEOUT) as client:
+            response = await client.get(api_url, params={"fd_name": keyword})
+            response.raise_for_status()
+            payload = response.json()
+    except (httpx.HTTPError, ValueError, TypeError) as exc:
+        logger.warning("OA person search failed: %s", exc)
+        raise AppException(
+            code=50230,
+            message="OA 人员搜索失败，请稍后重试或手工填写",
+            status_code=502,
+            message_key="errors.org.oa_person_search_failed",
+        ) from exc
+
+    if not isinstance(payload, dict) or payload.get("code") != 1:
+        raise AppException(
+            code=50230,
+            message="OA 人员搜索失败，请稍后重试或手工填写",
+            status_code=502,
+            message_key="errors.org.oa_person_search_failed",
+        )
+
+    raw_items = payload.get("data") or []
+    if not isinstance(raw_items, list):
+        return []
+
+    results: list[OaPersonInfo] = []
+    for item in raw_items:
+        if not isinstance(item, dict):
+            continue
+        fd_no = str(item.get("fd_no") or "").strip()
+        fd_name = str(item.get("fd_name") or "").strip()
+        if not fd_no or not fd_name:
+            continue
+        results.append(
+            OaPersonInfo(
+                fd_no=fd_no,
+                fd_name=fd_name,
+                fd_email=(str(item["fd_email"]).strip() if item.get("fd_email") else None) or None,
+                fd_department=(str(item["fd_department"]).strip() if item.get("fd_department") else None) or None,
+                fd_staff=(str(item["fd_staff"]).strip() if item.get("fd_staff") else None) or None,
+            )
+        )
+    return results
 
 
 async def list_orgs(db: AsyncSession) -> list[OrgInfo]:

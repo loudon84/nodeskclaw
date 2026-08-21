@@ -78,7 +78,7 @@ vue-tsc -b       # 类型检查
 | `/org-settings/smtp` | 邮件配置 | 组织 SMTP 服务器配置（org-settings 子路由） |
 | `/org-settings/upload` | 文件上传 | 上传限制与安全策略配置（org-settings 子路由） |
 | `/clusters/:id` | 集群详情 | 资源概览、节点列表、IngressClass、StorageClass |
-| `/members` | (重定向) | 重定向到 `/org-settings` |
+| `/members` | 成员管理 | 人类成员列表；快速创建支持姓名手填 + OA 搜索快选 |
 | `/enterprise-files` | 企业空间 | Agent 文件浏览（仅 org admin） |
 | `/enterprise-files/:instanceId` | 文件浏览器 | 单个 Agent 的文件列表和预览 |
 

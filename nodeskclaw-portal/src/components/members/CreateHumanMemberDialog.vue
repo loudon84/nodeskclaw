@@ -5,8 +5,9 @@ import {
   useMemberManagementStore,
   type AvailableMcpSkill,
   type MemberInfo,
+  type OaPersonInfo,
 } from '@/stores/memberManagement'
-import { Loader2 } from 'lucide-vue-next'
+import { Loader2, Search } from 'lucide-vue-next'
 import CustomSelect from '@/components/shared/CustomSelect.vue'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -42,6 +43,10 @@ const mustChangePassword = ref(true)
 const selectedSkillIds = ref<string[]>([])
 const skills = ref<AvailableMcpSkill[]>([])
 
+const oaResults = ref<OaPersonInfo[]>([])
+const oaSearching = ref(false)
+const oaDropdownOpen = ref(false)
+
 const roleOptions = computed(() => [
   { value: 'member', label: t('orgMembers.roleMember') },
   { value: 'operator', label: t('orgMembers.roleOperator') },
@@ -55,6 +60,27 @@ const supervisorOptions = computed(() =>
       label: m.user_name || m.user_email || m.username || m.id,
     }))
 )
+
+function resetOaSearch() {
+  oaResults.value = []
+  oaDropdownOpen.value = false
+  oaSearching.value = false
+}
+
+function resetForm() {
+  name.value = ''
+  email.value = ''
+  username.value = ''
+  defaultPassword.value = ''
+  role.value = 'member'
+  department.value = ''
+  jobTitle.value = ''
+  employeeNo.value = ''
+  supervisorId.value = null
+  mustChangePassword.value = true
+  selectedSkillIds.value = []
+  resetOaSearch()
+}
 
 function generatePassword() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$'
@@ -72,7 +98,10 @@ async function loadSkills() {
 
 watch(() => props.open, (val) => {
   if (val) {
+    resetForm()
     loadSkills()
+  } else {
+    resetOaSearch()
   }
 })
 
@@ -88,6 +117,40 @@ function toggleSkill(skillId: string, checked: boolean) {
     return
   }
   selectedSkillIds.value = selectedSkillIds.value.filter(id => id !== skillId)
+}
+
+async function handleSearchOa() {
+  const keyword = name.value.trim()
+  if (!keyword) {
+    toast.error(t('memberManagement.oaSearchNameRequired'))
+    return
+  }
+  oaSearching.value = true
+  oaResults.value = []
+  oaDropdownOpen.value = false
+  try {
+    const results = await store.searchOaPersons(keyword)
+    oaResults.value = results
+    if (results.length === 0) {
+      toast.error(t('memberManagement.oaSearchEmpty'))
+      return
+    }
+    oaDropdownOpen.value = true
+  } catch (e) {
+    toast.error(resolveApiErrorMessage(e, t('memberManagement.oaSearchFailed')))
+  } finally {
+    oaSearching.value = false
+  }
+}
+
+function selectOaPerson(person: OaPersonInfo) {
+  name.value = person.fd_name || name.value
+  employeeNo.value = person.fd_no || ''
+  email.value = person.fd_email || ''
+  username.value = (person.fd_no || '').toLowerCase()
+  department.value = person.fd_department || ''
+  jobTitle.value = person.fd_staff || ''
+  oaDropdownOpen.value = false
 }
 
 async function handleSubmit() {
@@ -131,9 +194,39 @@ async function handleSubmit() {
       <h3 class="text-lg font-semibold">{{ t('memberManagement.createDialogTitle') }}</h3>
 
       <div class="space-y-3">
-        <div>
+        <div class="relative">
           <Label>{{ t('memberManagement.nameLabel') }}</Label>
-          <Input v-model="name" class="mt-1" />
+          <div class="flex gap-2 mt-1">
+            <Input v-model="name" class="flex-1" />
+            <Button
+              variant="outline"
+              :disabled="oaSearching"
+              @click="handleSearchOa"
+            >
+              <Loader2 v-if="oaSearching" class="w-4 h-4 animate-spin mr-1" />
+              <Search v-else class="w-4 h-4 mr-1" />
+              {{ t('memberManagement.oaSearch') }}
+            </Button>
+          </div>
+          <div
+            v-if="oaDropdownOpen && oaResults.length > 0"
+            class="absolute z-10 mt-1 w-full rounded-lg border border-border bg-card shadow-lg max-h-48 overflow-y-auto"
+          >
+            <button
+              v-for="person in oaResults"
+              :key="person.fd_no"
+              type="button"
+              class="w-full px-3 py-2 text-left text-sm hover:bg-accent transition-colors flex items-center justify-between gap-2"
+              @click="selectOaPerson(person)"
+            >
+              <span class="font-medium truncate">{{ person.fd_name }}</span>
+              <span class="text-xs text-muted-foreground font-mono shrink-0">{{ person.fd_no }}</span>
+            </button>
+          </div>
+        </div>
+        <div>
+          <Label>{{ t('memberManagement.employeeNoLabel') }}</Label>
+          <Input v-model="employeeNo" class="mt-1" />
         </div>
         <div>
           <Label>{{ t('memberManagement.emailLabel') }}</Label>
@@ -161,10 +254,6 @@ async function handleSubmit() {
         <div>
           <Label>{{ t('memberManagement.jobTitleLabel') }}</Label>
           <Input v-model="jobTitle" class="mt-1" />
-        </div>
-        <div>
-          <Label>{{ t('memberManagement.employeeNoLabel') }}</Label>
-          <Input v-model="employeeNo" class="mt-1" />
         </div>
         <div>
           <Label>{{ t('memberManagement.supervisorLabel') }}</Label>

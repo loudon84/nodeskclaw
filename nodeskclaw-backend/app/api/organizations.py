@@ -2,7 +2,7 @@
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,6 +26,7 @@ from app.schemas.member import (
     CreateHumanMemberResponse,
     MemberSkillGrantListResponse,
     MemberSkillGrantSaveResult,
+    OaPersonInfo,
     ReplaceMemberSkillGrantsRequest,
     UpdateMemberProfileRequest,
 )
@@ -222,6 +223,17 @@ async def list_members(
 ):
     """列出组织成员（组织成员+）。"""
     data = await org_service.list_members(org_id, db, current_user_id=current_user.id)
+    return ApiResponse(data=data)
+
+
+@router.get("/{org_id}/members/oa-persons", response_model=ApiResponse[list[OaPersonInfo]])
+async def search_oa_persons(
+    org_id: str,
+    q: str = Query("", max_length=128),
+    org_ctx: tuple = Depends(require_org_admin),
+):
+    _actor, _org = org_ctx
+    data = await org_service.search_oa_persons(q)
     return ApiResponse(data=data)
 
 
