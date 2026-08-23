@@ -1,0 +1,100 @@
+{
+  "$defs": {
+    "TaskArtifactReadyPayload": {
+      "properties": {
+        "artifact_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Artifact Id"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Type"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Path"
+        }
+      },
+      "title": "TaskArtifactReadyPayload",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "event": {
+      "default": "task.artifact.ready",
+      "title": "Event",
+      "type": "string"
+    },
+    "task_id": {
+      "title": "Task Id",
+      "type": "string"
+    },
+    "timestamp": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Timestamp"
+    },
+    "event_type": {
+      "title": "Event Type",
+      "type": "string"
+    },
+    "event_seq": {
+      "title": "Event Seq",
+      "type": "integer"
+    },
+    "artifact": {
+      "$ref": "#/$defs/TaskArtifactReadyPayload"
+    }
+  },
+  "required": [
+    "task_id",
+    "event_type",
+    "event_seq",
+    "artifact"
+  ],
+  "title": "TaskArtifactReadyEvent",
+  "type": "object"
+}

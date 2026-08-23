@@ -133,7 +133,8 @@ class TaskResultService:
             result_section = {
                 "ready": True,
                 "summary": task.result_summary,
-                "content": None,
+                "result_content": task.result_content,
+                "content": task.result_content,
                 "isError": True,
                 "error": {
                     "code": task.error_code or task.status.value.upper(),
@@ -144,6 +145,7 @@ class TaskResultService:
             result_section = {
                 "ready": False,
                 "summary": None,
+                "result_content": None,
                 "content": None,
                 "message": "任务仍在执行中",
             }

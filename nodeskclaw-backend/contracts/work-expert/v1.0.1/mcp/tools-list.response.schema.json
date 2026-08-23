@@ -1,0 +1,14 @@
+{
+  "properties": {
+    "tools": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Tools",
+      "type": "array"
+    }
+  },
+  "title": "ToolsListResult",
+  "type": "object"
+}

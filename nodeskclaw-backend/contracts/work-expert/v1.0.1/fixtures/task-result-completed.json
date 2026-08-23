@@ -1,0 +1,13 @@
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "ready": true,
+    "status": "completed",
+    "task_id": "task-1",
+    "task_no": "TASK-org1-abcd1234",
+    "result_summary": "short summary",
+    "result_content": "full result body that is longer than summary",
+    "content": "full result body that is longer than summary"
+  }
+}

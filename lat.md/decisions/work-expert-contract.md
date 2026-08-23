@@ -1,6 +1,6 @@
 # Work Expert Contract
 
-WORK-EXPERT-CONTRACT v1.0.0 冻结 Expert MCP 与 Hermes Task 跟进 API，供 smc-copilot/apps/work 按 Git tag 锁定；FastAPI 路由与 Pydantic 为唯一事实源。
+WORK-EXPERT-CONTRACT 冻结 Expert MCP 与 Hermes Task 跟进 API；当前消费版本为 v1.0.1，v1.0.0 目录与 tag 保持不可变。FastAPI 路由与 Pydantic 为唯一事实源。
 
 ## Binding
 
@@ -9,13 +9,15 @@ Expert 与 Hermes 消费面的版本、产物路径与 tag 锁定约定。
 | 项 | 值 |
 |---|---|
 | contractName | WORK-EXPERT-CONTRACT |
-| contractVersion | 1.0.0 |
-| 产物目录 | `nodeskclaw-backend/contracts/work-expert/v1.0.0/` |
+| contractVersion | 1.0.1（v1.0.0 产物冻结于 `contracts/work-expert/v1.0.0/`） |
+| 产物目录 | `nodeskclaw-backend/contracts/work-expert/v1.0.1/` |
 | Provider | nodeskclaw-backend |
 | Consumer | smc-copilot/apps/work |
-| 发布 tag | `work-expert-contract-v1.0.0`（annotated，绑定 tag commit SHA） |
+| 发布 tag | `work-expert-contract-v1.0.1`（annotated）；v1.0.0 tag 不可移动 |
 
-`GET /api/v1/system/info` 的 `workExpertContract` 指向上述目录；Expert health 返回 `contractVersion` 与 `capabilities`。**禁止** consumer 使用 `gateway.version`。
+Consumer 必须锁定 **tag name + tag target commit SHA + SHA256SUMS**，禁止锁定 `main` 或只锁定 `manifest.backendCommit`。
+
+`GET /api/v1/system/info` 的 `workExpertContract` 指向当前版本目录；Expert health 返回 `contractVersion` 与 `capabilities`。**禁止** consumer 使用 `gateway.version`。
 
 ## Capabilities
 
@@ -39,11 +41,11 @@ Cancel-safe：RUNNING 取消后 Worker 不得 `mark_completed`。Retry 复制 ro
 
 ## CI
 
-`scripts/contracts.py generate` / `check` 校验 OpenAPI、schema、fixtures 与 SHA256SUMS；quality-gate 在 pytest 后执行 check。
+`scripts/contracts.py generate` / `check` 校验 OpenAPI、非空 200 schema、fixtures、SHA256SUMS、冻结 v1.0.0 checksum；quality-gate 在 pytest 后执行 check。v1.0.1 补齐 Hermes HTTP `response_model`。
 
 ## OpenAPI Coverage
 
-合同 OpenAPI 子集覆盖 13 条路径（Expert health/MCP + Hermes task 跟进 + artifact preview/download），清单见 [[nodeskclaw-backend/app/contracts/work_expert/constants.py#WORK_EXPERT_OPENAPI_PATHS]]。
+合同 OpenAPI 子集覆盖 13 条路径；v1.0.1 要求这些路径的 200 响应不得为 `schema: {}`，清单见 [[nodeskclaw-backend/app/contracts/work_expert/constants.py#WORK_EXPERT_OPENAPI_PATHS]]。
 
 ## Implementation
 

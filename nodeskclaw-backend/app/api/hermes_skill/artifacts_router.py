@@ -13,7 +13,13 @@ from app.core.exceptions import (
     ArtifactForbiddenError,
     NotFoundError,
 )
-from app.schemas.hermes_skill.artifact_schema import ArtifactDetail, ArtifactSummary, ArtifactPreviewResponse
+from app.schemas.hermes_skill.artifact_schema import ArtifactDetail, ArtifactSummary
+from app.schemas.work_expert.http_responses import (
+    ArtifactPreviewData,
+    ArtifactPreviewHttpResponse,
+    artifact_download_responses,
+    contract_error_responses,
+)
 from app.services.hermes_skill.artifact_service import ArtifactService, _max_batch_download_bytes
 from app.services.hermes_skill.path_guard import PathGuard
 from app.services.hermes_skill.permission_checker import PermissionChecker
@@ -88,7 +94,11 @@ async def get_artifact(
     return _ok(ArtifactDetail.model_validate(artifact).model_dump())
 
 
-@router.get("/artifacts/{artifact_id}/preview")
+@router.get(
+    "/artifacts/{artifact_id}/preview",
+    response_model=ArtifactPreviewHttpResponse,
+    responses=contract_error_responses(),
+)
 async def preview_artifact(
     artifact_id: str,
     user_org=Depends(require_org_member),
@@ -104,19 +114,25 @@ async def preview_artifact(
     artifact, content, truncated, preview_type = await service.preview(
         artifact_id, org.id, user_id=user.id if user else None,
     )
-    resp = ArtifactPreviewResponse(
+    resp = ArtifactPreviewData(
         artifact_id=artifact_id,
+        org_id=artifact.org_id,
+        task_id=artifact.task_id,
+        created_by=artifact.created_by,
         file_name=artifact.file_name,
         content_type=artifact.content_type or "text/plain",
         preview_type=preview_type,
         content=content,
         truncated=truncated,
         size_bytes=artifact.size_bytes,
+        sha256=artifact.sha256,
+        preview_url=f"/api/v1/hermes/artifacts/{artifact_id}/preview",
+        download_url=f"/api/v1/hermes/artifacts/{artifact_id}/download",
     )
     return _ok(resp.model_dump())
 
 
-@router.get("/artifacts/{artifact_id}/download")
+@router.get("/artifacts/{artifact_id}/download", responses=artifact_download_responses())
 async def download_artifact(
     artifact_id: str,
     user_org=Depends(require_org_member),

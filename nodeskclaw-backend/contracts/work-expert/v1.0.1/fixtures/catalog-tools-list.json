@@ -1,0 +1,20 @@
+{
+  "jsonrpc": "2.0",
+  "id": "list-root",
+  "result": {
+    "tools": [
+      {
+        "name": "call-prep",
+        "description": "Customer research expert",
+        "inputSchema": {
+          "type": "object",
+          "properties": {}
+        },
+        "annotations": {
+          "kind": "expert",
+          "slug": "call-prep"
+        }
+      }
+    ]
+  }
+}

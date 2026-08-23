@@ -1,0 +1,131 @@
+{
+  "$defs": {
+    "TaskCompletedResultPayload": {
+      "properties": {
+        "summary": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Summary"
+        },
+        "content": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Content"
+        },
+        "artifacts": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Artifacts",
+          "type": "array"
+        },
+        "artifact_mode": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Artifact Mode"
+        },
+        "kb_status": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Kb Status"
+        }
+      },
+      "title": "TaskCompletedResultPayload",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "event": {
+      "default": "task.completed",
+      "title": "Event",
+      "type": "string"
+    },
+    "task_id": {
+      "title": "Task Id",
+      "type": "string"
+    },
+    "timestamp": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Timestamp"
+    },
+    "event_type": {
+      "title": "Event Type",
+      "type": "string"
+    },
+    "event_seq": {
+      "title": "Event Seq",
+      "type": "integer"
+    },
+    "result": {
+      "$ref": "#/$defs/TaskCompletedResultPayload"
+    },
+    "artifact_mode": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Artifact Mode"
+    },
+    "kb_status": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Kb Status"
+    }
+  },
+  "required": [
+    "task_id",
+    "event_type",
+    "event_seq"
+  ],
+  "title": "TaskCompletedEvent",
+  "type": "object"
+}

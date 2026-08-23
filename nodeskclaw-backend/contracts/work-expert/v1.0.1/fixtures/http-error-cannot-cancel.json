@@ -1,0 +1,7 @@
+{
+  "code": 40000,
+  "error_code": 40000,
+  "message_key": "errors.task.cannot_cancel",
+  "message": "当前任务状态不可取消",
+  "data": null
+}

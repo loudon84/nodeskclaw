@@ -1,6 +1,6 @@
 # Expert MCP Gateway 模块说明
 
-> **apps/work 消费契约**：以 `nodeskclaw-backend/contracts/work-expert/v1.0.0/` 的 **WORK-EXPERT-CONTRACT v1.0.0** 为准（OpenAPI 子集、SSE/MCP schema、fixtures、SHA256SUMS）。由 `uv run python scripts/contracts.py generate` 从 FastAPI/Pydantic 生成；`contractVersion` 见 Expert health 与 `GET /api/v1/system/info`。本文档为运维与 Portal 背景说明，**勿用下文 gateway 版本号（v6.x）作 consumer 锁定依据**。详见同目录 `RELEASE.md` 与 `lat.md/decisions/work-expert-contract.md`。
+> **apps/work 消费契约**：以 `nodeskclaw-backend/contracts/work-expert/v1.0.1/` 的 **WORK-EXPERT-CONTRACT v1.0.1** 为准。v1.0.0 目录与 tag `work-expert-contract-v1.0.0` 已冻结、不可改写。由 `uv run python scripts/contracts.py generate` 从 FastAPI/Pydantic 生成。Consumer 锁定 **tag name + tag target commit SHA + SHA256SUMS**。勿用下文 gateway 版本号（v6.x）。
 
 ## 概述
 

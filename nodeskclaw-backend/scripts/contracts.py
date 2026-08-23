@@ -12,7 +12,7 @@ from pathlib import Path
 import yaml
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
-CONTRACT_ROOT = BACKEND_ROOT / "contracts" / "work-expert" / "v1.0.0"
+CONTRACTS_HOME = BACKEND_ROOT / "contracts" / "work-expert"
 
 P0_TEST_FILES = [
     "tests/expert_gateway/test_mcp_capability_token.py",
@@ -24,7 +24,22 @@ P0_TEST_FILES = [
     "tests/hermes_skill/test_result_content_separation.py",
     "tests/hermes_skill/test_progress_stages_minimum.py",
     "tests/contracts/test_contracts_check.py",
+    "tests/contracts/test_openapi_response_schemas.py",
 ]
+
+
+def contract_root(version: str | None = None) -> Path:
+    if version:
+        return CONTRACTS_HOME / f"v{version}"
+    try:
+        from app.contracts.work_expert.constants import WORK_EXPERT_CONTRACT_VERSION
+
+        return CONTRACTS_HOME / f"v{WORK_EXPERT_CONTRACT_VERSION}"
+    except ImportError:
+        return CONTRACTS_HOME / "v1.0.1"
+
+
+CONTRACT_ROOT = CONTRACTS_HOME / "v1.0.1"
 
 
 def _git_head() -> str:
@@ -46,8 +61,97 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def is_empty_json_schema(schema) -> bool:
+    if schema is None:
+        return True
+    if schema == {}:
+        return True
+    if not isinstance(schema, dict):
+        return False
+    if schema.get("$ref") or schema.get("type") or schema.get("properties"):
+        return False
+    if schema.get("oneOf") or schema.get("anyOf") or schema.get("allOf") or schema.get("items"):
+        return False
+    return True
+
+
+def _collect_refs(node, acc: set[str]) -> None:
+    if isinstance(node, dict):
+        ref = node.get("$ref")
+        if isinstance(ref, str) and ref.startswith("#/components/schemas/"):
+            acc.add(ref.rsplit("/", 1)[-1])
+        for value in node.values():
+            _collect_refs(value, acc)
+    elif isinstance(node, list):
+        for value in node:
+            _collect_refs(value, acc)
+
+
+def _prune_openapi_components(openapi: dict) -> dict:
+    schemas = (openapi.get("components") or {}).get("schemas") or {}
+    needed: set[str] = set()
+    _collect_refs(openapi.get("paths"), needed)
+    changed = True
+    while changed:
+        changed = False
+        for name in list(needed):
+            schema = schemas.get(name)
+            if not schema:
+                continue
+            before = len(needed)
+            _collect_refs(schema, needed)
+            if len(needed) > before:
+                changed = True
+    openapi["components"] = {
+        "schemas": {name: schemas[name] for name in sorted(needed) if name in schemas}
+    }
+    return openapi
+
+
+def _strip_empty_200_json_when_other_media(openapi: dict) -> dict:
+    for path_item in (openapi.get("paths") or {}).values():
+        if not isinstance(path_item, dict):
+            continue
+        for operation in path_item.values():
+            if not isinstance(operation, dict):
+                continue
+            content = (
+                operation.get("responses", {})
+                .get("200", {})
+                .get("content")
+            )
+            if not isinstance(content, dict):
+                continue
+            json_body = content.get("application/json")
+            if json_body and is_empty_json_schema(json_body.get("schema")):
+                if any(media != "application/json" for media in content):
+                    content.pop("application/json", None)
+    return openapi
+
+
+def assert_non_empty_200_schemas(openapi: dict, paths: list[str]) -> None:
+    empty: list[str] = []
+    for path in paths:
+        path_item = openapi.get("paths", {}).get(path) or {}
+        for method, operation in path_item.items():
+            if method.startswith("x-") or not isinstance(operation, dict):
+                continue
+            content = operation.get("responses", {}).get("200", {}).get("content") or {}
+            if not content:
+                empty.append(f"{method.upper()} {path} missing 200 content")
+                continue
+            for media, body in content.items():
+                if is_empty_json_schema((body or {}).get("schema")):
+                    empty.append(f"{method.upper()} {path} {media}")
+    if empty:
+        raise SystemExit("Empty OpenAPI 200 response schema: " + "; ".join(empty))
+
+
 def _load_openapi_subset() -> dict:
-    from app.contracts.work_expert.constants import WORK_EXPERT_OPENAPI_PATHS
+    from app.contracts.work_expert.constants import (
+        WORK_EXPERT_CONTRACT_VERSION,
+        WORK_EXPERT_OPENAPI_PATHS,
+    )
     from app.main import app
 
     full = app.openapi()
@@ -59,15 +163,19 @@ def _load_openapi_subset() -> dict:
     missing = [path for path in WORK_EXPERT_OPENAPI_PATHS if path not in full.get("paths", {})]
     if missing:
         raise SystemExit(f"OpenAPI missing contract paths: {missing}")
-    return {
+    openapi = {
         "openapi": full.get("openapi", "3.1.0"),
         "info": {
             "title": "WORK-EXPERT-CONTRACT",
-            "version": "1.0.0",
+            "version": WORK_EXPERT_CONTRACT_VERSION,
         },
         "paths": filtered_paths,
         "components": full.get("components", {}),
     }
+    openapi = _prune_openapi_components(openapi)
+    openapi = _strip_empty_200_json_when_other_media(openapi)
+    assert_non_empty_200_schemas(openapi, WORK_EXPERT_OPENAPI_PATHS)
+    return openapi
 
 
 def _model_schema(model) -> dict:
@@ -79,17 +187,18 @@ def _write_json(path: Path, payload: dict) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
-def _artifact_files() -> list[Path]:
+def _artifact_files(root: Path) -> list[Path]:
     patterns = [
         "openapi.yaml",
-        "manifest.json",
+        "RELEASE.md",
         "events/*.schema.json",
         "mcp/*.schema.json",
         "fixtures/*",
+        "evidence/*",
     ]
     files: list[Path] = []
     for pattern in patterns:
-        files.extend(sorted(CONTRACT_ROOT.glob(pattern)))
+        files.extend(sorted(root.glob(pattern)))
     return [path for path in files if path.is_file()]
 
 
@@ -98,6 +207,7 @@ def _build_manifest(file_hashes: dict[str, str], backend_commit: str) -> dict:
         WORK_EXPERT_CAPABILITIES,
         WORK_EXPERT_CONTRACT_NAME,
         WORK_EXPERT_CONTRACT_VERSION,
+        WORK_EXPERT_TAG_NAME,
     )
 
     return {
@@ -106,6 +216,8 @@ def _build_manifest(file_hashes: dict[str, str], backend_commit: str) -> dict:
         "provider": "nodeskclaw-backend",
         "consumer": "smc-copilot/apps/work",
         "backendCommit": backend_commit,
+        "tagName": WORK_EXPERT_TAG_NAME,
+        "tagTargetCommit": None,
         "generatedAt": datetime.now(timezone.utc).isoformat(),
         "openapiVersion": "3.1.0",
         "eventSchemaVersion": "1.0.0",
@@ -118,7 +230,7 @@ def _build_manifest(file_hashes: dict[str, str], backend_commit: str) -> dict:
             "agentMaxRunningDefault": 5,
             "workerBatchSize": 5,
             "workerSequential": True,
-            "loadGate": "unmet",
+            "loadGate": WORK_EXPERT_CAPABILITIES["loadGate"],
         },
     }
 
@@ -221,11 +333,75 @@ def _fixture_payloads() -> dict[str, dict | list | str]:
                     "task_id": "task-1",
                     "created_by": "user-1",
                     "file_name": "article.md",
+                    "file_path": "article.md",
                     "content_type": "text/markdown",
                     "size_bytes": 128,
                     "sha256": "abc123",
+                    "preview_url": "/api/v1/hermes/artifacts/artifact-1/preview",
+                    "download_url": "/api/v1/hermes/artifacts/artifact-1/download",
                 }
             ],
+            "server_artifacts": [],
+            "artifact_mode": "pull_only",
+        },
+        "fixtures/http-task-get.json": {
+            "code": 0,
+            "message": "success",
+            "data": {
+                "id": "task-1",
+                "org_id": "org-1",
+                "task_no": "TASK-org1-abcd1234",
+                "status": "running",
+            },
+        },
+        "fixtures/http-events-token.json": {
+            "code": 0,
+            "message": "success",
+            "data": {
+                "event_url": "/api/v1/hermes/tasks/task-1/events?token=sse_test",
+                "expires_in": 300,
+                "expires_at": "2026-08-23T03:00:00+00:00",
+            },
+        },
+        "fixtures/http-artifact-preview.json": {
+            "code": 0,
+            "message": "success",
+            "data": {
+                "artifact_id": "artifact-1",
+                "org_id": "org-1",
+                "task_id": "task-1",
+                "created_by": "user-1",
+                "file_name": "article.md",
+                "content_type": "text/markdown",
+                "preview_type": "text",
+                "content": "# draft",
+                "truncated": False,
+                "size_bytes": 8,
+                "sha256": "abc123",
+                "preview_url": "/api/v1/hermes/artifacts/artifact-1/preview",
+                "download_url": "/api/v1/hermes/artifacts/artifact-1/download",
+            },
+        },
+        "fixtures/http-error-owner-forbidden.json": {
+            "code": 40300,
+            "error_code": 40300,
+            "message_key": "errors.task.owner_forbidden",
+            "message": "无权访问该任务",
+            "data": None,
+        },
+        "fixtures/http-error-not-found.json": {
+            "code": 40400,
+            "error_code": 40400,
+            "message_key": "errors.task.not_found",
+            "message": "任务不存在",
+            "data": None,
+        },
+        "fixtures/http-error-cannot-cancel.json": {
+            "code": 40000,
+            "error_code": 40000,
+            "message_key": "errors.task.cannot_cancel",
+            "message": "当前任务状态不可取消",
+            "data": None,
         },
         "fixtures/json-rpc-error.json": {
             "jsonrpc": "2.0",
@@ -256,13 +432,15 @@ def generate_contracts() -> None:
         ToolsListResult,
     )
 
-    CONTRACT_ROOT.mkdir(parents=True, exist_ok=True)
-    (CONTRACT_ROOT / "events").mkdir(exist_ok=True)
-    (CONTRACT_ROOT / "mcp").mkdir(exist_ok=True)
-    (CONTRACT_ROOT / "fixtures").mkdir(exist_ok=True)
+    root = contract_root()
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "events").mkdir(exist_ok=True)
+    (root / "mcp").mkdir(exist_ok=True)
+    (root / "fixtures").mkdir(exist_ok=True)
+    (root / "evidence").mkdir(exist_ok=True)
 
     openapi = _load_openapi_subset()
-    (CONTRACT_ROOT / "openapi.yaml").write_text(
+    (root / "openapi.yaml").write_text(
         yaml.safe_dump(openapi, sort_keys=False, allow_unicode=True),
         encoding="utf-8",
     )
@@ -277,7 +455,7 @@ def generate_contracts() -> None:
         "task-failed.schema.json": TaskFailedEvent,
     }
     for filename, model in event_models.items():
-        _write_json(CONTRACT_ROOT / "events" / filename, _model_schema(model))
+        _write_json(root / "events" / filename, _model_schema(model))
 
     mcp_models = {
         "tools-list.request.schema.json": JsonRpcRequest,
@@ -287,14 +465,11 @@ def generate_contracts() -> None:
         "json-rpc-error.schema.json": JsonRpcErrorResponse,
     }
     for filename, model in mcp_models.items():
-        _write_json(CONTRACT_ROOT / "mcp" / filename, _model_schema(model))
+        _write_json(root / "mcp" / filename, _model_schema(model))
 
     for relative_path, payload in _fixture_payloads().items():
-        target = CONTRACT_ROOT / relative_path
-        if relative_path.endswith(".ndjson"):
-            target.write_text(payload if isinstance(payload, str) else "", encoding="utf-8")
-        else:
-            _write_json(target, payload)
+        target = root / relative_path
+        _write_json(target, payload)
 
     sse_replay = "\n".join(
         [
@@ -332,31 +507,67 @@ def generate_contracts() -> None:
             ),
         ]
     ) + "\n"
-    (CONTRACT_ROOT / "fixtures" / "sse-replay.ndjson").write_text(sse_replay, encoding="utf-8")
+    (root / "fixtures" / "sse-replay.ndjson").write_text(sse_replay, encoding="utf-8")
 
     backend_commit = _git_head()
     file_hashes = {
-        str(path.relative_to(CONTRACT_ROOT)).replace("\\", "/"): _sha256_file(path)
-        for path in _artifact_files()
+        str(path.relative_to(root)).replace("\\", "/"): _sha256_file(path)
+        for path in _artifact_files(root)
         if path.name != "manifest.json"
     }
     manifest = _build_manifest(file_hashes, backend_commit)
-    _write_json(CONTRACT_ROOT / "manifest.json", manifest)
+    _write_json(root / "manifest.json", manifest)
 
-    checksum_lines = [
-        f"{digest}  {relative}"
-        for relative, digest in sorted(file_hashes.items())
-    ]
-    (CONTRACT_ROOT / "SHA256SUMS").write_text("\n".join(checksum_lines) + "\n", encoding="utf-8")
-    print(f"Generated WORK-EXPERT-CONTRACT at {CONTRACT_ROOT} (backendCommit={backend_commit})")
+    checksum_lines = [f"{digest}  {relative}" for relative, digest in sorted(file_hashes.items())]
+    (root / "SHA256SUMS").write_text("\n".join(checksum_lines) + "\n", encoding="utf-8")
+    print(f"Generated WORK-EXPERT-CONTRACT at {root} (backendCommit={backend_commit})")
 
 
-def _read_manifest() -> dict:
-    return json.loads((CONTRACT_ROOT / "manifest.json").read_text(encoding="utf-8"))
+def _read_manifest(root: Path) -> dict:
+    return json.loads((root / "manifest.json").read_text(encoding="utf-8"))
 
 
-def _validate_fixtures() -> None:
+def _validate_checksums(root: Path) -> None:
+    checksum_path = root / "SHA256SUMS"
+    if not checksum_path.exists():
+        raise SystemExit(f"SHA256SUMS missing: {root}")
+    listed: dict[str, str] = {}
+    for line in checksum_path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        digest, relative = line.split("  ", 1)
+        listed[relative] = digest
+        path = root / relative
+        if not path.is_file():
+            raise SystemExit(f"SHA256SUMS lists missing file: {relative}")
+        actual = _sha256_file(path)
+        if actual != digest:
+            raise SystemExit(f"SHA256 mismatch for {relative}")
+    manifest = _read_manifest(root)
+    artifacts = manifest.get("artifacts") or {}
+    for relative, digest in artifacts.items():
+        if relative == "manifest.json":
+            continue
+        path = root / relative
+        if not path.is_file():
+            raise SystemExit(f"manifest.artifacts lists missing file: {relative}")
+        if _sha256_file(path) != digest:
+            raise SystemExit(f"manifest hash mismatch for {relative}")
+        if listed.get(relative) != digest:
+            raise SystemExit(f"SHA256SUMS/manifest disagree on {relative}")
+
+
+def _validate_fixtures(root: Path) -> None:
     import jsonschema
+
+    from app.schemas.hermes_skill.task_result_contract import TaskResultResponse, TaskSnapshotResponse
+    from app.schemas.work_expert.http_responses import (
+        ApiErrorBody,
+        ArtifactPreviewHttpResponse,
+        EventsTokenResponse,
+        TaskArtifactsHttpData,
+        TaskGetResponse,
+    )
 
     schema_map = {
         "fixtures/catalog-tools-list.json": ("mcp/tools-list.response.schema.json", "result"),
@@ -365,43 +576,62 @@ def _validate_fixtures() -> None:
         "fixtures/json-rpc-error.json": ("mcp/json-rpc-error.schema.json", None),
     }
     for fixture_rel, schema_info in schema_map.items():
-        fixture = json.loads((CONTRACT_ROOT / fixture_rel).read_text(encoding="utf-8"))
+        fixture = json.loads((root / fixture_rel).read_text(encoding="utf-8"))
         schema_rel, key = schema_info
-        schema = json.loads((CONTRACT_ROOT / schema_rel).read_text(encoding="utf-8"))
+        schema = json.loads((root / schema_rel).read_text(encoding="utf-8"))
         payload = fixture if key is None else fixture[key]
         jsonschema.validate(payload, schema)
 
+    pydantic_map = {
+        "fixtures/task-snapshot-running.json": (TaskSnapshotResponse, "data"),
+        "fixtures/task-result-completed.json": (TaskResultResponse, "data"),
+        "fixtures/task-artifacts.json": (TaskArtifactsHttpData, None),
+        "fixtures/http-task-get.json": (TaskGetResponse, None),
+        "fixtures/http-events-token.json": (EventsTokenResponse, None),
+        "fixtures/http-artifact-preview.json": (ArtifactPreviewHttpResponse, None),
+        "fixtures/http-error-owner-forbidden.json": (ApiErrorBody, None),
+        "fixtures/http-error-not-found.json": (ApiErrorBody, None),
+        "fixtures/http-error-cannot-cancel.json": (ApiErrorBody, None),
+    }
+    for fixture_rel, (model, key) in pydantic_map.items():
+        fixture = json.loads((root / fixture_rel).read_text(encoding="utf-8"))
+        payload = fixture if key is None else fixture[key]
+        model.model_validate(payload)
+
+
+def _validate_frozen_versions() -> None:
+    from app.contracts.work_expert.constants import WORK_EXPERT_FROZEN_VERSIONS
+
+    for version in WORK_EXPERT_FROZEN_VERSIONS:
+        root = CONTRACTS_HOME / f"v{version}"
+        if not root.exists():
+            raise SystemExit(f"Frozen contract missing: {root}")
+        _validate_checksums(root)
+
 
 def check_contracts(release: bool = False) -> None:
-    if not CONTRACT_ROOT.exists():
-        raise SystemExit(f"Contract directory missing: {CONTRACT_ROOT}")
+    sys.path.insert(0, str(BACKEND_ROOT))
+    root = contract_root()
+    if not root.exists():
+        raise SystemExit(f"Contract directory missing: {root}")
 
     for rel_path in P0_TEST_FILES:
         if not (BACKEND_ROOT / rel_path).exists():
             raise SystemExit(f"Missing required P0 test file: {rel_path}")
 
-    manifest = _read_manifest()
-    checksum_path = CONTRACT_ROOT / "SHA256SUMS"
-    if not checksum_path.exists():
-        raise SystemExit("SHA256SUMS missing")
+    _validate_frozen_versions()
+    _validate_checksums(root)
 
-    for line in checksum_path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        digest, relative = line.split("  ", 1)
-        path = CONTRACT_ROOT / relative
-        if _sha256_file(path) != digest:
-            raise SystemExit(f"SHA256 mismatch for {relative}")
-
+    manifest = _read_manifest(root)
     if manifest.get("backendCommit") != _git_head():
         if release:
             raise SystemExit("manifest.backendCommit does not match current HEAD in release mode")
         print("warning: manifest.backendCommit differs from current HEAD; run generate after implementation commit")
 
-    _validate_fixtures()
+    _validate_fixtures(root)
 
     current_openapi = yaml.safe_dump(_load_openapi_subset(), sort_keys=False, allow_unicode=True)
-    committed_openapi = (CONTRACT_ROOT / "openapi.yaml").read_text(encoding="utf-8")
+    committed_openapi = (root / "openapi.yaml").read_text(encoding="utf-8")
     if current_openapi != committed_openapi:
         raise SystemExit("OpenAPI drift detected; run contracts generate")
 
@@ -409,7 +639,7 @@ def check_contracts(release: bool = False) -> None:
 
     current_progress_schema = json.dumps(_model_schema(TaskProgressEvent), sort_keys=True)
     committed_progress_schema = json.dumps(
-        json.loads((CONTRACT_ROOT / "events" / "task-progress.schema.json").read_text(encoding="utf-8")),
+        json.loads((root / "events" / "task-progress.schema.json").read_text(encoding="utf-8")),
         sort_keys=True,
     )
     if current_progress_schema != committed_progress_schema:

@@ -1,0 +1,21 @@
+{
+  "code": 0,
+  "message": "success",
+  "data": [
+    {
+      "id": "artifact-1",
+      "org_id": "org-1",
+      "task_id": "task-1",
+      "created_by": "user-1",
+      "file_name": "article.md",
+      "file_path": "article.md",
+      "content_type": "text/markdown",
+      "size_bytes": 128,
+      "sha256": "abc123",
+      "preview_url": "/api/v1/hermes/artifacts/artifact-1/preview",
+      "download_url": "/api/v1/hermes/artifacts/artifact-1/download"
+    }
+  ],
+  "server_artifacts": [],
+  "artifact_mode": "pull_only"
+}

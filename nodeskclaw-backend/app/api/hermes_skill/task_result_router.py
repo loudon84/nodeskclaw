@@ -2,6 +2,12 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_db, require_org_member
+from app.schemas.work_expert.http_responses import (
+    EventsTokenResponse,
+    TaskResultHttpResponse,
+    TaskSnapshotHttpResponse,
+    contract_error_responses,
+)
 from app.services.hermes_skill.permission_checker import PermissionChecker
 from app.services.hermes_skill.skill_audit_logger import SkillAuditLogger
 from app.services.hermes_skill.task_event_token_service import TaskEventTokenService
@@ -21,7 +27,11 @@ async def _assert_task_owner(db: AsyncSession, task_id: str, user, org) -> None:
     await task_service.assert_task_access(task, user.id, org.id)
 
 
-@router.post("/tasks/{task_id}/events-token")
+@router.post(
+    "/tasks/{task_id}/events-token",
+    response_model=EventsTokenResponse,
+    responses=contract_error_responses(),
+)
 async def create_task_events_token(
     task_id: str,
     user_org=Depends(require_org_member),
@@ -44,7 +54,11 @@ async def create_task_events_token(
     return _ok(data)
 
 
-@router.get("/tasks/{task_id}/snapshot")
+@router.get(
+    "/tasks/{task_id}/snapshot",
+    response_model=TaskSnapshotHttpResponse,
+    responses=contract_error_responses(),
+)
 async def get_task_snapshot(
     task_id: str,
     user_org=Depends(require_org_member),
@@ -66,7 +80,11 @@ async def get_task_snapshot(
     return _ok(data)
 
 
-@router.get("/tasks/{task_id}/result")
+@router.get(
+    "/tasks/{task_id}/result",
+    response_model=TaskResultHttpResponse,
+    responses=contract_error_responses(),
+)
 async def get_task_result(
     task_id: str,
     user_org=Depends(require_org_member),

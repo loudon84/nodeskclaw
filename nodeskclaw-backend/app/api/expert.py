@@ -22,6 +22,7 @@ from app.contracts.work_expert.constants import (
     WORK_EXPERT_CONTRACT_PATH,
     WORK_EXPERT_CONTRACT_VERSION,
 )
+from app.schemas.work_expert.http_responses import JsonRpcHttpResponse, contract_error_responses
 from app.schemas.work_expert.mcp_jsonrpc import JsonRpcRequest
 from app.schemas.expert_mcp import ExpertHealthResponse
 from app.schemas.expert_skill import ExpertSkillItem, ExpertSkillListResponse, ExpertSkillSyncResult, ExpertSkillUpdateBody, ExpertSkillVisibilityBody
@@ -74,7 +75,12 @@ async def expert_health(
     return await ExpertHealthService(db).get_health(auth.org.id)
 
 
-@router.post("/mcp", tags=["Expert MCP Gateway"])
+@router.post(
+    "/mcp",
+    response_model=JsonRpcHttpResponse,
+    responses=contract_error_responses(),
+    tags=["Expert MCP Gateway"],
+)
 async def expert_mcp_root(
     body: JsonRpcRequest,
     request: Request,
@@ -93,7 +99,12 @@ async def expert_mcp_root(
     return result
 
 
-@router.post("/mcp/{slug}", tags=["Expert MCP Gateway"])
+@router.post(
+    "/mcp/{slug}",
+    response_model=JsonRpcHttpResponse,
+    responses=contract_error_responses(),
+    tags=["Expert MCP Gateway"],
+)
 async def expert_mcp_slug(
     slug: str,
     body: JsonRpcRequest,

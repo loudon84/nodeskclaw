@@ -1,0 +1,9 @@
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "event_url": "/api/v1/hermes/tasks/task-1/events?token=sse_test",
+    "expires_in": 300,
+    "expires_at": "2026-08-23T03:00:00+00:00"
+  }
+}

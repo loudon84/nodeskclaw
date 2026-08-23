@@ -1,0 +1,29 @@
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "task": {
+      "id": "task-1",
+      "status": "running"
+    },
+    "status": "running",
+    "timeline": [],
+    "result": {
+      "ready": false,
+      "summary": null,
+      "result_content": null,
+      "content": null
+    },
+    "artifacts": {
+      "ready": false,
+      "items": [],
+      "server_artifacts": []
+    },
+    "links": {
+      "event_stream": "/api/v1/hermes/tasks/task-1/events",
+      "result_url": "/api/v1/hermes/tasks/task-1/result",
+      "artifact_url": "/api/v1/hermes/tasks/task-1/artifacts"
+    },
+    "last_events": []
+  }
+}

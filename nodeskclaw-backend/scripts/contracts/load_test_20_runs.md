@@ -1,40 +1,40 @@
-# WORK-EXPERT-CONTRACT 20-run 负载复现步骤
+# WORK-EXPERT-CONTRACT 20-run 负载复现
 
-本文件描述如何手工验证 Expert MCP 并发任务吞吐。**不作为 CI gate**；合同 `manifest.json` 中 `loadGate` 为 `unmet`。
+本文件描述如何验证 20 个并发 Expert Run。**只有脚本在受控真实环境执行且 `passed=true` 时，才允许把 `loadGate` 设为 `met`。** 队列配置上限不是吞吐证据。
 
-## 前置条件
+## 阈值（预先定义）
 
-- 已部署含 WORK-EXPERT-CONTRACT v1.0.0 的 `nodeskclaw-backend`
-- 组织已配置 Expert catalog 与 Hermes Agent 绑定
-- 有效 JWT 或 `ndsk_mcp_*` Client Token（含 `mcp:tools:call` scope）
-- Worker 进程已启动（`HermesTaskWorker`）
+| 项 | 通过条件 |
+|---|---|
+| terminal | completed + failed + cancelled >= 20 |
+| accept HTTP 5xx | 0 |
+| 普通 Chat 探针失败率 | <= 5%（若提供 `WORK_EXPERT_LOADTEST_CHAT_PATH`） |
 
-## 队列配置参考值（非吞吐保证）
+## 环境变量
 
-| 项 | 配置键 | 默认值 |
-|---|---|---|
-| 组织排队上限 | org queued | 1000 |
-| 用户并发运行 | user running | 3 |
-| Skill 并发运行 | skill running | 10 |
-| Agent 并发运行 | agent running | 5 |
-| Worker 单次 poll | batch | 5（顺序执行） |
+| 变量 | 说明 |
+|---|---|
+| `WORK_EXPERT_LOADTEST_BASE_URL` | Backend 根 URL，例如 `https://example.com` |
+| `WORK_EXPERT_LOADTEST_TOKEN` | JWT 或 `ndsk_mcp_*`（勿写入仓库） |
+| `WORK_EXPERT_LOADTEST_SLUG` | 已发布 Expert slug |
+| `WORK_EXPERT_LOADTEST_SKILL` | 可调用 skill name |
+| `WORK_EXPERT_LOADTEST_CHAT_PATH` | 可选，普通 Chat 探针路径 |
+| `WORK_EXPERT_LOADTEST_ENV` | 环境标识，写入证据 |
+| `WORK_EXPERT_LOADTEST_WORKER_REPLICAS` | Worker replica 数 |
 
-## 复现步骤
+## 命令
 
-1. 选定一个已发布的 Expert slug（如 `call-prep`）与可调用 skill name。
-2. 并发发起 20 次 `POST /api/v1/expert/mcp/{slug}`，`method=tools/call`，每次使用不同的 `X-Idempotency-Key`。
-3. 对每个返回的 `structuredContent.task_id` 订阅 SSE 或轮询 `GET /api/v1/hermes/tasks/{task_id}/result`。
-4. 记录：全部进入 terminal 状态的耗时、失败数、队列等待时间、是否触发 org/user/skill 上限拒绝。
-5. 对比 Worker 日志与 `hermes_tasks` 表状态，确认无 duplicate completion、cancel-safe 与 result_content 完整性。
+```bash
+cd nodeskclaw-backend
+uv run python scripts/contracts/load_test_20_runs.py
+```
 
-## 通过标准（建议，非发布 gate）
+证据写入 `contracts/work-expert/v1.0.1/evidence/load-test-20-runs.json`。缺少环境变量时脚本退出码 2，证据 `executed=false`，`loadGate=unmet`。
 
-- 20 个任务最终均到达 terminal（completed / failed / cancelled）
-- 无重复 `TASK_COMPLETED` 事件
-- `result.content` 与 `result_summary` 分离正确
-- 取消中的 RUNNING 任务不会在 cancel 后被 mark_completed
+## 通过后
 
-## 已知限制
+1. 将证据 JSON 提交进合同目录。
+2. 仅当 `executed=true` 且 `passed=true` 时，把 `WORK_EXPERT_CAPABILITIES["loadGate"]` 改为 `met` 并重新 `contracts.py generate`。
+3. 若单 Worker 顺序执行达不到阈值，再改容量模型（可控并发或多 replica）后重测。禁止只改 manifest。
 
-- 单 Worker 对 poll batch 内任务 **顺序执行**，20 并发主要为队列与调度验证，非真实 20 路并行 Hermes 调用。
-- 合同 v1.0.0 不宣称满足 20 active runs 吞吐 SLA。
+v1.0.1 发布时该 gate 为 **unmet**。

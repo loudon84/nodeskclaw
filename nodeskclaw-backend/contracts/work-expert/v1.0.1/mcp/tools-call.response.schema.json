@@ -1,0 +1,290 @@
+{
+  "$defs": {
+    "ToolsCallAcceptedStructuredContent": {
+      "properties": {
+        "committed": {
+          "default": true,
+          "title": "Committed",
+          "type": "boolean"
+        },
+        "task_id": {
+          "title": "Task Id",
+          "type": "string"
+        },
+        "task_no": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Task No"
+        },
+        "status": {
+          "title": "Status",
+          "type": "string"
+        },
+        "execution_mode": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Execution Mode"
+        },
+        "tool_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tool Name"
+        },
+        "event_stream": {
+          "title": "Event Stream",
+          "type": "string"
+        },
+        "event_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Event Url"
+        },
+        "event_token_url": {
+          "title": "Event Token Url",
+          "type": "string"
+        },
+        "result_url": {
+          "title": "Result Url",
+          "type": "string"
+        },
+        "artifact_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Artifact Url"
+        },
+        "wait_strategy": {
+          "$ref": "#/$defs/WaitStrategy"
+        },
+        "catalog_slug": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Catalog Slug"
+        },
+        "skill_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Skill Name"
+        },
+        "invocation_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Invocation Id"
+        },
+        "artifact_mode": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Artifact Mode"
+        },
+        "server_artifacts": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Server Artifacts",
+          "type": "array"
+        },
+        "message": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Message"
+        },
+        "entrypoint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Entrypoint"
+        },
+        "task_source": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Task Source"
+        },
+        "agent_profile": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Agent Profile"
+        },
+        "runtime_skill_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Runtime Skill Id"
+        },
+        "catalog_kind": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Catalog Kind"
+        }
+      },
+      "required": [
+        "task_id",
+        "status",
+        "event_stream",
+        "event_token_url",
+        "result_url",
+        "wait_strategy"
+      ],
+      "title": "ToolsCallAcceptedStructuredContent",
+      "type": "object"
+    },
+    "WaitStrategy": {
+      "properties": {
+        "type": {
+          "default": "sse",
+          "title": "Type",
+          "type": "string"
+        },
+        "fallback": {
+          "default": "poll",
+          "title": "Fallback",
+          "type": "string"
+        },
+        "poll_url": {
+          "title": "Poll Url",
+          "type": "string"
+        },
+        "poll_tool": {
+          "default": "nodeskclaw_task_wait",
+          "title": "Poll Tool",
+          "type": "string"
+        },
+        "result_url": {
+          "title": "Result Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "poll_url",
+        "result_url"
+      ],
+      "title": "WaitStrategy",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "content": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Content",
+      "type": "array"
+    },
+    "structuredContent": {
+      "$ref": "#/$defs/ToolsCallAcceptedStructuredContent"
+    },
+    "isError": {
+      "default": false,
+      "title": "Iserror",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "structuredContent"
+  ],
+  "title": "ToolsCallAcceptedResult",
+  "type": "object"
+}

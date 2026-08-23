@@ -11,7 +11,15 @@ from app.core.deps import get_db, require_org_member
 from app.core.exceptions import NotFoundError, BadRequestError, ForbiddenError
 from app.models.hermes_skill.hermes_task import HermesTask, TaskStatus, EventType
 from app.schemas.hermes_skill.task import TaskRead
-from app.schemas.hermes_skill.artifact import ArtifactRead
+from app.schemas.work_expert.http_responses import (
+    TaskArtifactsHttpData,
+    TaskCancelResponse,
+    TaskGetResponse,
+    TaskRetryResponse,
+    artifact_list_item_from_record,
+    contract_error_responses,
+    sse_event_responses,
+)
 from app.schemas.hermes_skill.artifact_rescan import (
     ArtifactRescanRequest,
     ArtifactRescanResponse,
@@ -127,7 +135,11 @@ async def list_tasks(
     return _ok({"items": payload, "total": total, "page": page, "page_size": page_size})
 
 
-@router.get("/tasks/{task_id}")
+@router.get(
+    "/tasks/{task_id}",
+    response_model=TaskGetResponse,
+    responses=contract_error_responses(),
+)
 async def get_task(
     task_id: str,
     user_org=Depends(require_org_member),
@@ -169,7 +181,7 @@ async def get_task_timeline(
     })
 
 
-@router.get("/tasks/{task_id}/events")
+@router.get("/tasks/{task_id}/events", responses=sse_event_responses())
 async def stream_task_events(
     task_id: str,
     request: Request,
@@ -298,7 +310,11 @@ async def stream_task_events(
     )
 
 
-@router.get("/tasks/{task_id}/artifacts")
+@router.get(
+    "/tasks/{task_id}/artifacts",
+    response_model=TaskArtifactsHttpData,
+    responses=contract_error_responses(),
+)
 async def list_task_artifacts(
     task_id: str,
     user_org=Depends(require_org_member),
@@ -313,7 +329,7 @@ async def list_task_artifacts(
         await task_service.assert_task_access(task, user.id, org.id)
     service = ArtifactService(db)
     artifacts, _ = await service.list_artifacts(org_id=org.id, task_id=task_id, user_id=user.id if user else None)
-    items = [ArtifactRead.model_validate(a).model_dump() for a in artifacts]
+    items = [artifact_list_item_from_record(a) for a in artifacts]
     server_artifacts = task.server_artifacts or []
     if not server_artifacts:
         from app.services.mcp_skill_gateway.server_artifact_service import ServerArtifactService
@@ -402,7 +418,11 @@ async def rescan_task_artifacts(
     return _ok(response.model_dump())
 
 
-@router.post("/tasks/{task_id}/cancel")
+@router.post(
+    "/tasks/{task_id}/cancel",
+    response_model=TaskCancelResponse,
+    responses=contract_error_responses(),
+)
 async def cancel_task(
     task_id: str,
     user_org=Depends(require_org_member),
@@ -450,7 +470,11 @@ async def cancel_task(
     return _ok(TaskRead.model_validate(task).model_dump())
 
 
-@router.post("/tasks/{task_id}/retry")
+@router.post(
+    "/tasks/{task_id}/retry",
+    response_model=TaskRetryResponse,
+    responses=contract_error_responses(),
+)
 async def retry_task(
     task_id: str,
     user_org=Depends(require_org_member),
