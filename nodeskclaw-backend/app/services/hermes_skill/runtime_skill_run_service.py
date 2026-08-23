@@ -50,8 +50,20 @@ class RuntimeSkillRunService:
             request.catalog_slug or "",
         )
 
+        task_service = TaskService(self.db)
+        if request.idempotency_key and request.catalog_slug:
+            existing = await task_service.find_idempotent_task(
+                request.org_id,
+                request.user_id,
+                request.catalog_slug,
+                request.tool_name,
+                request.idempotency_key,
+            )
+            if existing is not None:
+                return await self._build_result_for_existing_task(request, existing)
+
         try:
-            task = await TaskService(self.db).create_task(
+            task = await task_service.create_task(
                 org_id=request.org_id,
                 skill_id=request.skill_id,
                 tool_name=request.tool_name,
@@ -63,6 +75,12 @@ class RuntimeSkillRunService:
                 arguments=request.arguments,
                 client_context=request.client_context,
                 routing_metadata=routing_metadata,
+                output_policy=dict(request.output_policy),
+                idempotency_key=request.idempotency_key,
+                catalog_slug=request.catalog_slug,
+                request_snapshot=request.request_snapshot,
+                request_trace_id=request.request_trace_id,
+                route_diagnostics=request.route_diagnostics,
             )
         except BadRequestError:
             raise
@@ -74,29 +92,35 @@ class RuntimeSkillRunService:
         task.output_policy = dict(request.output_policy)
         output_policy = dict(request.output_policy)
         suggested = output_policy.get("suggested_workspace_path")
-        if suggested:
+        if suggested and not suggested.endswith(f"/{task.id}"):
             output_policy["suggested_workspace_path"] = f"{suggested}/{task.id}"
             task.output_policy = output_policy
             routing_metadata["output_policy"] = output_policy
             task.routing_metadata = routing_metadata
 
         task.request_trace_id = request.request_trace_id
-        task.request_snapshot = request.request_snapshot
-        task.route_diagnostics = request.route_diagnostics
+        if request.request_snapshot is not None:
+            task.request_snapshot = request.request_snapshot
+        if request.route_diagnostics is not None:
+            task.route_diagnostics = request.route_diagnostics
         await self.db.flush()
 
-        logger.info(
-            "runtime_skill_run.task_created trace_id=%s task_id=%s task_no=%s tool=%s "
-            "entrypoint=%s task_source=%s route_type=%s",
-            request.request_trace_id or "",
-            task.id,
-            task.task_no,
-            request.tool_name,
-            request.entrypoint,
-            request.task_source,
-            route_snapshot.get("route_type"),
-        )
+        return await self._finalize_run(request, task, output_policy)
 
+    async def _build_result_for_existing_task(
+        self,
+        request: StartRuntimeSkillRunRequest,
+        task: Any,
+    ) -> RuntimeSkillRunResult:
+        output_policy = dict(task.output_policy or request.output_policy or {})
+        return await self._finalize_run(request, task, output_policy)
+
+    async def _finalize_run(
+        self,
+        request: StartRuntimeSkillRunRequest,
+        task: Any,
+        output_policy: dict[str, Any],
+    ) -> RuntimeSkillRunResult:
         ttl = request.sse_token_ttl_seconds
         if ttl is None:
             ttl = (

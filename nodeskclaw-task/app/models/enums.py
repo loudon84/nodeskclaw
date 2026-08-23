@@ -142,3 +142,9 @@ class WorkerStatus(StrEnum):
 
 class RpaEngineType(StrEnum):
     PLAYWRIGHT_CDP = "PLAYWRIGHT_CDP"
+class SuccessorJobStatus(StrEnum):
+    PENDING = "PENDING"
+    PROCESSING = "PROCESSING"
+    RETRYING = "RETRYING"
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"

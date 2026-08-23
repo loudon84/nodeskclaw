@@ -8,7 +8,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.models.base import not_deleted
 from app.models.expert_team import ExpertTeam
-from app.schemas.expert_mcp import ExpertHealthResponse, ExpertHealthRuntimeItem
+from app.contracts.work_expert.constants import (
+    WORK_EXPERT_CAPABILITIES,
+    WORK_EXPERT_CONTRACT_NAME,
+    WORK_EXPERT_CONTRACT_VERSION,
+)
+from app.schemas.expert_mcp import ExpertHealthResponse
 from app.services.expert_gateway.expert_catalog_service import ExpertCatalogService
 from app.services.expert_gateway.expert_team_skill_service import ExpertTeamSkillService
 
@@ -81,6 +86,9 @@ class ExpertHealthService:
         response = ExpertHealthResponse(
             ok=True,
             status="healthy" if runtimes or published_teams else "degraded",
+            contractName=WORK_EXPERT_CONTRACT_NAME,
+            contractVersion=WORK_EXPERT_CONTRACT_VERSION,
+            capabilities=dict(WORK_EXPERT_CAPABILITIES),
             gateway={"name": "expert-mcp-gateway", "version": "v6.1"},
             catalog={
                 "publishedExperts": len(experts),

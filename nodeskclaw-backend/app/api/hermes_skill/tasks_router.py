@@ -62,6 +62,20 @@ def _ok(data: Any = None, message: str = "success") -> dict:
     return {"code": 0, "message": message, "data": data}
 
 
+async def _get_task_with_access(
+    db: AsyncSession,
+    task_id: str,
+    user,
+    org,
+) -> HermesTask:
+    service = TaskService(db)
+    task = await service.get_task(task_id, org.id)
+    if user:
+        await PermissionChecker.require_permission(db, user.id, org.id, "hermes_task:view")
+        await service.assert_task_access(task, user.id, org.id)
+    return task
+
+
 @router.get("/tasks")
 async def list_tasks(
     page: int = Query(1, ge=1),
@@ -120,10 +134,7 @@ async def get_task(
     db: AsyncSession = Depends(get_db),
 ):
     user, org = user_org
-    if user:
-        await PermissionChecker.require_permission(db, user.id, org.id, "hermes_task:view")
-    service = TaskService(db)
-    task = await service.get_task(task_id, org.id)
+    task = await _get_task_with_access(db, task_id, user, org)
     return _ok(TaskRead.model_validate(task).model_dump())
 
 
@@ -183,7 +194,8 @@ async def stream_task_events(
         if org is None:
             raise ForbiddenError("用户未加入任何组织", "errors.org.user_has_no_org")
         await PermissionChecker.require_permission(db, user.id, org.id, "hermes_task:view")
-        await service.get_task(task_id, org.id)
+        task = await service.get_task(task_id, org.id)
+        await service.assert_task_access(task, user.id, org.id)
         org_id = org.id
     elif token:
         token_service = TaskEventTokenService(db)
@@ -297,6 +309,8 @@ async def list_task_artifacts(
         await PermissionChecker.require_permission(db, user.id, org.id, "hermes_artifact:view")
     task_service = TaskService(db)
     task = await task_service.get_task(task_id, org.id)
+    if user:
+        await task_service.assert_task_access(task, user.id, org.id)
     service = ArtifactService(db)
     artifacts, _ = await service.list_artifacts(org_id=org.id, task_id=task_id, user_id=user.id if user else None)
     items = [ArtifactRead.model_validate(a).model_dump() for a in artifacts]
@@ -399,19 +413,20 @@ async def cancel_task(
         await PermissionChecker.require_permission(db, user.id, org.id, "hermes_task:cancel")
     service = TaskService(db)
     task = await service.get_task(task_id, org.id)
+    if user:
+        await service.assert_task_access(task, user.id, org.id)
 
     cancellable = {TaskStatus.QUEUED, TaskStatus.ACCEPTED, TaskStatus.RUNNING}
     if task.status not in cancellable:
         raise BadRequestError("当前任务状态不可取消", "errors.task.cannot_cancel")
 
     event_service = TaskEventService(db)
-    if task.status in {TaskStatus.QUEUED, TaskStatus.ACCEPTED}:
-        await event_service.write_event(
-            task_id=task_id,
-            org_id=org.id,
-            event_type=EventType.TASK_CANCEL_REQUESTED,
-            payload={"requested_by": user.id if user else None},
-        )
+    await event_service.write_event(
+        task_id=task_id,
+        org_id=org.id,
+        event_type=EventType.TASK_CANCEL_REQUESTED,
+        payload={"requested_by": user.id if user else None, "status": task.status.value},
+    )
 
     if task.hermes_run_id:
         try:
@@ -446,6 +461,8 @@ async def retry_task(
         await PermissionChecker.require_permission(db, user.id, org.id, "hermes_task:retry")
     service = TaskService(db)
     task = await service.get_task(task_id, org.id)
+    if user:
+        await service.assert_task_access(task, user.id, org.id)
 
     retryable = {TaskStatus.FAILED, TaskStatus.TIMEOUT}
     if task.status not in retryable:
@@ -453,14 +470,22 @@ async def retry_task(
 
     new_task = await service.create_task(
         org_id=org.id,
-        skill_id=task.skill_id,
-        tool_name=task.tool_name,
+        skill_id=task.skill_id or "",
+        tool_name=task.tool_name or "",
         agent_id=task.agent_id,
         profile_id=task.profile_id,
         workspace_id=task.workspace_id,
         installation_id=task.installation_id,
         user_id=user.id if user else task.user_id,
         arguments=task.arguments,
+        client_context=task.client_context,
+        routing_metadata=task.routing_metadata,
+        output_policy=task.output_policy,
+        request_snapshot=task.request_snapshot,
+        request_trace_id=task.request_trace_id,
+        route_diagnostics=task.route_diagnostics,
+        parent_task_id=task.id,
+        catalog_slug=task.catalog_slug,
     )
     new_task.request_summary = f"retry of {task.task_no}"
     await db.flush()

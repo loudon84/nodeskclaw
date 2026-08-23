@@ -1,5 +1,7 @@
 # Expert MCP Gateway 模块说明
 
+> **apps/work 消费契约**：以 `nodeskclaw-backend/contracts/work-expert/v1.0.0/` 的 **WORK-EXPERT-CONTRACT v1.0.0** 为准（OpenAPI 子集、SSE/MCP schema、fixtures、SHA256SUMS）。由 `uv run python scripts/contracts.py generate` 从 FastAPI/Pydantic 生成；`contractVersion` 见 Expert health 与 `GET /api/v1/system/info`。本文档为运维与 Portal 背景说明，**勿用下文 gateway 版本号（v6.x）作 consumer 锁定依据**。详见同目录 `RELEASE.md` 与 `lat.md/decisions/work-expert-contract.md`。
+
 ## 概述
 
 Expert MCP Gateway（v6.3.2）在 Hermes 实例级 MCP 之上，为 **copilot-desktop** 提供专家能力网关。Portal 管理员将 Hermes Agent 配置为「专家」或「专家团队」，同步上游 Tools 为可治理 Skill 并发布到 Desktop 目录；客户端通过统一 JSON-RPC MCP 调用 `/api/v1/expert/mcp/{slug}`，无需区分 expert 与 expert_team。

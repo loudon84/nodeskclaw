@@ -8,5 +8,6 @@
 - [[compute-providers]] — k8s / docker / process 三计算 Provider
 - [[dual-api-prefix]] — Portal 与 Admin 双前缀共享 handler、成员表分离
 - [[knowledge-ragflow-split]] — Knowledge 权限治理与 RAGFlow 语义检索职责分离
+- [[work-expert-contract]] — Expert MCP 对 apps/work 的 WORK-EXPERT-CONTRACT v1.0.0 绑定与 P0 语义
 
 临时笔记与逐步代码 walkthrough 不属于此处。

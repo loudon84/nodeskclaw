@@ -19,6 +19,7 @@ class RpaRunResponse(CamelModel):
     ended_at: datetime | None = Field(None, serialization_alias="endedAt")
     error_code: str | None = Field(None, serialization_alias="errorCode")
     error_message: str | None = Field(None, serialization_alias="errorMessage")
+    output: dict[str, Any] | None = None
 
 
 class StepRunResponse(CamelModel):

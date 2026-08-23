@@ -72,8 +72,13 @@ def local_artifact_root() -> Path:
     return root
 
 
+def _artifact_base_url(configured_url: str) -> str:
+    return (configured_url or settings.PUBLIC_BASE_URL).rstrip("/")
+
+
+# @lat: [[architecture/task#Artifact URL Bases]]
 def local_upload_url(storage_key: str) -> str:
-    base = settings.PUBLIC_BASE_URL.rstrip("/")
+    base = _artifact_base_url(settings.ARTIFACT_UPLOAD_BASE_URL)
     return f"{base}/api/v1/autotask/artifacts/upload/{storage_key}"
 
 
@@ -85,7 +90,7 @@ def _sign_download(storage_key: str, expires: int) -> str:
 def local_download_url(storage_key: str) -> str:
     expires = int(time.time()) + settings.S3_PRESIGN_EXPIRES_SECONDS
     sig = _sign_download(storage_key, expires)
-    base = settings.PUBLIC_BASE_URL.rstrip("/")
+    base = _artifact_base_url(settings.ARTIFACT_DOWNLOAD_BASE_URL)
     return f"{base}/api/v1/autotask/artifacts/download/{storage_key}?expires={expires}&sig={sig}"
 
 

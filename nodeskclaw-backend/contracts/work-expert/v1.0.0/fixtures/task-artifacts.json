@@ -1,0 +1,16 @@
+{
+  "code": 0,
+  "message": "success",
+  "data": [
+    {
+      "id": "artifact-1",
+      "org_id": "org-1",
+      "task_id": "task-1",
+      "created_by": "user-1",
+      "file_name": "article.md",
+      "content_type": "text/markdown",
+      "size_bytes": 128,
+      "sha256": "abc123"
+    }
+  ]
+}

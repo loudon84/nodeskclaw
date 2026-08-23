@@ -11,8 +11,9 @@ from app.models.user_cache import UserCache
 from app.models.workflow_binding import WorkflowBinding
 from app.schemas.workflow import WorkflowBindingCreate, WorkflowBindingUpdate
 from app.services import rpa_engine_client
-from app.services.json_utils import dumps_json
+from app.services.json_utils import dumps_json, loads_json
 from app.services.portal_account_service import get_portal_account
+from app.services.task_successor_service import validate_successor_binding_config
 from app.services.workflow_template_service import get_workflow_template
 
 
@@ -85,6 +86,12 @@ async def create_workflow_binding(
         rpa_flow_id=body.rpa_flow_id,
         rpa_flow_version=body.rpa_flow_version,
     )
+    await validate_successor_binding_config(
+        db,
+        tenant_id=tenant_id,
+        source_portal_account_id=body.portal_account_id,
+        config=body.config,
+    )
     binding = WorkflowBinding(
         portal_account_id=body.portal_account_id,
         workflow_template_id=body.workflow_template_id,
@@ -113,6 +120,14 @@ async def update_workflow_binding(
 ) -> WorkflowBinding:
     binding = await get_workflow_binding(db, tenant_id, binding_id)
     data = body.model_dump(exclude_unset=True, by_alias=False)
+    final_config = data.get("config", loads_json(binding.config, {}))
+    await validate_successor_binding_config(
+        db,
+        tenant_id=tenant_id,
+        source_portal_account_id=binding.portal_account_id,
+        source_binding_id=binding.id,
+        config=final_config,
+    )
     if "config" in data:
         data["config"] = dumps_json(data["config"])
 
@@ -141,6 +156,13 @@ async def update_workflow_binding(
 
 async def enable_workflow_binding(db: AsyncSession, tenant_id: str, binding_id: str) -> WorkflowBinding:
     binding = await get_workflow_binding(db, tenant_id, binding_id)
+    await validate_successor_binding_config(
+        db,
+        tenant_id=tenant_id,
+        source_portal_account_id=binding.portal_account_id,
+        source_binding_id=binding.id,
+        config=loads_json(binding.config, {}),
+    )
     binding.status = BindingStatus.ENABLED
     await db.commit()
     await db.refresh(binding)

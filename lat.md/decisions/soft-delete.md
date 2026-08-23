@@ -8,7 +8,7 @@
 
 查询默认过滤 `deleted_at IS NULL`（或 `not_deleted(Model)`）；级联删除须手动软删子记录。
 
-唯一索引形态：`Index(..., unique=True, postgresql_where=text("deleted_at IS NULL"))`。ORM 基类：[[nodeskclaw-backend/app/models/base.py#BaseModel]]；软删方法：[[nodeskclaw-backend/app/models/base.py#BaseModel#soft_delete]]。
+唯一索引形态：`Index(..., unique=True, postgresql_where=text("deleted_at IS NULL"))`。ORM 基类：[[nodeskclaw-backend/app/models/base.py#BaseModel]]；软删方法：[[nodeskclaw-backend/app/models/base.py#BaseModel#soft_delete]]。兄弟服务同样适用，例如 AutoTask `task_successor_jobs` 的 `uq_task_successor_jobs_source_run_target`（见 [[task#Successor Jobs]]）。
 
 ## Why Not Hard Delete
 

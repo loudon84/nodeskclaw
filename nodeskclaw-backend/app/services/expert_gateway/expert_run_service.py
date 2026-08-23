@@ -18,6 +18,7 @@ from app.services.expert_gateway.errors import (
     EXPERT_TASK_CREATE_FAILED,
     mcp_success,
 )
+from app.services.expert_gateway.expert_mcp_auth_guard import ExpertMcpAuthGuard
 from app.services.expert_gateway.expert_catalog_service import ExpertCatalogService
 from app.services.expert_gateway.expert_invocation_log_service import ExpertInvocationLogService
 from app.services.hermes_skill.runtime_skill_run_service import RuntimeSkillRunService
@@ -113,6 +114,7 @@ class ExpertRunService:
                     "display_name": expert.display_name,
                 },
             },
+            headers=headers,
         )
         return self._build_mcp_accepted_result(
             jsonrpc_id=jsonrpc_id,
@@ -167,6 +169,7 @@ class ExpertRunService:
                     "display_name": team.display_name,
                 },
             },
+            headers=headers,
         )
         return self._build_mcp_accepted_result(
             jsonrpc_id=jsonrpc_id,
@@ -189,6 +192,7 @@ class ExpertRunService:
         catalog_slug: str,
         extra_route_snapshot: dict[str, Any],
         hermes_agent_instance_id: str | None = None,
+        headers: dict[str, str] | None = None,
     ):
         binding_id = hermes_agent_instance_id or agent.id
         run_request = StartRuntimeSkillRunRequest(
@@ -215,6 +219,7 @@ class ExpertRunService:
             upstream_tool_name=skill.upstream_tool_name,
             extra_route_snapshot=extra_route_snapshot,
             sse_token_ttl_seconds=settings.EXPERT_EVENT_TOKEN_TTL_SECONDS,
+            idempotency_key=ExpertMcpAuthGuard.extract_idempotency_key(headers) if headers else None,
         )
         try:
             run_result = await RuntimeSkillRunService(self.db).start(run_request)

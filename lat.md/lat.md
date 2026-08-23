@@ -4,9 +4,9 @@ DeskClaw 团队版（NoDeskClaw）是人与 AI 共同经营的实例管理平台
 
 本目录用 [lat.md](https://www.npmjs.com/package/lat.md) 锚定架构意图、领域概念与关键设计决策，供 Agent 与开发者在改码前对齐「做什么、为什么」，而不是复述源码细节。
 
-- [[domain]] — 领域概念：组织、集群、实例、工作区、基因、协作消息与知识对象
-- [[architecture]] — 系统与组件架构：Backend、Portal、LLM Proxy、Knowledge、Runtime
-- [[decisions]] — 跨组件设计决策：软删除、错误契约、CE/EE、计算 Provider、Knowledge/RAGFlow 边界
+- [[domain]] — 领域概念：组织、集群、实例、工作区、基因、协作消息、知识对象与 AutoTask 对象
+- [[architecture]] — 系统与组件架构：Backend、Portal、LLM Proxy、Knowledge、Task、Runtime
+- [[decisions]] — 跨组件设计决策：软删除、错误契约、CE/EE、计算 Provider、Knowledge/RAGFlow 边界、WORK-EXPERT-CONTRACT
 
 ## Product Mission
 
@@ -14,7 +14,7 @@ DeskClaw 团队版（NoDeskClaw）是人与 AI 共同经营的实例管理平台
 
 对外首次称呼必须是「DeskClaw 团队版」；技术上下文可用 DeskClaw、NoDeskClaw、CE、EE。
 
-实现路径定位仍用 `.cursor/context/*-codemap.md`；契约与数据流以 `docs/backend/` 为准。本目录描述意图与边界。
+实现路径定位仍用 `.cursor/context/*-codemap.md`。Expert MCP 对 apps/work 的消费契约以 [[decisions/work-expert-contract]] 与 `contracts/work-expert/v1.0.0/` 为准；其余 Backend 契约见 `docs/backend/`。本目录描述意图与边界。
 
 ## Component Boundaries
 

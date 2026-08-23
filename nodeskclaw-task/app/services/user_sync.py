@@ -24,7 +24,7 @@ def _is_cache_stale(synced_at: datetime) -> bool:
 
 async def _fetch_user_from_backend(token: str) -> dict:
     url = f"{settings.NODESKCLAW_BACKEND_URL.rstrip('/')}{settings.NODESKCLAW_AUTH_ME_PATH}"
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with httpx.AsyncClient(timeout=10.0, trust_env=False) as client:
         response = await client.get(url, headers={"Authorization": f"Bearer {token}"})
     if response.status_code == 401:
         raise ForbiddenError(

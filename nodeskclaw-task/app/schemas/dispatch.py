@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, model_validator
 
 from app.schemas.common import CamelModel
 
@@ -98,6 +98,13 @@ class RunFinishRequest(CamelModel):
     error_message: str | None = Field(
         None, validation_alias=AliasChoices("error_message", "errorMessage"), serialization_alias="errorMessage"
     )
+    output: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def validate_output_status(self):
+        if self.output is not None and self.status != "SUCCESS":
+            raise ValueError("Run output is allowed only for SUCCESS")
+        return self
 
 
 class WorkerArtifactUploadUrlRequest(CamelModel):

@@ -27,6 +27,8 @@ from app.services.expert_gateway.errors import (
     EXPERT_EVENT_TOKEN_CREATE_FAILED,
     EXPERT_TASK_CREATE_FAILED,
     EXPERT_UPSTREAM_MCP_ERROR,
+    EXPERT_TOOL_NOT_ALLOWED,
+    EXPERT_SCOPE_DENIED,
     mcp_error_v2,
     mcp_success,
 )
@@ -35,11 +37,17 @@ from app.services.expert_gateway.expert_invocation_log_service import ExpertInvo
 from app.services.expert_gateway.expert_mcp_proxy_service import ExpertMcpProxyService
 from app.services.expert_gateway.expert_permission_service import ExpertPermissionService
 from app.services.expert_gateway.expert_run_service import ExpertRunService
-from app.services.expert_gateway.expert_route_guard import find_route_override_keys
+from app.services.expert_gateway.expert_mcp_auth_guard import (
+    ExpertMcpAuthGuard,
+    MCP_SCOPE_TOOLS_CALL,
+    MCP_SCOPE_TOOLS_LIST,
+)
 from app.services.expert_gateway.expert_skill_service import ExpertSkillService
 from app.services.expert_gateway.expert_team_orchestrator import ExpertTeamOrchestrator
 from app.services.expert_gateway.expert_team_service import ExpertTeamService
 from app.services.expert_gateway.expert_team_skill_service import ExpertTeamSkillService
+from app.services.expert_gateway.expert_route_guard import find_route_override_keys
+from app.services.mcp_skill_gateway.auth import McpAuthContext
 
 _EVENT_STREAM_ERROR_KEY_MAP: dict[str, str] = {
     "errors.expert.agent_instance_not_bound": EXPERT_AGENT_INSTANCE_NOT_BOUND,
@@ -86,12 +94,13 @@ class ExpertMcpGatewayService:
 
     async def dispatch_root(
         self,
-        org_id: str,
-        user_id: str,
+        auth_ctx: McpAuthContext,
         body: dict,
         *,
         headers: dict[str, str] | None = None,
     ) -> dict:
+        org_id = auth_ctx.org.id
+        user_id = auth_ctx.user.id
         jsonrpc_id = body.get("id", 1)
         if body.get("jsonrpc") != "2.0":
             return mcp_error_v2(jsonrpc_id, EXPERT_INVALID_JSONRPC, "jsonrpc must be '2.0'")
@@ -117,22 +126,27 @@ class ExpertMcpGatewayService:
             return mcp_success(jsonrpc_id, {})
 
         if method == "tools/list":
+            scope_err = ExpertMcpAuthGuard.require_scope(auth_ctx, MCP_SCOPE_TOOLS_LIST, jsonrpc_id)
+            if scope_err:
+                return scope_err
             if not await ExpertPermissionService.has(self.db, user_id, org_id, "expert:view"):
                 return mcp_error_v2(jsonrpc_id, EXPERT_PERMISSION_DENIED, "expert:view required")
             tools = await self._list_catalog_tools(org_id, user_id)
+            tools = ExpertMcpAuthGuard.filter_catalog_tools(tools, auth_ctx)
             return mcp_success(jsonrpc_id, {"tools": tools})
 
         return mcp_error_v2(jsonrpc_id, "MCP_METHOD_NOT_FOUND", f"Method not found: {method}")
 
     async def dispatch_catalog_item(
         self,
-        org_id: str,
-        user_id: str,
+        auth_ctx: McpAuthContext,
         slug: str,
         body: dict,
         *,
         headers: dict[str, str] | None = None,
     ) -> dict:
+        org_id = auth_ctx.org.id
+        user_id = auth_ctx.user.id
         jsonrpc_id = body.get("id", 1)
         if body.get("jsonrpc") != "2.0":
             return mcp_error_v2(jsonrpc_id, EXPERT_INVALID_JSONRPC, "jsonrpc must be '2.0'")
@@ -159,12 +173,11 @@ class ExpertMcpGatewayService:
             return mcp_success(jsonrpc_id, {})
 
         if method == "tools/list":
-            return await self._dispatch_tools_list(org_id, user_id, item, jsonrpc_id)
+            return await self._dispatch_tools_list(org_id, user_id, item, jsonrpc_id, auth_ctx)
 
         if method == "tools/call":
             return await self._dispatch_tools_call(
-                org_id,
-                user_id,
+                auth_ctx,
                 item,
                 body,
                 headers=headers,
@@ -175,16 +188,25 @@ class ExpertMcpGatewayService:
 
     async def dispatch_slug(
         self,
-        org_id: str,
-        user_id: str,
+        auth_ctx: McpAuthContext,
         slug: str,
         body: dict,
         *,
         headers: dict[str, str] | None = None,
     ) -> dict:
-        return await self.dispatch_catalog_item(org_id, user_id, slug, body, headers=headers)
+        return await self.dispatch_catalog_item(auth_ctx, slug, body, headers=headers)
 
-    async def _dispatch_tools_list(self, org_id: str, user_id: str, item: CatalogItem, jsonrpc_id: Any) -> dict:
+    async def _dispatch_tools_list(
+        self,
+        org_id: str,
+        user_id: str,
+        item: CatalogItem,
+        jsonrpc_id: Any,
+        auth_ctx: McpAuthContext | None = None,
+    ) -> dict:
+        scope_err = ExpertMcpAuthGuard.require_scope(auth_ctx, MCP_SCOPE_TOOLS_LIST, jsonrpc_id)
+        if scope_err:
+            return scope_err
         if not await ExpertPermissionService.has(self.db, user_id, org_id, "expert_skill:view"):
             return mcp_error_v2(jsonrpc_id, EXPERT_PERMISSION_DENIED, "expert_skill:view required")
         if not item.published or not item.enabled:
@@ -199,6 +221,7 @@ class ExpertMcpGatewayService:
                 ExpertSkillService.build_tool_descriptor(expert, skill, runtime_ready=ready)
                 for skill in skills
             ]
+            tools = ExpertMcpAuthGuard.filter_skill_tools(tools, auth_ctx)
             return mcp_success(jsonrpc_id, {"tools": tools})
 
         team = item.source_record
@@ -218,23 +241,31 @@ class ExpertMcpGatewayService:
             )
             for skill in skills
         ]
+        tools = ExpertMcpAuthGuard.filter_skill_tools(tools, auth_ctx)
         return mcp_success(jsonrpc_id, {"tools": tools})
 
     async def _dispatch_tools_call(
         self,
-        org_id: str,
-        user_id: str,
+        auth_ctx: McpAuthContext,
         item: CatalogItem,
         body: dict,
         *,
         headers: dict[str, str] | None = None,
         jsonrpc_id: Any = 1,
     ) -> dict:
+        org_id = auth_ctx.org.id
+        user_id = auth_ctx.user.id
+        scope_err = ExpertMcpAuthGuard.require_scope(auth_ctx, MCP_SCOPE_TOOLS_CALL, jsonrpc_id)
+        if scope_err:
+            return scope_err
         if not await ExpertPermissionService.has(self.db, user_id, org_id, "expert_skill:invoke"):
             return mcp_error_v2(jsonrpc_id, EXPERT_PERMISSION_DENIED, "expert_skill:invoke required")
 
         params = body.get("params") if isinstance(body.get("params"), dict) else {}
         skill_name = str(params.get("name") or "").strip()
+        skill_err = ExpertMcpAuthGuard.assert_skill_allowed(auth_ctx, skill_name, jsonrpc_id)
+        if skill_err:
+            return skill_err
         arguments = params.get("arguments") if isinstance(params.get("arguments"), dict) else {}
         forbidden = find_route_override_keys(arguments)
         if forbidden:

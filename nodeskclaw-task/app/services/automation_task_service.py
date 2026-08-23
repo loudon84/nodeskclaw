@@ -16,7 +16,12 @@ from app.schemas.task import AutomationTaskCreate, AutomationTaskUpdate
 from app.services.json_utils import dumps_json, loads_json
 from app.services.portal_account_service import get_portal_account
 from app.services.task_state_machine import transition
+from app.services.task_successor_service import (
+    TARGET_WORKFLOW_CODE,
+    validate_delivery_confirmation_input,
+)
 from app.services.workflow_binding_service import get_workflow_binding
+from app.services.workflow_template_service import get_workflow_template
 
 
 async def list_tasks(db: AsyncSession, tenant_id: str, status: str | None = None) -> list[AutomationTask]:
@@ -95,6 +100,11 @@ async def update_task(
     task = await get_task(db, tenant_id, task_id)
     data = body.model_dump(exclude_unset=True, by_alias=False)
     if "input" in data:
+        if task.status not in {TaskStatus.DRAFT, TaskStatus.READY}:
+            raise BadRequestError(
+                message="任务进入队列后不允许修改输入参数",
+                message_key="errors.autotask.task_input_immutable",
+            )
         data["input"] = dumps_json(data["input"])
     for field, value in data.items():
         setattr(task, field, value)
@@ -113,10 +123,11 @@ async def submit_task(db: AsyncSession, tenant_id: str, task_id: str) -> Automat
 
 async def start_task(db: AsyncSession, tenant_id: str, task_id: str) -> AutomationTask:
     task = await get_task(db, tenant_id, task_id)
+    binding = await get_workflow_binding(db, tenant_id, task.workflow_binding_id)
+    await _validate_execution_input(db, tenant_id, task, binding.workflow_template_id)
     if task.status == TaskStatus.DRAFT:
         transition(task, TaskStatus.READY)
     transition(task, TaskStatus.QUEUED)
-    binding = await get_workflow_binding(db, tenant_id, task.workflow_binding_id)
     run = RpaRun(
         task_id=task.id,
         rpa_flow_id=binding.rpa_flow_id,
@@ -149,9 +160,10 @@ async def retry_task(db: AsyncSession, tenant_id: str, task_id: str) -> Automati
     task = await get_task(db, tenant_id, task_id)
     if task.status != TaskStatus.FAILED:
         raise BadRequestError(message="仅失败任务可重试", message_key="errors.autotask.retry_not_allowed")
+    binding = await get_workflow_binding(db, tenant_id, task.workflow_binding_id)
+    await _validate_execution_input(db, tenant_id, task, binding.workflow_template_id)
     transition(task, TaskStatus.READY)
     transition(task, TaskStatus.QUEUED)
-    binding = await get_workflow_binding(db, tenant_id, task.workflow_binding_id)
     db.add(RpaRun(task_id=task.id, rpa_flow_id=binding.rpa_flow_id, status=TaskStatus.QUEUED))
     await db.commit()
     await db.refresh(task)
@@ -198,3 +210,14 @@ async def list_task_runs(db: AsyncSession, tenant_id: str, task_id: str) -> list
 
 def task_input_dict(task: AutomationTask) -> dict:
     return loads_json(task.input, {})
+
+
+async def _validate_execution_input(
+    db: AsyncSession,
+    tenant_id: str,
+    task: AutomationTask,
+    workflow_template_id: str,
+) -> None:
+    template = await get_workflow_template(db, tenant_id, workflow_template_id)
+    if template.code == TARGET_WORKFLOW_CODE:
+        validate_delivery_confirmation_input(task_input_dict(task))

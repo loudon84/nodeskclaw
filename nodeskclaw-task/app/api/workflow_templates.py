@@ -55,6 +55,22 @@ async def update_workflow_template(
     return ApiResponse(data=WorkflowTemplateResponse.model_validate(template))
 
 
+@router.delete("/{template_id}", response_model=ApiResponse[None])
+async def delete_workflow_template(
+    template_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: UserCache = Depends(get_current_user),
+):
+    tenant_id = require_tenant_access(user)
+    await workflow_template_service.delete_workflow_template(
+        db,
+        tenant_id,
+        template_id,
+        user,
+    )
+    return ApiResponse(data=None, message="已删除")
+
+
 @router.post("/{template_id}/enable", response_model=ApiResponse[WorkflowTemplateResponse])
 async def enable_workflow_template(
     template_id: str,

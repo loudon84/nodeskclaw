@@ -46,6 +46,8 @@ class AutomationTaskResponse(CamelModel):
     progress: int
     created_by: str = Field(serialization_alias="createdBy")
     assigned_to: str | None = Field(None, serialization_alias="assignedTo")
+    source_task_id: str | None = Field(None, serialization_alias="sourceTaskId")
+    source_run_id: str | None = Field(None, serialization_alias="sourceRunId")
     created_at: datetime = Field(serialization_alias="createdAt")
     updated_at: datetime = Field(serialization_alias="updatedAt")
 
@@ -80,6 +82,8 @@ class TaskListItemResponse(CamelModel):
     input: dict[str, Any]
     current_step: str | None = Field(None, serialization_alias="currentStep")
     progress: int
+    source_task_id: str | None = Field(None, serialization_alias="sourceTaskId")
+    source_run_id: str | None = Field(None, serialization_alias="sourceRunId")
     created_at: datetime = Field(serialization_alias="createdAt")
     updated_at: datetime = Field(serialization_alias="updatedAt")
 
@@ -100,3 +104,20 @@ class TaskConfirmHumanResponse(CamelModel):
     task_id: str = Field(serialization_alias="taskId")
     status: str
     confirmed_at: datetime = Field(serialization_alias="confirmedAt")
+
+
+class TaskSuccessorJobResponse(CamelModel):
+    id: str
+    tenant_id: str = Field(serialization_alias="tenantId")
+    source_task_id: str = Field(serialization_alias="sourceTaskId")
+    source_run_id: str = Field(serialization_alias="sourceRunId")
+    target_workflow_binding_id: str = Field(serialization_alias="targetWorkflowBindingId")
+    input_mapper: str = Field(serialization_alias="inputMapper")
+    status: str
+    attempt_count: int = Field(serialization_alias="attemptCount")
+    next_attempt_at: datetime | None = Field(None, serialization_alias="nextAttemptAt")
+    last_error_code: str | None = Field(None, serialization_alias="lastErrorCode")
+    last_error_message: str | None = Field(None, serialization_alias="lastErrorMessage")
+    successor_task_id: str | None = Field(None, serialization_alias="successorTaskId")
+    created_at: datetime = Field(serialization_alias="createdAt")
+    updated_at: datetime = Field(serialization_alias="updatedAt")

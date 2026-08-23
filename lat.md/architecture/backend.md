@@ -26,9 +26,13 @@
 
 ## Hermes And MCP
 
-Hermes Skill、任务产物、Agent 绑定与 MCP Skill Gateway 是独立能力域，契约写在 `docs/backend/hermes_skill.md` 与 `mcp_skill_gateway.md`。
+Hermes Skill、任务产物、Agent 绑定与 MCP Skill Gateway 是独立能力域。组织 MCP 契约见 `docs/backend/mcp_skill_gateway.md`；Hermes Task 见 `docs/backend/hermes_skill.md`。
 
-MCP 对外 JSON-RPC 2.0；写操作需治理与审批语义。Expert MCP Gateway 另见 `docs/backend/expert_mcp_gateway.md`。
+**Expert MCP 对 apps/work 的冻结契约**为 WORK-EXPERT-CONTRACT v1.0.0（[[decisions/work-expert-contract]]）：产物在 `nodeskclaw-backend/contracts/work-expert/v1.0.0/`，由 `scripts/contracts.py` 从 FastAPI OpenAPI 与 Pydantic 模型生成；`contractVersion` 暴露在 Expert health 与 `GET /api/v1/system/info`。勿用 `gateway.version` 或 `docs/backend/expert_mcp_gateway.md` 中的历史 v6.x 编号作 consumer 版本依据。
+
+MCP 对外 JSON-RPC 2.0；应用错误以 HTTP 200 + `error.data.errorCode` 返回（Expert MCP 冻结行为）。
+
+P0 实现锚点：Expert 网关 [[nodeskclaw-backend/app/services/expert_gateway/expert_mcp_gateway_service.py#ExpertMcpGatewayService]]、MCP token 校验 [[nodeskclaw-backend/app/services/expert_gateway/expert_mcp_auth_guard.py#ExpertMcpAuthGuard]]、任务域 [[nodeskclaw-backend/app/services/hermes_skill/task_service.py#TaskService]]、Worker [[nodeskclaw-backend/app/services/hermes_skill/hermes_task_worker.py#HermesTaskWorker]]。Schema 事实源：`app/schemas/work_expert/`、`app/schemas/hermes_skill/sse_events.py`、`task_result_contract.py`。
 
 ## Startup
 

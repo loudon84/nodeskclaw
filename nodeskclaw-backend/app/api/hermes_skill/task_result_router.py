@@ -6,12 +6,19 @@ from app.services.hermes_skill.permission_checker import PermissionChecker
 from app.services.hermes_skill.skill_audit_logger import SkillAuditLogger
 from app.services.hermes_skill.task_event_token_service import TaskEventTokenService
 from app.services.hermes_skill.task_result_service import TaskResultService
+from app.services.hermes_skill.task_service import TaskService
 
 router = APIRouter(tags=["Hermes Task Result"])
 
 
 def _ok(data=None, message: str = "success") -> dict:
     return {"code": 0, "message": message, "data": data}
+
+
+async def _assert_task_owner(db: AsyncSession, task_id: str, user, org) -> None:
+    task_service = TaskService(db)
+    task = await task_service.get_task(task_id, org.id)
+    await task_service.assert_task_access(task, user.id, org.id)
 
 
 @router.post("/tasks/{task_id}/events-token")
@@ -22,6 +29,7 @@ async def create_task_events_token(
 ):
     user, org = user_org
     await PermissionChecker.require_permission(db, user.id, org.id, "hermes_task:view")
+    await _assert_task_owner(db, task_id, user, org)
     service = TaskEventTokenService(db)
     data = await service.create_token(task_id, user.id, org.id)
     audit = SkillAuditLogger(db)
@@ -44,6 +52,7 @@ async def get_task_snapshot(
 ):
     user, org = user_org
     await PermissionChecker.require_permission(db, user.id, org.id, "hermes_task:view")
+    await _assert_task_owner(db, task_id, user, org)
     service = TaskResultService(db)
     data = await service.get_snapshot(task_id, org.id)
     audit = SkillAuditLogger(db)
@@ -66,6 +75,7 @@ async def get_task_result(
     user, org = user_org
     await PermissionChecker.require_permission(db, user.id, org.id, "hermes_task:view")
     await PermissionChecker.require_permission(db, user.id, org.id, "hermes_artifact:view")
+    await _assert_task_owner(db, task_id, user, org)
     service = TaskResultService(db)
     data = await service.get_result(task_id, org.id)
     audit = SkillAuditLogger(db)

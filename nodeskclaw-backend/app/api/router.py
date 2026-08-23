@@ -46,6 +46,11 @@ from app.core.deps import get_db, require_ce_edition, require_org_admin, require
 from app.core.exceptions import ForbiddenError, NotFoundError
 from app.core.feature_gate import feature_gate
 from app.core.config import settings
+from app.contracts.work_expert.constants import (
+    WORK_EXPERT_CONTRACT_NAME,
+    WORK_EXPERT_CONTRACT_PATH,
+    WORK_EXPERT_CONTRACT_VERSION,
+)
 
 from app.api.security_ws import router as security_ws_router
 from app.api.tunnel import router as tunnel_router
@@ -100,6 +105,11 @@ async def system_info():
         "features": feature_gate.all_features(),
         "mcp": build_mcp_descriptor(),
         "genehub": build_genehub_descriptor(),
+        "workExpertContract": {
+            "contractName": WORK_EXPERT_CONTRACT_NAME,
+            "contractVersion": WORK_EXPERT_CONTRACT_VERSION,
+            "path": WORK_EXPERT_CONTRACT_PATH,
+        },
     }
 
 

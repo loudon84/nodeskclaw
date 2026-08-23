@@ -18,8 +18,22 @@ from app.services.hermes_skill.artifact_service import ArtifactService, _max_bat
 from app.services.hermes_skill.path_guard import PathGuard
 from app.services.hermes_skill.permission_checker import PermissionChecker
 from app.services.hermes_skill.artifact_audit_service import ArtifactAuditService
+from app.services.hermes_skill.task_service import TaskService
 
 router = APIRouter()
+
+
+async def _assert_task_owner_for_artifact(
+    db: AsyncSession,
+    artifact,
+    user,
+    org,
+) -> None:
+    if not artifact.task_id or not user:
+        return
+    task_service = TaskService(db)
+    task = await task_service.get_task(artifact.task_id, org.id)
+    await task_service.assert_task_access(task, user.id, org.id)
 
 
 def _ok(data: Any = None, message: str = "success") -> dict:
@@ -69,6 +83,7 @@ async def get_artifact(
     service = ArtifactService(db)
     artifact = await service.get_artifact(artifact_id, org.id)
     if user:
+        await _assert_task_owner_for_artifact(db, artifact, user, org)
         await service.ensure_artifact_visible(artifact, user.id, org.id)
     return _ok(ArtifactDetail.model_validate(artifact).model_dump())
 
@@ -83,6 +98,9 @@ async def preview_artifact(
     if user:
         await PermissionChecker.require_permission(db, user.id, org.id, "hermes_artifact:view")
     service = ArtifactService(db)
+    artifact = await service.get_artifact(artifact_id, org.id)
+    if user:
+        await _assert_task_owner_for_artifact(db, artifact, user, org)
     artifact, content, truncated, preview_type = await service.preview(
         artifact_id, org.id, user_id=user.id if user else None,
     )
@@ -108,6 +126,9 @@ async def download_artifact(
     if user:
         await PermissionChecker.require_permission(db, user.id, org.id, "hermes_artifact:download")
     service = ArtifactService(db)
+    artifact = await service.get_artifact(artifact_id, org.id)
+    if user:
+        await _assert_task_owner_for_artifact(db, artifact, user, org)
     result = await service.download(
         artifact_id, org.id,
         user_id=user.id if user else None,
@@ -164,6 +185,8 @@ async def batch_download_artifacts(
     task = await db.get(HermesTask, task_id)
     if not task or task.deleted_at is not None or task.org_id != org.id:
         raise NotFoundError("Task 不存在", "errors.task.not_found")
+    if user:
+        await TaskService(db).assert_task_access(task, user.id, org.id)
 
     service = ArtifactService(db)
     audit = ArtifactAuditService(db)

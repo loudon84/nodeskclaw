@@ -145,6 +145,8 @@ def build_task_list_item(
         input=loads_json(task.input, {}),
         current_step=_format_current_step(task),
         progress=task.progress,
+        source_task_id=getattr(task, "source_task_id", None),
+        source_run_id=getattr(task, "source_run_id", None),
         created_at=_format_datetime(task.created_at),
         updated_at=_format_datetime(task.updated_at),
     )

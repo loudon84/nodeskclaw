@@ -15,8 +15,15 @@ from app.schemas.task import (
     TaskListItemResponse,
     TaskListPageResponse,
     TaskMessageResponse,
+    TaskSuccessorJobResponse,
 )
-from app.services import artifact_service, automation_task_service, human_action_service, task_view_service
+from app.services import (
+    artifact_service,
+    automation_task_service,
+    human_action_service,
+    task_successor_service,
+    task_view_service,
+)
 
 router = APIRouter()
 
@@ -203,6 +210,48 @@ async def list_task_runs(
     tenant_id = require_tenant_access(user)
     runs = await automation_task_service.list_task_runs(db, tenant_id, task_id)
     return ApiResponse(data=[RpaRunResponse.model_validate(r) for r in runs])
+
+
+@router.get(
+    "/{task_id}/successors",
+    response_model=ApiResponse[list[TaskSuccessorJobResponse]],
+)
+async def list_task_successors(
+    task_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: UserCache = Depends(get_current_user),
+):
+    tenant_id = require_tenant_access(user)
+    await automation_task_service.get_task(db, tenant_id, task_id)
+    jobs = await task_successor_service.list_successor_jobs(
+        db,
+        tenant_id=tenant_id,
+        source_task_id=task_id,
+    )
+    return ApiResponse(
+        data=[TaskSuccessorJobResponse.model_validate(job) for job in jobs]
+    )
+
+
+@router.post(
+    "/{task_id}/successors/{job_id}/retry",
+    response_model=ApiResponse[TaskSuccessorJobResponse],
+)
+async def retry_task_successor(
+    task_id: str,
+    job_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: UserCache = Depends(get_current_user),
+):
+    tenant_id = require_tenant_access(user)
+    await automation_task_service.get_task(db, tenant_id, task_id)
+    job = await task_successor_service.retry_successor_job(
+        db,
+        tenant_id=tenant_id,
+        source_task_id=task_id,
+        job_id=job_id,
+    )
+    return ApiResponse(data=TaskSuccessorJobResponse.model_validate(job))
 
 
 @router.get("/{task_id}/artifacts", response_model=ApiResponse[list[ArtifactResponse]])

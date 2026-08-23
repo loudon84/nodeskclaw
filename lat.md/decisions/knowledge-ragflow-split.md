@@ -17,9 +17,9 @@ RAGFlow 管语义对象与检索；Knowledge 管企业 ACL、源文件注册与�
 
 ## Monorepo Integration
 
-已选定独立兄弟服务：`nodeskclaw-knowledge/` 进 monorepo，技术栈与 [[backend|Backend]] / `nodeskclaw-task` 对齐，不另起语言或 ORM。
+已选定独立兄弟服务：`nodeskclaw-knowledge/` 进 monorepo，技术栈与 [[backend|Backend]] / [[task|Task]] 对齐，不另起语言或 ORM。
 
-用户与令牌权威在 Backend；Knowledge 将 Bearer 视为 opaque credential，通过 Context API 取 Principal，自有 PostgreSQL + Alembic。相对 PRD：路由用 `api/router.py`；弱化 repositories；首版不做 Redis；Worker 与 API 共用镜像、不同 CMD。软删除与错误契约遵循 [[soft-delete]] 与 [[error-contract]]。包内布局见 [[knowledge#Package Placement]]。
+用户与令牌权威在 Backend；Knowledge 将 Bearer 视为 opaque credential，通过 Context API 取 Principal，自有 PostgreSQL + Alembic。相对 PRD：路由用 `api/router.py`；弱化 repositories；首版不做 Redis；Worker 与 API 共用镜像、不同 CMD。软删除与错误契约遵循 [[soft-delete]] 与 [[error-contract]]。包内布局见 [[knowledge#Package Placement]]；Task 打包约束见 [[task#Packaging Constraint]]。
 
 ## Llm Proxy Boundary
 

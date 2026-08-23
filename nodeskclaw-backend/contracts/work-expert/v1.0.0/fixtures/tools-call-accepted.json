@@ -1,0 +1,34 @@
+{
+  "jsonrpc": "2.0",
+  "id": "call-1",
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "任务已启动，正在由专家执行。"
+      }
+    ],
+    "structuredContent": {
+      "committed": true,
+      "task_id": "task-00000000-0000-4000-8000-000000000001",
+      "task_no": "TASK-org1-abcd1234",
+      "status": "running",
+      "event_stream": "/api/v1/hermes/tasks/task-00000000-0000-4000-8000-000000000001/events?token=sse_test",
+      "event_url": "/api/v1/hermes/tasks/task-00000000-0000-4000-8000-000000000001/events",
+      "event_token_url": "/api/v1/hermes/tasks/task-00000000-0000-4000-8000-000000000001/events-token",
+      "result_url": "/api/v1/hermes/tasks/task-00000000-0000-4000-8000-000000000001/result",
+      "artifact_url": "/api/v1/hermes/tasks/task-00000000-0000-4000-8000-000000000001/artifacts",
+      "wait_strategy": {
+        "type": "sse",
+        "fallback": "poll",
+        "poll_url": "/api/v1/hermes/tasks/task-00000000-0000-4000-8000-000000000001",
+        "poll_tool": "nodeskclaw_task_wait",
+        "result_url": "/api/v1/hermes/tasks/task-00000000-0000-4000-8000-000000000001/result"
+      },
+      "catalog_slug": "call-prep",
+      "skill_name": "customer-profiling",
+      "invocation_id": "invocation-1"
+    },
+    "isError": false
+  }
+}

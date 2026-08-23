@@ -14,6 +14,7 @@ from app.models.rpa_worker import RpaWorker  # noqa: F401
 from app.models.run_event import RunEvent  # noqa: F401
 from app.models.step_run import StepRun  # noqa: F401
 from app.models.task_message import TaskMessage  # noqa: F401
+from app.models.task_successor_job import TaskSuccessorJob  # noqa: F401
 from app.models.user_cache import UserCache  # noqa: F401
 from app.models.worker_lease import WorkerLease  # noqa: F401
 from app.models.workflow_binding import WorkflowBinding  # noqa: F401

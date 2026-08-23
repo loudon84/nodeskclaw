@@ -39,6 +39,10 @@ jobs:
         working-directory: nodeskclaw-backend
         run: uv run pytest
 
+      - name: WORK-EXPERT-CONTRACT check
+        working-directory: nodeskclaw-backend
+        run: uv run python scripts/contracts.py check
+
   portal:
     name: Portal Build / Test
     runs-on: ubuntu-latest

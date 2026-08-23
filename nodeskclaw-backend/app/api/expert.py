@@ -17,6 +17,12 @@ from app.schemas.expert import (
     ExpertUpdateBody,
 )
 from app.schemas.expert_log import ExpertInvocationLogDetail, ExpertInvocationLogListResponse
+from app.contracts.work_expert.constants import (
+    WORK_EXPERT_CONTRACT_NAME,
+    WORK_EXPERT_CONTRACT_PATH,
+    WORK_EXPERT_CONTRACT_VERSION,
+)
+from app.schemas.work_expert.mcp_jsonrpc import JsonRpcRequest
 from app.schemas.expert_mcp import ExpertHealthResponse
 from app.schemas.expert_skill import ExpertSkillItem, ExpertSkillListResponse, ExpertSkillSyncResult, ExpertSkillUpdateBody, ExpertSkillVisibilityBody
 from app.schemas.expert_team_skill import ExpertTeamSkillItem, ExpertTeamSkillListResponse, ExpertTeamSkillUpdateBody, ExpertTeamSkillVisibilityBody
@@ -59,6 +65,8 @@ async def expert_health(
         return ExpertHealthResponse(
             ok=False,
             status="unauthorized",
+            contractName=WORK_EXPERT_CONTRACT_NAME,
+            contractVersion=WORK_EXPERT_CONTRACT_VERSION,
             gateway={"name": "expert-mcp-gateway", "version": "v6.1"},
             catalog={"publishedExperts": 0, "publicSkills": 0, "callableSkills": 0},
             runtimes=[],
@@ -68,7 +76,7 @@ async def expert_health(
 
 @router.post("/mcp", tags=["Expert MCP Gateway"])
 async def expert_mcp_root(
-    body: dict,
+    body: JsonRpcRequest,
     request: Request,
     authorization: str | None = Header(default=None),
     db: AsyncSession = Depends(get_db),
@@ -77,9 +85,8 @@ async def expert_mcp_root(
     if err:
         return err
     result = await ExpertMcpGatewayService(db).dispatch_root(
-        auth.org.id,
-        auth.user.id,
-        body,
+        auth,
+        body.model_dump(exclude_none=True),
         headers=dict(request.headers),
     )
     await db.commit()
@@ -89,7 +96,7 @@ async def expert_mcp_root(
 @router.post("/mcp/{slug}", tags=["Expert MCP Gateway"])
 async def expert_mcp_slug(
     slug: str,
-    body: dict,
+    body: JsonRpcRequest,
     request: Request,
     authorization: str | None = Header(default=None),
     db: AsyncSession = Depends(get_db),
@@ -98,10 +105,9 @@ async def expert_mcp_slug(
     if err:
         return err
     result = await ExpertMcpGatewayService(db).dispatch_catalog_item(
-        auth.org.id,
-        auth.user.id,
+        auth,
         slug,
-        body,
+        body.model_dump(exclude_none=True),
         headers=dict(request.headers),
     )
     await db.commit()

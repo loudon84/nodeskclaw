@@ -15,6 +15,7 @@ from app.services.expert_gateway.errors import (
     EXPERT_AGENT_INSTANCE_NOT_BOUND,
     EXPERT_ROUTE_OVERRIDE_FORBIDDEN,
 )
+from app.services.mcp_skill_gateway.auth import McpAuthContext
 
 
 def test_resolve_run_mode_defaults_to_event_stream():
@@ -135,8 +136,10 @@ async def test_dispatch_tools_call_rejects_route_override():
         new=AsyncMock(return_value=True),
     ):
         result = await gateway._dispatch_tools_call(
-            "org-1",
-            "user-1",
+            McpAuthContext(
+                user=SimpleNamespace(id="user-1"),
+                org=SimpleNamespace(id="org-1"),
+            ),
             item,
             {
                 "params": {

@@ -7,9 +7,10 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.exceptions import BadRequestError, NotFoundError
+from app.core.exceptions import BadRequestError, ForbiddenError, NotFoundError
 from app.models.base import not_deleted
 from app.models.hermes_skill.hermes_task import HermesTask, HermesTaskEvent, TaskStatus, EventType
+from app.models.org_membership import OrgMembership, OrgRole
 from app.services.hermes_external.hermes_bound_agent_scope_service import HermesBoundAgentScopeService
 from app.services.hermes_skill.hermes_queue_policy_service import HermesQueuePolicyService
 
@@ -33,6 +34,13 @@ class TaskService:
         arguments: dict | None = None,
         client_context: dict | None = None,
         routing_metadata: dict | None = None,
+        output_policy: dict | None = None,
+        idempotency_key: str | None = None,
+        catalog_slug: str | None = None,
+        parent_task_id: str | None = None,
+        request_snapshot: dict | None = None,
+        request_trace_id: str | None = None,
+        route_diagnostics: dict | None = None,
     ) -> HermesTask:
         if agent_id:
             await HermesBoundAgentScopeService(self.db).assert_bound_instance(org_id, agent_id)
@@ -72,6 +80,13 @@ class TaskService:
             artifact_url=f"/api/v1/hermes/tasks/{{task_id}}/artifacts",
             client_context=client_context,
             routing_metadata=routing_metadata,
+            output_policy=output_policy,
+            idempotency_key=idempotency_key,
+            catalog_slug=catalog_slug,
+            parent_task_id=parent_task_id,
+            request_snapshot=request_snapshot,
+            request_trace_id=request_trace_id,
+            route_diagnostics=route_diagnostics,
         )
         self.db.add(task)
         await self.db.flush()
@@ -130,14 +145,27 @@ class TaskService:
         await self.db.flush()
         return task
 
-    async def mark_completed(self, task: HermesTask, result_summary: str | None = None) -> HermesTask:
-        if task.status == TaskStatus.COMPLETED:
+    async def mark_completed(
+        self,
+        task: HermesTask,
+        result_summary: str | None = None,
+        result_content: str | None = None,
+    ) -> HermesTask:
+        if task.status in {
+            TaskStatus.COMPLETED,
+            TaskStatus.CANCELLED,
+            TaskStatus.FAILED,
+            TaskStatus.TIMEOUT,
+        }:
             return task
         task.status = TaskStatus.COMPLETED
         task.completed_at = datetime.now(timezone.utc)
         if result_summary:
             task.result_summary = result_summary
-        await self._append_status_event(task, EventType.TASK_COMPLETED, {"status": TaskStatus.COMPLETED.value})
+        if result_content is not None:
+            task.result_content = result_content
+        if not await self._has_event(task.id, EventType.TASK_COMPLETED):
+            await self._append_status_event(task, EventType.TASK_COMPLETED, {"status": TaskStatus.COMPLETED.value})
         await self.db.flush()
         return task
 
@@ -199,6 +227,52 @@ class TaskService:
         if not task or task.deleted_at is not None or task.org_id != org_id:
             raise NotFoundError("Task 不存在", "errors.task.not_found")
         return task
+
+    async def get_org_role(self, user_id: str, org_id: str) -> OrgRole | None:
+        result = await self.db.execute(
+            select(OrgMembership.role).where(
+                OrgMembership.user_id == user_id,
+                OrgMembership.org_id == org_id,
+                not_deleted(OrgMembership),
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def assert_task_access(
+        self,
+        task: HermesTask,
+        user_id: str | None,
+        org_id: str,
+    ) -> None:
+        if not user_id:
+            return
+        role = await self.get_org_role(user_id, org_id)
+        if role in (OrgRole.admin, OrgRole.operator):
+            return
+        if task.user_id and task.user_id != user_id:
+            raise ForbiddenError("无权访问该任务", "errors.task.owner_forbidden")
+
+    async def find_idempotent_task(
+        self,
+        org_id: str,
+        user_id: str | None,
+        catalog_slug: str | None,
+        tool_name: str,
+        idempotency_key: str,
+    ) -> HermesTask | None:
+        if not idempotency_key or not user_id or not catalog_slug:
+            return None
+        result = await self.db.execute(
+            select(HermesTask).where(
+                not_deleted(HermesTask),
+                HermesTask.org_id == org_id,
+                HermesTask.user_id == user_id,
+                HermesTask.catalog_slug == catalog_slug,
+                HermesTask.tool_name == tool_name,
+                HermesTask.idempotency_key == idempotency_key,
+            ).limit(1)
+        )
+        return result.scalar_one_or_none()
 
     async def update_status(
         self,

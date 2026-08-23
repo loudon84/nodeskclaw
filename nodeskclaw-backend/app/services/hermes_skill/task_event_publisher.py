@@ -81,7 +81,9 @@ class TaskEventPublisher:
         self,
         task_id: str,
         org_id: str,
-    ) -> HermesTaskEvent:
+    ) -> HermesTaskEvent | None:
+        if await self._events.has_event(task_id, EventType.TASK_COMPLETED):
+            return None
         result_data = await TaskResultService(self.db).get_result(task_id, org_id)
         artifacts = result_data.get("server_artifacts") or []
         return await self.publish(
@@ -92,6 +94,7 @@ class TaskEventPublisher:
                 "mcp_event": "task.completed",
                 "result": {
                     "summary": result_data.get("result_summary"),
+                    "content": result_data.get("result_content"),
                     "artifacts": artifacts,
                     "artifact_mode": result_data.get("artifact_mode"),
                     "kb_status": result_data.get("kb_status"),

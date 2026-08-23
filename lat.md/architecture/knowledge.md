@@ -8,7 +8,7 @@
 
 Knowledge 作为兄弟服务包落在仓库根目录 `nodeskclaw-knowledge/`，与 Backend / LLM Proxy / Task 并列，不并入 `nodeskclaw-backend` 进程。
 
-脚手架对齐 `nodeskclaw-task`：`app/api`（`router.py` 聚合，域文件平铺）、`schemas`、`services`、`models`、`core`、`integrations/`（含 `ragflow` / `nodeskclaw_backend` / `llm_proxy`）、自管 `alembic/` 与独立 `DATABASE_URL`。入口：[[nodeskclaw-knowledge/app/main.py]]。默认不建强制 `repositories/` 层。首版不引入 Redis。环境变量含 `NODESKCLAW_BACKEND_URL`、`RAGFLOW_*`、`LLM_PROXY_URL`、`KNOWLEDGE_SERVICE_TOKEN`；**不再强制共享 Backend `JWT_SECRET`**。
+脚手架对齐 `nodeskclaw-task`：`app/api`（`router.py` 聚合，域文件平铺）、`schemas`、`services`、`models`、`core`、`integrations/`（含 `ragflow` / `nodeskclaw_backend` / `llm_proxy`）、自管 `alembic/` 与独立 `DATABASE_URL`。入口：[[nodeskclaw-knowledge/app/main.py]]。默认不建强制 `repositories/` 层。首版不引入 Redis。环境变量含 `NODESKCLAW_BACKEND_URL`、`RAGFLOW_*`、`LLM_PROXY_URL`、`KNOWLEDGE_SERVICE_TOKEN`；**不再强制共享 Backend `JWT_SECRET`**。flat-layout 的 editable 打包约束见 [[task#Packaging Constraint]]。
 
 ## Auth Integration
 

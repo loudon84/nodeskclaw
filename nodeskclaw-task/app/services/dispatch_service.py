@@ -49,6 +49,7 @@ from app.services.human_action_service import create_human_action_for_run
 from app.services.json_utils import dumps_json, loads_json
 from app.services.rpa_worker_service import get_worker
 from app.services.task_state_machine import transition
+from app.services.task_successor_service import enqueue_successor_job
 
 TERMINAL_RUN_STATUSES = {RunStatus.SUCCESS, RunStatus.FAILED, RunStatus.CANCELLED, RunStatus.WAITING_HUMAN}
 
@@ -551,11 +552,27 @@ async def finish_run(db: AsyncSession, run_id: str, body: RunFinishRequest) -> R
     run.ended_at = datetime.now(UTC)
     run.error_code = body.error_code
     run.error_message = body.error_message
+    run.output = body.output if body.status == RunStatus.SUCCESS else None
 
     if body.status == RunStatus.SUCCESS:
         transition(task, TaskStatus.SUCCESS)
         task.progress = 100
         event_type = RunEventType.RUN_SUCCEEDED
+        source_binding = (
+            await db.execute(
+                select(WorkflowBinding).where(
+                    WorkflowBinding.id == task.workflow_binding_id,
+                    not_deleted(WorkflowBinding),
+                )
+            )
+        ).scalar_one_or_none()
+        if source_binding is not None:
+            await enqueue_successor_job(
+                db,
+                source_task=task,
+                source_run=run,
+                source_binding=source_binding,
+            )
     elif body.status == RunStatus.FAILED:
         transition(task, TaskStatus.FAILED)
         event_type = RunEventType.RUN_FAILED

@@ -66,6 +66,9 @@ class HermesTask(BaseModel):
     arguments_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     request_summary: Mapped[str | None] = mapped_column(String(500), nullable=True)
     result_summary: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    result_content: Mapped[str | None] = mapped_column(Text, nullable=True)
+    idempotency_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    catalog_slug: Mapped[str | None] = mapped_column(String(255), nullable=True)
     error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     hermes_run_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -115,6 +118,16 @@ class HermesTask(BaseModel):
             "uq_hermes_tasks_task_no_alive", "task_no",
             unique=True,
             postgresql_where=text("deleted_at IS NULL"),
+        ),
+        Index(
+            "uq_hermes_tasks_idempotency_alive",
+            "org_id",
+            "user_id",
+            "catalog_slug",
+            "tool_name",
+            "idempotency_key",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL AND idempotency_key IS NOT NULL"),
         ),
     )
 

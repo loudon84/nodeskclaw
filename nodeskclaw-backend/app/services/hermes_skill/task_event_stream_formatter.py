@@ -88,6 +88,7 @@ def build_sse_data(
         if enriched_result:
             result = {
                 "summary": enriched_result.get("result_summary"),
+                "content": enriched_result.get("result_content"),
                 "artifacts": enriched_result.get("server_artifacts") or [],
                 "artifact_mode": enriched_result.get("artifact_mode"),
                 "kb_status": enriched_result.get("kb_status"),

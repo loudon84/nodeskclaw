@@ -1,0 +1,53 @@
+{
+  "contractName": "WORK-EXPERT-CONTRACT",
+  "contractVersion": "1.0.0",
+  "provider": "nodeskclaw-backend",
+  "consumer": "smc-copilot/apps/work",
+  "backendCommit": "ddedaf3bd3e8d3cc351a806c09c9d57a42b9bfa2",
+  "generatedAt": "2026-08-23T03:08:39.274462+00:00",
+  "openapiVersion": "3.1.0",
+  "eventSchemaVersion": "1.0.0",
+  "artifacts": {
+    "openapi.yaml": "d80856a130d707f648f01646aefbefcf703d75bf6d07309593a77ee77dcf3fec",
+    "events/task-artifact-ready.schema.json": "d15d416fb15ac64ac9305873a7a6b43a18d1ea23bda0af64a0ac8092fe32a7e0",
+    "events/task-completed.schema.json": "d9c8d01413ecf0791bab5d531818f05596c3f8b2ffa5f49edde0515d7eddc76a",
+    "events/task-event.schema.json": "3285bf7e66923b0ff982a1d158813005b0a82e349b1835b2ca8de6d40ad3f0fb",
+    "events/task-failed.schema.json": "4278ba68cfe05d736abeb8bfc444925329f789c0f4b9083af58c4b5661317d0a",
+    "events/task-progress.schema.json": "2df05250b80a2211d893e580904348cf8bee5806756fffd91a198060f6aab4ba",
+    "events/task-started.schema.json": "86a712be10747bc17aeb1f4c271c94e2a95d270caa2a541bf9b59fed831da2a1",
+    "events/task-timeline.schema.json": "07194612aef870fc855e062a03c788ca19279994eb8df4cda03bf42457f6fff8",
+    "mcp/json-rpc-error.schema.json": "4debb9b0cb090d76bb791448bd459914579e0467b140ce91c2827dbc2b7a3748",
+    "mcp/tools-call.request.schema.json": "d715c92793ae56ed9acf5160c39f04d18ab9a340a7afaafd271a7c5a9d18ca90",
+    "mcp/tools-call.response.schema.json": "2e522491eda54d04b4598001165a8cbe3f2d485f313c019d84e309f45352f066",
+    "mcp/tools-list.request.schema.json": "d715c92793ae56ed9acf5160c39f04d18ab9a340a7afaafd271a7c5a9d18ca90",
+    "mcp/tools-list.response.schema.json": "e1ab9850f9cfbd2cf7df710fe8b70d3ba14ec2f1b258370cd7ee29e049e23432",
+    "fixtures/catalog-tools-list.json": "f3a3f03551d0b2dc0542a253ceb7c574abbf5805a2c50fd807b7a2e387d6b726",
+    "fixtures/json-rpc-error.json": "144cc433fc645ae3f34ff45bb5f132493942a40109e86cf9babc03ca1c162129",
+    "fixtures/skill-tools-list.json": "bc342e340452ff91b5e1f8580b96c02f04addc3fe047d65e2fc260137eef1139",
+    "fixtures/sse-replay.ndjson": "73eba7792b295f8b3406b9cac8227d2453d0ba2ce89d38a3de6d6451e65c3a9a",
+    "fixtures/task-artifacts.json": "2af3440a6645cdcfdd0f6d60cb2013fcd504155ab22dff7fc8dba09f85156253",
+    "fixtures/task-result-completed.json": "d9795b8aeb0002a7a145234d74db904986313d72347e98b21f98104c0444e7ea",
+    "fixtures/task-snapshot-running.json": "1b0578fc16db1ddae9d9441f5c1dd7abff54f965df81762fc30a5031358b0770",
+    "fixtures/tools-call-accepted.json": "f23b4efa7e97f6c1e86ac26d41ccf91524fa949822f70fae52a9bb936f3010df"
+  },
+  "capabilities": {
+    "asyncEvent": true,
+    "sseResume": true,
+    "runtimeProgress": false,
+    "artifactMode": "pull_only",
+    "idempotency": true,
+    "taskOwnerPolicy": true,
+    "retryContract": true,
+    "cancelSafe": true,
+    "loadGate": "unmet"
+  },
+  "queueLimits": {
+    "orgMaxQueued": 1000,
+    "userMaxRunning": 3,
+    "skillMaxRunning": 10,
+    "agentMaxRunningDefault": 5,
+    "workerBatchSize": 5,
+    "workerSequential": true,
+    "loadGate": "unmet"
+  }
+}

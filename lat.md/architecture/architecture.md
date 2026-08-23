@@ -7,4 +7,5 @@
 - [[portal]] — 用户门户页面域、API 客户端、i18n 与可视化
 - [[llm-proxy]] — LLM 转发、HMAC 归因、额度预检与用量记录
 - [[knowledge]] — 知识治理、ACL、安全检索、评测与 RAGFlow Adapter
+- [[task]] — AutoTask 独立服务、打包约束与后继作业
 - [[runtime]] — 计算 Provider、实例生命周期、Channel 与外部运行时

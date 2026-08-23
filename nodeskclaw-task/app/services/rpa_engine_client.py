@@ -52,7 +52,7 @@ async def validate_binding(
     }
 
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        async with httpx.AsyncClient(timeout=15.0, trust_env=False) as client:
             resp = await client.post(url, json=body, headers=headers)
             resp.raise_for_status()
             data = resp.json()

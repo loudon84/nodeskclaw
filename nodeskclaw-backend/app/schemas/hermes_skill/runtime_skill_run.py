@@ -34,6 +34,7 @@ class StartRuntimeSkillRunRequest:
     extra_route_snapshot: dict[str, Any] = field(default_factory=dict)
     routing_metadata_extras: dict[str, Any] = field(default_factory=dict)
     sse_token_ttl_seconds: int | None = None
+    idempotency_key: str | None = None
 
 
 @dataclass

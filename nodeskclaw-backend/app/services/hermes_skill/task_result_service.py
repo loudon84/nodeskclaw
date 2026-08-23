@@ -56,7 +56,8 @@ class TaskResultService:
                     "message": task.error_message or "任务未完成",
                 },
                 "result_summary": task.result_summary,
-                "content": None,
+                "result_content": task.result_content,
+                "content": task.result_content,
                 "server_artifacts": task.server_artifacts or [],
             }
 
@@ -95,7 +96,8 @@ class TaskResultService:
             "artifacts": [self._artifact_to_dict(a) for a in artifacts if primary is None or a.id != primary.id],
             "timeline": timeline,
             "result_summary": task.result_summary,
-            "content": task.result_summary,
+            "result_content": task.result_content,
+            "content": task.result_content,
             "artifact_mode": "pull_only",
             "server_artifacts": task.server_artifacts or self._materialized_server_artifacts(artifacts),
             "artifact_status": task.artifact_status,
@@ -124,7 +126,8 @@ class TaskResultService:
             result_section = {
                 "ready": True,
                 "summary": task.result_summary,
-                "content": task.result_summary,
+                "result_content": task.result_content,
+                "content": task.result_content,
             }
         elif task.status in {TaskStatus.FAILED, TaskStatus.TIMEOUT, TaskStatus.CANCELLED}:
             result_section = {
@@ -293,10 +296,15 @@ class TaskResultService:
     def _artifact_to_dict(artifact: HermesArtifact) -> dict:
         return {
             "id": artifact.id,
+            "org_id": artifact.org_id,
+            "task_id": artifact.task_id,
+            "created_by": artifact.created_by,
             "title": artifact.title or artifact.file_name,
             "file_name": artifact.file_name,
             "artifact_type": artifact.artifact_type,
             "content_type": artifact.content_type,
+            "size_bytes": artifact.size_bytes,
+            "sha256": artifact.sha256,
             "preview_url": f"/api/v1/hermes/artifacts/{artifact.id}/preview",
             "download_url": f"/api/v1/hermes/artifacts/{artifact.id}/download",
         }

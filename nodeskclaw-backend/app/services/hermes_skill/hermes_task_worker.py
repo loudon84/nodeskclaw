@@ -153,6 +153,14 @@ class HermesTaskWorker:
 
             await task_service.mark_running(task)
 
+            publisher = TaskEventPublisher(db)
+            await publisher.publish_progress(
+                task.id,
+                task.org_id,
+                stage="preparing",
+                message="任务准备执行",
+            )
+
             await audit_logger.log(
                 action="hermes.task.started",
                 target_id=task.id,
@@ -668,6 +676,25 @@ class HermesTaskWorker:
             await self._sync_expert_log_if_terminal(db, task)
             return
 
+        await db.refresh(task)
+        if task.status == TaskStatus.CANCELLED or await event_service.has_event(
+            task.id, EventType.TASK_CANCEL_REQUESTED
+        ):
+            task.worker_id = None
+            task.locked_at = None
+            task.dispatch_status = "cancelled"
+            await db.flush()
+            await self._sync_expert_log_if_terminal(db, task)
+            return
+
+        publisher = TaskEventPublisher(db)
+        await publisher.publish_progress(
+            task.id,
+            task.org_id,
+            stage="finalizing",
+            message="任务结果整理中",
+        )
+
         await event_service.write_event(
             task_id=task.id,
             org_id=task.org_id,
@@ -676,7 +703,12 @@ class HermesTaskWorker:
             source="worker",
         )
         task.run_finished_at = datetime.now(timezone.utc)
-        await task_service.mark_completed(task, result_summary=content_text[:500])
+        summary = content_text[:500]
+        await task_service.mark_completed(
+            task,
+            result_summary=summary,
+            result_content=content_text,
+        )
 
         output_policy = None
         if task.routing_metadata and isinstance(task.routing_metadata, dict):
