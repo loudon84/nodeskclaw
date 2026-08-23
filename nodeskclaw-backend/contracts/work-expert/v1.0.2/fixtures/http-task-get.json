@@ -1,0 +1,10 @@
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "id": "task-1",
+    "org_id": "org-1",
+    "task_no": "TASK-org1-abcd1234",
+    "status": "running"
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "jsonrpc": "2.0",
+  "id": "list-skill",
+  "result": {
+    "tools": [
+      {
+        "name": "customer-profiling",
+        "description": "Profile a customer",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "prompt": {
+              "type": "string"
+            }
+          }
+        },
+        "annotations": {
+          "displayName": "客户画像",
+          "status": "ready",
+          "callEnabled": true,
+          "riskLevel": "low",
+          "approvalMode": "none"
+        }
+      }
+    ]
+  }
+}

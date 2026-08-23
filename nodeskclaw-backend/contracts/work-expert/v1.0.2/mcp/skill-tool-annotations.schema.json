@@ -1,0 +1,45 @@
+{
+  "additionalProperties": true,
+  "description": "POST /api/v1/expert/mcp/{slug} tools/list Skill annotations.",
+  "properties": {
+    "displayName": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Displayname"
+    },
+    "status": {
+      "minLength": 1,
+      "title": "Status",
+      "type": "string"
+    },
+    "callEnabled": {
+      "title": "Callenabled",
+      "type": "boolean"
+    },
+    "riskLevel": {
+      "minLength": 1,
+      "title": "Risklevel",
+      "type": "string"
+    },
+    "approvalMode": {
+      "minLength": 1,
+      "title": "Approvalmode",
+      "type": "string"
+    }
+  },
+  "required": [
+    "status",
+    "callEnabled",
+    "riskLevel",
+    "approvalMode"
+  ],
+  "title": "SkillToolAnnotations",
+  "type": "object"
+}

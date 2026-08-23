@@ -1,6 +1,6 @@
 # Expert MCP Gateway 模块说明
 
-> **apps/work 消费契约**：以 `nodeskclaw-backend/contracts/work-expert/v1.0.1/` 的 **WORK-EXPERT-CONTRACT v1.0.1** 为准。v1.0.0 目录与 tag `work-expert-contract-v1.0.0` 已冻结、不可改写。由 `uv run python scripts/contracts.py generate` 从 FastAPI/Pydantic 生成。Consumer 锁定 **tag name + tag target commit SHA + SHA256SUMS**。勿用下文 gateway 版本号（v6.x）。
+> **apps/work 消费契约**：以 `nodeskclaw-backend/contracts/work-expert/v1.0.2/` 的 **WORK-EXPERT-CONTRACT v1.0.2** 为准。v1.0.0 / v1.0.1 目录与对应 tag 已冻结、不可改写。由 `uv run python scripts/contracts.py generate` 从 FastAPI/Pydantic 生成。Consumer 锁定 **tag name + tag target commit SHA + SHA256SUMS**。勿用下文 gateway 版本号（v6.x）。
 
 ## 概述
 

@@ -25,6 +25,7 @@ P0_TEST_FILES = [
     "tests/hermes_skill/test_progress_stages_minimum.py",
     "tests/contracts/test_contracts_check.py",
     "tests/contracts/test_openapi_response_schemas.py",
+    "tests/contracts/test_mcp_tools_list_annotations.py",
 ]
 
 
@@ -36,10 +37,10 @@ def contract_root(version: str | None = None) -> Path:
 
         return CONTRACTS_HOME / f"v{WORK_EXPERT_CONTRACT_VERSION}"
     except ImportError:
-        return CONTRACTS_HOME / "v1.0.1"
+        return CONTRACTS_HOME / "v1.0.2"
 
 
-CONTRACT_ROOT = CONTRACTS_HOME / "v1.0.1"
+CONTRACT_ROOT = CONTRACTS_HOME / "v1.0.2"
 
 
 def _git_head() -> str:
@@ -246,7 +247,14 @@ def _fixture_payloads() -> dict[str, dict | list | str]:
                         "name": "call-prep",
                         "description": "Customer research expert",
                         "inputSchema": {"type": "object", "properties": {}},
-                        "annotations": {"kind": "expert", "slug": "call-prep"},
+                        "annotations": {
+                            "kind": "expert",
+                            "slug": "call-prep",
+                            "displayName": "客户调研专家",
+                            "status": "ready",
+                            "publicSkillCount": 3,
+                            "callableSkillCount": 2,
+                        },
                     }
                 ]
             },
@@ -260,6 +268,71 @@ def _fixture_payloads() -> dict[str, dict | list | str]:
                         "name": "customer-profiling",
                         "description": "Profile a customer",
                         "inputSchema": {"type": "object", "properties": {"prompt": {"type": "string"}}},
+                        "annotations": {
+                            "displayName": "客户画像",
+                            "status": "ready",
+                            "callEnabled": True,
+                            "riskLevel": "low",
+                            "approvalMode": "none",
+                        },
+                    }
+                ]
+            },
+        },
+        "fixtures/catalog-tools-list-missing-display-name.json": {
+            "jsonrpc": "2.0",
+            "id": "list-root-no-display",
+            "result": {
+                "tools": [
+                    {
+                        "name": "call-prep",
+                        "description": "Customer research expert",
+                        "inputSchema": {"type": "object", "properties": {}},
+                        "annotations": {
+                            "kind": "expert",
+                            "slug": "call-prep",
+                            "status": "offline",
+                            "publicSkillCount": 1,
+                            "callableSkillCount": 0,
+                        },
+                    }
+                ]
+            },
+        },
+        "fixtures/skill-tools-list-call-disabled.json": {
+            "jsonrpc": "2.0",
+            "id": "list-skill-disabled",
+            "result": {
+                "tools": [
+                    {
+                        "name": "restricted-skill",
+                        "description": "Requires approval",
+                        "inputSchema": {"type": "object", "properties": {}},
+                        "annotations": {
+                            "status": "ready",
+                            "callEnabled": False,
+                            "riskLevel": "high",
+                            "approvalMode": "approval_required",
+                        },
+                    }
+                ]
+            },
+        },
+        "fixtures/invalid-tool-annotations.json": {
+            "jsonrpc": "2.0",
+            "id": "list-invalid",
+            "result": {
+                "tools": [
+                    {
+                        "name": "call-prep",
+                        "inputSchema": {"type": "object", "properties": {}},
+                        "annotations": {
+                            "kind": "expert",
+                            "slug": "call-prep",
+                            "status": "ready",
+                            "publicSkillCount": -1,
+                            "callableSkillCount": 0,
+                        },
                     }
                 ]
             },
@@ -426,8 +499,10 @@ def generate_contracts() -> None:
         TaskTimelineEvent,
     )
     from app.schemas.work_expert.mcp_jsonrpc import (
+        CatalogToolAnnotations,
         JsonRpcErrorResponse,
         JsonRpcRequest,
+        SkillToolAnnotations,
         ToolsCallAcceptedResult,
         ToolsListResult,
     )
@@ -460,6 +535,8 @@ def generate_contracts() -> None:
     mcp_models = {
         "tools-list.request.schema.json": JsonRpcRequest,
         "tools-list.response.schema.json": ToolsListResult,
+        "catalog-tool-annotations.schema.json": CatalogToolAnnotations,
+        "skill-tool-annotations.schema.json": SkillToolAnnotations,
         "tools-call.request.schema.json": JsonRpcRequest,
         "tools-call.response.schema.json": ToolsCallAcceptedResult,
         "json-rpc-error.schema.json": JsonRpcErrorResponse,
@@ -470,6 +547,11 @@ def generate_contracts() -> None:
     for relative_path, payload in _fixture_payloads().items():
         target = root / relative_path
         _write_json(target, payload)
+
+    evidence_src = CONTRACTS_HOME / "v1.0.1" / "evidence" / "load-test-20-runs.json"
+    evidence_dst = root / "evidence" / "load-test-20-runs.json"
+    if evidence_src.is_file():
+        evidence_dst.write_bytes(evidence_src.read_bytes())
 
     sse_replay = "\n".join(
         [
@@ -572,6 +654,14 @@ def _validate_fixtures(root: Path) -> None:
     schema_map = {
         "fixtures/catalog-tools-list.json": ("mcp/tools-list.response.schema.json", "result"),
         "fixtures/skill-tools-list.json": ("mcp/tools-list.response.schema.json", "result"),
+        "fixtures/catalog-tools-list-missing-display-name.json": (
+            "mcp/tools-list.response.schema.json",
+            "result",
+        ),
+        "fixtures/skill-tools-list-call-disabled.json": (
+            "mcp/tools-list.response.schema.json",
+            "result",
+        ),
         "fixtures/tools-call-accepted.json": ("mcp/tools-call.response.schema.json", "result"),
         "fixtures/json-rpc-error.json": ("mcp/json-rpc-error.schema.json", None),
     }
@@ -581,6 +671,15 @@ def _validate_fixtures(root: Path) -> None:
         schema = json.loads((root / schema_rel).read_text(encoding="utf-8"))
         payload = fixture if key is None else fixture[key]
         jsonschema.validate(payload, schema)
+
+    invalid = json.loads((root / "fixtures/invalid-tool-annotations.json").read_text(encoding="utf-8"))
+    tools_schema = json.loads((root / "mcp/tools-list.response.schema.json").read_text(encoding="utf-8"))
+    try:
+        jsonschema.validate(invalid["result"], tools_schema)
+    except jsonschema.ValidationError:
+        pass
+    else:
+        raise SystemExit("fixtures/invalid-tool-annotations.json unexpectedly passed schema")
 
     pydantic_map = {
         "fixtures/task-snapshot-running.json": (TaskSnapshotResponse, "data"),

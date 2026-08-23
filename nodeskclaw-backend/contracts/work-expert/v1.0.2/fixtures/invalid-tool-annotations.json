@@ -1,0 +1,22 @@
+{
+  "jsonrpc": "2.0",
+  "id": "list-invalid",
+  "result": {
+    "tools": [
+      {
+        "name": "call-prep",
+        "inputSchema": {
+          "type": "object",
+          "properties": {}
+        },
+        "annotations": {
+          "kind": "expert",
+          "slug": "call-prep",
+          "status": "ready",
+          "publicSkillCount": -1,
+          "callableSkillCount": 0
+        }
+      }
+    ]
+  }
+}

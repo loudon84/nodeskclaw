@@ -29,7 +29,7 @@ cd nodeskclaw-backend
 uv run python scripts/contracts/load_test_20_runs.py
 ```
 
-证据写入 `contracts/work-expert/v1.0.1/evidence/load-test-20-runs.json`。缺少环境变量时脚本退出码 2，证据 `executed=false`，`loadGate=unmet`。
+证据写入 `contracts/work-expert/v1.0.2/evidence/load-test-20-runs.json`。缺少环境变量时脚本退出码 2，证据 `executed=false`，`loadGate=unmet`。
 
 ## 通过后
 
@@ -37,4 +37,4 @@ uv run python scripts/contracts/load_test_20_runs.py
 2. 仅当 `executed=true` 且 `passed=true` 时，把 `WORK_EXPERT_CAPABILITIES["loadGate"]` 改为 `met` 并重新 `contracts.py generate`。
 3. 若单 Worker 顺序执行达不到阈值，再改容量模型（可控并发或多 replica）后重测。禁止只改 manifest。
 
-v1.0.1 发布时该 gate 为 **unmet**。
+v1.0.2 发布时该 gate 为 **unmet**。

@@ -1,6 +1,6 @@
 # Work Expert Contract
 
-WORK-EXPERT-CONTRACT 冻结 Expert MCP 与 Hermes Task 跟进 API；当前消费版本为 v1.0.1，v1.0.0 目录与 tag 保持不可变。FastAPI 路由与 Pydantic 为唯一事实源。
+WORK-EXPERT-CONTRACT 冻结 Expert MCP 与 Hermes Task 跟进 API；当前消费版本为 v1.0.2，v1.0.0 与 v1.0.1 目录与 tag 保持不可变。FastAPI 路由与 Pydantic 为唯一事实源。
 
 ## Binding
 
@@ -9,11 +9,11 @@ Expert 与 Hermes 消费面的版本、产物路径与 tag 锁定约定。
 | 项 | 值 |
 |---|---|
 | contractName | WORK-EXPERT-CONTRACT |
-| contractVersion | 1.0.1（v1.0.0 产物冻结于 `contracts/work-expert/v1.0.0/`） |
-| 产物目录 | `nodeskclaw-backend/contracts/work-expert/v1.0.1/` |
+| contractVersion | 1.0.2（v1.0.0 / v1.0.1 产物冻结于各自目录） |
+| 产物目录 | `nodeskclaw-backend/contracts/work-expert/v1.0.2/` |
 | Provider | nodeskclaw-backend |
 | Consumer | smc-copilot/apps/work |
-| 发布 tag | `work-expert-contract-v1.0.1`（annotated）；v1.0.0 tag 不可移动 |
+| 发布 tag | `work-expert-contract-v1.0.2`（annotated）；v1.0.0 / v1.0.1 tag 不可移动 |
 
 Consumer 必须锁定 **tag name + tag target commit SHA + SHA256SUMS**，禁止锁定 `main` 或只锁定 `manifest.backendCommit`。
 
@@ -26,6 +26,16 @@ Health 与 manifest 一致的 capability flags；`loadGate: unmet` 表示 20-run
 - `asyncEvent` / `sseResume` / `artifactMode: pull_only` / `idempotency` / `taskOwnerPolicy` / `retryContract` / `cancelSafe`：true
 - `runtimeProgress`：false（仅保证 `preparing` 与 `finalizing` 等阶段，非可信工具级进度）
 - `loadGate`：**unmet**
+
+## MCP Tools List Annotations
+
+v1.0.2 为 Catalog 与 Skill 的 `tools/list` 定义可校验 annotations；`displayName` 只用于 UI，调用 identity 分别是 `annotations.slug` 与 `tool.name`。
+
+Catalog 最低字段：`kind`（`expert` | `expert_team`）、`slug`、`status`、`publicSkillCount`、`callableSkillCount`（后两者 ≥ 0）；`displayName` 可选，缺省回退 `tool.name` / `slug`。`kind`/`slug`/计数缺失或非法则拒绝该 Catalog 项。未知 `status` 不得当作 ready。
+
+Skill 最低字段：`status`、`callEnabled`、`riskLevel`、`approvalMode`；`displayName` 可选。`callEnabled` 缺失或非 boolean 视为 false；未知 `riskLevel`/`approvalMode` 不得静默调用。`callEnabled=false` 可出现在 list，禁止 `tools/call`。
+
+Schema 事实源：[[nodeskclaw-backend/app/schemas/work_expert/mcp_jsonrpc.py#CatalogToolAnnotations]]、[[nodeskclaw-backend/app/schemas/work_expert/mcp_jsonrpc.py#SkillToolAnnotations]]。产物在 `contracts/work-expert/v1.0.2/mcp/`。
 
 ## P0 Semantics
 
@@ -41,11 +51,11 @@ Cancel-safe：RUNNING 取消后 Worker 不得 `mark_completed`。Retry 复制 ro
 
 ## CI
 
-`scripts/contracts.py generate` / `check` 校验 OpenAPI、非空 200 schema、fixtures、SHA256SUMS、冻结 v1.0.0 checksum；quality-gate 在 pytest 后执行 check。v1.0.1 补齐 Hermes HTTP `response_model`。
+`scripts/contracts.py generate` / `check` 校验 OpenAPI、非空 200 schema、fixtures、SHA256SUMS、冻结 v1.0.0/v1.0.1 checksum；quality-gate 在 pytest 后执行 check。v1.0.2 补齐 MCP `tools/list` Catalog/Skill `annotations` 合同。
 
 ## OpenAPI Coverage
 
-合同 OpenAPI 子集覆盖 13 条路径；v1.0.1 要求这些路径的 200 响应不得为 `schema: {}`，清单见 [[nodeskclaw-backend/app/contracts/work_expert/constants.py#WORK_EXPERT_OPENAPI_PATHS]]。
+合同 OpenAPI 子集覆盖 13 条路径；200 响应不得为 `schema: {}`。v1.0.2 另要求 `tools/list` annotations 不得仅是开放 object，清单见 [[nodeskclaw-backend/app/contracts/work_expert/constants.py#WORK_EXPERT_OPENAPI_PATHS]]。
 
 ## Implementation
 
@@ -62,7 +72,7 @@ P0 语义在 Expert 网关、Hermes Task 服务与 Worker 中落地；迁移 `b1
 
 ## Tests
 
-P0 回归集中在 `tests/expert_gateway/` 与 `tests/hermes_skill/`（owner、idempotency、cancel、retry、dup completion、result_content、progress）及 `tests/contracts/test_contracts_check.py`；`contracts.py check` 另校验产物漂移。
+P0 回归集中在 `tests/expert_gateway/` 与 `tests/hermes_skill/`（owner、idempotency、cancel、retry、dup completion、result_content、progress）及 `tests/contracts/`（check、OpenAPI 200 schema、MCP tools/list annotations）；`contracts.py check` 另校验产物漂移与负例 fixture。
 
 ## Related
 

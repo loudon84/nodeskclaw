@@ -1,0 +1,24 @@
+{
+  "jsonrpc": "2.0",
+  "id": "list-root",
+  "result": {
+    "tools": [
+      {
+        "name": "call-prep",
+        "description": "Customer research expert",
+        "inputSchema": {
+          "type": "object",
+          "properties": {}
+        },
+        "annotations": {
+          "kind": "expert",
+          "slug": "call-prep",
+          "displayName": "客户调研专家",
+          "status": "ready",
+          "publicSkillCount": 3,
+          "callableSkillCount": 2
+        }
+      }
+    ]
+  }
+}

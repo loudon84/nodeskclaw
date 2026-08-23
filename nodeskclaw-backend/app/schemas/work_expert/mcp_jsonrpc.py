@@ -1,6 +1,6 @@
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class JsonRpcRequest(BaseModel):
@@ -74,5 +74,51 @@ class JsonRpcSuccessResponse(BaseModel):
     result: dict[str, Any] | ToolsCallAcceptedResult | None = None
 
 
+class McpInputSchema(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    type: str = "object"
+    properties: dict[str, Any] = Field(default_factory=dict)
+    required: list[str] | None = None
+    additionalProperties: bool | dict[str, Any] | None = None
+    items: dict[str, Any] | None = None
+    description: str | None = None
+    title: str | None = None
+
+
+class CatalogToolAnnotations(BaseModel):
+    """POST /api/v1/expert/mcp tools/list Expert / Expert Team annotations."""
+
+    model_config = ConfigDict(extra="allow")
+
+    kind: Literal["expert", "expert_team"]
+    slug: str = Field(min_length=1)
+    displayName: str | None = None
+    status: str = Field(min_length=1)
+    publicSkillCount: int = Field(ge=0)
+    callableSkillCount: int = Field(ge=0)
+
+
+class SkillToolAnnotations(BaseModel):
+    """POST /api/v1/expert/mcp/{slug} tools/list Skill annotations."""
+
+    model_config = ConfigDict(extra="allow")
+
+    displayName: str | None = None
+    status: str = Field(min_length=1)
+    callEnabled: bool
+    riskLevel: str = Field(min_length=1)
+    approvalMode: str = Field(min_length=1)
+
+
+class McpTool(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    name: str = Field(min_length=1)
+    description: str | None = None
+    inputSchema: McpInputSchema
+    annotations: CatalogToolAnnotations | SkillToolAnnotations
+
+
 class ToolsListResult(BaseModel):
-    tools: list[dict[str, Any]] = Field(default_factory=list)
+    tools: list[McpTool] = Field(default_factory=list)

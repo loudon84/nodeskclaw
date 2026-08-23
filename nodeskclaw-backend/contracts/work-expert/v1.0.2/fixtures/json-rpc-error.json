@@ -1,0 +1,11 @@
+{
+  "jsonrpc": "2.0",
+  "id": "err-1",
+  "error": {
+    "code": -32022,
+    "message": "Permission denied",
+    "data": {
+      "errorCode": "EXPERT_PERMISSION_DENIED"
+    }
+  }
+}

@@ -16,7 +16,7 @@ DEFAULT_EVIDENCE = (
     Path(__file__).resolve().parents[1]
     / "contracts"
     / "work-expert"
-    / "v1.0.1"
+    / "v1.0.2"
     / "evidence"
     / "load-test-20-runs.json"
 )

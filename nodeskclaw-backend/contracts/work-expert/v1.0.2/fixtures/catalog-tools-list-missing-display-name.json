@@ -1,0 +1,23 @@
+{
+  "jsonrpc": "2.0",
+  "id": "list-root-no-display",
+  "result": {
+    "tools": [
+      {
+        "name": "call-prep",
+        "description": "Customer research expert",
+        "inputSchema": {
+          "type": "object",
+          "properties": {}
+        },
+        "annotations": {
+          "kind": "expert",
+          "slug": "call-prep",
+          "status": "offline",
+          "publicSkillCount": 1,
+          "callableSkillCount": 0
+        }
+      }
+    ]
+  }
+}

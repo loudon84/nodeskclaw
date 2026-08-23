@@ -1,0 +1,36 @@
+{
+  "executed": false,
+  "passed": false,
+  "loadGate": "unmet",
+  "reason": "Missing WORK_EXPERT_LOADTEST_BASE_URL / TOKEN / SLUG / SKILL; 20 concurrent Expert Runs were not executed against a production-like environment in this release.",
+  "recordedAt": "2026-08-23T05:50:00+00:00",
+  "backendCommitAtRecord": "bbfff0de21fd9a123d70ac4dcdb54b3cfbdf8257",
+  "contractVersion": "1.0.1",
+  "thresholds": {
+    "min_terminal": 20,
+    "max_accept_http_5xx": 0,
+    "max_chat_failure_rate": 0.05
+  },
+  "counts": {
+    "accepted": 0,
+    "running": 0,
+    "completed": 0,
+    "failed": 0,
+    "cancelled": 0
+  },
+  "worker": {
+    "batchSize": 5,
+    "sequential": true,
+    "replicas": "not_measured"
+  },
+  "chatProbe": {
+    "executed": false,
+    "failure_rate": null
+  },
+  "taskIds": [],
+  "notes": [
+    "Do not set capabilities.loadGate=met without executed=true and passed=true.",
+    "Queue config limits are not throughput evidence.",
+    "Reproduce with: uv run python scripts/contracts/load_test_20_runs.py"
+  ]
+}

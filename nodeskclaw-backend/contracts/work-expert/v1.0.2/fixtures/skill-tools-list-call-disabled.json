@@ -1,0 +1,22 @@
+{
+  "jsonrpc": "2.0",
+  "id": "list-skill-disabled",
+  "result": {
+    "tools": [
+      {
+        "name": "restricted-skill",
+        "description": "Requires approval",
+        "inputSchema": {
+          "type": "object",
+          "properties": {}
+        },
+        "annotations": {
+          "status": "ready",
+          "callEnabled": false,
+          "riskLevel": "high",
+          "approvalMode": "approval_required"
+        }
+      }
+    ]
+  }
+}

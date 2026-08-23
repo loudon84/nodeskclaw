@@ -1,0 +1,243 @@
+{
+  "$defs": {
+    "CatalogToolAnnotations": {
+      "additionalProperties": true,
+      "description": "POST /api/v1/expert/mcp tools/list Expert / Expert Team annotations.",
+      "properties": {
+        "kind": {
+          "enum": [
+            "expert",
+            "expert_team"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "slug": {
+          "minLength": 1,
+          "title": "Slug",
+          "type": "string"
+        },
+        "displayName": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Displayname"
+        },
+        "status": {
+          "minLength": 1,
+          "title": "Status",
+          "type": "string"
+        },
+        "publicSkillCount": {
+          "minimum": 0,
+          "title": "Publicskillcount",
+          "type": "integer"
+        },
+        "callableSkillCount": {
+          "minimum": 0,
+          "title": "Callableskillcount",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "kind",
+        "slug",
+        "status",
+        "publicSkillCount",
+        "callableSkillCount"
+      ],
+      "title": "CatalogToolAnnotations",
+      "type": "object"
+    },
+    "McpInputSchema": {
+      "additionalProperties": true,
+      "properties": {
+        "type": {
+          "default": "object",
+          "title": "Type",
+          "type": "string"
+        },
+        "properties": {
+          "type": "object",
+          "additionalProperties": true,
+          "title": "Properties"
+        },
+        "required": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Required"
+        },
+        "additionalProperties": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Additionalproperties"
+        },
+        "items": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Items"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Title"
+        }
+      },
+      "title": "McpInputSchema",
+      "type": "object"
+    },
+    "McpTool": {
+      "additionalProperties": true,
+      "properties": {
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "inputSchema": {
+          "$ref": "#/$defs/McpInputSchema"
+        },
+        "annotations": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CatalogToolAnnotations"
+            },
+            {
+              "$ref": "#/$defs/SkillToolAnnotations"
+            }
+          ],
+          "title": "Annotations"
+        }
+      },
+      "required": [
+        "name",
+        "inputSchema",
+        "annotations"
+      ],
+      "title": "McpTool",
+      "type": "object"
+    },
+    "SkillToolAnnotations": {
+      "additionalProperties": true,
+      "description": "POST /api/v1/expert/mcp/{slug} tools/list Skill annotations.",
+      "properties": {
+        "displayName": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Displayname"
+        },
+        "status": {
+          "minLength": 1,
+          "title": "Status",
+          "type": "string"
+        },
+        "callEnabled": {
+          "title": "Callenabled",
+          "type": "boolean"
+        },
+        "riskLevel": {
+          "minLength": 1,
+          "title": "Risklevel",
+          "type": "string"
+        },
+        "approvalMode": {
+          "minLength": 1,
+          "title": "Approvalmode",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "callEnabled",
+        "riskLevel",
+        "approvalMode"
+      ],
+      "title": "SkillToolAnnotations",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "tools": {
+      "items": {
+        "$ref": "#/$defs/McpTool"
+      },
+      "title": "Tools",
+      "type": "array"
+    }
+  },
+  "title": "ToolsListResult",
+  "type": "object"
+}

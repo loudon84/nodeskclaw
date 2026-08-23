@@ -1,0 +1,55 @@
+{
+  "additionalProperties": true,
+  "description": "POST /api/v1/expert/mcp tools/list Expert / Expert Team annotations.",
+  "properties": {
+    "kind": {
+      "enum": [
+        "expert",
+        "expert_team"
+      ],
+      "title": "Kind",
+      "type": "string"
+    },
+    "slug": {
+      "minLength": 1,
+      "title": "Slug",
+      "type": "string"
+    },
+    "displayName": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Displayname"
+    },
+    "status": {
+      "minLength": 1,
+      "title": "Status",
+      "type": "string"
+    },
+    "publicSkillCount": {
+      "minimum": 0,
+      "title": "Publicskillcount",
+      "type": "integer"
+    },
+    "callableSkillCount": {
+      "minimum": 0,
+      "title": "Callableskillcount",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "kind",
+    "slug",
+    "status",
+    "publicSkillCount",
+    "callableSkillCount"
+  ],
+  "title": "CatalogToolAnnotations",
+  "type": "object"
+}

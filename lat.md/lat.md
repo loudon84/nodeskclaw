@@ -14,7 +14,7 @@ DeskClaw 团队版（NoDeskClaw）是人与 AI 共同经营的实例管理平台
 
 对外首次称呼必须是「DeskClaw 团队版」；技术上下文可用 DeskClaw、NoDeskClaw、CE、EE。
 
-实现路径定位仍用 `.cursor/context/*-codemap.md`。Expert MCP 对 apps/work 的消费契约以 [[decisions/work-expert-contract]] 与 `contracts/work-expert/v1.0.0/` 为准；其余 Backend 契约见 `docs/backend/`。本目录描述意图与边界。
+实现路径定位仍用 `.cursor/context/*-codemap.md`。Expert MCP 对 apps/work 的消费契约以 [[decisions/work-expert-contract]] 与 `contracts/work-expert/v1.0.2/` 为准；其余 Backend 契约见 `docs/backend/`。本目录描述意图与边界。
 
 ## Component Boundaries
 

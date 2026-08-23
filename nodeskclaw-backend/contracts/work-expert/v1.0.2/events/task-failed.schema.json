@@ -1,0 +1,44 @@
+{
+  "properties": {
+    "event": {
+      "default": "task.failed",
+      "title": "Event",
+      "type": "string"
+    },
+    "task_id": {
+      "title": "Task Id",
+      "type": "string"
+    },
+    "timestamp": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Timestamp"
+    },
+    "event_type": {
+      "title": "Event Type",
+      "type": "string"
+    },
+    "event_seq": {
+      "title": "Event Seq",
+      "type": "integer"
+    },
+    "error": {
+      "default": null,
+      "title": "Error"
+    }
+  },
+  "required": [
+    "task_id",
+    "event_type",
+    "event_seq"
+  ],
+  "title": "TaskFailedEvent",
+  "type": "object"
+}

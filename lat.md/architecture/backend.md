@@ -28,7 +28,7 @@
 
 Hermes Skill、任务产物、Agent 绑定与 MCP Skill Gateway 是独立能力域。组织 MCP 契约见 `docs/backend/mcp_skill_gateway.md`；Hermes Task 见 `docs/backend/hermes_skill.md`。
 
-**Expert MCP 对 apps/work 的冻结契约**为 WORK-EXPERT-CONTRACT（[[decisions/work-expert-contract]]）：当前消费版本 v1.0.1，产物在 `nodeskclaw-backend/contracts/work-expert/v1.0.1/`；v1.0.0 目录与 tag 不可改写。由 `scripts/contracts.py` 从 FastAPI OpenAPI 与 Pydantic 生成。勿用 `gateway.version`。
+**Expert MCP 对 apps/work 的冻结契约**为 WORK-EXPERT-CONTRACT（[[decisions/work-expert-contract]]）：当前消费版本 v1.0.2，产物在 `nodeskclaw-backend/contracts/work-expert/v1.0.2/`；v1.0.0 与 v1.0.1 目录与 tag 不可改写。由 `scripts/contracts.py` 从 FastAPI OpenAPI 与 Pydantic 生成。勿用 `gateway.version`。
 
 MCP 对外 JSON-RPC 2.0；应用错误以 HTTP 200 + `error.data.errorCode` 返回（Expert MCP 冻结行为）。
 
