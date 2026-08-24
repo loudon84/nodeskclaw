@@ -185,10 +185,10 @@ Token 解析后绑定 `user` + `org`，所有 Expert 调用在该组织上下文
   "kind": "expert_skill",
   "slug": "call-prep",
   "displayName": "客户画像",
-  "public": true,R
+  "public": true,
   "callEnabled": true,
   "riskLevel": "low",
-  "approvalMode": "none",
+  "approvalMode": "auto",
   "status": "ready",
   "callMode": "async_sse",
   "streaming": true,
@@ -211,6 +211,7 @@ Token 解析后绑定 `user` + `org`，所有 Expert 调用在该组织上下文
 | `routeType` | `hermes_api_server`：Worker 走 chat_completions |
 | `upstreamToolName` | 绑定 Hermes Agent 上游 Tool 全名 |
 | `sseTimelineEnabled` | `true`：使用 `nodeskclaw_task_events` 阶段事件 |
+| `approvalMode` | `auto`：Work 可静默 `tools/call`；`server`：需服务端审批，P0 不得静默调用 |
 | `artifactMode` | `pull_only`：客户端主动拉取产物 |
 | `orchestrationMode` | 团队专用：`upstream_skill`（默认）或 `gateway_sequential` |
 

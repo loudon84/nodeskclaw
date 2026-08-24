@@ -29,6 +29,7 @@ def test_resolve_run_mode_sync_legacy():
 
 
 def test_build_tool_descriptor_includes_streaming_annotations():
+    # @lat: [[work-expert-contract#MCP Tools List Annotations]]
     expert = Expert(
         id="exp-1",
         org_id="org-1",
@@ -52,6 +53,31 @@ def test_build_tool_descriptor_includes_streaming_annotations():
     assert descriptor["annotations"]["routeType"] == "hermes_api_server"
     assert descriptor["annotations"]["upstreamToolName"] == "tool.a"
     assert descriptor["annotations"]["sseTimelineEnabled"] is True
+    assert descriptor["annotations"]["approvalMode"] == "auto"
+    assert descriptor["annotations"]["callEnabled"] is True
+    assert descriptor["annotations"]["riskLevel"] == "low"
+    assert descriptor["annotations"]["status"] == "ready"
+
+
+def test_build_tool_descriptor_keeps_explicit_server_approval_mode():
+    expert = Expert(
+        id="exp-1",
+        org_id="org-1",
+        hermes_agent_id="agent-1",
+        expert_slug="call-prep",
+        display_name="客户研究员",
+    )
+    skill = ExpertSkill(
+        org_id="org-1",
+        expert_id="exp-1",
+        skill_name="customer-profiling",
+        upstream_tool_name="tool.a",
+        is_public=True,
+        call_enabled=True,
+        approval_mode="server",
+    )
+    descriptor = ExpertSkillService.build_tool_descriptor(expert, skill, runtime_ready=True)
+    assert descriptor["annotations"]["approvalMode"] == "server"
 
 
 @pytest.mark.asyncio

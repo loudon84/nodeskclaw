@@ -33,7 +33,7 @@ v1.0.2 为 Catalog 与 Skill 的 `tools/list` 定义可校验 annotations；`dis
 
 Catalog 最低字段：`kind`（`expert` | `expert_team`）、`slug`、`status`、`publicSkillCount`、`callableSkillCount`（后两者 ≥ 0）；`displayName` 可选，缺省回退 `tool.name` / `slug`。`kind`/`slug`/计数缺失或非法则拒绝该 Catalog 项。未知 `status` 不得当作 ready。
 
-Skill 最低字段：`status`、`callEnabled`、`riskLevel`、`approvalMode`；`displayName` 可选。`callEnabled` 缺失或非 boolean 视为 false；未知 `riskLevel`/`approvalMode` 不得静默调用。`callEnabled=false` 可出现在 list，禁止 `tools/call`。
+Skill 最低字段：`status`、`callEnabled`、`riskLevel`、`approvalMode`；`displayName` 可选。Work 静默 `tools/call` 要求 `status=ready`、`callEnabled=true`、`riskLevel=low`、`approvalMode=auto`。`approvalMode=server` 表示需服务端审批，P0 不得静默调用。`callEnabled=false` 可出现在 list，禁止 `tools/call`。
 
 Schema 事实源：[[nodeskclaw-backend/app/schemas/work_expert/mcp_jsonrpc.py#CatalogToolAnnotations]]、[[nodeskclaw-backend/app/schemas/work_expert/mcp_jsonrpc.py#SkillToolAnnotations]]。产物在 `contracts/work-expert/v1.0.2/mcp/`。
 

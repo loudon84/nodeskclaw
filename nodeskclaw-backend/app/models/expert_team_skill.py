@@ -24,7 +24,7 @@ class ExpertTeamSkill(BaseModel):
     is_public: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     call_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     risk_level: Mapped[str] = mapped_column(String(32), nullable=False, default="low")
-    approval_mode: Mapped[str] = mapped_column(String(32), nullable=False, default="server")
+    approval_mode: Mapped[str] = mapped_column(String(32), nullable=False, default="auto", server_default="auto")
     output_formats: Mapped[list] = mapped_column(JSONB, nullable=False, server_default='["markdown"]')
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
     stale: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
