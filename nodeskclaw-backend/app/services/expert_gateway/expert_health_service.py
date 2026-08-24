@@ -13,7 +13,7 @@ from app.contracts.work_expert.constants import (
     WORK_EXPERT_CONTRACT_NAME,
     WORK_EXPERT_CONTRACT_VERSION,
 )
-from app.schemas.expert_mcp import ExpertHealthResponse
+from app.schemas.expert_mcp import ExpertHealthResponse, ExpertHealthRuntimeItem
 from app.services.expert_gateway.expert_catalog_service import ExpertCatalogService
 from app.services.expert_gateway.expert_team_skill_service import ExpertTeamSkillService
 
