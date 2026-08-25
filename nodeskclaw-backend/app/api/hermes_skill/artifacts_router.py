@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Query
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.file_downloads import content_disposition_attachment
 from app.core.deps import get_db, require_org_member
 from app.core.exceptions import (
     ArtifactBatchSizeExceededError,
@@ -155,13 +156,13 @@ async def download_artifact(
         return StreamingResponse(
             io.BytesIO(raw_bytes),
             media_type=artifact.content_type or "application/octet-stream",
-            headers={"Content-Disposition": f'attachment; filename="{artifact.file_name}"'},
+            headers={"Content-Disposition": content_disposition_attachment(artifact.file_name)},
         )
     file_path = result
     return FileResponse(
         path=str(file_path),
-        filename=file_path.name,
-        media_type="application/octet-stream",
+        filename=artifact.file_name or file_path.name,
+        media_type=artifact.content_type or "application/octet-stream",
     )
 
 

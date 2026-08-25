@@ -471,7 +471,7 @@ Installation 级覆盖：在 `PATCH /skill-installations/{id}` 的 `routing_meta
 | GET | `/artifacts` | member | 产物列表 |
 | GET | `/artifacts/{artifact_id}` | member | 产物详情 |
 | GET | `/artifacts/{artifact_id}/preview` | member | 预览（`object_store` 限 200KB） |
-| GET | `/artifacts/{artifact_id}/download` | member | 下载（支持 `object_store` 字节流） |
+| GET | `/artifacts/{artifact_id}/download` | member | 下载（支持 `object_store` 字节流）。`Content-Disposition` 使用 RFC 5987 `filename*=UTF-8''`，中文文件名不可直接写入 latin-1 响应头 |
 | DELETE | `/artifacts/{artifact_id}` | admin | 删除产物 |
 | POST | `/tasks/{task_id}/artifacts/download` | member | 批量下载任务产物 |
 

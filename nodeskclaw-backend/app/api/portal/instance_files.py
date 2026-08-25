@@ -1,13 +1,13 @@
 """Portal instance file management endpoints — read & write (instance admin only)."""
 
 import logging
-from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.file_downloads import content_disposition_attachment
 from app.core.deps import get_db
 from app.core.security import get_current_user
 from app.models.instance_member import InstanceRole
@@ -121,12 +121,11 @@ async def download_file(
     raw_bytes, filename, mime_type = await enterprise_file_service.download_file_for_instance(
         instance_id, path, db
     )
-    filename_encoded = quote(filename, safe="")
     return Response(
         content=raw_bytes,
         media_type=mime_type,
         headers={
-            "Content-Disposition": f"attachment; filename*=UTF-8''{filename_encoded}",
+            "Content-Disposition": content_disposition_attachment(filename),
             "Content-Length": str(len(raw_bytes)),
         },
     )

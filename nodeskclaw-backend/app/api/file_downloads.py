@@ -7,6 +7,11 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from app.services import storage_service
 
 
+def content_disposition_attachment(filename: str) -> str:
+    encoded = quote(filename or "download", safe="")
+    return f"attachment; filename*=UTF-8''{encoded}"
+
+
 async def build_storage_download_response(
     *,
     storage_key: str,
@@ -31,10 +36,9 @@ async def build_storage_download_response(
         )
 
     resolved = download.range
-    filename_encoded = quote(filename, safe="")
     headers = {
         "Accept-Ranges": "bytes",
-        "Content-Disposition": f"attachment; filename*=UTF-8''{filename_encoded}",
+        "Content-Disposition": content_disposition_attachment(filename),
         "Content-Length": str(resolved.length),
     }
     status_code = 206 if resolved.is_partial else 200
