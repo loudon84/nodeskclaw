@@ -32,3 +32,10 @@ class SearchUserResult(BaseModel):
     name: str | None = None
     email: str | None = None
     avatar_url: str | None = None
+
+
+class DirectReportUser(BaseModel):
+    id: str
+    name: str
+    email: str | None = None
+    username: str | None = None

@@ -15,6 +15,7 @@ export interface PortalUser {
   username: string | null
   avatar_url: string | null
   is_super_admin: boolean
+  is_task_admin: boolean
   has_password: boolean
   must_change_password: boolean
   current_org_id: string | null

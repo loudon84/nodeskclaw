@@ -210,3 +210,51 @@ async def test_create_human_member_rejects_case_insensitive_username_duplicate(r
             )
         )
         assert dup.scalar_one_or_none() is not None
+
+
+@pytest.mark.asyncio
+async def test_build_user_info_sets_is_task_admin_from_user():
+    user = SimpleNamespace(
+        id="user-task-admin",
+        name="Task Admin",
+        email="taskadmin@example.com",
+        username="taskadmin",
+        password_hash="hash",
+        is_active=True,
+        must_change_password=False,
+        is_super_admin=False,
+        is_task_admin=True,
+        oauth_connections=[],
+        last_login_at=None,
+        current_org_id=None,
+        role="user",
+    )
+    db = SimpleNamespace()
+
+    info = await auth_service._build_user_info(user, db)
+
+    assert info.is_task_admin is True
+
+
+@pytest.mark.asyncio
+async def test_build_user_info_defaults_is_task_admin_false_without_db():
+    user = SimpleNamespace(
+        id="user-regular",
+        name="Regular",
+        email="regular@example.com",
+        username="regular",
+        password_hash=None,
+        is_active=True,
+        must_change_password=False,
+        is_super_admin=False,
+        is_task_admin=False,
+        oauth_connections=[],
+        last_login_at=None,
+        current_org_id=None,
+        role="user",
+    )
+    db = SimpleNamespace()
+
+    info = await auth_service._build_user_info(user, db)
+
+    assert info.is_task_admin is False

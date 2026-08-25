@@ -14,6 +14,14 @@ NoDeskClaw 的核心领域实体是组织、集群、实例、工作区与基因
 
 快速创建人类成员支持 OA 姓名搜索快选：Portal 点「搜索」调用 `GET /orgs/{org_id}/members/oa-persons?q=`，后端代理 `OA_PERSON_API_URL`（`fd_name`）；未配置或失败不阻断手工填写。映射与代理见 [[nodeskclaw-backend/app/services/org_service.py#search_oa_persons]]。
 
+## User
+
+平台用户是登录主体，持有账号凭证、组织归属与任务治理标记。
+
+`users.is_task_admin` 标记任务管理员（默认 `false`），随 `UserInfo` 在 `/auth/account-login` 及同源登录、`/auth/me` 返回。直属下属查询：`GET /members/{member_id}/subordinate`（`member_id` 为 `users.id`），经 `org_memberships`（`o.user_id` → `s.supervisor_membership_id = o.id` → `u.id = s.user_id`）返回 `id, name, email, username`。实现见 [[nodeskclaw-backend/app/services/org_service.py#list_subordinates]]。
+
+权威模型：[[nodeskclaw-backend/app/models/user.py#User]]。
+
 ## Cluster
 
 集群保存可编排的计算目标（KubeConfig 加密、健康状态），供实例部署与巡检使用。

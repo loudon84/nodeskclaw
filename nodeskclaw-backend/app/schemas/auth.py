@@ -55,6 +55,7 @@ class UserInfo(BaseModel):
     role: str
     is_active: bool = True
     is_super_admin: bool = False
+    is_task_admin: bool = False
     has_password: bool = False
     must_change_password: bool = False
     current_org_id: str | None = None

@@ -709,3 +709,42 @@ async def update_member_profile(
 
     enriched = await _enrich_members([(membership, user)], db)
     return enriched[0]
+
+
+# @lat: [[core-concepts#User]]
+async def list_subordinates(user_id: str, db: AsyncSession) -> list[dict]:
+    """List direct-report users for the given user id via org_memberships reporting chain."""
+    from sqlalchemy.orm import aliased
+
+    user = (await db.execute(
+        select(User).where(User.id == user_id, not_deleted(User))
+    )).scalar_one_or_none()
+    if not user:
+        raise NotFoundError("用户不存在", "errors.auth.user_not_found")
+
+    supervisor = aliased(OrgMembership)
+    subordinate = aliased(OrgMembership)
+
+    result = await db.execute(
+        select(User)
+        .select_from(supervisor)
+        .join(subordinate, supervisor.id == subordinate.supervisor_membership_id)
+        .join(User, User.id == subordinate.user_id)
+        .where(
+            supervisor.user_id == user_id,
+            not_deleted(supervisor),
+            not_deleted(subordinate),
+            not_deleted(User),
+        )
+        .order_by(User.name.asc())
+        .distinct()
+    )
+    return [
+        {
+            "id": u.id,
+            "name": u.name,
+            "email": u.email,
+            "username": u.username,
+        }
+        for u in result.scalars().all()
+    ]

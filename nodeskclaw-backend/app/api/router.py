@@ -62,6 +62,7 @@ from app.api.engine_versions import (
 from app.api.invitations import invite_router, invite_public_router
 from app.api.portal.instances import router as portal_instance_router
 from app.api.portal.instance_members import router as portal_instance_members_router
+from app.api.portal.members import router as portal_members_router
 from app.api.portal.deploy import router as portal_deploy_router
 from app.api.portal.channel_configs import router as portal_channel_config_router
 from app.api.portal.mcp import router as portal_mcp_router
@@ -167,6 +168,7 @@ api_router.include_router(portal_events_router, prefix="/events", tags=["事件"
 api_router.include_router(portal_instance_router, prefix="/instances", tags=["实例"])
 api_router.include_router(instance_attach_router, prefix="/instances", tags=["实例"])
 api_router.include_router(portal_instance_members_router, prefix="/instances", tags=["实例成员"])
+api_router.include_router(portal_members_router, prefix="/members", tags=["组织成员下属"])
 api_router.include_router(portal_channel_config_router, prefix="/instances", tags=["Channel 配置"])
 api_router.include_router(portal_mcp_router, prefix="/instances", tags=["MCP"])
 api_router.include_router(portal_instance_files_router, prefix="/instances", tags=["实例文件"])

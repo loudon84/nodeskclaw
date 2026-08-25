@@ -46,6 +46,8 @@ class User(BaseModel):
 
     # SaaS 多租户字段
     is_super_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default="false")
+    # @lat: [[core-concepts#User]]
+    is_task_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default="false")
     current_org_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("organizations.id"), nullable=True
     )
