@@ -4,7 +4,6 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 EE_DIR="$SCRIPT_DIR/ee"
 BACKEND_DIR="$SCRIPT_DIR/nodeskclaw-backend"
-TASK_DIR="$SCRIPT_DIR/nodeskclaw-task"
 LLM_PROXY_DIR="$SCRIPT_DIR/nodeskclaw-llm-proxy"
 PORTAL_DIR="$SCRIPT_DIR/nodeskclaw-portal"
 ADMIN_DIR="$EE_DIR/nodeskclaw-frontend"
@@ -33,8 +32,8 @@ usage() {
 
 模式:
   (无参数)   自动检测：ee/ 存在 → EE，否则 → CE
-  ce         强制 CE 模式（backend + task + portal）
-  ee         强制 EE 模式（backend + task + portal + admin）
+  ce         强制 CE 模式（backend + portal）
+  ee         强制 EE 模式（backend + portal + admin）
 
 选项:
   --fresh      强制重新安装依赖（删除 .venv / node_modules 后重装）
@@ -44,7 +43,6 @@ usage() {
 服务端口:
   backend    http://localhost:4510
   llm-proxy  http://localhost:4511
-  task       http://localhost:4520
   portal     http://localhost:4517
   admin(EE)  http://localhost:4518
 EOF
@@ -85,7 +83,7 @@ cleanup() {
   for pid in "${PIDS[@]}"; do
     wait "$pid" 2>/dev/null || true
   done
-  for port in 4510 4511 4520; do
+  for port in 4510 4511; do
     local remaining
     remaining=$(_find_pids_on_port "$port")
     if [ -n "$remaining" ]; then
@@ -174,15 +172,7 @@ if [ "$DOCKER_PG" = true ]; then
     log "PostgreSQL 就绪"
   fi
 
-  if ! docker exec "$DOCKER_PG_CONTAINER" psql -U nodeskclaw -d nodeskclaw -tc \
-    "SELECT 1 FROM pg_database WHERE datname = 'nodeskclaw_task'" | grep -q 1; then
-    log "创建 nodeskclaw_task 数据库..."
-    docker exec "$DOCKER_PG_CONTAINER" psql -U nodeskclaw -d nodeskclaw \
-      -c "CREATE DATABASE nodeskclaw_task"
-  fi
-
   export DATABASE_URL="postgresql+asyncpg://nodeskclaw:nodeskclaw@localhost:5432/nodeskclaw"
-  export TASK_DATABASE_URL="postgresql+asyncpg://nodeskclaw:nodeskclaw@localhost:5432/nodeskclaw_task"
   export DATABASE_NAME_SUFFIX=""
   log "DATABASE_URL 已设置为 Docker PostgreSQL (localhost:5432)"
 fi
@@ -206,23 +196,12 @@ if [ ! -f "$BACKEND_DIR/.env" ]; then
   exit 1
 fi
 
-if [ ! -d "$TASK_DIR" ]; then
-  err "未找到 $TASK_DIR"
-  exit 1
-fi
-
-if [ ! -f "$TASK_DIR/.env" ]; then
-  log "创建 nodeskclaw-task/.env (从 .env.example)..."
-  cp "$TASK_DIR/.env.example" "$TASK_DIR/.env"
-fi
-
 log "前置检查通过 (uv=$(uv --version 2>/dev/null || echo '?'), node=$(node --version))"
 
 # ── 依赖安装 ──────────────────────────────────────────────
 if [ "$FRESH" = true ]; then
   log "--fresh: 清理并重新安装依赖..."
   rm -rf "$BACKEND_DIR/.venv"
-  rm -rf "$TASK_DIR/.venv"
   rm -rf "$LLM_PROXY_DIR/.venv"
   rm -rf "$PORTAL_DIR/node_modules"
   [ "$MODE" = "ee" ] && rm -rf "$ADMIN_DIR/node_modules"
@@ -233,13 +212,6 @@ if [ ! -d "$BACKEND_DIR/.venv" ]; then
   (cd "$BACKEND_DIR" && uv sync)
 else
   log "后端依赖已就绪，跳过安装"
-fi
-
-if [ ! -d "$TASK_DIR/.venv" ]; then
-  log "安装 AutoTask 依赖 (uv sync)..."
-  (cd "$TASK_DIR" && uv sync)
-else
-  log "AutoTask 依赖已就绪，跳过安装"
 fi
 
 if [ ! -d "$LLM_PROXY_DIR/.venv" ]; then
@@ -290,7 +262,6 @@ require_port_free() {
 
 require_port_free 4510 "backend"
 require_port_free 4511 "llm-proxy"
-require_port_free 4520 "task"
 
 # ── 启动服务 ──────────────────────────────────────────────
 log "启动服务..."
@@ -315,20 +286,6 @@ PIDS+=($!)
   2>&1 | prefix_output "$BLUE" "backend" &
 PIDS+=($!)
 
-_TASK_JWT_SECRET=$(grep '^JWT_SECRET=' "$BACKEND_DIR/.env" | head -1 | cut -d= -f2-)
-_TASK_DATABASE_URL="${TASK_DATABASE_URL:-}"
-if [ -z "$_TASK_DATABASE_URL" ]; then
-  _TASK_DATABASE_URL=$(grep '^DATABASE_URL=' "$TASK_DIR/.env" | head -1 | cut -d= -f2-)
-fi
-
-(cd "$TASK_DIR" && \
-  DATABASE_URL="${_TASK_DATABASE_URL}" \
-  JWT_SECRET="${_TASK_JWT_SECRET}" \
-  NODESKCLAW_BACKEND_URL="http://127.0.0.1:4510" \
-  uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 4520 --timeout-graceful-shutdown 3) \
-  2>&1 | prefix_output "$RED" "task   " &
-PIDS+=($!)
-
 sleep 1
 
 (cd "$PORTAL_DIR" && npm run dev) \
@@ -351,7 +308,6 @@ echo "${BOLD} NoDeskClaw 本地开发环境 (${MODE_UPPER})${RESET}"
 echo "${BOLD}========================================${RESET}"
 echo "  ${BLUE}Backend${RESET}  http://localhost:4510"
 echo "  ${CYAN}LLM Prx${RESET}  http://localhost:4511"
-echo "  ${RED}Task${RESET}     http://localhost:4520"
 echo "  ${GREEN}Portal${RESET}   http://localhost:4517"
 if [ "$MODE" = "ee" ]; then
   echo "  ${YELLOW}Admin${RESET}    http://localhost:4518"
