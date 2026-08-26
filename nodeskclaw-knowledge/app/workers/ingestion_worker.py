@@ -12,6 +12,7 @@ import uuid
 from app.core.deps import async_session_factory
 from app.integrations.ragflow.client import RagflowClient
 from app.services import evaluation_runner, evaluation_service, ingestion_service, metrics_service, reconciliation_service
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +87,26 @@ async def _run_loop(*, with_reconciliation: bool) -> None:
                     if not owned:
                         logger.warning("evaluation lease stolen run_id=%s", eval_run.id)
                     processed = True
+
+            if settings.KNOWLEDGE_V2_BUILD_ENABLED:
+                from app.services import build_orchestrator
+
+                async with async_session_factory() as db:
+                    claimed_build = await build_orchestrator.claim_next_build_job(
+                        db, lease_owner=lease_owner
+                    )
+                    if claimed_build:
+                        build_job, lease_token = claimed_build
+                        await build_orchestrator.process_build_job(db, build_job)
+                        owned = await build_orchestrator.finalize_build_job(
+                            db,
+                            build_job,
+                            lease_owner=lease_owner,
+                            lease_token=lease_token,
+                        )
+                        if not owned:
+                            logger.warning("build lease stolen job_id=%s", build_job.id)
+                        processed = True
 
             loop_count += 1
             if with_reconciliation and loop_count % RECONCILIATION_EVERY_LOOPS == 0:

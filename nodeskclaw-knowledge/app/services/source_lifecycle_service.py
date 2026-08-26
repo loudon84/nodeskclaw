@@ -157,6 +157,25 @@ async def activate_source_file_version(
         old_version = await db.get(SourceFileVersion, sf.active_version_id)
 
     activate_version(sf, target, old_version)
+    from app.services import build_orchestrator
+
+    try:
+        await build_orchestrator.enqueue_after_activation(
+            db,
+            org_id=member.org_id,
+            kb=kb,
+            source_file_id=sf.id,
+            version_id=target.id,
+            capabilities=None,
+            member_id=member.member_id,
+        )
+    except Exception:
+        logger.exception(
+            "build enqueue after activation failed kb=%s source=%s version=%s",
+            kb.id,
+            sf.id,
+            target.id,
+        )
     await write_audit(
         db,
         org_id=member.org_id,

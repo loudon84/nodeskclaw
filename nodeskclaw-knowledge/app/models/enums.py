@@ -298,6 +298,40 @@ class RuntimeResourceType(str, Enum):
     dataset = "dataset"
 
 
+class IndexType(str, Enum):
+    chunk = "chunk"
+    question = "question"
+    hierarchical_summary = "hierarchical_summary"
+    table = "table"
+    outline = "outline"
+    graph = "graph"
+
+
+class IndexStateStatus(str, Enum):
+    not_built = "not_built"
+    building = "building"
+    ready = "ready"
+    stale = "stale"
+    failed = "failed"
+    unsupported = "unsupported"
+
+
+class BuildJobStatus(str, Enum):
+    queued = "queued"
+    running = "running"
+    completed = "completed"
+    partial = "partial"
+    failed = "failed"
+    cancelled = "cancelled"
+
+
+class BuildTriggerPolicy(str, Enum):
+    ingestion = "ingestion"
+    on_activate = "on_activate"
+    debounce = "debounce"
+    manual = "manual"
+
+
 DEFAULT_RETRIEVAL_CONFIG = {
     "top_k": 1024,
     "top_n": 8,

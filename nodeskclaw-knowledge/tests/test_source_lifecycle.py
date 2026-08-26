@@ -273,9 +273,15 @@ async def test_build_access_plan_excludes_archived_files(monkeypatch):
         def all(self):
             return captured["files"]
 
+        def scalar_one_or_none(self):
+            return None
+
     class _Db:
         async def execute(self, stmt):
             captured["stmt"] = str(stmt)
+            sql = str(stmt)
+            if "knowledge_runtime_bindings" in sql or "KnowledgeRuntimeBinding" in sql:
+                return _Result()
             captured["files"] = [active_sf]
             return _Result()
 

@@ -62,6 +62,7 @@ class RagflowRuntimeAdapter:
             "supports_graph": False,
             "supports_metadata_filter": True,
             "supports_table": False,
+            "supports_outline": False,
             "ragflow_version": version,
         }
         degraded: list[str] = []

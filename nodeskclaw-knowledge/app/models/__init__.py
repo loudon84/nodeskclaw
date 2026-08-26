@@ -1,6 +1,8 @@
 # @lat: [[knowledge#Runtime Schema V11]]
 from app.models.audit_log import AuditLog
 from app.models.base import Base, BaseModel, not_deleted
+from app.models.build_job import KnowledgeBuildJob
+from app.models.build_profile import BuildProfile
 from app.models.chat_citation import ChatCitation
 from app.models.chat_message import ChatMessage
 from app.models.chat_session import ChatSession
@@ -12,6 +14,7 @@ from app.models.connector import (
     KnowledgeSourceConnector,
 )
 from app.models.evaluation import EvaluationCase, EvaluationResult, EvaluationRun, EvaluationSet
+from app.models.index_state import IndexState
 from app.models.ingestion_job import IngestionJob
 from app.models.knowledge_base import KnowledgeBase
 from app.models.knowledge_base_acl import KnowledgeBaseAcl
@@ -58,4 +61,7 @@ __all__ = [
     "ConnectorSyncRun",
     "ConnectorSyncItem",
     "KnowledgeRuntimeBinding",
+    "BuildProfile",
+    "IndexState",
+    "KnowledgeBuildJob",
 ]
