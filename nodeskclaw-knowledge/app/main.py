@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse, Response
 from sqlalchemy import text
 
 from app.api.router import api_router
+from app.api.v2.router import router as api_v2_router
 from app.core.config import settings
 from app.core.deps import async_session_factory
 from app.core.exceptions import register_exception_handlers
@@ -69,6 +70,7 @@ app.add_middleware(
 app.add_middleware(CorrelationIdMiddleware)
 register_exception_handlers(app)
 app.include_router(api_router, prefix="/api/v1")
+app.include_router(api_v2_router, prefix="/api/v2")
 
 
 # @lat: [[knowledge#Observability Metrics]]

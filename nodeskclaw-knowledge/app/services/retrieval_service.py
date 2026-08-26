@@ -14,6 +14,8 @@ from app.core.exceptions import BadRequestError, ForbiddenError, NotFoundError, 
 from app.integrations.ragflow.client import RagflowClient
 from app.models.enums import (
     AccessPlanKind,
+    ApplicationPermission,
+    ApplicationStatus,
     KnowledgeSetStatus,
     ProfileStatus,
     RetrievalOrigin,
@@ -32,7 +34,11 @@ from app.services import (
     retrieval_profile_service,
     retrieval_trace_service,
 )
-from app.services.permission_service import build_access_plan, has_set_permission
+from app.services.permission_service import (
+    build_access_plan,
+    has_application_permission,
+    has_set_permission,
+)
 from app.services.retrieval_profile_service import merge_profile_config
 
 
@@ -98,6 +104,152 @@ def _diagnostics_from_slices(slice_results: list) -> dict:
 
 # @lat: [[knowledge#Secure Retrieval Pipeline]]
 async def retrieve(
+    db: AsyncSession,
+    member: KnowledgePrincipal,
+    ragflow: RagflowClient,
+    *,
+    knowledge_set_id: str,
+    query: str,
+    options: RetrievalOptions | None = None,
+    top_k: int | None = None,
+    similarity_threshold: float | None = None,
+    filters: dict[str, list] | None = None,
+    origin: str = RetrievalOrigin.direct_retrieval.value,
+    profile_id: str | None = None,
+    application_id: str | None = None,
+    include_capability_plan: bool = False,
+) -> dict:
+    if application_id:
+        return await retrieve_for_application(
+            db,
+            member,
+            ragflow,
+            application_id=application_id,
+            query=query,
+            options=options,
+            top_k=top_k,
+            similarity_threshold=similarity_threshold,
+            filters=filters,
+            origin=origin,
+            profile_id=profile_id,
+        )
+    result = await _retrieve_for_set(
+        db,
+        member,
+        ragflow,
+        knowledge_set_id=knowledge_set_id,
+        query=query,
+        options=options,
+        top_k=top_k,
+        similarity_threshold=similarity_threshold,
+        filters=filters,
+        origin=origin,
+        profile_id=profile_id,
+    )
+    if include_capability_plan or settings.KNOWLEDGE_V2_CAPABILITY_PLANNER_ENABLED:
+        from app.services import capability_planner
+
+        plan = capability_planner.build_capability_plan(query)
+        result["capability_plan"] = plan.to_dict()
+        result["evidence"] = _chunks_to_evidence(result.get("chunks") or [])
+    return result
+
+
+async def retrieve_for_application(
+    db: AsyncSession,
+    member: KnowledgePrincipal,
+    ragflow: RagflowClient,
+    *,
+    application_id: str,
+    query: str,
+    options: RetrievalOptions | None = None,
+    top_k: int | None = None,
+    similarity_threshold: float | None = None,
+    filters: dict[str, list] | None = None,
+    origin: str = RetrievalOrigin.direct_retrieval.value,
+    profile_id: str | None = None,
+) -> dict:
+    from app.services import knowledge_application_service
+
+    if not settings.KNOWLEDGE_V2_APPLICATION_ENABLED:
+        raise BadRequestError(
+            message="Knowledge Application 未启用",
+            message_key="errors.knowledge.application_disabled",
+        )
+    app = await knowledge_application_service.get_application(db, member, application_id)
+    if app.status == ApplicationStatus.disabled.value:
+        raise ForbiddenError(
+            message="应用已禁用",
+            message_key="errors.knowledge.application_disabled",
+        )
+    if app.status != ApplicationStatus.active.value and origin != RetrievalOrigin.evaluation.value:
+        raise ForbiddenError(
+            message="应用未发布",
+            message_key="errors.knowledge.application_not_active",
+        )
+    if not await has_application_permission(db, member, app, ApplicationPermission.use.value):
+        raise ForbiddenError(
+            message="无权使用该知识应用",
+            message_key="errors.knowledge.retrieval_denied",
+        )
+    set_ids = await knowledge_application_service.list_bound_set_ids(db, application_id)
+    if not set_ids:
+        raise BadRequestError(
+            message="应用未绑定知识集合",
+            message_key="errors.knowledge.application_empty",
+        )
+    # Use first usable set as entry; AccessPlan still enforces per-file ACL
+    primary_set_id = set_ids[0]
+    result = await _retrieve_for_set(
+        db,
+        member,
+        ragflow,
+        knowledge_set_id=primary_set_id,
+        query=query,
+        options=options,
+        top_k=top_k,
+        similarity_threshold=similarity_threshold,
+        filters=filters,
+        origin=origin,
+        profile_id=profile_id,
+    )
+    from app.services import capability_planner
+
+    plan = capability_planner.build_capability_plan(query)
+    result["application_id"] = application_id
+    result["answer_model"] = app.answer_model
+    result["capability_plan"] = plan.to_dict()
+    result["evidence"] = _chunks_to_evidence(result.get("chunks") or [])
+    return result
+
+
+def _chunks_to_evidence(chunks: list[dict]) -> list[dict]:
+    evidence = []
+    for chunk in chunks:
+        evidence.append(
+            {
+                "evidence_id": chunk.get("chunk_id"),
+                "evidence_type": "chunk",
+                "content": chunk.get("content"),
+                "score": chunk.get("similarity"),
+                "source_refs": [
+                    {
+                        "source_file_id": chunk.get("source_file_id"),
+                        "file_version_id": chunk.get("file_version_id"),
+                        "knowledge_base_id": chunk.get("knowledge_base_id"),
+                    }
+                ],
+                "payload": {
+                    "document_id": chunk.get("document_id"),
+                    "page": chunk.get("page"),
+                    "highlight": chunk.get("highlight"),
+                },
+            }
+        )
+    return evidence
+
+
+async def _retrieve_for_set(
     db: AsyncSession,
     member: KnowledgePrincipal,
     ragflow: RagflowClient,
