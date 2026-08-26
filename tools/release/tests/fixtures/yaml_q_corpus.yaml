@@ -1,0 +1,38 @@
+# Shared YAML-Q regression corpus (PRD-OPSI-v2.1.6 FR-216-16 / FR-216-21).
+# Python and Pester must consume the same semantic values.
+schema: smc.opsi.yaml-q-corpus.v1
+strings:
+  scoped_npm: "@modelcontextprotocol/server-filesystem"
+  at_user: "@foo"
+  backtick: "`command"
+  windows_path: "C:\\ProgramData\\SMC\\Hermes\\workspace"
+  url: "https://example.com/api:v1"
+  hash: "#value"
+  colon: "a:b"
+  bool_string: "true"
+  null_string: "null"
+  number_string: "123"
+  leading_space: " value"
+  trailing_space: "value "
+  unicode: "智能体工作空间"
+  env: "${API_SERVER_KEY}"
+  quote: "a\"b"
+  apostrophe: "it's"
+  ampersand: "&ref"
+  asterisk: "*star"
+  bang: "!tag"
+  pipe: "|pipe"
+  fold: ">fold"
+  percent: "%x"
+  question: "?query"
+nested:
+  list:
+    - "@modelcontextprotocol/server-filesystem"
+    - "C:\\ProgramData\\SMC\\Hermes\\workspace"
+    - "https://example.com/api:v1"
+  map:
+    scoped: "@foo"
+    hash: "#value"
+    unicode: "智能体工作空间"
+  empty_list: []
+  empty_map: {}
