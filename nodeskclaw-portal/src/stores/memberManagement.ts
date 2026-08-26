@@ -14,6 +14,7 @@ export interface MemberInfo {
   username?: string | null
   user_avatar_url: string | null
   is_active?: boolean
+  is_task_admin?: boolean
   must_change_password?: boolean
   department?: string | null
   job_title?: string | null
@@ -65,6 +66,7 @@ export interface CreateHumanMemberPayload {
   employee_no?: string | null
   supervisor_membership_id?: string | null
   must_change_password: boolean
+  is_task_admin?: boolean
   skill_ids: string[]
 }
 
@@ -84,6 +86,7 @@ export interface UpdateMemberProfilePayload {
   employee_no?: string | null
   supervisor_membership_id?: string | null
   is_active?: boolean | null
+  is_task_admin?: boolean | null
 }
 
 export interface InvitationInfo {

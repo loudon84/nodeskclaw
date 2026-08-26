@@ -3385,6 +3385,7 @@ const enUS = {
     profileSaved: "Member profile saved",
     profileSaveFailed: "Failed to save member profile",
     accountActive: "Account Active",
+    isTaskAdmin: "Task administrator",
     skillDrawerTitle: "Member Skill Grants",
     skillSearchPlaceholder: "Search skill name or ID...",
     onlyGranted: "Granted only",

@@ -37,6 +37,7 @@ const jobTitle = ref('')
 const employeeNo = ref('')
 const supervisorId = ref<string | null>(null)
 const isActive = ref(true)
+const isTaskAdmin = ref(false)
 
 watch(() => props.open, (val) => {
   if (val && props.member) {
@@ -47,6 +48,7 @@ watch(() => props.open, (val) => {
     employeeNo.value = props.member.employee_no || ''
     supervisorId.value = props.member.supervisor_membership_id || null
     isActive.value = props.member.is_active ?? true
+    isTaskAdmin.value = props.member.is_task_admin ?? false
   }
 })
 
@@ -69,6 +71,7 @@ async function handleSubmit() {
     employee_no: employeeNo.value.trim() || null,
     supervisor_membership_id: supervisorId.value,
     is_active: isActive.value,
+    is_task_admin: isTaskAdmin.value,
   }
   try {
     const updated = await store.updateMemberProfile(props.member.id, payload)
@@ -121,6 +124,10 @@ async function handleSubmit() {
         <label class="flex items-center gap-2 text-sm">
           <Checkbox v-model:checked="isActive" />
           {{ t('memberManagement.accountActive') }}
+        </label>
+        <label class="flex items-center gap-2 text-sm">
+          <Checkbox v-model:checked="isTaskAdmin" />
+          {{ t('memberManagement.isTaskAdmin') }}
         </label>
       </div>
 

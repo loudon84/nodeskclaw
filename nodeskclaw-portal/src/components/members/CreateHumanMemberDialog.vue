@@ -40,6 +40,7 @@ const jobTitle = ref('')
 const employeeNo = ref('')
 const supervisorId = ref<string | null>(null)
 const mustChangePassword = ref(true)
+const isTaskAdmin = ref(false)
 const selectedSkillIds = ref<string[]>([])
 const skills = ref<AvailableMcpSkill[]>([])
 
@@ -78,6 +79,7 @@ function resetForm() {
   employeeNo.value = ''
   supervisorId.value = null
   mustChangePassword.value = true
+  isTaskAdmin.value = false
   selectedSkillIds.value = []
   resetOaSearch()
 }
@@ -174,6 +176,7 @@ async function handleSubmit() {
       employee_no: employeeNo.value.trim() || null,
       supervisor_membership_id: supervisorId.value,
       must_change_password: mustChangePassword.value,
+      is_task_admin: isTaskAdmin.value,
       skill_ids: selectedSkillIds.value,
     })
     if (member) {
@@ -284,6 +287,10 @@ async function handleSubmit() {
         <label class="flex items-center gap-2 text-sm">
           <Checkbox v-model:checked="mustChangePassword" />
           {{ t('memberManagement.mustChangePassword') }}
+        </label>
+        <label class="flex items-center gap-2 text-sm">
+          <Checkbox v-model:checked="isTaskAdmin" />
+          {{ t('memberManagement.isTaskAdmin') }}
         </label>
       </div>
 

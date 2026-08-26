@@ -69,6 +69,7 @@ class MemberInfo(BaseModel):
     username: str | None = None
     user_avatar_url: str | None = None
     is_active: bool | None = None
+    is_task_admin: bool = False
     must_change_password: bool | None = None
     department: str | None = None
     job_title: str | None = None

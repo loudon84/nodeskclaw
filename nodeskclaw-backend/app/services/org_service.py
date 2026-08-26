@@ -287,6 +287,7 @@ def _build_member_info(
         username=user.username,
         user_avatar_url=user.avatar_url,
         is_active=user.is_active,
+        is_task_admin=user.is_task_admin,
         must_change_password=user.must_change_password,
         department=membership.department,
         job_title=membership.job_title,
@@ -412,6 +413,7 @@ async def add_member(org_id: str, user_id: str, role: str, db: AsyncSession) -> 
         user_name=user.name,
         user_email=user.email,
         user_avatar_url=user.avatar_url,
+        is_task_admin=user.is_task_admin,
         created_at=membership.created_at,
     )
 
@@ -592,6 +594,7 @@ async def create_human_member(
             username=username,
             password_hash=_hash_password(body.default_password),
             must_change_password=body.must_change_password,
+            is_task_admin=body.is_task_admin,
             current_org_id=org_id,
         )
         db.add(user)
@@ -633,6 +636,7 @@ async def create_human_member(
         user.current_org_id = org_id
     if body.must_change_password:
         user.must_change_password = True
+    user.is_task_admin = body.is_task_admin
 
     await db.commit()
     await db.refresh(membership)
@@ -696,6 +700,8 @@ async def update_member_profile(
         user.username = new_username
     if "is_active" in data and data["is_active"] is not None:
         user.is_active = data["is_active"]
+    if "is_task_admin" in data and data["is_task_admin"] is not None:
+        user.is_task_admin = data["is_task_admin"]
     if "department" in data:
         membership.department = data["department"]
     if "job_title" in data:
