@@ -717,9 +717,19 @@ async def update_member_profile(
     return enriched[0]
 
 
+def _direct_report_payload(user: User) -> dict:
+    return {
+        "id": user.id,
+        "name": user.name,
+        "email": user.email,
+        "username": user.username,
+        "is_active": bool(user.is_active),
+    }
+
+
 # @lat: [[core-concepts#User]]
 async def list_subordinates(user_id: str, db: AsyncSession) -> list[dict]:
-    """List direct-report users for the given user id via org_memberships reporting chain."""
+    """List the given user plus direct reports; task/super admins get all users."""
     from sqlalchemy.orm import aliased
 
     user = (await db.execute(
@@ -728,29 +738,29 @@ async def list_subordinates(user_id: str, db: AsyncSession) -> list[dict]:
     if not user:
         raise NotFoundError("用户不存在", "errors.auth.user_not_found")
 
-    supervisor = aliased(OrgMembership)
-    subordinate = aliased(OrgMembership)
-
-    result = await db.execute(
-        select(User)
-        .select_from(supervisor)
-        .join(subordinate, supervisor.id == subordinate.supervisor_membership_id)
-        .join(User, User.id == subordinate.user_id)
-        .where(
-            supervisor.user_id == user_id,
-            not_deleted(supervisor),
-            not_deleted(subordinate),
-            not_deleted(User),
+    if user.is_task_admin or user.is_super_admin:
+        result = await db.execute(
+            select(User).where(not_deleted(User)).order_by(User.name.asc())
         )
-        .order_by(User.name.asc())
-        .distinct()
-    )
-    return [
-        {
-            "id": u.id,
-            "name": u.name,
-            "email": u.email,
-            "username": u.username,
-        }
-        for u in result.scalars().all()
-    ]
+        users = list(result.scalars().all())
+    else:
+        supervisor = aliased(OrgMembership)
+        subordinate = aliased(OrgMembership)
+        result = await db.execute(
+            select(User)
+            .select_from(supervisor)
+            .join(subordinate, supervisor.id == subordinate.supervisor_membership_id)
+            .join(User, User.id == subordinate.user_id)
+            .where(
+                supervisor.user_id == user_id,
+                not_deleted(supervisor),
+                not_deleted(subordinate),
+                not_deleted(User),
+            )
+            .distinct()
+        )
+        users_by_id = {item.id: item for item in result.scalars().all()}
+        users_by_id[user.id] = user
+        users = sorted(users_by_id.values(), key=lambda item: item.name or "")
+
+    return [_direct_report_payload(item) for item in users]

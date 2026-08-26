@@ -14,7 +14,7 @@
 
 鉴权依赖集中在 `app/core/deps.py`；业务层仍须强制 org / workspace / user 边界。
 
-租户隔离不能只靠路由装饰器：列表与写入查询必须过滤 `deleted_at` 与归属字段。Feature 开关见 [[nodeskclaw-backend/app/core/feature_gate.py#FeatureGate]]。
+租户隔离不能只靠路由装饰器：列表与写入查询必须过滤 `deleted_at` 与归属字段。例外：`GET /members/{member_id}/subordinate` 在查询对象为 `is_task_admin` 或 `is_super_admin` 时返回全部未软删除用户，见 [[core-concepts#User]]。Feature 开关见 [[nodeskclaw-backend/app/core/feature_gate.py#FeatureGate]]。
 
 ## Service Domains
 

@@ -18,7 +18,7 @@ NoDeskClaw 的核心领域实体是组织、集群、实例、工作区与基因
 
 平台用户是登录主体，持有账号凭证、组织归属与任务治理标记。
 
-`users.is_task_admin` 标记任务管理员（默认 `false`）。登录与 `/auth/me` 的 `UserInfo`、成员列表的 `MemberInfo` 均带出该字段；创建人类成员 `POST /orgs/{org_id}/members/create-human` 与更新资料 `PATCH /orgs/{org_id}/members/{membership_id}/profile` 可写入。直属下属查询：`GET /members/{member_id}/subordinate`（`member_id` 为 `users.id`），经 `org_memberships`（`o.user_id` → `s.supervisor_membership_id = o.id` → `u.id = s.user_id`）返回 `id, name, email, username`。实现见 [[nodeskclaw-backend/app/services/org_service.py#create_human_member]]、[[nodeskclaw-backend/app/services/org_service.py#update_member_profile]]、[[nodeskclaw-backend/app/services/org_service.py#list_subordinates]]。
+`users.is_task_admin` 标记任务管理员（默认 `false`）。登录与 `/auth/me` 的 `UserInfo`、成员列表的 `MemberInfo` 均带出该字段；创建人类成员 `POST /orgs/{org_id}/members/create-human` 与更新资料 `PATCH /orgs/{org_id}/members/{membership_id}/profile` 可写入。直属下属查询：`GET /members/{member_id}/subordinate`（`member_id` 为 `users.id`）返回查询对象本人及其直属下属（`id, name, email, username, is_active`）。若该用户 `is_task_admin` 或 `is_super_admin`，则返回全部未软删除用户。契约见 [[nodeskclaw-backend/app/schemas/instance_member.py#DirectReportUser]]；路由 [[nodeskclaw-backend/app/api/portal/members.py#list_member_subordinates]]；实现见 [[nodeskclaw-backend/app/services/org_service.py#create_human_member]]、[[nodeskclaw-backend/app/services/org_service.py#update_member_profile]]、[[nodeskclaw-backend/app/services/org_service.py#list_subordinates]]。
 
 权威模型：[[nodeskclaw-backend/app/models/user.py#User]]。
 

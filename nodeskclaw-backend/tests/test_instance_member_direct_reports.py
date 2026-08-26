@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import uuid
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
@@ -101,12 +102,17 @@ async def test_list_subordinates_returns_reports(require_test_db):
 
         reports = await org_service.list_subordinates(supervisor.id, db)
 
-        assert [item["id"] for item in reports] == ["user-report-a", "user-report-b"]
+        assert [item["id"] for item in reports] == [
+            "user-report-a",
+            "user-report-b",
+            "user-supervisor",
+        ]
         assert reports[0] == {
             "id": "user-report-a",
             "name": "Alice Report",
             "email": "alice@example.com",
             "username": "alice",
+            "is_active": True,
         }
 
 
@@ -126,7 +132,8 @@ async def test_list_subordinates_returns_empty_when_no_reports(require_test_db):
 
         reports = await org_service.list_subordinates(lone_user.id, db)
 
-        assert reports == []
+        assert [item["id"] for item in reports] == ["user-lone"]
+        assert reports[0]["is_active"] is True
 
 
 @pytest.mark.asyncio
@@ -144,6 +151,87 @@ async def test_list_subordinates_excludes_soft_deleted_users(require_test_db):
         reports = await org_service.list_subordinates(supervisor.id, db)
 
         assert "user-report-deleted" not in {item["id"] for item in reports}
+
+
+def test_direct_report_payload_includes_is_active():
+    user = User(
+        id="u-payload-inactive",
+        name="Inactive",
+        email="inactive@example.com",
+        username="inactive",
+        is_active=False,
+        is_super_admin=False,
+        is_task_admin=False,
+        must_change_password=False,
+    )
+    payload = org_service._direct_report_payload(user)
+    assert payload == {
+        "id": "u-payload-inactive",
+        "name": "Inactive",
+        "email": "inactive@example.com",
+        "username": "inactive",
+        "is_active": False,
+    }
+
+
+@pytest.mark.asyncio
+async def test_list_subordinates_task_admin_returns_all_users(require_test_db):
+    suffix = uuid.uuid4().hex[:12]
+    async with TestSessionLocal() as db:
+        admin = User(
+            id=f"ta-admin-{suffix}",
+            name="Task Admin All",
+            username=f"taadmin{suffix}",
+            email=f"taadmin-{suffix}@example.com",
+            is_task_admin=True,
+            is_active=True,
+        )
+        outsider = User(
+            id=f"ta-out-{suffix}",
+            name="Outsider",
+            username=f"taout{suffix}",
+            email=f"taout-{suffix}@example.com",
+            is_active=False,
+        )
+        db.add_all([admin, outsider])
+        await db.commit()
+
+        reports = await org_service.list_subordinates(admin.id, db)
+        ids = {item["id"] for item in reports}
+
+        assert admin.id in ids
+        assert outsider.id in ids
+        outsider_row = next(item for item in reports if item["id"] == outsider.id)
+        assert outsider_row["is_active"] is False
+
+
+@pytest.mark.asyncio
+async def test_list_subordinates_super_admin_returns_all_users(require_test_db):
+    suffix = uuid.uuid4().hex[:12]
+    async with TestSessionLocal() as db:
+        admin = User(
+            id=f"sa-admin-{suffix}",
+            name="Super Admin All",
+            username=f"saadmin{suffix}",
+            email=f"saadmin-{suffix}@example.com",
+            is_super_admin=True,
+            is_active=True,
+        )
+        outsider = User(
+            id=f"sa-out-{suffix}",
+            name="Super Outsider",
+            username=f"saout{suffix}",
+            email=f"saout-{suffix}@example.com",
+            is_active=True,
+        )
+        db.add_all([admin, outsider])
+        await db.commit()
+
+        reports = await org_service.list_subordinates(admin.id, db)
+        ids = {item["id"] for item in reports}
+
+        assert admin.id in ids
+        assert outsider.id in ids
 
 
 @pytest.mark.asyncio

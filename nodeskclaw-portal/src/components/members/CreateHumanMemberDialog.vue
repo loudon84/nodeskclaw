@@ -284,14 +284,14 @@ async function handleSubmit() {
             <p v-if="skills.length === 0" class="text-xs text-muted-foreground">{{ t('memberManagement.noSkillsAvailable') }}</p>
           </div>
         </div>
-        <label class="flex items-center gap-2 text-sm">
-          <Checkbox v-model:checked="mustChangePassword" />
-          {{ t('memberManagement.mustChangePassword') }}
-        </label>
-        <label class="flex items-center gap-2 text-sm">
-          <Checkbox v-model:checked="isTaskAdmin" />
-          {{ t('memberManagement.isTaskAdmin') }}
-        </label>
+        <div class="flex items-center gap-2 text-sm">
+          <Checkbox id="create-member-must-change-password" v-model:checked="mustChangePassword" />
+          <label for="create-member-must-change-password" class="cursor-pointer">{{ t('memberManagement.mustChangePassword') }}</label>
+        </div>
+        <div class="flex items-center gap-2 text-sm">
+          <Checkbox id="create-member-is-task-admin" v-model:checked="isTaskAdmin" />
+          <label for="create-member-is-task-admin" class="cursor-pointer">{{ t('memberManagement.isTaskAdmin') }}</label>
+        </div>
       </div>
 
       <div class="flex justify-end gap-2 pt-2">
