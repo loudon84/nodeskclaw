@@ -74,6 +74,14 @@ P0 语义在 Expert 网关、Hermes Task 服务与 Worker 中落地；迁移 `b1
 
 P0 回归集中在 `tests/expert_gateway/` 与 `tests/hermes_skill/`（owner、idempotency、cancel、retry、dup completion、result_content、progress）及 `tests/contracts/`（check、OpenAPI 200 schema、MCP tools/list annotations）；`contracts.py check` 另校验产物漂移与负例 fixture。
 
+## Expert Skill Target V1
+
+Expert Skill v1 目标架构采用 Skill-first 调用、不可变 Revision、服务端 Installation 路由、统一调用内核、规范运行事件与事务 Outbox；这是待实施方案，不表示当前 capability 已完成。
+
+正式方案见 `docs/_expert/prd-v1.0.md`。Expert 仅保留 Persona 与 Skill Collection；MCP、Work API 和 Legacy Expert 入口统一转换为调用命令。核心保存客户端无关的运行事件，再投影为 Task、Work Chat、Resource 与 Audit。
+
+冻结的 v1.0.2 合同保持不可变；新事件、Clarify Resume、Skill Revision 与 Work Skill Catalog 应进入后续兼容合同版本。实施前 `runtimeProgress: false` 与 `loadGate: unmet` 仍是当前事实，不得因目标方案而改写健康能力。
+
 ## Related
 
 相关架构入口与生成脚本。
