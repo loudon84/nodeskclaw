@@ -108,6 +108,26 @@ async def _run_loop(*, with_reconciliation: bool) -> None:
                             logger.warning("build lease stolen job_id=%s", build_job.id)
                         processed = True
 
+            if settings.KNOWLEDGE_TRANSLATION_ENABLED:
+                from app.services import translation_service
+
+                async with async_session_factory() as db:
+                    claimed_tr = await translation_service.claim_next_translation_job(
+                        db, lease_owner=lease_owner
+                    )
+                    if claimed_tr:
+                        tr_job, lease_token = claimed_tr
+                        await translation_service.process_translation_job(db, tr_job)
+                        owned = await translation_service.finalize_translation_job(
+                            db,
+                            tr_job,
+                            lease_owner=lease_owner,
+                            lease_token=lease_token,
+                        )
+                        if not owned:
+                            logger.warning("translation lease stolen job_id=%s", tr_job.id)
+                        processed = True
+
             loop_count += 1
             if with_reconciliation and loop_count % RECONCILIATION_EVERY_LOOPS == 0:
                 async with async_session_factory() as db:

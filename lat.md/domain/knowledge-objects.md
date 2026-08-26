@@ -6,9 +6,9 @@ UI 可称「知识库 / 数据集」，代码内部禁止用 `dataset` 表示 no
 
 ## Knowledge Base
 
-KnowledgeBase 是一个物理知识库，一对一映射 RAGFlow Dataset（`ragflow_dataset_id`），归属某个 `org_id`。
+KnowledgeBase 是企业知识资产容器（权限、模型、Build Profile），一对一 Runtime Binding 指向 RAGFlow Dataset；`ragflow_dataset_id` 仅为 v1 mirror。
 
-托管库在 RAGFlow 侧统一 `permission = me`，由 Knowledge Service Account 管理；企业 ACL 不映射为 RAGFlow `team`。状态含 provisioning / active / updating / error / deleting。v1.1 增加 `acl_version`、`visibility`、`tags`、`last_synced_at`、`last_error`；v1.2 增加 `metadata_schema`：[[nodeskclaw-knowledge/app/models/knowledge_base.py#KnowledgeBase]]。
+托管库在 RAGFlow 侧统一 `permission = me`，由 Knowledge Service Account 管理；企业 ACL 不映射为 RAGFlow `team`。状态含 provisioning / active / updating / error / deleting。v1.1 增加 `acl_version`、`visibility`、`tags`、`last_synced_at`、`last_error`；v1.2 增加 `metadata_schema`；v2 增加 `active_build_profile_id` / `knowledge_model_id` / `build_version`：[[nodeskclaw-knowledge/app/models/knowledge_base.py#KnowledgeBase]]。Binding：[[nodeskclaw-knowledge/app/models/runtime_binding.py#KnowledgeRuntimeBinding]]。
 
 ## Source File
 
@@ -40,23 +40,47 @@ v1.2 将企业业务 Metadata 与系统 `nk_*` 分离：KB 持有 `metadata_sche
 
 KnowledgeSet 是多 KnowledgeBase 的逻辑检索集合，不是 RAGFlow 物理对象。
 
-绑定关系仅存 Knowledge 库；检索时展开为多个 Slice 调用 RAGFlow。禁止为聚合检索在 RAGFlow 复制文档。v1.1 拥有独立 Set ACL（READ/USE/UPDATE/DELETE/MANAGE/MANAGE_ACL）与 `retrieval_config` JSONB；Set USE 不得提升底层 KB/File 权限：[[nodeskclaw-knowledge/app/models/knowledge_set.py#KnowledgeSet]]、[[nodeskclaw-knowledge/app/models/knowledge_set_acl.py#KnowledgeSetAcl]]。
+绑定关系仅存 Knowledge 库；检索时展开为多个 Slice 调用 RAGFlow。禁止为聚合检索在 RAGFlow 复制文档。v1.1 拥有独立 Set ACL（READ/USE/UPDATE/DELETE/MANAGE/MANAGE_ACL）与 `retrieval_config` JSONB；Set USE 不得提升底层 KB/File 权限：[[nodeskclaw-knowledge/app/models/knowledge_set.py#KnowledgeSet]]、[[nodeskclaw-knowledge/app/models/knowledge_set_acl.py#KnowledgeSetAcl]]。v2 去掉 Set 绑定 KB 的 embedding 强制对齐闸。
 
 v1.2 强制闸：`status=disabled` 时用户 Retrieval、Chat 发消息与新建 Session 返回 403（`errors.knowledge.set_disabled`）；MANAGE、历史 Chat 查看、配置编辑、Evaluation 仍放行。
 
 运行时检索配置改为 ACTIVE Retrieval Profile，见 [[knowledge-objects#Retrieval Profile]]；`retrieval_config` 字段保留但不再作为运行时权威。
+
+## Knowledge Application
+
+KnowledgeApplication 是面向用户的检索/Chat 产品面，可绑定多个 KnowledgeSet；Answer Model Authority 在 Application。
+
+表与 ACL：[[nodeskclaw-knowledge/app/models/knowledge_application.py]]、[[nodeskclaw-knowledge/app/models/knowledge_application_acl.py]]。USE 判定 Owner：[[nodeskclaw-knowledge/app/services/permission_service.py#has_application_permission]]。服务：[[nodeskclaw-knowledge/app/services/knowledge_application_service.py]]。
+
+## Build Profile And Index
+
+Build Profile（Standard/Enhanced/Reasoning）描述要构建的 Index 类型与触发策略；Index State 跟踪每 KB×index 生命周期；BuildJob 与 IngestionJob 分表。
+
+Profile / State / Job：[[nodeskclaw-knowledge/app/models/build_profile.py]]、[[nodeskclaw-knowledge/app/models/index_state.py]]、[[nodeskclaw-knowledge/app/models/build_job.py]]。Registry：[[nodeskclaw-knowledge/app/services/index_registry.py]]。无稳定 Public API 的 Index 记 `unsupported`。
+
+## Knowledge Model
+
+Knowledge Model 存 entity/relation/term/extraction_policy JSON，供 Reasoning Build 与抽取策略引用。
+
+模型：[[nodeskclaw-knowledge/app/models/knowledge_model.py#KnowledgeModel]]。服务：[[nodeskclaw-knowledge/app/services/knowledge_model_service.py]]。
+
+## Translation Objects
+
+Translation 按 Document→Page→Revision 工作，默认不替换原文 Source Version；Artifact 存本地路径，signed URL 短 TTL 现算。
+
+模型：[[nodeskclaw-knowledge/app/models/translation.py]]。服务：[[nodeskclaw-knowledge/app/services/translation_service.py]]、[[nodeskclaw-knowledge/app/services/artifact_store.py]]。
+
+## Retrieval Profile
+
+v1.2 将 Set 的检索参数升级为版本化发布模型：DRAFT / ACTIVE / ARCHIVED，每 Set 同时至多一条 ACTIVE。
+
+表 `knowledge_retrieval_profiles`（soft delete + Partial Unique Index on set+version）：[[nodeskclaw-knowledge/app/models/retrieval_profile.py#RetrievalProfile]]。v2 增加 `scope_type` / `application_id`（旧行 backfill `set`）。生命周期（create DRAFT、update DRAFT、publish、rollback）见 [[nodeskclaw-knowledge/app/services/retrieval_profile_service.py]]。迁移为既有 Set 播种 ACTIVE v1；新建 Set 同步播种。`retrieve` 只读 ACTIVE；缺失时 400 `errors.knowledge.profile_not_active`。Playground 允许指定 DRAFT/ACTIVE 调试，见 [[knowledge#Retrieval Playground And Trace]]。
 
 ## Evaluation Objects
 
 评测集绑定 KnowledgeSet：Case 声明 query 与 expected_source_file_ids；Run 异步执行并对齐某 Retrieval Profile。
 
 四表：`knowledge_evaluation_sets` / `cases` / `runs` / `results`：[[nodeskclaw-knowledge/app/models/evaluation.py]]。Run 状态 pending/running/completed/failed，并带 attempt/lease 字段与 `principal_snapshot`（异步执行时还原创建者 ACL 身份）供 Worker 租赁。指标与执行见 [[knowledge#Retrieval Evaluation]]。
-
-## Retrieval Profile
-
-v1.2 将 Set 的检索参数升级为版本化发布模型：DRAFT / ACTIVE / ARCHIVED，每 Set 同时至多一条 ACTIVE。
-
-表 `knowledge_retrieval_profiles`（soft delete + Partial Unique Index on set+version）：[[nodeskclaw-knowledge/app/models/retrieval_profile.py#RetrievalProfile]]。生命周期（create DRAFT、update DRAFT、publish、rollback）见 [[nodeskclaw-knowledge/app/services/retrieval_profile_service.py]]。迁移为既有 Set 播种 ACTIVE v1；新建 Set 同步播种。`retrieve` 只读 ACTIVE；缺失时 400 `errors.knowledge.profile_not_active`。Playground 允许指定 DRAFT/ACTIVE 调试，见 [[knowledge#Retrieval Playground And Trace]]。
 
 ## Knowledge Principal
 

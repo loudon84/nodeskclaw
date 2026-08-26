@@ -32,6 +32,12 @@ from app.models.runtime_binding import KnowledgeRuntimeBinding
 from app.models.source_file import SourceFile
 from app.models.source_file_acl import SourceFileAcl
 from app.models.source_file_version import SourceFileVersion
+from app.models.translation import (
+    TranslationDocument,
+    TranslationJob,
+    TranslationPage,
+    TranslationRevision,
+)
 
 __all__ = [
     "Base",
@@ -71,4 +77,8 @@ __all__ = [
     "KnowledgeApplicationSetItem",
     "KnowledgeApplicationAcl",
     "KnowledgeModel",
+    "TranslationDocument",
+    "TranslationPage",
+    "TranslationRevision",
+    "TranslationJob",
 ]

@@ -132,6 +132,37 @@ CONNECTOR_AUTH_ERROR = Counter(
     ["connector_type"],
 )
 
+BINDING_DRIFT = Counter(
+    "knowledge_binding_drift_total",
+    "Runtime Binding drift detections",
+    ["reason"],
+)
+INDEX_DRIFT = Counter(
+    "knowledge_index_drift_total",
+    "Index State drift detections",
+    ["index_type"],
+)
+BUILD_JOBS = Counter(
+    "knowledge_build_jobs_total",
+    "Knowledge build jobs by status",
+    ["status"],
+)
+CAPABILITY_PLANS = Counter(
+    "knowledge_capability_plans_total",
+    "Capability planner invocations",
+    ["reason_code"],
+)
+TRANSLATION_DRIFT = Counter(
+    "knowledge_translation_drift_total",
+    "Translation artifact drift detections",
+    ["reason"],
+)
+EVIDENCE_RETURNED = Counter(
+    "knowledge_evidence_returned_total",
+    "Evidence items returned by type",
+    ["evidence_type"],
+)
+
 METRICS_CONTENT_TYPE = CONTENT_TYPE_LATEST
 
 
@@ -234,3 +265,27 @@ def observe_connector_fetch(*, connector_type: str, status: str, duration_second
 
 def observe_connector_auth_error(*, connector_type: str) -> None:
     CONNECTOR_AUTH_ERROR.labels(connector_type=connector_type or "unknown").inc()
+
+
+def observe_binding_drift(*, reason: str) -> None:
+    BINDING_DRIFT.labels(reason=reason or "unknown").inc()
+
+
+def observe_index_drift(*, index_type: str) -> None:
+    INDEX_DRIFT.labels(index_type=index_type or "unknown").inc()
+
+
+def observe_build_job(*, status: str) -> None:
+    BUILD_JOBS.labels(status=status or "unknown").inc()
+
+
+def observe_capability_plan(*, reason_code: str) -> None:
+    CAPABILITY_PLANS.labels(reason_code=reason_code or "unknown").inc()
+
+
+def observe_translation_drift(*, reason: str) -> None:
+    TRANSLATION_DRIFT.labels(reason=reason or "unknown").inc()
+
+
+def observe_evidence_returned(*, evidence_type: str) -> None:
+    EVIDENCE_RETURNED.labels(evidence_type=evidence_type or "unknown").inc()

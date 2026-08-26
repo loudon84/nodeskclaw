@@ -24,9 +24,9 @@ Principal 以 `OrgMembership.id`（`member_id`）为准。Backend `GET /api/v1/a
 
 ## Health Probes
 
-`/health/live` 只表示进程存活；`/health/ready` 检查 PostgreSQL、RAGFlow、Backend，任一失败返回 HTTP 503。
+`/health/live` 只表示进程存活；`/health/ready` 检查 PostgreSQL 与 RAGFlow 核心 Chunk 能力，非 Chunk capability 缺失只记 degraded 不 503。
 
-实现：[[nodeskclaw-knowledge/app/main.py#health_ready]]。Compose 中 API 以 live 作 healthcheck；Worker `depends_on` API healthy，确保先完成 `alembic upgrade` 再建连接。
+实现：[[nodeskclaw-knowledge/app/main.py#health_ready]]。Compose 中 API 以 live 作 healthcheck；Worker `depends_on` API healthy，确保先完成 `alembic upgrade` 再建连接。Ready 经 [[nodeskclaw-knowledge/app/runtime/ragflow.py#RagflowRuntimeAdapter]] 探测 version/capabilities。
 
 ## Secure Retrieval Pipeline
 
@@ -46,6 +46,12 @@ AccessPlan 分 `FULL_ACCESS` / `FILTERED_ACCESS` / `NO_ACCESS`，并保留 `full
 
 全部 RAGFlow HTTP 经 `RagflowClient` Adapter：[[nodeskclaw-knowledge/app/integrations/ragflow/client.py#RagflowClient]]。禁止业务 Service 直接拼请求，禁止改 RAGFlow DB。KnowledgeSet 是逻辑聚合；检索展开为多个 Slice，不在 RAGFlow 再建聚合 Dataset。LLM 统一经 `LlmProxyClient`：[[nodeskclaw-knowledge/app/integrations/llm_proxy/client.py#LlmProxyClient]]。决策见 [[decisions/knowledge-ragflow-split]]。领域对象见 [[knowledge-objects]]。
 
+## Knowledge Control Plane V2
+
+v2.0 将 Dataset 身份换成 Runtime Binding，并增加 Build/Application/Capability/Translation；`/api/v1` 保持兼容，`/api/v2` 由 feature flag 控制。
+
+Runtime Binding Authority：[[nodeskclaw-knowledge/app/services/runtime_binding_service.py]]、[[nodeskclaw-knowledge/app/models/runtime_binding.py#KnowledgeRuntimeBinding]]。产品映射 Owner：[[nodeskclaw-knowledge/app/runtime/ragflow.py#RagflowRuntimeAdapter]]（KEEP transport `RagflowClient`）。Build Profile / IndexRegistry / IndexState / BuildJob：[[nodeskclaw-knowledge/app/services/build_profile_service.py]]、[[nodeskclaw-knowledge/app/services/index_registry.py]]、[[nodeskclaw-knowledge/app/services/build_orchestrator.py]]。Application USE 在 [[nodeskclaw-knowledge/app/services/permission_service.py#has_application_permission]]。Capability Planner（规则模式）：[[nodeskclaw-knowledge/app/services/capability_planner.py]]。Evidence 统一 Cleaner：[[nodeskclaw-knowledge/app/services/chunk_security_service.py#clean_evidence]]。v2 HTTP：[[nodeskclaw-knowledge/app/api/v2/router.py]]；Agent tools 必须 `get_member_context`：[[nodeskclaw-knowledge/app/api/agent_tools.py]]。Translation + Artifact：[[nodeskclaw-knowledge/app/services/translation_service.py]]、[[nodeskclaw-knowledge/app/services/artifact_store.py]]。
+
 ## Runtime Schema V11
 
 v1.1 在 v1.0 八域表之上增加 Set ACL、Chat、Audit 与入库/检索运行时字段，支撑 Worker 与安全边界。
@@ -58,7 +64,7 @@ v1.1 在 v1.0 八域表之上增加 Set ACL、Chat、Audit 与入库/检索运�
 
 v1.3 增加独立 `knowledge-connector-worker`：调度 interval/manual SyncRun、leasing v2 + heartbeat、编排 discover/fetch 并经 Ingestion Facade 入库：[[nodeskclaw-knowledge/app/workers/connector_worker.py]]。
 
-上传走 SpooledTemporaryFile 流式读入（`KNOWLEDGE_UPLOAD_MAX_MB` 限流），再交给 `RagflowClient.upload_document(file_obj=...)`：[[nodeskclaw-knowledge/app/services/ingestion_service.py#read_upload_spooled]]。网络超时后进入 `upload_unknown`，先按确定性 upload token 对账恢复，禁止盲重传：[[nodeskclaw-knowledge/app/services/ingestion_facade.py]]。通用租赁：[[nodeskclaw-knowledge/app/workers/job_leasing.py#claim_next]]（`FOR UPDATE SKIP LOCKED` + `lease_token` + heartbeat，claim 后立即 commit，禁止外部 I/O 持有 row lock），Ingestion 与 Evaluation Run 共用；终态写回必须 `lease_owner+lease_token` 所有权校验，旧 Worker 不得覆盖新 Worker。Worker 同进程轮询入库、评测与周期 Reconciliation（含 Connector Reconciliation）：[[nodeskclaw-knowledge/app/workers/ingestion_worker.py]]。状态映射与激活：[[nodeskclaw-knowledge/app/services/ingestion_service.py#process_leased_job]]。仅 RAGFlow `run=FAIL`（及明确校验失败）将 version 标 `failed`；网络异常 / Poll 超限只失败 Job，不把 version 标 FAILED。蓝绿切换后 best-effort `enabled=0` 旧文档。
+上传走 SpooledTemporaryFile 流式读入（`KNOWLEDGE_UPLOAD_MAX_MB` 限流），再交给 `RagflowClient.upload_document(file_obj=...)`：[[nodeskclaw-knowledge/app/services/ingestion_service.py#read_upload_spooled]]。网络超时后进入 `upload_unknown`，先按确定性 upload token 对账恢复，禁止盲重传：[[nodeskclaw-knowledge/app/services/ingestion_facade.py]]。通用租赁：[[nodeskclaw-knowledge/app/workers/job_leasing.py#claim_next]]（`FOR UPDATE SKIP LOCKED` + `lease_token` + heartbeat，claim 后立即 commit，禁止外部 I/O 持有 row lock），Ingestion 与 Evaluation Run 共用；终态写回必须 `lease_owner+lease_token` 所有权校验，旧 Worker 不得覆盖新 Worker。Worker 同进程轮询入库、评测、Build/Translation 与周期 Reconciliation（含 Connector Reconciliation）：[[nodeskclaw-knowledge/app/workers/ingestion_worker.py]]。状态映射与激活：[[nodeskclaw-knowledge/app/services/ingestion_service.py#process_leased_job]]。仅 RAGFlow `run=FAIL`（及明确校验失败）将 version 标 `failed`；网络异常 / Poll 超限只失败 Job，不把 version 标 FAILED。蓝绿切换后 best-effort `enabled=0` 旧文档。
 
 ## Retrieval Evaluation
 
@@ -70,9 +76,9 @@ v1.2 离线评测：Evaluation Set/Case + 异步 Run，用确定性 Retrieval Me
 
 `source_file.active_version_id` 是检索安全 Authority；Cleaner 批量拦截 superseded / 未知 / metadata mismatch / 未授权 Chunk。
 
-drop 必须写审计：`METADATA_MISMATCH` 或 `CHUNK_SECURITY_DROP`。实现：[[nodeskclaw-knowledge/app/services/chunk_security_service.py#clean_chunks]]。RAGFlow `enabled` 只是优化，不能替代本地 Active Check。
+drop 必须写审计：`METADATA_MISMATCH` 或 `CHUNK_SECURITY_DROP`。实现：[[nodeskclaw-knowledge/app/services/chunk_security_service.py#clean_chunks]]（v2 Evidence 同路径 [[nodeskclaw-knowledge/app/services/chunk_security_service.py#clean_evidence]]）。RAGFlow `enabled` 只是优化，不能替代本地 Active Check。
 
-版本回滚：先 RAGFlow 目标 `enabled=1`，再本地事务切 `active_version_id` 并将旧版标 superseded，最后 best-effort 旧版 `enabled=0`；切换窗口即使双 enabled，Cleaner 仍只认 `active_version_id`：[[nodeskclaw-knowledge/app/services/source_lifecycle_service.py#activate_source_file_version]]。
+版本回滚：先 RAGFlow 目标 `enabled=1`，再本地事务切 `active_version_id` 并将旧版标 superseded，最后 best-effort 旧版 `enabled=0`；切换窗口即使双 enabled，Cleaner 仍只认 `active_version_id`。激活后 mark Index STALE 并按 Build Policy 入队：[[nodeskclaw-knowledge/app/services/source_lifecycle_service.py#activate_source_file_version]]。
 
 ## Retrieval Planner
 
@@ -82,9 +88,9 @@ drop 必须写审计：`METADATA_MISMATCH` 或 `CHUNK_SECURITY_DROP`。实现：
 
 ## Secure Chat
 
-Chat 只能消费 SafeChunks：Session Owner → Set USE → Secure Retrieval → Context Builder → LLM Proxy → Citation 与本轮 SafeChunkSet 校验。
+Chat 只能消费 SafeChunks：Session Owner → Set USE（或 Application USE）→ Secure Retrieval → Context Builder → LLM Proxy → Citation 与本轮 SafeChunkSet 校验。
 
-服务：[[nodeskclaw-knowledge/app/services/chat_service.py]]、[[nodeskclaw-knowledge/app/services/context_builder.py]]。Context Builder 将检索内容视为 data，system prompt 声明不得覆盖指令，并用 `<knowledge_source>` 隔离。SSE 事件含 retrieval/generation/delta/citation/error；degraded 时额外 `retrieval_degraded`，fail_closed 失败不调 LLM。`disabled` KnowledgeSet 拒绝 create_session / send_message，但 get_session / list_messages 历史可读。LLM 经服务身份 `KNOWLEDGE_SERVICE_TOKEN`，见 [[decisions/knowledge-ragflow-split#Llm Proxy Boundary]]。Citation 持久化含 `page`/`positions`；解析见 [[knowledge#Citation Resolve]]。
+服务：[[nodeskclaw-knowledge/app/services/chat_service.py]]、[[nodeskclaw-knowledge/app/services/context_builder.py]]。v2 Session 可带 `application_id`，Answer Model Authority 来自 Application 快照。Context Builder 将检索内容视为 data，system prompt 声明不得覆盖指令，并用 `<knowledge_source>` 隔离。SSE 事件含 retrieval/generation/delta/citation/error；degraded 时额外 `retrieval_degraded`，fail_closed 失败不调 LLM。`disabled` KnowledgeSet 拒绝 create_session / send_message，但 get_session / list_messages 历史可读。LLM 经服务身份 `KNOWLEDGE_SERVICE_TOKEN`，见 [[decisions/knowledge-ragflow-split#Llm Proxy Boundary]]。Citation 持久化含 `page`/`positions`；解析见 [[knowledge#Citation Resolve]]。
 
 ## Citation Resolve
 
@@ -94,7 +100,7 @@ Session owner 或同 org 且对 SourceFile 有 READ 的成员可查；跨 org �
 
 ## Observability Metrics
 
-`/metrics` 以 Prometheus exposition 暴露 HTTP / RAGFlow / Retrieval / Security Drop / Ingestion / LLM / Connector Sync 核心指标，不经鉴权，供 scrape。
+`/metrics` 以 Prometheus exposition 暴露 HTTP / RAGFlow / Retrieval / Security Drop / Ingestion / LLM / Connector / Binding / Index / Build / Capability / Evidence / Translation 核心指标，不经鉴权，供 scrape。
 
 指标集中于 [[nodeskclaw-knowledge/app/services/metrics_service.py]]；埋点：Correlation 中间件记 HTTP、Ragflow/LlmProxy Client 记外部调用、retrieve 记 retrieval、Cleaner 记 drop reason、ingestion worker 记 job 终态、connector sync/fetch 记 `connector_type`+`status`（禁止 `connector_id`/`external_object_id`/`source_uri` label）。路径 UUID 归一为 `:id`。入口：[[nodeskclaw-knowledge/app/main.py#metrics]]。
 
@@ -108,4 +114,4 @@ Session owner 或同 org 且对 SourceFile 有 READ 的成员可查；跨 org �
 
 每轮 Reconciliation 写入 `reconciliation_runs`（checked/drifted/repaired/failed、started/finished、status、error），失败标记 `errors.knowledge.reconciliation_failed`。
 
-模型：[[nodeskclaw-knowledge/app/models/reconciliation_run.py#ReconciliationRun]]。Runner：[[nodeskclaw-knowledge/app/services/reconciliation_service.py#run_reconciliation]]。迁移：`alembic/versions/fd64182b8bad_knowledge_v1_2_reconciliation_runs.py`。
+模型：[[nodeskclaw-knowledge/app/models/reconciliation_run.py#ReconciliationRun]]。Runner：[[nodeskclaw-knowledge/app/services/reconciliation_service.py#run_reconciliation]]（v2 扩展 Binding / Index / Translation drift，禁止自动新建 Dataset 换 ID）。迁移：`alembic/versions/fd64182b8bad_knowledge_v1_2_reconciliation_runs.py`。
