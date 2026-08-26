@@ -6,6 +6,7 @@ import hashlib
 import time
 import uuid
 from datetime import UTC, datetime
+from types import SimpleNamespace
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -208,26 +209,70 @@ async def retrieve_for_application(
             message="应用未绑定知识集合",
             message_key="errors.knowledge.application_empty",
         )
-    # Use first usable set as entry; AccessPlan still enforces per-file ACL
-    primary_set_id = set_ids[0]
+
+    usable_set_ids: list[str] = []
+    merged_kbs: list = []
+    seen_kb: set[str] = set()
+    weight_by_kb: dict[str, float] = {}
+    for set_id in set_ids:
+        try:
+            ks = await knowledge_set_service.get_knowledge_set(db, member, set_id)
+        except (NotFoundError, ForbiddenError):
+            continue
+        if ks.status == KnowledgeSetStatus.disabled.value:
+            continue
+        if not await has_set_permission(db, member, ks, SetPermission.use.value):
+            continue
+        usable_set_ids.append(set_id)
+        for kb in await knowledge_set_service.list_bound_knowledge_bases(db, member, set_id):
+            if kb.id not in seen_kb:
+                seen_kb.add(kb.id)
+                merged_kbs.append(kb)
+        for item in await knowledge_set_service.list_set_items(db, member, set_id):
+            prev = weight_by_kb.get(item.knowledge_base_id)
+            w = float(item.weight)
+            if prev is None or w > prev:
+                weight_by_kb[item.knowledge_base_id] = w
+
+    if not usable_set_ids:
+        raise BadRequestError(
+            message="应用没有可用的知识集合",
+            message_key="errors.knowledge.application_empty",
+        )
+    if not merged_kbs:
+        raise BadRequestError(
+            message="应用未绑定知识库",
+            message_key="errors.knowledge.application_empty",
+        )
+
+    merged_items = [
+        SimpleNamespace(knowledge_base_id=kb_id, weight=weight)
+        for kb_id, weight in weight_by_kb.items()
+    ]
+
+    resolved_profile_id = profile_id or app.active_profile_id
     result = await _retrieve_for_set(
         db,
         member,
         ragflow,
-        knowledge_set_id=primary_set_id,
+        knowledge_set_id=usable_set_ids[0],
         query=query,
         options=options,
         top_k=top_k,
         similarity_threshold=similarity_threshold,
         filters=filters,
         origin=origin,
-        profile_id=profile_id,
+        profile_id=resolved_profile_id,
+        kbs_override=merged_kbs,
+        set_items_override=merged_items,
+        bump_set_ids=usable_set_ids,
     )
     from app.services import capability_planner
 
     plan = capability_planner.build_capability_plan(query)
     result["application_id"] = application_id
     result["answer_model"] = app.answer_model
+    result["knowledge_set_ids"] = usable_set_ids
     result["capability_plan"] = plan.to_dict()
     result["evidence"] = _chunks_to_evidence(result.get("chunks") or [])
     return result
@@ -272,18 +317,22 @@ async def _retrieve_for_set(
     filters: dict[str, list] | None = None,
     origin: str = RetrievalOrigin.direct_retrieval.value,
     profile_id: str | None = None,
+    kbs_override: list | None = None,
+    set_items_override: list | None = None,
+    bump_set_ids: list[str] | None = None,
 ) -> dict:
     started = time.perf_counter()
     ks = await knowledge_set_service.get_knowledge_set(db, member, knowledge_set_id)
     if (
         ks.status == KnowledgeSetStatus.disabled.value
         and origin != RetrievalOrigin.evaluation.value
+        and kbs_override is None
     ):
         raise ForbiddenError(message="知识集合已禁用", message_key="errors.knowledge.set_disabled")
     if not await has_set_permission(db, member, ks, SetPermission.use.value):
         raise ForbiddenError(message="无权检索该知识集合", message_key="errors.knowledge.retrieval_denied")
 
-    kbs = await knowledge_set_service.list_bound_knowledge_bases(db, member, knowledge_set_id)
+    kbs = kbs_override if kbs_override is not None else await knowledge_set_service.list_bound_knowledge_bases(db, member, knowledge_set_id)
     if not kbs:
         raise BadRequestError(message="知识集合未绑定知识库", message_key="errors.knowledge.set_empty")
 
@@ -300,7 +349,8 @@ async def _retrieve_for_set(
         profile = await db.get(RetrievalProfile, profile_id)
         if profile is None or profile.deleted_at is not None:
             raise NotFoundError(message="检索配置不存在", message_key="errors.knowledge.profile_not_found")
-        if profile.knowledge_set_id != knowledge_set_id:
+        allowed_sets = {knowledge_set_id, *(bump_set_ids or [])}
+        if profile.knowledge_set_id not in allowed_sets and kbs_override is None:
             raise BadRequestError(
                 message="检索配置不属于该知识集合",
                 message_key="errors.knowledge.profile_not_found",
@@ -375,7 +425,11 @@ async def _retrieve_for_set(
             kbs,
         )
 
-    set_items = await knowledge_set_service.list_set_items(db, member, knowledge_set_id)
+    set_items = (
+        set_items_override
+        if set_items_override is not None
+        else await knowledge_set_service.list_set_items(db, member, knowledge_set_id)
+    )
     metadata_condition = (
         retrieval_planner.build_metadata_condition(normalized_filters)
         if settings.RAGFLOW_METADATA_PUSHDOWN_ENABLED
@@ -412,8 +466,10 @@ async def _retrieve_for_set(
             failed_slice_count=0,
         )
         db.add(audit)
-        ks.usage_count += 1
-        ks.last_used_at = datetime.now(UTC)
+        for sid in bump_set_ids or [knowledge_set_id]:
+            row = await knowledge_set_service.get_knowledge_set(db, member, sid)
+            row.usage_count += 1
+            row.last_used_at = datetime.now(UTC)
         await db.commit()
         _observe_retrieval("empty", started)
         return {"query_id": query_id, "chunks": [], "status": "empty", "diagnostics": {"slice_count": 0}}
@@ -512,8 +568,13 @@ async def _retrieve_for_set(
     )
     db.add(audit)
     if origin != RetrievalOrigin.evaluation.value:
-        ks.usage_count += 1
-        ks.last_used_at = datetime.now(UTC)
+        from app.models.knowledge_set import KnowledgeSet
+
+        for sid in bump_set_ids or [knowledge_set_id]:
+            row = ks if sid == knowledge_set_id else await db.get(KnowledgeSet, sid)
+            if row is not None and row.deleted_at is None:
+                row.usage_count += 1
+                row.last_used_at = datetime.now(UTC)
     await db.commit()
 
     chunks_out = []
