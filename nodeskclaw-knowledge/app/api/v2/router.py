@@ -6,15 +6,17 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.agent_tools import router as agent_tools_router
 from app.core.config import settings
 from app.core.deps import get_db, get_member_context, get_ragflow_client
 from app.core.exceptions import BadRequestError
 from app.integrations.ragflow.client import RagflowClient
 from app.schemas.common import ApiResponse
 from app.schemas.principal import KnowledgePrincipal
-from app.services import knowledge_application_service, retrieval_service
+from app.services import knowledge_application_service, knowledge_model_service, retrieval_service
 
 router = APIRouter(tags=["v2"])
+router.include_router(agent_tools_router)
 
 
 class ApplicationRetrievalRequest(BaseModel):
@@ -144,3 +146,62 @@ async def publish_application(
         )
     app = await knowledge_application_service.publish_application(db, member, application_id)
     return ApiResponse(data={"id": app.id, "status": app.status})
+
+
+@router.post("/knowledge-models")
+async def create_knowledge_model(
+    body: dict,
+    member: KnowledgePrincipal = Depends(get_member_context),
+    db: AsyncSession = Depends(get_db),
+):
+    if not settings.KNOWLEDGE_API_V2_ENABLED:
+        raise BadRequestError(
+            message="Knowledge API v2 未启用",
+            message_key="errors.knowledge.api_v2_disabled",
+        )
+    row = await knowledge_model_service.create_model(
+        db,
+        member,
+        name=body["name"],
+        description=body.get("description"),
+        entities=body.get("entities"),
+        relations=body.get("relations"),
+        terms=body.get("terms"),
+        extraction_policy=body.get("extraction_policy"),
+    )
+    return ApiResponse(
+        data={
+            "id": row.id,
+            "name": row.name,
+            "version": row.version,
+            "entities": row.entities,
+            "relations": row.relations,
+            "terms": row.terms,
+            "extraction_policy": row.extraction_policy,
+        }
+    )
+
+
+@router.get("/knowledge-models/{model_id}")
+async def get_knowledge_model(
+    model_id: str,
+    member: KnowledgePrincipal = Depends(get_member_context),
+    db: AsyncSession = Depends(get_db),
+):
+    if not settings.KNOWLEDGE_API_V2_ENABLED:
+        raise BadRequestError(
+            message="Knowledge API v2 未启用",
+            message_key="errors.knowledge.api_v2_disabled",
+        )
+    row = await knowledge_model_service.get_model(db, member, model_id)
+    return ApiResponse(
+        data={
+            "id": row.id,
+            "name": row.name,
+            "version": row.version,
+            "entities": row.entities,
+            "relations": row.relations,
+            "terms": row.terms,
+            "extraction_policy": row.extraction_policy,
+        }
+    )

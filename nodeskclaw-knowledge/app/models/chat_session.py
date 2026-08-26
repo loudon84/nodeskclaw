@@ -21,6 +21,7 @@ class ChatSession(BaseModel):
     org_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
     member_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
     knowledge_set_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    application_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     title: Mapped[str | None] = mapped_column(String(256), nullable=True)
     answer_mode: Mapped[str] = mapped_column(String(32), nullable=False, default="detailed")
     show_citations: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)

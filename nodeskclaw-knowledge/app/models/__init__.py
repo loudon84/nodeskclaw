@@ -20,6 +20,7 @@ from app.models.knowledge_application import KnowledgeApplication, KnowledgeAppl
 from app.models.knowledge_application_acl import KnowledgeApplicationAcl
 from app.models.knowledge_base import KnowledgeBase
 from app.models.knowledge_base_acl import KnowledgeBaseAcl
+from app.models.knowledge_model import KnowledgeModel
 from app.models.knowledge_set import KnowledgeSet
 from app.models.knowledge_set_acl import KnowledgeSetAcl
 from app.models.knowledge_set_item import KnowledgeSetItem
@@ -69,4 +70,5 @@ __all__ = [
     "KnowledgeApplication",
     "KnowledgeApplicationSetItem",
     "KnowledgeApplicationAcl",
+    "KnowledgeModel",
 ]

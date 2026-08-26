@@ -348,7 +348,8 @@ class PlaygroundResponse(BaseModel):
 
 
 class ChatSessionCreate(BaseModel):
-    knowledge_set_id: str
+    knowledge_set_id: str | None = None
+    application_id: str | None = None
     title: str | None = None
     answer_mode: AnswerMode = AnswerMode.detailed
     show_citations: bool = True
@@ -360,6 +361,7 @@ class ChatSessionOut(BaseModel):
     org_id: str
     member_id: str
     knowledge_set_id: str
+    application_id: str | None = None
     title: str | None = None
     answer_mode: str
     show_citations: bool

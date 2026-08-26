@@ -45,6 +45,7 @@ async def create_session(
         db,
         member,
         knowledge_set_id=body.knowledge_set_id,
+        application_id=body.application_id,
         title=body.title,
         answer_mode=body.answer_mode.value,
         show_citations=body.show_citations,
