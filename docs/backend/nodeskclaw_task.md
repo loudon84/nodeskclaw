@@ -724,9 +724,7 @@ uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 4520
 
 ### 通过 dev.sh 一键启动
 
-项目根目录 `./dev.sh` 会并行启动 backend（4510）、task（4520）、llm-proxy、portal 等；task 的 `JWT_SECRET` 自动从 `nodeskclaw-backend/.env` 同步。
-
-使用 `--docker-pg` 时会自动创建 `nodeskclaw_task` 数据库。
+根目录 `./dev.sh` **不再启动** `nodeskclaw-task`。本地请按上一节单独启动本服务；`JWT_SECRET` 需与 `nodeskclaw-backend/.env` 保持一致。
 
 ### 数据库
 

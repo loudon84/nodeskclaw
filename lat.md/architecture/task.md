@@ -8,7 +8,7 @@
 
 Task 落在仓库根 `nodeskclaw-task/`，与 Backend / Knowledge / LLM Proxy 并列，不并入 Backend 进程。
 
-目录约定：`app/api`（`router.py` 聚合）、`schemas`、`services`、`models`、`core`、自管 `alembic/`、本地 `storage/`（制品落盘，不是可分发 Python 包）、独立 `DATABASE_URL`。本地与镜像安装优先 `uv sync`（Dockerfile 同路径）。启动可用 `SKIP_AUTO_MIGRATE=1` 跳过自动迁移，`SEED_DATA_ENABLED=false` 跳过种子。
+目录约定：`app/api`（`router.py` 聚合）、`schemas`、`services`、`models`、`core`、自管 `alembic/`、本地 `storage/`（制品落盘，不是可分发 Python 包）、独立 `DATABASE_URL`。本地与镜像安装优先 `uv sync`（Dockerfile 同路径）。根目录 `dev.sh` 不启动本服务，本地需单独 `uv run uvicorn`（默认 4520）。启动可用 `SKIP_AUTO_MIGRATE=1` 跳过自动迁移，`SEED_DATA_ENABLED=false` 跳过种子。
 
 ## Packaging Constraint
 
