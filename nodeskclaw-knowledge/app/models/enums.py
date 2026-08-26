@@ -7,6 +7,7 @@ class KnowledgeBaseStatus(str, Enum):
     provisioning = "provisioning"
     active = "active"
     updating = "updating"
+    degraded = "degraded"
     error = "error"
     deleting = "deleting"
 

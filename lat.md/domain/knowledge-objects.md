@@ -8,7 +8,7 @@ UI 可称「知识库 / 数据集」，代码内部禁止用 `dataset` 表示 no
 
 KnowledgeBase 是企业知识资产容器（权限、模型、Build Profile），一对一 Runtime Binding 指向 RAGFlow Dataset；`ragflow_dataset_id` 仅为 v1 mirror。
 
-托管库在 RAGFlow 侧统一 `permission = me`，由 Knowledge Service Account 管理；企业 ACL 不映射为 RAGFlow `team`。状态含 provisioning / active / updating / error / deleting。v1.1 增加 `acl_version`、`visibility`、`tags`、`last_synced_at`、`last_error`；v1.2 增加 `metadata_schema`；v2 增加 `active_build_profile_id` / `knowledge_model_id` / `build_version`：[[nodeskclaw-knowledge/app/models/knowledge_base.py#KnowledgeBase]]。Binding：[[nodeskclaw-knowledge/app/models/runtime_binding.py#KnowledgeRuntimeBinding]]。
+托管库在 RAGFlow 侧统一 `permission = me`，由 Knowledge Service Account 管理；企业 ACL 不映射为 RAGFlow `team`。状态含 provisioning / active / updating / degraded / error / deleting；`degraded` 表示核心 Chunk Build 终态失败。v1.1 增加 `acl_version`、`visibility`、`tags`、`last_synced_at`、`last_error`；v1.2 增加 `metadata_schema`；v2 增加 `active_build_profile_id` / `knowledge_model_id` / `build_version`：[[nodeskclaw-knowledge/app/models/knowledge_base.py#KnowledgeBase]]。Binding：[[nodeskclaw-knowledge/app/models/runtime_binding.py#KnowledgeRuntimeBinding]]。
 
 ## Source File
 
@@ -66,15 +66,17 @@ Build Profile（Standard/Enhanced/Reasoning）描述要构建的 Index 类型与
 
 ## Index State
 
-Index State 跟踪每 KB×index_type 生命周期：not_built / building / ready / stale / failed / unsupported。
+Index State 跟踪每 KB×index_type 生命周期：not_built / building / ready / stale / failed / unsupported；Build Worker 执行 `process_build_job` 时将状态置 `building`，终态写回 `ready`/`failed`/`unsupported`。
 
 模型：[[nodeskclaw-knowledge/app/models/index_state.py#IndexState]]。服务：[[nodeskclaw-knowledge/app/services/index_state_service.py]]。无稳定 Public API 不得标 READY。
 
 ## Build Job
 
-KnowledgeBuildJob 与 IngestionJob 分表；Build 不修改 `source_file.active_version_id`。
+KnowledgeBuildJob 与 IngestionJob 分表；Build 不修改 `source_file.active_version_id`。Worker 经 `process_build_job` 执行 Stage：`building` → capability 检查 → `EXECUTORS` 分派 → `ready`/`failed`/`unsupported`；chunk 失败且重试用尽时 KB 进入 `degraded`。
 
-模型：[[nodeskclaw-knowledge/app/models/build_job.py#KnowledgeBuildJob]]。编排：[[nodeskclaw-knowledge/app/services/build_orchestrator.py]]。
+`stage_results` 结构化记录 `stage`/`status`/`attempt`/`output`/`error_code`。重试由 `KNOWLEDGE_BUILD_MAX_ATTEMPTS` 与 `KNOWLEDGE_BUILD_RETRY_BACKOFF_SECONDS` 控制：可重试失败回排 `queued` 并设 `next_run_at`，IndexState 暂回 `stale`。secondary index 有 capability 但无 executor 标 `executor_unavailable`（不伪造 READY）。chunk Stage 经 `require_dataset_id` 分页校验 RAGFlow 文档 `run=DONE` 且 `chunk_count>0`；chunk 成功且 KB 为 `degraded` 时恢复为 `active` 并清 `last_error`。
+
+模型：[[nodeskclaw-knowledge/app/models/build_job.py#KnowledgeBuildJob]]。编排：[[nodeskclaw-knowledge/app/services/build_orchestrator.py#process_build_job]]。Stage 执行器：[[nodeskclaw-knowledge/app/services/build_executors.py#execute_chunk_stage]]、[[nodeskclaw-knowledge/app/services/build_executors.py#EXECUTORS]]。
 
 ## Knowledge Model
 

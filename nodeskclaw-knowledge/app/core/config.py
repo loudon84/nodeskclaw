@@ -55,6 +55,8 @@ class Settings(BaseSettings):
     ARTIFACT_LOCAL_ROOT: str = "/data/knowledge-artifacts"
     KNOWLEDGE_BUILD_WORKER_CONCURRENCY: int = 2
     KNOWLEDGE_BUILD_LEASE_SECONDS: int = 120
+    KNOWLEDGE_BUILD_MAX_ATTEMPTS: int = 3
+    KNOWLEDGE_BUILD_RETRY_BACKOFF_SECONDS: int = 60
     KNOWLEDGE_TRANSLATION_WORKER_CONCURRENCY: int = 2
 
     CORS_ORIGINS: list[str] = ["http://127.0.0.1:5173", "http://localhost:5173", "http://127.0.0.1:3000"]

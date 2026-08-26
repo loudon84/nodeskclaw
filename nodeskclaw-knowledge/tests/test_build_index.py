@@ -6,8 +6,59 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.core.config import settings
-from app.models.enums import BuildJobStatus, IndexStateStatus, IndexType
-from app.services import build_orchestrator, build_profile_service, index_registry, index_state_service
+from app.models.enums import BuildJobStatus, IndexStateStatus, IndexType, KnowledgeBaseStatus
+from app.services import build_executors, build_orchestrator, build_profile_service, index_registry, index_state_service
+
+
+def _make_job(**overrides):
+    defaults = {
+        "id": "bj1",
+        "org_id": "o1",
+        "knowledge_base_id": "kb1",
+        "index_type": IndexType.graph.value,
+        "status": BuildJobStatus.running.value,
+        "progress": 0,
+        "error_code": None,
+        "error_message": None,
+        "stage_results": None,
+        "finished_at": None,
+        "attempt_count": 1,
+        "max_attempts": 5,
+        "next_run_at": None,
+    }
+    defaults.update(overrides)
+    return SimpleNamespace(**defaults)
+
+
+def _make_kb(**overrides):
+    defaults = {
+        "id": "kb1",
+        "deleted_at": None,
+        "status": KnowledgeBaseStatus.active.value,
+        "last_error": None,
+    }
+    defaults.update(overrides)
+    return SimpleNamespace(**defaults)
+
+
+def _make_state(**overrides):
+    defaults = {
+        "status": IndexStateStatus.stale.value,
+        "build_version": 0,
+        "last_build_job_id": None,
+        "last_error": None,
+        "last_built_at": None,
+    }
+    defaults.update(overrides)
+    return SimpleNamespace(**defaults)
+
+
+def _ready_doc(doc_id: str, chunk_count: int = 5):
+    return SimpleNamespace(id=doc_id, run="DONE", chunk_count=chunk_count)
+
+
+def _pending_doc(doc_id: str):
+    return SimpleNamespace(id=doc_id, run="RUNNING", chunk_count=0)
 
 
 def test_system_profiles_define_standard_enhanced_reasoning():
@@ -145,33 +196,238 @@ async def test_enqueue_after_activation_debounces_graph(monkeypatch):
 @pytest.mark.asyncio
 async def test_process_build_job_marks_unsupported_without_public_api(monkeypatch):
     db = AsyncMock()
-    kb = SimpleNamespace(id="kb1", deleted_at=None)
+    kb = _make_kb()
     db.get = AsyncMock(return_value=kb)
-    state = SimpleNamespace(
-        status=IndexStateStatus.stale.value,
-        build_version=0,
-        last_build_job_id=None,
-        last_error=None,
-        last_built_at=None,
-    )
+    state = _make_state()
     set_status = AsyncMock(return_value=state)
     monkeypatch.setattr(index_state_service, "get_or_create_state", AsyncMock(return_value=state))
     monkeypatch.setattr(index_state_service, "set_state_status", set_status)
-
-    job = SimpleNamespace(
-        id="bj1",
-        org_id="o1",
-        knowledge_base_id="kb1",
-        index_type=IndexType.graph.value,
-        status=BuildJobStatus.running.value,
-        progress=0,
-        error_code=None,
-        error_message=None,
-        stage_results=None,
-        finished_at=None,
-        attempt_count=1,
+    monkeypatch.setattr(
+        build_orchestrator.runtime_binding_service,
+        "get_binding",
+        AsyncMock(return_value=SimpleNamespace(capabilities={})),
     )
+
+    job = _make_job(index_type=IndexType.graph.value)
     await build_orchestrator.process_build_job(db, job)
     assert job.status == BuildJobStatus.completed.value
-    assert job.stage_results["result"] == "unsupported"
+    assert job.stage_results["status"] == "unsupported"
+    assert job.stage_results["stage"] == IndexType.graph.value
     set_status.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_process_build_job_chunk_success_restores_degraded_kb(monkeypatch):
+    db = AsyncMock()
+    kb = _make_kb(status=KnowledgeBaseStatus.degraded.value, last_error="chunk failed")
+    db.get = AsyncMock(return_value=kb)
+    state = _make_state()
+    monkeypatch.setattr(index_state_service, "get_or_create_state", AsyncMock(return_value=state))
+    monkeypatch.setattr(index_state_service, "set_state_status", AsyncMock(return_value=state))
+    monkeypatch.setattr(
+        build_orchestrator.runtime_binding_service,
+        "get_binding",
+        AsyncMock(return_value=SimpleNamespace(capabilities={"supports_chunk": True})),
+    )
+    async def fake_chunk_stage(*_args, **_kwargs):
+        return build_executors.StageResult(
+            status="succeeded",
+            output={"documents_total": 2, "documents_ready": 2, "chunks_total": 10},
+        )
+
+    monkeypatch.setitem(build_executors.EXECUTORS, IndexType.chunk.value, fake_chunk_stage)
+
+    job = _make_job(index_type=IndexType.chunk.value)
+    await build_orchestrator.process_build_job(db, job)
+    assert job.status == BuildJobStatus.completed.value
+    assert job.stage_results["status"] == "succeeded"
+    assert job.stage_results["output"]["documents_ready"] == 2
+    assert kb.status == KnowledgeBaseStatus.active.value
+    assert kb.last_error is None
+
+
+@pytest.mark.asyncio
+async def test_process_build_job_chunk_not_ready_requeues(monkeypatch):
+    monkeypatch.setattr(settings, "KNOWLEDGE_BUILD_MAX_ATTEMPTS", 3)
+    db = AsyncMock()
+    kb = _make_kb()
+    db.get = AsyncMock(return_value=kb)
+    state = _make_state()
+    monkeypatch.setattr(index_state_service, "get_or_create_state", AsyncMock(return_value=state))
+    monkeypatch.setattr(index_state_service, "set_state_status", AsyncMock(return_value=state))
+    monkeypatch.setattr(
+        build_orchestrator.runtime_binding_service,
+        "get_binding",
+        AsyncMock(return_value=SimpleNamespace(capabilities={"supports_chunk": True})),
+    )
+    async def fake_chunk_stage(*_args, **_kwargs):
+        return build_executors.StageResult(
+            status="failed",
+            retryable=True,
+            error_code="documents_not_ready",
+            error_message="1 document(s) not ready",
+            output={"not_ready_document_ids": ["d1"]},
+        )
+
+    monkeypatch.setitem(build_executors.EXECUTORS, IndexType.chunk.value, fake_chunk_stage)
+
+    job = _make_job(index_type=IndexType.chunk.value, attempt_count=1)
+    await build_orchestrator.process_build_job(db, job)
+    assert job.status == BuildJobStatus.queued.value
+    assert job.next_run_at is not None
+    assert job.finished_at is None
+    assert job.stage_results["output"]["retry_scheduled"] is True
+
+
+@pytest.mark.asyncio
+async def test_process_build_job_chunk_max_attempts_marks_kb_degraded(monkeypatch):
+    monkeypatch.setattr(settings, "KNOWLEDGE_BUILD_MAX_ATTEMPTS", 3)
+    db = AsyncMock()
+    kb = _make_kb()
+    db.get = AsyncMock(return_value=kb)
+    state = _make_state()
+    monkeypatch.setattr(index_state_service, "get_or_create_state", AsyncMock(return_value=state))
+    monkeypatch.setattr(index_state_service, "set_state_status", AsyncMock(return_value=state))
+    monkeypatch.setattr(
+        build_orchestrator.runtime_binding_service,
+        "get_binding",
+        AsyncMock(return_value=SimpleNamespace(capabilities={"supports_chunk": True})),
+    )
+    async def fake_chunk_stage(*_args, **_kwargs):
+        return build_executors.StageResult(
+            status="failed",
+            retryable=True,
+            error_code="documents_not_ready",
+            error_message="1 document(s) not ready",
+        )
+
+    monkeypatch.setitem(build_executors.EXECUTORS, IndexType.chunk.value, fake_chunk_stage)
+
+    job = _make_job(index_type=IndexType.chunk.value, attempt_count=3)
+    await build_orchestrator.process_build_job(db, job)
+    assert job.status == BuildJobStatus.failed.value
+    assert kb.status == KnowledgeBaseStatus.degraded.value
+    assert kb.last_error == "1 document(s) not ready"
+
+
+@pytest.mark.asyncio
+async def test_process_build_job_executor_unavailable_for_secondary_index(monkeypatch):
+    db = AsyncMock()
+    kb = _make_kb()
+    db.get = AsyncMock(return_value=kb)
+    state = _make_state(status=IndexStateStatus.not_built.value)
+    set_status = AsyncMock(return_value=state)
+    monkeypatch.setattr(index_state_service, "get_or_create_state", AsyncMock(return_value=state))
+    monkeypatch.setattr(index_state_service, "set_state_status", set_status)
+    monkeypatch.setattr(
+        build_orchestrator.runtime_binding_service,
+        "get_binding",
+        AsyncMock(
+            return_value=SimpleNamespace(
+                capabilities={"supports_auto_questions": True},
+            )
+        ),
+    )
+
+    job = _make_job(index_type=IndexType.question.value)
+    await build_orchestrator.process_build_job(db, job)
+    assert job.status == BuildJobStatus.failed.value
+    assert job.error_code == "executor_unavailable"
+    failed_calls = [
+        call
+        for call in set_status.await_args_list
+        if len(call.args) > 2 and call.args[2] == IndexStateStatus.failed.value
+    ]
+    assert failed_calls
+
+
+@pytest.mark.asyncio
+async def test_process_build_job_exception_requeues(monkeypatch):
+    monkeypatch.setattr(settings, "KNOWLEDGE_BUILD_MAX_ATTEMPTS", 3)
+    db = AsyncMock()
+    kb = _make_kb()
+    db.get = AsyncMock(return_value=kb)
+    state = _make_state()
+    monkeypatch.setattr(index_state_service, "get_or_create_state", AsyncMock(return_value=state))
+    monkeypatch.setattr(index_state_service, "set_state_status", AsyncMock(return_value=state))
+    monkeypatch.setattr(
+        build_orchestrator.runtime_binding_service,
+        "get_binding",
+        AsyncMock(return_value=SimpleNamespace(capabilities={"supports_chunk": True})),
+    )
+
+    async def boom(*_args, **_kwargs):
+        raise RuntimeError("ragflow timeout")
+
+    monkeypatch.setitem(build_executors.EXECUTORS, IndexType.chunk.value, boom)
+
+    job = _make_job(index_type=IndexType.chunk.value, attempt_count=1)
+    await build_orchestrator.process_build_job(db, job)
+    assert job.status == BuildJobStatus.queued.value
+    assert job.next_run_at is not None
+    assert job.stage_results["error_code"] == "stage_exception"
+
+
+@pytest.mark.asyncio
+async def test_process_build_job_kb_missing(monkeypatch):
+    db = AsyncMock()
+    db.get = AsyncMock(return_value=None)
+    job = _make_job()
+    await build_orchestrator.process_build_job(db, job)
+    assert job.status == BuildJobStatus.failed.value
+    assert job.error_code == "kb_missing"
+
+
+@pytest.mark.asyncio
+async def test_execute_chunk_stage_succeeds_when_all_documents_ready(monkeypatch):
+    db = AsyncMock()
+    kb = _make_kb()
+    job = _make_job(index_type=IndexType.chunk.value)
+
+    class FakeRagflow:
+        async def list_documents(self, _dataset_id, *, page=1, page_size=100, **kwargs):
+            if page == 1:
+                return [_ready_doc("d1", 3), _ready_doc("d2", 7)]
+            return []
+
+        async def aclose(self):
+            return None
+
+    monkeypatch.setattr(
+        build_executors.runtime_binding_service,
+        "require_dataset_id",
+        AsyncMock(return_value="ds1"),
+    )
+    monkeypatch.setattr(build_executors, "RagflowClient", lambda: FakeRagflow())
+
+    result = await build_executors.execute_chunk_stage(db, job, kb)
+    assert result.status == "succeeded"
+    assert result.output["documents_total"] == 2
+    assert result.output["documents_ready"] == 2
+    assert result.output["chunks_total"] == 10
+
+
+@pytest.mark.asyncio
+async def test_execute_chunk_stage_retryable_when_documents_pending(monkeypatch):
+    db = AsyncMock()
+    kb = _make_kb()
+    job = _make_job(index_type=IndexType.chunk.value)
+
+    class FakeRagflow:
+        async def list_documents(self, _dataset_id, *, page=1, page_size=100, **kwargs):
+            return [_ready_doc("d1"), _pending_doc("d2")]
+
+        async def aclose(self):
+            return None
+
+    monkeypatch.setattr(
+        build_executors.runtime_binding_service,
+        "require_dataset_id",
+        AsyncMock(return_value="ds1"),
+    )
+    monkeypatch.setattr(build_executors, "RagflowClient", lambda: FakeRagflow())
+
+    result = await build_executors.execute_chunk_stage(db, job, kb)
+    assert result.status == "failed"
+    assert result.retryable is True
+    assert result.error_code == "documents_not_ready"

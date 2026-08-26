@@ -11,8 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.models.base import not_deleted
 from app.models.build_job import KnowledgeBuildJob
-from app.models.enums import BuildJobStatus, BuildTriggerPolicy, IndexStateStatus, IndexType
-from app.services import build_profile_service, index_state_service
+from app.models.enums import BuildJobStatus, BuildTriggerPolicy, IndexStateStatus, IndexType, KnowledgeBaseStatus
+from app.services import build_executors, build_profile_service, index_state_service, runtime_binding_service
 from app.services.index_registry import get_descriptor, is_runtime_supported
 from app.workers.job_leasing import claim_next, clear_lease_if_owner
 
@@ -184,15 +184,26 @@ async def claim_next_build_job(
     return job, lease_token
 
 
+# @lat: [[knowledge-objects#Build Job]]
 async def process_build_job(db: AsyncSession, job: KnowledgeBuildJob) -> None:
     from app.models.knowledge_base import KnowledgeBase
 
+    started_at = datetime.now(UTC)
     kb = await db.get(KnowledgeBase, job.knowledge_base_id)
     if kb is None or kb.deleted_at is not None:
         job.status = BuildJobStatus.failed.value
         job.error_code = "kb_missing"
         job.error_message = "knowledge base missing"
         job.finished_at = datetime.now(UTC)
+        job.stage_results = _stage_results_payload(
+            index_type=job.index_type,
+            status="failed",
+            started_at=started_at,
+            finished_at=job.finished_at,
+            attempt=int(job.attempt_count or 0),
+            error_code=job.error_code,
+            error_message=job.error_message,
+        )
         await db.flush()
         return
 
@@ -205,19 +216,246 @@ async def process_build_job(db: AsyncSession, job: KnowledgeBuildJob) -> None:
     await index_state_service.set_state_status(
         db,
         state,
-        IndexStateStatus.unsupported.value,
+        IndexStateStatus.building.value,
         build_job_id=job.id,
-        error="runtime_public_api_unavailable",
     )
-    job.stage_results = {
-        "result": "unsupported",
-        "reason": "no_stable_public_api",
-        "index_type": job.index_type,
-    }
-    job.status = BuildJobStatus.completed.value
-    job.progress = 100
-    job.finished_at = datetime.now(UTC)
+
+    binding = await runtime_binding_service.get_binding(db, job.knowledge_base_id)
+    capabilities = (binding.capabilities if binding else None) or {}
+
+    if not is_runtime_supported(job.index_type, capabilities):
+        finished_at = datetime.now(UTC)
+        await index_state_service.set_state_status(
+            db,
+            state,
+            IndexStateStatus.unsupported.value,
+            build_job_id=job.id,
+            error="runtime_public_api_unavailable",
+        )
+        job.stage_results = _stage_results_payload(
+            index_type=job.index_type,
+            status="unsupported",
+            started_at=started_at,
+            finished_at=finished_at,
+            attempt=int(job.attempt_count or 0),
+            error_code="runtime_public_api_unavailable",
+            error_message="no stable public API",
+            output={"reason": "no_stable_public_api"},
+        )
+        job.status = BuildJobStatus.completed.value
+        job.progress = 100
+        job.error_code = None
+        job.error_message = None
+        job.finished_at = finished_at
+        await db.flush()
+        return
+
+    executor = build_executors.EXECUTORS.get(job.index_type)
+    if executor is None:
+        finished_at = datetime.now(UTC)
+        await index_state_service.set_state_status(
+            db,
+            state,
+            IndexStateStatus.failed.value,
+            build_job_id=job.id,
+            error="executor_unavailable",
+        )
+        job.stage_results = _stage_results_payload(
+            index_type=job.index_type,
+            status="failed",
+            started_at=started_at,
+            finished_at=finished_at,
+            attempt=int(job.attempt_count or 0),
+            error_code="executor_unavailable",
+            error_message="no build executor registered for index type",
+        )
+        job.status = BuildJobStatus.failed.value
+        job.error_code = "executor_unavailable"
+        job.error_message = "no build executor registered for index type"
+        job.progress = 100
+        job.finished_at = finished_at
+        await db.flush()
+        return
+
+    try:
+        result = await executor(db, job, kb)
+    except Exception as exc:
+        finished_at = datetime.now(UTC)
+        retryable = True
+        if _should_retry_job(job, retryable):
+            _requeue_build_job(job, finished_at=finished_at)
+            await index_state_service.set_state_status(
+                db,
+                state,
+                IndexStateStatus.stale.value,
+                build_job_id=job.id,
+                error=str(exc),
+            )
+            job.stage_results = _stage_results_payload(
+                index_type=job.index_type,
+                status="failed",
+                started_at=started_at,
+                finished_at=finished_at,
+                attempt=int(job.attempt_count or 0),
+                error_code="stage_exception",
+                error_message=str(exc),
+                output={"retry_scheduled": True},
+            )
+        else:
+            await _mark_build_failed(
+                db,
+                job=job,
+                kb=kb,
+                state=state,
+                started_at=started_at,
+                finished_at=finished_at,
+                error_code="stage_exception",
+                error_message=str(exc),
+            )
+        await db.flush()
+        return
+
+    finished_at = datetime.now(UTC)
+    if result.status == "succeeded":
+        await index_state_service.set_state_status(
+            db,
+            state,
+            IndexStateStatus.ready.value,
+            build_job_id=job.id,
+        )
+        job.stage_results = _stage_results_payload(
+            index_type=job.index_type,
+            status="succeeded",
+            started_at=started_at,
+            finished_at=finished_at,
+            attempt=int(job.attempt_count or 0),
+            output=result.output,
+        )
+        job.status = BuildJobStatus.completed.value
+        job.progress = 100
+        job.error_code = None
+        job.error_message = None
+        job.finished_at = finished_at
+        if kb.status == KnowledgeBaseStatus.degraded.value:
+            kb.status = KnowledgeBaseStatus.active.value
+            kb.last_error = None
+        await db.flush()
+        return
+
+    if _should_retry_job(job, result.retryable):
+        _requeue_build_job(job, finished_at=finished_at)
+        await index_state_service.set_state_status(
+            db,
+            state,
+            IndexStateStatus.stale.value,
+            build_job_id=job.id,
+            error=result.error_message,
+        )
+        job.stage_results = _stage_results_payload(
+            index_type=job.index_type,
+            status="failed",
+            started_at=started_at,
+            finished_at=finished_at,
+            attempt=int(job.attempt_count or 0),
+            error_code=result.error_code,
+            error_message=result.error_message,
+            output={**result.output, "retry_scheduled": True},
+        )
+        await db.flush()
+        return
+
+    await _mark_build_failed(
+        db,
+        job=job,
+        kb=kb,
+        state=state,
+        started_at=started_at,
+        finished_at=finished_at,
+        error_code=result.error_code or "stage_failed",
+        error_message=result.error_message or "build stage failed",
+        output=result.output,
+    )
     await db.flush()
+
+
+def _stage_results_payload(
+    *,
+    index_type: str,
+    status: str,
+    started_at: datetime,
+    finished_at: datetime,
+    attempt: int,
+    error_code: str | None = None,
+    error_message: str | None = None,
+    output: dict | None = None,
+) -> dict:
+    return {
+        "stage": index_type,
+        "status": status,
+        "started_at": started_at.isoformat(),
+        "finished_at": finished_at.isoformat(),
+        "attempt": attempt,
+        "error_code": error_code,
+        "error_message": error_message,
+        "output": output or {},
+    }
+
+
+def _should_retry_job(job: KnowledgeBuildJob, retryable: bool) -> bool:
+    if not retryable:
+        return False
+    max_attempts = min(int(job.max_attempts or settings.KNOWLEDGE_BUILD_MAX_ATTEMPTS), settings.KNOWLEDGE_BUILD_MAX_ATTEMPTS)
+    return int(job.attempt_count or 0) < max_attempts
+
+
+def _requeue_build_job(job: KnowledgeBuildJob, *, finished_at: datetime) -> None:
+    attempt = int(job.attempt_count or 0)
+    backoff = settings.KNOWLEDGE_BUILD_RETRY_BACKOFF_SECONDS * max(attempt, 1)
+    job.status = BuildJobStatus.queued.value
+    job.next_run_at = finished_at + timedelta(seconds=backoff)
+    job.finished_at = None
+    job.error_code = None
+    job.error_message = None
+    job.progress = max(int(job.progress or 0), 10)
+
+
+async def _mark_build_failed(
+    db: AsyncSession,
+    *,
+    job: KnowledgeBuildJob,
+    kb,
+    state,
+    started_at: datetime,
+    finished_at: datetime,
+    error_code: str,
+    error_message: str,
+    output: dict | None = None,
+) -> None:
+    await index_state_service.set_state_status(
+        db,
+        state,
+        IndexStateStatus.failed.value,
+        build_job_id=job.id,
+        error=error_code,
+    )
+    job.stage_results = _stage_results_payload(
+        index_type=job.index_type,
+        status="failed",
+        started_at=started_at,
+        finished_at=finished_at,
+        attempt=int(job.attempt_count or 0),
+        error_code=error_code,
+        error_message=error_message,
+        output=output or {},
+    )
+    job.status = BuildJobStatus.failed.value
+    job.error_code = error_code
+    job.error_message = error_message
+    job.progress = 100
+    job.finished_at = finished_at
+    if job.index_type == IndexType.chunk.value:
+        kb.status = KnowledgeBaseStatus.degraded.value
+        kb.last_error = error_message
 
 
 async def finalize_build_job(
@@ -241,5 +479,6 @@ async def finalize_build_job(
             "stage_results": job.stage_results,
             "finished_at": job.finished_at,
             "attempt_count": job.attempt_count,
+            "next_run_at": job.next_run_at,
         },
     )
