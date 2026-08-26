@@ -52,11 +52,29 @@ KnowledgeApplication 是面向用户的检索/Chat 产品面，可绑定多个 K
 
 表与 ACL：[[nodeskclaw-knowledge/app/models/knowledge_application.py]]、[[nodeskclaw-knowledge/app/models/knowledge_application_acl.py]]。USE 判定 Owner：[[nodeskclaw-knowledge/app/services/permission_service.py#has_application_permission]]。服务：[[nodeskclaw-knowledge/app/services/knowledge_application_service.py]]。
 
-## Build Profile And Index
+## Runtime Binding
 
-Build Profile（Standard/Enhanced/Reasoning）描述要构建的 Index 类型与触发策略；Index State 跟踪每 KB×index 生命周期；BuildJob 与 IngestionJob 分表。
+Runtime Binding 是 KnowledgeBase 到 RAGFlow Dataset 的权威身份映射；`ragflow_dataset_id` 仅作 v1 mirror。
 
-Profile / State / Job：[[nodeskclaw-knowledge/app/models/build_profile.py]]、[[nodeskclaw-knowledge/app/models/index_state.py]]、[[nodeskclaw-knowledge/app/models/build_job.py]]。Registry：[[nodeskclaw-knowledge/app/services/index_registry.py]]。无稳定 Public API 的 Index 记 `unsupported`。
+模型：[[nodeskclaw-knowledge/app/models/runtime_binding.py#KnowledgeRuntimeBinding]]。服务：[[nodeskclaw-knowledge/app/services/runtime_binding_service.py]]。
+
+## Build Profile
+
+Build Profile（Standard/Enhanced/Reasoning）描述要构建的 Index 类型与触发策略，具体 Runtime 配置只在 Adapter 内转换。
+
+模型：[[nodeskclaw-knowledge/app/models/build_profile.py#BuildProfile]]。服务：[[nodeskclaw-knowledge/app/services/build_profile_service.py]]。Registry：[[nodeskclaw-knowledge/app/services/index_registry.py]]。
+
+## Index State
+
+Index State 跟踪每 KB×index_type 生命周期：not_built / building / ready / stale / failed / unsupported。
+
+模型：[[nodeskclaw-knowledge/app/models/index_state.py#IndexState]]。服务：[[nodeskclaw-knowledge/app/services/index_state_service.py]]。无稳定 Public API 不得标 READY。
+
+## Build Job
+
+KnowledgeBuildJob 与 IngestionJob 分表；Build 不修改 `source_file.active_version_id`。
+
+模型：[[nodeskclaw-knowledge/app/models/build_job.py#KnowledgeBuildJob]]。编排：[[nodeskclaw-knowledge/app/services/build_orchestrator.py]]。
 
 ## Knowledge Model
 
