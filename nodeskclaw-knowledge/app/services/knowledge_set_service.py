@@ -258,12 +258,7 @@ async def bind_knowledge_base(
     ks = await get_knowledge_set(db, member, set_id)
     if not await has_set_permission(db, member, ks, SetPermission.manage.value):
         raise ForbiddenError()
-    kb = await knowledge_base_service.get_knowledge_base(db, member, knowledge_base_id)
-    if kb.embedding_model != ks.embedding_model:
-        raise BadRequestError(
-            message="知识库 Embedding Model 与集合不一致",
-            message_key="errors.knowledge.embedding_model_mismatch",
-        )
+    await knowledge_base_service.get_knowledge_base(db, member, knowledge_base_id)
     existing = await db.execute(
         select(KnowledgeSetItem).where(
             KnowledgeSetItem.knowledge_set_id == set_id,

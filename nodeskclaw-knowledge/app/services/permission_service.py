@@ -12,11 +12,14 @@ from app.models.base import not_deleted
 from app.models.enums import (
     AccessPlanKind,
     AclEffect,
+    ApplicationPermission,
     FilePermission,
     KbPermission,
     SetPermission,
     SubjectType,
 )
+from app.models.knowledge_application import KnowledgeApplication
+from app.models.knowledge_application_acl import KnowledgeApplicationAcl
 from app.models.knowledge_base import KnowledgeBase
 from app.models.knowledge_base_acl import KnowledgeBaseAcl
 from app.models.knowledge_set import KnowledgeSet
@@ -188,6 +191,41 @@ async def has_set_permission(
         return decided
     if permission != SetPermission.read.value:
         manage = _resolve_permission(acls, member, SetPermission.manage.value)
+        if manage:
+            return True
+    return False
+
+
+async def has_application_permission(
+    db: AsyncSession,
+    member: KnowledgePrincipal,
+    application: KnowledgeApplication | str,
+    permission: str,
+) -> bool:
+    if member.is_super_admin:
+        return True
+    if isinstance(application, str):
+        app = await db.get(KnowledgeApplication, application)
+    else:
+        app = application
+    if app is None or app.deleted_at is not None:
+        return False
+    if app.org_id != member.org_id and not member.is_super_admin:
+        return False
+    if app.owner_member_id == member.member_id:
+        return True
+    result = await db.execute(
+        select(KnowledgeApplicationAcl).where(
+            KnowledgeApplicationAcl.application_id == app.id,
+            not_deleted(KnowledgeApplicationAcl),
+        )
+    )
+    acls = list(result.scalars().all())
+    decided = _resolve_permission(acls, member, permission)
+    if decided is not None:
+        return decided
+    if permission != ApplicationPermission.read.value:
+        manage = _resolve_permission(acls, member, ApplicationPermission.manage.value)
         if manage:
             return True
     return False

@@ -65,6 +65,26 @@ class SetPermission(str, Enum):
     manage_acl = "manage_acl"
 
 
+class ApplicationPermission(str, Enum):
+    read = "read"
+    use = "use"
+    update = "update"
+    delete = "delete"
+    manage = "manage"
+    manage_acl = "manage_acl"
+
+
+class ApplicationStatus(str, Enum):
+    draft = "draft"
+    active = "active"
+    disabled = "disabled"
+
+
+class ProfileScopeType(str, Enum):
+    set = "set"
+    application = "application"
+
+
 class IngestionJobStatus(str, Enum):
     pending = "pending"
     uploading = "uploading"

@@ -106,6 +106,7 @@ async def create_draft(
     )
     row = RetrievalProfile(
         knowledge_set_id=knowledge_set_id,
+        scope_type="set",
         version=int(max_version or 0) + 1,
         config=merge_profile_config(config),
         status=ProfileStatus.draft.value,
@@ -214,6 +215,8 @@ async def rollback(
     )
     draft = RetrievalProfile(
         knowledge_set_id=source.knowledge_set_id,
+        application_id=source.application_id,
+        scope_type=source.scope_type or "set",
         version=int(max_version or 0) + 1,
         config=merge_profile_config(source.config),
         status=ProfileStatus.draft.value,
@@ -270,6 +273,7 @@ async def seed_active_profile(
 ) -> RetrievalProfile:
     row = RetrievalProfile(
         knowledge_set_id=knowledge_set_id,
+        scope_type="set",
         version=1,
         config=merge_profile_config(config),
         status=ProfileStatus.active.value,
