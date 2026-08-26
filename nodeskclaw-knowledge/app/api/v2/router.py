@@ -7,15 +7,17 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.agent_tools import router as agent_tools_router
+from app.api.v2.assets import router as assets_router
 from app.core.config import settings
 from app.core.deps import get_db, get_member_context, get_ragflow_client
 from app.core.exceptions import BadRequestError
 from app.integrations.ragflow.client import RagflowClient
 from app.schemas.common import ApiResponse
 from app.schemas.principal import KnowledgePrincipal
-from app.services import knowledge_application_service, knowledge_model_service, retrieval_service, translation_service
+from app.services import knowledge_model_service, retrieval_service, translation_service
 
 router = APIRouter(tags=["v2"])
+router.include_router(assets_router)
 router.include_router(agent_tools_router)
 
 
@@ -102,50 +104,6 @@ async def retrieval_playground_v2(
             message_key="errors.knowledge.retrieval_target_required",
         )
     return ApiResponse(data=data)
-
-
-@router.post("/applications")
-async def create_application(
-    body: dict,
-    member: KnowledgePrincipal = Depends(get_member_context),
-    db: AsyncSession = Depends(get_db),
-):
-    if not settings.KNOWLEDGE_API_V2_ENABLED or not settings.KNOWLEDGE_V2_APPLICATION_ENABLED:
-        raise BadRequestError(
-            message="Knowledge Application 未启用",
-            message_key="errors.knowledge.application_disabled",
-        )
-    app = await knowledge_application_service.create_application(
-        db,
-        member,
-        name=body["name"],
-        description=body.get("description"),
-        answer_model=body.get("answer_model"),
-        knowledge_set_ids=body.get("knowledge_set_ids"),
-    )
-    return ApiResponse(
-        data={
-            "id": app.id,
-            "name": app.name,
-            "status": app.status,
-            "answer_model": app.answer_model,
-        }
-    )
-
-
-@router.post("/applications/{application_id}/publish")
-async def publish_application(
-    application_id: str,
-    member: KnowledgePrincipal = Depends(get_member_context),
-    db: AsyncSession = Depends(get_db),
-):
-    if not settings.KNOWLEDGE_API_V2_ENABLED or not settings.KNOWLEDGE_V2_APPLICATION_ENABLED:
-        raise BadRequestError(
-            message="Knowledge Application 未启用",
-            message_key="errors.knowledge.application_disabled",
-        )
-    app = await knowledge_application_service.publish_application(db, member, application_id)
-    return ApiResponse(data={"id": app.id, "status": app.status})
 
 
 @router.post("/knowledge-models")

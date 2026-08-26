@@ -543,3 +543,81 @@ class EvaluationCompareOut(BaseModel):
     profile_a: EvaluationCompareSideOut
     profile_b: EvaluationCompareSideOut
     delta: EvaluationCompareMetricsOut
+
+
+class KnowledgeBaseV2Out(BaseModel):
+    id: str
+    org_id: str
+    name: str
+    description: str | None = None
+    embedding_model: str
+    chunk_method: str
+    status: str
+    owner_member_id: str
+    acl_version: int = 1
+    visibility: str = "private"
+    tags: list[str] | None = None
+    active_build_profile_id: str | None = None
+    knowledge_model_id: str | None = None
+    build_version: int = 0
+
+    model_config = {"from_attributes": True}
+
+
+class KnowledgeSetV2Create(BaseModel):
+    name: str = Field(min_length=1, max_length=128)
+    description: str | None = None
+    visibility: Visibility = Visibility.private
+    retrieval_config: RetrievalConfig | None = None
+
+
+class KnowledgeSetV2Out(BaseModel):
+    id: str
+    org_id: str
+    name: str
+    description: str | None = None
+    owner_member_id: str
+    status: str
+    acl_version: int = 1
+    visibility: str = "private"
+    retrieval_config: dict[str, Any] | None = None
+    usage_count: int = 0
+    last_used_at: Any = None
+    knowledge_bases: list[dict[str, Any]] | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class KnowledgeApplicationCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=128)
+    description: str | None = None
+    answer_model: str | None = None
+    knowledge_set_ids: list[str] | None = None
+
+
+class KnowledgeApplicationUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=128)
+    description: str | None = None
+    answer_model: str | None = None
+    status: str | None = None
+
+
+class KnowledgeApplicationOut(BaseModel):
+    id: str
+    org_id: str
+    name: str
+    description: str | None = None
+    owner_member_id: str
+    status: str
+    answer_model: str | None = None
+    active_profile_id: str | None = None
+    acl_version: int = 1
+    visibility: str = "private"
+    knowledge_set_ids: list[str] = Field(default_factory=list)
+
+    model_config = {"from_attributes": True}
+
+
+class KnowledgeApplicationBindSet(BaseModel):
+    knowledge_set_id: str
+    sort_order: int = 0
