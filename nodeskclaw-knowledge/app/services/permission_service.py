@@ -218,7 +218,10 @@ async def build_access_plan(
     any_filtered = False
 
     for kb in readable_kbs:
-        if not kb.ragflow_dataset_id:
+        from app.services import runtime_binding_service
+
+        dataset_id = await runtime_binding_service.get_dataset_id(db, kb)
+        if not dataset_id:
             continue
         result = await db.execute(
             select(SourceFile).where(
@@ -239,7 +242,7 @@ async def build_access_plan(
                 denied_or_partial = True
 
         if not files or (not denied_or_partial and len(kb_allowed_files) == len(files)):
-            full_dataset_ids.append(kb.ragflow_dataset_id)
+            full_dataset_ids.append(dataset_id)
             allowed_source_file_ids.extend([f.id for f in kb_allowed_files])
             continue
 
@@ -257,7 +260,7 @@ async def build_access_plan(
             partial_slices.append(
                 {
                     "kind": "filtered_documents",
-                    "dataset_id": kb.ragflow_dataset_id,
+                    "dataset_id": dataset_id,
                     "knowledge_base_id": kb.id,
                     "document_ids": doc_ids,
                 }

@@ -192,24 +192,21 @@ async def create_knowledge_base(
     _seed_visibility_acl(db, knowledge_base_id=kb.id, visibility=visibility, member=member)
 
     try:
-        dataset_id = await ragflow.create_dataset(
-            name=f"{member.org_id}:{name}",
+        from app.runtime.ragflow import RagflowRuntimeAdapter
+
+        adapter = RagflowRuntimeAdapter(client=ragflow)
+        result = await adapter.provision_binding(
+            db,
+            kb=kb,
             embedding_model=embedding_model,
             chunk_method=chunk_method,
             parser_config=parser_config,
-            permission="me",
             description=description,
-        )
-        kb.ragflow_dataset_id = dataset_id
-        kb.status = KnowledgeBaseStatus.active.value
-        from app.services import runtime_binding_service
-
-        await runtime_binding_service.upsert_ragflow_dataset_binding(
-            db,
+            name=f"{member.org_id}:{name}",
             org_id=member.org_id,
-            knowledge_base_id=kb.id,
-            resource_id=dataset_id,
         )
+        kb.ragflow_dataset_id = result.resource_id
+        kb.status = KnowledgeBaseStatus.active.value
     except RagflowError as exc:
         kb.status = KnowledgeBaseStatus.error.value
         await db.commit()
@@ -271,9 +268,12 @@ async def update_knowledge_base(
         kb.description = description
         changes["description"] = description
         ragflow_fields["description"] = description
-    if kb.ragflow_dataset_id and ragflow_fields:
+    from app.services import runtime_binding_service
+
+    dataset_id = await runtime_binding_service.get_dataset_id(db, kb)
+    if dataset_id and ragflow_fields:
         try:
-            await ragflow.update_dataset(kb.ragflow_dataset_id, **ragflow_fields)
+            await ragflow.update_dataset(dataset_id, **ragflow_fields)
         except RagflowError as exc:
             raise BadRequestError(message=exc.message, message_key=exc.message_key) from exc
     if changes:
@@ -304,18 +304,18 @@ async def delete_knowledge_base(
         raise ForbiddenError()
     kb.status = KnowledgeBaseStatus.deleting.value
     await db.flush()
-    if kb.ragflow_dataset_id:
-        try:
-            await ragflow.delete_dataset(kb.ragflow_dataset_id)
-        except RagflowError as exc:
-            kb.last_error = exc.message
-            await db.commit()
-            return
+    from app.runtime.ragflow import RagflowRuntimeAdapter
     from app.services import runtime_binding_service
 
+    try:
+        adapter = RagflowRuntimeAdapter(client=ragflow)
+        await adapter.delete_binding(db, kb)
+    except RagflowError as exc:
+        kb.last_error = exc.message
+        await db.commit()
+        return
     binding = await runtime_binding_service.get_binding(db, kb.id)
-    if binding is not None:
-        binding.status = "deleting"
+    if binding is not None and binding.deleted_at is None:
         binding.soft_delete()
     kb.soft_delete()
     await write_audit(
