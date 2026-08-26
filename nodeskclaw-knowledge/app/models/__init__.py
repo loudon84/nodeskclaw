@@ -22,6 +22,7 @@ from app.models.reconciliation_run import ReconciliationRun
 from app.models.retrieval_audit import RetrievalAudit
 from app.models.retrieval_profile import RetrievalProfile
 from app.models.retrieval_trace import RetrievalTrace
+from app.models.runtime_binding import KnowledgeRuntimeBinding
 from app.models.source_file import SourceFile
 from app.models.source_file_acl import SourceFileAcl
 from app.models.source_file_version import SourceFileVersion
@@ -56,4 +57,5 @@ __all__ = [
     "ConnectorSourceObject",
     "ConnectorSyncRun",
     "ConnectorSyncItem",
+    "KnowledgeRuntimeBinding",
 ]

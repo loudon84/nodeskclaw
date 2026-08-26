@@ -45,6 +45,18 @@ class Settings(BaseSettings):
     KNOWLEDGE_CONNECTOR_MASTER_KEY: str = ""
     KNOWLEDGE_HTTP_PRIVATE_NETWORK_ALLOWLIST: str = ""
 
+    KNOWLEDGE_API_V2_ENABLED: bool = False
+    KNOWLEDGE_V2_RUNTIME_BINDING_ENABLED: bool = True
+    KNOWLEDGE_V2_BUILD_ENABLED: bool = False
+    KNOWLEDGE_V2_APPLICATION_ENABLED: bool = False
+    KNOWLEDGE_V2_CAPABILITY_PLANNER_ENABLED: bool = False
+    KNOWLEDGE_TRANSLATION_ENABLED: bool = False
+    ARTIFACT_STORE_TYPE: str = "local"
+    ARTIFACT_LOCAL_ROOT: str = "/data/knowledge-artifacts"
+    KNOWLEDGE_BUILD_WORKER_CONCURRENCY: int = 2
+    KNOWLEDGE_BUILD_LEASE_SECONDS: int = 120
+    KNOWLEDGE_TRANSLATION_WORKER_CONCURRENCY: int = 2
+
     CORS_ORIGINS: list[str] = ["http://127.0.0.1:5173", "http://localhost:5173", "http://127.0.0.1:3000"]
 
     @field_validator("CORS_ORIGINS", mode="before")

@@ -282,6 +282,22 @@ class ConnectorSourceObjectState(str, Enum):
     detached = "detached"
 
 
+class RuntimeBindingStatus(str, Enum):
+    provisioning = "provisioning"
+    ready = "ready"
+    syncing = "syncing"
+    error = "error"
+    deleting = "deleting"
+
+
+class RuntimeType(str, Enum):
+    ragflow = "ragflow"
+
+
+class RuntimeResourceType(str, Enum):
+    dataset = "dataset"
+
+
 DEFAULT_RETRIEVAL_CONFIG = {
     "top_k": 1024,
     "top_n": 8,

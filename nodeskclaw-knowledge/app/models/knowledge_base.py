@@ -43,3 +43,6 @@ class KnowledgeBase(BaseModel):
     tags: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     visibility: Mapped[str] = mapped_column(String(32), nullable=False, default="private")
     metadata_schema: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    active_build_profile_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    knowledge_model_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    build_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

@@ -202,6 +202,14 @@ async def create_knowledge_base(
         )
         kb.ragflow_dataset_id = dataset_id
         kb.status = KnowledgeBaseStatus.active.value
+        from app.services import runtime_binding_service
+
+        await runtime_binding_service.upsert_ragflow_dataset_binding(
+            db,
+            org_id=member.org_id,
+            knowledge_base_id=kb.id,
+            resource_id=dataset_id,
+        )
     except RagflowError as exc:
         kb.status = KnowledgeBaseStatus.error.value
         await db.commit()
@@ -303,6 +311,12 @@ async def delete_knowledge_base(
             kb.last_error = exc.message
             await db.commit()
             return
+    from app.services import runtime_binding_service
+
+    binding = await runtime_binding_service.get_binding(db, kb.id)
+    if binding is not None:
+        binding.status = "deleting"
+        binding.soft_delete()
     kb.soft_delete()
     await write_audit(
         db,
