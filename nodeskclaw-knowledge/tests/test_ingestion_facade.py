@@ -70,6 +70,10 @@ async def test_authorize_user_upload_requires_permission():
 
     with (
         patch("app.services.ingestion_facade.knowledge_base_service.get_knowledge_base", AsyncMock(return_value=kb)),
+        patch(
+            "app.services.ingestion_facade.runtime_binding_service.get_dataset_id",
+            AsyncMock(return_value="ds1"),
+        ),
         patch("app.services.ingestion_facade.has_kb_permission", AsyncMock(return_value=False)),
     ):
         with pytest.raises(ForbiddenError):
@@ -154,7 +158,13 @@ async def test_ingest_from_connector_sets_actor_and_provenance():
 
     db.add.side_effect = capture_add
 
-    with patch("app.services.ingestion_facade.next_version_no", AsyncMock(return_value=1)):
+    with patch("app.services.ingestion_facade.next_version_no", AsyncMock(return_value=1)), patch(
+        "app.services.ingestion_facade.runtime_binding_service.require_dataset_id",
+        AsyncMock(return_value="ds1"),
+    ), patch(
+        "app.services.ingestion_facade.runtime_binding_service.get_dataset_id",
+        AsyncMock(return_value="ds1"),
+    ):
         sf, version, job = await ingest_from_connector(
             db,
             ragflow,

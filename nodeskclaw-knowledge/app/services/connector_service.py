@@ -33,7 +33,7 @@ from app.models.enums import (
 from app.models.knowledge_base import KnowledgeBase
 from app.models.source_file import SourceFile
 from app.schemas.principal import KnowledgePrincipal
-from app.services import knowledge_base_service
+from app.services import knowledge_base_service, runtime_binding_service
 from app.services.audit_service import write_audit
 from app.services.connector_credential_service import get_credential_provider
 from app.services.permission_service import has_kb_permission
@@ -385,6 +385,7 @@ async def delete_connector(
     )
     files = list(result.scalars().all())
     kb = await db.get(KnowledgeBase, row.knowledge_base_id)
+    dataset_id = await runtime_binding_service.get_dataset_id(db, kb) if kb else None
 
     if policy == "archive_sources":
         for sf in files:
@@ -392,13 +393,13 @@ async def delete_connector(
                 sf.archived_at = _now()
             sf.archive_reason = ArchiveReason.connector_deleted.value
             sf.sync_state = SourceSyncState.stale.value
-            if kb and kb.ragflow_dataset_id and sf.active_version_id:
+            if dataset_id and sf.active_version_id:
                 from app.models.source_file_version import SourceFileVersion
 
                 version = await db.get(SourceFileVersion, sf.active_version_id)
                 if version and version.ragflow_document_id:
                     try:
-                        await ragflow.set_document_enabled(kb.ragflow_dataset_id, version.ragflow_document_id, False)
+                        await ragflow.set_document_enabled(dataset_id, version.ragflow_document_id, False)
                     except Exception:
                         pass
     elif policy == "detach_sources":
@@ -409,14 +410,14 @@ async def delete_connector(
             sf.sync_state = SourceSyncState.detached.value
     elif policy == "delete_sources":
         for sf in files:
-            if kb and kb.ragflow_dataset_id and sf.active_version_id:
+            if dataset_id and sf.active_version_id:
                 from app.models.source_file_version import SourceFileVersion
 
                 version = await db.get(SourceFileVersion, sf.active_version_id)
                 if version and version.ragflow_document_id:
                     try:
                         await ragflow.set_document_enabled(
-                            kb.ragflow_dataset_id, version.ragflow_document_id, False
+                            dataset_id, version.ragflow_document_id, False
                         )
                     except Exception:
                         pass

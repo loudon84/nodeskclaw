@@ -16,7 +16,7 @@ from app.models.source_file import SourceFile
 from app.models.source_file_acl import SourceFileAcl
 from app.models.source_file_version import SourceFileVersion
 from app.schemas.principal import KnowledgePrincipal
-from app.services import knowledge_base_service
+from app.services import knowledge_base_service, runtime_binding_service
 from app.services.audit_service import write_audit
 from app.services.permission_service import has_file_permission, has_kb_permission, validate_acl_subject
 
@@ -174,9 +174,10 @@ async def delete_source_file(
         ).scalars().all()
     )
     doc_ids = [v.ragflow_document_id for v in versions if v.ragflow_document_id]
-    if kb.ragflow_dataset_id and doc_ids:
+    dataset_id = await runtime_binding_service.get_dataset_id(db, kb)
+    if dataset_id and doc_ids:
         try:
-            await ragflow.delete_documents(kb.ragflow_dataset_id, doc_ids)
+            await ragflow.delete_documents(dataset_id, doc_ids)
         except Exception as exc:
             sf.last_error = str(exc)
             await db.commit()
@@ -269,9 +270,10 @@ async def download_source_file(
     if version is None or version.deleted_at is not None or not version.ragflow_document_id:
         raise NotFoundError(message="没有可用版本", message_key="errors.knowledge.version_not_found")
     kb = await knowledge_base_service.get_knowledge_base(db, member, sf.knowledge_base_id)
-    if not kb.ragflow_dataset_id:
+    dataset_id = await runtime_binding_service.get_dataset_id(db, kb)
+    if not dataset_id:
         raise NotFoundError(message="知识库未就绪", message_key="errors.knowledge.kb_not_ready")
-    content = await ragflow.download_document(kb.ragflow_dataset_id, version.ragflow_document_id)
+    content = await ragflow.download_document(dataset_id, version.ragflow_document_id)
     return sf, version, content
 
 

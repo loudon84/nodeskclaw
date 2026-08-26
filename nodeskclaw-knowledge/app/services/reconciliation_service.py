@@ -17,6 +17,7 @@ from app.models.knowledge_base import KnowledgeBase
 from app.models.reconciliation_run import ReconciliationRun
 from app.models.source_file import SourceFile
 from app.models.source_file_version import SourceFileVersion
+from app.services import runtime_binding_service
 from app.services.audit_service import write_audit
 from app.services.metadata_service import build_meta_fields
 
@@ -34,21 +35,21 @@ async def _disable_superseded_enabled_documents(db: AsyncSession, ragflow: Ragfl
             not_deleted(SourceFileVersion),
             not_deleted(SourceFile),
             not_deleted(KnowledgeBase),
-            KnowledgeBase.ragflow_dataset_id.is_not(None),
         )
     )
     disabled = 0
     failed = 0
     for version, sf, kb in result.all():
-        if not kb.ragflow_dataset_id or not version.ragflow_document_id:
+        dataset_id = await runtime_binding_service.get_dataset_id(db, kb)
+        if not dataset_id or not version.ragflow_document_id:
             continue
         try:
-            docs = await ragflow.list_documents(kb.ragflow_dataset_id, id=version.ragflow_document_id, page_size=1)
+            docs = await ragflow.list_documents(dataset_id, id=version.ragflow_document_id, page_size=1)
             if not docs:
                 continue
             if docs[0].enabled is False:
                 continue
-            await ragflow.set_document_enabled(kb.ragflow_dataset_id, version.ragflow_document_id, False)
+            await ragflow.set_document_enabled(dataset_id, version.ragflow_document_id, False)
             disabled += 1
         except RagflowError as exc:
             failed += 1
@@ -72,7 +73,8 @@ async def _retry_deleting_source_files(db: AsyncSession, ragflow: RagflowClient)
     failed = 0
     for sf in result.scalars().all():
         kb = await db.get(KnowledgeBase, sf.knowledge_base_id)
-        if kb is None or not kb.ragflow_dataset_id:
+        dataset_id = await runtime_binding_service.get_dataset_id(db, kb) if kb else None
+        if kb is None or not dataset_id:
             continue
         version_rows = await db.execute(
             select(SourceFileVersion).where(
@@ -84,7 +86,7 @@ async def _retry_deleting_source_files(db: AsyncSession, ragflow: RagflowClient)
         doc_ids = [v.ragflow_document_id for v in versions if v.ragflow_document_id]
         try:
             if doc_ids:
-                await ragflow.delete_documents(kb.ragflow_dataset_id, doc_ids)
+                await ragflow.delete_documents(dataset_id, doc_ids)
             for version in versions:
                 version.soft_delete()
             sf.soft_delete()
@@ -106,12 +108,13 @@ async def _retry_deleting_knowledge_bases(db: AsyncSession, ragflow: RagflowClie
     completed = 0
     failed = 0
     for kb in result.scalars().all():
-        if not kb.ragflow_dataset_id:
+        dataset_id = await runtime_binding_service.get_dataset_id(db, kb)
+        if not dataset_id:
             kb.soft_delete()
             completed += 1
             continue
         try:
-            await ragflow.delete_dataset(kb.ragflow_dataset_id)
+            await ragflow.delete_dataset(dataset_id)
             kb.soft_delete()
             completed += 1
         except RagflowError as exc:
@@ -132,7 +135,6 @@ async def _repair_metadata_drift(db: AsyncSession, ragflow: RagflowClient) -> tu
             not_deleted(SourceFileVersion),
             not_deleted(SourceFile),
             not_deleted(KnowledgeBase),
-            KnowledgeBase.ragflow_dataset_id.is_not(None),
         )
         .limit(200)
     )
@@ -141,11 +143,12 @@ async def _repair_metadata_drift(db: AsyncSession, ragflow: RagflowClient) -> tu
     repaired_count = 0
     failed_count = 0
     for version, sf, kb in result.all():
-        if not kb.ragflow_dataset_id or not version.ragflow_document_id:
+        dataset_id = await runtime_binding_service.get_dataset_id(db, kb)
+        if not dataset_id or not version.ragflow_document_id:
             continue
         checked_count += 1
         try:
-            docs = await ragflow.list_documents(kb.ragflow_dataset_id, id=version.ragflow_document_id, page_size=1)
+            docs = await ragflow.list_documents(dataset_id, id=version.ragflow_document_id, page_size=1)
         except RagflowError:
             failed_count += 1
             continue
@@ -177,9 +180,9 @@ async def _repair_metadata_drift(db: AsyncSession, ragflow: RagflowClient) -> tu
             remote_revision,
         )
         try:
-            await ragflow.update_document_metadata(kb.ragflow_dataset_id, version.ragflow_document_id, expected)
+            await ragflow.update_document_metadata(dataset_id, version.ragflow_document_id, expected)
             verify_docs = await ragflow.list_documents(
-                kb.ragflow_dataset_id,
+                dataset_id,
                 id=version.ragflow_document_id,
                 page_size=1,
             )

@@ -48,6 +48,21 @@ async def lifespan(app: FastAPI):
 
     app.state.llm_proxy_client = LlmProxyClient(http_client=llm_http)
 
+    try:
+        from app.services import runtime_binding_service
+
+        async with async_session_factory() as session:
+            stats = await runtime_binding_service.backfill_from_knowledge_bases(session)
+            await session.commit()
+            logger.info(
+                "runtime binding backfill created=%s updated=%s skipped=%s",
+                stats.get("created"),
+                stats.get("updated"),
+                stats.get("skipped"),
+            )
+    except Exception:
+        logger.exception("runtime binding backfill failed; continuing startup")
+
     yield
 
     await backend_client.aclose()

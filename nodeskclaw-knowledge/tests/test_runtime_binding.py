@@ -73,3 +73,27 @@ async def test_get_dataset_id_falls_back_to_legacy_when_flag_disabled(monkeypatc
     kb = SimpleNamespace(id="kb1", ragflow_dataset_id="legacy", deleted_at=None)
     db = AsyncMock()
     assert await runtime_binding_service.get_dataset_id(db, kb) == "legacy"
+
+
+@pytest.mark.asyncio
+async def test_require_dataset_id_raises_when_missing(monkeypatch):
+    monkeypatch.setattr(
+        runtime_binding_service,
+        "get_dataset_id",
+        AsyncMock(return_value=None),
+    )
+    from app.core.exceptions import BadRequestError
+
+    with pytest.raises(BadRequestError) as exc:
+        await runtime_binding_service.require_dataset_id(AsyncMock(), SimpleNamespace(id="kb1"))
+    assert exc.value.message_key == "errors.knowledge.kb_not_ready"
+
+
+@pytest.mark.asyncio
+async def test_require_dataset_id_returns_id(monkeypatch):
+    monkeypatch.setattr(
+        runtime_binding_service,
+        "get_dataset_id",
+        AsyncMock(return_value="ds-ready"),
+    )
+    assert await runtime_binding_service.require_dataset_id(AsyncMock(), SimpleNamespace(id="kb1")) == "ds-ready"

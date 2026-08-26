@@ -23,7 +23,7 @@ from app.models.knowledge_base import KnowledgeBase
 from app.models.source_file import SourceFile
 from app.models.source_file_version import SourceFileVersion
 from app.schemas.principal import KnowledgePrincipal
-from app.services import knowledge_base_service, source_file_service
+from app.services import knowledge_base_service, runtime_binding_service, source_file_service
 from app.services.metadata_service import build_meta_fields, validate_metadata_values
 from app.services.permission_service import has_kb_permission
 from app.services.source_file_service import activate_version, next_version_no, sha256_bytes
@@ -156,8 +156,7 @@ async def reparse_source_file(
     if version is None or not version.ragflow_document_id:
         raise NotFoundError(message="没有可重新解析的版本", message_key="errors.knowledge.version_not_found")
     kb = await knowledge_base_service.get_knowledge_base(db, member, sf.knowledge_base_id)
-    if not kb.ragflow_dataset_id:
-        raise BadRequestError(message="知识库未就绪", message_key="errors.knowledge.kb_not_ready")
+    dataset_id = await runtime_binding_service.require_dataset_id(db, kb)
 
     job = IngestionJob(
         source_file_id=sf.id,
@@ -177,8 +176,8 @@ async def reparse_source_file(
             metadata=sf.metadata_,
             metadata_revision=sf.metadata_revision,
         )
-        await ragflow.update_document_metadata(kb.ragflow_dataset_id, version.ragflow_document_id, meta)
-        await ragflow.parse_documents(kb.ragflow_dataset_id, [version.ragflow_document_id])
+        await ragflow.update_document_metadata(dataset_id, version.ragflow_document_id, meta)
+        await ragflow.parse_documents(dataset_id, [version.ragflow_document_id])
         version.parse_status = "parsing"
         version.ragflow_status = "UNSTART"
         job.status = IngestionJobStatus.parse_dispatched.value
@@ -274,8 +273,7 @@ async def retry_job(
     if sf is None or version is None or not version.ragflow_document_id:
         raise NotFoundError(message="版本不存在", message_key="errors.knowledge.version_not_found")
     kb = await knowledge_base_service.get_knowledge_base(db, member, sf.knowledge_base_id)
-    if not kb.ragflow_dataset_id:
-        raise BadRequestError(message="知识库未就绪", message_key="errors.knowledge.kb_not_ready")
+    dataset_id = await runtime_binding_service.require_dataset_id(db, kb)
     if not await has_kb_permission(db, member, kb.id, KbPermission.upload.value):
         raise ForbiddenError()
 
@@ -298,8 +296,8 @@ async def retry_job(
         metadata=sf.metadata_,
         metadata_revision=sf.metadata_revision,
     )
-    await ragflow.update_document_metadata(kb.ragflow_dataset_id, version.ragflow_document_id, meta)
-    await ragflow.parse_documents(kb.ragflow_dataset_id, [version.ragflow_document_id])
+    await ragflow.update_document_metadata(dataset_id, version.ragflow_document_id, meta)
+    await ragflow.parse_documents(dataset_id, [version.ragflow_document_id])
     version.parse_status = "parsing"
     version.ragflow_status = "UNSTART"
     job.status = IngestionJobStatus.parse_dispatched.value
@@ -327,9 +325,10 @@ async def cancel_job(
     sf = await db.get(SourceFile, job.source_file_id)
     version = await db.get(SourceFileVersion, job.file_version_id)
     kb = await db.get(KnowledgeBase, sf.knowledge_base_id) if sf else None
-    if kb and kb.ragflow_dataset_id and job.ragflow_document_id:
+    dataset_id = await runtime_binding_service.get_dataset_id(db, kb) if kb else None
+    if kb and dataset_id and job.ragflow_document_id:
         try:
-            await ragflow.stop_parsing(kb.ragflow_dataset_id, [job.ragflow_document_id])
+            await ragflow.stop_parsing(dataset_id, [job.ragflow_document_id])
         except RagflowError:
             logger.warning("stop_parsing failed job_id=%s", job.id)
 
@@ -399,14 +398,15 @@ async def process_leased_job(
         return True
 
     kb = await db.get(KnowledgeBase, sf.knowledge_base_id)
-    if kb is None or not kb.ragflow_dataset_id:
+    dataset_id = await runtime_binding_service.get_dataset_id(db, kb) if kb else None
+    if kb is None or not dataset_id:
         job.status = IngestionJobStatus.failed.value
         job.error_message = "knowledge base not ready"
         job.finished_at = _now()
         return True
 
     try:
-        docs = await ragflow.list_documents(kb.ragflow_dataset_id, id=version.ragflow_document_id, page_size=1)
+        docs = await ragflow.list_documents(dataset_id, id=version.ragflow_document_id, page_size=1)
     except RagflowError as exc:
         job.attempt_count += 1
         if job.attempt_count >= job.max_attempts:
@@ -514,11 +514,11 @@ async def process_leased_job(
 
     if old_version and old_version.ragflow_document_id:
         try:
-            await ragflow.set_document_enabled(kb.ragflow_dataset_id, old_version.ragflow_document_id, False)
+            await ragflow.set_document_enabled(dataset_id, old_version.ragflow_document_id, False)
         except Exception:
             logger.warning(
                 "failed to disable old document dataset=%s document=%s",
-                kb.ragflow_dataset_id,
+                dataset_id,
                 old_version.ragflow_document_id,
             )
     return True

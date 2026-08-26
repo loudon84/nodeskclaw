@@ -58,6 +58,7 @@ def build_retrieval_plan(
     *,
     metadata_condition: dict[str, Any] | None = None,
     pushdown_enabled: bool | None = None,
+    dataset_id_by_kb_id: dict[str, str] | None = None,
 ) -> RetrievalPlan:
     use_pushdown = (
         settings.RAGFLOW_METADATA_PUSHDOWN_ENABLED if pushdown_enabled is None else bool(pushdown_enabled)
@@ -68,7 +69,13 @@ def build_retrieval_plan(
         return RetrievalPlan(plan_kind=AccessPlanKind.no_access, metadata_pushdown=bool(condition))
 
     weights = {item.knowledge_base_id: float(item.weight) for item in set_items}
-    kb_by_dataset = {kb.ragflow_dataset_id: kb for kb in knowledge_bases if kb.ragflow_dataset_id}
+    id_map = dataset_id_by_kb_id or {}
+    kb_by_dataset = {
+        dataset_id: kb
+        for kb in knowledge_bases
+        for dataset_id in [id_map.get(kb.id)]
+        if dataset_id
+    }
     batch_size = max(1, int(settings.RETRIEVAL_DOCUMENT_BATCH_SIZE))
 
     slices: list[RetrievalSlice] = []

@@ -82,6 +82,10 @@ async def test_archive_sets_archived_at_and_disables_ragflow():
             "app.services.source_lifecycle_service.knowledge_base_service.get_knowledge_base",
             new=AsyncMock(return_value=kb),
         ),
+        patch(
+            "app.services.source_lifecycle_service.runtime_binding_service.get_dataset_id",
+            new=AsyncMock(return_value="ds1"),
+        ),
         patch("app.services.source_lifecycle_service.write_audit", new=AsyncMock()),
     ):
         result = await source_lifecycle_service.archive_source_file(db, member, ragflow, "sf1")
@@ -114,6 +118,10 @@ async def test_unarchive_clears_archived_at_and_enables_active():
         patch(
             "app.services.source_lifecycle_service.knowledge_base_service.get_knowledge_base",
             new=AsyncMock(return_value=kb),
+        ),
+        patch(
+            "app.services.source_lifecycle_service.runtime_binding_service.get_dataset_id",
+            new=AsyncMock(return_value="ds1"),
         ),
         patch("app.services.source_lifecycle_service.write_audit", new=AsyncMock()),
     ):
@@ -152,6 +160,10 @@ async def test_activate_version_rollback_blue_green():
         patch(
             "app.services.source_lifecycle_service.knowledge_base_service.get_knowledge_base",
             new=AsyncMock(return_value=kb),
+        ),
+        patch(
+            "app.services.source_lifecycle_service.runtime_binding_service.require_dataset_id",
+            new=AsyncMock(return_value="ds1"),
         ),
         patch("app.services.source_lifecycle_service.write_audit", new=AsyncMock()),
     ):

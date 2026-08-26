@@ -59,9 +59,19 @@ async def test_retrieve_passes_set_items_to_planner():
             "app.services.retrieval_service.knowledge_set_service.list_set_items",
             new=AsyncMock(return_value=set_items),
         ),
+        patch(
+            "app.services.retrieval_service.runtime_binding_service.get_dataset_id",
+            new=AsyncMock(return_value="ds1"),
+        ),
         patch("app.services.retrieval_service.retrieval_planner.build_retrieval_plan", return_value=empty_plan) as build,
     ):
         result = await retrieve(db, member, ragflow, knowledge_set_id="set1", query="hello")
 
-    build.assert_called_once_with(plan_access, kbs, set_items, metadata_condition=None)
+    build.assert_called_once_with(
+        plan_access,
+        kbs,
+        set_items,
+        metadata_condition=None,
+        dataset_id_by_kb_id={"kb1": "ds1"},
+    )
     assert result["chunks"] == []

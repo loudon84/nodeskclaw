@@ -13,7 +13,7 @@ from app.models.enums import AuditAction, FilePermission, KbPermission, ParseSta
 from app.models.source_file import SourceFile
 from app.models.source_file_version import SourceFileVersion
 from app.schemas.principal import KnowledgePrincipal
-from app.services import knowledge_base_service, source_file_service
+from app.services import knowledge_base_service, runtime_binding_service, source_file_service
 from app.services.audit_service import write_audit
 from app.services.permission_service import has_file_permission, has_kb_permission
 from app.services.source_file_service import activate_version
@@ -58,15 +58,16 @@ async def archive_source_file(
         sf.archived_at = datetime.now(UTC)
 
     kb = await knowledge_base_service.get_knowledge_base(db, member, sf.knowledge_base_id)
-    if kb.ragflow_dataset_id and sf.active_version_id:
+    dataset_id = await runtime_binding_service.get_dataset_id(db, kb)
+    if dataset_id and sf.active_version_id:
         version = await db.get(SourceFileVersion, sf.active_version_id)
         if version and version.deleted_at is None and version.ragflow_document_id:
             try:
-                await ragflow.set_document_enabled(kb.ragflow_dataset_id, version.ragflow_document_id, False)
+                await ragflow.set_document_enabled(dataset_id, version.ragflow_document_id, False)
             except Exception:
                 logger.warning(
                     "failed to disable archived document dataset=%s document=%s",
-                    kb.ragflow_dataset_id,
+                    dataset_id,
                     version.ragflow_document_id,
                 )
 
@@ -95,7 +96,8 @@ async def unarchive_source_file(
     sf.archived_at = None
 
     kb = await knowledge_base_service.get_knowledge_base(db, member, sf.knowledge_base_id)
-    if kb.ragflow_dataset_id and sf.active_version_id:
+    dataset_id = await runtime_binding_service.get_dataset_id(db, kb)
+    if dataset_id and sf.active_version_id:
         version = await db.get(SourceFileVersion, sf.active_version_id)
         if (
             version
@@ -104,11 +106,11 @@ async def unarchive_source_file(
             and version.parse_status == ParseStatus.active.value
         ):
             try:
-                await ragflow.set_document_enabled(kb.ragflow_dataset_id, version.ragflow_document_id, True)
+                await ragflow.set_document_enabled(dataset_id, version.ragflow_document_id, True)
             except Exception:
                 logger.warning(
                     "failed to enable unarchived document dataset=%s document=%s",
-                    kb.ragflow_dataset_id,
+                    dataset_id,
                     version.ragflow_document_id,
                 )
 
@@ -147,10 +149,9 @@ async def activate_source_file_version(
         )
 
     kb = await knowledge_base_service.get_knowledge_base(db, member, sf.knowledge_base_id)
-    if not kb.ragflow_dataset_id:
-        raise BadRequestError(message="知识库未就绪", message_key="errors.knowledge.kb_not_ready")
+    dataset_id = await runtime_binding_service.require_dataset_id(db, kb)
 
-    await ragflow.set_document_enabled(kb.ragflow_dataset_id, target.ragflow_document_id, True)
+    await ragflow.set_document_enabled(dataset_id, target.ragflow_document_id, True)
 
     old_version = None
     if sf.active_version_id and sf.active_version_id != target.id:
@@ -195,14 +196,14 @@ async def activate_source_file_version(
         old_version
         and old_version.ragflow_document_id
         and old_version.id != target.id
-        and kb.ragflow_dataset_id
+        and dataset_id
     ):
         try:
-            await ragflow.set_document_enabled(kb.ragflow_dataset_id, old_version.ragflow_document_id, False)
+            await ragflow.set_document_enabled(dataset_id, old_version.ragflow_document_id, False)
         except Exception:
             logger.warning(
                 "failed to disable superseded document dataset=%s document=%s",
-                kb.ragflow_dataset_id,
+                dataset_id,
                 old_version.ragflow_document_id,
             )
 

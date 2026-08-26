@@ -19,7 +19,7 @@ from app.models.knowledge_base import KnowledgeBase
 from app.models.source_file import SourceFile
 from app.models.source_file_version import SourceFileVersion
 from app.schemas.principal import KnowledgePrincipal
-from app.services import knowledge_base_service, source_file_service
+from app.services import knowledge_base_service, runtime_binding_service, source_file_service
 from app.services.audit_service import write_audit
 from app.services.permission_service import AccessPlan, has_file_permission, has_kb_permission
 
@@ -403,7 +403,8 @@ async def patch_source_file_metadata(
 
     if sf.active_version_id:
         version = await db.get(SourceFileVersion, sf.active_version_id)
-        if version and version.ragflow_document_id and kb.ragflow_dataset_id and version.deleted_at is None:
+        dataset_id = await runtime_binding_service.get_dataset_id(db, kb)
+        if version and version.ragflow_document_id and dataset_id and version.deleted_at is None:
             meta = build_meta_fields(
                 source_file_id=sf.id,
                 file_version_id=version.id,
@@ -417,7 +418,7 @@ async def patch_source_file_metadata(
                 source_revision=sf.source_revision,
             )
             try:
-                await ragflow.update_document_metadata(kb.ragflow_dataset_id, version.ragflow_document_id, meta)
+                await ragflow.update_document_metadata(dataset_id, version.ragflow_document_id, meta)
             except RagflowError as exc:
                 await db.rollback()
                 raise ValidationError(
@@ -480,7 +481,10 @@ async def apply_metadata_filters_to_access_plan(
 
     for kb_id, kb_files in by_kb.items():
         kb = kb_by_id.get(kb_id)
-        if kb is None or not kb.ragflow_dataset_id:
+        if kb is None:
+            continue
+        dataset_id = await runtime_binding_service.get_dataset_id(db, kb)
+        if not dataset_id:
             continue
         doc_ids: list[str] = []
         for sf in kb_files:
@@ -492,11 +496,11 @@ async def apply_metadata_filters_to_access_plan(
                 doc_ids.append(version.ragflow_document_id)
                 filtered_document_ids.append(version.ragflow_document_id)
         if doc_ids:
-            dataset_ids.append(kb.ragflow_dataset_id)
+            dataset_ids.append(dataset_id)
             partial_slices.append(
                 {
                     "kind": "filtered_documents",
-                    "dataset_id": kb.ragflow_dataset_id,
+                    "dataset_id": dataset_id,
                     "knowledge_base_id": kb.id,
                     "document_ids": doc_ids,
                 }

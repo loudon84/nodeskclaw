@@ -74,7 +74,7 @@ async def test_ingest_facade_recovers_without_reupload():
     db.add = MagicMock()
     db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
 
-    kb = MagicMock(id="kb1", org_id="o1", ragflow_dataset_id="ds1", status="active", metadata_schema={})
+    kb = MagicMock(id="kb1", org_id="o1", ragflow_dataset_id="ds1", status="active", metadata_schema={}, deleted_at=None)
     actor = ingestion_facade.KnowledgeActor(actor_type="member", actor_id="m1", org_id="o1", member_id="m1")
 
     ragflow = AsyncMock()
@@ -96,7 +96,10 @@ async def test_ingest_facade_recovers_without_reupload():
 
     with patch("app.services.ingestion_facade.validate_metadata_values", return_value={}), patch(
         "app.services.ingestion_facade.next_version_no", new=AsyncMock(return_value=1)
-    ), patch("app.services.ingestion_facade.build_meta_fields", return_value={"nk_source_file_id": "sf"}):
+    ), patch("app.services.ingestion_facade.build_meta_fields", return_value={"nk_source_file_id": "sf"}), patch(
+        "app.services.ingestion_facade.runtime_binding_service.require_dataset_id",
+        new=AsyncMock(return_value="ds1"),
+    ):
         sf, version, job = await ingestion_facade.ingest_core(
             db,
             ragflow,
@@ -140,6 +143,7 @@ def test_pushdown_disabled_omits_condition(monkeypatch):
         [kb],
         [item],
         metadata_condition={"logic": "and", "conditions": []},
+        dataset_id_by_kb_id={"kb1": "ds1"},
     )
     assert plan.metadata_pushdown is False
     assert plan.slices[0].metadata_condition is None

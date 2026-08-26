@@ -158,6 +158,10 @@ async def test_playground_allows_draft_profile_and_returns_timing():
             "app.services.retrieval_service.knowledge_set_service.list_set_items",
             new=AsyncMock(return_value=[]),
         ),
+        patch(
+            "app.services.retrieval_service.runtime_binding_service.get_dataset_id",
+            new=AsyncMock(return_value="ds1"),
+        ),
         patch("app.services.retrieval_service.retrieval_planner.build_retrieval_plan", return_value=plan),
         patch(
             "app.services.retrieval_service.retrieval_merge_service.execute_and_merge",

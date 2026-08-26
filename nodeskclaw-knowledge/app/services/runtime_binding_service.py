@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.exceptions import BadRequestError
 from app.models.base import not_deleted
 from app.models.enums import RuntimeBindingStatus, RuntimeResourceType, RuntimeType
 from app.models.knowledge_base import KnowledgeBase
@@ -45,6 +46,14 @@ async def get_dataset_id(db: AsyncSession, knowledge_base: KnowledgeBase | str) 
         if binding is not None and binding.status != RuntimeBindingStatus.deleting.value:
             return binding.resource_id
     return kb.ragflow_dataset_id
+
+
+async def require_dataset_id(db: AsyncSession, knowledge_base: KnowledgeBase | str) -> str:
+    """Resolve dataset id or raise kb_not_ready. Prefer over reading kb.ragflow_dataset_id."""
+    dataset_id = await get_dataset_id(db, knowledge_base)
+    if not dataset_id:
+        raise BadRequestError(message="知识库未就绪", message_key="errors.knowledge.kb_not_ready")
+    return dataset_id
 
 
 async def upsert_ragflow_dataset_binding(

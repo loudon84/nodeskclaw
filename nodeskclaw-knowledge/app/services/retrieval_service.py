@@ -33,6 +33,7 @@ from app.services import (
     retrieval_planner,
     retrieval_profile_service,
     retrieval_trace_service,
+    runtime_binding_service,
 )
 from app.services.permission_service import (
     build_access_plan,
@@ -44,6 +45,15 @@ from app.services.retrieval_profile_service import merge_profile_config
 
 def _observe_retrieval(status: str, started: float) -> None:
     metrics_service.observe_retrieval(status=status, duration_seconds=time.perf_counter() - started)
+
+
+async def _dataset_id_by_kb_id(db: AsyncSession, knowledge_bases: list) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for kb in knowledge_bases:
+        dataset_id = await runtime_binding_service.get_dataset_id(db, kb)
+        if dataset_id:
+            out[kb.id] = dataset_id
+    return out
 
 
 def _extract_page(positions: list | None) -> int | None:
@@ -371,11 +381,13 @@ async def _retrieve_for_set(
         if settings.RAGFLOW_METADATA_PUSHDOWN_ENABLED
         else None
     )
+    dataset_map = await _dataset_id_by_kb_id(db, kbs)
     plan = retrieval_planner.build_retrieval_plan(
         plan_access,
         kbs,
         set_items,
         metadata_condition=metadata_condition,
+        dataset_id_by_kb_id=dataset_map,
     )
 
     if plan_access.kind == AccessPlanKind.no_access or not plan.slices:
@@ -651,11 +663,13 @@ async def playground_retrieve(
         if settings.RAGFLOW_METADATA_PUSHDOWN_ENABLED
         else None
     )
+    dataset_map = await _dataset_id_by_kb_id(db, kbs)
     plan = retrieval_planner.build_retrieval_plan(
         plan_access,
         kbs,
         set_items,
         metadata_condition=metadata_condition,
+        dataset_id_by_kb_id=dataset_map,
     )
     acl_ms = int((time.perf_counter() - acl_started) * 1000)
 

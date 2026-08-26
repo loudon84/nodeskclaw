@@ -119,6 +119,12 @@ def _enter_retrieve_patches(stack: ExitStack, *, ks, profile, plan, merge_result
         )
     )
     stack.enter_context(
+        patch(
+            "app.services.retrieval_service.runtime_binding_service.get_dataset_id",
+            new=AsyncMock(return_value="ds1"),
+        )
+    )
+    stack.enter_context(
         patch("app.services.retrieval_service.retrieval_planner.build_retrieval_plan", return_value=plan)
     )
     stack.enter_context(

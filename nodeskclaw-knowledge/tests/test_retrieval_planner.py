@@ -33,7 +33,12 @@ def test_retrieval_planner_full_plus_partial():
     )
     kbs = [_kb("kb_a", "ds_a"), _kb("kb_b", "ds_b")]
     items = [_item("kb_a", 1.0), _item("kb_b", 2.0)]
-    plan = build_retrieval_plan(access, kbs, items)
+    plan = build_retrieval_plan(
+        access,
+        kbs,
+        items,
+        dataset_id_by_kb_id={"kb_a": "ds_a", "kb_b": "ds_b"},
+    )
 
     assert plan.plan_kind == AccessPlanKind.filtered_access
     assert len(plan.slices) == 2
@@ -44,6 +49,27 @@ def test_retrieval_planner_full_plus_partial():
     assert partial_slice.dataset_id == "ds_b"
     assert partial_slice.document_ids == ["doc_b1", "doc_b2"]
     assert partial_slice.weight == 2.0
+
+
+def test_retrieval_planner_uses_binding_map_when_kb_column_empty():
+    access = AccessPlan(
+        kind=AccessPlanKind.filtered_access,
+        dataset_ids=["from-binding"],
+        full_dataset_ids=["from-binding"],
+        partial_slices=[],
+        source_file_ids=["sf1"],
+        knowledge_base_ids=["kb1"],
+    )
+    kb = SimpleNamespace(id="kb1", ragflow_dataset_id=None)
+    plan = build_retrieval_plan(
+        access,
+        [kb],
+        [_item("kb1", 1.0)],
+        dataset_id_by_kb_id={"kb1": "from-binding"},
+    )
+    assert len(plan.slices) == 1
+    assert plan.slices[0].dataset_id == "from-binding"
+    assert plan.slices[0].knowledge_base_id == "kb1"
 
 
 def test_retrieval_planner_batches_partial_document_ids(monkeypatch):
@@ -63,7 +89,12 @@ def test_retrieval_planner_batches_partial_document_ids(monkeypatch):
         source_file_ids=["sf1"],
         knowledge_base_ids=["kb_b"],
     )
-    plan = build_retrieval_plan(access, [_kb("kb_b", "ds_b")], [_item("kb_b", 1.0)])
+    plan = build_retrieval_plan(
+        access,
+        [_kb("kb_b", "ds_b")],
+        [_item("kb_b", 1.0)],
+        dataset_id_by_kb_id={"kb_b": "ds_b"},
+    )
     assert len(plan.slices) == 3
     assert plan.slices[0].document_ids == ["d1", "d2"]
     assert plan.slices[1].document_ids == ["d3", "d4"]
@@ -96,6 +127,7 @@ def test_retrieval_planner_partial_plus_partial():
         access,
         [_kb("kb_a", "ds_a"), _kb("kb_b", "ds_b")],
         [_item("kb_a", 1.0), _item("kb_b", 1.5)],
+        dataset_id_by_kb_id={"kb_a": "ds_a", "kb_b": "ds_b"},
     )
     assert plan.plan_kind == AccessPlanKind.filtered_access
     assert len(plan.slices) == 2
@@ -123,7 +155,12 @@ def test_retrieval_planner_batches_5000_document_ids(monkeypatch):
         source_file_ids=["sf1"],
         knowledge_base_ids=["kb_b"],
     )
-    plan = build_retrieval_plan(access, [_kb("kb_b", "ds_b")], [_item("kb_b", 1.0)])
+    plan = build_retrieval_plan(
+        access,
+        [_kb("kb_b", "ds_b")],
+        [_item("kb_b", 1.0)],
+        dataset_id_by_kb_id={"kb_b": "ds_b"},
+    )
     assert len(plan.slices) == 10
     assert plan.slices[0].document_ids == doc_ids[:500]
     assert plan.slices[-1].document_ids == doc_ids[4500:]
