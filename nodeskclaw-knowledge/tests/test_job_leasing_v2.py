@@ -1,5 +1,6 @@
 """Job leasing v2 unit tests."""
 
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -125,3 +126,62 @@ class MagicStmt:
 
     def limit(self, *args, **kwargs):
         return self
+
+
+@pytest.mark.asyncio
+async def test_build_worker_claims_only_build_jobs():
+    with patch(
+        "app.workers.build_worker.build_orchestrator.claim_next_build_job",
+        AsyncMock(return_value=None),
+    ) as claim:
+        with patch("app.workers.build_worker.settings.KNOWLEDGE_V2_BUILD_ENABLED", True):
+            from app.workers import build_worker
+
+            task = asyncio.create_task(build_worker._run_loop())
+            await asyncio.sleep(0.05)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+    claim.assert_awaited()
+
+
+def test_worker_modules_expose_domain_entrypoints():
+    from app.workers import build_worker, ingestion_worker, maintenance_worker, translation_worker
+
+    assert callable(build_worker.main)
+    assert callable(ingestion_worker.main)
+    assert callable(translation_worker.main)
+    assert callable(maintenance_worker.main)
+
+
+@pytest.mark.asyncio
+async def test_ingestion_worker_only_claims_ingestion_jobs():
+    with patch("app.workers.ingestion_worker.ingestion_service.claim_next_job", AsyncMock(return_value=None)) as claim:
+        with patch("app.workers.ingestion_worker.RagflowClient") as ragflow_cls:
+            ragflow_cls.return_value.aclose = AsyncMock()
+            from app.workers import ingestion_worker
+
+            task = asyncio.create_task(ingestion_worker._run_loop())
+            await asyncio.sleep(0.05)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+    claim.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_translation_worker_only_claims_translation_jobs():
+    with patch(
+        "app.workers.translation_worker.translation_service.claim_next_translation_job",
+        AsyncMock(return_value=None),
+    ) as claim:
+        from app.workers import translation_worker
+
+        with patch.object(translation_worker.settings, "KNOWLEDGE_TRANSLATION_ENABLED", True):
+            task = asyncio.create_task(translation_worker._run_loop())
+            await asyncio.sleep(0.05)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+    claim.assert_awaited()
+
