@@ -52,6 +52,7 @@ class Settings(BaseSettings):
     KNOWLEDGE_V2_CAPABILITY_PLANNER_ENABLED: bool = False
     KNOWLEDGE_V2_MULTI_INDEX_RETRIEVAL_ENABLED: bool = False
     KNOWLEDGE_TRANSLATION_ENABLED: bool = False
+    KNOWLEDGE_TRANSLATION_ENGINE: str = "docutranslate"
     ARTIFACT_STORE_TYPE: str = "local"
     ARTIFACT_LOCAL_ROOT: str = "/data/knowledge-artifacts"
     KNOWLEDGE_BUILD_WORKER_CONCURRENCY: int = 2
@@ -59,6 +60,14 @@ class Settings(BaseSettings):
     KNOWLEDGE_BUILD_MAX_ATTEMPTS: int = 3
     KNOWLEDGE_BUILD_RETRY_BACKOFF_SECONDS: int = 60
     KNOWLEDGE_TRANSLATION_WORKER_CONCURRENCY: int = 2
+    KNOWLEDGE_TRANSLATION_LEASE_SECONDS: int = 120
+    DOCUTRANSLATE_BASE_URL: str = "http://127.0.0.1:8010"
+    DOCUTRANSLATE_TIMEOUT_SECONDS: float = 120.0
+    MINERU_BASE_URL: str = "http://127.0.0.1:8020"
+    MINERU_TIMEOUT_SECONDS: float = 120.0
+    OLLAMA_BASE_URL: str = "http://127.0.0.1:11434"
+    OLLAMA_TIMEOUT_SECONDS: float = 120.0
+    OLLAMA_TRANSLATION_MODEL: str = "llama3"
 
     CORS_ORIGINS: list[str] = ["http://127.0.0.1:5173", "http://localhost:5173", "http://127.0.0.1:3000"]
 

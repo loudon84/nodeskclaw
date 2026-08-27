@@ -13,6 +13,11 @@ from app.models.base import not_deleted
 from app.models.translation import TranslationDocument, TranslationJob, TranslationPage, TranslationRevision
 from app.schemas.principal import KnowledgePrincipal
 from app.services import artifact_store, source_file_service
+from app.services.translation_engine import (
+    TranslationEngineError,
+    TranslationPageRequest,
+    get_translation_engine,
+)
 from app.workers.job_leasing import claim_next, clear_lease_if_owner
 
 
@@ -127,7 +132,6 @@ async def claim_next_translation_job(db: AsyncSession, *, lease_owner: str):
 
 
 async def process_translation_job(db: AsyncSession, job: TranslationJob) -> None:
-    """Placeholder stage: mark page partial/completed without replacing Source Version."""
     if not job.page_id:
         job.status = "failed"
         job.error_message = "missing_page"
@@ -139,10 +143,72 @@ async def process_translation_job(db: AsyncSession, job: TranslationJob) -> None
         job.error_message = "page_missing"
         job.finished_at = datetime.now(UTC)
         return
-    page.status = "partial"
+    doc = await db.get(TranslationDocument, job.document_id)
+    if doc is None or doc.deleted_at is not None:
+        job.status = "failed"
+        job.error_message = "document_missing"
+        job.finished_at = datetime.now(UTC)
+        return
+
+    page.status = "running"
+    engine = get_translation_engine()
+    try:
+        result = await engine.translate_page(
+            TranslationPageRequest(
+                document_id=doc.id,
+                page_id=page.id,
+                page_no=page.page_no,
+                source_file_id=doc.source_file_id,
+                file_version_id=doc.file_version_id,
+                target_lang=doc.target_lang,
+                source_text=f"[page {page.page_no}]",
+            )
+        )
+    except TranslationEngineError as exc:
+        page.status = "failed"
+        page.last_error = str(exc)
+        job.status = "failed"
+        job.error_message = str(exc)
+        job.finished_at = datetime.now(UTC)
+        await db.flush()
+        return
+    finally:
+        await engine.aclose()
+
+    new_rev = int(page.current_revision) + 1
+    relative = f"translations/{doc.id}/{page.id}/r{new_rev}.txt"
+    uri = artifact_store.write_bytes(relative, result.content.encode("utf-8"))
+    revision = TranslationRevision(
+        page_id=page.id,
+        revision=new_rev,
+        content=result.content,
+        artifact_uri=uri,
+        meta=result.meta or None,
+    )
+    db.add(revision)
+    page.current_revision = new_rev
+    page.artifact_uri = uri
+    page.status = "completed"
+    page.last_error = None
     job.status = "completed"
+    job.error_message = None
     job.finished_at = datetime.now(UTC)
+    await _refresh_document_progress(db, doc)
     await db.flush()
+
+
+async def _refresh_document_progress(db: AsyncSession, doc: TranslationDocument) -> None:
+    pages = await list_pages(db, doc.id)
+    if not pages:
+        return
+    completed = sum(1 for p in pages if p.status == "completed")
+    doc.progress = int((completed / len(pages)) * 100)
+    if completed == len(pages):
+        doc.status = "completed"
+    elif any(p.status == "failed" for p in pages):
+        doc.status = "partial"
+    elif any(p.status in {"running", "partial"} for p in pages):
+        doc.status = "running"
 
 
 async def finalize_translation_job(
