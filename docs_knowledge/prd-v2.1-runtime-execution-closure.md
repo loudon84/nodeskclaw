@@ -1,10 +1,10 @@
 ---
 work_item_id: nodeskclaw-knowledge-v2.1-runtime-execution-closure
 version: v2.1
-status: REVIEW_REQUIRED
+status: APPROVED
 target_branch: nodeskclaw/main
-review_verdict:
-approved_at:
+review_verdict: PASS
+approved_at: 2026-08-27T11:48:00+08:00
 ---
 
 # PRD-nodeskclaw-knowledge-v2.1
@@ -12,7 +12,7 @@ approved_at:
 ## Runtime Execution Closure & Multi-Index Retrieval
 
 **版本**：v2.1
-**状态**：REVIEW_REQUIRED（Grounding 完成，待 Review）
+**状态**：APPROVED
 **目标分支**：`nodeskclaw/main`
 **实施范围**：`nodeskclaw-knowledge`
 **前置版本**：`PRD-nodeskclaw-knowledge-v2.0`（`docs_knowledge/prd-v2.0-nodeskclaw-knowledge.md`）
@@ -21,13 +21,11 @@ approved_at:
 
 ---
 
-# 0. Grounding Summary
+# 0. Source Anchors
 
-**Mode**：`discover`（输入 PRD 无 Source Anchors / Current Inventory，无历史 Review Findings；本次完成源码发现与校准）。
+**证据基线**：`nodeskclaw-knowledge` @ commit `2368464`（含 Build 执行内核落地）。
 
-**证据基线**：`nodeskclaw-knowledge` @ commit `2368464`（含 Build 执行内核落地，对应 `.cursor/plans/build_执行内核落地_0f96146d.plan.md`，已全部完成）。
-
-**原文 §4–§9 现状断言抽查结果**：全部属实。关键证据：
+关键 Source Anchors（证明 Owner / Boundary 的最小集合）：
 
 - `EXECUTORS` 仅注册 chunk — `nodeskclaw-knowledge/app/services/build_executors.py#EXECUTORS`
 - Runtime capability 为静态定义、version 恒为 None — `nodeskclaw-knowledge/app/runtime/ragflow.py#RagflowRuntimeAdapter#check_health`
@@ -36,17 +34,18 @@ approved_at:
 - `process_translation_job` 为 placeholder — `nodeskclaw-knowledge/app/services/translation_service.py#process_translation_job`
 - 单 Worker Loop 处理全部 Job 类型 — `nodeskclaw-knowledge/app/workers/ingestion_worker.py#_run_loop`
 
-**Grounding 新发现（原文未覆盖，本版已校准）**：
+**Owner / Boundary Anchors**：
 
-1. **MCP 工具契约已存在生产 Owner**：`app/api/agent_tools.py` 已以 HTTP 形式暴露 `knowledge.search` / `knowledge.retrieve` / `knowledge.get_document` / `knowledge.get_evidence` 四个工具（挂载于 v2 路由）。§59 的 MCP 是**新增 Transport**，工具语义 Owner 不变，禁止在 MCP 层重写工具逻辑。
-2. **Evidence 按 ID 解析已存在生产 Owner**：`app/services/citation_service.py#resolve_citation` + `app/api/citations.py` 已实现"每次解析重新执行权限校验"。§48 的 Evidence API 是该路径的扩展（MODIFY），不是新 Owner；`evidence_id` 的持久化身份是本版必须冻结的架构决定（当前 evidence_id 为请求作用域 chunk id，不落库）。
-3. **§31 目标 `services/retrieval/` 包与现有模块存在 Owner 重叠**：`retrieval_planner.py`（slice 规划）、`retrieval_merge_service.py`（执行+合并）、`chunk_security_service.py`（Active Version Security，已具备 `clean_evidence` / `EvidenceItem` / `evidence_from_chunk(evidence_type=...)`）、`retrieval_trace_service.py`、`capability_planner.py` 均为现有 Owner。本版按 **MODIFY 现有 Owner** 收敛，禁止新建平行 Planner / Security / Trace 实现。
-4. **§17 目标 `services/build/` 包属于同一 Capability Owner 的内部重构**（MODIFY），现有 `build_orchestrator.py` / `build_executors.py` 作为 Facade 兼容路径，受 Compatibility Contract 约束。
-5. **配置命名冲突**：§62 的 `TRANSLATION_WORKER_CONCURRENCY` 与现有 `KNOWLEDGE_TRANSLATION_WORKER_CONCURRENCY`（`app/core/config.py`）重复，复用现有名称，不引入 alias。
-6. **`knowledge_runtime_bindings` 无等价 probe 字段**：现有 `last_reconciled_at` / `last_error` 为 reconciliation 语义，§61 的 `last_capability_probe_at` / `last_capability_probe_error` 新增成立。
-7. **§24 Index Stale 策略部分已实现**：`build_orchestrator.py#enqueue_after_activation` 已按 trigger policy 做 stale 标记 + on_activate/debounce enqueue，本版为 MODIFY 而非全新建设。
-8. **新外部依赖确认**：§49–§52 引入 DocuTranslate / MinerU / Ollama 为新的运行时基础设施依赖，部署形态需在 Plan 阶段单独确认。
-9. **`/health/ready` 当前无鉴权暴露 RAGFlow capabilities 明细**（`app/main.py`）。§46 新增 Admin-only Runtime API 后，`/health/ready` 收敛为仅暴露 reachability，capability 明细只走 Admin API。
+- Agent 工具契约 Owner（HTTP transport 四工具 + member principal 鉴权）— `nodeskclaw-knowledge/app/api/agent_tools.py#get_member_context`
+- Evidence 按 ID 解析 + 每次重新鉴权 Owner — `nodeskclaw-knowledge/app/services/citation_service.py#resolve_citation`、`app/api/citations.py`
+- Evidence 持久化模型现状（chat 域特化，`message_id` 非空）— `nodeskclaw-knowledge/app/models/chat_citation.py`
+- 检索相关现有 Owner — `retrieval_planner.py`、`retrieval_merge_service.py`、`chunk_security_service.py`（Active Version Security / EvidenceItem）、`retrieval_trace_service.py`、`capability_planner.py`
+- 身份谓词与 enforcement — `app/schemas/principal.py#KnowledgePrincipal`（`is_super_admin`）、`app/services/permission_service.py#has_application_permission`
+- 配置与 Feature Flag — `app/core/config.py`
+- 模型字段边界 — `app/models/index_state.py`、`app/models/runtime_binding.py`
+- `/health/ready` 现状 — `app/main.py`
+
+**新外部依赖**：DocuTranslate / MinerU / Ollama 为本版新增运行时基础设施依赖（§49–§52），部署形态在 Plan 阶段确认。
 
 ---
 
@@ -99,7 +98,7 @@ approved_at:
 | Multi-Index Retriever | 检索执行层（`retrieval_merge_service.py` 为执行 Owner，retriever 按 index_type 扩展） | Chunk/Question/Summary/Graph 按 Plan 真实执行 + fallback 写 Trace | MODIFY |
 | Evidence 归一化与融合 | `chunk_security_service.py`（EvidenceItem 扩展）+ `retrieval_merge_service.py`（融合 Owner） | chunk/question/summary/graph_path 四类 Evidence；rule-based weighted fusion + dedup | MODIFY |
 | Active Version Security | `chunk_security_service.py#clean_evidence` | 所有 Secondary Evidence 同样强制清洗 | KEEP |
-| Evidence API | `citation_service.py` 解析路径扩展 + v2 evidence 端点 | 按 evidence_id 解析且每次重新鉴权；evidence_id 持久化身份见 §48 校准 | MODIFY |
+| Evidence API | `citation_service.py` 解析路径扩展 + v2 evidence 端点 | 按 evidence_id 解析且每次重新鉴权；evidence_id 持久化身份见 §48 架构决定 | MODIFY |
 | Translation Execution | `translation_service.py`（Service Owner）+ 新增 Engine Adapter | TranslationEngine 契约 + DocuTranslate(MinerU+Ollama) 适配；Service 不直接依赖 DocuTranslate | ADD |
 | Worker 生产形态拆分 | `app/workers/` | 同一镜像多入口：api/ingestion/build/translation/maintenance | MODIFY |
 | Engineering API | `app/api/v2/`（新端点） | indexes 查询、build-profile 读写、builds 触发/查询/重试 | ADD |
@@ -112,56 +111,45 @@ approved_at:
 
 ## Change Classification
 
-### KEEP
-
-- RAGFlow 为唯一正式 Knowledge Runtime（§3.1）；`RagflowClient` 仅作 HTTP Transport，不塞产品逻辑（§14）
-- Job Leasing（PostgreSQL，`job_leasing.py`），不引入 Redis/RabbitMQ/Kafka/Celery（§56）
-- Active Version Security 清洗路径（`chunk_security_service.py`），§37 原则不变
-- Retrieval Audit 不存 Query 全文（§41）
-- Artifact Store local:// 实现（§53）
-- BuildProfile 解析与 activate 触发框架（`enqueue_after_activation`）
-- Agent 工具契约（`agent_tools.py` 四个工具的语义与鉴权模型）
-- Citation 解析的每次重新鉴权语义（`citation_service.py`）
-- KnowledgeBase 状态机与"仅 Core Chunk 失败才 degraded"语义（§79，已在 `build_orchestrator.py` 落地）
-
-### MODIFY
-
-- `build_executors.py#EXECUTORS`：注册 question/summary/graph 真实 executor（§19–§21）；chunk executor 增加 source_watermark 校验（§18）
-- `index_registry.py#INDEX_DESCRIPTORS`：扩展 provider/cost_class/core/trigger_policy/requires/fallback/experimental 字段（§15）；`SYSTEM_BUILD_PROFILES` 收敛为 §16 定义（Enhanced=Chunk+Question，Reasoning=Chunk+Question+Summary+Graph，outline/table 移出标准 Profile）
-- `app/models/index_state.py`：新增 `retrieval_status`（§23、§61）
-- `app/runtime/ragflow.py#RagflowRuntimeAdapter`：capabilities 由静态定义改为 probe 事实驱动；新增 §14 接口（get_runtime_version/probe_capabilities/configure_index/trigger_index_build/get_index_build_status/retrieve_index/validate_index_retrieval）
-- `capability_planner.py`：升级为 §26–§29 的 Effective Capability Plan（query_type 分类体系、KB 级 effective_indexes、禁用 stale/building/failed/unsupported/query-unavailable）；调用点从检索后前移至执行前（§27）
-- `retrieval_planner.py`：slice 模型扩展为 §30 的 Retrieval Execution Plan 维度
-- `retrieval_merge_service.py`：从 chunk 单路执行合并升级为多 index 执行 + fallback + 融合（§31–§33、§38–§39）
-- `chunk_security_service.py`：EvidenceItem 扩展为 §34 KnowledgeEvidence 字段集（freshness/lineage_status/source_refs 统一结构）
-- `retrieval_trace_service.py` / RetrievalAudit：扩展 §40 Trace v2 与 §41 审计字段（query_type/requested_indexes/effective_indexes/fallback_used）
-- `translation_service.py`：placeholder 执行替换为真实 Engine 调用（§49–§52）
-- `ingestion_worker.py`：单 loop 拆分为 §54–§58 的多入口 Worker 形态
-- `app/api/v2/`：按 §44 拆分为 assets/engineering/applications/retrieval/evidence/translations/runtime_admin
-- `metrics_service.py`：新增 §67 指标，遵守 §68 label 限制
-- `evaluation_service.py`：Evaluation Run 增加 effective_indexes 与 §77 评测维度
-- `app/main.py`：`/health/ready` 收敛为仅暴露 reachability（capability 明细移至 Admin API）
-
-### ADD
-
-- Runtime Capability Contract（`RuntimeIndexCapability`，§12）与 RuntimeBinding capability 快照字段（`last_capability_probe_at` / `last_capability_probe_error`，§61）
-- Runtime Capability Probe 能力（§13）
-- Question / Summary / Graph Executor（§19–§21，注册进现有 EXECUTORS Owner）
-- Engineering API（§45）与 Runtime Admin API（§46）
-- Evidence API 端点（§48，解析逻辑复用 citation 路径 Owner）
-- TranslationEngine 契约与 DocuTranslate 适配（§50）
-- build_worker / translation_worker / maintenance_worker 入口（§55、§57、§58）
-- MCP Transport（§59–§60，仅 transport，不复制工具语义）
-- §62 新增配置项（`TRANSLATION_WORKER_CONCURRENCY` 除外——复用现有 `KNOWLEDGE_TRANSLATION_WORKER_CONCURRENCY`）
-- §63 Feature Flag 体系、§69 Audit Events
-
-### REPLACE
-
-- `KnowledgeSet.retrieval_config` 的 Runtime Retrieval Authority 身份 → `RetrievalProfile`（§43）。字段本身保留为 v1 兼容，见 Compatibility Contract。
-
-### REMOVE
-
-- 本版本无生产路径物理删除。v1 API、facade 模块、`retrieval_config` 字段均进入 Compatibility Contract，按 Removal Condition 在后续版本移除。
+| Capability / Owner | Action | 说明 |
+|---|---|---|
+| RAGFlow 为唯一正式 Knowledge Runtime；`RagflowClient` 仅作 HTTP Transport，不塞产品逻辑 | KEEP | §3.1、§14 |
+| Job Leasing（PostgreSQL，`job_leasing.py`） | KEEP | §56；不引入 Redis/RabbitMQ/Kafka/Celery |
+| Active Version Security 清洗路径（`chunk_security_service.py`） | KEEP | §37 原则不变 |
+| Retrieval Audit 不存 Query 全文 | KEEP | §41 |
+| Artifact Store `local://` 实现 | KEEP | §53 |
+| BuildProfile 解析与 activate 触发框架（`enqueue_after_activation`） | KEEP | 已落地 |
+| Agent 工具契约（`agent_tools.py` 四个工具的语义与鉴权模型） | KEEP | §59–§60 仅新增 transport |
+| Citation 解析的每次重新鉴权语义（`citation_service.py`） | KEEP | §48 |
+| KnowledgeBase 状态机与"仅 Core Chunk 失败才 degraded"语义 | KEEP | §79，已在 `build_orchestrator.py` 落地 |
+| `build_executors.py#EXECUTORS` | MODIFY | 注册 question/summary/graph 真实 executor（§19–§21）；chunk executor 增加 source_watermark 校验（§18） |
+| `index_registry.py#INDEX_DESCRIPTORS` | MODIFY | 扩展 provider/cost_class/core/trigger_policy/requires/fallback/experimental 字段（§15）；`SYSTEM_BUILD_PROFILES` 收敛为 §16 定义（Enhanced=Chunk+Question，Reasoning=Chunk+Question+Summary+Graph，outline/table 移出标准 Profile） |
+| `app/models/index_state.py` | MODIFY | 新增 `retrieval_status`（§23、§61） |
+| `app/runtime/ragflow.py#RagflowRuntimeAdapter` | MODIFY | capabilities 由静态定义改为 probe 事实驱动；新增 §14 接口（get_runtime_version/probe_capabilities/configure_index/trigger_index_build/get_index_build_status/retrieve_index/validate_index_retrieval） |
+| `capability_planner.py` | MODIFY | 升级为 §26–§29 的 Effective Capability Plan（query_type 分类体系、KB 级 effective_indexes、禁用 stale/building/failed/unsupported/query-unavailable）；调用点从检索后前移至执行前（§27） |
+| `retrieval_planner.py` | MODIFY | slice 模型扩展为 §30 的 Retrieval Execution Plan 维度 |
+| `retrieval_merge_service.py` | MODIFY | 从 chunk 单路执行合并升级为多 index 执行 + fallback + 融合（§31–§33、§38–§39） |
+| `chunk_security_service.py` | MODIFY | EvidenceItem 扩展为 §34 KnowledgeEvidence 字段集（freshness/lineage_status/source_refs 统一结构） |
+| `retrieval_trace_service.py` / RetrievalAudit | MODIFY | 扩展 §40 Trace v2 与 §41 审计字段（query_type/requested_indexes/effective_indexes/fallback_used） |
+| `translation_service.py` | MODIFY | placeholder 执行替换为真实 Engine 调用（§49–§52） |
+| `ingestion_worker.py` | MODIFY | 单 loop 拆分为 §54–§58 的多入口 Worker 形态 |
+| `app/api/v2/` | MODIFY | 按 §44 拆分为 assets/engineering/applications/retrieval/evidence/translations/runtime_admin |
+| `metrics_service.py` | MODIFY | 新增 §67 指标，遵守 §68 label 限制 |
+| `evaluation_service.py` | MODIFY | Evaluation Run 增加 effective_indexes 与 §77 评测维度 |
+| `app/main.py` `/health/ready` | MODIFY | 收敛为仅暴露 reachability（capability 明细移至 Admin API） |
+| `knowledge_chat_citations` 持久化模型 | MODIFY | 扩展为通用 Knowledge Evidence 记录，支持非 chat 来源、自带 org 与签发主体范围（§48、§61） |
+| Runtime Capability Contract（`RuntimeIndexCapability`）与 probe 字段 | ADD | §12；`last_capability_probe_at` / `last_capability_probe_error`（§61） |
+| Runtime Capability Probe | ADD | §13；为 `RuntimeBinding.capabilities` 唯一写入方 |
+| Question / Summary / Graph Executor | ADD | §19–§21，注册进现有 EXECUTORS Owner |
+| Engineering API 与 Runtime Admin API | ADD | §45、§46 |
+| Evidence API 端点 | ADD | §48，解析逻辑复用 citation 路径 Owner |
+| TranslationEngine 契约与 DocuTranslate 适配 | ADD | §50 |
+| build_worker / translation_worker / maintenance_worker 入口 | ADD | §55、§57、§58 |
+| MCP Transport | ADD | §59–§60，仅 transport，不复制工具语义 |
+| §62 新增配置项 | ADD | `TRANSLATION_WORKER_CONCURRENCY` 不新增——复用现有 `KNOWLEDGE_TRANSLATION_WORKER_CONCURRENCY` |
+| §63 Feature Flag 体系、§69 Audit Events | ADD | flag 分工见 §63 |
+| Runtime Retrieval Authority：`KnowledgeSet.retrieval_config` → `RetrievalProfile` | REPLACE | §43；字段本身保留为 v1 兼容，见 Compatibility Contract 与 Replacement / Removal Matrix |
+| 生产路径物理删除 | REMOVE | 本版本无；v1 API、facade 模块、`retrieval_config` 字段均进入 Compatibility Contract，按 Removal Condition 在后续版本移除 |
 
 ---
 
@@ -200,11 +188,11 @@ approved_at:
 
 ## Acceptance Criteria
 
-以 §85–§87 为操作化验收标准，Grounding 校准后的关键门槛：
+以 §85–§87 为操作化验收标准，关键门槛：
 
 1. **真实闭环验收**（§85）：20+ 测试文档完成 SourceFile ACTIVE → Chunk/Question/Summary/Graph READY → Query → Capability Planner → 实际多索引检索 → Evidence → Citation 全链路；ORM 存在、API 200、Mock 测试通过均不构成完成。
 2. **核心验收 Case**（§86 Case 1–7）：Standard 只产 Chunk；Enhanced 的 Chunk/Question 均可实际检索；Reasoning 四类索引进入正确 IndexState；Graph build-ready/query-unsupported 时不进 effective plan；新版本激活后旧版本不可返回且 Secondary stale 并触发 rebuild；Graph 失败时 KB 仍 active 且 Chunk 检索正常；Translation 完成 PDF → MinerU → DocuTranslate → Ollama → Revision → Final Artifact。
-3. **Definition of Done**（§87 全部勾选项），其中 Grounding 校准点：
+3. **Definition of Done**（§87 全部勾选项），其中关键约束：
    - "MCP 通过 KnowledgeApplication 调用" 的验收同时覆盖 HTTP agent tools 与 MCP 两个 transport，且工具语义只有一份实现；
    - "Evidence 不再只有 Chunk" 的验收以 `chunk_security_service` 扩展后的统一 Evidence 模型为准；
    - Engineering API 验收包含 build-profile 读写与 builds 触发/查询/重试（§45）。
@@ -929,6 +917,8 @@ last_capability_probe_at
 last_capability_probe_error
 ```
 
+> **Lifecycle 约束**：v2.1 起 probe 是 `RuntimeBinding.capabilities` 的**唯一写入方**；`provision_binding` 不得再用静态 health 结果覆盖 capabilities，必须复用 probe 快照（防止 provision 用静态值回写真实探测结果）。
+
 ---
 
 # 14. RAGFlow Runtime Adapter
@@ -1114,7 +1104,7 @@ build_executors.py
 
 保留 Facade 兼容层。
 
-> Owner 校准（Grounding）：本次包重构是 Build 编排这一 Capability 的**同一 Owner 内部 MODIFY**，不产生第二 Production Owner。Facade 期间 `build_orchestrator.py` / `build_executors.py` 的 import 路径是生产兼容路径，受文首 Compatibility Contract 约束（Removal Version: v2.2）。新 Executor 必须注册进现有 `EXECUTORS` 注册表语义，禁止在新包内另建平行注册表。
+> **Owner 决定**：本次包重构是 Build 编排这一 Capability 的**同一 Owner 内部 MODIFY**，不产生第二 Production Owner。Facade 期间 `build_orchestrator.py` / `build_executors.py` 的 import 路径是生产兼容路径，受文首 Compatibility Contract 约束（Removal Version: v2.2）。新 Executor 必须注册进现有 `EXECUTORS` 注册表语义，禁止在新包内另建平行注册表。
 
 ---
 
@@ -1660,7 +1650,7 @@ retrieve_for_application()
 playground_retrieve()
 ```
 
-> Owner 校准（Grounding）：目标包内各模块与现有 Owner 的映射为——`access_planner` ↔ `permission_service.build_access_plan`（KEEP）；`capability_planner` ↔ 现有 `capability_planner.py`（MODIFY）；`execution_planner` / `runtime_slice_planner` ↔ 现有 `retrieval_planner.py` 的 slice 模型扩展（MODIFY，禁止新建平行 Planner）；`executor` / `fusion` ↔ 现有 `retrieval_merge_service.py`（MODIFY）；`security` ↔ 现有 `chunk_security_service.py`（MODIFY，Active Version Security 唯一 Owner）；`evidence` ↔ `chunk_security_service.EvidenceItem` 扩展（MODIFY）；`trace` ↔ 现有 `retrieval_trace_service.py`（MODIFY）。包落地是同一 Owner 的代码搬迁，Facade 兼容路径受 Compatibility Contract 约束。
+> **Owner 决定**：目标包内各模块与现有 Owner 的映射为——`access_planner` ↔ `permission_service.build_access_plan`（KEEP）；`capability_planner` ↔ 现有 `capability_planner.py`（MODIFY）；`execution_planner` / `runtime_slice_planner` ↔ 现有 `retrieval_planner.py` 的 slice 模型扩展（MODIFY，禁止新建平行 Planner）；`executor` / `fusion` ↔ 现有 `retrieval_merge_service.py`（MODIFY）；`security` ↔ 现有 `chunk_security_service.py`（MODIFY，Active Version Security 唯一 Owner）；`evidence` ↔ `chunk_security_service.EvidenceItem` 扩展（MODIFY）；`trace` ↔ 现有 `retrieval_trace_service.py`（MODIFY）。包落地是同一 Owner 的代码搬迁，Facade 兼容路径受 Compatibility Contract 约束。
 
 ---
 
@@ -2051,7 +2041,7 @@ v1 compatibility
 
 但 v2 API 不应再鼓励客户端直接修改。
 
-> Owner 校准（Grounding）：这是本版唯一的 REPLACE——Runtime Retrieval Authority 从 `KnowledgeSet.retrieval_config` 转移到 `RetrievalProfile`。字段保留为生产兼容路径，Current Consumer / Removal Condition / Removal Version 见文首 Compatibility Contract 与 Replacement / Removal Matrix。
+> **Owner 决定**：这是本版唯一的 REPLACE——Runtime Retrieval Authority 从 `KnowledgeSet.retrieval_config` 转移到 `RetrievalProfile`。字段保留为生产兼容路径，Current Consumer / Removal Condition / Removal Version 见文首 Compatibility Contract 与 Replacement / Removal Matrix。
 
 ---
 
@@ -2180,7 +2170,9 @@ POST /api/v2/runtime/capabilities/probe
 
 这种绕过 Knowledge Domain 的 API。
 
-> 边界校准（Grounding）：现有 `/health/ready`（`app/main.py`）无鉴权暴露 RAGFlow capabilities 明细。本节 Admin API 落地后，`/health/ready` 收敛为仅暴露 reachability 布尔值，capability 明细只走 Admin-only 端点。
+> **边界决定**：现有 `/health/ready`（`app/main.py`）无鉴权暴露 RAGFlow capabilities 明细。本节 Admin API 落地后，`/health/ready` 收敛为仅暴露 reachability 布尔值，capability 明细只走 Admin-only 端点。
+>
+> "Admin / Platform Operator" 的判定谓词冻结为现有身份模型：`KnowledgePrincipal.is_super_admin`（`app/schemas/principal.py`，已在 `permission_service.py` 普遍 enforcement）。不引入新的角色体系。
 
 ---
 
@@ -2243,7 +2235,13 @@ GET /api/v2/evidence/{evidence_id}
 永久拥有访问权限
 ```
 
-> Owner 校准（Grounding）：按 ID 解析 + 每次重新鉴权的生产 Owner 已存在——`citation_service.py#resolve_citation`（`app/api/citations.py` 与 agent tools 的 `knowledge.get_evidence` 均复用它）。本节 Evidence API 是该路径的扩展（MODIFY），禁止新建平行解析逻辑。本版必须冻结的架构决定：`evidence_id` 从当前的请求作用域 chunk id（不落库）升级为可解析身份——要么复用 ChatCitation 持久化模型，要么定义新的持久化 Evidence 身份；二选一在 Plan 前必须确定，但解析入口 Owner 不变。
+> **Owner 决定**：按 ID 解析 + 每次重新鉴权的生产 Owner 已存在——`citation_service.py#resolve_citation`（`app/api/citations.py` 与 agent tools 的 `knowledge.get_evidence` 均复用它）。本节 Evidence API 是该路径的扩展（MODIFY），禁止新建平行解析逻辑。
+
+**`evidence_id` 身份模型（架构决定）**：
+
+1. `evidence_id` 是**持久化身份**：检索管线在返回每条 Evidence 时签发并落库，跨会话可解析；请求作用域的 runtime chunk id 不再作为 `evidence_id` 对外暴露。
+2. 持久化载体：**扩展现有 ChatCitation 持久化模型**为通用 Knowledge Evidence 记录（chat 引用 = 带 message 关联的特化；非 chat 来源的 Evidence 不依赖 chat session 存在，记录自带 org 与签发主体范围）。归属 citation/evidence 解析 Owner，禁止新建平行解析存储。具体表结构与迁移属 Plan。
+3. 所有解析入口——v1 citations API、agent tools `knowledge.get_evidence`、本节 v2 Evidence API、后续 MCP `knowledge.get_evidence`——共用同一 resolve 路径，每次重新执行权限校验。
 
 ---
 
@@ -2522,7 +2520,7 @@ TRANSLATION_WORKER_CONCURRENCY
 
 v2.1 增加正式 MCP Transport。
 
-> Owner 校准（Grounding）：以下四个工具的语义与鉴权模型已存在生产 Owner——`app/api/agent_tools.py`（HTTP transport，member principal，剥离 runtime document_id）。MCP 是**新增 transport**，必须复用同一服务层（`retrieval_service` / `citation_service` / `source_file_service`），禁止在 MCP 层重写工具逻辑或放宽鉴权。HTTP 与 MCP 两个 transport 长期共存，均为正式路径，不构成 legacy 兼容关系。
+> **Owner 决定**：以下四个工具的语义与鉴权模型已存在生产 Owner——`app/api/agent_tools.py`（HTTP transport，member principal，剥离 runtime document_id）。MCP 是**新增 transport**，必须复用同一服务层（`retrieval_service` / `citation_service` / `source_file_service`），禁止在 MCP 层重写工具逻辑或放宽鉴权。HTTP 与 MCP 两个 transport 长期共存，均为正式路径，不构成 legacy 兼容关系。
 
 工具：
 
@@ -2586,6 +2584,8 @@ ACL
 Runtime
 ```
 
+> **身份模型**：MCP 调用携带与 HTTP agent tools 相同的 member principal（经 backend context 签发，`get_member_context`），最终 enforcement 为现有 `has_application_permission(member, app, use)`。禁止为 MCP 引入绕过 member principal 的 service-token 直连读取路径（与 `agent_tools.py` 现有约束一致）。
+
 ---
 
 # 61. Database Changes
@@ -2621,7 +2621,7 @@ last_capability_probe_at
 last_capability_probe_error
 ```
 
-> 校准结论（Grounding）：现有 `last_reconciled_at` / `last_error` 是 reconciliation 语义，与 capability probe 不同义，**无等价字段**，两个 probe 字段确认新增（随 Alembic 迁移）。
+（现有 `last_reconciled_at` / `last_error` 为 reconciliation 语义，与 capability probe 不同义。）
 
 ---
 
@@ -2634,6 +2634,12 @@ stage_results JSONB
 ```
 
 不新增大量 Stage Table。
+
+---
+
+### Evidence / Citation 持久化
+
+扩展 `knowledge_chat_citations` 持久化模型为通用 Knowledge Evidence 记录（身份模型见 §48 冻结决定）：支持非 chat 来源（retrieval / agent tools / MCP），记录自带 org 与签发主体范围，resolve 不依赖 chat session 存在。具体列与迁移属 Plan。
 
 ---
 
@@ -2684,6 +2690,8 @@ CapabilityPlanner
 ```
 
 确保可以快速回滚。
+
+> **Flag 分工**：现有 `KNOWLEDGE_V2_CAPABILITY_PLANNER_ENABLED`（`app/core/config.py`）保留为 **diagnostics 输出开关**（控制 plan 是否写入响应/审计）；`KNOWLEDGE_V2_MULTI_INDEX_RETRIEVAL_ENABLED` 控制**执行路径**（planner 是否驱动 retrieval）。两者独立：diagnostics 可先于执行路径灰度开启。
 
 ---
 
@@ -3495,6 +3503,8 @@ Profile = Standard
 
 ## Case 2 — Enhanced
 
+前提：Runtime 支持 Question 检索（`question_build` 与 `question_query` 均 supported）。
+
 ```text
 Profile = Enhanced
 ```
@@ -3507,6 +3517,8 @@ Question
 ```
 
 均可实际检索。
+
+若 Runtime 不支持 Question：正确行为为 `question=unsupported` 且不进入 effective plan（与 §11.2 原则一致），不属于本 Case 的通过条件。
 
 ---
 

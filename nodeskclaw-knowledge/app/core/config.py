@@ -4,6 +4,7 @@ from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+# @lat: [[knowledge#Feature Flags And Config]]
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
@@ -51,6 +52,11 @@ class Settings(BaseSettings):
     KNOWLEDGE_V2_APPLICATION_ENABLED: bool = False
     KNOWLEDGE_V2_CAPABILITY_PLANNER_ENABLED: bool = False
     KNOWLEDGE_V2_MULTI_INDEX_RETRIEVAL_ENABLED: bool = False
+    KNOWLEDGE_V2_QUESTION_INDEX_ENABLED: bool = False
+    KNOWLEDGE_V2_SUMMARY_INDEX_ENABLED: bool = False
+    KNOWLEDGE_V2_GRAPH_INDEX_ENABLED: bool = False
+    KNOWLEDGE_RUNTIME_CAPABILITY_PROBE_ENABLED: bool = True
+    KNOWLEDGE_RUNTIME_CAPABILITY_CACHE_SECONDS: int = 300
     KNOWLEDGE_TRANSLATION_ENABLED: bool = False
     KNOWLEDGE_TRANSLATION_ENGINE: str = "docutranslate"
     ARTIFACT_STORE_TYPE: str = "local"
