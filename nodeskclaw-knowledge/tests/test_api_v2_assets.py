@@ -92,6 +92,10 @@ async def test_create_set_v2_defaults_embedding(monkeypatch):
             "app.api.v2.assets.knowledge_set_service.list_set_items",
             new=AsyncMock(return_value=[]),
         ),
+        patch(
+            "app.api.v2.assets.retrieval_profile_service.get_active_profile",
+            new=AsyncMock(return_value=None),
+        ),
     ):
         result = await assets.create_knowledge_set_v2(
             KnowledgeSetV2Create(name="set-a"),

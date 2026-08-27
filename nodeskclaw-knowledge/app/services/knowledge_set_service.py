@@ -193,8 +193,16 @@ async def update_knowledge_set(
         row.visibility = visibility
         changes["visibility"] = visibility
     if retrieval_config is not None:
-        row.retrieval_config = retrieval_config
-        changes["retrieval_config"] = retrieval_config
+        from app.services import retrieval_profile_service
+
+        await retrieval_profile_service.sync_v1_retrieval_config_to_active_profile(
+            db,
+            row.id,
+            retrieval_config,
+            created_by_member_id=member.member_id,
+        )
+        row.retrieval_config = retrieval_profile_service.merge_profile_config(retrieval_config)
+        changes["retrieval_config"] = row.retrieval_config
     if changes:
         await write_audit(
             db,

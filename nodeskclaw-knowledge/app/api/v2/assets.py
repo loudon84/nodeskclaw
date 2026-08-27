@@ -23,9 +23,15 @@ from app.schemas.knowledge import (
     KnowledgeSetUpdate,
     KnowledgeSetV2Create,
     KnowledgeSetV2Out,
+    KnowledgeSetV2Update,
 )
 from app.schemas.principal import KnowledgePrincipal
-from app.services import knowledge_application_service, knowledge_base_service, knowledge_set_service
+from app.services import (
+    knowledge_application_service,
+    knowledge_base_service,
+    knowledge_set_service,
+    retrieval_profile_service,
+)
 
 router = APIRouter(tags=["v2-assets"])
 
@@ -89,11 +95,18 @@ async def _set_v2_out(db: AsyncSession, member: KnowledgePrincipal, row) -> Know
         status=row.status,
         acl_version=row.acl_version,
         visibility=row.visibility,
-        retrieval_config=row.retrieval_config,
+        retrieval_config=await _active_retrieval_config(db, row),
         usage_count=row.usage_count,
         last_used_at=row.last_used_at,
         knowledge_bases=bound,
     )
+
+
+async def _active_retrieval_config(db, row) -> dict | None:
+    profile = await retrieval_profile_service.get_active_profile(db, row.id)
+    if profile is not None:
+        return retrieval_profile_service.merge_profile_config(profile.config)
+    return row.retrieval_config
 
 
 @router.get("/knowledge-bases", response_model=ApiResponse[PageData[KnowledgeBaseV2Out]])
@@ -242,12 +255,11 @@ async def get_knowledge_set_v2(
 @router.patch("/knowledge-sets/{set_id}", response_model=ApiResponse[KnowledgeSetV2Out])
 async def patch_knowledge_set_v2(
     set_id: str,
-    body: KnowledgeSetUpdate,
+    body: KnowledgeSetV2Update,
     member: KnowledgePrincipal = Depends(get_member_context),
     db: AsyncSession = Depends(get_db),
 ):
     _require_api_v2()
-    retrieval_config = body.retrieval_config.model_dump() if body.retrieval_config else None
     row = await knowledge_set_service.update_knowledge_set(
         db,
         member,
@@ -256,7 +268,6 @@ async def patch_knowledge_set_v2(
         description=body.description,
         status=body.status,
         visibility=body.visibility.value if body.visibility is not None else None,
-        retrieval_config=retrieval_config,
     )
     return ApiResponse(data=await _set_v2_out(db, member, row))
 

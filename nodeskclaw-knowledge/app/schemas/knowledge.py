@@ -586,6 +586,13 @@ class KnowledgeSetV2Create(BaseModel):
     retrieval_config: RetrievalConfig | None = None
 
 
+class KnowledgeSetV2Update(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    status: str | None = None
+    visibility: Visibility | None = None
+
+
 class KnowledgeSetV2Out(BaseModel):
     id: str
     org_id: str

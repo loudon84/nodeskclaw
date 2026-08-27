@@ -190,7 +190,36 @@ async def publish(
     )
     await db.commit()
     await db.refresh(row)
+    get_result = db.get(KnowledgeSet, row.knowledge_set_id)
+    ks = await get_result if hasattr(get_result, "__await__") else get_result
+    if ks is not None and getattr(ks, "deleted_at", None) is None:
+        ks.retrieval_config = merge_profile_config(row.config)
     return row
+
+
+async def sync_v1_retrieval_config_to_active_profile(
+    db: AsyncSession,
+    knowledge_set_id: str,
+    config: dict[str, Any],
+    *,
+    created_by_member_id: str | None = None,
+) -> RetrievalProfile:
+    merged = merge_profile_config(config)
+    active = await get_active_profile(db, knowledge_set_id)
+    if active is None:
+        active = await seed_active_profile(
+            db,
+            knowledge_set_id=knowledge_set_id,
+            created_by_member_id=created_by_member_id or "",
+            config=merged,
+        )
+    else:
+        active.config = merged
+    ks = await db.get(KnowledgeSet, knowledge_set_id)
+    if ks is not None and ks.deleted_at is None:
+        ks.retrieval_config = merged
+    await db.flush()
+    return active
 
 
 async def rollback(
