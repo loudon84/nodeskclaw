@@ -20,9 +20,13 @@ approved_at:
 
 ## Grounding Summary
 
-**Mode**: `verify`
+**Mode**: `revision`
 
-输入 PRD 由外部分析（ChatGPT）基于源码检查产出，包含具体文件/符号级锚点。本轮对全部十条"核心差距"主张及关键 ADD 主张做了源码抽查，全部复现。
+本轮只关闭 Review Findings F1–F5。下方 verify 证据表为上一轮抽查结果，不重做 discovery。
+
+### 上一轮 verify 证据（保留）
+
+输入 PRD 由外部分析（ChatGPT）基于源码检查产出，包含具体文件/符号级锚点。verify 轮对全部十条"核心差距"主张及关键 ADD 主张做了源码抽查，全部复现。
 
 ### 验证结果
 
@@ -48,18 +52,33 @@ approved_at:
 3. **`nk_*` 标签注入的移除有真实消费者**：`app/services/chunk_security_service.py` 将 `nk_index_type`/`nk_evidence_type` 作为 override authority 消费。移除标签注入必须同步迁移该消费者，已纳入 Replacement / Removal Matrix。
 4. **`reconciliation_worker.py` 代码已存在但不在 Compose 拓扑中**：原 §72/73 分类修正为"Compose MODIFY + 已有 worker 代码 KEEP"，而非全新增。
 
+### Grounding Closure Table
+
+| Finding | Reproduced | Resolution | Evidence | Status |
+|---|---|---|---|---|
+| F1 现有 Runtime Facade 未入库 | YES | `RagflowRuntimeAdapter` 列为 RAGFlow runtime facade 唯一 Production Owner（MODIFY）。`client.py` 仅为 transport。`ragflow_contract.py` 是 Adapter 消费的合同模块，不是第二条 probe 入口。`configure_index` / `provision_binding` 不再是 parser_config 权威；对 RAGFlow 的 config apply 只由 `reconciliation_service` 调用 Adapter primitive | `app/runtime/ragflow.py#RagflowRuntimeAdapter`；`knowledge_base_service.create_knowledge_base` 走 `provision_binding`；`build_executors` 走 `configure_index`；`runtime_admin` 走 `probe_capabilities` | CLOSED |
+| F2 `expand_plan_for_indexes` 才是复制 Slice 的现有 Owner | YES | `retrieval_planner.build_retrieval_plan` = MODIFY（唯一 `RuntimeExecutionSlice` 发射 Owner）。`capability_planner` 只输出 per-KB mode/policy，不发射 slice。`expand_plan_for_indexes` = REPLACE+REMOVE。架构图删除独立 Runtime Feature Planner | `retrieval_planner.py#expand_plan_for_indexes`；`retrieval_service.retrieve` 调用链 `build_capability_plan` → `build_retrieval_plan` → `expand_plan_for_indexes` | CLOSED |
+| F3 聚合安全无最终 enforcement owner | YES | 最终 Owner = `retrieval_merge_service`：向 RAGFlow 发请求前按 slice `access_scope` 拒绝 dataset-level aggregate feature，不依赖 Planner 是否把 flag 设对。`aggregate_runtime_policy` 是该 Owner 执行的策略。`Adapter.retrieve_index` 限定为内部 artifact/probe，不是用户检索入口 | 用户检索入口（API v1/v2、playground、chat、evaluation、MCP/`agent_tools`）均汇入 `retrieval_service` → merge；`retrieve_index` 仅被 `validate_index_retrieval` 使用 | CLOSED |
+| F4 mode 标识冲突 | YES | 冻结唯一枚举 `RuntimeRetrievalMode`：`semantic` / `compiled_assisted` / `graph_assisted` / `toc_enhanced`。删除 `semantic_with_question_enrichment` 与作为独立请求 mode 的 `semantic_enriched`。Question enrichment 是 `semantic` slice 上的 `retrieval_features: [auto_questions]`，同一 KB 不得因此再发一次相同检索 | 原 §G 与 §K 标识不一致；Question 不改变 RAGFlow 请求参数 | CLOSED |
+| F5 Question READY 缺 Chunk read 合同 | YES | Adapter/Client Target 增加 Document Chunk 读取合同（观察 `questions` / `question_kwd` 或 runtime 等价字段）。无 enrichment 字段或 count=0 → Question 不得 READY。此为现有 Adapter/Client 的 MODIFY，不新建 Owner | 现有 `client.py` `/chunks` 仅 `parse_documents` / `stop_parsing`；无 chunk 字段读取 | CLOSED |
+
 ---
 
 ## Current Capability Inventory
 
 | Capability | Existing Owner | Current Behaviour | Evidence | Result |
 |---|---|---|---|---|
-| Runtime Capability Probe | `app/runtime/capabilities.py` | 按 reachable + 版本号 + 硬编码假设生成能力快照；Graph 固定 `retrieval_supported=false` | `capabilities.py#probe_index_capabilities` | PARTIAL → MODIFY |
-| RAGFlow Retrieval 调用 | `app/integrations/ragflow/client.py` | `retrieve()` 仅基础 chunk 参数，无 use_kg/toc/compilation/knn_* | `client.py#retrieve` | PARTIAL → MODIFY |
-| Multi-Index Retrieval 执行 | `app/services/retrieval_merge_service.py` | 每个 index slice 调同一 retrieval，本地注入 `nk_index_type`/`nk_evidence_type` 伪装 Evidence Type | `retrieval_merge_service.py#_tag_chunks_for_index` | CONFLICT → REPLACE |
-| Capability 聚合 | `app/services/retrieval_service.py` | 多 KB 的 binding.capabilities 与 IndexState 合并成全局 dict，丢失 per-KB 差异 | `retrieval_service.py`（merged_capabilities/update） | CONFLICT → REPLACE |
+| RAGFlow Runtime Facade | `app/runtime/ragflow.py#RagflowRuntimeAdapter` | 现有 probe/configure_index/provision_binding/retrieve_index 入口；probe 委托 `capabilities.py` 硬编码快照 | `ragflow.py#RagflowRuntimeAdapter` | PARTIAL → MODIFY |
+| Runtime Capability Snapshot | `app/runtime/capabilities.py` | 按 reachable + 版本号 + 硬编码假设生成能力快照；Graph 固定 `retrieval_supported=false` | `capabilities.py#probe_index_capabilities` | PARTIAL → MODIFY |
+| RAGFlow HTTP Transport | `app/integrations/ragflow/client.py` | `retrieve()` 仅基础 chunk 参数；`/chunks` 仅 parse/stop，无 chunk 字段读取；无 search/graph | `client.py#retrieve` | PARTIAL → MODIFY |
+| Access → Retrieval Slice | `app/services/retrieval_planner.py` | `build_retrieval_plan` 按 AccessPlan 生成 slice；`expand_plan_for_indexes` 按 index_type 复制相同 slice | `retrieval_planner.py#expand_plan_for_indexes` | PARTIAL → MODIFY（plan）+ REPLACE（expand） |
+| Multi-Index 标签伪装语义 | `app/services/retrieval_merge_service.py#_tag_chunks_for_index` | 每个 index slice 调同一 retrieval，本地注入 `nk_index_type`/`nk_evidence_type` | `retrieval_merge_service.py#_tag_chunks_for_index` | CONFLICT → REPLACE |
+| Retrieval 执行（Owner 保留） | `app/services/retrieval_merge_service.py` | 对 RAGFlow 发出用户检索请求；当前无 aggregate access_scope 门禁 | `retrieval_merge_service.py` | PARTIAL → MODIFY |
+| Capability 全局聚合语义 | `app/services/retrieval_service.py` | 多 KB 的 binding.capabilities 与 IndexState 合并成全局 dict | `retrieval_service.py`（merged_capabilities/update） | CONFLICT → REPLACE |
+| Retrieval 编排 | `app/services/retrieval_service.py` | 串联 capability_planner + retrieval_planner + merge；Owner 保留 | `retrieval_service.py#retrieve` | PARTIAL → MODIFY |
+| Capability mode 规划 | `app/services/capability_planner.py` | 输出 `effective_indexes[]`，不发射 per-KB ExecutionSlice | `capability_planner.py#build_capability_plan` | PARTIAL → MODIFY |
 | Build 完成判定 | `app/services/build_executors.py` | 仅轮询 Document run=DONE；仅取前 200 文档、只触发前 50 | `build_executors.py` | PARTIAL → MODIFY |
-| Dataset 生命周期写路径 | `app/services/knowledge_base_service.py` + `runtime_binding_service.py` | 业务 Service 直接 `ragflow.update_dataset()`；创建无幂等恢复 | `knowledge_base_service.py` | PARTIAL → MODIFY |
+| Dataset 生命周期写路径 | `app/services/knowledge_base_service.py` + `runtime_binding_service.py` | 业务 Service 直接 `ragflow.update_dataset()`；创建走 Adapter `provision_binding` | `knowledge_base_service.py` | PARTIAL → MODIFY |
 | Runtime Reconciliation | `app/services/reconciliation_service.py` | 已有 document supersede / delete retry / metadata drift / binding drift；无 config desired/observed reconcile | `reconciliation_service.py#run_reconciliation` | PARTIAL → MODIFY |
 | RuntimeBinding 模型 | `app/models/runtime_binding.py` | 仅 `runtime_config`/`capabilities`，无 desired/observed/revision/drift | `runtime_binding.py#KnowledgeRuntimeBinding` | PARTIAL → MODIFY |
 | Application Publish | `app/services/knowledge_application_service.py` | `publish_application` 仅置 status=active，无任何运行时检查 | `knowledge_application_service.py#publish_application` | PARTIAL → MODIFY |
@@ -67,24 +86,25 @@ approved_at:
 | Translation 状态 | `app/services/translation_service.py` | dummy `[page N]` source_text 被标 completed | `translation_service.py` | PARTIAL → MODIFY（仅状态定义） |
 | Worker 代码 | `app/workers/` | build/translation/maintenance/ingestion/connector/reconciliation worker 代码均已存在 | `app/workers/*.py` | EXISTS → KEEP |
 | Worker 生产拓扑 | 根 `docker-compose.yml` | 仅 `nodeskclaw-knowledge-worker`（ingestion --with-reconciliation） | `docker-compose.yml` | PARTIAL → MODIFY |
-| Knowledge Domain（KB/ACL/Source/Set/Profile/Binding/IndexState/BuildJob/Planner 框架/Evidence 持久化/Citation/Evaluation/MCP/Job Leasing） | 各 service | v2.0/v2.1 已稳定 | 原 PRD §3.1 | EXISTS → KEEP |
+| Knowledge Domain（KB/ACL/Source/Set/Profile/Binding/IndexState/BuildJob/Evidence 持久化/Citation/Evaluation/MCP/Job Leasing） | 各 service | v2.0/v2.1 已稳定；不含 retrieval_planner expand 语义 | 原 PRD §3.1 | EXISTS → KEEP |
 
 ## Target End-State Inventory
 
 | Capability | Target Owner | Target Behaviour |
 |---|---|---|
-| RAGFlow Contract Probe | `app/runtime/ragflow_contract.py`（ADD，唯一 contract probe owner）+ `capabilities.py`（MODIFY，消费 probe 结果） | L1 Transport / L2 Endpoint / L3 Feature 三层实测探测，产出 `RagflowCompatibilityProfile`；禁止版本号推断 |
-| RAGFlow Client | `client.py`（MODIFY） | `retrieve()` 增加 knn_top_k/knn_num_candidates/rerank_candidates_count/use_kg/toc_enhance/include_knowledge_compilation；新增 `search_dataset`、`get_dataset_graph` |
+| RAGFlow Runtime Facade | `RagflowRuntimeAdapter`（MODIFY，唯一 facade Owner） | 对外唯一 runtime 入口：probe、dataset/document primitive、feature retrieve、artifact probe（含 chunk 字段读取、dataset search、dataset graph）。`retrieve_index` 仅内部 probe，不作为用户检索 |
+| RAGFlow HTTP Transport | `client.py`（MODIFY） | 仅被 Adapter 调用。`retrieve()` 增加 knn_top_k/knn_num_candidates/rerank_candidates_count/use_kg/toc_enhance/include_knowledge_compilation；补齐 search/graph/chunk-read transport |
+| Contract Probe 模块 | `ragflow_contract.py`（ADD，非独立入口） | 定义 `RagflowCompatibilityProfile` 与 L1/L2/L3 探测语义；仅由 Adapter 消费。`capabilities.py` MODIFY 为 snapshot 形状，禁止版本号推断 |
 | Runtime Desired/Observed State | `runtime_binding.py`（MODIFY）+ `runtime_binding_service`（MODIFY） | Binding 持有 desired_config/observed_config/config_revision/observed_revision/drift_status/last_observed_at |
-| Runtime Config Authority | `RuntimeConfigCompiler`（ADD，唯一 authority） | 由 KB base config + BuildProfile + KnowledgeModel + CompatibilityProfile 生成 desired config；禁止任何 Executor/业务 Service 直接 patch parser_config |
-| Runtime Config Reconciliation | `reconciliation_service.py`（MODIFY） | Desired→Observed diff→apply→read-back；LOCAL KNOWLEDGE DOMAIN WINS；不自动重建丢失 Dataset |
+| Runtime Config Compile | `RuntimeConfigCompiler`（ADD，唯一 desired-config 生成权威） | 由 KB base config + BuildProfile + KnowledgeModel + CompatibilityProfile 生成 desired config；不直接写 RAGFlow |
+| Runtime Config Apply | `reconciliation_service.py`（MODIFY，唯一 apply Owner） | Desired→Observed diff→调用 Adapter primitive apply→read-back；LOCAL KNOWLEDGE DOMAIN WINS；不自动重建丢失 Dataset。Adapter `configure_index` 只允许被此 Owner 调用 |
 | Dataset 生命周期 | `runtime_binding_service.py`（MODIFY，唯一写 owner） | 幂等创建（`nk:<kb_id>:<name>` 稳定身份恢复）、统一更新入口、幂等删除（404=deleted，unknown→reconcile 确认） |
 | Active Runtime Document 集合 | `ActiveRuntimeDocumentResolver`（ADD，唯一 authority） | SourceFile.active_version_id → FileVersion.ragflow_document_id；Build 前验证 exists+enabled+metadata 一致；分页覆盖全部 ACTIVE 文档，去除 50/200 限制 |
-| Build 语义闭环 | `build_executors.py`（MODIFY）+ `build_orchestrator.py`（MODIFY） | Compile→Reconcile→Execute→Validate；Question 验证 question-enriched chunks；Summary 验证 RAPTOR artifact+lineage；Graph 验证 dataset graph 数据；KB 级 Advisory Lock 串行化 config mutation |
-| Per-KB Capability Matrix | `KnowledgeBaseExecutionCapability`（ADD）+ `capability_planner.py`（MODIFY） | 每 KB 独立计算 allowed/denied modes；Planner 输出 `RuntimeExecutionSlice[]` 而非 effective_indexes |
-| Runtime 执行 | `retrieval_merge_service.py`（REPLACE 核心语义） | 接受 `RuntimeExecutionSlice`（mode/use_kg/compilation/toc/fallback），按 mode 映射真实 RAGFlow 参数 |
-| Evidence 判定 | `RuntimeEvidenceNormalizer`（ADD）+ `chunk_security_service.py`（MODIFY） | Evidence Type 由 runtime 响应 marker+lineage 判定；正式类型 chunk/summary/graph_path；`citation_eligible` 需 source_refs 全部当前授权 |
-| 聚合安全门禁 | `aggregate_runtime_policy`（ADD，默认 full_access_only） | FILTERED_ACCESS 禁止 dataset graph/dataset summary；Graph 无 SourceRef 降为 GraphHint 只做 query expansion |
+| Build 语义闭环 | `build_executors.py`（MODIFY）+ `build_orchestrator.py`（MODIFY） | Compile→Reconcile（唯一 apply）→Execute→Validate；Question 验证依赖 Adapter chunk 字段读取；Summary/Graph 验证 artifact；KB 级 Advisory Lock 串行化 config mutation |
+| Per-KB mode 规划 | `capability_planner.py`（MODIFY） | 每 KB 计算 allowed/denied modes 与 retrieval_features；**不**发射 `RuntimeExecutionSlice` |
+| RuntimeExecutionSlice 发射 | `retrieval_planner.py`（MODIFY，唯一发射 Owner） | 消费 AccessPlan + per-KB mode policy，输出语义互异的 `RuntimeExecutionSlice[]`（含必填 `access_scope`）。删除 `expand_plan_for_indexes` |
+| Runtime 执行 + 聚合门禁 | `retrieval_merge_service.py`（MODIFY） | 接受 `RuntimeExecutionSlice`，按 mode 映射 RAGFlow 参数；**最终**按 `access_scope` 拒绝 dataset-level aggregate feature，即使 Planner 误开 flag |
+| Evidence 判定 | `RuntimeEvidenceNormalizer`（ADD）+ `chunk_security_service.py`（MODIFY） | Evidence Type 由 runtime 响应 marker+lineage 判定；正式类型 chunk/summary/graph_path；`citation_eligible` 由 Security Cleaner 在授权之后签发 |
 | Application Readiness | `ApplicationReadinessService`（ADD）+ publish gate（MODIFY） | publish 前验证 KnowledgeSet/KB binding/chunk/retrieval/profile；未就绪 409+diagnostics；新增 readiness API |
 | Worker 拓扑 | `docker-compose.yml`（MODIFY） | api/ingestion/build/maintenance/connector 五服务拆分；translation 可选 profile；统一 `x-knowledge-environment` anchor；worker heartbeat |
 | API v2 | `app/api/v2/`（MODIFY） | runtime diagnostics、reconcile、readiness、indexes 增强（build/retrieval status、coverage、validated_at）；v2.2 结束冻结为 copilot-knowledge 正式 contract |
@@ -93,29 +113,33 @@ approved_at:
 
 | 对象 | 分类 | 说明 |
 |---|---|---|
-| Knowledge Domain（KB/ACL/Source/Set/Profile/IndexState/BuildJob/Citation/Evaluation/MCP/Job Leasing） | KEEP | 不重做 |
+| Knowledge Domain（KB/ACL/Source/Set/Profile/IndexState/BuildJob/Citation/Evaluation/MCP/Job Leasing） | KEEP | 不重做；不含 `expand_plan_for_indexes` |
 | Worker 代码文件（build/translation/maintenance/ingestion/connector/reconciliation） | KEEP | 代码已存在，仅拓扑落地 |
-| `capabilities.py` | MODIFY | 从声明式改为消费 Contract Probe 结果 |
-| `client.py` | MODIFY | 参数补齐 + 两个新端点 |
+| `RagflowRuntimeAdapter` | MODIFY | 唯一 RAGFlow runtime facade；消费 contract probe；暴露 search/graph/chunk-read；`retrieve_index` 降为内部 probe |
+| `capabilities.py` | MODIFY | snapshot 形状；探测由 Adapter 经 contract 模块执行，禁止版本号推断 |
+| `client.py` | MODIFY | transport：参数补齐 + search/graph/chunk-read；仅被 Adapter 调用 |
 | `runtime_binding.py` 模型 | MODIFY | 新增 desired/observed/revision/drift 字段 |
 | `runtime_binding_service.py` | MODIFY | 收敛 Dataset 生命周期写入口 + 幂等恢复 |
-| `reconciliation_service.py` | MODIFY | 扩展 config desired/observed reconcile |
-| `knowledge_base_service.py` | MODIFY | 移除直接 `update_dataset` 调用，改走 binding service |
-| `build_executors.py` | MODIFY | 移除 parser_config 直改、50/200 限制；接入 Compiler/Reconcile/Resolver/artifact 验证 |
-| `capability_planner.py` | MODIFY | 输出 ExecutionSlice[] |
+| `reconciliation_service.py` | MODIFY | 唯一 RAGFlow config apply Owner |
+| `knowledge_base_service.py` | MODIFY | 移除直接 `update_dataset` / 直接 parser_config 权威 |
+| `build_executors.py` | MODIFY | 禁止自行 patch parser_config；走 Compile→Reconcile→Validate；Question 用 chunk-read |
+| `capability_planner.py` | MODIFY | 只输出 per-KB mode/policy/retrieval_features，不发射 slice |
+| `retrieval_planner.py` | MODIFY | 唯一 `RuntimeExecutionSlice` 发射 Owner；AccessPlan 必须写入 `access_scope` |
 | `knowledge_application_service.py` | MODIFY | publish 接入 Readiness Gate |
-| `chunk_security_service.py` | MODIFY | 停止消费 `nk_*` 标签，改为 Cleaner v2.2（Chunk/Summary/Graph） |
-| `retrieval_service.py` | MODIFY | 全局 capability 聚合改为 per-KB matrix |
+| `chunk_security_service.py` | MODIFY | 停止消费 `nk_*` 标签；签发 `citation_eligible` |
+| `retrieval_service.py` | MODIFY | 删除全局 capability 聚合；编排 planner → merge |
+| `retrieval_merge_service.py` | MODIFY | 接受 ExecutionSlice；最终 aggregate 门禁；删除标签注入权威 |
 | `translation_service.py` | MODIFY | 仅修正状态定义（dummy 不得标 completed） |
 | `docker-compose.yml` | MODIFY | Worker 拓扑拆分 + 统一 env anchor |
-| `ragflow_contract.py` / CompatibilityProfile | ADD | 唯一 contract probe owner |
-| `RuntimeConfigCompiler` | ADD | 唯一 desired config authority |
+| `ragflow_contract.py` / CompatibilityProfile | ADD | Adapter 消费的合同模块，不是独立 Production Owner |
+| `RuntimeConfigCompiler` | ADD | 唯一 desired config 生成权威；不写 RAGFlow |
 | `ActiveRuntimeDocumentResolver` | ADD | 唯一 active document authority |
 | `ApplicationReadinessService` | ADD | 唯一 readiness owner |
 | `RuntimeEvidenceNormalizer` | ADD | 唯一 evidence type 判定 owner |
 | readiness / reconcile / runtime diagnostics API | ADD | v2 contract 一部分 |
-| `_tag_chunks_for_index` 标签注入语义 | REPLACE | 由 RuntimeEvidenceNormalizer 替代（见 Removal Matrix） |
+| `_tag_chunks_for_index` 标签注入语义 | REPLACE | 由 RuntimeEvidenceNormalizer 替代 |
 | 全局 capability 聚合语义 | REPLACE | 由 per-KB matrix 替代 |
+| `expand_plan_for_indexes` 按 index 复制 Slice | REPLACE | 由 `retrieval_planner` 发射语义互异 ExecutionSlice 替代 |
 | 旧单 Worker compose 服务 | REMOVE | `nodeskclaw-knowledge-worker`（ingestion --with-reconciliation）由拆分拓扑替代 |
 
 ## Replacement / Removal Matrix
@@ -123,8 +147,9 @@ approved_at:
 | 旧生产路径 | 替代者 | REMOVE 内容 | Removal Condition |
 |---|---|---|---|
 | `retrieval_merge_service._tag_chunks_for_index` 按请求 index_type 注入 `nk_evidence_type` 作为 Evidence Type authority | `RuntimeEvidenceNormalizer` 按 runtime 响应判定 | 删除标签注入逻辑；`chunk_security_service` 停止将 `nk_*` 作为 override authority | Normalizer 上线且 Security Cleaner v2.2 全量消费新 Evidence；E2E 验证 Evidence Type 来源 |
-| `retrieval_service` 全局 `merged_capabilities`/`build_states` 聚合 | Per-KB `KnowledgeBaseExecutionCapability` matrix | 删除全局合并 dict 及基于其的 plan 输入 | Capability Planner v2.2 全量切换 ExecutionSlice 输出 |
-| Build Executor 直接 `parser_config.update` + `configure_index` | `RuntimeConfigCompiler` + 统一 Reconcile | 删除 Executor 内 parser_config 构造/patch 代码 | 所有 Executor 走 Compile→Reconcile→Execute→Validate 流程 |
+| `retrieval_service` 全局 `merged_capabilities`/`build_states` 聚合 | Per-KB `KnowledgeBaseExecutionCapability` matrix（由 capability_planner 计算） | 删除全局合并 dict 及基于其的 plan 输入 | capability_planner 全量切换 per-KB mode policy；retrieval_planner 发射 ExecutionSlice |
+| `retrieval_planner.expand_plan_for_indexes` 按 index_type 复制相同 Access Slice | `retrieval_planner` 按 mode 发射语义互异的 `RuntimeExecutionSlice` | 删除 `expand_plan_for_indexes` 及对 `effective_indexes[]` 的复制循环 | ExecutionSlice 路径全量切换；同一 KB 不再因 Question 重复相同 retrieve |
+| Build Executor / Adapter 直接 `parser_config.update` + `configure_index` 作为权威 | `RuntimeConfigCompiler` 生成 desired + `reconciliation_service` 唯一 apply（Adapter `configure_index` 仅为其 primitive） | 删除 Executor 与业务 Service 内 parser_config 构造/patch 权威；禁止 Adapter 被非 reconcile 路径当作 config 权威 | 所有 Build 走 Compile→Reconcile→Execute→Validate |
 | `knowledge_base_service` 直接 `ragflow.update_dataset` | `runtime_binding_service` 统一写入口 | 删除业务 Service 内直接 update 调用 | KB 更新 E2E 通过统一入口验证 |
 | `nodeskclaw-knowledge-worker`（ingestion --with-reconciliation） | 拆分后的五个 worker 服务 | 从 compose 移除旧服务定义 | 新拓扑全部启动且 heartbeat 可见 |
 
@@ -219,12 +244,15 @@ Knowledge Control Plane
   Runtime Desired State / Runtime Binding / Runtime Observed State / Runtime Reconciliation
         ↓
 Knowledge Execution Plane
-  Application Readiness / Per-KB Capability Matrix / Capability Planner
-  Runtime Feature Planner / Secure Retrieval / Evidence Normalizer / Evidence Fusion
+  Application Readiness / Per-KB Capability Matrix
+  Capability Planner (mode/policy only)
+  Retrieval Planner (unique RuntimeExecutionSlice emitter)
+  Secure Retrieval (merge_service = final aggregate gate)
+  Evidence Normalizer / Evidence Fusion
         ↓
-RAGFlow Adapter
-  Dataset & Document Mgmt / Base Retrieval / Auto Question Enrichment
-  Knowledge Compilation (RAPTOR) / Graph (use_kg) / ToC Enhancement / Runtime Artifact Probe
+RAGFlow Adapter (RagflowRuntimeAdapter, unique runtime facade)
+  Dataset & Document primitives / Base Retrieval / Artifact Probe
+  Auto Question / Knowledge Compilation / Graph / ToC  (via feature retrieve)
         ↓
 RAGFlow
 ```
@@ -235,7 +263,7 @@ RAGFlow
 
 ### A. RAGFlow Compatibility Contract（P0-A）
 
-新增 `app/runtime/ragflow_contract.py`，定义 `RagflowCompatibilityProfile`：
+新增 `app/runtime/ragflow_contract.py`，定义 `RagflowCompatibilityProfile`。该模块不是独立 Production Owner：探测由 `RagflowRuntimeAdapter` 执行并消费该合同。
 
 ```text
 runtime_version (参考用)
@@ -247,30 +275,38 @@ toc_enhance / metadata_filter
 knn_top_k / knn_num_candidates / rerank_candidates_count
 ```
 
-Capability 的 Authority 是 actual contract probe，不是版本号。
+Capability 的 Authority 是 Adapter 执行的 actual contract probe，不是版本号，也不是 `capabilities.py` 的硬编码表。
 
 **Probe 分级**：
 
 - L1 Transport：health、version（如可用）
-- L2 Endpoint：Dataset CRUD、Document list、Retrieval endpoint、Dataset search、Dataset graph
+- L2 Endpoint：Dataset CRUD、Document list、Retrieval endpoint、Dataset search、Dataset graph、Document Chunk read（question 字段可见性）
 - L3 Feature：`use_kg`/`include_knowledge_compilation`/`toc_enhance`/`knn_top_k`/`metadata_condition` 参数被真实接受
 
-不得通过版本号直接推断能力。版本变更时 runtime capability snapshot invalidated，重新 probe。禁止使用 `version in VALIDATED_VERSIONS → automatically enable capability`。
+不得通过版本号直接推断能力。版本变更时 runtime capability snapshot invalidated，重新 probe。禁止使用 `version in VALIDATED_VERSIONS → automatically enable capability`。`capabilities.py` 只保留 snapshot 形状，供 Binding 持久化。
 
-### B. RAGFlow Client Contract Upgrade
+### B. RAGFlow Adapter / Transport Contract Upgrade
 
-`RagflowClient.retrieve()` 增加 `knn_top_k`、`knn_num_candidates`、`rerank_candidates_count`、`use_kg`、`toc_enhance`、`include_knowledge_compilation`；保留 `top_k → knn_top_k` adapter alias（见 Compatibility Contract C2）。Knowledge Domain 不暴露 RAGFlow 参数名称。
+`RagflowRuntimeAdapter` 是 RAGFlow runtime facade 的唯一 Production Owner。`RagflowClient` 仅为 HTTP transport，只允许被 Adapter 调用。Knowledge Domain 不暴露 RAGFlow 参数名称。
 
-新增 Adapter 方法：
+Transport `retrieve()` 增加 `knn_top_k`、`knn_num_candidates`、`rerank_candidates_count`、`use_kg`、`toc_enhance`、`include_knowledge_compilation`；保留 `top_k → knn_top_k` alias（见 Compatibility Contract C2）。
 
-- `search_dataset(dataset_id, question, document_ids, use_kg, include_knowledge_compilation, ...)` → `POST /api/v1/datasets/{dataset_id}/search`；用于 contract test、Playground 单 KB 诊断、Graph/compilation feature 验证
+Adapter 对外（领域层）必须提供：
+
+- feature retrieve：按 ExecutionSlice 已通过门禁的参数检索（用户检索不走 `retrieve_index`）
+- `search_dataset(...)` → `POST /api/v1/datasets/{dataset_id}/search`；用于 contract test、Playground 单 KB 诊断、Graph/compilation feature 验证
 - `get_dataset_graph(dataset_id)` → `GET /api/v1/datasets/{dataset_id}/graph`；Graph Build READY 不再只看 Document DONE
+- **Document Chunk read**：读取 ACTIVE Document 的 chunk 列表/详情，shape 必须能观察 question enrichment 字段是否存在（`questions` / `question_kwd` 或 runtime 等价字段）。Reject：可见 enrichment count = 0 → Question Index 不得 READY
+
+`Adapter.retrieve_index` 限定为内部 artifact/probe 校验，不是用户检索入口，不得接受调用方传入的 dataset-level aggregate flag 作为用户查询旁路。
+
+`Adapter.configure_index` 与 `provision_binding` 中的 parser_config 写入不再是权威：对 RAGFlow Dataset config 的 apply 只能由 `reconciliation_service` 调用这些 primitive。
 
 ### C. Runtime Desired / Observed State
 
 `KnowledgeRuntimeBinding` 增加 `desired_config`/`observed_config` JSONB、`config_revision`/`observed_revision`、`drift_status`、`last_observed_at`。Drift Status 枚举：`unknown / in_sync / drifted / reconciling / error`。
 
-**Desired Config Authority**：由 KnowledgeBase base config + BuildProfile + KnowledgeModel + Runtime Compatibility Profile 经新增 `RuntimeConfigCompiler` 共同生成。禁止多个 Service 各自直接 patch parser_config；Build Executor 不再拥有 parser_config Authority。
+**Desired Config Authority**：由 KnowledgeBase base config + BuildProfile + KnowledgeModel + Runtime Compatibility Profile 经新增 `RuntimeConfigCompiler` 共同生成。Compiler 只生成 desired_config，不写 RAGFlow。禁止 Executor / 业务 Service / Adapter 被非 reconcile 路径直接 patch parser_config。Build Executor 不再拥有 parser_config Authority。
 
 Effective RAGFlow Config 示例：
 
@@ -286,7 +322,7 @@ Effective RAGFlow Config 示例：
 }
 ```
 
-**Reconciliation**（扩展 `reconciliation_service`）：Desired → GET Dataset → Observed → Normalize → Diff → Apply if required → Read back → in_sync。只允许 LOCAL KNOWLEDGE DOMAIN WINS；未经管理员允许不自动重建丢失 Dataset。
+**Reconciliation**（`reconciliation_service` = 唯一 apply Owner）：Desired → GET Dataset → Observed → Normalize → Diff → 调用 Adapter primitive Apply if required → Read back → in_sync。只允许 LOCAL KNOWLEDGE DOMAIN WINS；未经管理员允许不自动重建丢失 Dataset。
 
 ### D. Dataset 生命周期闭环（Owner: `runtime_binding_service`）
 
@@ -314,8 +350,10 @@ Build Job Output 标准化：`runtime_operation` / `runtime_config_revision` / `
 
 `auto_questions` 属于 Chunk Retrieval Enrichment，不是独立物理 Retriever。Product 保留 `IndexType.question` 表达 Build Capability，但 Runtime Execution 不再"复制 question slice → 调同一 retrieval → 改标签为 question"。
 
-- **Build READY**：eligible Active Documents > 0 且 question-enriched chunks > 0（通过 Chunk read API 检查 `questions`/`question_kwd`），输出 eligible_chunks/question_enriched_chunks/coverage_ratio
-- **Runtime Mapping**：Execution Mode = `semantic_with_question_enrichment`；执行 Base Retrieval 并标记 `retrieval_features: [auto_questions]`；Evidence 类型以实际 Runtime Result 为准，不得伪造 `evidence_type=question`
+- **Build READY**：eligible Active Documents > 0 且 question-enriched chunks > 0。验证必须通过 Adapter **Document Chunk read** 观察 `questions` / `question_kwd`（或 runtime 等价字段）。Document `run=DONE` 且 enrichment count=0 → **不得** READY。输出 eligible_chunks/question_enriched_chunks/coverage_ratio
+- **Runtime Mapping**：不引入独立 mode。Question 就绪且 policy 允许时，在该 KB 的 **`semantic` slice** 上标记 `retrieval_features: [auto_questions]`。同一 KB 不得因此再发射第二条相同 retrieve。Evidence 类型以实际 Runtime Result 为准，不得伪造 `evidence_type=question`
+
+禁止使用标识 `semantic_with_question_enrichment` 或把 `semantic_enriched` 当作独立请求 mode。
 
 ### H. RAPTOR / Summary Capability
 
@@ -332,7 +370,7 @@ Product Capability = `hierarchical_summary`；Runtime Mapping = RAGFlow RAPTOR /
 `retrieval_supported` 不再静态定义 false，由 runtime probe 决定。Execution Mode = `graph_assisted`（`use_kg=true`）。
 
 - **Build READY**：configured → task complete → GET dataset graph succeeds → entity/relation data exists；不得以普通 Chunk Count 作为 Graph READY
-- **Security Gate（默认）**：FULL_ACCESS KB slice → allow use_kg；FILTERED_ACCESS → disable use_kg → fallback chunk。原因：RAGFlow KG Retrieval 按 Dataset 执行，不能假定其内部遵守 SourceFile document scope
+- **Security Gate（默认）**：Planner 对 FILTERED_ACCESS 不得规划 `graph_assisted`。**最终 enforcement Owner 是 `retrieval_merge_service`**：若 slice `access_scope` 为 filtered，则在调用 RAGFlow 前强制 `use_kg=false` 并回退 `semantic`，即使 Planner 误设 `use_kg=true`。原因：RAGFlow KG Retrieval 按 Dataset 执行，不能假定其内部遵守 SourceFile document scope
 - **Evidence 策略**：可解析 SourceRef → `evidence_type=graph_path` + citation_eligible=true；无 SourceRef → 不得作为 Citation Evidence，降为 GraphHint 用于 query expansion / ranking assistance，最终由 Chunk Evidence 支撑回答
 
 ### J. ToC Enhancement
@@ -341,28 +379,30 @@ Product Capability = `hierarchical_summary`；Runtime Mapping = RAGFlow RAPTOR /
 
 ### K. Runtime Feature Model 与 Per-KB Matrix
 
+冻结唯一 mode 枚举（这是 Runtime Execution Contract 的身份字段）：
+
 ```python
 class RuntimeRetrievalMode(str, Enum):
     semantic = "semantic"
-    semantic_enriched = "semantic_enriched"
     compiled_assisted = "compiled_assisted"
     graph_assisted = "graph_assisted"
     toc_enhanced = "toc_enhanced"
 ```
 
-Logical Index 与 Runtime Mode 解耦。
+不存在 `semantic_enriched` / `semantic_with_question_enrichment`。Logical Index 与 Runtime Mode 解耦。
 
-新增 `KnowledgeBaseExecutionCapability`（knowledge_base_id / access_scope / runtime_binding_status / runtime_capabilities / index_states / retrieval_states / allowed_modes / denied_modes），每个 KB 独立计算。
+新增 `KnowledgeBaseExecutionCapability`（knowledge_base_id / access_scope / runtime_binding_status / runtime_capabilities / index_states / retrieval_states / allowed_modes / denied_modes），每个 KB 独立计算。由 `capability_planner` 计算 **mode/policy only**。
 
-Capability Planner v2.2 输入 Query/Application/RetrievalProfile/Per-KB Matrix/AccessPlan，输出 `RuntimeExecutionSlice[]`：
+**`RuntimeExecutionSlice` 的唯一发射 Owner 是 `retrieval_planner`**（MODIFY `build_retrieval_plan`）。它消费 AccessPlan + per-KB mode policy，输出：
 
 ```python
 class RuntimeExecutionSlice:
     knowledge_base_id: str
     dataset_id: str
     document_ids: list[str] | None
-    access_scope: str
+    access_scope: str  # 必填：full | filtered
     mode: RuntimeRetrievalMode
+    retrieval_features: list[str]  # e.g. ["auto_questions"]；不构成独立 slice
     use_kg: bool
     include_knowledge_compilation: bool
     toc_enhance: bool
@@ -371,9 +411,18 @@ class RuntimeExecutionSlice:
     fallback_mode: str
 ```
 
-**禁止"按 Index 复制相同 Slice"**：same KB → one or more semantically distinct RuntimeExecutionSlice。`retrieval_merge_service` 重构为接受 `RuntimeExecutionSlice` 而非仅 `RetrievalSlice.index_type`。
+`capability_planner` 不得发射 `RuntimeExecutionSlice` 或 `RetrievalSlice`。
 
-Runtime Request Mapping：semantic（use_kg=false, compilation=false）/ semantic_enriched（base + question enrichment 已构建）/ compiled_assisted（compilation=true）/ graph_assisted（use_kg=true）/ toc_enhanced（toc=true）。
+**禁止"按 Index 复制相同 Slice"**：删除 `expand_plan_for_indexes`。same KB → one or more semantically distinct RuntimeExecutionSlice（请求参数必须可区分；Question enrichment 不构成第二次 retrieve）。
+
+`retrieval_merge_service` 接受 `RuntimeExecutionSlice`，并执行最终 aggregate 门禁后再调 Adapter。
+
+Runtime Request Mapping：
+
+- `semantic`：use_kg=false，include_knowledge_compilation=false；可选 `retrieval_features=[auto_questions]`
+- `compiled_assisted`：include_knowledge_compilation=true
+- `graph_assisted`：use_kg=true
+- `toc_enhanced`：toc_enhance=true
 
 ### L. Application 层
 
@@ -418,15 +467,21 @@ KnowledgeApplication 不暴露 RAGFlow 参数。RetrievalProfile 增加 Product 
 
 正式 Evidence Type：`chunk` / `summary` / `graph_path`。Question 当前作为 retrieval enrichment，不强制产生 question Evidence；Runtime 未来返回独立 question hit 时再启用。
 
-新增 `citation_eligible`：source_refs 非空 AND 全部 refs 当前授权 AND 全部 refs active 或有合法历史引用路径。
+新增 `citation_eligible`：source_refs 非空 AND 全部 refs 当前授权 AND 全部 refs active 或有合法历史引用路径。**签发权威是 Security Cleaner**（授权完成之后）。Normalizer 只判定 Evidence Type 与 lineage，不签发 citation。
 
 Security Cleaner v2.2 统一支持 Chunk/Summary/Graph Evidence：Summary 检查全部 source refs；Graph 无法解析 source refs 时降为 GraphHint，不签发 Citation。
 
 ### O. 聚合安全策略
 
-新增 `aggregate_runtime_policy`，默认 `full_access_only`，适用于 Graph KG / Dataset-level RAPTOR / Dataset-level compiled artifacts。
+`aggregate_runtime_policy` 默认 `full_access_only`，适用于 Graph KG / Dataset-level RAPTOR / Dataset-level compiled artifacts。它是策略，不是 Production Owner。
 
-FILTERED_ACCESS 默认允许：semantic、question enrichment、document-scoped toc enhancement、file-level summary with verified lineage。默认禁止：dataset graph KG、dataset-level summary、untraceable aggregate artifact。
+**最终 enforcement Owner：`retrieval_merge_service`。** 在调用 Adapter/RAGFlow 之前：
+
+- 每个 slice 必须带 `access_scope`
+- `access_scope=filtered`：强制 `use_kg=false`；禁止 dataset-level `include_knowledge_compilation`；未通过 lineage 证明的 dataset summary 不得发出；即使 Planner 把对应 flag 设为 true 也拒绝并回退 `semantic`（或 policy 允许的 file-scoped fallback）
+- `access_scope=full`：允许按 Compatibility Profile 与 Application policy 使用 graph / compilation
+
+FILTERED_ACCESS 默认允许：semantic、question enrichment（`retrieval_features`）、document-scoped toc enhancement、file-level summary with verified lineage。默认禁止：dataset graph KG、dataset-level summary、untraceable aggregate artifact。
 
 ### P. Retrieval Trace v2.2
 
@@ -486,7 +541,7 @@ KNOWLEDGE_V2_AGGREGATE_FULL_ACCESS_ONLY=true
 
 | Phase | 内容 | Gate |
 |---|---|---|
-| A — RAGFlow Contract | Client 参数补齐、Dataset Search、Dataset Graph、Contract Probe、Compatibility Profile、真实 capability snapshot | contract test against target runtime passes |
+| A — RAGFlow Contract | Adapter facade 合同：retrieve 参数、Dataset Search、Dataset Graph、Document Chunk read、Contract Probe（Adapter 执行）、Compatibility Profile、真实 capability snapshot | contract test against target runtime passes |
 | B — Management Runtime Closure | Desired/Observed Config、RuntimeConfigCompiler、Dataset 生命周期 reconciliation、ActiveRuntimeDocumentResolver、Drift API | KB management E2E passes |
 | C — Build Semantic Closure | Question/RAPTOR/Graph artifact 验证、去除 50 限制、KB config lock | Enhanced / Reasoning Build E2E passes |
 | D — Application Execution Closure | Per-KB Matrix、RuntimeExecutionSlice、feature-specific retrieval、Graph/Summary Security Gate、Application Readiness | Application Runtime E2E passes |
@@ -510,14 +565,15 @@ KNOWLEDGE_V2_AGGREGATE_FULL_ACCESS_ONLY=true
 [ ] RAGFlow capability 由 Contract Probe 得到，不靠静态版本猜测
 [ ] ACTIVE FileVersion 是所有 Build 的 Runtime Document Authority
 [ ] Secondary Build 覆盖全部 ACTIVE Runtime Documents
-[ ] Question READY 有实际 question enrichment 证据
+[ ] Question READY 有实际 question enrichment 证据，且证据来自 Adapter Document Chunk read（`questions`/`question_kwd` 或等价字段）；Document DONE 且 enrichment count=0 不得 READY
 [ ] Summary READY 有实际 RAPTOR/compiled artifact 证据
 [ ] Graph READY 有实际 Dataset Graph 证据
 [ ] Graph Retrieval 真正使用 RAGFlow KG capability
 [ ] Summary Retrieval 真正使用 compilation capability
-[ ] Question 不再通过重复相同 Retrieval 伪造独立 Evidence
-[ ] Capability/Execution Plan 为 per-KB，而不是全局覆盖
+[ ] Question 不产生独立 RuntimeRetrievalMode，也不通过重复相同 Retrieval 伪造独立 Evidence；同一 KB 至多一条 semantic retrieve，question 仅作为 retrieval_features
+[ ] Capability/Execution Plan 为 per-KB；`RuntimeExecutionSlice` 仅由 retrieval_planner 发射；`expand_plan_for_indexes` 已移除
 [ ] FILTERED_ACCESS 不允许不安全 Dataset Graph 聚合检索（Application Retrieval E2E：relationship query + FILTERED_ACCESS → graph disabled → semantic fallback，必过安全 Case）
+[ ] 即使 ExecutionSlice 误带 use_kg 或 dataset-level compilation，retrieval_merge_service 在 FILTERED_ACCESS 下仍拒绝向 RAGFlow 发出对应参数
 [ ] Dataset Summary 不允许绕过文件 ACL
 [ ] Evidence Type 由 Runtime Result 判定
 [ ] 所有 Citation Eligible Evidence 均有 SourceRef
@@ -535,10 +591,14 @@ KNOWLEDGE_V2_AGGREGATE_FULL_ACCESS_ONLY=true
 ## Source Anchors
 
 ```text
+nodeskclaw-knowledge/app/runtime/ragflow.py#RagflowRuntimeAdapter
 nodeskclaw-knowledge/app/runtime/capabilities.py#probe_index_capabilities
 nodeskclaw-knowledge/app/integrations/ragflow/client.py#retrieve
+nodeskclaw-knowledge/app/services/retrieval_planner.py#build_retrieval_plan
+nodeskclaw-knowledge/app/services/retrieval_planner.py#expand_plan_for_indexes
 nodeskclaw-knowledge/app/services/retrieval_merge_service.py#_tag_chunks_for_index
-nodeskclaw-knowledge/app/services/retrieval_service.py
+nodeskclaw-knowledge/app/services/retrieval_service.py#retrieve
+nodeskclaw-knowledge/app/services/capability_planner.py#build_capability_plan
 nodeskclaw-knowledge/app/services/build_executors.py
 nodeskclaw-knowledge/app/services/knowledge_base_service.py
 nodeskclaw-knowledge/app/services/runtime_binding_service.py
@@ -546,7 +606,6 @@ nodeskclaw-knowledge/app/services/reconciliation_service.py#run_reconciliation
 nodeskclaw-knowledge/app/services/knowledge_application_service.py#publish_application
 nodeskclaw-knowledge/app/services/chunk_security_service.py
 nodeskclaw-knowledge/app/services/translation_service.py
-nodeskclaw-knowledge/app/services/capability_planner.py
 nodeskclaw-knowledge/app/models/runtime_binding.py#KnowledgeRuntimeBinding
 docker-compose.yml
 ```
