@@ -80,6 +80,18 @@ async def test_execute_rest_connector_blocks_ssrf():
         async for _ in execute_connector_run(tool_name="ssrf_attempt", arguments={}, snapshot=snapshot):
             pass
 
+    # Test .internal domain blocking
+    snapshot_internal = {
+        "runtime_policy": {
+            "connector_kind": "rest",
+            "connector_config": {"url": "http://metadata.google.internal/computeMetadata/v1/"},
+        }
+    }
+    with pytest.raises(RuntimeError, match="SSRF blocked"):
+        async for _ in execute_connector_run(tool_name="ssrf_internal", arguments={}, snapshot=snapshot_internal):
+            pass
+
+
 
 @pytest.mark.asyncio
 async def test_execute_db_connector_rejects_non_select():

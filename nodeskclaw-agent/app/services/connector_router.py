@@ -16,17 +16,22 @@ READ_ONLY_SQL_RE = re.compile(r"^\s*(SELECT|WITH)\b", re.IGNORECASE)
 
 
 def _validate_ssrf(url_str: str) -> None:
-    """Validate that the target URL does not target AWS/cloud metadata or internal loops unless explicitly configured."""
+    """Validate that the target URL does not target AWS/cloud metadata or internal link-local addresses."""
     parsed = urlparse(url_str)
     host = parsed.hostname or ""
     if not host:
         raise RuntimeError("Invalid URL: missing host")
-    if host.lower() in ("169.254.169.254", "metadata.google.internal", "instance-data"):
-        raise RuntimeError("SSRF blocked: request to cloud metadata service is forbidden")
+    low_host = host.lower()
+    if (
+        low_host in ("169.254.169.254", "metadata.google.internal", "instance-data")
+        or low_host.endswith(".internal")
+        or low_host.endswith(".local")
+    ):
+        raise RuntimeError("SSRF blocked: request to cloud metadata/internal host is forbidden")
     try:
         ip = ipaddress.ip_address(host)
-        if ip.is_link_local:
-            raise RuntimeError("SSRF blocked: link-local addresses are forbidden")
+        if ip.is_link_local or ip.is_multicast or ip.is_unspecified or ip.is_reserved:
+            raise RuntimeError("SSRF blocked: forbidden IP range")
     except ValueError:
         pass
 
