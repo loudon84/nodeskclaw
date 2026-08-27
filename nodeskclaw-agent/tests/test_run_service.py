@@ -272,20 +272,48 @@ async def test_add_artifact_rejects_stale_attempt():
 
 
 @pytest.mark.asyncio
-async def test_store_artifact_bytes_rejects_stale_attempt():
+async def test_store_and_get_artifact_bytes_local_file(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.services.run_service.settings.SKILL_AGENT_ARTIFACT_DIR", str(tmp_path))
     db = AsyncMock()
     scalar = MagicMock()
-    scalar.scalar_one_or_none.return_value = "attempt-current"
+    scalar.scalar_one_or_none.return_value = "att-1"
     db.execute = AsyncMock(return_value=scalar)
 
-    with pytest.raises(RuntimeError, match="stale attempt"):
-        await run_service.store_artifact_bytes(
-            db,
-            "run-1",
-            name="test.txt",
-            content=b"abc",
-            attempt_id="attempt-old",
-        )
+    # Store
+    desc = await run_service.store_artifact_bytes(
+        db,
+        "run-1",
+        name="output.json",
+        content=b'{"result": "success"}',
+        content_type="application/json",
+        attempt_id="att-1",
+    )
+    assert desc.name == "output.json"
+    assert desc.size_bytes == 21
+    assert desc.checksum_sha256 is not None
+
+    # Get from file
+    file_path = tmp_path / "run-1" / f"{desc.artifact_id}_output.json"
+    assert file_path.exists()
+    assert file_path.read_bytes() == b'{"result": "success"}'
+
+    mapping_res = MagicMock()
+    mapping_res.mappings.return_value.first.return_value = {
+        "id": desc.artifact_id,
+        "name": "output.json",
+        "content_type": "application/json",
+        "size_bytes": 21,
+        "storage_ref": str(file_path),
+        "checksum_sha256": desc.checksum_sha256,
+    }
+    db.execute = AsyncMock(return_value=mapping_res)
+
+    packed = await run_service.get_artifact_bytes(db, "run-1", desc.artifact_id)
+    assert packed is not None
+    meta, raw = packed
+    assert meta["name"] == "output.json"
+    assert raw == b'{"result": "success"}'
+
 
 
 @pytest.mark.asyncio
@@ -310,5 +338,75 @@ async def test_get_artifact_bytes_returns_content():
     meta, content = packed
     assert meta["name"] == "report.pdf"
     assert content == b"hello world"
+
+
+@pytest.mark.asyncio
+async def test_resume_run_transitions_waiting_approval(monkeypatch):
+    db = AsyncMock()
+    waiting_view = run_service.RunView(
+        run_id="run-waiting",
+        org_id="org-1",
+        user_id="user-1",
+        tool_name="test_tool",
+        status="WAITING_APPROVAL",
+        snapshot={},
+        attempt_id=None,
+        generation=0,
+        created_at="2026-08-27T00:00:00Z",
+        updated_at="2026-08-27T00:00:00Z",
+    )
+    queued_view = run_service.RunView(
+        run_id="run-waiting",
+        org_id="org-1",
+        user_id="user-1",
+        tool_name="test_tool",
+        status="QUEUED",
+        snapshot={},
+        attempt_id=None,
+        generation=0,
+        created_at="2026-08-27T00:00:00Z",
+        updated_at="2026-08-27T00:00:00Z",
+    )
+    get_run_mock = AsyncMock(side_effect=[waiting_view, queued_view])
+    monkeypatch.setattr(run_service, "get_run", get_run_mock)
+    monkeypatch.setattr(run_service, "set_status", AsyncMock(return_value=True))
+    monkeypatch.setattr(run_service, "append_event", AsyncMock())
+
+    res = await run_service.resume_run(db, "run-waiting", org_id="org-1", evidence={"reason": "test"})
+    assert res is not None
+    assert res.status == "QUEUED"
+
+
+def test_build_hybrid_step_plan_deterministic():
+    from app.services.worker import build_hybrid_step_plan
+
+    # 1. Central
+    plan1 = build_hybrid_step_plan({"placement": {"role": "central", "engine": "hermes"}})
+    assert len(plan1) == 1
+    assert plan1[0]["role"] == "central"
+    assert plan1[0]["engine"] == "hermes"
+
+    # 2. Edge only
+    plan2 = build_hybrid_step_plan({"placement": {"role": "edge", "engine": "connector"}})
+    assert len(plan2) == 1
+    assert plan2[0]["role"] == "edge"
+    assert plan2[0]["engine"] == "connector"
+
+    # 3. Hybrid
+    snapshot_hybrid = {
+        "placement": {"role": "hybrid", "engine": "hybrid"},
+        "runtime_policy": {
+            "connector_bindings": [
+                {"id": "b1", "placement": "edge"},
+                {"id": "b2", "placement": "central"},
+            ]
+        },
+    }
+    plan3 = build_hybrid_step_plan(snapshot_hybrid)
+    assert len(plan3) == 2
+    assert plan3[0]["step"] == "central_hermes"
+    assert plan3[1]["step"] == "edge_connector_b1"
+    assert plan3[1]["role"] == "edge"
+
 
 

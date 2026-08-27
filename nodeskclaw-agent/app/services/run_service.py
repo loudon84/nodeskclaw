@@ -449,6 +449,29 @@ async def set_status(
     return (rowcount or 0) > 0
 
 
+async def resume_run(
+    db: AsyncSession,
+    run_id: str,
+    *,
+    org_id: str,
+    evidence: dict[str, Any] | None = None,
+) -> RunView | None:
+    run = await get_run(db, run_id, org_id=org_id)
+    if not run:
+        return None
+
+    if run.status != "WAITING_APPROVAL":
+        return run
+
+    evidence_dict = evidence or {}
+    evidence_payload = {"status": "RESUMING", "evidence": evidence_dict}
+    await set_status(db, run_id, "RESUMING", expected_status=["WAITING_APPROVAL"])
+    await append_event(db, run_id, "run.resuming", evidence_payload)
+    await set_status(db, run_id, "QUEUED", expected_status=["RESUMING"])
+    await append_event(db, run_id, "run.queued", {"status": "QUEUED"})
+    return await get_run(db, run_id, org_id=org_id)
+
+
 async def approve_run(
     db: AsyncSession,
     run_id: str,

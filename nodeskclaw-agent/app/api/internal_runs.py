@@ -199,7 +199,7 @@ async def resume_internal_run(
     if not run:
         raise HTTPException(status_code=404, detail="run not found")
     evidence = body.get("evidence") if body else None
-    res = await run_service.approve_run(db, run_id, evidence=evidence, org_id=x_exec_org_id)
+    res = await run_service.resume_run(db, run_id, evidence=evidence, org_id=x_exec_org_id)
     if not res:
         raise HTTPException(status_code=404, detail="run not found")
     return MutationResponse(
