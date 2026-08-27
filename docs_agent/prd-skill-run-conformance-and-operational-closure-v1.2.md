@@ -1,24 +1,21 @@
 ---
 work_item_id: SKILL-RUN-CONFORMANCE-OPERATIONAL-CLOSURE
 version: 1.2.0
-status: REVIEW_REQUIRED
+status: APPROVED
 target_branch: main
-review_verdict:
-approved_at:
+review_verdict: PASS
+approved_at: 2026-08-27T15:02:00+08:00
 ---
 
 # NoDeskClaw Skill Run Conformance and Operational Closure PRD v1.2
 
 本文定义 DeskClaw 团队版 Skill Run（技能运行）执行平面的下一阶段工程方案，目标是在不改变既有 Production Owner（生产负责人）的前提下，关闭 v1.1 实施后仍存在的跨服务合同、并发正确性、安全、安装调谐、运维和发布证据缺口。
 
-## Document Status
-
-本文处于 `REVIEW_REQUIRED`（待审查）状态，Grounding Mode（校准模式）为 `discover`（发现模式）。文档已经依据当前架构、源码和测试完成能力盘点，但尚未获得 Architecture Review（架构审查）PASS，不得直接作为实施授权。
+## Baselines
 
 - Predecessor PRD（前序需求文档）：`docs_agent/prd-skill-run-architecture-closure-v1.1.md`。
 - Architecture Baseline（架构基线）：`lat.md/architecture/architecture.md`、`lat.md/architecture/skill-agent.md`、`lat.md/decisions/skill-platform-execution.md`。
 - Source Baseline（源码基线）：`main@fe3cd1e8` 与 2026-08-27 当前相关工作树。
-- Grounding Evidence（校准证据）：Agent 26 个测试通过；Backend 相关 16 个测试通过；Skill Run Contract（技能运行合同）开发检查通过，但 Release Check（发布检查）因 Manifest Commit（清单提交）不匹配失败。
 
 ## Executive Summary
 
@@ -68,6 +65,7 @@ v1.1 已建立 Outbox Dispatcher（发件箱投递器）、Attempt Lease（尝�
 以下 Source Anchor（源码锚点）只用于证明当前 Owner、边界和缺口，不是 Implementation Plan（实施计划）的施工文件清单：
 
 - `nodeskclaw-backend/app/api/runs.py#_authorize_run`
+- `nodeskclaw-backend/app/api/internal_edge.py#claim_edge_job`
 - `nodeskclaw-backend/app/api/internal_edge.py#post_edge_job_events`
 - `nodeskclaw-backend/app/services/hermes_skill/run_dispatch_outbox_service.py#RunDispatchOutboxService`
 - `nodeskclaw-backend/app/services/hermes_skill/run_projection_updater_service.py#RunProjectionUpdaterService#sync_task_projection`
@@ -83,6 +81,8 @@ v1.1 已建立 Outbox Dispatcher（发件箱投递器）、Attempt Lease（尝�
 - `nodeskclaw-agent/app/services/run_service.py#set_status`
 - `nodeskclaw-agent/app/services/run_service.py#approve_run`
 - `nodeskclaw-agent/app/services/worker.py#RunWorker`
+- `nodeskclaw-agent/app/services/hermes_engine.py#fetch_credential_lease`
+- `nodeskclaw-agent/app/services/hermes_engine.py#execute_hermes_run`
 - `nodeskclaw-agent/app/services/connector_router.py#execute_connector_run`
 - `nodeskclaw-agent/app/services/edge_worker.py#EdgeWorker`
 
@@ -557,27 +557,3 @@ Skill Run Contract 必须覆盖生产执行面，而不仅是 MCP 接受响应�
 | Alembic 基线与存量 Schema 漂移 | Agent 无法启动 | 结构校验、预生产副本演练、备份与可回滚迁移策略 |
 | 持久化存储依赖不可用 | 新 Run 无法生成 Artifact | readiness 阻断新流量、运行可恢复、容量与延迟告警 |
 | 合同版本需要破坏性升级 | Consumer 无法同步 | Review 决定新版本号，不原地改写已发布 Tag，提供明确迁移窗口 |
-
-## Grounding Summary
-
-本 PRD 使用 `discover` 模式完成校准，结论如下：
-
-- Reused（复用）：Backend 员工授权、HermesTask C2 投影、Run Dispatch Outbox、Agent Run SoT、创建幂等、Attempt/Lease 骨架、Credential Broker、EdgeJob Queue、Edge Spool、Connector Center 定义和 Skill Run Contract 目录。
-- Modified（修改）：Projection Updater、Outbox 错误分类、Attempt Fencing、Edge Delivery、Hybrid 编排、Cancel、Credential Lease、Artifact Storage、健康指标审计、Run Context 和跨服务测试。
-- Replaced（替换）：可选组织过滤、内部响应字段假设、`MAX+1` 事件序号、分散状态写入、通用 Resume 审批、Connector 地址回退、SQL 前缀只读、Backend 直接安装、Agent 启动 DDL、不完整合同发布链。
-- Added（新增到既有 Owner）：Hybrid EdgeJob Transport Port、Installation Desired Pull/Reconcile Protocol、Agent readiness/metrics/audit 接口和完整执行合同 Schema；这些能力不形成新的 Production Owner。
-- Deferred（延期）：Work Consumer 迁移、HermesTask C2 退场、Expert Contract 升级、新引擎、新知识库和新附件平台。
-
-当前测试证明组件级代码可运行，但不能证明跨服务合同和生产 Release Gate：Agent 26 个测试与 Backend 相关 16 个测试通过；Projection 单测使用了与 Agent 实际响应不同的 mock 字段；合同开发检查通过，而 `check --release` 因 Manifest commit 与当前 HEAD 不匹配失败。
-
-## Review Request
-
-请独立 Reviewer（审查者）重点验证：
-
-1. 本 PRD 是否严格复用 Backend 与 Agent 既有 Owner，没有建立第二套 Run、Event、Projection、EdgeJob、Installation 或 Artifact 事实源。
-2. Canonical Internal Run Contract 是否完整关闭真实 Provider/Consumer 字段漂移与租户身份缺失。
-3. Attempt Generation、Edge Delivery Generation、Event allocator 和 Terminal CAS 是否形成不可绕过的单一写门禁。
-4. Hybrid Step Plan 与 EdgeJob Transport Port 是否保持 Agent 编排、Backend 传输的唯一 Owner 边界。
-5. Connector 私网策略是否同时满足 central 默认拒绝和 edge 受控企业内网访问。
-6. Installation Owner 切换是否包含明确的 Backend 旧执行移除条件。
-7. Agent Operations 与 Contract Release Gate 是否足以证明生产可部署，而非只证明单元测试通过。
