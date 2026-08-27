@@ -58,6 +58,36 @@ async def test_append_event_source_dedup():
     assert res.source_event_id == "src-evt-1"
 
 
+@pytest.mark.asyncio
+async def test_append_event_source_idempotency_conflict_raises():
+    db = AsyncMock()
+    existing_row = {
+        "id": "evt-existing",
+        "run_id": "run-1",
+        "attempt_id": "att-1",
+        "event_type": "run.progress",
+        "event_seq": 2,
+        "source": "edge",
+        "source_event_id": "src-evt-1",
+        "payload": {"step": "1", "data": "old"},
+        "created_at": None,
+    }
+    mapping_res = MagicMock()
+    mapping_res.mappings.return_value.first.return_value = existing_row
+    db.execute = AsyncMock(return_value=mapping_res)
+
+    with pytest.raises(RuntimeError, match="idempotency conflict"):
+        await run_service.append_event(
+            db,
+            "run-1",
+            "run.progress",
+            {"step": "1", "data": "different"},
+            source="edge",
+            source_event_id="src-evt-1",
+        )
+
+
+
 def test_build_snapshot_uses_release_fields():
     req = CreateRunRequest(
         run_id="run-1",

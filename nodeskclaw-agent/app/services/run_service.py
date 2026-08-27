@@ -243,6 +243,9 @@ async def append_event(
         if current and current != attempt_id:
             raise RuntimeError("stale attempt cannot write events")
 
+    payload = payload or {}
+    now = _utcnow()
+
     # Idempotency check if source_event_id provided
     if source_event_id:
         existing_event = (
@@ -259,6 +262,11 @@ async def append_event(
             )
         ).mappings().first()
         if existing_event:
+            exist_payload = existing_event["payload"] or {}
+            exist_digest = hashlib.sha256(json.dumps(exist_payload, sort_keys=True, default=str).encode()).hexdigest()
+            new_digest = hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()
+            if exist_digest != new_digest:
+                raise RuntimeError("idempotency conflict: source_event_id payload mismatch")
             return RunEventView(
                 event_id=existing_event["id"],
                 run_id=existing_event["run_id"],
@@ -267,50 +275,51 @@ async def append_event(
                 source=existing_event["source"],
                 source_event_id=existing_event["source_event_id"],
                 timestamp=_iso(existing_event["created_at"]),
-                payload=existing_event["payload"] or {},
+                payload=exist_payload,
             )
 
     event_id = str(uuid.uuid4())
-    payload = payload or {}
-    now = _utcnow()
 
-    # Atomic event sequencing via insert from subquery
-    row = (
+    # Per-run atomic event sequence allocator via UPDATE runs ... RETURNING next_event_seq
+    seq_row = (
         await db.execute(
             text(
                 f"""
-                INSERT INTO "{SCHEMA}".run_events (
-                    id, run_id, attempt_id, event_type, event_seq, source, source_event_id, payload, created_at
-                )
-                SELECT
-                    :id,
-                    :run_id,
-                    :attempt_id,
-                    :event_type,
-                    COALESCE(MAX(event_seq), 0) + 1,
-                    :source,
-                    :source_event_id,
-                    CAST(:payload AS jsonb),
-                    :created_at
-                FROM "{SCHEMA}".run_events
-                WHERE run_id = :run_id
-                RETURNING event_seq
+                UPDATE "{SCHEMA}".runs
+                SET next_event_seq = COALESCE(next_event_seq, 0) + 1,
+                    updated_at = :now
+                WHERE id = :run_id
+                RETURNING next_event_seq
                 """
             ),
-            {
-                "id": event_id,
-                "run_id": run_id,
-                "attempt_id": attempt_id,
-                "event_type": event_type,
-                "source": source,
-                "source_event_id": source_event_id,
-                "payload": json.dumps(payload),
-                "created_at": now,
-            },
+            {"run_id": run_id, "now": now},
         )
     ).mappings().first()
 
-    event_seq = row["event_seq"] if row else 1
+    event_seq = seq_row["next_event_seq"] if seq_row else 1
+
+    await db.execute(
+        text(
+            f"""
+            INSERT INTO "{SCHEMA}".run_events (
+                id, run_id, attempt_id, event_type, event_seq, source, source_event_id, payload, created_at
+            ) VALUES (
+                :id, :run_id, :attempt_id, :event_type, :event_seq, :source, :source_event_id, CAST(:payload AS jsonb), :created_at
+            )
+            """
+        ),
+        {
+            "id": event_id,
+            "run_id": run_id,
+            "attempt_id": attempt_id,
+            "event_type": event_type,
+            "event_seq": event_seq,
+            "source": source,
+            "source_event_id": source_event_id,
+            "payload": json.dumps(payload),
+            "created_at": now,
+        },
+    )
 
     return RunEventView(
         event_id=event_id,

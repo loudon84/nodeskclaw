@@ -42,6 +42,20 @@ async def init_schema() -> None:
             )
         )
         await conn.execute(text(f'ALTER TABLE "{schema}".runs ADD COLUMN IF NOT EXISTS generation BIGINT NOT NULL DEFAULT 0'))
+        await conn.execute(text(f'ALTER TABLE "{schema}".runs ADD COLUMN IF NOT EXISTS next_event_seq INTEGER NOT NULL DEFAULT 0'))
+        # Backfill next_event_seq from existing max(event_seq)
+        await conn.execute(
+            text(
+                f"""
+                UPDATE "{schema}".runs r
+                SET next_event_seq = COALESCE(
+                    (SELECT MAX(e.event_seq) FROM "{schema}".run_events e WHERE e.run_id = r.id),
+                    0
+                )
+                WHERE r.next_event_seq = 0;
+                """
+            )
+        )
         await conn.execute(
             text(
                 f"""
