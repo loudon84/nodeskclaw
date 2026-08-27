@@ -337,6 +337,13 @@ class IndexStateStatus(str, Enum):
     unsupported = "unsupported"
 
 
+class IndexRetrievalStatus(str, Enum):
+    unavailable = "unavailable"
+    ready = "ready"
+    degraded = "degraded"
+    unsupported = "unsupported"
+
+
 class BuildJobStatus(str, Enum):
     queued = "queued"
     running = "running"

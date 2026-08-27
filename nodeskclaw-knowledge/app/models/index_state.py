@@ -7,6 +7,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import BaseModel
+from app.models.enums import IndexRetrievalStatus
 
 
 # @lat: [[knowledge-objects#Index State]]
@@ -26,6 +27,11 @@ class IndexState(BaseModel):
     knowledge_base_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
     index_type: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="not_built")
+    retrieval_status: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default=IndexRetrievalStatus.unavailable.value,
+    )
     build_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     source_watermark: Mapped[str | None] = mapped_column(String(64), nullable=True)
     last_build_job_id: Mapped[str | None] = mapped_column(String(36), nullable=True)

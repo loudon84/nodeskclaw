@@ -62,7 +62,12 @@ def _pending_doc(doc_id: str):
 
 
 def test_system_profiles_define_standard_enhanced_reasoning():
-    assert set(index_registry.SYSTEM_BUILD_PROFILES.keys()) == {"standard", "enhanced", "reasoning"}
+    assert set(index_registry.SYSTEM_BUILD_PROFILES.keys()) == {
+        "standard",
+        "enhanced",
+        "reasoning",
+        "experimental",
+    }
     assert IndexType.graph.value not in index_registry.SYSTEM_BUILD_PROFILES["standard"]["index_types"]
     assert IndexType.graph.value in index_registry.SYSTEM_BUILD_PROFILES["reasoning"]["index_types"]
 
@@ -106,17 +111,15 @@ async def test_ensure_system_profiles_creates_three():
 
     async def smart_scalar(_stmt):
         attempt["i"] += 1
-        # Calls 1,2,3: miss; if somehow more before add, still miss until add
-        # After objects exist, subsequent ensure calls should hit — we only run once here
-        if len(created) >= 3 and attempt["i"] > 3:
+        if len(created) >= 4 and attempt["i"] > 4:
             keys = list(index_registry.SYSTEM_BUILD_PROFILES.keys())
-            return keyed.get(keys[(attempt["i"] - 1) % 3])
+            return keyed.get(keys[(attempt["i"] - 1) % 4])
         return None
 
     db.scalar = smart_scalar  # type: ignore[method-assign]
     profiles = await build_profile_service.ensure_system_profiles(db)
-    assert len(profiles) == 3
-    assert {p.system_key for p in profiles} == {"standard", "enhanced", "reasoning"}
+    assert len(profiles) == 4
+    assert {p.system_key for p in profiles} == {"standard", "enhanced", "reasoning", "experimental"}
     assert all(p.is_system for p in profiles)
 
 

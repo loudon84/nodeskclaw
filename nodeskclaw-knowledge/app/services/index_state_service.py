@@ -8,10 +8,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.base import not_deleted
-from app.models.enums import IndexStateStatus, IndexType
+from app.models.enums import IndexRetrievalStatus, IndexStateStatus, IndexType
 from app.models.index_state import IndexState
 from app.services import build_profile_service
-from app.services.index_registry import is_runtime_supported, list_index_types
+from app.services.index_registry import is_index_retrieval_ready, is_runtime_supported, list_index_types
 
 
 async def get_or_create_state(
@@ -75,11 +75,30 @@ async def ensure_kb_index_states(
             if state.status != IndexStateStatus.unsupported.value:
                 state.status = IndexStateStatus.unsupported.value
                 state.last_error = "runtime_public_api_unavailable"
+            state.retrieval_status = IndexRetrievalStatus.unsupported.value
         elif state.status == IndexStateStatus.unsupported.value:
             state.status = IndexStateStatus.not_built.value
             state.last_error = None
+            state.retrieval_status = IndexRetrievalStatus.unavailable.value
+        else:
+            _sync_retrieval_status(state, index_type, capabilities)
         states.append(state)
     return states
+
+
+def _sync_retrieval_status(
+    state: IndexState,
+    index_type: str,
+    capabilities: dict | None,
+) -> None:
+    if state.status != IndexStateStatus.ready.value:
+        if state.retrieval_status == IndexRetrievalStatus.ready.value:
+            state.retrieval_status = IndexRetrievalStatus.unavailable.value
+        return
+    if is_index_retrieval_ready(index_type, capabilities):
+        state.retrieval_status = IndexRetrievalStatus.ready.value
+    else:
+        state.retrieval_status = IndexRetrievalStatus.unsupported.value
 
 
 async def mark_indexes_stale(
@@ -138,4 +157,10 @@ async def set_state_status(
     if status == IndexStateStatus.ready.value:
         state.last_built_at = datetime.now(UTC)
         state.build_version = int(state.build_version or 0) + 1
+        state.retrieval_status = IndexRetrievalStatus.ready.value
+    elif status in {IndexStateStatus.failed.value, IndexStateStatus.stale.value}:
+        if state.retrieval_status == IndexRetrievalStatus.ready.value:
+            state.retrieval_status = IndexRetrievalStatus.degraded.value
+    elif status == IndexStateStatus.unsupported.value:
+        state.retrieval_status = IndexRetrievalStatus.unsupported.value
     return state
