@@ -219,8 +219,13 @@ async def resume_internal_run(
     run = await run_service.get_run(db, run_id, org_id=x_exec_org_id)
     if not run:
         raise HTTPException(status_code=404, detail="run not found")
+    if run.status == "WAITING_APPROVAL":
+        raise HTTPException(status_code=400, detail="run in WAITING_APPROVAL state requires approval, not resume")
     evidence = body.get("evidence") if body else None
-    res = await run_service.resume_run(db, run_id, evidence=evidence, org_id=x_exec_org_id)
+    try:
+        res = await run_service.resume_run(db, run_id, evidence=evidence, org_id=x_exec_org_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     if not res:
         raise HTTPException(status_code=404, detail="run not found")
     return MutationResponse(

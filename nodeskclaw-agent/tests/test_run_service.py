@@ -341,7 +341,7 @@ async def test_get_artifact_bytes_returns_content():
 
 
 @pytest.mark.asyncio
-async def test_resume_run_transitions_waiting_approval(monkeypatch):
+async def test_resume_run_rejects_waiting_approval(monkeypatch):
     db = AsyncMock()
     waiting_view = run_service.RunView(
         run_id="run-waiting",
@@ -355,8 +355,30 @@ async def test_resume_run_transitions_waiting_approval(monkeypatch):
         created_at="2026-08-27T00:00:00Z",
         updated_at="2026-08-27T00:00:00Z",
     )
+    get_run_mock = AsyncMock(return_value=waiting_view)
+    monkeypatch.setattr(run_service, "get_run", get_run_mock)
+
+    with pytest.raises(ValueError, match="requires approval"):
+        await run_service.resume_run(db, "run-waiting", org_id="org-1")
+
+
+@pytest.mark.asyncio
+async def test_resume_run_transitions_paused(monkeypatch):
+    db = AsyncMock()
+    paused_view = run_service.RunView(
+        run_id="run-paused",
+        org_id="org-1",
+        user_id="user-1",
+        tool_name="test_tool",
+        status="PAUSED",
+        snapshot={},
+        attempt_id=None,
+        generation=0,
+        created_at="2026-08-27T00:00:00Z",
+        updated_at="2026-08-27T00:00:00Z",
+    )
     queued_view = run_service.RunView(
-        run_id="run-waiting",
+        run_id="run-paused",
         org_id="org-1",
         user_id="user-1",
         tool_name="test_tool",
@@ -367,12 +389,12 @@ async def test_resume_run_transitions_waiting_approval(monkeypatch):
         created_at="2026-08-27T00:00:00Z",
         updated_at="2026-08-27T00:00:00Z",
     )
-    get_run_mock = AsyncMock(side_effect=[waiting_view, queued_view])
+    get_run_mock = AsyncMock(side_effect=[paused_view, queued_view])
     monkeypatch.setattr(run_service, "get_run", get_run_mock)
     monkeypatch.setattr(run_service, "set_status", AsyncMock(return_value=True))
     monkeypatch.setattr(run_service, "append_event", AsyncMock())
 
-    res = await run_service.resume_run(db, "run-waiting", org_id="org-1", evidence={"reason": "test"})
+    res = await run_service.resume_run(db, "run-paused", org_id="org-1", evidence={"reason": "test"})
     assert res is not None
     assert res.status == "QUEUED"
 

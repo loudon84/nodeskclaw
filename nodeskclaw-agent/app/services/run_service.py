@@ -476,16 +476,19 @@ async def resume_run(
     if not run:
         return None
 
-    if run.status != "WAITING_APPROVAL":
-        return run
+    if run.status == "WAITING_APPROVAL":
+        raise ValueError("run in WAITING_APPROVAL state requires approval via approve endpoint, not resume")
 
-    evidence_dict = evidence or {}
-    evidence_payload = {"status": "RESUMING", "evidence": evidence_dict}
-    await set_status(db, run_id, "RESUMING", expected_status=["WAITING_APPROVAL"])
-    await append_event(db, run_id, "run.resuming", evidence_payload)
-    await set_status(db, run_id, "QUEUED", expected_status=["RESUMING"])
-    await append_event(db, run_id, "run.queued", {"status": "QUEUED"})
-    return await get_run(db, run_id, org_id=org_id)
+    if run.status in ("PAUSED", "SUSPENDED"):
+        evidence_dict = evidence or {}
+        evidence_payload = {"status": "RESUMING", "evidence": evidence_dict}
+        await set_status(db, run_id, "RESUMING", org_id=org_id, expected_status=["PAUSED", "SUSPENDED"])
+        await append_event(db, run_id, "run.resuming", evidence_payload, org_id=org_id)
+        await set_status(db, run_id, "QUEUED", org_id=org_id, expected_status=["RESUMING"])
+        await append_event(db, run_id, "run.queued", {"status": "QUEUED"}, org_id=org_id)
+        return await get_run(db, run_id, org_id=org_id)
+
+    return run
 
 
 async def approve_run(
@@ -499,7 +502,7 @@ async def approve_run(
     run = await get_run(db, run_id, org_id=org_id)
     if not run:
         return None
-    
+
     # Idempotent approval record checking
     eff_approval_id = approval_id or f"appr-{run_id}"
     evidence_dict = evidence or {}
@@ -527,10 +530,10 @@ async def approve_run(
         return run
 
     evidence_payload = {"status": "RESUMING", "approval_id": eff_approval_id, "evidence": evidence_dict}
-    await set_status(db, run_id, "RESUMING", expected_status=["WAITING_APPROVAL"])
-    await append_event(db, run_id, "run.resuming", evidence_payload)
-    await set_status(db, run_id, "QUEUED", expected_status=["RESUMING"])
-    await append_event(db, run_id, "run.queued", {"status": "QUEUED"})
+    await set_status(db, run_id, "RESUMING", org_id=org_id, expected_status=["WAITING_APPROVAL"])
+    await append_event(db, run_id, "run.resuming", evidence_payload, org_id=org_id)
+    await set_status(db, run_id, "QUEUED", org_id=org_id, expected_status=["RESUMING"])
+    await append_event(db, run_id, "run.queued", {"status": "QUEUED"}, org_id=org_id)
     return await get_run(db, run_id, org_id=org_id)
 
 
@@ -541,14 +544,15 @@ async def cancel_run(db: AsyncSession, run_id: str, *, org_id: str) -> RunView |
     if run.status in TERMINAL:
         return run
 
-    # If already CANCELLING or in-flight (RUNNING/PREPARING with worker)
-    if run.status in ("PREPARING", "RUNNING") and run.attempt_id:
+    # If already CANCELLING or in-flight (RUNNING/PREPARING/RESUMING with worker)
+    if run.status in ("PREPARING", "RUNNING", "RESUMING") and run.attempt_id:
         # Move to CANCELLING state
-        await set_status(db, run_id, "CANCELLING", expected_status=["PREPARING", "RUNNING", "RESUMING"])
-        await append_event(db, run_id, "run.cancelling", {"status": "CANCELLING"})
+        ok = await set_status(db, run_id, "CANCELLING", org_id=org_id, expected_status=["PREPARING", "RUNNING", "RESUMING"])
+        if ok:
+            await append_event(db, run_id, "run.cancelling", {"status": "CANCELLING"}, org_id=org_id)
         return await get_run(db, run_id, org_id=org_id)
 
-    # If QUEUED or WAITING_APPROVAL (no active in-flight worker execution), cancel immediately
+    # If QUEUED, WAITING_APPROVAL, PAUSED, SUSPENDED (no active in-flight worker execution), cancel immediately
     if run.attempt_id:
         await db.execute(
             text(
@@ -560,8 +564,15 @@ async def cancel_run(db: AsyncSession, run_id: str, *, org_id: str) -> RunView |
             ),
             {"id": run.attempt_id},
         )
-    await set_status(db, run_id, "CANCELLED")
-    await append_event(db, run_id, "run.cancelled", {"status": "CANCELLED"})
+    ok = await set_status(
+        db,
+        run_id,
+        "CANCELLED",
+        org_id=org_id,
+        expected_status=["QUEUED", "WAITING_APPROVAL", "PAUSED", "SUSPENDED", "CANCELLING"],
+    )
+    if ok:
+        await append_event(db, run_id, "run.cancelled", {"status": "CANCELLED"}, org_id=org_id)
     return await get_run(db, run_id, org_id=org_id)
 
 
