@@ -53,6 +53,8 @@ Cancel-safe：RUNNING 取消后 Worker 不得 `mark_completed`。Retry 复制 ro
 
 `scripts/contracts.py generate` / `check` 校验 OpenAPI、非空 200 schema、fixtures、SHA256SUMS、冻结 v1.0.0/v1.0.1 checksum；quality-gate 在 pytest 后执行 check。v1.0.2 补齐 MCP `tools/list` Catalog/Skill `annotations` 合同。
 
+员工 Skill-first 合同族由同脚本 `generate --family skill-run` 产出到 `contracts/skill-run/v1.0.0/`，**不得**改写本目录 checksum（见 [[decisions/skill-platform-execution]]）。
+
 ## OpenAPI Coverage
 
 合同 OpenAPI 子集覆盖 13 条路径；200 响应不得为 `schema: {}`。v1.0.2 另要求 `tools/list` annotations 不得仅是开放 object，清单见 [[nodeskclaw-backend/app/contracts/work_expert/constants.py#WORK_EXPERT_OPENAPI_PATHS]]。
@@ -61,12 +63,15 @@ Cancel-safe：RUNNING 取消后 Worker 不得 `mark_completed`。Retry 复制 ro
 
 P0 语义在 Expert 网关、Hermes Task 服务与 Worker 中落地；迁移 `b1bc120a37db` 增加 `result_content`、`idempotency_key`、`catalog_slug` 与幂等 Partial Unique Index。
 
+Skill Platform Slice A/B 后：新生产 Skill Run 由 [[nodeskclaw-backend/app/services/hermes_skill/runtime_skill_run_service.py#RuntimeSkillRunService]] 入队 `nodeskclaw-agent`（Snapshot 含 published Release digest）；HermesTask 仅作 C2 投影（`execution_owner=agent`）。[[nodeskclaw-backend/app/services/hermes_skill/hermes_task_worker.py#HermesTaskWorker]] 不再认领这些任务，仍可 drain 旧队列。员工 Catalog 仅投影 published SkillRelease（见 [[decisions/skill-platform-execution]]）。Expert 对外 `task_id` / `/hermes/tasks/*` 合同不变。
+
 | 语义 | 入口 |
 |---|---|
 | Task Owner / 幂等 / mark_completed 守卫 | [[nodeskclaw-backend/app/services/hermes_skill/task_service.py#TaskService]] |
 | MCP scopes / allowed_tools / idempotency header | [[nodeskclaw-backend/app/services/expert_gateway/expert_mcp_auth_guard.py#ExpertMcpAuthGuard]] |
 | tools/call → RuntimeSkillRun | [[nodeskclaw-backend/app/services/expert_gateway/expert_run_service.py#ExpertRunService]] |
-| Cancel-safe / preparing·finalizing / result_content 写入 | [[nodeskclaw-backend/app/services/hermes_skill/hermes_task_worker.py#HermesTaskWorker]] |
+| Cancel-safe / preparing·finalizing / result_content 写入（旧/非 agent-owned） | [[nodeskclaw-backend/app/services/hermes_skill/hermes_task_worker.py#HermesTaskWorker]] |
+| 新生产 Run 执行 / Event SoT | [[nodeskclaw-agent/app/services/worker.py#RunWorker]]（见 [[decisions/skill-platform-execution]]） |
 | result 查询分离 | [[nodeskclaw-backend/app/services/hermes_skill/task_result_service.py#TaskResultService]] |
 | contractVersion / capabilities | [[nodeskclaw-backend/app/services/expert_gateway/expert_health_service.py]]、`GET /api/v1/system/info` |
 
@@ -76,7 +81,9 @@ P0 回归集中在 `tests/expert_gateway/` 与 `tests/hermes_skill/`（owner、i
 
 ## Expert Skill Target V1
 
-Expert Skill v1 目标架构采用 Skill-first 调用、不可变 Revision、服务端 Installation 路由、统一调用内核、规范运行事件与事务 Outbox；这是待实施方案，不表示当前 capability 已完成。
+Expert Skill v1 目标架构采用 Skill-first 调用、不可变 Revision、服务端 Installation 路由、统一调用内核、规范运行事件与事务 Outbox；整体仍是待实施方案，不表示 Expert 侧 capability 已完成。
+
+员工侧不可变发布已落地为 Hermes `SkillRelease`（Catalog / Snapshot 门禁，见 [[decisions/skill-platform-execution]]）；这不等于 Expert Skill Revision / Work Skill Catalog 已交付。
 
 正式方案见 `docs/_expert/prd-v1.0.md`。Expert 仅保留 Persona 与 Skill Collection；MCP、Work API 和 Legacy Expert 入口统一转换为调用命令。核心保存客户端无关的运行事件，再投影为 Task、Work Chat、Resource 与 Audit。
 

@@ -99,6 +99,7 @@ class HermesTask(BaseModel):
     routing_metadata: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     output_policy: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     server_artifacts: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    projection_cursor: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     artifact_status: Mapped[str] = mapped_column(String(32), nullable=False, default="none")
     kb_status: Mapped[str] = mapped_column(String(32), nullable=False, default="none")
     request_trace_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
