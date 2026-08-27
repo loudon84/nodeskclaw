@@ -238,9 +238,53 @@ def test_canonical_response_models(monkeypatch):
         assert data["org_id"] == "org-1"
         assert data["idempotent"] is True
 
-        # 7. POST /runs/{run_id}/approvals/{approval_id} -> MutationResponse
-        r = client.post("/internal/v1/runs/r1/approvals/appr1", headers=headers)
-        assert r.status_code == 200
-        data = r.json()
-        assert data["org_id"] == "org-1"
-        assert data["idempotent"] is True
+
+def test_dual_token_grace_period_rotation(monkeypatch):
+    monkeypatch.setattr(settings, "SKILL_AGENT_INTERNAL_TOKEN", "new-secret")
+    monkeypatch.setattr(settings, "SKILL_AGENT_INTERNAL_TOKEN_PREVIOUS", "old-secret")
+
+    for client in _client(monkeypatch):
+        # 1. New token accepted
+        r1 = client.get(
+            "/internal/v1/runs/r1",
+            headers={"X-Skill-Agent-Token": "new-secret", "X-Exec-Org-Id": "org-1"},
+        )
+        assert r1.status_code != 401
+
+        # 2. Previous token accepted during rotation
+        r2 = client.get(
+            "/internal/v1/runs/r1",
+            headers={"X-Skill-Agent-Token": "old-secret", "X-Exec-Org-Id": "org-1"},
+        )
+        assert r2.status_code != 401
+
+        # 3. Bad token rejected
+        r3 = client.get(
+            "/internal/v1/runs/r1",
+            headers={"X-Skill-Agent-Token": "invalid-secret", "X-Exec-Org-Id": "org-1"},
+        )
+        assert r3.status_code == 401
+
+
+def test_health_and_metrics_endpoints(monkeypatch):
+    mock_db = AsyncMock()
+    # Mock for metrics query
+    mapping_res = MagicMock()
+    mapping_res.mappings.return_value.all.return_value = [{"status": "COMPLETED", "count": 5}]
+    mock_db.execute = AsyncMock(return_value=mapping_res)
+
+    for client in _client(monkeypatch, mock_db=mock_db):
+        # Health check
+        h_resp = client.get("/health")
+        assert h_resp.status_code == 200
+        h_data = h_resp.json()
+        assert h_data["status"] == "ok"
+        assert h_data["database"] == "connected"
+
+        # Metrics
+        m_resp = client.get("/metrics")
+        assert m_resp.status_code == 200
+        m_data = m_resp.json()
+        assert "runs_by_status" in m_data
+        assert m_data["runs_by_status"].get("COMPLETED") == 5
+

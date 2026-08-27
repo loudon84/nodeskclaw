@@ -55,3 +55,28 @@ async def health(db: AsyncSession = Depends(get_db)):
         "service": "nodeskclaw-agent",
         "role": settings.SKILL_AGENT_ROLE,
     }
+
+
+@app.get("/metrics")
+async def metrics(db: AsyncSession = Depends(get_db)):
+    schema = settings.SKILL_AGENT_SCHEMA
+    counts = {}
+    try:
+        res = await db.execute(
+            text(
+                f"""
+                SELECT status, count(*) as count
+                FROM "{schema}".runs
+                GROUP BY status
+                """
+            )
+        )
+        for row in res.mappings().all():
+            counts[row["status"]] = row["count"]
+    except Exception:
+        logger.exception("metrics query failed")
+    return {
+        "service": "nodeskclaw-agent",
+        "role": settings.SKILL_AGENT_ROLE,
+        "runs_by_status": counts,
+    }
