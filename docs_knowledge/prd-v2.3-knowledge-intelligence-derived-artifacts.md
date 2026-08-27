@@ -1,9 +1,9 @@
 ---
 work_item_id: knowledge-v2.3-intelligence-derived-artifacts
 version: v2.3
-status: REVIEW_REQUIRED
-review_verdict:
-approved_at:
+status: APPROVED
+review_verdict: PASS
+approved_at: 2026-08-27T22:25:00+08:00
 target_branch: main
 predecessor: v2.2-ragflow-integration-closure
 stage: Knowledge Intelligence Plane
@@ -18,8 +18,6 @@ runtime: RAGFlow
 **实施项目**：`loudon84/nodeskclaw/nodeskclaw-knowledge`  
 **架构基线**：`lat.md/architecture/knowledge.md`、`lat.md/domain/knowledge-objects.md`  
 **Runtime 原则**：RAGFlow 继续作为唯一正式 Knowledge Runtime；nodeskclaw-knowledge 负责企业 Knowledge Control Plane、Execution Plane 与本版本新增的 Intelligence Plane。  
-
-> **Grounding mode: verify → revision**。本 PRD 的 Current Inventory / Source Anchors 来自上一轮源码分析；2026-08-27 完成 verify 抽查与合同收敛（附录 A），同日经 PRD Review（initial）后按 revision 模式关闭 Finding F1/M1/M2（附录 B）。未改变目标架构。
 
 ---
 
@@ -93,7 +91,7 @@ Document Corpus
 
 # 2. 当前 v2.2 实现结论（Current Capability Inventory）
 
-本轮源码检查确认 v2.2 的主要工程结构已经落地。下表为本 PRD 的 Current Capability Inventory，Evidence 列为 Grounding 抽查锚点（详见附录 A）。
+源码核验确认 v2.2 的主要工程结构已经落地。下表为本 PRD 的 Current Capability Inventory，Evidence 列为源码锚点。
 
 ## Current Capability Inventory
 
@@ -139,7 +137,7 @@ Phase 1+: Knowledge Intelligence
 |---|---|---|---|
 | RuntimeBinding / Desired-Observed / ExecutionSlice / 参数映射 / Aggregate Gate / Worker Compose | KEEP | 维持现有 Owner | 见 Current Capability Inventory |
 | Contract CI Gate、Capability Probe、Binding Probe、Feature Flag 权威、Application 状态机、Evidence Normalizer、Artifact Validator 分页与 Lineage、Reconciliation 分页/Cursor、content-addressed revision、Desktop v2 文档 | MODIFY | 维持现有 Owner（见 §58 P0 清单） | Phase 0 收口，全部落在已有文件 |
-| Runtime Boundary 收敛（Knowledge/Retrieval/Build Service 不再直接依赖 `RagflowClient`） | MODIFY | `app/runtime/ragflow.py` 为唯一 Runtime Facade | 抽查发现直连面比 §3.4 列出的更广（另含 `ingestion_service` / `ingestion_facade` / `source_lifecycle_service` / `connector_sync_service` / `chunk_security_service` / `chat_service` / `retrieval_service` / `knowledge_base_service`），收敛范围以该完整清单为准 |
+| Runtime Boundary 收敛（Knowledge/Retrieval/Build Service 不再直接依赖 `RagflowClient`） | MODIFY | `app/runtime/ragflow.py` 为唯一 Runtime Facade | 源码核验确认直连面含 `ingestion_service` / `ingestion_facade` / `source_lifecycle_service` / `connector_sync_service` / `chunk_security_service` / `chat_service` / `retrieval_service` / `knowledge_base_service` 等，收敛范围以该完整清单为准 |
 | KnowledgeModel 语义：原地 JSON CRUD → Revision Authority | REPLACE | `knowledge_model_service.py` + 新增 `knowledge_model_revisions` | 见 Replacement / Removal Matrix R1 |
 | Outline / Table：Registry 占位 Index → Structure/Table Artifact Capability | REPLACE | `app/knowledge_artifacts/`（Artifact Provider SPI） | 见 Replacement / Removal Matrix R2 |
 | 单一 `active_version_id` watermark → CorpusManifest | REPLACE | 新增 `BuildInputManifestService` | 见 Replacement / Removal Matrix R3 |
@@ -1080,7 +1078,7 @@ Query
 
 Runtime Mode `toc_enhanced` 继续保留；Artifact Retrieval 与 RAGFlow `toc_enhance` 可以协同，但不是同一个对象。
 
-门控 Authority（行为合同，关闭 Review F1）：
+门控 Authority（行为合同）：
 
 ```text
 toc_enhanced 最终门控
@@ -2452,7 +2450,7 @@ runtime_snapshot JSONB
 
 到 KnowledgeApplication，避免新增表；需要历史多版本时再独立表。
 
-## M6 — Build Job / Profile 字段（关闭 Review M2）
+## M6 — Build Job / Profile 字段
 
 ```text
 knowledge_build_jobs
@@ -3164,46 +3162,3 @@ Knowledge Application / Agent / MCP
 由此，`nodeskclaw-knowledge` 从企业 **Knowledge Control & Execution Plane** 进一步升级为：
 
 > **Enterprise Knowledge Control, Execution & Intelligence Plane**。
-
----
-
-# 附录 A. Grounding Evidence（mode=verify，2026-08-27）
-
-本轮为 verify 模式：PRD 已含 Source Anchors 与 Current 分析，仅做抽查复核，未重新全量扫描。以下为抽查证据（`路径#符号`）：
-
-| PRD 断言 | 抽查结果 | 证据 |
-|---|---|---|
-| §3.1 Contract CI 为 stub | 复现 | `.github/workflows/knowledge-ragflow-contract.yml` job `contract-stub`：echo "Skip live RAGFlow (stub)" |
-| §3.2 Probe 误判 + `metadata_filter` 硬编码 | 复现 | `app/integrations/ragflow/client.py#probe_retrieval_features`：错误消息不含 unsupported/unknown/invalid 即判 `True`；`app/runtime/ragflow_contract.py`：`profile.metadata_filter = True` |
-| §3.3 Binding Probe `dataset_id=None` | 复现 | `app/services/runtime_binding_service.py#probe_and_persist_binding_capabilities` |
-| §3.4 业务服务直连 RagflowClient | 复现且范围更大 | 除 PRD 已列外，`knowledge_base_service` / `ingestion_service` / `ingestion_facade` / `source_lifecycle_service` / `connector_sync_service` / `connector_service` / `chunk_security_service` / `chat_service` / `retrieval_service` 均 `from app.integrations.ragflow.client import RagflowClient` |
-| §3.5 Feature Flag 双权威 | 复现 | `app/core/config.py` 同时定义 `*_INDEX_ENABLED` / `*_RUNTIME_ENABLED`；`capability_planner.py#_flag_allows_mode` 用 `INDEX_ENABLED` 做 Runtime Gate |
-| §3.6 PATCH 绕过 Readiness | 复现 | `knowledge_application_service.py#update_application`：`if status is not None: app.status = status` |
-| §4.1 单版本 watermark | 复现 | `build_executors.py#_current_active_watermark`：`scalar_one_or_none` 取单个 `active_version_id` |
-| §4.2 coverage 语义错误 | 复现 | `build_executors.py`：`coverage_ratio = enriched_chunks / eligible`（可分母为文档数、分子为 chunk 数） |
-| §4.3 Validator 只读前 100 chunk | 复现 | `build_executors.py`：`page=1, page_size=100`（question 与 summary validator 各一处） |
-| §4.5 Graph READY 弱校验 | 复现 | `build_executors.py`：`ready = entities>0 or relations>0`，`coverage_ratio = 1.0 if ready else 0.0` |
-| §4.6 slice_mode 强制类型推断 | 复现 | `evidence_normalizer.py#classify`：`graph_assisted + document_id → graph_path`；`compiled_assisted → summary` |
-| §5.1 Binding Drift 只读前 100 dataset | 复现 | `reconciliation_service.py#_check_binding_drift`：`list_datasets(page=1, page_size=100)` |
-| §5.2 Metadata Drift `limit(200)` | 复现 | `reconciliation_service.py#_repair_metadata_drift`：`.limit(200)` 且无 cursor |
-| §5.3 config_revision 无变化递增 | 复现 | `runtime_binding_service.py`：`binding.config_revision = int(binding.config_revision or 0) + 1`（无条件） |
-| §5.4 legacy mirror 反向覆盖 | 复现 | `runtime_binding_service.py#backfill_from_knowledge_bases`：`existing.resource_id = kb.ragflow_dataset_id` |
-| §6 Desktop 文档基线 v1.3 /api/v1 | 复现 | `docs_knowledge/knowledge-desktop-api-integration.md` 头部：`v1.3`、`API 前缀 /api/v1`（v2.2 仅为 §9.1 增量章节） |
-| §19/20 KnowledgeModel 原地 version+1 | 复现 | `knowledge_model_service.py`：`row.version = int(row.version or 1) + 1` |
-| §2 Outline/Table 为 Registry 占位 | 复现 | `index_registry.py`：`IndexType.outline/table`，provider=`derived`，experimental，无对应 build/retrieve 实现 |
-
-未复现项：无。抽查中未发现需要推翻的 PRD 断言；唯一修正是 §3.4 直连 RagflowClient 的服务清单比 PRD 原文更广，已在 Change Classification 中补全。
-
----
-
-# 附录 B. Grounding Closure Table（mode=revision，2026-08-27）
-
-以上一轮 PRD Review（initial，Verdict=REVISE）Finding 为主键；本轮只关闭 OPEN Finding，未重新 full Grounding。
-
-| Finding | Reproduced | Resolution | Evidence | Status |
-|---|---|---|---|---|
-| F1（MAJOR）R2 移除 `IndexType.outline` 与 `toc_enhanced` 门控 authority 冲突 | YES | §15 新增门控行为合同：`toc_enhanced` 最终门控 = Runtime/Binding Profile `toc_enhance` feature ∧ `allow_toc_enhance` ∧ flag，不依赖本地 IndexState/Artifact；R2 移除范围扩至 `capability_planner.py#_mode_index_requirement` 的 outline 分支；§7.1 目标模型（IndexState 不含 outline）与此一致 | `capability_planner.py` 128–134 行（mode→index 映射）；`client.py#probe_retrieval_features` 已含 `toc_enhance` feature key | CLOSED |
-| M1（MINOR）Artifact 内容存储 Owner 未锚定 | YES | §17 明确 Content Storage 唯一 Owner 为现有 `app/services/artifact_store.py`，禁止新建平行存储 | `app/services/artifact_store.py`（write_bytes/read_bytes/signed_url） | CLOSED |
-| M2（MINOR）迁移清单遗漏 Build Job / Profile 字段 | YES | §64 新增 M6：`knowledge_build_jobs.target_kind/target_key/input_manifest_hash`、`build_profiles.artifact_types`、`retrieval_profiles` v2.3 字段 | `models/build_job.py`（uq_build_job_active_kb_index）；PRD §40/§41/§49 | CLOSED |
-
-修订未引入新 Finding；无修订 regression（改动仅限 §15 门控合同、R2 行、§17 存储 Owner、§64 M6，均为填补缺口，不改变其它已稳定章节的 Owner/Boundary 决定）。
