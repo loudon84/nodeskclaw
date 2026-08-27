@@ -40,10 +40,11 @@ class RunProjectionUpdaterService:
                 resp_run.raise_for_status()
                 run_data = resp_run.json()
 
-                # 2. Fetch Events
-                resp_events = await client.get(f"/internal/v1/runs/{task_id}/events")
+                # 2. Fetch Events with incremental after_seq
+                curr_cursor = task.projection_cursor or 0
+                resp_events = await client.get(f"/internal/v1/runs/{task_id}/events", params={"after_seq": curr_cursor})
                 resp_events.raise_for_status()
-                events_data = resp_events.json().get("events", [])
+                events_data = resp_events.json().get("items", [])
 
                 # Map Run status to TaskStatus
                 agent_status = run_data.get("status")
@@ -57,12 +58,15 @@ class RunProjectionUpdaterService:
                     "COMPLETED": TaskStatus.COMPLETED,
                     "FAILED": TaskStatus.FAILED,
                     "CANCELLED": TaskStatus.CANCELLED,
+                    "TIMED_OUT": TaskStatus.FAILED,
                 }
                 new_task_status = status_map.get(agent_status, task.status)
                 task.status = new_task_status
+                if agent_status == "TIMED_OUT":
+                    task.error_code = task.error_code or "errors.skill_run.timed_out"
+                    task.error_message = task.error_message or "Run execution timed out"
 
                 # 3. Apply events monotonically
-                curr_cursor = task.projection_cursor or 0
                 for ev in sorted(events_data, key=lambda x: x.get("event_seq", 0)):
                     seq = ev.get("event_seq", 0)
                     if seq <= curr_cursor:
@@ -98,17 +102,22 @@ class RunProjectionUpdaterService:
 
                 task.projection_cursor = curr_cursor
 
-                # 4. If completed, sync result & artifacts
+                # 4. If completed or failed, sync result & artifacts
                 if new_task_status in (TaskStatus.COMPLETED, TaskStatus.FAILED):
                     resp_result = await client.get(f"/internal/v1/runs/{task_id}/result")
                     if resp_result.status_code == 200:
                         res_json = resp_result.json()
-                        task.result_content = res_json.get("content") or ""
-                        task.result_summary = res_json.get("summary") or ""
+                        result_obj = res_json.get("result")
+                        if isinstance(result_obj, dict):
+                            task.result_content = result_obj.get("content") or ""
+                            task.result_summary = result_obj.get("summary") or ""
+                        elif isinstance(result_obj, str):
+                            task.result_content = result_obj
+                            task.result_summary = result_obj[:500] if result_obj else ""
 
                     resp_artifacts = await client.get(f"/internal/v1/runs/{task_id}/artifacts")
                     if resp_artifacts.status_code == 200:
-                        task.server_artifacts = resp_artifacts.json().get("artifacts", [])
+                        task.server_artifacts = resp_artifacts.json().get("items", [])
 
                 await self.db.commit()
                 return True

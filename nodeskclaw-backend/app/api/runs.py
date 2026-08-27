@@ -173,7 +173,7 @@ async def get_run_artifacts(
         return {"code": 0, "data": {"items": []}}
 
     data = await _agent_get(f"/internal/v1/runs/{run_id}/artifacts", org_id=org.id, user_id=user.id)
-    if str(data.get("org_id") or "") != org.id:
+    if str(data.get("org_id") or "") != org.id or str(data.get("run_id") or "") != run_id:
         raise ForbiddenError("无权访问该 Run", "errors.run.forbidden")
     return {"code": 0, "data": data}
 
@@ -192,7 +192,7 @@ async def download_run_artifact(
         raise NotFoundError("Artifact 不存在", "errors.run.artifact_not_found")
 
     artifacts_data = await _agent_get(f"/internal/v1/runs/{run_id}/artifacts", org_id=org.id, user_id=user.id)
-    if str(artifacts_data.get("org_id") or "") != org.id:
+    if str(artifacts_data.get("org_id") or "") != org.id or str(artifacts_data.get("run_id") or "") != run_id:
         raise ForbiddenError("无权访问该 Run", "errors.run.forbidden")
     items = artifacts_data.get("items") or []
     target_art = next((a for a in items if a.get("artifact_id") == artifact_id), None)
