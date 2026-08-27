@@ -377,6 +377,7 @@ async def _persist_retrieval_evidence(
         )
         db.add(citation)
         await db.flush()
+        metrics_service.observe_evidence_returned(evidence_type=evidence_type)
         evidence_out.append(_evidence_response_payload(citation, highlight=chunk.highlight))
     return chunks_out, evidence_out
 
@@ -536,6 +537,8 @@ async def _retrieve_for_set(
         capabilities=merged_capabilities,
         force_chunk_only=not settings.KNOWLEDGE_V2_MULTI_INDEX_RETRIEVAL_ENABLED,
     )
+    for code in capability_plan.reason_codes:
+        metrics_service.observe_capability_plan(reason_code=code)
 
     plan = retrieval_planner.build_retrieval_plan(
         plan_access,
@@ -727,7 +730,11 @@ async def _retrieve_for_set(
         "diagnostics": diagnostics,
         "latency_ms": latency_ms,
     }
-    if settings.KNOWLEDGE_V2_CAPABILITY_PLANNER_ENABLED or settings.KNOWLEDGE_V2_MULTI_INDEX_RETRIEVAL_ENABLED:
+    if (
+        settings.KNOWLEDGE_V2_CAPABILITY_PLANNER_ENABLED
+        or settings.KNOWLEDGE_V2_MULTI_INDEX_RETRIEVAL_ENABLED
+        or origin == RetrievalOrigin.evaluation.value
+    ):
         payload["capability_plan"] = capability_plan.to_dict()
         payload["execution_plan"] = {
             "slices": [

@@ -1,7 +1,7 @@
 """Ingestion worker: network exhaustion must not mark version failed."""
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -54,7 +54,11 @@ async def test_process_leased_job_network_exhaustion_keeps_version_not_failed():
     ragflow = AsyncMock()
     ragflow.list_documents = AsyncMock(side_effect=RagflowError("timeout", message_key="errors.knowledge.ragflow_error"))
 
-    await process_leased_job(db, ragflow, job)
+    with patch(
+        "app.services.ingestion_service.runtime_binding_service.get_dataset_id",
+        new=AsyncMock(return_value="ds1"),
+    ):
+        await process_leased_job(db, ragflow, job)
 
     assert job.status == IngestionJobStatus.failed.value
     assert job.error_message == "timeout"

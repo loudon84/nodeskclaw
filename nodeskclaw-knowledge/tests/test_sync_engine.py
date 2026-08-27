@@ -221,7 +221,13 @@ async def test_delete_event_archives_with_source_deleted():
     ragflow = AsyncMock()
 
     db.get = AsyncMock(return_value=sf)
-    with patch.object(connector_sync_service, "_add_sync_item", AsyncMock()):
+    with (
+        patch.object(connector_sync_service, "_add_sync_item", AsyncMock()),
+        patch(
+            "app.services.connector_sync_service.runtime_binding_service.get_dataset_id",
+            new=AsyncMock(return_value=None),
+        ),
+    ):
         await connector_sync_service._handle_deleted_descriptor(
             db, ragflow, connector=connector, kb=kb, sync_run=sync_run, obj=obj, metrics=metrics
         )

@@ -117,7 +117,7 @@ async def get_dataset_id(db: AsyncSession, knowledge_base: KnowledgeBase | str) 
         kb = await db.get(KnowledgeBase, knowledge_base)
     else:
         kb = knowledge_base
-    if kb is None or kb.deleted_at is not None:
+    if kb is None or getattr(kb, "deleted_at", None) is not None:
         return None
     if settings.KNOWLEDGE_V2_RUNTIME_BINDING_ENABLED:
         binding = await get_binding(db, kb.id)

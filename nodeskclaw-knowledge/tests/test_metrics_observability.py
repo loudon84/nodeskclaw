@@ -69,8 +69,16 @@ def test_observe_helpers_increment():
     )
     metrics_service.observe_connector_fetch(connector_type="s3_compatible", status="failed", duration_seconds=0.3)
     metrics_service.observe_connector_auth_error(connector_type="http_manifest")
+    metrics_service.observe_capability_plan(reason_code="rule_default_chunk")
+    metrics_service.observe_evidence_returned(evidence_type="chunk")
+    metrics_service.observe_build_job(status="completed")
+    metrics_service.observe_binding_drift(reason="version_mismatch")
+    metrics_service.observe_index_drift(index_type="graph")
     payload = metrics_service.render_metrics().decode("utf-8")
     assert "knowledge_retrieval_degraded_total" in payload
+    assert "knowledge_capability_plans_total" in payload
+    assert "knowledge_evidence_returned_total" in payload
+    assert "knowledge_build_jobs_total" in payload
     assert 'reason="unauthorized"' in payload
     assert "knowledge_llm_prompt_tokens_total" in payload
     assert 'connector_type="filesystem"' in payload
