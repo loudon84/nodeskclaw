@@ -1,0 +1,154 @@
+{
+  "$defs": {
+    "SkillToolAnnotations": {
+      "properties": {
+        "category": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Category"
+        },
+        "riskLevel": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Risklevel"
+        },
+        "requiresApproval": {
+          "default": false,
+          "title": "Requiresapproval",
+          "type": "boolean"
+        },
+        "approvalMode": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Approvalmode"
+        },
+        "streaming": {
+          "default": true,
+          "title": "Streaming",
+          "type": "boolean"
+        },
+        "artifacts": {
+          "default": true,
+          "title": "Artifacts",
+          "type": "boolean"
+        },
+        "version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Version"
+        }
+      },
+      "title": "SkillToolAnnotations",
+      "type": "object"
+    },
+    "SkillToolDescriptor": {
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Title"
+        },
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "inputSchema": {
+          "additionalProperties": true,
+          "title": "Inputschema",
+          "type": "object"
+        },
+        "version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Version"
+        },
+        "category": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Category"
+        },
+        "annotations": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SkillToolAnnotations"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "SkillToolDescriptor",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "tools": {
+      "items": {
+        "$ref": "#/$defs/SkillToolDescriptor"
+      },
+      "title": "Tools",
+      "type": "array"
+    }
+  },
+  "title": "ToolsListResult",
+  "type": "object"
+}

@@ -11,6 +11,7 @@ from app.core.exceptions import NotFoundError, ConflictError, ForbiddenError
 from app.models.base import not_deleted
 from app.models.hermes_skill.skill import HermesSkill
 from app.models.hermes_skill.skill_installation import HermesSkillInstallation
+from app.models.hermes_skill.skill_release import HermesSkillRelease, SkillReleaseStatus
 from app.schemas.hermes_skill.skill import (
     SkillRead,
     SkillFilterParams,
@@ -20,12 +21,32 @@ from app.schemas.hermes_skill.skill import (
 from app.schemas.hermes_skill.common import READ_ONLY_SOURCE_TYPES
 from app.services.hermes_skill.skill_scanner import SkillScanner, ScanError
 from app.services.hermes_skill.permission_checker import PermissionChecker
+from app.services.hermes_skill.skill_release_service import SkillReleaseService
 
 router = APIRouter()
 
 
 def _ok(data: Any = None, message: str = "success") -> dict:
     return {"code": 0, "message": message, "data": data}
+
+
+async def _enrich_skill_read(db: AsyncSession, skill: HermesSkill) -> dict:
+    data = SkillRead.model_validate(skill).model_dump()
+    published = await SkillReleaseService(db).get_published_by_skill_db_id(skill.id)
+    if published:
+        data["published_version"] = published.version
+        data["published_release_status"] = published.status
+        data["published_release_id"] = published.id
+        data["published_digest"] = published.digest
+    draft = await db.execute(
+        select(HermesSkillRelease.id).where(
+            not_deleted(HermesSkillRelease),
+            HermesSkillRelease.skill_db_id == skill.id,
+            HermesSkillRelease.status == SkillReleaseStatus.DRAFT.value,
+        ).limit(1)
+    )
+    data["has_draft_release"] = draft.scalar_one_or_none() is not None
+    return data
 
 
 @router.get("/skills")
@@ -77,7 +98,7 @@ async def list_skills(
     query = query.order_by(HermesSkill.created_at.desc()).offset(offset).limit(page_size)
 
     result = await db.execute(query)
-    items = [SkillRead.model_validate(s).model_dump() for s in result.scalars().all()]
+    items = [await _enrich_skill_read(db, s) for s in result.scalars().all()]
 
     return _ok(SkillListResult(items=items, total=total, page=page, page_size=page_size).model_dump())
 
@@ -92,7 +113,7 @@ async def get_skill(
     skill = await db.get(HermesSkill, skill_db_id)
     if not skill or skill.deleted_at is not None or skill.org_id != org.id:
         raise NotFoundError("Skill 不存在", "errors.skill.not_found")
-    return _ok(SkillRead.model_validate(skill).model_dump())
+    return _ok(await _enrich_skill_read(db, skill))
 
 
 class SkillOutputPolicyBody(BaseModel):

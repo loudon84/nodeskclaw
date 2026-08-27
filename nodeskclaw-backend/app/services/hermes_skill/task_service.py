@@ -41,6 +41,7 @@ class TaskService:
         request_snapshot: dict | None = None,
         request_trace_id: str | None = None,
         route_diagnostics: dict | None = None,
+        task_id: str | None = None,
     ) -> HermesTask:
         if agent_id:
             await HermesBoundAgentScopeService(self.db).assert_bound_instance(org_id, agent_id)
@@ -59,7 +60,7 @@ class TaskService:
             ).hexdigest()
 
         task = HermesTask(
-            id=str(uuid.uuid4()),
+            id=task_id or str(uuid.uuid4()),
             org_id=org_id,
             task_no=f"TASK-{org_id[:4]}-{uuid.uuid4().hex[:8]}",
             skill_id=skill_id,

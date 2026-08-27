@@ -32,6 +32,11 @@ class SkillRead(BaseModel):
     scanned_at: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
+    published_version: str | None = None
+    published_release_status: str | None = None
+    published_release_id: str | None = None
+    published_digest: str | None = None
+    has_draft_release: bool = False
 
 
 class SkillFilterParams(BaseModel):

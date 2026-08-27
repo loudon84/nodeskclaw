@@ -118,6 +118,7 @@ _MESSAGE_KEY_MAP: dict[str, str] = {
     "errors.skill.permission_denied": MCP_TOOL_PERMISSION_DENIED,
     "errors.skill.input_schema_validation_failed": MCP_INVALID_ARGUMENTS,
     "errors.skill.route_override_not_allowed": MCP_INVALID_ARGUMENTS,
+    "errors.mcp.catalog_addressing_not_allowed": MCP_INVALID_ARGUMENTS,
     "errors.member.skill_not_granted": MCP_TOOL_PERMISSION_DENIED,
     "errors.external_docker.instance_not_found": HERMES_INSTANCE_NOT_FOUND,
     "errors.external_docker.instance_ref_required": MCP_INVALID_ARGUMENTS,

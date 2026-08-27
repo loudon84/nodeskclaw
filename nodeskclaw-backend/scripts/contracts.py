@@ -13,6 +13,7 @@ import yaml
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 CONTRACTS_HOME = BACKEND_ROOT / "contracts" / "work-expert"
+SKILL_RUN_CONTRACTS_HOME = BACKEND_ROOT / "contracts" / "skill-run"
 
 P0_TEST_FILES = [
     "tests/expert_gateway/test_mcp_capability_token.py",
@@ -708,6 +709,24 @@ def _validate_frozen_versions() -> None:
         _validate_checksums(root)
 
 
+def _validate_skill_run_fixtures(root: Path) -> None:
+    import jsonschema
+
+    schema_map = {
+        "fixtures/skill-tools-list.json": (
+            "mcp/tools-list.response.schema.json",
+            "result",
+        ),
+        "fixtures/tools-call-accepted.json": ("mcp/tools-call.response.schema.json", "result"),
+    }
+    for fixture_rel, schema_info in schema_map.items():
+        fixture = json.loads((root / fixture_rel).read_text(encoding="utf-8"))
+        schema_rel, key = schema_info
+        schema = json.loads((root / schema_rel).read_text(encoding="utf-8"))
+        payload = fixture if key is None else fixture[key]
+        jsonschema.validate(payload, schema)
+
+
 def check_contracts(release: bool = False) -> None:
     sys.path.insert(0, str(BACKEND_ROOT))
     root = contract_root()
@@ -746,18 +765,158 @@ def check_contracts(release: bool = False) -> None:
 
     print("WORK-EXPERT-CONTRACT check passed")
 
+    skill_run_root = SKILL_RUN_CONTRACTS_HOME / "v1.0.0"
+    if skill_run_root.exists():
+        _validate_checksums(skill_run_root)
+        _validate_skill_run_fixtures(skill_run_root)
+        print("SKILL-RUN-CONTRACT check passed")
+
+
+def generate_skill_run_contracts() -> None:
+    from app.schemas.skill_run.constants import (
+        SKILL_RUN_CAPABILITIES,
+        SKILL_RUN_CONTRACT_NAME,
+        SKILL_RUN_CONTRACT_VERSION,
+        SKILL_RUN_TAG_NAME,
+    )
+    from app.schemas.skill_run.mcp_jsonrpc import (
+        ArtifactDescriptor,
+        ExecutionSnapshot,
+        RunEvent,
+        RunRecord,
+        SkillToolAnnotations,
+        ToolsCallAcceptedResult,
+        ToolsListResult,
+    )
+    from app.schemas.work_expert.mcp_jsonrpc import JsonRpcErrorResponse, JsonRpcRequest
+
+    root = SKILL_RUN_CONTRACTS_HOME / f"v{SKILL_RUN_CONTRACT_VERSION}"
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "mcp").mkdir(exist_ok=True)
+    (root / "events").mkdir(exist_ok=True)
+    (root / "runs").mkdir(exist_ok=True)
+    (root / "fixtures").mkdir(exist_ok=True)
+
+    mcp_models = {
+        "tools-list.request.schema.json": JsonRpcRequest,
+        "tools-list.response.schema.json": ToolsListResult,
+        "skill-tool-annotations.schema.json": SkillToolAnnotations,
+        "tools-call.request.schema.json": JsonRpcRequest,
+        "tools-call.response.schema.json": ToolsCallAcceptedResult,
+        "json-rpc-error.schema.json": JsonRpcErrorResponse,
+    }
+    for filename, model in mcp_models.items():
+        _write_json(root / "mcp" / filename, _model_schema(model))
+
+    _write_json(root / "events" / "run-event.schema.json", _model_schema(RunEvent))
+    _write_json(root / "runs" / "run.schema.json", _model_schema(RunRecord))
+    _write_json(root / "runs" / "execution-snapshot.schema.json", _model_schema(ExecutionSnapshot))
+    _write_json(root / "runs" / "artifact-descriptor.schema.json", _model_schema(ArtifactDescriptor))
+
+    _write_json(
+        root / "fixtures" / "tools-call-accepted.json",
+        {
+            "jsonrpc": "2.0",
+            "id": "call-1",
+            "result": {
+                "content": [{"type": "text", "text": "accepted"}],
+                "structuredContent": {
+                    "committed": True,
+                    "run_id": "run-1",
+                    "status": "QUEUED",
+                    "tool_name": "writer_article_generate",
+                    "event_stream": "/api/v1/runs/run-1/events?token=example",
+                    "result_url": "/api/v1/runs/run-1/result",
+                    "artifact_url": "/api/v1/runs/run-1/artifacts",
+                    "execution_mode": "async_event",
+                },
+                "isError": False,
+            },
+        },
+    )
+    _write_json(
+        root / "fixtures" / "skill-tools-list.json",
+        {
+            "jsonrpc": "2.0",
+            "id": "list-1",
+            "result": {
+                "tools": [
+                    {
+                        "name": "writer_article_generate",
+                        "title": "Writer",
+                        "description": "Generate article",
+                        "inputSchema": {"type": "object"},
+                        "version": "1.0.0",
+                        "category": "writer",
+                        "annotations": {
+                            "category": "writer",
+                            "riskLevel": "low",
+                            "requiresApproval": False,
+                            "streaming": True,
+                            "artifacts": True,
+                            "version": "1.0.0",
+                        },
+                    }
+                ]
+            },
+        },
+    )
+
+    release = (
+        f"# {SKILL_RUN_CONTRACT_NAME} v{SKILL_RUN_CONTRACT_VERSION}\n\n"
+        "Skill-first employee MCP and Run identity contract.\n"
+        "Does not modify work-expert v1.0.2.\n"
+    )
+    (root / "RELEASE.md").write_text(release, encoding="utf-8")
+
+    backend_commit = _git_head()
+    file_hashes = {
+        str(path.relative_to(root)).replace("\\", "/"): _sha256_file(path)
+        for path in _artifact_files(root)
+        if path.name != "manifest.json"
+    }
+    manifest = {
+        "contractName": SKILL_RUN_CONTRACT_NAME,
+        "contractVersion": SKILL_RUN_CONTRACT_VERSION,
+        "provider": "nodeskclaw-backend",
+        "consumer": "smc-copilot/apps/work",
+        "backendCommit": backend_commit,
+        "tagName": SKILL_RUN_TAG_NAME,
+        "generatedAt": datetime.now(timezone.utc).isoformat(),
+        "artifacts": file_hashes,
+        "capabilities": SKILL_RUN_CAPABILITIES,
+    }
+    _write_json(root / "manifest.json", manifest)
+    checksum_lines = [f"{digest}  {relative}" for relative, digest in sorted(file_hashes.items())]
+    (root / "SHA256SUMS").write_text("\n".join(checksum_lines) + "\n", encoding="utf-8")
+    print(f"Generated {SKILL_RUN_CONTRACT_NAME} at {root} (backendCommit={backend_commit})")
+
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="WORK-EXPERT-CONTRACT generator/checker")
+    import os
+    os.environ.setdefault("JWT_SECRET", "test-secret-key-for-jwt-generation-minimum-32-chars-long")
+    os.environ.setdefault("ENCRYPTION_KEY", "test-encryption-key-for-aes-encryption-32-bytes-long")
+    os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/nodeskclaw_test")
+
+    parser = argparse.ArgumentParser(description="Contract generator/checker")
     sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("generate", help="Generate contract artifacts")
+    generate_parser = sub.add_parser("generate", help="Generate contract artifacts")
+    generate_parser.add_argument(
+        "--family",
+        choices=("work-expert", "skill-run", "all"),
+        default="work-expert",
+        help="Contract family to generate",
+    )
     check_parser = sub.add_parser("check", help="Validate committed contract artifacts")
     check_parser.add_argument("--release", action="store_true")
     args = parser.parse_args()
 
     sys.path.insert(0, str(BACKEND_ROOT))
     if args.command == "generate":
-        generate_contracts()
+        if args.family in ("work-expert", "all"):
+            generate_contracts()
+        if args.family in ("skill-run", "all"):
+            generate_skill_run_contracts()
     else:
         check_contracts(release=args.release)
 

@@ -6,9 +6,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import NotFoundError, BadRequestError, ForbiddenError
 from app.models.base import not_deleted
+from app.models.connector.edge_job import EdgeJob, EdgeJobStatus
+from app.models.connector.edge_node import EdgeNode
+from app.models.connector.instance import ConnectorInstance, ConnectorPlacement
+from app.models.connector.tool import ConnectorTool
 from app.models.hermes_skill.skill import HermesSkill
+from app.services.connector.connector_service import ConnectorService
+from app.api.internal_edge import is_edge_node_online
 from app.models.hermes_skill.skill_installation import HermesSkillInstallation
 from app.models.hermes_skill.hermes_task import TaskStatus
+from app.models.hermes_skill.skill_release import HermesSkillRelease, SkillReleaseStatus
 from app.services.hermes_skill.agent_alias_resolver import AgentAliasResolver
 from app.services.hermes_skill.hermes_skill_authorization_service import HermesSkillAuthorizationService
 from app.services.hermes_skill.permission_checker import PermissionChecker
@@ -16,6 +23,7 @@ from app.services.hermes_skill.skill_routing_service import SkillRoutingService
 from app.schemas.hermes_skill.runtime_skill_run import StartRuntimeSkillRunRequest
 from app.services.hermes_skill.runtime_skill_run_service import RuntimeSkillRunService
 from app.services.hermes_skill.task_service import TaskService
+from app.services.hermes_skill.skill_release_service import SkillReleaseService
 from app.services.mcp_skill_gateway.mcp_execution_mode import (
     ASYNC_EVENT_MODE,
     WAIT_MODE,
@@ -97,6 +105,13 @@ class McpToolMapper:
             HermesSkill.tool_name.isnot(None),
             HermesSkill.tool_name != "",
             exists(installed_subq.where(HermesSkillInstallation.skill_id == HermesSkill.skill_id)),
+            exists(
+                select(HermesSkillRelease.id).where(
+                    not_deleted(HermesSkillRelease),
+                    HermesSkillRelease.skill_db_id == HermesSkill.id,
+                    HermesSkillRelease.status == SkillReleaseStatus.PUBLISHED.value,
+                )
+            ),
         ]
         if category:
             conditions.append(HermesSkill.category == category)
@@ -119,26 +134,202 @@ class McpToolMapper:
                     if await authz.can_list(org_id, user_id, s.id, s.skill_id)
                 ]
 
-        alias_resolver = AgentAliasResolver(self.db)
         tools = []
         for skill in skills:
-            tools.append(await self._skill_to_tool_dict(skill, org_id, agent_id, agent_alias, alias_resolver, user_id))
+            tools.append(await self._skill_to_tool_dict(skill, org_id, user_id))
+        tools.extend(await self._list_public_connector_tools(org_id, keyword=keyword, category=category))
         return tools
+
+    async def _list_public_connector_tools(
+        self,
+        org_id: str,
+        *,
+        keyword: str | None = None,
+        category: str | None = None,
+    ) -> list[dict[str, Any]]:
+        query = (
+            select(ConnectorTool, ConnectorInstance)
+            .join(ConnectorInstance, ConnectorInstance.id == ConnectorTool.instance_id)
+            .where(
+                not_deleted(ConnectorTool),
+                not_deleted(ConnectorInstance),
+                ConnectorTool.org_id == org_id,
+                ConnectorTool.is_public.is_(True),
+                ConnectorInstance.is_active.is_(True),
+            )
+            .order_by(ConnectorTool.tool_name.asc())
+        )
+        if keyword:
+            query = query.where(
+                ConnectorTool.tool_name.ilike(f"%{keyword}%")
+                | ConnectorTool.title.ilike(f"%{keyword}%")
+                | ConnectorTool.description.ilike(f"%{keyword}%")
+            )
+        rows = (await self.db.execute(query)).all()
+        tools: list[dict[str, Any]] = []
+        edge_node_cache: dict[str, Any] = {}
+        for connector_tool, instance in rows:
+            if instance.placement == ConnectorPlacement.EDGE.value:
+                node_id = instance.edge_node_id
+                if not node_id:
+                    continue
+                if node_id not in edge_node_cache:
+                    node_result = await self.db.execute(
+                        select(EdgeNode).where(
+                            not_deleted(EdgeNode),
+                            EdgeNode.org_id == org_id,
+                            EdgeNode.id == node_id,
+                        )
+                    )
+                    edge_node_cache[node_id] = node_result.scalar_one_or_none()
+                node = edge_node_cache[node_id]
+                if not node or not is_edge_node_online(node):
+                    continue
+            meta = dict(connector_tool.extra_metadata or {})
+            tool_category = meta.get("category") or "connector"
+            if category and tool_category != category:
+                continue
+            placement = instance.placement or ConnectorPlacement.CENTRAL.value
+            tools.append(
+                {
+                    "name": connector_tool.tool_name,
+                    "title": connector_tool.title or connector_tool.tool_name,
+                    "description": connector_tool.description or "",
+                    "inputSchema": connector_tool.input_schema or {},
+                    "version": meta.get("version"),
+                    "category": tool_category,
+                    "approvalMode": "server" if bool(meta.get("requires_approval")) else "none",
+                    "requiresApproval": bool(meta.get("requires_approval")),
+                    "authorized": True,
+                    "grantStatus": "active",
+                    "kind": "connector",
+                    "sourceType": f"connector:{placement}",
+                    "serverManagedRoute": True,
+                    "executionModes": [ASYNC_EVENT_MODE],
+                    "defaultExecutionMode": ASYNC_EVENT_MODE,
+                    "artifactMode": "pull_only",
+                    "resultMode": "pull_on_complete",
+                    "routeOverrideAllowed": False,
+                    "requiresRouteOverride": False,
+                    "forbiddenArgumentKeys": list(RUNTIME_SKILL_FORBIDDEN_ARGUMENT_KEYS),
+                }
+            )
+        return tools
+
+    async def _call_connector_tool(
+        self,
+        *,
+        tool_name: str,
+        arguments: dict[str, Any],
+        raw_args: dict[str, Any],
+        org_id: str,
+        user_id: str,
+        client_context: dict | None,
+        request_trace_id: str | None,
+        request_snapshot: dict | None,
+    ) -> dict[str, Any]:
+        if self._has_explicit_runtime_route_override(raw_args):
+            raise BadRequestError(
+                "组织级 MCP 不允许覆盖 Connector 路由",
+                "errors.connector.route_override_not_allowed",
+            )
+        bundle = await ConnectorService(self.db).get_public_tool_bundle(org_id, tool_name)
+        instance = bundle["instance"]
+        definition = bundle["definition"]
+        connector_tool = bundle["tool"]
+        if instance.placement != ConnectorPlacement.CENTRAL.value:
+            if instance.placement == ConnectorPlacement.EDGE.value:
+                if not instance.edge_node_id:
+                    raise BadRequestError(
+                        "Edge Connector 未绑定节点，请联系管理员配置 edge_node_id",
+                        "errors.connector.edge_node_required",
+                    )
+                node_result = await self.db.execute(
+                    select(EdgeNode).where(
+                        not_deleted(EdgeNode),
+                        EdgeNode.org_id == org_id,
+                        EdgeNode.id == instance.edge_node_id,
+                    )
+                )
+                node = node_result.scalar_one_or_none()
+                if not node or not is_edge_node_online(node):
+                    raise BadRequestError(
+                        "Edge 离线，请联系管理员",
+                        "errors.connector.edge_offline",
+                    )
+            else:
+                raise BadRequestError(
+                    "该 Connector placement 不受支持",
+                    "errors.connector.invalid_placement",
+                )
+        request = StartRuntimeSkillRunRequest(
+            org_id=org_id,
+            user_id=user_id or "",
+            tool_name=tool_name,
+            runtime_skill_id=tool_name,
+            agent_profile="connector",
+            hermes_agent_instance_id="connector-central",
+            agent_id=None,
+            arguments=arguments,
+            client_context=client_context or {},
+            output_policy={"artifact_mode": "pull_only"},
+            task_source="org_mcp",
+            skill_id=tool_name,
+            request_trace_id=request_trace_id,
+            request_snapshot=request_snapshot,
+            execution_mode=ASYNC_EVENT_MODE,
+            entrypoint="mcp_skill_gateway",
+            catalog_kind="connector",
+            catalog_slug=tool_name,
+            upstream_tool_name=tool_name,
+            extra_route_snapshot={
+                "route_type": "connector",
+                "connector_kind": definition.kind,
+                "connector_tool_name": connector_tool.tool_name,
+                "connector_title": connector_tool.title,
+                "connector_description": connector_tool.description,
+                "connector_config": dict(instance.config or {}),
+                "connector_secret_ref_id": instance.secret_ref_id,
+                "connector_binding_refs": [connector_tool.id],
+                "knowledge_refs": [],
+                "placement": instance.placement,
+                "edge_node_id": instance.edge_node_id,
+            },
+            routing_metadata_extras={
+                "connector_tool_id": connector_tool.id,
+                "connector_instance_id": instance.id,
+                "connector_definition_id": definition.id,
+                "routing_reason": "connector_public_tool",
+            },
+        )
+        result = await RuntimeSkillRunService(self.db).start(request)
+        if instance.placement == ConnectorPlacement.EDGE.value and instance.edge_node_id:
+            run_id = str(result.structured_content.get("run_id") or result.task.id)
+            job = EdgeJob(
+                org_id=org_id,
+                edge_node_id=instance.edge_node_id,
+                run_id=run_id,
+                tool_name=tool_name,
+                status=EdgeJobStatus.QUEUED.value,
+                arguments=arguments,
+                snapshot={
+                    "runtime_policy": dict(request.extra_route_snapshot),
+                    "placement": {"role": "edge", "engine": "connector"},
+                },
+            )
+            self.db.add(job)
+            await self.db.flush()
+        return result.structured_content
 
     async def _skill_to_tool_dict(
         self,
         skill: HermesSkill,
         org_id: str,
-        agent_id: str | None,
-        agent_alias: str | None,
-        alias_resolver: AgentAliasResolver,
         user_id: str,
     ) -> dict[str, Any]:
         extra = skill.extra_metadata or {}
-        resolved_alias = agent_alias
-        resolved_agent_id = agent_id
-        profile_id = None
-        workspace_id = None
+        published = await SkillReleaseService(self.db).get_published_by_skill_db_id(skill.id)
+        release_extra = (published.extra_metadata if published else None) or extra
         installation = None
         inst_result = await self.db.execute(
             select(HermesSkillInstallation).where(
@@ -149,16 +340,6 @@ class McpToolMapper:
             ).limit(1)
         )
         installation = inst_result.scalar_one_or_none()
-        if installation:
-            resolved_agent_id = resolved_agent_id or installation.agent_id
-            profile_id = installation.profile_id
-            workspace_id = installation.workspace_id
-        if resolved_agent_id and not resolved_alias:
-            resolution = await alias_resolver.resolve(org_id, resolved_agent_id)
-            if resolution:
-                resolved_alias = resolution.agent_alias
-                profile_id = profile_id or resolution.profile_id
-                workspace_id = workspace_id or resolution.workspace_id
 
         authorized = True
         grant_status = "active"
@@ -168,35 +349,36 @@ class McpToolMapper:
             if not authorized:
                 grant_status = "denied"
 
+        requires_approval = bool(
+            release_extra.get("requires_approval") or release_extra.get("requiresApproval")
+        )
         tool: dict[str, Any] = {
             "name": skill.tool_name,
-            "title": skill.title or skill.name,
-            "description": skill.description or "",
-            "inputSchema": skill.input_schema or {},
-            "version": skill.version,
-            "category": skill.category,
-            "agentAlias": resolved_alias,
-            "agentId": resolved_agent_id,
-            "profileId": profile_id,
-            "workspaceId": workspace_id,
-            "approvalMode": "server",
-            "requiresApproval": False,
+            "title": (published.title if published else None) or skill.title or skill.name,
+            "description": (published.description if published else None) or skill.description or "",
+            "inputSchema": (published.input_schema if published else None) or skill.input_schema or {},
+            "version": published.version if published else skill.version,
+            "category": (published.category if published else None) or skill.category,
+            "approvalMode": "server" if requires_approval else "none",
+            "requiresApproval": requires_approval,
             "authorized": authorized,
             "grantStatus": grant_status,
         }
-        if extra.get("ui_schema"):
-            tool["uiSchema"] = extra["ui_schema"]
-        if extra.get("examples"):
-            tool["examples"] = extra["examples"]
-        if extra.get("primary_artifact_policy"):
-            tool["primaryArtifactPolicy"] = extra["primary_artifact_policy"]
+        if published:
+            tool["skillReleaseId"] = published.id
+            tool["skillReleaseDigest"] = published.digest
+        if release_extra.get("ui_schema"):
+            tool["uiSchema"] = release_extra["ui_schema"]
+        if release_extra.get("examples"):
+            tool["examples"] = release_extra["examples"]
+        if release_extra.get("primary_artifact_policy"):
+            tool["primaryArtifactPolicy"] = release_extra["primary_artifact_policy"]
         if skill.source_type == RUNTIME_SKILL_ROUTE_TYPE:
             tool.update(
                 await self._build_runtime_skill_tool_metadata(
                     skill,
                     org_id,
                     installation,
-                    profile_id,
                 )
             )
         return tool
@@ -206,12 +388,13 @@ class McpToolMapper:
         skill: HermesSkill,
         org_id: str,
         installation: HermesSkillInstallation | None,
-        profile_id: str | None,
     ) -> dict[str, Any]:
         route_meta = {}
         if installation and isinstance(installation.routing_metadata, dict):
             route_meta = installation.routing_metadata
-        runtime_profile = route_meta.get("agent_profile") or profile_id
+        runtime_profile = route_meta.get("agent_profile") or (
+            installation.profile_id if installation else None
+        )
         route_health = await self._resolve_runtime_route_health(
             org_id,
             route_meta,
@@ -219,16 +402,10 @@ class McpToolMapper:
         )
         return {
             "sourceType": RUNTIME_SKILL_ROUTE_TYPE,
-            "routeType": route_meta.get("route_type") or RUNTIME_SKILL_ROUTE_TYPE,
             "serverManagedRoute": True,
-            "runtimeSkillId": route_meta.get("runtime_skill_id") or skill.skill_id,
-            "runtimeInstanceId": route_meta.get("hermes_agent_instance_id"),
-            "runtimeInstanceName": runtime_profile,
-            "runtimeProfile": runtime_profile,
             "executionModes": [ASYNC_EVENT_MODE],
             "defaultExecutionMode": ASYNC_EVENT_MODE,
             "sseTimelineEnabled": True,
-            "eventStreamProvider": "nodeskclaw_task_events",
             "artifactMode": "pull_only",
             "resultMode": "pull_on_complete",
             "routeOverrideAllowed": False,
@@ -292,19 +469,31 @@ class McpToolMapper:
 
         skill = await routing_service.get_exposed_skill(tool_name, org_id)
         if not skill:
-            from app.services.hermes_skill.skill_audit_logger import SkillAuditLogger
-            audit_logger = SkillAuditLogger(self.db)
-            await audit_logger.log(
-                action="hermes.skill.routing.failed",
-                target_id=tool_name,
-                org_id=org_id,
-                actor_id=user_id or "",
-                details={"tool_name": tool_name, "error": "errors.skill.tool_not_found"},
-            )
-            raise NotFoundError(
-                f"MCP Tool {tool_name} 不存在",
-                "errors.skill.tool_not_found",
-            )
+            try:
+                return await self._call_connector_tool(
+                    tool_name=tool_name,
+                    arguments=agent_arguments,
+                    raw_args=raw_args,
+                    org_id=org_id,
+                    user_id=user_id,
+                    client_context=client_context,
+                    request_trace_id=request_trace_id,
+                    request_snapshot=request_snapshot,
+                )
+            except NotFoundError:
+                from app.services.hermes_skill.skill_audit_logger import SkillAuditLogger
+                audit_logger = SkillAuditLogger(self.db)
+                await audit_logger.log(
+                    action="hermes.skill.routing.failed",
+                    target_id=tool_name,
+                    org_id=org_id,
+                    actor_id=user_id or "",
+                    details={"tool_name": tool_name, "error": "errors.skill.tool_not_found"},
+                )
+                raise NotFoundError(
+                    f"MCP Tool {tool_name} 不存在",
+                    "errors.skill.tool_not_found",
+                )
 
         try:
             if skill.source_type == "hermes_api_server":
@@ -538,6 +727,11 @@ class McpToolMapper:
         runtime_run_result = None
         if skill.source_type == RUNTIME_SKILL_ROUTE_TYPE:
             route_meta = installation.routing_metadata or {}
+            client_ctx = dict(client_context or {})
+            published = await SkillReleaseService(self.db).get_published_by_skill_db_id(skill.id)
+            release_extra = (published.extra_metadata if published else None) or (skill.extra_metadata or {})
+            if release_extra.get("requires_approval") or release_extra.get("requiresApproval"):
+                client_ctx["requires_approval"] = True
             run_request = StartRuntimeSkillRunRequest(
                 org_id=org_id,
                 user_id=user_id or "",
@@ -547,7 +741,7 @@ class McpToolMapper:
                 hermes_agent_instance_id=str(route_meta.get("hermes_agent_instance_id") or ""),
                 agent_id=installation.agent_id,
                 arguments=agent_arguments,
-                client_context=client_context or {},
+                client_context=client_ctx,
                 output_policy=output_policy,
                 task_source="org_mcp",
                 skill_id=skill.skill_id,
@@ -573,6 +767,42 @@ class McpToolMapper:
                 request_trace_id or "",
                 tool_name,
                 RUNTIME_SKILL_ROUTE_TYPE,
+            )
+            runtime_run_result = await RuntimeSkillRunService(self.db).start(run_request)
+            task = runtime_run_result.task
+        elif settings.SKILL_AGENT_ENABLED:
+            client_ctx = dict(client_context or {})
+            published = await SkillReleaseService(self.db).get_published_by_skill_db_id(skill.id)
+            release_extra = (published.extra_metadata if published else None) or (skill.extra_metadata or {})
+            if release_extra.get("requires_approval") or release_extra.get("requiresApproval"):
+                client_ctx["requires_approval"] = True
+            run_request = StartRuntimeSkillRunRequest(
+                org_id=org_id,
+                user_id=user_id or "",
+                tool_name=tool_name,
+                runtime_skill_id=skill.skill_id,
+                agent_profile=str(installation.profile_id or ""),
+                hermes_agent_instance_id="",
+                agent_id=installation.agent_id,
+                arguments=agent_arguments,
+                client_context=client_ctx,
+                output_policy=output_policy,
+                task_source="org_mcp",
+                skill_id=skill.skill_id,
+                installation_id=installation.id,
+                workspace_id=installation.workspace_id,
+                request_trace_id=request_trace_id,
+                request_snapshot=request_snapshot,
+                route_diagnostics=route_diagnostics,
+                execution_mode=execution_mode,
+                entrypoint="mcp_skill_gateway",
+                routing_metadata_extras={
+                    "agent_alias": agent_alias,
+                    "agent_id": installation.agent_id,
+                    "profile_id": installation.profile_id,
+                    "workspace_id": installation.workspace_id,
+                    "routing_reason": routing_result.reason,
+                },
             )
             runtime_run_result = await RuntimeSkillRunService(self.db).start(run_request)
             task = runtime_run_result.task

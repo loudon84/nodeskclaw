@@ -1,13 +1,16 @@
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 from app.services.mcp_skill_gateway.handler import _handle_tools_list
 
 
 @pytest.mark.asyncio
-async def test_tools_list_agent_alias_filter():
+async def test_tools_list_rejects_agent_alias_filter():
     db = AsyncMock()
-    with patch("app.services.mcp_skill_gateway.handler._collect_tools", AsyncMock(return_value=[{"name": "writer_article_generate"}])) as collect:
+    with patch(
+        "app.services.mcp_skill_gateway.handler._collect_tools",
+        AsyncMock(return_value=[{"name": "writer_article_generate"}]),
+    ) as collect:
         result = await _handle_tools_list(
             1,
             "user-1",
@@ -16,22 +19,19 @@ async def test_tools_list_agent_alias_filter():
             params={"agent_alias": "common-writer", "profile": "writer"},
             request_headers={},
         )
-    collect.assert_awaited_once_with(
-        "user-1",
-        "org-1",
-        db,
-        agent_alias="common-writer",
-        profile="writer",
-        workspace_id=None,
-    )
-    assert result["result"]["tools"][0]["name"] == "writer_article_generate"
+    collect.assert_not_awaited()
+    assert "error" in result
+    assert result["error"]["data"]["errorCode"] == "MCP_INVALID_ARGUMENTS"
 
 
 @pytest.mark.asyncio
-async def test_tools_list_profile_header_fallback():
+async def test_tools_list_ignores_profile_header_without_params():
     db = AsyncMock()
-    with patch("app.services.mcp_skill_gateway.handler._collect_tools", AsyncMock(return_value=[])) as collect:
-        await _handle_tools_list(
+    with patch(
+        "app.services.mcp_skill_gateway.handler._collect_tools",
+        AsyncMock(return_value=[]),
+    ) as collect:
+        result = await _handle_tools_list(
             1,
             "user-1",
             "org-1",
@@ -43,7 +43,6 @@ async def test_tools_list_profile_header_fallback():
         "user-1",
         "org-1",
         db,
-        agent_alias=None,
-        profile="writer",
-        workspace_id=None,
+        allowed_skills=None,
     )
+    assert result["result"]["tools"] == []

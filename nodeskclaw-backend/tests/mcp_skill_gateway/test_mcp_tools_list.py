@@ -2,17 +2,10 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.services.mcp_skill_gateway.handler import dispatch, dispatch_authenticated
-from app.services.mcp_skill_gateway.mcp_tool_registry import build_tool_descriptor, get_tool
-
-
-def _hermes_tool(name: str) -> dict:
-    tool = get_tool(name)
-    assert tool is not None
-    return build_tool_descriptor(tool)
 
 
 @pytest.mark.asyncio
-async def test_tools_list_returns_hermes_tools_with_annotations():
+async def test_tools_list_returns_only_skill_tools():
     from app.services.mcp_skill_gateway.auth import McpAuthContext
 
     user = MagicMock()
@@ -21,47 +14,45 @@ async def test_tools_list_returns_hermes_tools_with_annotations():
     org.id = "org-1"
     body = {"jsonrpc": "2.0", "id": "tools-1", "method": "tools/list", "params": {}}
     db = AsyncMock()
+    skill_tool = {
+        "name": "writer_article_generate",
+        "title": "Writer",
+        "description": "Generate article",
+        "inputSchema": {"type": "object"},
+        "version": "1.0.0",
+        "category": "writer",
+        "approvalMode": "server",
+        "requiresApproval": False,
+        "authorized": True,
+        "grantStatus": "active",
+    }
 
     with patch(
         "app.services.mcp_skill_gateway.handler.resolve_mcp_user",
         return_value=McpAuthContext(user=user, org=org),
     ), patch(
         "app.services.mcp_skill_gateway.handler.McpToolMapper",
-    ) as mock_mapper_cls, patch(
-        "app.services.mcp_skill_gateway.handler.get_grant_annotation",
-        new=AsyncMock(return_value={"authorized": False, "grantStatus": "missing"}),
-    ):
+    ) as mock_mapper_cls:
         mock_mapper = AsyncMock()
-        mock_mapper.list_tools.return_value = []
+        mock_mapper.list_tools.return_value = [skill_tool]
         mock_mapper_cls.return_value = mock_mapper
 
         result = await dispatch(body, "Bearer valid-token", db)
 
     tools = result["result"]["tools"]
-    assert len(tools) == 10
-    genehub_tools = [t for t in tools if t["name"].startswith("genehub.")]
-    assert len(genehub_tools) == 4
-    for tool in tools:
-        annotations = tool["annotations"]
-        assert "category" in annotations
-        assert "permission" in annotations
-        assert "riskLevel" in annotations
-        assert "requiresApproval" in annotations
-        assert "enabled" in annotations
-        if annotations["requiresApproval"]:
-            assert annotations["approvalMode"] == "server"
-        elif annotations.get("approvalMode") == "desktop":
-            assert annotations.get("authorized") is True
-            assert annotations.get("grantStatus") == "desktop_pending"
-        else:
-            assert annotations.get("authorized") is True
-    read_genehub = [t for t in genehub_tools if t["name"] != "genehub.skill.register_to_hermes"]
-    assert all(t["annotations"]["permission"] == "read" for t in read_genehub)
-    register_tool = next(t for t in genehub_tools if t["name"] == "genehub.skill.register_to_hermes")
-    assert register_tool["annotations"]["permission"] == "write"
-    assert register_tool["annotations"]["requiresApproval"] is False
-    assert register_tool["annotations"]["approvalMode"] == "desktop"
-    assert register_tool["annotations"]["desktopConfirmationRequired"] is True
+    assert tools == [skill_tool]
+    assert all(not t["name"].startswith("hermes.") for t in tools)
+    assert all(not t["name"].startswith("genehub.") for t in tools)
+    assert all(not t["name"].startswith("nodeskclaw_task_") for t in tools)
+    for key in (
+        "agentAlias",
+        "agentId",
+        "profileId",
+        "runtimeInstanceId",
+        "routeType",
+        "installationId",
+    ):
+        assert key not in skill_tool
 
 
 @pytest.mark.asyncio
@@ -75,23 +66,14 @@ async def test_tools_list_never_returns_null():
 
     with patch(
         "app.services.mcp_skill_gateway.handler.McpToolMapper",
-    ) as mock_mapper_cls, patch(
-        "app.services.mcp_skill_gateway.handler.get_grant_annotation",
-        new=AsyncMock(return_value=None),
-    ), patch(
-        "app.services.mcp_skill_gateway.handler.list_enabled_tools",
-        return_value=[get_tool("hermes.instances.list")],
-    ):
+    ) as mock_mapper_cls:
         mock_mapper = AsyncMock()
         mock_mapper.list_tools.return_value = [{"name": "tool.a"}]
         mock_mapper_cls.return_value = mock_mapper
 
         result = await dispatch_authenticated(body, (user, org), db)
 
-    assert result["result"]["tools"] == [
-        _hermes_tool("hermes.instances.list"),
-        {"name": "tool.a"},
-    ]
+    assert result["result"]["tools"] == [{"name": "tool.a"}]
 
 
 @pytest.mark.asyncio
@@ -107,13 +89,7 @@ async def test_tools_list_different_users_can_differ():
 
     with patch(
         "app.services.mcp_skill_gateway.handler.McpToolMapper",
-    ) as mock_mapper_cls, patch(
-        "app.services.mcp_skill_gateway.handler.get_grant_annotation",
-        new=AsyncMock(return_value=None),
-    ), patch(
-        "app.services.mcp_skill_gateway.handler.list_enabled_tools",
-        return_value=[get_tool("hermes.instances.list")],
-    ):
+    ) as mock_mapper_cls:
         mock_mapper = AsyncMock()
         mock_mapper.list_tools.side_effect = [
             [{"name": "granted_tool"}],
@@ -124,5 +100,26 @@ async def test_tools_list_different_users_can_differ():
         granted = await dispatch_authenticated(body, (user_a, org), db)
         denied = await dispatch_authenticated(body, (user_b, org), db)
 
-    assert granted["result"]["tools"][0]["name"] == "hermes.instances.list"
-    assert denied["result"]["tools"] == [_hermes_tool("hermes.instances.list")]
+    assert granted["result"]["tools"] == [{"name": "granted_tool"}]
+    assert denied["result"]["tools"] == []
+
+
+@pytest.mark.asyncio
+async def test_tools_list_rejects_catalog_addressing_params():
+    user = MagicMock()
+    user.id = "user-1"
+    org = MagicMock()
+    org.id = "org-1"
+    body = {
+        "jsonrpc": "2.0",
+        "id": "tools-1",
+        "method": "tools/list",
+        "params": {"agent_alias": "common-writer"},
+    }
+    db = AsyncMock()
+
+    result = await dispatch_authenticated(body, (user, org), db)
+
+    assert "error" in result
+    assert result["error"]["data"]["errorCode"] == "MCP_INVALID_ARGUMENTS"
+    assert "rejected_params" in result["error"]["data"]

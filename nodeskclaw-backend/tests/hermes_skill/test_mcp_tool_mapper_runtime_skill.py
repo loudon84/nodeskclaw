@@ -74,6 +74,9 @@ async def test_mcp_client_token_profile_does_not_override_runtime_route():
              "resolve_runtime_skill_fixed_route",
              AsyncMock(return_value=routing_result),
          ) as mock_fixed_route, \
+         patch(
+             "app.services.hermes_skill.mcp_tool_mapper.SkillReleaseService",
+         ) as release_cls, \
          patch("app.services.hermes_skill.mcp_tool_mapper.AgentAliasResolver") as mock_alias_cls, \
          patch("app.services.hermes_skill.mcp_tool_mapper.RuntimeSkillRunService") as mock_run_svc_cls, \
          patch("app.services.hermes_skill.mcp_tool_mapper.HermesSkillAuthorizationService") as mock_authz_cls, \
@@ -81,6 +84,7 @@ async def test_mcp_client_token_profile_does_not_override_runtime_route():
          patch.object(mapper, "_resolve_runtime_route_health", AsyncMock(return_value={"ok": True})):
         mock_alias_cls.return_value.enrich_routing = AsyncMock()
         mock_alias_cls.return_value.resolve = AsyncMock(return_value=None)
+        release_cls.return_value.get_published_by_skill_db_id = AsyncMock(return_value=None)
         mock_authz_cls.return_value.can_invoke = AsyncMock(return_value=True)
         mock_run_svc = AsyncMock()
         mock_run_svc.start.return_value = RuntimeSkillRunResult(
@@ -186,14 +190,22 @@ async def test_normal_skill_profile_routing_unchanged():
              "resolve_runtime_skill_fixed_route",
              AsyncMock(),
          ) as mock_fixed_route, \
+         patch(
+             "app.services.hermes_skill.mcp_tool_mapper.settings",
+         ) as mock_settings, \
+         patch(
+             "app.services.hermes_skill.mcp_tool_mapper.SkillReleaseService",
+         ) as release_cls, \
          patch("app.services.hermes_skill.mcp_tool_mapper.AgentAliasResolver") as mock_alias_cls, \
          patch("app.services.hermes_skill.mcp_tool_mapper.TaskService") as mock_task_svc_cls, \
          patch("app.services.hermes_skill.mcp_tool_mapper.HermesSkillAuthorizationService") as mock_authz_cls, \
          patch("app.services.hermes_skill.skill_audit_logger.SkillAuditLogger") as mock_audit_cls:
+        mock_settings.SKILL_AGENT_ENABLED = False
         mock_alias_cls.return_value.enrich_routing = AsyncMock(
             return_value={"profile_id": "default"},
         )
         mock_alias_cls.return_value.resolve = AsyncMock(return_value=None)
+        release_cls.return_value.get_published_by_skill_db_id = AsyncMock(return_value=None)
         mock_authz_cls.return_value.can_invoke = AsyncMock(return_value=True)
         mock_task_svc = AsyncMock()
         mock_task_svc.create_task.return_value = created_task
@@ -210,3 +222,51 @@ async def test_normal_skill_profile_routing_unchanged():
 
     mock_alias_cls.return_value.enrich_routing.assert_awaited_once()
     mock_fixed_route.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_public_connector_tool_starts_agent_run():
+    db = AsyncMock()
+    mapper = McpToolMapper(db)
+    run_task = MagicMock()
+    run_task.id = "run-1"
+    run_task.task_no = "TASK-org1-xyz"
+    run_task.status = TaskStatus.QUEUED
+    run_task.event_url = "/api/v1/hermes/tasks/run-1/events"
+    run_task.artifact_url = "/api/v1/hermes/tasks/run-1/artifacts"
+
+    bundle = {
+        "tool": MagicMock(id="tool-1", tool_name="crm_lookup", title="CRM Lookup", description="lookup crm"),
+        "instance": MagicMock(id="inst-1", placement="central", config={"url": "https://example.com"}),
+        "definition": MagicMock(id="def-1", kind="rest"),
+        "secret_ref_name": None,
+    }
+
+    with patch.object(PermissionChecker, "require_permission", AsyncMock()), \
+         patch.object(SkillRoutingService, "get_exposed_skill", AsyncMock(return_value=None)), \
+         patch(
+             "app.services.hermes_skill.mcp_tool_mapper.ConnectorService",
+         ) as connector_cls, \
+         patch(
+             "app.services.hermes_skill.mcp_tool_mapper.RuntimeSkillRunService",
+         ) as run_svc_cls:
+        connector_cls.return_value.get_public_tool_bundle = AsyncMock(return_value=bundle)
+        run_svc_cls.return_value.start = AsyncMock(
+            return_value=RuntimeSkillRunResult(
+                task=run_task,
+                sse_token="tok",
+                structured_content={"run_id": "run-1", "result_url": "/api/v1/runs/run-1/result"},
+            )
+        )
+
+        result = await mapper.call_tool(
+            "crm_lookup",
+            {"customer_id": "c-1"},
+            "org-1",
+            "user-1",
+        )
+
+    assert result["run_id"] == "run-1"
+    request = run_svc_cls.return_value.start.await_args.args[0]
+    assert request.catalog_kind == "connector"
+    assert request.extra_route_snapshot["connector_kind"] == "rest"

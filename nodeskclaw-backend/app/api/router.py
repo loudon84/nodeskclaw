@@ -38,6 +38,7 @@ from app.api.uploads import router as uploads_router
 from app.api.webhooks import router as webhook_router
 from app.api.blackboard import router as blackboard_router
 from app.api.performance import router as performance_router
+from app.api.runs import router as runs_router
 from app.api.workspaces import router as workspace_router
 from app.api.templates import router as template_router
 from app.api.workspace_deploys import router as workspace_deploys_router
@@ -60,6 +61,8 @@ from app.api.engine_versions import (
     engine_version_write_router,
 )
 from app.api.invitations import invite_router, invite_public_router
+from app.api.internal_edge import router as internal_edge_router
+from app.api.internal_skill_agent import router as internal_skill_agent_router
 from app.api.portal.instances import router as portal_instance_router
 from app.api.portal.instance_members import router as portal_instance_members_router
 from app.api.portal.members import router as portal_members_router
@@ -209,6 +212,9 @@ api_router.include_router(gateway_sse_router, prefix="/gateway", tags=["Gateway 
 api_router.include_router(hermes_skill_router, prefix="/hermes", tags=["Hermes Skill"])
 api_router.include_router(hermes_experts_router, prefix="/hermes-experts", tags=["Hermes Expert"])
 api_router.include_router(expert_router, prefix="/expert", tags=["Expert MCP Gateway"])
+api_router.include_router(runs_router, tags=["Runs"])
+api_router.include_router(internal_edge_router, tags=["Internal Edge"])
+api_router.include_router(internal_skill_agent_router, tags=["Internal Skill Agent"])
 api_router.include_router(desktop_genehub_router, tags=["Desktop GeneHub"])
 
 # ── 管理平台 Admin API（/api/v1/admin）─────────────────────

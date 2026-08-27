@@ -34,6 +34,12 @@ class HermesSkillInstallation(BaseModel):
     priority: Mapped[int] = mapped_column(nullable=False, default=0)
     routing_scope: Mapped[str | None] = mapped_column(String(64), nullable=True)
     routing_metadata: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    target_kind: Mapped[str] = mapped_column(String(32), nullable=False, default="remote")
+    edge_node_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("edge_nodes.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    actual_status: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    actual_reported_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
     __table_args__ = (
         Index(
@@ -41,6 +47,12 @@ class HermesSkillInstallation(BaseModel):
             "skill_id", "agent_id",
             unique=True,
             postgresql_where=text("deleted_at IS NULL"),
+        ),
+        Index(
+            "uq_hermes_skill_inst_skill_edge",
+            "skill_id", "edge_node_id",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL AND target_kind = 'edge' AND edge_node_id IS NOT NULL"),
         ),
         Index("ix_hermes_skill_inst_org", "org_id"),
         Index("ix_hermes_skill_inst_status", "status"),

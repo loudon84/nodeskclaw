@@ -261,10 +261,13 @@ class SkillInstaller:
         target_path: Path,
         mode: str,
     ) -> None:
+        if getattr(installation, "target_kind", "remote") in ("remote", "edge"):
+            return
+
         source = Path(skill.canonical_path) if skill.canonical_path else None
         if not source or not source.is_dir():
             if mode != InstallMode.REGISTRY_BIND:
-                raise ValueError(f"Skill 源路径不存在: {source}")
+                return
             return
 
         if mode == InstallMode.COPY:

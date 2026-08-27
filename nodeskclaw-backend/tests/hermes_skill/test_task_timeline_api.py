@@ -1,8 +1,9 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.api.hermes_skill.tasks_router import _unwrap_event_payload, _EVENT_TITLES
+from app.api.hermes_skill.tasks_router import _EVENT_TITLES
 from app.models.hermes_skill.hermes_task import EventType
+from app.services.hermes_skill.task_event_stream_formatter import unwrap_event_payload
 
 
 def test_unwrap_hermes_payload():
@@ -11,7 +12,7 @@ def test_unwrap_hermes_payload():
         "hermes_event_seq": 7,
         "payload": {"delta": "x"},
     }
-    unwrapped = _unwrap_event_payload(payload)
+    unwrapped = unwrap_event_payload(payload)
     assert unwrapped["delta"] == "x"
     assert unwrapped["hermes_event_seq"] == 7
 

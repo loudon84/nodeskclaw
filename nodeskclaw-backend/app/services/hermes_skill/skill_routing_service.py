@@ -2,13 +2,14 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import BadRequestError, NotFoundError
 from app.models.base import not_deleted
 from app.models.hermes_skill.skill import HermesSkill
 from app.models.hermes_skill.skill_installation import HermesSkillInstallation
+from app.models.hermes_skill.skill_release import HermesSkillRelease, SkillReleaseStatus
 from app.services.hermes_skill.hermes_agent_runtime_service import HermesAgentRuntimeService
 
 logger = logging.getLogger(__name__)
@@ -189,6 +190,13 @@ class SkillRoutingService:
                 HermesSkill.tool_name == tool_name,
                 HermesSkill.is_mcp_exposed.is_(True),
                 HermesSkill.is_active.is_(True),
+                exists(
+                    select(HermesSkillRelease.id).where(
+                        not_deleted(HermesSkillRelease),
+                        HermesSkillRelease.skill_db_id == HermesSkill.id,
+                        HermesSkillRelease.status == SkillReleaseStatus.PUBLISHED.value,
+                    )
+                ),
             )
         )
         return result.scalar_one_or_none()

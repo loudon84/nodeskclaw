@@ -861,7 +861,33 @@ async def lifespan(app: FastAPI):
         _worker_task = asyncio.create_task(_worker.start())
         logger.info("Hermes Task Worker 已启动")
 
+    # ── Skill Run Dispatch Worker ─────────────────────────
+    _dispatch_worker_task = None
+    if settings.SKILL_AGENT_ENABLED and settings.SKILL_RUN_DISPATCHER_ENABLED:
+        from app.services.hermes_skill.run_dispatch_outbox_service import RunDispatchWorker
+        _dispatch_worker = RunDispatchWorker()
+        _dispatch_worker_task = asyncio.create_task(_dispatch_worker.start())
+        logger.info("Skill Run Dispatch Worker 已启动")
+
+    # ── Skill Run Projection Worker ───────────────────────
+    _projection_worker_task = None
+    if settings.SKILL_AGENT_ENABLED and settings.SKILL_RUN_PROJECTION_ENABLED:
+        from app.services.hermes_skill.run_projection_updater_service import RunProjectionWorker
+        _projection_worker = RunProjectionWorker()
+        _projection_worker_task = asyncio.create_task(_projection_worker.start())
+        logger.info("Skill Run Projection Worker 已启动")
+
     yield
+
+    # ── Skill Run Projection Worker shutdown ──────────────
+    if _projection_worker_task and not _projection_worker_task.done():
+        _projection_worker.stop()
+        _projection_worker_task.cancel()
+
+    # ── Skill Run Dispatch Worker shutdown ─────────────────
+    if _dispatch_worker_task and not _dispatch_worker_task.done():
+        _dispatch_worker.stop()
+        _dispatch_worker_task.cancel()
 
     # ── Hermes Task Worker shutdown ────────────────────────
     if _worker_task and not _worker_task.done():
