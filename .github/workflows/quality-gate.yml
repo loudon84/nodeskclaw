@@ -43,6 +43,32 @@ jobs:
         working-directory: nodeskclaw-backend
         run: uv run python scripts/contracts.py check
 
+  agent:
+    name: Agent Pytest / Conformance
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgresql+asyncpg://nodeskclaw:nodeskclaw@127.0.0.1:5432/nodeskclaw_test
+      SKILL_AGENT_INTERNAL_TOKEN: ci-agent-token
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install agent dependencies
+        working-directory: nodeskclaw-agent
+        run: uv sync --group dev
+
+      - name: Agent Pytest
+        working-directory: nodeskclaw-agent
+        run: uv run pytest
+
   portal:
     name: Portal Build / Test
     runs-on: ubuntu-latest

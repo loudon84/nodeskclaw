@@ -10,13 +10,13 @@ Architecture Closure (v1.1) 确立了 Run 生产执行架构的十大约束，�
 
 - **Transactional Outbox Dispatcher**：Backend 通过 [[nodeskclaw-backend/app/models/hermes_skill/run_dispatch_outbox.py#RunDispatchOutbox]] 保证创建原子性，[[nodeskclaw-backend/app/services/hermes_skill/run_dispatch_outbox_service.py#RunDispatchOutboxService]] 定时轮询租约投递至 Agent，Agent 在 `runs` 表按 `id` 幂等处理。
 - **Secret-free Credential Flow**：Snapshot 不内嵌明文 token，仅记录 `credential_lease_ref`；Agent 认领后在 Attempt 期间调用 Backend [[nodeskclaw-backend/app/api/internal_skill_agent.py#mint_credential_lease]] 实时铸造短生命周期 JWT（broker 模式）。
-- **Fencing & Generation Control**：Agent 对 `runs` 与 `run_attempts` 表采用 `generation` 字段控制 CAS 写路径并发，`run_events` 采用 `COALESCE(MAX(event_seq), 0) + 1` 原子自增且基于 `(run_id, source, source_event_id)` 唯一索引去重。
+- **Fencing & Generation Control**：Agent 对 `runs` 与 `run_attempts` 表采用 `generation` 字段控制 CAS 写路径并发，`run_events` 采用 `next_event_seq` 原子上递自增且基于 `(run_id, source, source_event_id)` 唯一索引去重。
 - **Cancel Three-Phase State Machine**：取消请求进入 `CANCELLING` 中间态，`hermes_engine` 与 `worker` 通过 `cancel_event` 异步探测中断并流式产出 `run.cancelled`。
-- **Approval Decision Idempotency**：独立 `run_approvals` 表记录审批决策与证据，防止重复恢复与竞态。
-- **Projection Monotonic Updater**：Backend [[nodeskclaw-backend/app/services/hermes_skill/run_projection_updater_service.py#RunProjectionUpdaterService]] 基于单调递增 `projection_cursor` 游标同步状态机与事件至 `HermesTask`。
-- **Edge Transport & Spooling**：Edge 节点以递增 `delivery_generation` 认领 `EdgeJob`，离线时增量事件安全持久化至本地磁盘并在恢复后 flush。
-- **Security & SSRF Gates**：Connector 固定配置优先于动态参数，REST/MCP 严格拦截 169.254.169.254 及 link-local 目标，DB 严格限制 SELECT/WITH 只读查询。
-- **Identity Rotation**：Agent 内部鉴权支持 `SKILL_AGENT_INTERNAL_TOKEN_PREVIOUS` 双密钥平滑轮换。
+- **Approval Decision Idempotency**：独立 `run_approvals` 表记录审批决策与证据，区分 `resume_run` 与 `approve_run` 语义，防止重复恢复与竞态。
+- **Projection Monotonic Updater**：Backend [[nodeskclaw-backend/app/services/hermes_skill/run_projection_updater_service.py#RunProjectionUpdaterService]] 基于单调递增 `projection_cursor` 游标（`after_seq`）同步状态机与事件至 `HermesTask`。
+- **Edge Transport & Spooling**：Edge 节点以递增 `delivery_generation` 认领 `EdgeJob`，防重放双端校验，离线时增量事件安全持久化至本地磁盘并在恢复后 flush。
+- **Security & SSRF Gates**：Connector 固定配置优先于动态参数，REST/MCP 严格拦截 169.254.169.254 及 link-local / internal 目标，DB 严格限制 SELECT/WITH 只读查询。
+- **Identity Rotation**：Agent 内部鉴权支持 `SKILL_AGENT_INTERNAL_TOKEN_PREVIOUS` 双密钥平滑轮换，暴露 `/health` 与 `/metrics` 探针。
 
 ## Owners
 

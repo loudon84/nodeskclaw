@@ -18,8 +18,8 @@ Run 调度生命周期严格基于租约过期控制、CAS 状态迁移与 Attem
 - **创建与幂等**：[[nodeskclaw-agent/app/services/run_service.py#create_run]] 支持分布式并发创建，冲突时基于主键与快照哈希幂等返回已有记录。
 - **认领与租约续期**：`RunWorker` 认领时递增 `generation` 并写入 `run_attempts`，通过后台协程定时续租；当租约过期且被其他节点抢占时触发 fencing 自动终止。
 - **CAS 状态机**：[[nodeskclaw-agent/app/services/run_service.py#set_status]] 变更状态时强制带上 `expected_status` 与 `attempt_id` 进行乐观并发控制。
-- **原子事件定序**：[[nodeskclaw-agent/app/services/run_service.py#append_event]] 利用数据库子查询 `COALESCE(MAX(event_seq), 0) + 1` 原子上递序列号，并通过 `(run_id, source, source_event_id)` 唯一索引去重。
-- **三阶段取消与审批**：运行中取消支持流转至 `CANCELLING` 中间态；[[nodeskclaw-agent/app/services/run_service.py#approve_run]] 记录独立 `run_approvals` 保证审批恢复幂等。
+- **原子事件定序**：[[nodeskclaw-agent/app/services/run_service.py#append_event]] 利用数据库 `next_event_seq` 原子上递序列号，并通过 `(run_id, source, source_event_id)` 唯一索引去重及 payload 哈希防冲突。
+- **三阶段取消与审批**：运行中取消支持流转至 `CANCELLING` 中间态；[[nodeskclaw-agent/app/services/run_service.py#approve_run]] 与 `resume_run` 分离，记录独立 `run_approvals` 保证审批恢复幂等。
 
 ## Hermes Engine Adapter
 
