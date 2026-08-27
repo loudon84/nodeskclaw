@@ -1,20 +1,24 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.config import settings
 from app.db import get_db
+from app.schemas import RunView
 
 
-def _client(monkeypatch):
+def _client(monkeypatch, mock_db=None):
     monkeypatch.setattr(settings, "SKILL_AGENT_WORKER_ENABLED", False)
     import app.main as main_module
 
-    async def _override_db():
+    if mock_db is None:
         mock_db = AsyncMock()
         mock_res = MagicMock()
         mock_res.mappings.return_value.first.return_value = None
         mock_db.execute.return_value = mock_res
+
+    async def _override_db():
         yield mock_db
 
     with patch.object(main_module, "init_schema", new=AsyncMock()):
@@ -43,6 +47,21 @@ def test_internal_run_rejects_forged_org(monkeypatch):
         response = client.post(
             "/internal/v1/runs",
             json={"run_id": "r1", "tool_name": "demo", "org_id": "other-org", "arguments": {}},
+            headers={
+                "X-Skill-Agent-Token": "secret",
+                "X-Exec-Org-Id": "org-1",
+                "X-Exec-User-Id": "user-1",
+            },
+        )
+        assert response.status_code == 403
+
+
+def test_internal_run_rejects_forged_user(monkeypatch):
+    monkeypatch.setattr(settings, "SKILL_AGENT_INTERNAL_TOKEN", "secret")
+    for client in _client(monkeypatch):
+        response = client.post(
+            "/internal/v1/runs",
+            json={"run_id": "r1", "tool_name": "demo", "user_id": "other-user", "arguments": {}},
             headers={
                 "X-Skill-Agent-Token": "secret",
                 "X-Exec-Org-Id": "org-1",
@@ -103,3 +122,125 @@ def test_internal_run_accepts_previous_token(monkeypatch):
         )
         assert resp2.status_code != 401
 
+
+@pytest.mark.parametrize(
+    "method,url,body",
+    [
+        ("POST", "/internal/v1/runs", {"run_id": "r1", "tool_name": "demo"}),
+        ("GET", "/internal/v1/runs/r1", None),
+        ("GET", "/internal/v1/runs/r1/events", None),
+        ("GET", "/internal/v1/runs/r1/result", None),
+        ("GET", "/internal/v1/runs/r1/artifacts", None),
+        ("GET", "/internal/v1/runs/r1/artifacts/art1/bytes", None),
+        ("POST", "/internal/v1/runs/r1/events/ingest", {"events": []}),
+        ("POST", "/internal/v1/runs/r1/cancel", None),
+        ("POST", "/internal/v1/runs/r1/resume", None),
+        ("POST", "/internal/v1/runs/r1/approvals/appr1", None),
+    ],
+)
+def test_all_10_routes_require_exec_org_id_fail_closed(monkeypatch, method, url, body):
+    monkeypatch.setattr(settings, "SKILL_AGENT_INTERNAL_TOKEN", "secret")
+    mock_db = AsyncMock()
+    for client in _client(monkeypatch, mock_db=mock_db):
+        headers = {"X-Skill-Agent-Token": "secret"}  # No X-Exec-Org-Id
+        if method == "POST":
+            resp = client.post(url, json=body or {}, headers=headers)
+        else:
+            resp = client.get(url, headers=headers)
+        assert resp.status_code == 422
+        # Verify no DB execution happened (fail-closed before DB query)
+        assert not mock_db.execute.called
+
+
+def test_ingest_rejects_forged_org_in_body(monkeypatch):
+    monkeypatch.setattr(settings, "SKILL_AGENT_INTERNAL_TOKEN", "secret")
+    for client in _client(monkeypatch):
+        response = client.post(
+            "/internal/v1/runs/r1/events/ingest",
+            json={"org_id": "forged-org", "events": []},
+            headers={
+                "X-Skill-Agent-Token": "secret",
+                "X-Exec-Org-Id": "org-1",
+            },
+        )
+        assert response.status_code == 403
+
+
+def test_canonical_response_models(monkeypatch):
+    monkeypatch.setattr(settings, "SKILL_AGENT_INTERNAL_TOKEN", "secret")
+    from app.services import run_service
+
+    dummy_run = RunView(
+        run_id="r1",
+        org_id="org-1",
+        user_id="user-1",
+        tool_name="demo",
+        status="COMPLETED",
+        snapshot={},
+        result={"summary": "done"},
+        created_at="2026-08-27T00:00:00Z",
+        updated_at="2026-08-27T00:00:00Z",
+    )
+    monkeypatch.setattr(run_service, "get_run", AsyncMock(return_value=dummy_run))
+    monkeypatch.setattr(run_service, "list_events", AsyncMock(return_value=[]))
+    monkeypatch.setattr(run_service, "list_artifacts", AsyncMock(return_value=[]))
+    monkeypatch.setattr(run_service, "cancel_run", AsyncMock(return_value=dummy_run))
+    monkeypatch.setattr(run_service, "approve_run", AsyncMock(return_value=dummy_run))
+
+    headers = {
+        "X-Skill-Agent-Token": "secret",
+        "X-Exec-Org-Id": "org-1",
+    }
+
+    for client in _client(monkeypatch):
+        # 1. GET /runs/{run_id} -> RunView
+        r = client.get("/internal/v1/runs/r1", headers=headers)
+        assert r.status_code == 200
+        data = r.json()
+        assert data["run_id"] == "r1"
+        assert data["org_id"] == "org-1"
+
+        # 2. GET /runs/{run_id}/events -> EventsResponse
+        r = client.get("/internal/v1/runs/r1/events", headers=headers)
+        assert r.status_code == 200
+        data = r.json()
+        assert "items" in data
+        assert "next_seq" in data
+        assert data["org_id"] == "org-1"
+
+        # 3. GET /runs/{run_id}/result -> ResultResponse
+        r = client.get("/internal/v1/runs/r1/result", headers=headers)
+        assert r.status_code == 200
+        data = r.json()
+        assert data["org_id"] == "org-1"
+        assert data["status"] == "COMPLETED"
+        assert data["result"] == {"summary": "done"}
+
+        # 4. GET /runs/{run_id}/artifacts -> ArtifactsResponse
+        r = client.get("/internal/v1/runs/r1/artifacts", headers=headers)
+        assert r.status_code == 200
+        data = r.json()
+        assert "items" in data
+        assert data["org_id"] == "org-1"
+
+        # 5. POST /runs/{run_id}/cancel -> MutationResponse
+        r = client.post("/internal/v1/runs/r1/cancel", headers=headers)
+        assert r.status_code == 200
+        data = r.json()
+        assert data["org_id"] == "org-1"
+        assert data["status"] == "COMPLETED"
+        assert data["idempotent"] is True
+
+        # 6. POST /runs/{run_id}/resume -> MutationResponse
+        r = client.post("/internal/v1/runs/r1/resume", headers=headers)
+        assert r.status_code == 200
+        data = r.json()
+        assert data["org_id"] == "org-1"
+        assert data["idempotent"] is True
+
+        # 7. POST /runs/{run_id}/approvals/{approval_id} -> MutationResponse
+        r = client.post("/internal/v1/runs/r1/approvals/appr1", headers=headers)
+        assert r.status_code == 200
+        data = r.json()
+        assert data["org_id"] == "org-1"
+        assert data["idempotent"] is True

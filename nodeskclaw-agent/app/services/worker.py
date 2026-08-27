@@ -269,7 +269,7 @@ class RunWorker:
                     if stop_renew.is_set():
                         break
                     async with SessionLocal() as chk_db:
-                        run_row = await run_service.get_run(chk_db, run_id)
+                        run_row = await run_service.get_run(chk_db, run_id, org_id=claimed.get("org_id") or "")
                         if run_row and run_row.status in ("CANCELLING", "CANCELLED"):
                             cancel_event.set()
                             break

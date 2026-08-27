@@ -152,7 +152,7 @@ async def test_approve_run_records_approval_idempotently(monkeypatch):
     monkeypatch.setattr(run_service, "set_status", AsyncMock(return_value=True))
     monkeypatch.setattr(run_service, "append_event", AsyncMock())
 
-    res = await run_service.approve_run(db, "run-wait", approval_id="appr-123", evidence={"actor": "admin"})
+    res = await run_service.approve_run(db, "run-wait", org_id="org-1", approval_id="appr-123", evidence={"actor": "admin"})
     assert res.status == "QUEUED"
     assert db.execute.called
 
@@ -191,7 +191,7 @@ async def test_cancel_run_three_phase_transitions(monkeypatch):
     monkeypatch.setattr(run_service, "set_status", AsyncMock(return_value=True))
     monkeypatch.setattr(run_service, "append_event", AsyncMock())
 
-    res = await run_service.cancel_run(db, "run-running")
+    res = await run_service.cancel_run(db, "run-running", org_id="org-1")
     assert res.status == "CANCELLING"
 
     # 2. Queued run -> transitions directly to CANCELLED
@@ -221,7 +221,7 @@ async def test_cancel_run_three_phase_transitions(monkeypatch):
     )
     get_run_mock2 = AsyncMock(side_effect=[queued_view, cancelled_view])
     monkeypatch.setattr(run_service, "get_run", get_run_mock2)
-    res2 = await run_service.cancel_run(db, "run-queued")
+    res2 = await run_service.cancel_run(db, "run-queued", org_id="org-1")
     assert res2.status == "CANCELLED"
 
 

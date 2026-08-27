@@ -191,12 +191,9 @@ async def create_run(
     )
 
 
-async def get_run(db: AsyncSession, run_id: str, *, org_id: str | None = None) -> RunView | None:
-    conditions = ['id = :id']
-    params: dict[str, Any] = {"id": run_id}
-    if org_id:
-        conditions.append('org_id = :org_id')
-        params["org_id"] = org_id
+async def get_run(db: AsyncSession, run_id: str, *, org_id: str) -> RunView | None:
+    conditions = ['id = :id', 'org_id = :org_id']
+    params: dict[str, Any] = {"id": run_id, "org_id": org_id}
     where_sql = " AND ".join(conditions)
     row = (
         await db.execute(
@@ -447,10 +444,11 @@ async def approve_run(
     db: AsyncSession,
     run_id: str,
     *,
+    org_id: str,
     approval_id: str | None = None,
     evidence: dict[str, Any] | None = None,
 ) -> RunView | None:
-    run = await get_run(db, run_id)
+    run = await get_run(db, run_id, org_id=org_id)
     if not run:
         return None
     
@@ -485,11 +483,11 @@ async def approve_run(
     await append_event(db, run_id, "run.resuming", evidence_payload)
     await set_status(db, run_id, "QUEUED", expected_status=["RESUMING"])
     await append_event(db, run_id, "run.queued", {"status": "QUEUED"})
-    return await get_run(db, run_id)
+    return await get_run(db, run_id, org_id=org_id)
 
 
-async def cancel_run(db: AsyncSession, run_id: str) -> RunView | None:
-    run = await get_run(db, run_id)
+async def cancel_run(db: AsyncSession, run_id: str, *, org_id: str) -> RunView | None:
+    run = await get_run(db, run_id, org_id=org_id)
     if not run:
         return None
     if run.status in TERMINAL:
@@ -500,7 +498,7 @@ async def cancel_run(db: AsyncSession, run_id: str) -> RunView | None:
         # Move to CANCELLING state
         await set_status(db, run_id, "CANCELLING", expected_status=["PREPARING", "RUNNING", "RESUMING"])
         await append_event(db, run_id, "run.cancelling", {"status": "CANCELLING"})
-        return await get_run(db, run_id)
+        return await get_run(db, run_id, org_id=org_id)
 
     # If QUEUED or WAITING_APPROVAL (no active in-flight worker execution), cancel immediately
     if run.attempt_id:
@@ -516,7 +514,7 @@ async def cancel_run(db: AsyncSession, run_id: str) -> RunView | None:
         )
     await set_status(db, run_id, "CANCELLED")
     await append_event(db, run_id, "run.cancelled", {"status": "CANCELLED"})
-    return await get_run(db, run_id)
+    return await get_run(db, run_id, org_id=org_id)
 
 
 async def add_artifact(

@@ -65,3 +65,31 @@ class RunEventView(BaseModel):
     source_event_id: str | None = None
     timestamp: str
     payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class EventsResponse(BaseModel):
+    org_id: str
+    run_id: str
+    items: list[RunEventView] = Field(default_factory=list)
+    next_seq: int | None = None
+
+
+class ResultResponse(BaseModel):
+    org_id: str
+    run_id: str
+    status: str
+    result: dict[str, Any] | None = None
+
+
+class ArtifactsResponse(BaseModel):
+    org_id: str
+    run_id: str
+    items: list[ArtifactDescriptor] = Field(default_factory=list)
+
+
+class MutationResponse(BaseModel):
+    org_id: str
+    run_id: str
+    status: str
+    idempotent: bool = True
+
