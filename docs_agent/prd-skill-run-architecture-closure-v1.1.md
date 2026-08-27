@@ -1,10 +1,10 @@
 ---
 work_item_id: SKILL-RUN-ARCHITECTURE-CLOSURE
 version: 1.1.0
-status: REVIEW_REQUIRED
+status: APPROVED
 target_branch: main
-review_verdict:
-approved_at:
+review_verdict: PASS
+approved_at: 2026-08-27T12:16:41+08:00
 ---
 
 # NoDeskClaw Skill Run Architecture Closure PRD v1.1
@@ -13,13 +13,12 @@ approved_at:
 
 ## Document Status
 
-本文处于 `REVIEW_REQUIRED`（待审查）状态。本轮 Grounding Mode（校准模式）为 `revision`（修订模式），只关闭上一轮 initial Review（初次审查）的 Finding；初稿发现基线仍来自 `discover`（发现模式）。本文尚未获得 `APPROVED`（已批准）或 `PASS`（通过）结论，不得直接作为实施授权。
+本文已通过 Architecture Review（架构审查），状态为 `APPROVED`（已批准），可作为 Implementation Plan（实施计划）的架构与需求基线。
 
 - Predecessor PRD（前序需求文档）：`docs_agent/prd-skill-run-production-hardening-v1.0.md`。
 - Product Baseline（产品基线）：`docs_agent/prd-skill-platform-v1.0.md`。
 - Architecture Baseline（架构基线）：`lat.md/architecture/architecture.md`、`lat.md/decisions/skill-platform-execution.md`。
 - Consumer Boundary（消费端边界）：`lat.md/decisions/work-expert-contract.md`。
-- Grounding Baseline（校准基线）：当前 `main` 分支 HEAD 与 2026-08-27 工作树内已实施代码。
 
 ## Executive Summary
 
@@ -683,40 +682,3 @@ Backend 对外继续提供统一 Run API，并由 Backend Projection Updater 把
 | remote 安装 Owner 切换导致双执行 | Runtime 内容竞争 | generation 门禁、切换窗口、Backend 执行熔断和单 Owner 验证 |
 | Context 引用解析引入新延迟 | Run 准备阶段变慢 | 批量元数据校验、限时解析、可观测缓存且不缓存授权结果越界 |
 | 范围被误解为 Work 迁移 | Consumer 合同被意外修改 | Non-Goals、Compatibility Contract 和独立 Work PRD 门禁共同约束 |
-
-## Grounding Summary
-
-本 PRD 初稿采用 `discover` 模式完成能力发现；本轮采用 `revision` 模式，只按上一轮 Finding 收敛以下结论：
-
-- Reused（复用）：HermesTask 访问与 C2 读取投影、Backend/Agent Owner 边界、现有 RunDispatchOutbox 模型、Agent 幂等键与摘要、Attempt/Lease 骨架、hybrid placement resolver、`needs_edge_jobs`、EdgeJob 传输模型、Agent Event SoT（事件事实源）和现有合同目录。
-- Modified（修改）：Run 授权与 Agent 租户绑定、HermesTask C2 投影同步、Outbox 投递、Attempt fencing、事件顺序、Hybrid 编排、Edge 可靠性、Cancel、Approval、安装调谐、Agent 运维与 Run Context 合同。
-- Replaced（替换）：持久化凭证、`MAX+1` 事件序号、非原子状态更新、Edge 批量事件、通用 resume 审批、Backend 直接 remote 安装和启动 DDL。
-- Removed（移除）：客户端覆盖 Connector 目标、生产 `/tmp` Artifact 默认和不安全静态 Token 默认值。
-- Deferred（延期）：`smc-copilot/apps/work` 迁移、C2 HermesTask 投影退场、Expert Contract 升级、知识库与 RAG 能力建设。
-
-## Grounding Closure Table
-
-本表以 2026-08-27 initial Review 的 Finding 为主键，记录本轮 `revision` 的最小关闭结果。
-
-| Finding | Reproduced | Resolution | Evidence | Status |
-|---|---|---|---|---|
-| F-01 Run 状态模型与现有合同冲突 | YES | 公开 Run 终态统一为 `COMPLETED/FAILED/CANCELLED/TIMED_OUT`，派发投影统一为 `DISPATCH_PENDING`；未知副作用改用 `FAILED` + `manual_intervention_required`，不新增公开终态 | `Run State and Attempt Semantics`、`Failure Semantics`、AC-15 | CLOSED |
-| F-02 Run Authorization 错误分类为 KEEP | YES | 改为 `PARTIAL / MODIFY`；所有 Agent 内部读取与写入绑定可信 `org_id + run_id`，身份信封缺失即拒绝，Artifact Bytes 重复组织过滤 | `Current Capability Inventory`、`Fail-Closed Run Access and Trusted Org Context`、`Agent Read and Mutation Contract`、AC-06 | CLOSED |
-| F-03 HermesTask C2 投影缺少生命周期同步方案 | YES | 指定 Backend Projection Updater 为 agent-owned Run C2 投影唯一写入 Owner；以 Agent `event_seq` 单调游标补拉、重试和重建，并冻结 C2 状态映射 | `Projection Consistency Boundary`、`HermesTask Projection Reconciliation`、AC-24/25 | CLOSED |
-| F-04 Hybrid Existing Capability 被误判为 NEW | YES | 改为 `PARTIAL / MODIFY`，明确复用现有 placement resolver、`needs_edge_jobs` 与 Worker 分支，只补 step 编排和恢复 | `Current Capability Inventory`、`Change Classification` | CLOSED |
-| F-05 C2 Compatibility 没有具体 Removal Version | YES | 恢复前序批准基线 `Skill Platform Contract v1.1`，并明确独立 Work PRD 是该平台合同完成声明的外部依赖 | `Compatibility Contract / HermesTask C2 Projection`、AC-49 | CLOSED |
-| M-01 PRD 批准与实现验收形成流程死锁 | YES | Architecture Review PASS 后即可 converge；实现 AC 改为发布门禁 | AC-49 | CLOSED |
-| M-02 Credential Resolution Owner 表达为双 Owner | YES | 明确 Backend Credential Lease Broker 是唯一 Owner，Agent 仅为认证消费者 | `Target End-State Inventory` | CLOSED |
-| M-03 lat Enqueue Path 保留过期顺序 | YES | 不在本 PRD 修订中改写已实施架构事实；Delivery Slice 5 明确实现后同步 Outbox 顺序、Projection Owner 与状态映射 | `Delivery Sequence / Slice 5` | CLOSED |
-
-## Review Request
-
-请独立 Reviewer（审查者）重点验证以下问题：
-
-1. 本文是否完整复用了前序实现，且没有建立第二套 Run、Access Projection、Installation Desired State 或 Artifact 事实源。
-2. Outbox、Attempt、Edge、Event、Cancel 和 Approval 的原子边界是否足以消除孤儿 Run、双执行和旧写覆盖。
-3. Credential Broker 与 Connector SecretStore 的 Owner 是否清晰且没有互相接管。
-4. remote Installation Owner 从 Backend 切换到 Agent 是否符合原架构目标并具有明确移除门禁。
-5. Session/Attachment/Knowledge 合同是否只补执行引用，不越界建设知识与附件平台。
-6. Work Consumer 与 C2 退场是否被清晰排除，避免把 v1.1 文档版本误解为整个 Skill Platform v1.1 已完成。
-7. Acceptance Criteria（验收标准）是否足够确定，可供后续 Implementation Plan 映射到具体文件、符号和测试。
