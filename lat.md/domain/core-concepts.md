@@ -68,7 +68,7 @@ OpenClaw 写入 `.openclaw/skills/`；Hermes 走对应 adapter。学习回调需
 
 Skill 安装定义了 Skill 在组织内特定执行目标上的部署绑定，支持云端 Remote 与私网 Edge 两种部署形态。
 
-安装实体通过 [[nodeskclaw-backend/app/models/hermes_skill/skill_installation.py#HermesSkillInstallation]] 记录 Desired 期望配置（`target_kind` 为 remote 或 edge，以及关联的 `edge_node_id`）与边缘节点回报的 `actual_status` 真实状态。
+安装实体通过 [[nodeskclaw-backend/app/models/hermes_skill/skill_installation.py#HermesSkillInstallation]] 记录 Desired 期望配置（`target_kind` 为 remote 或 edge，以及关联的 `edge_node_id`）与边缘节点回报的 `actual_status` 真实状态，并通过 `reconciled_status` 计算对齐状态（`reconciled` / `pending_sync` / `drifted`）。
 
 ## Connector Center
 
