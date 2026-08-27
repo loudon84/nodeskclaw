@@ -50,6 +50,7 @@ class Settings(BaseSettings):
     KNOWLEDGE_V2_BUILD_ENABLED: bool = False
     KNOWLEDGE_V2_APPLICATION_ENABLED: bool = False
     KNOWLEDGE_V2_CAPABILITY_PLANNER_ENABLED: bool = False
+    KNOWLEDGE_V2_MULTI_INDEX_RETRIEVAL_ENABLED: bool = False
     KNOWLEDGE_TRANSLATION_ENABLED: bool = False
     ARTIFACT_STORE_TYPE: str = "local"
     ARTIFACT_LOCAL_ROOT: str = "/data/knowledge-artifacts"

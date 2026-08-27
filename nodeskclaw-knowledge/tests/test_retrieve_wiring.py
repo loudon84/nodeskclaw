@@ -63,6 +63,26 @@ async def test_retrieve_passes_set_items_to_planner():
             "app.services.retrieval_service.runtime_binding_service.get_dataset_id",
             new=AsyncMock(return_value="ds1"),
         ),
+        patch(
+            "app.services.retrieval_service.runtime_binding_service.get_binding",
+            new=AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.services.index_state_service.list_states_for_kb",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch(
+            "app.services.retrieval_service.retrieval_merge_service.execute_and_merge",
+            new=AsyncMock(
+                return_value=SimpleNamespace(
+                    merged=[],
+                    candidate_count=0,
+                    filtered_count=0,
+                    ragflow_call_count=0,
+                    slice_results=[],
+                )
+            ),
+        ),
         patch("app.services.retrieval_service.retrieval_planner.build_retrieval_plan", return_value=empty_plan) as build,
     ):
         result = await retrieve(db, member, ragflow, knowledge_set_id="set1", query="hello")

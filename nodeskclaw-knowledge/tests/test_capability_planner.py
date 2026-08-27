@@ -7,7 +7,7 @@ from app.services.chunk_security_service import EvidenceItem, evidence_from_chun
 
 def test_capability_plan_default_chunk():
     plan = capability_planner.build_capability_plan("hello world")
-    assert "chunk" in plan.selected_indexes
+    assert "chunk" in plan.effective_indexes
     assert "rule_default_chunk" in plan.reason_codes
 
 
@@ -16,10 +16,23 @@ def test_capability_plan_graph_keywords_degrade_when_unsupported():
         "查找实体关系图谱",
         available_indexes=["chunk", "graph"],
         index_states={"graph": "unsupported", "chunk": "ready"},
+        retrieval_states={"graph": "unsupported", "chunk": "ready"},
     )
-    assert "chunk" in plan.selected_indexes
+    assert "chunk" in plan.effective_indexes
     assert any(d.startswith("graph:") for d in plan.degraded)
-    assert "graph" not in plan.selected_indexes
+    assert "graph" not in plan.effective_indexes
+
+
+def test_capability_plan_force_chunk_only_flag():
+    plan = capability_planner.build_capability_plan(
+        "查找实体关系图谱",
+        available_indexes=["chunk", "graph"],
+        index_states={"graph": "ready", "chunk": "ready"},
+        retrieval_states={"graph": "ready", "chunk": "ready"},
+        force_chunk_only=True,
+    )
+    assert plan.effective_indexes == ["chunk"]
+    assert "flag_force_chunk_only" in plan.reason_codes
 
 
 def test_evidence_from_chunk():

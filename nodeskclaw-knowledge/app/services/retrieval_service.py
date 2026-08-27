@@ -267,13 +267,13 @@ async def retrieve_for_application(
         set_items_override=merged_items,
         bump_set_ids=usable_set_ids,
     )
-    from app.services import capability_planner
-
-    plan = capability_planner.build_capability_plan(query)
     result["application_id"] = application_id
     result["answer_model"] = app.answer_model
     result["knowledge_set_ids"] = usable_set_ids
-    result["capability_plan"] = plan.to_dict()
+    if "capability_plan" not in result and settings.KNOWLEDGE_V2_CAPABILITY_PLANNER_ENABLED:
+        from app.services import capability_planner
+
+        result["capability_plan"] = capability_planner.build_capability_plan(query).to_dict()
     result["evidence"] = _chunks_to_evidence(result.get("chunks") or [])
     return result
 
@@ -436,6 +436,30 @@ async def _retrieve_for_set(
         else None
     )
     dataset_map = await _dataset_id_by_kb_id(db, kbs)
+
+    build_states: dict[str, str] = {}
+    retrieval_states: dict[str, str] = {}
+    merged_capabilities: dict = {}
+    from app.services import capability_planner, index_state_service
+    from app.services.index_registry import list_index_types
+
+    for kb in kbs:
+        binding = await runtime_binding_service.get_binding(db, kb.id)
+        if binding and binding.capabilities:
+            merged_capabilities.update(binding.capabilities)
+        for state in await index_state_service.list_states_for_kb(db, kb.id):
+            build_states[state.index_type] = state.status
+            retrieval_states[state.index_type] = state.retrieval_status
+
+    capability_plan = capability_planner.build_capability_plan(
+        query,
+        available_indexes=list_index_types(),
+        index_states=build_states,
+        retrieval_states=retrieval_states,
+        capabilities=merged_capabilities,
+        force_chunk_only=not settings.KNOWLEDGE_V2_MULTI_INDEX_RETRIEVAL_ENABLED,
+    )
+
     plan = retrieval_planner.build_retrieval_plan(
         plan_access,
         kbs,
@@ -443,6 +467,15 @@ async def _retrieve_for_set(
         metadata_condition=metadata_condition,
         dataset_id_by_kb_id=dataset_map,
     )
+    primary_index = (
+        capability_plan.effective_indexes[0]
+        if capability_plan.effective_indexes
+        else "chunk"
+    )
+    for slice_ in plan.slices:
+        slice_.index_type = primary_index
+        slice_.top_k = effective_top_k
+        slice_.access_scope = plan_access.kind.value
 
     if plan_access.kind == AccessPlanKind.no_access or not plan.slices:
         query_id = str(uuid.uuid4())
@@ -607,13 +640,28 @@ async def _retrieve_for_set(
 
     _observe_retrieval(execution_status, started)
     diagnostics["metadata_pushdown"] = bool(getattr(plan, "metadata_pushdown", False))
-    return {
+    payload = {
         "query_id": query_id,
         "chunks": chunks_out,
         "status": execution_status,
         "diagnostics": diagnostics,
         "latency_ms": latency_ms,
     }
+    if settings.KNOWLEDGE_V2_CAPABILITY_PLANNER_ENABLED or settings.KNOWLEDGE_V2_MULTI_INDEX_RETRIEVAL_ENABLED:
+        payload["capability_plan"] = capability_plan.to_dict()
+        payload["execution_plan"] = {
+            "slices": [
+                {
+                    "index_type": s.index_type,
+                    "knowledge_base_id": s.knowledge_base_id,
+                    "dataset_id": s.dataset_id,
+                    "top_k": s.top_k,
+                    "access_scope": s.access_scope,
+                }
+                for s in plan.slices
+            ]
+        }
+    return payload
 
 
 def _chunks_to_results(merged: list) -> list[dict]:

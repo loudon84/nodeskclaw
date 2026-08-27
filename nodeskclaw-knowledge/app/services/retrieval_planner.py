@@ -20,6 +20,10 @@ class RetrievalSlice:
     document_ids: list[str] = field(default_factory=list)
     weight: float = 1.0
     metadata_condition: dict[str, Any] | None = None
+    index_type: str = "chunk"
+    provider: str = "ragflow"
+    top_k: int | None = None
+    access_scope: str | None = None
 
 
 @dataclass
