@@ -1,10 +1,10 @@
 ---
 work_item_id: SKILL-RUN-RELEASE-READINESS
 version: 1.3.0
-status: REVIEW_REQUIRED
+status: APPROVED
 target_branch: main
-review_verdict:
-approved_at:
+review_verdict: PASS
+approved_at: 2026-08-27T22:28:57+08:00
 ---
 
 # NoDeskClaw Skill Run Release Readiness PRD v1.3
@@ -13,11 +13,9 @@ approved_at:
 
 ## Baselines
 
-- Grounding Mode（校准模式）：`revision`。
 - Predecessor PRD（前序需求文档）：`docs_agent/prd-skill-run-conformance-and-operational-closure-v1.2.md`。
 - Architecture Baseline（架构基线）：`lat.md/architecture/architecture.md`、`lat.md/architecture/skill-agent.md`、`lat.md/decisions/skill-platform-execution.md`、`lat.md/decisions/work-expert-contract.md`。
 - Source Baseline（源码基线）：`main@6e46c295e6fb10b2808ff0728a063a7e1332158a`。
-- Verification Baseline（验证基线）：Agent 相关测试 46 项通过；Backend 相关测试 29 项通过并有 1 个未等待协程警告；`lat check` 通过；Skill Run Contract Release Check（技能运行合同发布检查）失败。
 
 ## Executive Summary
 
@@ -517,17 +515,6 @@ Agent 生产就绪必须同时覆盖 Schema（数据库结构）、Storage（存
 5. Operational Gate（运维门禁）：Alembic、持久化 Artifact、独立探针、指标、Agent 执行证据、Backend 审计投影和依赖故障通过。
 6. Integration Gate（集成门禁）：真实 Backend–Agent HTTP、PostgreSQL 并发、跨 Pod 接管、Edge 断线重放和 C2 最终一致性通过。
 7. Contract Release Gate（合同发布门禁）：UNRELEASED `v1.0.0` 完整制品、双端验证、干净提交、Checksum、Release Check、首次不可变 Tag 和 `lat check` 通过。
-
-## Grounding Closure Table
-
-本表仅记录 initial Review（初次审查）的 4 个 MAJOR Finding 及本轮 revision（修订）闭环，不扩展新的审查范围。
-
-| Finding | Reproduced | Resolution | Evidence | Status |
-|---|---|---|---|---|
-| F-01 Credential Lease 与 Run Context Resolution 遗漏 | YES | 恢复两个 PARTIAL/MODIFY 能力，冻结 fail-closed、使用前复核、TTL 与禁止持久化凭证语义，并增加 AC 46–49 | Current/Target Inventory、Credential and Run Context Resolution、AC 46–49 | CLOSED |
-| F-02 Dispatch Outbox 无验收且当前描述不准确 | YES | 保留现有永久/临时错误分类事实，补 Lease Generation、过期提交隔离、授权重放、审计、指标与 AC 41–45 | Dispatch Outbox Reliability、AC 41–45 | CLOSED |
-| F-03 Execution Audit False MISSING / ADD | YES | 拆分为 Agent Event Log 执行证据与 Backend OperationAuditLog 投影，均为 MODIFY，并明确唯一事实源 | Current/Target Inventory、Architecture Invariant 13、AC 50 | CLOSED |
-| F-04 合同版本与不可变边界未冻结 | YES | 明确当前 `v1.0.0` 为 UNRELEASED，首次 Tag 前可确定性重生成，`skill-run-contract-v1.0.0` 后永久冻结；Backend Contract Package 为唯一 Owner | Contract Release and Evidence、AC 51–59 | CLOSED |
 
 ## Risks and Mitigations
 
