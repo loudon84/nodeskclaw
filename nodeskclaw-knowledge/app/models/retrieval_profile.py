@@ -19,11 +19,20 @@ class RetrievalProfile(BaseModel):
             "knowledge_set_id",
             "version",
             unique=True,
-            postgresql_where=text("deleted_at IS NULL"),
+            postgresql_where=text("deleted_at IS NULL AND scope_type = 'set'"),
+        ),
+        Index(
+            "uq_retrieval_profile_application_version",
+            "application_id",
+            "version",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL AND scope_type = 'application'"),
         ),
     )
 
-    knowledge_set_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    knowledge_set_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    application_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    scope_type: Mapped[str] = mapped_column(String(32), nullable=False, default="set")
     version: Mapped[int] = mapped_column(Integer, nullable=False)
     config: Mapped[dict] = mapped_column(
         JSONB, nullable=False, default=lambda: dict(DEFAULT_RETRIEVAL_CONFIG)

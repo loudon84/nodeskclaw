@@ -10,8 +10,8 @@ from app.integrations.ragflow.exceptions import RagflowUploadUnknownError
 from app.integrations.ragflow.models import RagflowDocument
 from app.integrations.ragflow.upload_token import build_upload_token, deterministic_upload_filename
 from app.services.retrieval_merge_service import _retrieve_slice
-from app.services.retrieval_planner import RetrievalSlice, build_metadata_condition, build_retrieval_plan
-from app.models.enums import AccessPlanKind, RetrievalSliceKind
+from app.services.retrieval_planner import RuntimeExecutionSlice, build_metadata_condition, build_retrieval_plan
+from app.models.enums import AccessPlanKind, RuntimeRetrievalMode
 from app.services.permission_service import AccessPlan
 
 
@@ -74,7 +74,7 @@ async def test_ingest_facade_recovers_without_reupload():
     db.add = MagicMock()
     db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
 
-    kb = MagicMock(id="kb1", org_id="o1", ragflow_dataset_id="ds1", status="active", metadata_schema={})
+    kb = MagicMock(id="kb1", org_id="o1", ragflow_dataset_id="ds1", status="active", metadata_schema={}, deleted_at=None)
     actor = ingestion_facade.KnowledgeActor(actor_type="member", actor_id="m1", org_id="o1", member_id="m1")
 
     ragflow = AsyncMock()
@@ -96,7 +96,10 @@ async def test_ingest_facade_recovers_without_reupload():
 
     with patch("app.services.ingestion_facade.validate_metadata_values", return_value={}), patch(
         "app.services.ingestion_facade.next_version_no", new=AsyncMock(return_value=1)
-    ), patch("app.services.ingestion_facade.build_meta_fields", return_value={"nk_source_file_id": "sf"}):
+    ), patch("app.services.ingestion_facade.build_meta_fields", return_value={"nk_source_file_id": "sf"}), patch(
+        "app.services.ingestion_facade.runtime_binding_service.require_dataset_id",
+        new=AsyncMock(return_value="ds1"),
+    ):
         sf, version, job = await ingestion_facade.ingest_core(
             db,
             ragflow,
@@ -140,6 +143,7 @@ def test_pushdown_disabled_omits_condition(monkeypatch):
         [kb],
         [item],
         metadata_condition={"logic": "and", "conditions": []},
+        dataset_id_by_kb_id={"kb1": "ds1"},
     )
     assert plan.metadata_pushdown is False
     assert plan.slices[0].metadata_condition is None
@@ -147,9 +151,11 @@ def test_pushdown_disabled_omits_condition(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_pushdown_fallback_retries_without_condition():
-    slice_ = RetrievalSlice(
-        kind=RetrievalSliceKind.filtered_documents,
+    slice_ = RuntimeExecutionSlice(
+        knowledge_base_id="kb1",
         dataset_id="ds1",
+        access_scope="filtered",
+        mode=RuntimeRetrievalMode.semantic,
         document_ids=["d1"],
         metadata_condition={"logic": "and", "conditions": [{"name": "biz_x", "comparison_operator": "is", "value": "1"}]},
     )
@@ -173,6 +179,7 @@ async def test_pushdown_fallback_retries_without_condition():
         highlight=False,
         rerank_id=None,
         cross_languages=None,
+        rerank_candidates_count=None,
         semaphore=__import__("asyncio").Semaphore(1),
     )
     assert result.status == "success"

@@ -40,6 +40,7 @@ const jobTitle = ref('')
 const employeeNo = ref('')
 const supervisorId = ref<string | null>(null)
 const mustChangePassword = ref(true)
+const isTaskAdmin = ref(false)
 const selectedSkillIds = ref<string[]>([])
 const skills = ref<AvailableMcpSkill[]>([])
 
@@ -78,6 +79,7 @@ function resetForm() {
   employeeNo.value = ''
   supervisorId.value = null
   mustChangePassword.value = true
+  isTaskAdmin.value = false
   selectedSkillIds.value = []
   resetOaSearch()
 }
@@ -174,6 +176,7 @@ async function handleSubmit() {
       employee_no: employeeNo.value.trim() || null,
       supervisor_membership_id: supervisorId.value,
       must_change_password: mustChangePassword.value,
+      is_task_admin: isTaskAdmin.value,
       skill_ids: selectedSkillIds.value,
     })
     if (member) {
@@ -281,10 +284,14 @@ async function handleSubmit() {
             <p v-if="skills.length === 0" class="text-xs text-muted-foreground">{{ t('memberManagement.noSkillsAvailable') }}</p>
           </div>
         </div>
-        <label class="flex items-center gap-2 text-sm">
-          <Checkbox v-model:checked="mustChangePassword" />
-          {{ t('memberManagement.mustChangePassword') }}
-        </label>
+        <div class="flex items-center gap-2 text-sm">
+          <Checkbox id="create-member-must-change-password" v-model:checked="mustChangePassword" />
+          <label for="create-member-must-change-password" class="cursor-pointer">{{ t('memberManagement.mustChangePassword') }}</label>
+        </div>
+        <div class="flex items-center gap-2 text-sm">
+          <Checkbox id="create-member-is-task-admin" v-model:checked="isTaskAdmin" />
+          <label for="create-member-is-task-admin" class="cursor-pointer">{{ t('memberManagement.isTaskAdmin') }}</label>
+        </div>
       </div>
 
       <div class="flex justify-end gap-2 pt-2">

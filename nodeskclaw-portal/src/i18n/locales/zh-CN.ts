@@ -3513,6 +3513,7 @@ const zhCN = {
     profileSaved: "成员资料已保存",
     profileSaveFailed: "保存成员资料失败",
     accountActive: "账号启用",
+    isTaskAdmin: "是否 Task 管理员",
     skillDrawerTitle: "成员 Skill 授权",
     skillSearchPlaceholder: "搜索 Skill 名称或 ID...",
     onlyGranted: "仅显示已授权",

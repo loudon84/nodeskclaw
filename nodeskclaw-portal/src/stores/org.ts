@@ -32,6 +32,7 @@ export interface MemberInfo {
   username?: string | null
   user_avatar_url: string | null
   is_active?: boolean
+  is_task_admin?: boolean
   must_change_password?: boolean
   department?: string | null
   job_title?: string | null

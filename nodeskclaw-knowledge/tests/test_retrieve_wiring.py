@@ -59,9 +59,41 @@ async def test_retrieve_passes_set_items_to_planner():
             "app.services.retrieval_service.knowledge_set_service.list_set_items",
             new=AsyncMock(return_value=set_items),
         ),
+        patch(
+            "app.services.retrieval_service.runtime_binding_service.get_dataset_id",
+            new=AsyncMock(return_value="ds1"),
+        ),
+        patch(
+            "app.services.retrieval_service.runtime_binding_service.get_binding",
+            new=AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.services.index_state_service.list_states_for_kb",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch(
+            "app.services.retrieval_service.retrieval_merge_service.execute_and_merge",
+            new=AsyncMock(
+                return_value=SimpleNamespace(
+                    merged=[],
+                    candidate_count=0,
+                    filtered_count=0,
+                    ragflow_call_count=0,
+                    slice_results=[],
+                )
+            ),
+        ),
         patch("app.services.retrieval_service.retrieval_planner.build_retrieval_plan", return_value=empty_plan) as build,
     ):
         result = await retrieve(db, member, ragflow, knowledge_set_id="set1", query="hello")
 
-    build.assert_called_once_with(plan_access, kbs, set_items, metadata_condition=None)
+    build.assert_called_once()
+    call_kwargs = build.call_args.kwargs
+    assert call_kwargs["metadata_condition"] is None
+    assert call_kwargs["dataset_id_by_kb_id"] == {"kb1": "ds1"}
+    assert "kb_capabilities" in call_kwargs
+    assert call_kwargs["kb_capabilities"]["kb1"].knowledge_base_id == "kb1"
+    assert build.call_args.args[0] == plan_access
+    assert build.call_args.args[1] == kbs
+    assert build.call_args.args[2] == set_items
     assert result["chunks"] == []

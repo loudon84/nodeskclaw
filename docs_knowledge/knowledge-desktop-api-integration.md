@@ -406,6 +406,24 @@ SSE 跨进程传输：Main 逐事件 `port.postMessage` 给 Renderer，或聚合
 
 ---
 
+## 9.1 v2.2 API 增量（`/api/v2`）
+
+v2.2 在 v1.3 基线上新增 headless 运维/发布契约，Desktop 后续可按需接入：
+
+| 域 | 方法 | 路径 | 说明 |
+|---|---|---|---|
+| Applications | GET | `/api/v2/applications/{id}/readiness` | 发布前 readiness 诊断（blocking/warnings） |
+| Applications | POST | `/api/v2/applications/{id}/publish` | 未就绪返回 **409** + diagnostics |
+| Runtime | GET | `/api/v2/knowledge-bases/{kb_id}/runtime` | KB Runtime 诊断（不含 API Key） |
+| Runtime | POST | `/api/v2/knowledge-bases/{kb_id}/runtime/reconcile` | Config reconcile；`repair_mode=reprovision` 才重建 Dataset |
+| Runtime | GET | `/api/v2/runtime/workers` | Worker heartbeat 快照（ingestion/build/maintenance/connector） |
+| Engineering | GET | `/api/v2/knowledge-bases/{id}/indexes` | 增加 `build_status` / `retrieval_status` / `validation` / `coverage` / `last_validated_at` |
+| Retrieval | POST | `/api/v2/retrieval/playground` | 返回 `execution_slices[]` 与 per-slice 诊断 |
+
+启用开关：`KNOWLEDGE_API_V2_ENABLED=true`；Graph/Summary/TOC runtime 分别由 `KNOWLEDGE_V2_GRAPH_RUNTIME_ENABLED` 等 flag 控制。
+
+---
+
 ## 10. 边界与注意事项
 
 - Desktop **只连** nodeskclaw-knowledge，**不直连 RAGFlow**（所有 RAGFlow 调用在服务端 Adapter 内）。

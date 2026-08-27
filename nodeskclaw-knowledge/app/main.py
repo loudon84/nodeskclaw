@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse, Response
 from sqlalchemy import text
 
 from app.api.router import api_router
+from app.api.v2.router import router as api_v2_router
 from app.core.config import settings
 from app.core.deps import async_session_factory
 from app.core.exceptions import register_exception_handlers
@@ -47,6 +48,21 @@ async def lifespan(app: FastAPI):
 
     app.state.llm_proxy_client = LlmProxyClient(http_client=llm_http)
 
+    try:
+        from app.services import runtime_binding_service
+
+        async with async_session_factory() as session:
+            stats = await runtime_binding_service.backfill_from_knowledge_bases(session)
+            await session.commit()
+            logger.info(
+                "runtime binding backfill created=%s updated=%s skipped=%s",
+                stats.get("created"),
+                stats.get("updated"),
+                stats.get("skipped"),
+            )
+    except Exception:
+        logger.exception("runtime binding backfill failed; continuing startup")
+
     yield
 
     await backend_client.aclose()
@@ -69,6 +85,7 @@ app.add_middleware(
 app.add_middleware(CorrelationIdMiddleware)
 register_exception_handlers(app)
 app.include_router(api_router, prefix="/api/v1")
+app.include_router(api_v2_router, prefix="/api/v2")
 
 
 # @lat: [[knowledge#Observability Metrics]]
@@ -93,11 +110,14 @@ async def health_ready():
     except Exception:
         checks["database"] = False
 
-    ragflow = RagflowClient()
+    from app.runtime.ragflow import RagflowRuntimeAdapter
+
+    adapter = RagflowRuntimeAdapter()
     try:
-        checks["ragflow"] = await ragflow.system_health()
+        health = await adapter.check_health()
+        checks["ragflow"] = health.chunk_retrieval_ok
     finally:
-        await ragflow.aclose()
+        await adapter.aclose()
 
     backend = NodeskclawBackendClient()
     try:

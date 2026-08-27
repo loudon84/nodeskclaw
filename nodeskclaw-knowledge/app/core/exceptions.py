@@ -82,6 +82,7 @@ class ConflictError(AppException):
         message: str = "资源冲突",
         message_key: str = "errors.common.conflict",
         message_params: dict[str, str] | None = None,
+        details: dict[str, Any] | None = None,
     ):
         super().__init__(
             code=40900,
@@ -89,6 +90,7 @@ class ConflictError(AppException):
             status_code=409,
             message_key=message_key,
             message_params=message_params,
+            details=details,
         )
 
 

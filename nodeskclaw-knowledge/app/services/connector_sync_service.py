@@ -35,7 +35,7 @@ from app.models.enums import (
 from app.models.knowledge_base import KnowledgeBase
 from app.models.source_file import SourceFile
 from app.models.source_file_version import SourceFileVersion
-from app.services import ingestion_facade, metrics_service, source_registry_service
+from app.services import ingestion_facade, metrics_service, runtime_binding_service, source_registry_service
 from app.services.audit_service import write_audit
 from app.services.ingestion_facade import actor_from_connector
 from app.services.metadata_service import validate_metadata_values
@@ -102,11 +102,12 @@ async def archive_for_source_deleted(
         sf.archived_at = _now()
     sf.archive_reason = ArchiveReason.source_deleted.value
     sf.sync_state = SourceSyncState.stale.value
-    if kb.ragflow_dataset_id and sf.active_version_id:
+    dataset_id = await runtime_binding_service.get_dataset_id(db, kb)
+    if dataset_id and sf.active_version_id:
         version = await db.get(SourceFileVersion, sf.active_version_id)
         if version and version.ragflow_document_id and version.deleted_at is None:
             try:
-                await ragflow.set_document_enabled(kb.ragflow_dataset_id, version.ragflow_document_id, False)
+                await ragflow.set_document_enabled(dataset_id, version.ragflow_document_id, False)
             except Exception:
                 logger.warning("disable archived document failed source_file_id=%s", sf.id)
 
@@ -123,11 +124,12 @@ async def restore_source_deleted(
     sf.archived_at = None
     sf.archive_reason = None
     sf.sync_state = SourceSyncState.in_sync.value
-    if kb.ragflow_dataset_id and sf.active_version_id:
+    dataset_id = await runtime_binding_service.get_dataset_id(db, kb)
+    if dataset_id and sf.active_version_id:
         version = await db.get(SourceFileVersion, sf.active_version_id)
         if version and version.ragflow_document_id and version.deleted_at is None:
             try:
-                await ragflow.set_document_enabled(kb.ragflow_dataset_id, version.ragflow_document_id, True)
+                await ragflow.set_document_enabled(dataset_id, version.ragflow_document_id, True)
             except Exception:
                 logger.warning("enable restored document failed source_file_id=%s", sf.id)
     return True

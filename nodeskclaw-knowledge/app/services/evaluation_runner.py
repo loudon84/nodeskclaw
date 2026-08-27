@@ -225,6 +225,9 @@ async def process_evaluation_run(
                 "expected_source_hit": expected_source_hit(returned_ids, expected_ids, k),
                 "execution_status": execution_status,
                 "k": k,
+                "effective_indexes": (payload.get("capability_plan") or {}).get("effective_indexes"),
+                "query_type": (payload.get("capability_plan") or {}).get("query_type"),
+                "fallback_used": (payload.get("capability_plan") or {}).get("fallback_used"),
             },
         )
         db.add(result)
@@ -237,6 +240,13 @@ async def process_evaluation_run(
             return
 
     run.metrics = _aggregate_metrics(results, k=k)
+    if results:
+        sample_details = results[0].details or {}
+        run.metrics = {
+            **(run.metrics or {}),
+            "effective_indexes": sample_details.get("effective_indexes"),
+            "query_type": sample_details.get("query_type"),
+        }
     run.status = EvaluationRunStatus.completed.value
     run.last_error = None
     run.finished_at = utc_now()

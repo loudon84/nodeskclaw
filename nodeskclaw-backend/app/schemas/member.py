@@ -18,6 +18,7 @@ class CreateHumanMemberRequest(BaseModel):
     employee_no: str | None = Field(default=None, max_length=64)
     supervisor_membership_id: str | None = None
     must_change_password: bool = True
+    is_task_admin: bool = False
     skill_ids: list[str] = []
 
 
@@ -29,6 +30,7 @@ class UpdateMemberProfileRequest(BaseModel):
     employee_no: str | None = Field(default=None, max_length=64)
     supervisor_membership_id: str | None = None
     is_active: bool | None = None
+    is_task_admin: bool | None = None
 
 
 class MemberSkillGrantPayload(BaseModel):

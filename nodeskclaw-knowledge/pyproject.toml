@@ -37,3 +37,6 @@ ignore = ["E501", "N818", "UP046", "UP042", "I001", "F401"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
 testpaths = ["tests"]
+markers = [
+    "ragflow_contract: live RAGFlow contract tests (require RAGFLOW_CONTRACT_TEST=1)",
+]

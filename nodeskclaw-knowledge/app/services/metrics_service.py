@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
 
 # @lat: [[knowledge#Observability Metrics]]
 
@@ -132,6 +132,81 @@ CONNECTOR_AUTH_ERROR = Counter(
     ["connector_type"],
 )
 
+BINDING_DRIFT = Counter(
+    "knowledge_binding_drift_total",
+    "Runtime Binding drift detections",
+    ["reason"],
+)
+INDEX_DRIFT = Counter(
+    "knowledge_index_drift_total",
+    "Index State drift detections",
+    ["index_type"],
+)
+BUILD_JOBS = Counter(
+    "knowledge_build_jobs_total",
+    "Knowledge build jobs by status",
+    ["status"],
+)
+CAPABILITY_PLANS = Counter(
+    "knowledge_capability_plans_total",
+    "Capability planner invocations",
+    ["reason_code"],
+)
+TRANSLATION_DRIFT = Counter(
+    "knowledge_translation_drift_total",
+    "Translation artifact drift detections",
+    ["reason"],
+)
+EVIDENCE_RETURNED = Counter(
+    "knowledge_evidence_returned_total",
+    "Evidence items returned by type",
+    ["evidence_type"],
+)
+
+RUNTIME_DRIFT = Counter(
+    "knowledge_runtime_drift_total",
+    "Runtime binding or config drift detections",
+    ["reason"],
+)
+RUNTIME_RECONCILE = Counter(
+    "knowledge_runtime_reconcile_total",
+    "Runtime reconcile operations",
+    ["status"],
+)
+RUNTIME_MODE_REQUESTS = Counter(
+    "knowledge_runtime_mode_requests_total",
+    "Retrieval runtime mode invocations",
+    ["mode"],
+)
+RUNTIME_CONTRACT_PROBE = Counter(
+    "knowledge_runtime_contract_probe_total",
+    "RAGFlow contract probe runs",
+    ["level", "status"],
+)
+BUILD_VALIDATION = Counter(
+    "knowledge_build_validation_total",
+    "Build artifact validation outcomes",
+    ["index_type", "status"],
+)
+AGGREGATE_SECURITY_FALLBACK = Counter(
+    "knowledge_aggregate_security_fallback_total",
+    "Aggregate security gate fallbacks",
+    ["reason"],
+)
+APPLICATION_READINESS_FAILURE = Counter(
+    "application_readiness_failure_total",
+    "Application readiness blocking checks",
+    ["reason"],
+)
+
+WORKER_HEARTBEAT = Gauge(
+    "knowledge_worker_heartbeat_timestamp",
+    "Last worker heartbeat unix timestamp",
+    ["worker_role"],
+)
+
+_WORKER_HEARTBEAT_TS: dict[str, float] = {}
+
 METRICS_CONTENT_TYPE = CONTENT_TYPE_LATEST
 
 
@@ -234,3 +309,69 @@ def observe_connector_fetch(*, connector_type: str, status: str, duration_second
 
 def observe_connector_auth_error(*, connector_type: str) -> None:
     CONNECTOR_AUTH_ERROR.labels(connector_type=connector_type or "unknown").inc()
+
+
+def observe_binding_drift(*, reason: str) -> None:
+    BINDING_DRIFT.labels(reason=reason or "unknown").inc()
+
+
+def observe_index_drift(*, index_type: str) -> None:
+    INDEX_DRIFT.labels(index_type=index_type or "unknown").inc()
+
+
+def observe_build_job(*, status: str) -> None:
+    BUILD_JOBS.labels(status=status or "unknown").inc()
+
+
+def observe_capability_plan(*, reason_code: str) -> None:
+    CAPABILITY_PLANS.labels(reason_code=reason_code or "unknown").inc()
+
+
+def observe_translation_drift(*, reason: str) -> None:
+    TRANSLATION_DRIFT.labels(reason=reason or "unknown").inc()
+
+
+def observe_evidence_returned(*, evidence_type: str) -> None:
+    EVIDENCE_RETURNED.labels(evidence_type=evidence_type or "unknown").inc()
+
+
+def observe_runtime_drift(*, reason: str) -> None:
+    RUNTIME_DRIFT.labels(reason=reason or "unknown").inc()
+
+
+def observe_runtime_reconcile(*, status: str) -> None:
+    RUNTIME_RECONCILE.labels(status=status or "unknown").inc()
+
+
+def observe_runtime_mode_request(*, mode: str) -> None:
+    RUNTIME_MODE_REQUESTS.labels(mode=mode or "unknown").inc()
+
+
+def observe_runtime_contract_probe(*, level: str, status: str) -> None:
+    RUNTIME_CONTRACT_PROBE.labels(level=level or "unknown", status=status or "unknown").inc()
+
+
+def observe_build_validation(*, index_type: str, status: str) -> None:
+    BUILD_VALIDATION.labels(index_type=index_type or "unknown", status=status or "unknown").inc()
+
+
+def observe_aggregate_security_fallback(*, reason: str) -> None:
+    AGGREGATE_SECURITY_FALLBACK.labels(reason=reason or "unknown").inc()
+
+
+def observe_application_readiness_failure(*, reason: str) -> None:
+    APPLICATION_READINESS_FAILURE.labels(reason=reason or "unknown").inc()
+
+
+def observe_worker_heartbeat(*, worker_role: str) -> None:
+    import time
+
+    role = worker_role or "unknown"
+    now = time.time()
+    _WORKER_HEARTBEAT_TS[role] = now
+    WORKER_HEARTBEAT.labels(worker_role=role).set(now)
+
+
+def worker_heartbeat_snapshot() -> dict[str, float | None]:
+    roles = ("ingestion", "build", "maintenance", "connector", "translation")
+    return {role: _WORKER_HEARTBEAT_TS.get(role) for role in roles}

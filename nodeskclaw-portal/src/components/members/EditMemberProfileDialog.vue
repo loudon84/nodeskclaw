@@ -37,18 +37,26 @@ const jobTitle = ref('')
 const employeeNo = ref('')
 const supervisorId = ref<string | null>(null)
 const isActive = ref(true)
+const isTaskAdmin = ref(false)
 
-watch(() => props.open, (val) => {
-  if (val && props.member) {
-    name.value = props.member.user_name || ''
-    username.value = props.member.username || ''
-    department.value = props.member.department || ''
-    jobTitle.value = props.member.job_title || ''
-    employeeNo.value = props.member.employee_no || ''
-    supervisorId.value = props.member.supervisor_membership_id || null
-    isActive.value = props.member.is_active ?? true
-  }
-})
+function fillForm(member: MemberInfo) {
+  name.value = member.user_name || ''
+  username.value = member.username || ''
+  department.value = member.department || ''
+  jobTitle.value = member.job_title || ''
+  employeeNo.value = member.employee_no || ''
+  supervisorId.value = member.supervisor_membership_id || null
+  isActive.value = member.is_active !== false
+  isTaskAdmin.value = member.is_task_admin === true
+}
+
+watch(
+  () => [props.open, props.member] as const,
+  ([open, member]) => {
+    if (open && member) fillForm(member)
+  },
+  { immediate: true },
+)
 
 const supervisorOptions = computed(() =>
   props.members
@@ -69,6 +77,7 @@ async function handleSubmit() {
     employee_no: employeeNo.value.trim() || null,
     supervisor_membership_id: supervisorId.value,
     is_active: isActive.value,
+    is_task_admin: isTaskAdmin.value,
   }
   try {
     const updated = await store.updateMemberProfile(props.member.id, payload)
@@ -118,10 +127,14 @@ async function handleSubmit() {
             class="mt-1"
           />
         </div>
-        <label class="flex items-center gap-2 text-sm">
-          <Checkbox v-model:checked="isActive" />
-          {{ t('memberManagement.accountActive') }}
-        </label>
+        <div class="flex items-center gap-2 text-sm">
+          <Checkbox id="edit-member-is-active" v-model:checked="isActive" />
+          <label for="edit-member-is-active" class="cursor-pointer">{{ t('memberManagement.accountActive') }}</label>
+        </div>
+        <div class="flex items-center gap-2 text-sm">
+          <Checkbox id="edit-member-is-task-admin" v-model:checked="isTaskAdmin" />
+          <label for="edit-member-is-task-admin" class="cursor-pointer">{{ t('memberManagement.isTaskAdmin') }}</label>
+        </div>
       </div>
 
       <div class="flex justify-end gap-2 pt-2">

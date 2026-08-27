@@ -271,6 +271,10 @@ async def test_delete_sources_disables_ragflow_document():
         patch.object(connector_service, "has_kb_permission", AsyncMock(return_value=True)),
         patch.object(connector_service, "write_audit", AsyncMock()),
         patch.object(connector_service, "get_credential_provider", return_value=cred_provider),
+        patch(
+            "app.services.connector_service.runtime_binding_service.get_dataset_id",
+            new=AsyncMock(return_value="ds1"),
+        ),
     ):
         await connector_service.delete_connector(
             db, _member(), ragflow, "c1", policy="delete_sources"

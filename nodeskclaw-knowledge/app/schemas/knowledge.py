@@ -20,6 +20,21 @@ from app.models.enums import (
 ALLOWED_ROLES = {"member", "operator", "admin"}
 
 
+class RuntimeIndexCapability(BaseModel):
+    index_type: str
+    build_supported: bool
+    retrieval_supported: bool
+    build_mode: str | None = None
+    retrieval_mode: str | None = None
+    requires_reparse: bool = False
+    source_lineage_supported: bool = False
+    runtime_version: str | None = None
+    min_runtime_version: str | None = None
+    validated: bool = False
+    experimental: bool = False
+    reason: str | None = None
+
+
 class KnowledgeBaseCreate(BaseModel):
     name: str = Field(min_length=1, max_length=128)
     description: str | None = None
@@ -348,7 +363,8 @@ class PlaygroundResponse(BaseModel):
 
 
 class ChatSessionCreate(BaseModel):
-    knowledge_set_id: str
+    knowledge_set_id: str | None = None
+    application_id: str | None = None
     title: str | None = None
     answer_mode: AnswerMode = AnswerMode.detailed
     show_citations: bool = True
@@ -360,6 +376,7 @@ class ChatSessionOut(BaseModel):
     org_id: str
     member_id: str
     knowledge_set_id: str
+    application_id: str | None = None
     title: str | None = None
     answer_mode: str
     show_citations: bool
@@ -388,8 +405,15 @@ class ChatMessageOut(BaseModel):
 
 
 class CitationResolveOut(BaseModel):
+    evidence_id: str
     citation_id: str
-    message_id: str
+    message_id: str | None = None
+    org_id: str
+    issued_member_id: str
+    evidence_type: str
+    content: str | None = None
+    source_refs: list | None = None
+    origin: str
     knowledge_base_id: str
     source_file_id: str
     file_version_id: str
@@ -401,6 +425,19 @@ class CitationResolveOut(BaseModel):
     quote: str | None = None
     accessible: bool
     reason: str
+    source_kind: str | None = None
+    connector_type: str | None = None
+    connector_name: str | None = None
+    source_path: str | None = None
+    source_revision: str | None = None
+    source_modified_at: str | None = None
+    last_synced_at: str | None = None
+    sync_state: str | None = None
+    source_freshness: str | None = None
+
+
+class EvidenceResolveOut(CitationResolveOut):
+    pass
 
 
 class AuditLogOut(BaseModel):
@@ -541,3 +578,88 @@ class EvaluationCompareOut(BaseModel):
     profile_a: EvaluationCompareSideOut
     profile_b: EvaluationCompareSideOut
     delta: EvaluationCompareMetricsOut
+
+
+class KnowledgeBaseV2Out(BaseModel):
+    id: str
+    org_id: str
+    name: str
+    description: str | None = None
+    embedding_model: str
+    chunk_method: str
+    status: str
+    owner_member_id: str
+    acl_version: int = 1
+    visibility: str = "private"
+    tags: list[str] | None = None
+    active_build_profile_id: str | None = None
+    knowledge_model_id: str | None = None
+    build_version: int = 0
+
+    model_config = {"from_attributes": True}
+
+
+class KnowledgeSetV2Create(BaseModel):
+    name: str = Field(min_length=1, max_length=128)
+    description: str | None = None
+    visibility: Visibility = Visibility.private
+    retrieval_config: RetrievalConfig | None = None
+
+
+class KnowledgeSetV2Update(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    status: str | None = None
+    visibility: Visibility | None = None
+
+
+class KnowledgeSetV2Out(BaseModel):
+    id: str
+    org_id: str
+    name: str
+    description: str | None = None
+    owner_member_id: str
+    status: str
+    acl_version: int = 1
+    visibility: str = "private"
+    retrieval_config: dict[str, Any] | None = None
+    usage_count: int = 0
+    last_used_at: Any = None
+    knowledge_bases: list[dict[str, Any]] | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class KnowledgeApplicationCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=128)
+    description: str | None = None
+    answer_model: str | None = None
+    knowledge_set_ids: list[str] | None = None
+
+
+class KnowledgeApplicationUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=128)
+    description: str | None = None
+    answer_model: str | None = None
+    status: str | None = None
+
+
+class KnowledgeApplicationOut(BaseModel):
+    id: str
+    org_id: str
+    name: str
+    description: str | None = None
+    owner_member_id: str
+    status: str
+    answer_model: str | None = None
+    active_profile_id: str | None = None
+    acl_version: int = 1
+    visibility: str = "private"
+    knowledge_set_ids: list[str] = Field(default_factory=list)
+
+    model_config = {"from_attributes": True}
+
+
+class KnowledgeApplicationBindSet(BaseModel):
+    knowledge_set_id: str
+    sort_order: int = 0

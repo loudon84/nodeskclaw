@@ -82,6 +82,10 @@ async def test_archive_sets_archived_at_and_disables_ragflow():
             "app.services.source_lifecycle_service.knowledge_base_service.get_knowledge_base",
             new=AsyncMock(return_value=kb),
         ),
+        patch(
+            "app.services.source_lifecycle_service.runtime_binding_service.get_dataset_id",
+            new=AsyncMock(return_value="ds1"),
+        ),
         patch("app.services.source_lifecycle_service.write_audit", new=AsyncMock()),
     ):
         result = await source_lifecycle_service.archive_source_file(db, member, ragflow, "sf1")
@@ -114,6 +118,10 @@ async def test_unarchive_clears_archived_at_and_enables_active():
         patch(
             "app.services.source_lifecycle_service.knowledge_base_service.get_knowledge_base",
             new=AsyncMock(return_value=kb),
+        ),
+        patch(
+            "app.services.source_lifecycle_service.runtime_binding_service.get_dataset_id",
+            new=AsyncMock(return_value="ds1"),
         ),
         patch("app.services.source_lifecycle_service.write_audit", new=AsyncMock()),
     ):
@@ -152,6 +160,10 @@ async def test_activate_version_rollback_blue_green():
         patch(
             "app.services.source_lifecycle_service.knowledge_base_service.get_knowledge_base",
             new=AsyncMock(return_value=kb),
+        ),
+        patch(
+            "app.services.source_lifecycle_service.runtime_binding_service.require_dataset_id",
+            new=AsyncMock(return_value="ds1"),
         ),
         patch("app.services.source_lifecycle_service.write_audit", new=AsyncMock()),
     ):
@@ -273,9 +285,15 @@ async def test_build_access_plan_excludes_archived_files(monkeypatch):
         def all(self):
             return captured["files"]
 
+        def scalar_one_or_none(self):
+            return None
+
     class _Db:
         async def execute(self, stmt):
             captured["stmt"] = str(stmt)
+            sql = str(stmt)
+            if "knowledge_runtime_bindings" in sql or "KnowledgeRuntimeBinding" in sql:
+                return _Result()
             captured["files"] = [active_sf]
             return _Result()
 

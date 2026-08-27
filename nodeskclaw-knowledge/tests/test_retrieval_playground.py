@@ -6,11 +6,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.core.exceptions import BadRequestError, ForbiddenError
-from app.models.enums import AccessPlanKind, ProfileStatus, RetrievalSliceKind
+from app.models.enums import AccessPlanKind, ProfileStatus, RuntimeRetrievalMode
 from app.schemas.principal import KnowledgePrincipal
 from app.services.permission_service import AccessPlan
 from app.services.retrieval_merge_service import MergeExecutionResult, MergeTiming, MergedChunk
-from app.services.retrieval_planner import RetrievalPlan, RetrievalSlice
+from app.services.retrieval_planner import RetrievalPlan, RuntimeExecutionSlice
 from app.services.retrieval_service import playground_retrieve
 from app.services.retrieval_trace_service import build_chunk_traces, build_filter_summary
 
@@ -110,11 +110,12 @@ async def test_playground_allows_draft_profile_and_returns_timing():
         plan_kind=AccessPlanKind.full_access,
         allowed_source_file_ids=["sf1"],
         slices=[
-            RetrievalSlice(
-                kind=RetrievalSliceKind.full_dataset,
-                dataset_id="ds1",
+            RuntimeExecutionSlice(
                 knowledge_base_id="kb1",
-                document_ids=[],
+                dataset_id="ds1",
+                access_scope="full",
+                mode=RuntimeRetrievalMode.semantic,
+                document_ids=None,
                 weight=1.0,
             )
         ],
@@ -157,6 +158,10 @@ async def test_playground_allows_draft_profile_and_returns_timing():
         patch(
             "app.services.retrieval_service.knowledge_set_service.list_set_items",
             new=AsyncMock(return_value=[]),
+        ),
+        patch(
+            "app.services.retrieval_service.runtime_binding_service.get_dataset_id",
+            new=AsyncMock(return_value="ds1"),
         ),
         patch("app.services.retrieval_service.retrieval_planner.build_retrieval_plan", return_value=plan),
         patch(

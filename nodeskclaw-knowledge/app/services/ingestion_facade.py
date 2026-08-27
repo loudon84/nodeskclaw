@@ -33,7 +33,7 @@ from app.models.knowledge_base import KnowledgeBase
 from app.models.source_file import SourceFile
 from app.models.source_file_version import SourceFileVersion
 from app.schemas.principal import KnowledgePrincipal
-from app.services import knowledge_base_service, source_file_service
+from app.services import knowledge_base_service, runtime_binding_service, source_file_service
 from app.services.audit_service import write_audit
 from app.services.metadata_service import build_meta_fields, validate_metadata_values
 from app.services.permission_service import has_kb_permission
@@ -78,7 +78,8 @@ async def authorize_user_upload(
     kb_id: str,
 ) -> KnowledgeBase:
     kb = await knowledge_base_service.get_knowledge_base(db, member, kb_id)
-    if not kb.ragflow_dataset_id or kb.status != "active":
+    dataset_id = await runtime_binding_service.get_dataset_id(db, kb)
+    if not dataset_id or kb.status != "active":
         raise BadRequestError(message="知识库未就绪", message_key="errors.knowledge.kb_not_ready")
     if not await has_kb_permission(db, member, kb.id, KbPermission.upload.value) and not await has_kb_permission(
         db, member, kb.id, KbPermission.manage.value
@@ -160,7 +161,8 @@ async def ingest_from_connector(
 ) -> tuple[SourceFile, SourceFileVersion, IngestionJob]:
     if actor.actor_type != KnowledgeActorType.connector.value:
         raise BadRequestError(message="Connector 入库必须使用 connector Actor", message_key="errors.common.bad_request")
-    if not kb.ragflow_dataset_id or kb.status != "active":
+    dataset_id = await runtime_binding_service.get_dataset_id(db, kb)
+    if not dataset_id or kb.status != "active":
         raise BadRequestError(message="知识库未就绪", message_key="errors.knowledge.kb_not_ready")
     return await ingest_core(
         db,
@@ -231,6 +233,8 @@ async def ingest_core(
 
     if actor.org_id != kb.org_id:
         raise ForbiddenError()
+
+    dataset_id = await runtime_binding_service.require_dataset_id(db, kb)
 
     old_version: SourceFileVersion | None = None
     if source_file_id:
@@ -339,7 +343,7 @@ async def ingest_core(
         try:
             if file_obj is not None:
                 document_id = await ragflow.upload_document(
-                    kb.ragflow_dataset_id,
+                    dataset_id,
                     filename=upload_name,
                     mime=mime_type,
                     file_obj=file_obj,
@@ -347,7 +351,7 @@ async def ingest_core(
                 )
             else:
                 document_id = await ragflow.upload_document(
-                    kb.ragflow_dataset_id,
+                    dataset_id,
                     content or b"",
                     upload_name,
                     mime_type,
@@ -358,7 +362,7 @@ async def ingest_core(
             job.error_code = exc.message_key
             job.error_message = exc.message
             await db.flush()
-            recovered = await ragflow.recover_uploaded_document(kb.ragflow_dataset_id, upload_token)
+            recovered = await ragflow.recover_uploaded_document(dataset_id, upload_token)
             if not recovered:
                 job.status = IngestionJobStatus.failed.value
                 job.finished_at = _now()
@@ -392,12 +396,12 @@ async def ingest_core(
             source_revision=sf.source_revision,
         )
         meta["nk_upload_token"] = upload_token
-        await ragflow.update_document_metadata(kb.ragflow_dataset_id, document_id, meta)
+        await ragflow.update_document_metadata(dataset_id, document_id, meta)
         job.status = IngestionJobStatus.metadata_synced.value
         job.progress = 60
         await db.flush()
 
-        await ragflow.parse_documents(kb.ragflow_dataset_id, [document_id])
+        await ragflow.parse_documents(dataset_id, [document_id])
         version.parse_status = "parsing"
         version.ragflow_status = "UNSTART"
         job.status = IngestionJobStatus.parse_dispatched.value

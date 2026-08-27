@@ -7,10 +7,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.core.exceptions import ServiceUnavailableError
-from app.models.enums import AccessPlanKind, RetrievalOrigin, RetrievalSliceKind
+from app.models.enums import AccessPlanKind, RetrievalOrigin, RuntimeRetrievalMode
 from app.services.permission_service import AccessPlan
 from app.services.retrieval_merge_service import MergeExecutionResult, RetrievalSliceResult
-from app.services.retrieval_planner import RetrievalPlan, RetrievalSlice
+from app.services.retrieval_planner import RetrievalPlan, RuntimeExecutionSlice
 from app.services.retrieval_service import retrieve
 
 
@@ -25,6 +25,7 @@ def _ks():
         status="active",
         usage_count=0,
         last_used_at=None,
+        deleted_at=None,
     )
 
 
@@ -61,15 +62,17 @@ def _plan_with_slices():
         plan_kind=AccessPlanKind.filtered_access,
         allowed_source_file_ids=["sf1"],
         slices=[
-            RetrievalSlice(
-                kind=RetrievalSliceKind.full_dataset,
-                dataset_id="ds1",
+            RuntimeExecutionSlice(
                 knowledge_base_id="kb1",
+                dataset_id="ds1",
+                access_scope="full",
+                mode=RuntimeRetrievalMode.semantic,
             ),
-            RetrievalSlice(
-                kind=RetrievalSliceKind.full_dataset,
-                dataset_id="ds2",
+            RuntimeExecutionSlice(
                 knowledge_base_id="kb2",
+                dataset_id="ds2",
+                access_scope="full",
+                mode=RuntimeRetrievalMode.semantic,
             ),
         ],
     )
@@ -115,6 +118,24 @@ def _enter_retrieve_patches(stack: ExitStack, *, ks, profile, plan, merge_result
     stack.enter_context(
         patch(
             "app.services.retrieval_service.knowledge_set_service.list_set_items",
+            new=AsyncMock(return_value=[]),
+        )
+    )
+    stack.enter_context(
+        patch(
+            "app.services.retrieval_service.runtime_binding_service.get_dataset_id",
+            new=AsyncMock(return_value="ds1"),
+        )
+    )
+    stack.enter_context(
+        patch(
+            "app.services.retrieval_service.runtime_binding_service.get_binding",
+            new=AsyncMock(return_value=None),
+        )
+    )
+    stack.enter_context(
+        patch(
+            "app.services.index_state_service.list_states_for_kb",
             new=AsyncMock(return_value=[]),
         )
     )

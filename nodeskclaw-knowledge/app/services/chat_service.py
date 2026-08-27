@@ -10,7 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.exceptions import AppException, ForbiddenError, NotFoundError
+from app.core.exceptions import AppException, BadRequestError, ForbiddenError, NotFoundError
 from app.integrations.llm_proxy.client import LlmProxyClient
 from app.integrations.llm_proxy.exceptions import LlmProxyError
 from app.integrations.llm_proxy.models import ChatCompletionRequest, ChatMessage as LlmChatMessage
@@ -73,23 +73,64 @@ async def create_session(
     db: AsyncSession,
     member: KnowledgePrincipal,
     *,
-    knowledge_set_id: str,
+    knowledge_set_id: str | None = None,
+    application_id: str | None = None,
     title: str | None = None,
     answer_mode: str = "detailed",
     show_citations: bool = True,
     answer_model: str | None = None,
 ) -> ChatSession:
-    await _ensure_set_usable(db, member, knowledge_set_id)
-    if not await has_set_permission(db, member, knowledge_set_id, SetPermission.use.value):
+    resolved_set_id = knowledge_set_id
+    resolved_answer_model = answer_model
+    if application_id:
+        from app.models.enums import ApplicationPermission, ApplicationStatus
+        from app.services import knowledge_application_service
+        from app.services.permission_service import has_application_permission
+
+        app = await knowledge_application_service.get_application(db, member, application_id)
+        if app.status == ApplicationStatus.disabled.value:
+            raise ForbiddenError(
+                message="应用已禁用",
+                message_key="errors.knowledge.application_disabled",
+            )
+        if app.status != ApplicationStatus.active.value:
+            raise ForbiddenError(
+                message="应用未发布",
+                message_key="errors.knowledge.application_not_active",
+            )
+        if not await has_application_permission(
+            db, member, app, ApplicationPermission.use.value
+        ):
+            raise ForbiddenError(
+                message="无权使用该知识应用",
+                message_key="errors.knowledge.retrieval_denied",
+            )
+        set_ids = await knowledge_application_service.list_bound_set_ids(db, application_id)
+        if not set_ids:
+            raise BadRequestError(
+                message="应用未绑定知识集合",
+                message_key="errors.knowledge.application_empty",
+            )
+        resolved_set_id = set_ids[0]
+        if resolved_answer_model is None:
+            resolved_answer_model = app.answer_model
+    if not resolved_set_id:
+        raise BadRequestError(
+            message="需要 knowledge_set_id 或 application_id",
+            message_key="errors.knowledge.chat_target_required",
+        )
+    await _ensure_set_usable(db, member, resolved_set_id)
+    if not await has_set_permission(db, member, resolved_set_id, SetPermission.use.value):
         raise ForbiddenError(message="无权使用该知识集合", message_key="errors.knowledge.set_use_denied")
     row = ChatSession(
         org_id=member.org_id,
         member_id=member.member_id,
-        knowledge_set_id=knowledge_set_id,
+        knowledge_set_id=resolved_set_id,
+        application_id=application_id,
         title=title,
         answer_mode=answer_mode,
         show_citations=show_citations,
-        answer_model=answer_model,
+        answer_model=resolved_answer_model,
         status=ChatSessionStatus.active.value,
     )
     db.add(row)
@@ -175,6 +216,7 @@ async def send_message_stream(
             member,
             ragflow,
             knowledge_set_id=session.knowledge_set_id,
+            application_id=getattr(session, "application_id", None),
             query=content,
             origin=RetrievalOrigin.chat.value,
         )
@@ -296,8 +338,23 @@ async def send_message_stream(
         assistant.model = model
 
         for cit in citations:
+            source_refs = [
+                {
+                    "source_file_id": cit.get("source_file_id"),
+                    "file_version_id": cit.get("file_version_id"),
+                    "knowledge_base_id": cit.get("knowledge_base_id"),
+                }
+            ]
+            runtime_payload = {
+                "document_id": cit.get("document_id"),
+                "chunk_id": cit.get("chunk_id"),
+                "page": cit.get("page"),
+                "positions": cit.get("positions"),
+            }
             db.add(
                 ChatCitation(
+                    org_id=member.org_id,
+                    issued_member_id=member.member_id,
                     message_id=assistant.id,
                     knowledge_base_id=str(cit.get("knowledge_base_id") or ""),
                     source_file_id=str(cit.get("source_file_id") or ""),
@@ -308,6 +365,11 @@ async def send_message_stream(
                     quote=cit.get("quote"),
                     page=cit.get("page"),
                     positions=cit.get("positions"),
+                    evidence_type="chunk",
+                    content=cit.get("quote"),
+                    source_refs=source_refs,
+                    runtime_payload=runtime_payload,
+                    origin=RetrievalOrigin.chat.value,
                 )
             )
 

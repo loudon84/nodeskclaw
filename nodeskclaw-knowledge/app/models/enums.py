@@ -7,6 +7,7 @@ class KnowledgeBaseStatus(str, Enum):
     provisioning = "provisioning"
     active = "active"
     updating = "updating"
+    degraded = "degraded"
     error = "error"
     deleting = "deleting"
 
@@ -65,6 +66,26 @@ class SetPermission(str, Enum):
     manage_acl = "manage_acl"
 
 
+class ApplicationPermission(str, Enum):
+    read = "read"
+    use = "use"
+    update = "update"
+    delete = "delete"
+    manage = "manage"
+    manage_acl = "manage_acl"
+
+
+class ApplicationStatus(str, Enum):
+    draft = "draft"
+    active = "active"
+    disabled = "disabled"
+
+
+class ProfileScopeType(str, Enum):
+    set = "set"
+    application = "application"
+
+
 class IngestionJobStatus(str, Enum):
     pending = "pending"
     uploading = "uploading"
@@ -88,6 +109,13 @@ class AccessPlanKind(str, Enum):
 class RetrievalSliceKind(str, Enum):
     full_dataset = "full_dataset"
     filtered_documents = "filtered_documents"
+
+
+class RuntimeRetrievalMode(str, Enum):
+    semantic = "semantic"
+    compiled_assisted = "compiled_assisted"
+    graph_assisted = "graph_assisted"
+    toc_enhanced = "toc_enhanced"
 
 
 class KnowledgeSetStatus(str, Enum):
@@ -282,6 +310,71 @@ class ConnectorSourceObjectState(str, Enum):
     detached = "detached"
 
 
+class RuntimeBindingStatus(str, Enum):
+    provisioning = "provisioning"
+    ready = "ready"
+    syncing = "syncing"
+    error = "error"
+    deleting = "deleting"
+
+
+class BindingDriftStatus(str, Enum):
+    unknown = "unknown"
+    in_sync = "in_sync"
+    drifted = "drifted"
+    reconciling = "reconciling"
+    error = "error"
+
+
+class RuntimeType(str, Enum):
+    ragflow = "ragflow"
+
+
+class RuntimeResourceType(str, Enum):
+    dataset = "dataset"
+
+
+class IndexType(str, Enum):
+    chunk = "chunk"
+    question = "question"
+    hierarchical_summary = "hierarchical_summary"
+    table = "table"
+    outline = "outline"
+    graph = "graph"
+
+
+class IndexStateStatus(str, Enum):
+    not_built = "not_built"
+    building = "building"
+    ready = "ready"
+    stale = "stale"
+    failed = "failed"
+    unsupported = "unsupported"
+
+
+class IndexRetrievalStatus(str, Enum):
+    unavailable = "unavailable"
+    ready = "ready"
+    degraded = "degraded"
+    unsupported = "unsupported"
+
+
+class BuildJobStatus(str, Enum):
+    queued = "queued"
+    running = "running"
+    completed = "completed"
+    partial = "partial"
+    failed = "failed"
+    cancelled = "cancelled"
+
+
+class BuildTriggerPolicy(str, Enum):
+    ingestion = "ingestion"
+    on_activate = "on_activate"
+    debounce = "debounce"
+    manual = "manual"
+
+
 DEFAULT_RETRIEVAL_CONFIG = {
     "top_k": 1024,
     "top_n": 8,
@@ -295,4 +388,12 @@ DEFAULT_RETRIEVAL_CONFIG = {
     "failure_policy": "fail_closed",
     "context_max_chunks": 8,
     "context_max_chars": 24000,
+    "retrieval_mode": "adaptive",
+    "allow_question_enrichment": True,
+    "allow_summary": True,
+    "allow_graph": True,
+    "allow_toc_enhance": True,
+    "fallback_policy": "chunk",
+    "candidate_budget": 1024,
+    "rerank_candidates": 64,
 }
