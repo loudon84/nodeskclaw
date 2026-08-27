@@ -40,13 +40,13 @@ def get_backend_client(request: Request) -> NodeskclawBackendClient:
     return client
 
 
-def get_ragflow_client(request: Request):
-    client = getattr(request.app.state, "ragflow_client", None)
-    if client is not None:
-        return client
-    from app.integrations.ragflow.client import RagflowClient
+def get_runtime_adapter(request: Request):
+    adapter = getattr(request.app.state, "runtime_adapter", None)
+    if adapter is not None:
+        return adapter
+    from app.runtime.ragflow import RagflowRuntimeAdapter
 
-    return RagflowClient()
+    return RagflowRuntimeAdapter()
 
 
 def get_llm_proxy_client(request: Request):

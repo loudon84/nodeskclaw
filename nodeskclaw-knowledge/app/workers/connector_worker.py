@@ -13,7 +13,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select, text as sql_text
 
 from app.core.deps import async_session_factory
-from app.integrations.ragflow.client import RagflowClient
+from app.runtime.ragflow import RagflowRuntimeAdapter
 from app.models.base import not_deleted
 from app.models.connector import ConnectorSyncItem, ConnectorSyncRun, KnowledgeSourceConnector
 from app.models.enums import ConnectorSyncItemStatus, ConnectorSyncRunStatus, IngestionJobStatus
@@ -91,7 +91,7 @@ async def finalize_leased_sync_run(
 
 async def process_sync_run(
     db,
-    ragflow: RagflowClient,
+    ragflow: RagflowRuntimeAdapter,
     run: ConnectorSyncRun,
     *,
     lease_owner: str,
@@ -229,7 +229,7 @@ async def _track_child_ingestion(db, run: ConnectorSyncRun) -> None:
 
 async def _run_loop() -> None:
     lease_owner = _lease_owner()
-    ragflow = RagflowClient()
+    ragflow = RagflowRuntimeAdapter()
     loop_count = 0
     logger.info("connector worker started lease_owner=%s", lease_owner)
     try:

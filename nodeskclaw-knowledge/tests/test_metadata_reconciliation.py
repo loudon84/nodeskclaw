@@ -5,6 +5,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from datetime import UTC, datetime
+
 from app.integrations.ragflow.models import RagflowDocument
 from app.services import reconciliation_service
 
@@ -18,6 +20,7 @@ async def test_metadata_drift_local_wins_repair():
         ragflow_document_id="d1",
         parse_status="active",
         deleted_at=None,
+        updated_at=datetime(2026, 1, 1, tzinfo=UTC),
     )
     sf = SimpleNamespace(
         id="sf1",
@@ -30,7 +33,9 @@ async def test_metadata_drift_local_wins_repair():
 
     execute_result = MagicMock()
     execute_result.all.return_value = [(version, sf, kb)]
-    db.execute = AsyncMock(return_value=execute_result)
+    empty_result = MagicMock()
+    empty_result.all.return_value = []
+    db.execute = AsyncMock(side_effect=[execute_result, empty_result])
 
     drifted = RagflowDocument(
         id="d1",

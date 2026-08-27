@@ -54,6 +54,20 @@ def test_filtered_access_denies_aggregate_modes():
     assert cap.selected_mode == RuntimeRetrievalMode.semantic.value
 
 
+def test_toc_enhanced_without_outline_index_when_runtime_supports(monkeypatch):
+    monkeypatch.setattr(capability_planner.settings, "KNOWLEDGE_V2_TOC_ENHANCE_ENABLED", True)
+    plan = capability_planner.build_capability_plan(
+        "文档目录大纲章节",
+        kb_access_scopes={"kb1": "full"},
+        kb_capabilities_input={"kb1": {"supports_toc_enhance": True}},
+        kb_index_states={"kb1": {"chunk": "ready"}},
+        kb_retrieval_states={"kb1": {"chunk": "ready"}},
+        profile_policy={"allow_toc_enhance": True},
+    )
+    cap = plan.kb_capabilities["kb1"]
+    assert RuntimeRetrievalMode.toc_enhanced.value in cap.allowed_modes
+
+
 def test_evidence_from_chunk_uses_normalizer():
     chunk = RagflowChunk(
         id="c1",

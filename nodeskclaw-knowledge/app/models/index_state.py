@@ -34,6 +34,8 @@ class IndexState(BaseModel):
     )
     build_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     source_watermark: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    input_manifest_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    input_manifest_summary: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     last_build_job_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     runtime_payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)

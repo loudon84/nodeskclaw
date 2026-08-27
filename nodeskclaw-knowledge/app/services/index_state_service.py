@@ -108,6 +108,8 @@ async def mark_indexes_stale(
     kb,
     index_types: list[str] | None = None,
     source_watermark: str | None = None,
+    input_manifest_hash: str | None = None,
+    input_manifest_summary: dict | None = None,
     capabilities: dict | None = None,
 ) -> list[IndexState]:
     profile = await build_profile_service.resolve_profile_for_kb(db, kb)
@@ -133,6 +135,10 @@ async def mark_indexes_stale(
         state.status = IndexStateStatus.stale.value
         if source_watermark is not None:
             state.source_watermark = source_watermark
+        if input_manifest_hash is not None:
+            state.input_manifest_hash = input_manifest_hash
+        if input_manifest_summary is not None:
+            state.input_manifest_summary = input_manifest_summary
         updated.append(state)
     return updated
 
@@ -145,6 +151,8 @@ async def set_state_status(
     build_job_id: str | None = None,
     error: str | None = None,
     capabilities: dict | None = None,
+    input_manifest_hash: str | None = None,
+    input_manifest_summary: dict | None = None,
 ) -> IndexState:
     if status == IndexStateStatus.ready.value and state.status == IndexStateStatus.unsupported.value:
         return state
@@ -158,6 +166,10 @@ async def set_state_status(
     if status == IndexStateStatus.ready.value:
         state.last_built_at = datetime.now(UTC)
         state.build_version = int(state.build_version or 0) + 1
+        if input_manifest_hash is not None:
+            state.input_manifest_hash = input_manifest_hash
+        if input_manifest_summary is not None:
+            state.input_manifest_summary = input_manifest_summary
         if capabilities is not None:
             _sync_retrieval_status(state, state.index_type, capabilities)
         else:

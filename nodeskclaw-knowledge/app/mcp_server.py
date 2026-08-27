@@ -16,11 +16,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.agent_tools import (
     knowledge_get_document,
     knowledge_get_evidence,
+    knowledge_get_structure,
+    knowledge_get_table,
     knowledge_search_or_retrieve,
 )
-from app.core.deps import get_db, get_member_context, get_ragflow_client
+from app.core.deps import get_db, get_member_context, get_runtime_adapter
 from app.core.exceptions import BadRequestError
-from app.integrations.ragflow.client import RagflowClient
+from app.runtime.ragflow import RagflowRuntimeAdapter
 from app.schemas.common import ApiResponse
 from app.schemas.principal import KnowledgePrincipal
 
@@ -31,6 +33,8 @@ MCP_TOOL_NAMES = (
     "knowledge.retrieve",
     "knowledge.get_document",
     "knowledge.get_evidence",
+    "knowledge.get_structure",
+    "knowledge.get_table",
 )
 
 
@@ -101,6 +105,32 @@ MCP_TOOLS: list[McpToolDefinition] = [
             "required": ["evidence_id"],
         },
     ),
+    McpToolDefinition(
+        name="knowledge.get_structure",
+        description="通过 ACL 链获取 Outline/PageIndex 结构节点。",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "knowledge_base_id": {"type": "string"},
+                "query": {"type": "string"},
+                "source_file_id": {"type": "string"},
+            },
+            "required": ["knowledge_base_id"],
+        },
+    ),
+    McpToolDefinition(
+        name="knowledge.get_table",
+        description="通过 ACL 链获取 Table 行证据。",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "knowledge_base_id": {"type": "string"},
+                "query": {"type": "string"},
+                "source_file_id": {"type": "string"},
+            },
+            "required": ["knowledge_base_id"],
+        },
+    ),
 ]
 
 
@@ -111,7 +141,7 @@ def list_tools() -> list[McpToolDefinition]:
 async def call_tool(
     db: AsyncSession,
     member: KnowledgePrincipal,
-    ragflow: RagflowClient,
+    ragflow: RagflowRuntimeAdapter,
     *,
     name: str,
     arguments: dict[str, Any],
@@ -149,6 +179,38 @@ async def call_tool(
             )
         return await knowledge_get_evidence(db, member, evidence_id=str(evidence_id))
 
+    if name == "knowledge.get_structure":
+        kb_id = arguments.get("knowledge_base_id")
+        if not kb_id:
+            raise BadRequestError(
+                message="缺少 knowledge_base_id",
+                message_key="errors.common.bad_request",
+            )
+        return await knowledge_get_structure(
+            db,
+            member,
+            ragflow,
+            knowledge_base_id=str(kb_id),
+            query=arguments.get("query"),
+            source_file_id=arguments.get("source_file_id"),
+        )
+
+    if name == "knowledge.get_table":
+        kb_id = arguments.get("knowledge_base_id")
+        if not kb_id:
+            raise BadRequestError(
+                message="缺少 knowledge_base_id",
+                message_key="errors.common.bad_request",
+            )
+        return await knowledge_get_table(
+            db,
+            member,
+            ragflow,
+            knowledge_base_id=str(kb_id),
+            query=arguments.get("query"),
+            source_file_id=arguments.get("source_file_id"),
+        )
+
     raise BadRequestError(
         message=f"未知 MCP 工具: {name}",
         message_key="errors.knowledge.mcp_tool_not_found",
@@ -167,7 +229,7 @@ async def mcp_call_tool(
     body: McpToolCallRequest,
     member: KnowledgePrincipal = Depends(get_member_context),
     db: AsyncSession = Depends(get_db),
-    ragflow: RagflowClient = Depends(get_ragflow_client),
+    ragflow: RagflowRuntimeAdapter = Depends(get_runtime_adapter),
 ):
     result = await call_tool(
         db,

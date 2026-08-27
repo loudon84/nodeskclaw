@@ -157,7 +157,7 @@ def test_worker_modules_expose_domain_entrypoints():
 @pytest.mark.asyncio
 async def test_ingestion_worker_only_claims_ingestion_jobs():
     with patch("app.workers.ingestion_worker.ingestion_service.claim_next_job", AsyncMock(return_value=None)) as claim:
-        with patch("app.workers.ingestion_worker.RagflowClient") as ragflow_cls:
+        with patch("app.workers.ingestion_worker.RagflowRuntimeAdapter") as ragflow_cls:
             ragflow_cls.return_value.aclose = AsyncMock()
             from app.workers import ingestion_worker
 

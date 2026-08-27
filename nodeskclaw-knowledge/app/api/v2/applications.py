@@ -100,7 +100,6 @@ async def patch_application_v2(
         name=body.name,
         description=body.description,
         answer_model=body.answer_model,
-        status=body.status,
     )
     data = await knowledge_application_service.application_to_out(db, app)
     return ApiResponse(data=KnowledgeApplicationOut.model_validate(data))
@@ -125,6 +124,18 @@ async def publish_application_v2(
 ):
     _require_application()
     app = await knowledge_application_service.publish_application(db, member, application_id)
+    data = await knowledge_application_service.application_to_out(db, app)
+    return ApiResponse(data=KnowledgeApplicationOut.model_validate(data))
+
+
+@router.post("/applications/{application_id}/disable", response_model=ApiResponse[KnowledgeApplicationOut])
+async def disable_application_v2(
+    application_id: str,
+    member: KnowledgePrincipal = Depends(get_member_context),
+    db: AsyncSession = Depends(get_db),
+):
+    _require_application()
+    app = await knowledge_application_service.disable_application(db, member, application_id)
     data = await knowledge_application_service.application_to_out(db, app)
     return ApiResponse(data=KnowledgeApplicationOut.model_validate(data))
 

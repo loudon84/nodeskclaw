@@ -10,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.connectors.registry import get_connector_class, list_types
 from app.core.exceptions import BadRequestError, ConflictError, ForbiddenError, NotFoundError
-from app.integrations.ragflow.client import RagflowClient
 from app.models.base import not_deleted
 from app.models.connector import (
     ConnectorCredential,
@@ -364,7 +363,7 @@ async def trigger_sync(
 async def delete_connector(
     db: AsyncSession,
     member: KnowledgePrincipal,
-    ragflow: RagflowClient,
+    ragflow: RagflowRuntimeAdapter,
     connector_id: str,
     *,
     policy: str = "archive_sources",

@@ -48,15 +48,15 @@ v1.2 强制闸：`status=disabled` 时用户 Retrieval、Chat 发消息与新建
 
 ## Knowledge Application
 
-KnowledgeApplication 是面向用户的检索/Chat 产品面，可绑定多个 KnowledgeSet；Answer Model Authority 在 Application。v2.2 publish 前必须 readiness gate。
+KnowledgeApplication 是面向用户的检索/Chat 产品面，可绑定多个 KnowledgeSet；Answer Model Authority 在 Application。v2.2 publish 前必须 readiness gate；v2.3 publish 写入 `runtime_snapshot`，PATCH 禁止直接改 `status`，停用走 `POST .../disable`。
 
-表与 ACL：[[nodeskclaw-knowledge/app/models/knowledge_application.py]]、[[nodeskclaw-knowledge/app/models/knowledge_application_acl.py]]。Readiness：[[nodeskclaw-knowledge/app/services/application_readiness_service.py#check]]；未就绪 publish 返回 409。USE 判定：[[nodeskclaw-knowledge/app/services/permission_service.py#has_application_permission]]。服务：[[nodeskclaw-knowledge/app/services/knowledge_application_service.py]]。检索：[[nodeskclaw-knowledge/app/services/retrieval_service.py#retrieve_for_application]]。v2 HTTP：[[nodeskclaw-knowledge/app/api/v2/applications.py]]。
+表与 ACL：[[nodeskclaw-knowledge/app/models/knowledge_application.py]]、[[nodeskclaw-knowledge/app/models/knowledge_application_acl.py]]。Readiness：[[nodeskclaw-knowledge/app/services/application_readiness_service.py#check]]；未就绪 publish 返回 409。Publish/disable：[[nodeskclaw-knowledge/app/services/knowledge_application_service.py#publish_application]]、[[nodeskclaw-knowledge/app/services/knowledge_application_service.py#disable_application]]；v2 HTTP：[[nodeskclaw-knowledge/app/api/v2/applications.py]]。USE 判定：[[nodeskclaw-knowledge/app/services/permission_service.py#has_application_permission]]。检索：[[nodeskclaw-knowledge/app/services/retrieval_service.py#retrieve_for_application]]。
 
 ## Runtime Binding
 
 Runtime Binding 是 KnowledgeBase 到 RAGFlow Dataset 的权威身份映射；`ragflow_dataset_id` 仅作 v1 mirror。
 
-模型：[[nodeskclaw-knowledge/app/models/runtime_binding.py#KnowledgeRuntimeBinding]]。v2.2 增加 `desired_config` / `observed_config` / `config_revision` / `observed_revision` / `drift_status` / `last_observed_at`；Desired 由 [[nodeskclaw-knowledge/app/services/runtime_config_compiler.py#compile_desired_config]] 生成，Observed apply 唯一经 [[nodeskclaw-knowledge/app/services/reconciliation_service.py#reconcile_binding_config]]。v2.1 probe 字段 `last_capability_probe_at` / `last_capability_probe_error`；`capabilities` 由 L1/L2/L3 contract probe 写入：[[nodeskclaw-knowledge/app/runtime/ragflow_contract.py#probe_compatibility_profile]]、[[nodeskclaw-knowledge/app/services/runtime_binding_service.py#probe_and_persist_binding_capabilities]]。幂等 Dataset 创建/删除：[[nodeskclaw-knowledge/app/services/runtime_binding_service.py#create_dataset_idempotent]]、[[nodeskclaw-knowledge/app/services/runtime_binding_service.py#delete_dataset_idempotent]]（稳定名 `nk:<kb_id>:<display-name>`）。解析：[[nodeskclaw-knowledge/app/services/runtime_binding_service.py#get_dataset_id]]、[[nodeskclaw-knowledge/app/services/runtime_binding_service.py#require_dataset_id]]。启动幂等 backfill：[[nodeskclaw-knowledge/app/services/runtime_binding_service.py#backfill_from_knowledge_bases]]（[[nodeskclaw-knowledge/app/main.py]] lifespan）。
+模型：[[nodeskclaw-knowledge/app/models/runtime_binding.py#KnowledgeRuntimeBinding]]。v2.2 增加 `desired_config` / `observed_config` / `config_revision` / `observed_revision` / `drift_status` / `last_observed_at`；v2.3 增加 `desired_config_hash`（content-addressed，`config_revision` 仅在 hash 变化时递增）。Desired 由 [[nodeskclaw-knowledge/app/services/runtime_config_compiler.py#compile_desired_config]] 生成，Observed apply 唯一经 [[nodeskclaw-knowledge/app/services/reconciliation_service.py#reconcile_binding_config]]。v2.1 probe 字段 `last_capability_probe_at` / `last_capability_probe_error`；`capabilities` 由 L1/L2/L3 contract probe 写入：[[nodeskclaw-knowledge/app/runtime/ragflow_contract.py#probe_compatibility_profile]]、[[nodeskclaw-knowledge/app/services/runtime_binding_service.py#probe_and_persist_binding_capabilities]]。v2.3 probe 在 ACTIVE document 上下文执行四态语义：[[nodeskclaw-knowledge/app/integrations/ragflow/client.py#RagflowClient#probe_retrieval_features]]。幂等 Dataset 创建/删除：[[nodeskclaw-knowledge/app/services/runtime_binding_service.py#create_dataset_idempotent]]、[[nodeskclaw-knowledge/app/services/runtime_binding_service.py#delete_dataset_idempotent]]（稳定名 `nk:<kb_id>:<display-name>`）。解析：[[nodeskclaw-knowledge/app/services/runtime_binding_service.py#get_dataset_id]]、[[nodeskclaw-knowledge/app/services/runtime_binding_service.py#require_dataset_id]]。启动幂等 backfill：[[nodeskclaw-knowledge/app/services/runtime_binding_service.py#backfill_from_knowledge_bases]]（[[nodeskclaw-knowledge/app/main.py]] lifespan）；backfill 禁止 mirror 反向覆盖 `resource_id`（R4）。
 
 ## Build Profile
 
@@ -66,21 +66,27 @@ Build Profile（Standard/Enhanced/Reasoning）描述要构建的 Index 类型与
 
 ## Index State
 
-Index State 跟踪每 KB×index_type 生命周期：not_built / building / ready / stale / failed / unsupported；v2.1 增加 `retrieval_status`；v2.2 增加 `validation_payload` / `coverage_payload` / `last_validated_at` 记录 artifact 验证。
+Index State 跟踪每 KB×index_type 的 build/retrieval 生命周期与 validation/manifest 元数据。
 
-模型：[[nodeskclaw-knowledge/app/models/index_state.py#IndexState]]。服务：[[nodeskclaw-knowledge/app/services/index_state_service.py]]。Question READY 需 chunk-read 验证 enrichment>0；Summary/Graph READY 需 compiled/graph artifact，Document DONE  alone 不足。无稳定 Public API 不得标 READY；Capability Planner 禁用 stale/building/failed/unsupported/query-unavailable index。
+模型：[[nodeskclaw-knowledge/app/models/index_state.py#IndexState]]。服务：[[nodeskclaw-knowledge/app/services/index_state_service.py]]。v2.3 增加 `input_manifest_hash` / `input_manifest_summary`（CorpusManifest）；Manifest 计算：[[nodeskclaw-knowledge/app/services/build_input_manifest_service.py#compute_manifest]]。Question READY 需 chunk-read 验证 enrichment>0；Summary/Graph READY 需 compiled/graph artifact，Document DONE alone 不足。无稳定 Public API 不得标 READY；Capability Planner 禁用 stale/building/failed/unsupported/query-unavailable index；v2.3 `IndexType.outline` / `table` 占位已从 INDEX_REGISTRY 生产路径移除。
 
 ## Build Job
 
-KnowledgeBuildJob 与 IngestionJob 分表；Build 不修改 `source_file.active_version_id`。v2.2 每次 Build 走 Compile→Reconcile→Execute→Validate，输入文档来自 ACTIVE FileVersion 集合。
+KnowledgeBuildJob 与 IngestionJob 分表；Build 不修改 `source_file.active_version_id`。v2.2 每次 Build 走 Compile→Reconcile→Execute→Validate；v2.3 增加 `target_kind` / `target_key` / `input_manifest_hash` 与增量 BuildDelta（`KNOWLEDGE_V23_INCREMENTAL_BUILD_ENABLED`）。
 
-Worker 经 `process_build_job` 执行：Compile desired config → Reconcile once（advisory lock）→ Executor → Validate artifact。输入由 [[nodeskclaw-knowledge/app/services/active_runtime_documents.py#resolve_active_documents]] 分页覆盖全部 ACTIVE 文档（`RAGFLOW_BUILD_BATCH_SIZE`），禁止 50/200 截断。`stage_results` 含 `runtime_operation` / `artifact_validation` / `retrieval_validation` 等。chunk 失败且重试用尽时 KB 进入 `degraded`。模型：[[nodeskclaw-knowledge/app/models/build_job.py#KnowledgeBuildJob]]。编排：[[nodeskclaw-knowledge/app/services/build_orchestrator.py#process_build_job]]。Stage 执行器：[[nodeskclaw-knowledge/app/services/build_executors.py#EXECUTORS]]。Worker：[[nodeskclaw-knowledge/app/workers/build_worker.py]]。
+Worker 经 `process_build_job` 执行：Compile desired config → Reconcile once（advisory lock）→ Executor → Validate artifact。输入由 [[nodeskclaw-knowledge/app/services/active_runtime_documents.py#resolve_active_documents]] 分页覆盖全部 ACTIVE 文档（`RAGFLOW_BUILD_BATCH_SIZE`），禁止 50/200 截断；v2.3 以 [[nodeskclaw-knowledge/app/services/build_input_manifest_service.py#compute_build_delta]] 决定增量/full rebuild。`stage_results` 含 `runtime_operation` / `artifact_validation` / `retrieval_validation` 等。chunk 失败且重试用尽时 KB 进入 `degraded`。模型：[[nodeskclaw-knowledge/app/models/build_job.py#KnowledgeBuildJob]]。编排：[[nodeskclaw-knowledge/app/services/build_orchestrator.py#process_build_job]]。Stage 执行器：[[nodeskclaw-knowledge/app/services/build_executors.py#EXECUTORS]]。Worker：[[nodeskclaw-knowledge/app/workers/build_worker.py]]。
 
 ## Knowledge Model
 
-Knowledge Model 存 entity/relation/term/extraction_policy JSON，供 Reasoning Build 与抽取策略引用。
+Knowledge Model 存 entity/relation/term/extraction_policy JSON，供 Reasoning Build 与抽取策略引用；v2.3 引入不可变 Revision，update 创建 draft revision，publish 切换 `active_revision_id`。
 
-模型：[[nodeskclaw-knowledge/app/models/knowledge_model.py#KnowledgeModel]]。服务：[[nodeskclaw-knowledge/app/services/knowledge_model_service.py]]。
+模型：[[nodeskclaw-knowledge/app/models/knowledge_model.py#KnowledgeModel]]、[[nodeskclaw-knowledge/app/models/knowledge_model_revision.py#KnowledgeModelRevision]]。服务：[[nodeskclaw-knowledge/app/services/knowledge_model_service.py]]。Revision API：[[nodeskclaw-knowledge/app/api/v2/knowledge_models.py]]。
+
+## Knowledge Artifact
+
+KnowledgeArtifact catalog 记录 Outline/Table/Graph 等 Derived Artifact 构建态与 manifest 绑定；Provider SPI 经 Runtime Adapter 读写 RAGFlow native artifact，禁止业务层直连 Client。
+
+模型：[[nodeskclaw-knowledge/app/models/knowledge_artifact.py#KnowledgeArtifact]]。Provider：[[nodeskclaw-knowledge/app/knowledge_artifacts/outline.py]]、[[nodeskclaw-knowledge/app/knowledge_artifacts/table.py]]、[[nodeskclaw-knowledge/app/knowledge_artifacts/ragflow_compilation.py]]。HTTP：[[nodeskclaw-knowledge/app/api/v2/artifacts.py]]。Table row 检索经 ACL 过滤：[[nodeskclaw-knowledge/app/knowledge_artifacts/table.py#filter_table_candidates_by_acl]]。
 
 ## Translation Objects
 
@@ -98,7 +104,7 @@ v1.2 将 Set 的检索参数升级为版本化发布模型：DRAFT / ACTIVE / AR
 
 `knowledge_chat_citations` 承载 Chat Citation 与检索/agent 持久化 Evidence；`evidence_id` 即行 `id`。
 
-v2.1 扩展 `org_id` / `issued_member_id` / `evidence_type` / `content` / `source_refs` / `runtime_payload` / `origin`；`message_id` 可空。v2.2 Evidence Type 由 [[nodeskclaw-knowledge/app/services/evidence_normalizer.py#classify]] 按 runtime marker 判定（禁止 `nk_*` 标签 authority）；`citation_eligible` 由 Cleaner 在授权后签发。Active Version Security 经 [[nodeskclaw-knowledge/app/services/chunk_security_service.py#clean_evidence]]。模型：[[nodeskclaw-knowledge/app/models/chat_citation.py#ChatCitation]]。签发：[[nodeskclaw-knowledge/app/services/retrieval_service.py#_persist_retrieval_evidence]]。
+v2.1 扩展 `org_id` / `issued_member_id` / `evidence_type` / `content` / `source_refs` / `runtime_payload` / `origin`；`message_id` 可空。v2.2 Evidence Type 由 [[nodeskclaw-knowledge/app/services/evidence_normalizer.py#classify]] 按 runtime marker/lineage 判定（`slice_mode` 仅 hint，禁止 `nk_*` 标签 authority）；`citation_eligible` 由 Cleaner 在授权后签发。v2.3 支持 `table_row` 等 artifact evidence（须含 SourceRef）。Active Version Security 经 [[nodeskclaw-knowledge/app/services/chunk_security_service.py#clean_evidence]]。模型：[[nodeskclaw-knowledge/app/models/chat_citation.py#ChatCitation]]。签发：[[nodeskclaw-knowledge/app/services/retrieval_service.py#_persist_retrieval_evidence]]。
 
 ## Evaluation Objects
 

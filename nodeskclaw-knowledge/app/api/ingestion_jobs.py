@@ -3,8 +3,8 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_db, get_member_context, get_ragflow_client
-from app.integrations.ragflow.client import RagflowClient
+from app.core.deps import get_db, get_member_context, get_runtime_adapter
+from app.runtime.ragflow import RagflowRuntimeAdapter
 from app.schemas.common import ApiResponse, PageData
 from app.schemas.knowledge import IngestionJobOut
 from app.schemas.principal import KnowledgePrincipal
@@ -59,7 +59,7 @@ async def retry_ingestion_job(
     job_id: str,
     member: KnowledgePrincipal = Depends(get_member_context),
     db: AsyncSession = Depends(get_db),
-    ragflow: RagflowClient = Depends(get_ragflow_client),
+    ragflow: RagflowRuntimeAdapter = Depends(get_runtime_adapter),
 ):
     job = await ingestion_service.retry_job(db, member, ragflow, job_id)
     return ApiResponse(data=IngestionJobOut.model_validate(job))
@@ -70,7 +70,7 @@ async def cancel_ingestion_job(
     job_id: str,
     member: KnowledgePrincipal = Depends(get_member_context),
     db: AsyncSession = Depends(get_db),
-    ragflow: RagflowClient = Depends(get_ragflow_client),
+    ragflow: RagflowRuntimeAdapter = Depends(get_runtime_adapter),
 ):
     job = await ingestion_service.cancel_job(db, member, ragflow, job_id)
     return ApiResponse(data=IngestionJobOut.model_validate(job))

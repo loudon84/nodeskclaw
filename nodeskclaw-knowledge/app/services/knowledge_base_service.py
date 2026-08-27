@@ -6,7 +6,6 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import BadRequestError, ConflictError, ForbiddenError, NotFoundError
-from app.integrations.ragflow.client import RagflowClient
 from app.integrations.ragflow.exceptions import RagflowError
 from app.models.base import not_deleted
 from app.models.enums import AclEffect, AuditAction, KnowledgeBaseStatus, KbPermission, SubjectType, UiRole
@@ -114,7 +113,7 @@ async def get_knowledge_base(db: AsyncSession, member: KnowledgePrincipal, kb_id
 async def create_knowledge_base(
     db: AsyncSession,
     member: KnowledgePrincipal,
-    ragflow: RagflowClient,
+    ragflow: RagflowRuntimeAdapter,
     *,
     name: str,
     description: str | None,
@@ -192,9 +191,7 @@ async def create_knowledge_base(
     _seed_visibility_acl(db, knowledge_base_id=kb.id, visibility=visibility, member=member)
 
     try:
-        from app.runtime.ragflow import RagflowRuntimeAdapter
-
-        adapter = RagflowRuntimeAdapter(client=ragflow)
+        adapter = ragflow
         result = await adapter.provision_binding(
             db,
             kb=kb,
@@ -229,7 +226,7 @@ async def create_knowledge_base(
 async def update_knowledge_base(
     db: AsyncSession,
     member: KnowledgePrincipal,
-    ragflow: RagflowClient,
+    ragflow: RagflowRuntimeAdapter,
     kb_id: str,
     *,
     name: str | None = None,
@@ -272,21 +269,16 @@ async def update_knowledge_base(
 
     dataset_id = await runtime_binding_service.get_dataset_id(db, kb)
     if dataset_id and ragflow_fields:
-        from app.runtime.ragflow import RagflowRuntimeAdapter
-
-        adapter = RagflowRuntimeAdapter(client=ragflow)
         try:
             await runtime_binding_service.update_dataset_metadata(
                 db,
-                adapter,
+                ragflow,
                 kb,
                 name=ragflow_fields.get("name"),
                 description=ragflow_fields.get("description"),
             )
         except RagflowError as exc:
             raise BadRequestError(message=exc.message, message_key=exc.message_key) from exc
-        finally:
-            await adapter.aclose()
     if changes:
         await write_audit(
             db,
@@ -305,7 +297,7 @@ async def update_knowledge_base(
 async def delete_knowledge_base(
     db: AsyncSession,
     member: KnowledgePrincipal,
-    ragflow: RagflowClient,
+    ragflow: RagflowRuntimeAdapter,
     kb_id: str,
 ) -> None:
     kb = await get_knowledge_base(db, member, kb_id)
@@ -315,12 +307,8 @@ async def delete_knowledge_base(
         raise ForbiddenError()
     kb.status = KnowledgeBaseStatus.deleting.value
     await db.flush()
-    from app.runtime.ragflow import RagflowRuntimeAdapter
-    from app.services import runtime_binding_service
-
     try:
-        adapter = RagflowRuntimeAdapter(client=ragflow)
-        await adapter.delete_binding(db, kb)
+        await ragflow.delete_binding(db, kb)
     except RagflowError as exc:
         kb.last_error = exc.message
         await db.commit()

@@ -12,7 +12,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.integrations.ragflow.client import RagflowClient
 from app.integrations.ragflow.exceptions import RagflowError
 from app.models.base import not_deleted
 from app.models.build_job import KnowledgeBuildJob
@@ -20,7 +19,7 @@ from app.models.enums import IndexType, SourceFileStatus
 from app.models.knowledge_base import KnowledgeBase
 from app.models.source_file import SourceFile
 from app.runtime.ragflow import RagflowRuntimeAdapter
-from app.services import active_runtime_documents, index_state_service, runtime_binding_service
+from app.services import active_runtime_documents, build_input_manifest_service, index_state_service, runtime_binding_service
 from app.services.active_runtime_documents import ActiveRuntimeDocument, iter_document_batches
 from app.services.index_registry import is_index_retrieval_ready, is_runtime_supported
 
@@ -41,44 +40,30 @@ class StageResult:
     coverage_payload: dict[str, Any] | None = None
 
 
-async def _current_active_watermark(db: AsyncSession, kb: KnowledgeBase) -> str | None:
-    result = await db.execute(
-        select(SourceFile.active_version_id)
-        .where(
-            SourceFile.knowledge_base_id == kb.id,
-            SourceFile.status == SourceFileStatus.active.value,
-            SourceFile.active_version_id.is_not(None),
-            not_deleted(SourceFile),
-        )
-        .order_by(SourceFile.updated_at.desc())
-        .limit(1)
-    )
-    row = result.scalar_one_or_none()
-    return str(row) if row else None
-
-
-async def _validate_source_watermark(
+async def _validate_input_manifest(
     db: AsyncSession,
     kb: KnowledgeBase,
     index_type: str,
 ) -> StageResult | None:
+    from app.services import build_input_manifest_service
+
     state = await index_state_service.get_or_create_state(
         db,
         org_id=kb.org_id,
         knowledge_base_id=kb.id,
         index_type=index_type,
     )
-    expected = state.source_watermark
+    expected = state.input_manifest_hash
     if not expected:
         return None
-    current = await _current_active_watermark(db, kb)
-    if current and current != expected:
+    current_hash, _items, _summary = await build_input_manifest_service.compute_manifest(db, kb)
+    if current_hash != expected:
         return StageResult(
             status="failed",
             retryable=True,
-            error_code="source_watermark_mismatch",
-            error_message="active version changed during build",
-            output={"expected_watermark": expected, "current_watermark": current},
+            error_code="input_manifest_mismatch",
+            error_message="corpus manifest changed during build",
+            output={"expected_manifest_hash": expected, "current_manifest_hash": current_hash},
         )
     return None
 
@@ -147,6 +132,46 @@ def _chunk_has_summary_marker(chunk: dict[str, Any]) -> bool:
     return "raptor" in content.lower() or "compiled" in content.lower()
 
 
+def _chunk_has_summary_lineage(chunk: dict[str, Any]) -> bool:
+    if not _chunk_has_summary_marker(chunk):
+        return False
+    source_ids = chunk.get("source_chunk_ids")
+    if isinstance(source_ids, list) and len(source_ids) > 0:
+        return True
+    return False
+
+
+def _entity_has_lineage(entity: dict[str, Any]) -> bool:
+    for key in ("source_id", "document_id", "chunk_id", "source_chunk_id", "source_chunk_ids"):
+        value = entity.get(key)
+        if value:
+            return True
+    sources = entity.get("sources") or entity.get("source_refs")
+    if isinstance(sources, list) and len(sources) > 0:
+        return True
+    return False
+
+
+async def _load_document_chunks(
+    adapter: RagflowRuntimeAdapter,
+    dataset_id: str,
+    document_id: str,
+    *,
+    page_size: int = 100,
+    max_chunks: int | None = None,
+) -> tuple[list[dict[str, Any]], str]:
+    chunks: list[dict[str, Any]] = []
+    async for chunk in adapter.iter_document_chunks(
+        dataset_id,
+        document_id,
+        page_size=page_size,
+        max_chunks=max_chunks,
+    ):
+        chunks.append(chunk)
+    mode = "sampled" if max_chunks is not None else "full"
+    return chunks, mode
+
+
 async def _validate_question_artifacts(
     adapter: RagflowRuntimeAdapter,
     dataset_id: str,
@@ -154,30 +179,45 @@ async def _validate_question_artifacts(
 ) -> tuple[dict[str, Any], dict[str, Any], bool]:
     eligible = len(documents)
     enriched_chunks = 0
+    enriched_documents = 0
+    inspected_chunks = 0
     per_document: list[dict[str, Any]] = []
     for doc in documents:
-        chunks = await adapter.read_document_chunks(dataset_id, doc.ragflow_document_id, page=1, page_size=100)
+        chunks, _validation_mode = await _load_document_chunks(
+            adapter, dataset_id, doc.ragflow_document_id
+        )
+        inspected_chunks += len(chunks)
         doc_enriched = sum(_chunk_question_count(chunk) for chunk in chunks)
         enriched_chunks += doc_enriched
+        if doc_enriched > 0:
+            enriched_documents += 1
         per_document.append(
             {
                 "ragflow_document_id": doc.ragflow_document_id,
                 "file_version_id": doc.file_version_id,
                 "question_enriched_chunks": doc_enriched,
+                "inspected_chunks": len(chunks),
             }
         )
-    coverage_ratio = (enriched_chunks / eligible) if eligible else 0.0
+    document_coverage = (enriched_documents / eligible) if eligible else 0.0
+    chunk_coverage = (enriched_chunks / inspected_chunks) if inspected_chunks else 0.0
     validation = {
         "artifact_type": "question_enrichment",
         "eligible_documents": eligible,
+        "enriched_documents": enriched_documents,
         "question_enriched_chunks": enriched_chunks,
+        "inspected_chunks": inspected_chunks,
+        "validation_mode": "full",
         "per_document": per_document,
         "ready": enriched_chunks > 0,
     }
     coverage = {
         "eligible_documents": eligible,
+        "enriched_documents": enriched_documents,
         "question_enriched_chunks": enriched_chunks,
-        "coverage_ratio": coverage_ratio,
+        "inspected_chunks": inspected_chunks,
+        "document_coverage": document_coverage,
+        "chunk_coverage": chunk_coverage,
     }
     return validation, coverage, enriched_chunks > 0
 
@@ -188,31 +228,55 @@ async def _validate_summary_artifacts(
     documents: list[ActiveRuntimeDocument],
 ) -> tuple[dict[str, Any], dict[str, Any], bool]:
     summary_chunks = 0
+    lineage_valid_chunks = 0
+    inspected_chunks = 0
     per_document: list[dict[str, Any]] = []
     for doc in documents:
-        chunks = await adapter.read_document_chunks(dataset_id, doc.ragflow_document_id, page=1, page_size=100)
+        chunks, _validation_mode = await _load_document_chunks(
+            adapter, dataset_id, doc.ragflow_document_id
+        )
+        inspected_chunks += len(chunks)
         doc_summary = sum(1 for chunk in chunks if _chunk_has_summary_marker(chunk))
+        doc_lineage = sum(1 for chunk in chunks if _chunk_has_summary_lineage(chunk))
         summary_chunks += doc_summary
+        lineage_valid_chunks += doc_lineage
         per_document.append(
             {
                 "ragflow_document_id": doc.ragflow_document_id,
                 "file_version_id": doc.file_version_id,
                 "summary_chunks": doc_summary,
+                "lineage_valid_chunks": doc_lineage,
+                "inspected_chunks": len(chunks),
             }
         )
+    build_ready = summary_chunks > 0
+    lineage_ready = lineage_valid_chunks > 0 if summary_chunks > 0 else False
     validation = {
         "artifact_type": "raptor_summary",
         "eligible_documents": len(documents),
         "summary_chunks": summary_chunks,
+        "lineage_valid_chunks": lineage_valid_chunks,
+        "inspected_chunks": inspected_chunks,
+        "validation_mode": "full",
+        "build_ready": build_ready,
+        "lineage_ready": lineage_ready,
         "per_document": per_document,
-        "ready": summary_chunks > 0,
+        "ready": build_ready and lineage_ready,
     }
     coverage = {
         "eligible_documents": len(documents),
         "summary_chunks": summary_chunks,
-        "coverage_ratio": (summary_chunks / len(documents)) if documents else 0.0,
+        "lineage_valid_chunks": lineage_valid_chunks,
+        "inspected_chunks": inspected_chunks,
+        "document_coverage": (
+            sum(1 for row in per_document if row["summary_chunks"] > 0) / len(documents)
+            if documents
+            else 0.0
+        ),
+        "chunk_coverage": (summary_chunks / inspected_chunks) if inspected_chunks else 0.0,
+        "lineage_coverage": (lineage_valid_chunks / summary_chunks) if summary_chunks else 0.0,
     }
-    return validation, coverage, summary_chunks > 0
+    return validation, coverage, build_ready and lineage_ready
 
 
 async def _validate_graph_artifacts(
@@ -224,17 +288,40 @@ async def _validate_graph_artifacts(
     relations = graph.get("relations") or (graph.get("data") or {}).get("relations") or []
     entity_count = len(entities) if isinstance(entities, list) else 0
     relation_count = len(relations) if isinstance(relations, list) else 0
-    ready = entity_count > 0 or relation_count > 0
+    build_ready = entity_count > 0 or relation_count > 0
+    lineage_ready = False
+    if isinstance(entities, list) and entities:
+        lineage_ready = any(
+            isinstance(entity, dict) and _entity_has_lineage(entity) for entity in entities
+        )
+    retrieval_ready = False
+    if build_ready:
+        try:
+            result = await adapter.feature_retrieve(
+                dataset_ids=[dataset_id],
+                question="graph validation probe",
+                top_k=1,
+                use_kg=True,
+            )
+            retrieval_ready = result is not None
+        except Exception:
+            retrieval_ready = False
+    ready = build_ready and retrieval_ready and lineage_ready
     validation = {
         "artifact_type": "graph",
         "entity_count": entity_count,
         "relation_count": relation_count,
+        "build_ready": build_ready,
+        "retrieval_ready": retrieval_ready,
+        "lineage_ready": lineage_ready,
         "ready": ready,
     }
     coverage = {
         "entity_count": entity_count,
         "relation_count": relation_count,
-        "coverage_ratio": 1.0 if ready else 0.0,
+        "build_ready": build_ready,
+        "retrieval_ready": retrieval_ready,
+        "lineage_ready": lineage_ready,
     }
     return validation, coverage, ready
 
@@ -261,12 +348,12 @@ async def execute_chunk_stage(
     job: KnowledgeBuildJob,
     kb: KnowledgeBase,
 ) -> StageResult:
-    mismatch = await _validate_source_watermark(db, kb, IndexType.chunk.value)
+    mismatch = await _validate_input_manifest(db, kb, IndexType.chunk.value)
     if mismatch is not None:
         return mismatch
 
     dataset_id = await runtime_binding_service.require_dataset_id(db, kb)
-    ragflow = RagflowClient()
+    adapter = RagflowRuntimeAdapter()
     page = 1
     page_size = settings.RAGFLOW_BUILD_BATCH_SIZE
     documents_total = 0
@@ -277,7 +364,7 @@ async def execute_chunk_stage(
 
     try:
         while True:
-            docs = await ragflow.list_documents(dataset_id, page=page, page_size=page_size)
+            docs = await adapter.list_documents(dataset_id, page=page, page_size=page_size)
             if not docs:
                 break
             for doc in docs:
@@ -296,7 +383,7 @@ async def execute_chunk_stage(
     except RagflowError:
         raise
     finally:
-        await ragflow.aclose()
+        await adapter.aclose()
 
     output = {
         "runtime_operation": "chunk_inventory",
@@ -339,7 +426,7 @@ async def _execute_secondary_stage(
     capability_key: str,
     runtime_operation: str,
 ) -> StageResult:
-    mismatch = await _validate_source_watermark(db, kb, index_type)
+    mismatch = await _validate_input_manifest(db, kb, index_type)
     if mismatch is not None:
         return mismatch
 
@@ -374,7 +461,41 @@ async def _execute_secondary_stage(
                     "blocked_documents": resolution.blocked,
                 },
             )
-        doc_ids = [doc.ragflow_document_id for doc in resolution.documents]
+
+        manifest_state = await index_state_service.get_or_create_state(
+            db,
+            org_id=kb.org_id,
+            knowledge_base_id=kb.id,
+            index_type=index_type,
+        )
+        _current_hash, current_items, _current_summary = await build_input_manifest_service.compute_manifest(
+            db, kb
+        )
+        previous_items = build_input_manifest_service.items_from_summary(
+            manifest_state.input_manifest_summary
+        )
+        build_delta = build_input_manifest_service.compute_build_delta(previous_items, current_items)
+        incremental_enabled = settings.KNOWLEDGE_V23_INCREMENTAL_BUILD_ENABLED
+        full_rebuild = False
+        target_documents = resolution.documents
+        if incremental_enabled:
+            if index_type in {IndexType.question.value, IndexType.hierarchical_summary.value}:
+                changed_ids = build_delta.changed_source_file_ids
+                if changed_ids:
+                    target_documents = [
+                        doc for doc in resolution.documents if doc.source_file_id in changed_ids
+                    ]
+            elif index_type == IndexType.graph.value:
+                graph_cap = capabilities.get("supports_graph") or {}
+                incremental_supported = (
+                    isinstance(graph_cap, dict) and graph_cap.get("incremental_supported") is True
+                )
+                if not incremental_supported and (
+                    build_delta.added or build_delta.changed or build_delta.removed
+                ):
+                    full_rebuild = True
+
+        doc_ids = [doc.ragflow_document_id for doc in target_documents]
         if doc_ids:
             await _trigger_parse_batches(adapter, dataset_id, doc_ids)
         ready, poll_output = await _poll_documents_ready(adapter, dataset_id, doc_ids, max_wait_seconds=20)
@@ -383,9 +504,12 @@ async def _execute_secondary_stage(
             "runtime_operation": runtime_operation,
             "runtime_config_revision": getattr(binding, "config_revision", None),
             "active_document_count": len(resolution.documents),
-            "processed_document_count": poll_output.get("documents_ready", 0),
+            "processed_document_count": len(target_documents),
             "capability_key": capability_key,
             "retrieval_ready": is_index_retrieval_ready(index_type, capabilities),
+            "incremental_build": incremental_enabled,
+            "full_rebuild": full_rebuild,
+            "build_delta": build_delta.to_summary(),
         }
         if not ready:
             return StageResult(
@@ -401,11 +525,11 @@ async def _execute_secondary_stage(
         artifact_ready: bool
         if index_type == IndexType.question.value:
             validation_payload, coverage_payload, artifact_ready = await _validate_question_artifacts(
-                adapter, dataset_id, resolution.documents
+                adapter, dataset_id, target_documents
             )
         elif index_type == IndexType.hierarchical_summary.value:
             validation_payload, coverage_payload, artifact_ready = await _validate_summary_artifacts(
-                adapter, dataset_id, resolution.documents
+                adapter, dataset_id, target_documents
             )
         elif index_type == IndexType.graph.value:
             validation_payload, coverage_payload, artifact_ready = await _validate_graph_artifacts(

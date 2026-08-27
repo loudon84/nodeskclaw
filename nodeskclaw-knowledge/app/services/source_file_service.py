@@ -9,7 +9,6 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ForbiddenError, NotFoundError
-from app.integrations.ragflow.client import RagflowClient
 from app.models.base import not_deleted
 from app.models.enums import AclEffect, AuditAction, FilePermission, KbPermission, SourceFileStatus
 from app.models.source_file import SourceFile
@@ -152,7 +151,7 @@ async def get_source_file(db: AsyncSession, member: KnowledgePrincipal, source_f
 async def delete_source_file(
     db: AsyncSession,
     member: KnowledgePrincipal,
-    ragflow: RagflowClient,
+    ragflow: RagflowRuntimeAdapter,
     source_file_id: str,
 ) -> None:
     sf = await get_source_file(db, member, source_file_id)
@@ -258,7 +257,7 @@ async def enrich_source_file(sf: SourceFile, db: AsyncSession) -> dict:
 async def download_source_file(
     db: AsyncSession,
     member: KnowledgePrincipal,
-    ragflow: RagflowClient,
+    ragflow: RagflowRuntimeAdapter,
     source_file_id: str,
 ) -> tuple[SourceFile, SourceFileVersion, bytes]:
     sf = await get_source_file(db, member, source_file_id)

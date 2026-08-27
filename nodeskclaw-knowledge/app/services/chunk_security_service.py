@@ -9,7 +9,6 @@ from dataclasses import dataclass, field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.integrations.ragflow.client import RagflowClient
 from app.integrations.ragflow.models import RagflowChunk
 from app.models.base import not_deleted
 from app.models.enums import AuditAction
@@ -136,7 +135,7 @@ def evidence_from_chunk(
 
 async def clean_chunks_with_modes(
     db: AsyncSession,
-    ragflow: RagflowClient,
+    ragflow: RagflowRuntimeAdapter,
     chunks_with_modes: list[tuple[RagflowChunk, str]],
     *,
     allowed_source_file_ids: set[str],
@@ -184,7 +183,7 @@ async def clean_chunks_with_modes(
 
 async def clean_chunks(
     db: AsyncSession,
-    ragflow: RagflowClient,
+    ragflow: RagflowRuntimeAdapter,
     chunks: list[RagflowChunk],
     *,
     allowed_source_file_ids: set[str],
@@ -205,7 +204,7 @@ async def clean_chunks(
 
 async def clean_evidence(
     db: AsyncSession,
-    ragflow: RagflowClient,
+    ragflow: RagflowRuntimeAdapter,
     evidence_items: list[EvidenceItem],
     *,
     allowed_source_file_ids: set[str],

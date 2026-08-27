@@ -30,4 +30,6 @@ def test_mcp_tools_cover_agent_tool_names():
         "knowledge.retrieve",
         "knowledge.get_document",
         "knowledge.get_evidence",
+        "knowledge.get_structure",
+        "knowledge.get_table",
     }

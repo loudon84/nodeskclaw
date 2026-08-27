@@ -41,6 +41,7 @@ class KnowledgeRuntimeBinding(BaseModel):
     capabilities: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     runtime_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     desired_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    desired_config_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     observed_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     config_revision: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     observed_revision: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

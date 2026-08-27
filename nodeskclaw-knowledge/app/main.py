@@ -38,11 +38,14 @@ async def lifespan(app: FastAPI):
 
     backend_client = NodeskclawBackendClient(http_client=backend_http)
     ragflow_client = RagflowClient(http_client=ragflow_http)
+    from app.runtime.ragflow import RagflowRuntimeAdapter
+
     app.state.backend_http = backend_http
     app.state.ragflow_http = ragflow_http
     app.state.llm_http = llm_http
     app.state.backend_client = backend_client
     app.state.ragflow_client = ragflow_client
+    app.state.runtime_adapter = RagflowRuntimeAdapter(client=ragflow_client)
 
     from app.integrations.llm_proxy.client import LlmProxyClient
 

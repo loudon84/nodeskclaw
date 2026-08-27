@@ -641,7 +641,8 @@ class KnowledgeApplicationUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=128)
     description: str | None = None
     answer_model: str | None = None
-    status: str | None = None
+
+    model_config = {"extra": "forbid"}
 
 
 class KnowledgeApplicationOut(BaseModel):

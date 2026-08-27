@@ -10,7 +10,7 @@ import socket
 import uuid
 
 from app.core.deps import async_session_factory
-from app.integrations.ragflow.client import RagflowClient
+from app.runtime.ragflow import RagflowRuntimeAdapter
 from app.services import evaluation_runner, evaluation_service, metrics_service, reconciliation_service
 
 logger = logging.getLogger(__name__)
@@ -25,7 +25,7 @@ def _lease_owner() -> str:
 
 async def _run_loop(*, with_reconciliation: bool) -> None:
     lease_owner = _lease_owner()
-    ragflow = RagflowClient()
+    ragflow = RagflowRuntimeAdapter()
     loop_count = 0
     logger.info(
         "maintenance worker started lease_owner=%s reconciliation=%s",

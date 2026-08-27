@@ -10,11 +10,11 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.runtime.ragflow import RagflowRuntimeAdapter
 from app.core.exceptions import AppException, BadRequestError, ForbiddenError, NotFoundError
 from app.integrations.llm_proxy.client import LlmProxyClient
 from app.integrations.llm_proxy.exceptions import LlmProxyError
 from app.integrations.llm_proxy.models import ChatCompletionRequest, ChatMessage as LlmChatMessage
-from app.integrations.ragflow.client import RagflowClient
 from app.models.base import not_deleted
 from app.models.chat_citation import ChatCitation
 from app.models.chat_message import ChatMessage
@@ -178,7 +178,7 @@ async def list_messages(
 async def send_message_stream(
     db: AsyncSession,
     member: KnowledgePrincipal,
-    ragflow: RagflowClient,
+    ragflow: RagflowRuntimeAdapter,
     llm_proxy: LlmProxyClient,
     *,
     session_id: str,

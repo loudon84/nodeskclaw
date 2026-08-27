@@ -6,9 +6,9 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.deps import get_db, get_member_context, get_ragflow_client
+from app.runtime.ragflow import RagflowRuntimeAdapter
+from app.core.deps import get_db, get_member_context, get_runtime_adapter
 from app.core.exceptions import BadRequestError
-from app.integrations.ragflow.client import RagflowClient
 from app.models.knowledge_base import KnowledgeBase
 from app.schemas.common import ApiResponse, PageData
 from app.schemas.knowledge import (
@@ -132,7 +132,7 @@ async def create_knowledge_base_v2(
     body: KnowledgeBaseCreate,
     member: KnowledgePrincipal = Depends(get_member_context),
     db: AsyncSession = Depends(get_db),
-    ragflow: RagflowClient = Depends(get_ragflow_client),
+    ragflow: RagflowRuntimeAdapter = Depends(get_runtime_adapter),
 ):
     _require_api_v2()
     kb = await knowledge_base_service.create_knowledge_base(
@@ -167,7 +167,7 @@ async def patch_knowledge_base_v2(
     body: KnowledgeBaseUpdate,
     member: KnowledgePrincipal = Depends(get_member_context),
     db: AsyncSession = Depends(get_db),
-    ragflow: RagflowClient = Depends(get_ragflow_client),
+    ragflow: RagflowRuntimeAdapter = Depends(get_runtime_adapter),
 ):
     _require_api_v2()
     kb = await knowledge_base_service.update_knowledge_base(

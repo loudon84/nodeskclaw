@@ -28,12 +28,15 @@ def _marker_hit(meta: dict, markers: frozenset[str]) -> bool:
 
 
 def classify(chunk: RagflowChunk, slice_mode: str) -> str:
-    """Classify runtime chunk into evidence_type: chunk | summary | graph_path."""
+    """Classify runtime chunk into evidence_type: chunk | summary | graph_path | graph_hint."""
     meta = dict(chunk.document_metadata or {})
     content = (chunk.content or "").lower()
 
     if meta.get("questions") or meta.get("question_kwd"):
         return "chunk"
+
+    if meta.get("source_chunk_ids"):
+        return "summary"
 
     if _marker_hit(meta, _SUMMARY_MARKERS) or "raptor" in content[:200]:
         return "summary"
@@ -42,11 +45,6 @@ def classify(chunk: RagflowChunk, slice_mode: str) -> str:
         return "graph_path"
 
     if slice_mode == RuntimeRetrievalMode.graph_assisted.value:
-        if chunk.document_id or meta.get("nk_source_file_id"):
-            return "graph_path"
         return "graph_hint"
-
-    if slice_mode == RuntimeRetrievalMode.compiled_assisted.value:
-        return "summary"
 
     return "chunk"

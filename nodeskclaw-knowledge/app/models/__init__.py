@@ -18,9 +18,11 @@ from app.models.index_state import IndexState
 from app.models.ingestion_job import IngestionJob
 from app.models.knowledge_application import KnowledgeApplication, KnowledgeApplicationSetItem
 from app.models.knowledge_application_acl import KnowledgeApplicationAcl
+from app.models.knowledge_artifact import KnowledgeArtifact
 from app.models.knowledge_base import KnowledgeBase
 from app.models.knowledge_base_acl import KnowledgeBaseAcl
 from app.models.knowledge_model import KnowledgeModel
+from app.models.knowledge_model_revision import KnowledgeModelRevision
 from app.models.knowledge_set import KnowledgeSet
 from app.models.knowledge_set_acl import KnowledgeSetAcl
 from app.models.knowledge_set_item import KnowledgeSetItem
@@ -76,7 +78,9 @@ __all__ = [
     "KnowledgeApplication",
     "KnowledgeApplicationSetItem",
     "KnowledgeApplicationAcl",
+    "KnowledgeArtifact",
     "KnowledgeModel",
+    "KnowledgeModelRevision",
     "TranslationDocument",
     "TranslationPage",
     "TranslationRevision",

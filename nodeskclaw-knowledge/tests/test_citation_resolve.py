@@ -363,6 +363,45 @@ def test_evidence_normalizer_classify_summary():
     assert classify(chunk, "compiled_assisted") == "summary"
 
 
+def test_evidence_normalizer_compiled_assisted_without_marker_is_chunk():
+    from app.integrations.ragflow.models import RagflowChunk
+    from app.services.evidence_normalizer import classify
+
+    chunk = RagflowChunk(
+        id="c1",
+        content="plain semantic text",
+        document_id="d1",
+        document_metadata={"nk_source_file_id": "sf1"},
+    )
+    assert classify(chunk, "compiled_assisted") == "chunk"
+
+
+def test_evidence_normalizer_graph_assisted_without_marker_is_hint_not_path():
+    from app.integrations.ragflow.models import RagflowChunk
+    from app.services.evidence_normalizer import classify
+
+    chunk = RagflowChunk(
+        id="c1",
+        content="plain semantic text",
+        document_id="d1",
+        document_metadata={"nk_source_file_id": "sf1"},
+    )
+    assert classify(chunk, "graph_assisted") == "graph_hint"
+
+
+def test_evidence_normalizer_source_chunk_ids_implies_summary():
+    from app.integrations.ragflow.models import RagflowChunk
+    from app.services.evidence_normalizer import classify
+
+    chunk = RagflowChunk(
+        id="c1",
+        content="derived summary",
+        document_id="d1",
+        document_metadata={"source_chunk_ids": ["c0"]},
+    )
+    assert classify(chunk, "semantic") == "summary"
+
+
 def test_evidence_normalizer_ignores_nk_evidence_type():
     from app.integrations.ragflow.models import RagflowChunk
     from app.services.evidence_normalizer import classify

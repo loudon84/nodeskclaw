@@ -24,6 +24,7 @@ class KnowledgeModel(BaseModel):
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    active_revision_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     entities: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     relations: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     terms: Mapped[list | None] = mapped_column(JSONB, nullable=True)
