@@ -19,7 +19,7 @@ runtime: RAGFlow
 **架构基线**：`lat.md/architecture/knowledge.md`、`lat.md/domain/knowledge-objects.md`  
 **Runtime 原则**：RAGFlow 继续作为唯一正式 Knowledge Runtime；nodeskclaw-knowledge 负责企业 Knowledge Control Plane、Execution Plane 与本版本新增的 Intelligence Plane。  
 
-> **Grounding mode: verify**。本 PRD 的 Current Inventory / Source Anchors 来自上一轮源码分析；本轮（2026-08-27）按 smc-prd-grounding 做了源码抽查、Owner 唯一性校验与 Change Classification 收敛，抽查证据见「附录 A. Grounding Evidence」。本轮修订仅做合同收敛，不改变目标架构。
+> **Grounding mode: verify → revision**。本 PRD 的 Current Inventory / Source Anchors 来自上一轮源码分析；2026-08-27 完成 verify 抽查与合同收敛（附录 A），同日经 PRD Review（initial）后按 revision 模式关闭 Finding F1/M1/M2（附录 B）。未改变目标架构。
 
 ---
 
@@ -158,7 +158,7 @@ Phase 1+: Knowledge Intelligence
 | # | 旧生产路径（REMOVE 对象） | 替代（REPLACE 为） | Removal Condition | Removal Version |
 |---|---|---|---|---|
 | R1 | `knowledge_model_service.py` 原地修改 + `version + 1` 写路径 | `knowledge_model_revisions` 不可变 Revision + `active_revision_id` | 现有 Model backfill 为 revision v1 ACTIVE；Build/Retrieval 全部消费 `active_revision_id`；旧写路径无调用方 | v2.3 M2 内完成 |
-| R2 | `index_registry.py` 中 `IndexType.outline` / `IndexType.table` 占位注册项（provider=derived, experimental）及其假定 build/retrieval 路径 | Artifact Provider SPI 下的 outline/table Artifact Capability | Artifact Provider 上线且 Golden E2E 通过；Registry 中不再存在无实现的占位 Index | v2.3 Phase 2/3 完成 |
+| R2 | `index_registry.py` 中 `IndexType.outline` / `IndexType.table` 占位注册项（provider=derived, experimental）及其假定 build/retrieval 路径；`capability_planner.py#_mode_index_requirement` 的 `toc_enhanced → IndexType.outline` 门控分支 | Artifact Provider SPI 下的 outline/table Artifact Capability；`toc_enhanced` 门控改由 Runtime/Binding Profile 的 `toc_enhance` feature 承担（见 §15） | Artifact Provider 上线且 Golden E2E 通过；`toc_enhanced` 门控不再引用 `IndexType.outline`；Registry 中不再存在无实现的占位 Index | v2.3 Phase 2/3 完成 |
 | R3 | `_current_active_watermark()` 单版本 watermark 作为 READY 判定 authority | `CorpusManifest.input_manifest_hash` | IndexState 与 KnowledgeArtifact 全部记录 manifest hash；READY 判定只认 manifest | v2.3 Phase 1 完成 |
 | R4 | `backfill_from_knowledge_bases()` 中 `existing.resource_id = kb.ragflow_dataset_id` 反向覆盖分支 | RuntimeBinding 为唯一 Dataset Identity Authority | backfill 只创建缺失 Binding，不再修改已存在 Binding；mirror 字段只读 | v2.3 Phase 0 完成 |
 
@@ -1080,6 +1080,17 @@ Query
 
 Runtime Mode `toc_enhanced` 继续保留；Artifact Retrieval 与 RAGFlow `toc_enhance` 可以协同，但不是同一个对象。
 
+门控 Authority（行为合同，关闭 Review F1）：
+
+```text
+toc_enhanced 最终门控
+= Runtime / Binding Capability Profile 的 toc_enhance feature
+  ∧ RetrievalProfile allow_toc_enhance
+  ∧ 对应 Feature Flag
+```
+
+`toc_enhanced` 是纯 Runtime 检索特性，**不依赖任何本地 IndexState 或 Artifact**；`IndexType.outline` 移除后其门控不受影响。Outline / PageIndex Artifact 的 READY 状态只门控 `structure / navigation / chapter_lookup` 类 Artifact Retrieval，与 `toc_enhanced` 互不作为对方的可用性前提。
+
 ---
 
 # 16. Table Structured Artifact
@@ -1125,6 +1136,8 @@ Content 存放：
 ```text
 ArtifactStore JSON / JSONL
 ```
+
+Content Storage 唯一 Owner 为现有 `app/services/artifact_store.py`（本地字节存取 + 短 TTL 签名 URL，现服务 translation artifact_uri）；KnowledgeArtifact 复用该模块，禁止新建平行的 Artifact 内容存储。
 
 DB 只存 Artifact Catalog 与检索必要元数据。
 
@@ -2439,6 +2452,26 @@ runtime_snapshot JSONB
 
 到 KnowledgeApplication，避免新增表；需要历史多版本时再独立表。
 
+## M6 — Build Job / Profile 字段（关闭 Review M2）
+
+```text
+knowledge_build_jobs
+  + target_kind        # index | artifact
+  + target_key
+  + input_manifest_hash
+  （index_type 保留兼容；现有 Partial Unique Index
+    uq_build_job_active_kb_index(knowledge_base_id, index_type)
+    的键位语义调整由 Plan 决定，必须保持软删除过滤）
+
+build_profiles
+  + artifact_types JSONB
+
+retrieval_profiles
+  + v2.3 字段（allow_outline_artifact / allow_table_artifact /
+    planner_mode / fusion_strategy / candidate_budget /
+    artifact_candidate_budget / fallback_policy）
+```
+
 ---
 
 # 65. Observability
@@ -3160,3 +3193,17 @@ Knowledge Application / Agent / MCP
 | §2 Outline/Table 为 Registry 占位 | 复现 | `index_registry.py`：`IndexType.outline/table`，provider=`derived`，experimental，无对应 build/retrieve 实现 |
 
 未复现项：无。抽查中未发现需要推翻的 PRD 断言；唯一修正是 §3.4 直连 RagflowClient 的服务清单比 PRD 原文更广，已在 Change Classification 中补全。
+
+---
+
+# 附录 B. Grounding Closure Table（mode=revision，2026-08-27）
+
+以上一轮 PRD Review（initial，Verdict=REVISE）Finding 为主键；本轮只关闭 OPEN Finding，未重新 full Grounding。
+
+| Finding | Reproduced | Resolution | Evidence | Status |
+|---|---|---|---|---|
+| F1（MAJOR）R2 移除 `IndexType.outline` 与 `toc_enhanced` 门控 authority 冲突 | YES | §15 新增门控行为合同：`toc_enhanced` 最终门控 = Runtime/Binding Profile `toc_enhance` feature ∧ `allow_toc_enhance` ∧ flag，不依赖本地 IndexState/Artifact；R2 移除范围扩至 `capability_planner.py#_mode_index_requirement` 的 outline 分支；§7.1 目标模型（IndexState 不含 outline）与此一致 | `capability_planner.py` 128–134 行（mode→index 映射）；`client.py#probe_retrieval_features` 已含 `toc_enhance` feature key | CLOSED |
+| M1（MINOR）Artifact 内容存储 Owner 未锚定 | YES | §17 明确 Content Storage 唯一 Owner 为现有 `app/services/artifact_store.py`，禁止新建平行存储 | `app/services/artifact_store.py`（write_bytes/read_bytes/signed_url） | CLOSED |
+| M2（MINOR）迁移清单遗漏 Build Job / Profile 字段 | YES | §64 新增 M6：`knowledge_build_jobs.target_kind/target_key/input_manifest_hash`、`build_profiles.artifact_types`、`retrieval_profiles` v2.3 字段 | `models/build_job.py`（uq_build_job_active_kb_index）；PRD §40/§41/§49 | CLOSED |
+
+修订未引入新 Finding；无修订 regression（改动仅限 §15 门控合同、R2 行、§17 存储 Owner、§64 M6，均为填补缺口，不改变其它已稳定章节的 Owner/Boundary 决定）。
