@@ -29,6 +29,25 @@ def _ok(data: Any = None, message: str = "success") -> dict:
     return {"code": 0, "message": message, "data": data}
 
 
+def compute_reconciled_status(installation: HermesSkillInstallation) -> str:
+    """Compute the reconciled status comparing desired (status) and actual (actual_status).
+    - If target_kind != 'edge', returns desired status.
+    - If target_kind == 'edge':
+      - If actual_status == desired status (e.g. 'installed' == 'installed') -> 'reconciled'
+      - If actual_status is None -> 'pending_sync'
+      - Otherwise -> 'drifted'
+    """
+    if getattr(installation, "target_kind", "remote") != "edge":
+        return str(installation.status or "pending")
+    desired = str(installation.status or "").lower()
+    actual = str(installation.actual_status or "").lower()
+    if not actual:
+        return "pending_sync"
+    if actual == desired:
+        return "reconciled"
+    return "drifted"
+
+
 @router.get("/skill-installations")
 async def list_installations(
     skill_id: str | None = None,
@@ -71,7 +90,12 @@ async def list_installations(
     query = query.order_by(HermesSkillInstallation.created_at.desc()).offset(offset).limit(page_size)
 
     result = await db.execute(query)
-    items = [InstallationRead.model_validate(i).model_dump() for i in result.scalars().all()]
+    raw_items = result.scalars().all()
+    items = []
+    for inst in raw_items:
+        data = InstallationRead.model_validate(inst).model_dump()
+        data["reconciled_status"] = compute_reconciled_status(inst)
+        items.append(data)
 
     return _ok(InstallationListResult(items=items, total=total, page=page, page_size=page_size).model_dump())
 
@@ -96,6 +120,9 @@ async def create_installation(
         conflict_strategy=body.conflict_strategy,
         installed_by=user.id if user else None,
     )
+    installation.target_kind = body.target_kind or "remote"
+    installation.edge_node_id = body.edge_node_id
+    await db.flush()
     await db.commit()
     return _ok(InstallationRead.model_validate(installation).model_dump())
 

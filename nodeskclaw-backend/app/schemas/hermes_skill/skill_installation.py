@@ -10,6 +10,8 @@ class InstallationCreate(BaseModel):
     workspace_id: str | None = None
     install_mode: str = "copy"
     conflict_strategy: str = "install_as_new_version"
+    target_kind: str = "remote"
+    edge_node_id: str | None = None
 
 
 class InstallationRead(BaseModel):
@@ -32,6 +34,11 @@ class InstallationRead(BaseModel):
     priority: int = 0
     routing_scope: str | None = None
     routing_metadata: dict | None = None
+    target_kind: str = "remote"
+    edge_node_id: str | None = None
+    actual_status: str | None = None
+    actual_reported_at: datetime | None = None
+    reconciled_status: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
