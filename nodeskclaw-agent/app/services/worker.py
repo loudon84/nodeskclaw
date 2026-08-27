@@ -26,6 +26,40 @@ logger = logging.getLogger(__name__)
 SCHEMA = settings.SKILL_AGENT_SCHEMA
 
 
+def build_hybrid_step_plan(snapshot: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Build a deterministic list of steps (central vs edge) for hybrid execution.
+    Returns:
+      [
+        {"step": "central_hermes", "role": "central", "engine": "hermes"},
+        {"step": "edge_connector", "role": "edge", "engine": "connector", "binding_id": ...}
+      ]
+    """
+    if not snapshot:
+        return [{"step": "central", "role": "central", "engine": "hermes"}]
+    
+    steps: list[dict[str, Any]] = []
+    placement = snapshot.get("placement") or {}
+    if placement.get("role") == "hybrid" or placement.get("engine") == "hybrid":
+        steps.append({"step": "central_hermes", "role": "central", "engine": "hermes"})
+        policy = snapshot.get("runtime_policy") or {}
+        bindings = policy.get("connector_bindings") or []
+        if isinstance(bindings, dict):
+            bindings = [bindings]
+        for b in bindings:
+            if isinstance(b, dict) and b.get("placement") == "edge":
+                steps.append({
+                    "step": f"edge_connector_{b.get('id') or b.get('binding_id') or 'job'}",
+                    "role": "edge",
+                    "engine": "connector",
+                    "binding": b,
+                })
+    elif placement.get("role") == "edge" or placement.get("engine") == "connector":
+        steps.append({"step": "edge_connector", "role": "edge", "engine": "connector"})
+    else:
+        steps.append({"step": "central", "role": "central", "engine": placement.get("engine", "hermes")})
+    return steps
+
+
 def needs_edge_jobs(snapshot: dict[str, Any] | None) -> bool:
     """True when any connector_binding in runtime_policy has placement=edge."""
     if not snapshot:
