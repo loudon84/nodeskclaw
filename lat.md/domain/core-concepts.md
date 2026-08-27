@@ -74,5 +74,5 @@ Skill 安装定义了 Skill 在组织内特定执行目标上的部署绑定，�
 
 Connector Center 是连接企业外部 API、MCP 服务与数据库的连接器中枢，实现凭证隔离与安全调用。
 
-核心模型包括 [[nodeskclaw-backend/app/models/connector/definition.py#ConnectorDefinition]]、[[nodeskclaw-backend/app/models/connector/instance.py#ConnectorInstance]]、[[nodeskclaw-backend/app/models/connector/tool.py#ConnectorTool]] 与 [[nodeskclaw-backend/app/models/connector/edge_node.py#EdgeNode]]，明文密钥不入库，经 SecretRef 与 Edge SecretStore 隔离管理。
+核心模型包括 [[nodeskclaw-backend/app/models/connector/definition.py#ConnectorDefinition]]、[[nodeskclaw-backend/app/models/connector/instance.py#ConnectorInstance]]、[[nodeskclaw-backend/app/models/connector/tool.py#ConnectorTool]] 与 [[nodeskclaw-backend/app/models/connector/edge_node.py#EdgeNode]]；[[nodeskclaw-backend/app/models/connector/binding.py#SkillConnectorBinding]] 把已发布 SkillRelease 绑定到 Connector Instance，[[nodeskclaw-backend/app/models/connector/secret_ref.py#SecretRef]] 只保存密钥引用元数据，明文密钥不入库，经 Edge SecretStore 隔离管理。
 

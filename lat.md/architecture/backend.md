@@ -36,7 +36,7 @@ Hermes Skill、任务产物、Agent 绑定与 MCP Skill Gateway 是独立能力�
 
 MCP 对外 JSON-RPC 2.0；应用错误以 HTTP 200 + `error.data.errorCode` 返回（Expert MCP 冻结行为）。
 
-P0 实现锚点：Expert 网关 [[nodeskclaw-backend/app/services/expert_gateway/expert_mcp_gateway_service.py#ExpertMcpGatewayService]]、MCP token 校验 [[nodeskclaw-backend/app/services/expert_gateway/expert_mcp_auth_guard.py#ExpertMcpAuthGuard]]、任务域投影 [[nodeskclaw-backend/app/services/hermes_skill/task_service.py#TaskService]]、SkillRelease [[nodeskclaw-backend/app/services/hermes_skill/skill_release_service.py#SkillReleaseService]]、Backend Worker（仅 drain 非 agent-owned）[[nodeskclaw-backend/app/services/hermes_skill/hermes_task_worker.py#HermesTaskWorker]]、Agent Worker [[nodeskclaw-agent/app/services/worker.py#RunWorker]]。Schema 事实源：`app/schemas/work_expert/`、`app/schemas/skill_run/`、`app/schemas/hermes_skill/sse_events.py`、`task_result_contract.py`。
+P0 实现锚点：Expert 网关 [[nodeskclaw-backend/app/services/expert_gateway/expert_mcp_gateway_service.py#ExpertMcpGatewayService]]、MCP token 校验 [[nodeskclaw-backend/app/services/expert_gateway/expert_mcp_auth_guard.py#ExpertMcpAuthGuard]]、任务域投影 [[nodeskclaw-backend/app/services/hermes_skill/task_service.py#TaskService]]、SkillRelease [[nodeskclaw-backend/app/services/hermes_skill/skill_release_service.py#SkillReleaseService]]、Backend Worker（仅 drain `routing_metadata.execution_owner == "backend"` 的任务，无标记或 agent-owned 一律跳过）[[nodeskclaw-backend/app/services/hermes_skill/hermes_task_worker.py#HermesTaskWorker]]、Agent Worker [[nodeskclaw-agent/app/services/worker.py#RunWorker]]。Schema 事实源：`app/schemas/work_expert/`、`app/schemas/skill_run/`、`app/schemas/hermes_skill/sse_events.py`、`task_result_contract.py`。
 
 ## Startup
 
