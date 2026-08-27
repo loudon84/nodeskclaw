@@ -410,3 +410,41 @@ class RagflowClient:
             return resp2.status_code < 400
         except Exception:
             return False
+
+    async def get_system_version(self) -> str | None:
+        for path in ("/api/v1/system/version", "/v1/system/version"):
+            try:
+                client = await self._ensure_client()
+                resp = await client.get(path, headers=self._headers(), timeout=5.0)
+                if resp.status_code >= 400:
+                    continue
+                payload = resp.json() if resp.content else {}
+                if isinstance(payload, dict):
+                    data = payload.get("data") if payload.get("code", 0) == 0 else payload
+                    if isinstance(data, dict):
+                        for key in ("version", "ragflow_version", "release"):
+                            value = data.get(key)
+                            if value:
+                                return str(value)
+                    elif data:
+                        return str(data)
+            except Exception:
+                continue
+        return None
+
+    async def get_dataset(self, dataset_id: str) -> dict[str, Any] | None:
+        data = await self._request("GET", f"/api/v1/datasets/{dataset_id}")
+        return data if isinstance(data, dict) else None
+
+    async def update_dataset_parser_config(
+        self,
+        dataset_id: str,
+        *,
+        parser_config: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        data = await self._request(
+            "PUT",
+            f"/api/v1/datasets/{dataset_id}",
+            json={"parser_config": parser_config},
+        )
+        return data if isinstance(data, dict) else None

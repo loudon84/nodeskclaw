@@ -97,3 +97,32 @@ async def test_require_dataset_id_returns_id(monkeypatch):
         AsyncMock(return_value="ds-ready"),
     )
     assert await runtime_binding_service.require_dataset_id(AsyncMock(), SimpleNamespace(id="kb1")) == "ds-ready"
+
+
+@pytest.mark.asyncio
+async def test_probe_and_persist_updates_binding(monkeypatch):
+    binding = SimpleNamespace(
+        knowledge_base_id="kb1",
+        capabilities={"supports_chunk": True},
+        runtime_version=None,
+        last_capability_probe_at=None,
+        last_capability_probe_error=None,
+    )
+    monkeypatch.setattr(runtime_binding_service, "get_binding", AsyncMock(return_value=binding))
+    client = AsyncMock()
+    client.system_health = AsyncMock(return_value=True)
+    client.get_system_version = AsyncMock(return_value="0.17.0")
+    adapter = AsyncMock()
+    adapter.client = client
+    adapter.get_probe_snapshot = lambda: (None, None)
+    db = AsyncMock()
+    db.flush = AsyncMock()
+    result = await runtime_binding_service.probe_and_persist_binding_capabilities(
+        db,
+        knowledge_base_id="kb1",
+        adapter=adapter,
+    )
+    assert result.probe_error is None
+    assert result.capabilities["supports_chunk"]["build_supported"] is True
+    assert binding.last_capability_probe_at is not None
+    assert binding.last_capability_probe_error is None

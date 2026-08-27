@@ -117,7 +117,11 @@ def is_runtime_supported(index_type: str, capabilities: dict[str, Any] | None) -
     if desc is None:
         return False
     if index_type == IndexType.chunk.value:
-        return True
+        caps = capabilities or {}
+        chunk_cap = caps.get("supports_chunk")
+        if chunk_cap is None:
+            return True
+        return _capability_flag_enabled(chunk_cap)
     req = desc.get("runtime_requirements") or {}
     if not req.get("requires_public_api"):
         return True
@@ -125,4 +129,10 @@ def is_runtime_supported(index_type: str, capabilities: dict[str, Any] | None) -
     if not key:
         return False
     caps = capabilities or {}
-    return bool(caps.get(key))
+    return _capability_flag_enabled(caps.get(key))
+
+
+def _capability_flag_enabled(cap_value: Any) -> bool:
+    if isinstance(cap_value, dict):
+        return bool(cap_value.get("build_supported"))
+    return bool(cap_value)

@@ -20,6 +20,21 @@ from app.models.enums import (
 ALLOWED_ROLES = {"member", "operator", "admin"}
 
 
+class RuntimeIndexCapability(BaseModel):
+    index_type: str
+    build_supported: bool
+    retrieval_supported: bool
+    build_mode: str | None = None
+    retrieval_mode: str | None = None
+    requires_reparse: bool = False
+    source_lineage_supported: bool = False
+    runtime_version: str | None = None
+    min_runtime_version: str | None = None
+    validated: bool = False
+    experimental: bool = False
+    reason: str | None = None
+
+
 class KnowledgeBaseCreate(BaseModel):
     name: str = Field(min_length=1, max_length=128)
     description: str | None = None

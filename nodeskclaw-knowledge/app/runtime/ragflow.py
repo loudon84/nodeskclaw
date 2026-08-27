@@ -12,10 +12,11 @@ from app.integrations.ragflow.client import RagflowClient
 from app.integrations.ragflow.exceptions import RagflowError
 from app.models.enums import RuntimeBindingStatus
 from app.models.knowledge_base import KnowledgeBase
+from app.runtime import capabilities as runtime_capabilities
 from app.services import runtime_binding_service
 
-MINIMUM_SUPPORTED_RAGFLOW_VERSION = "0.17.0"
-VALIDATED_RAGFLOW_VERSIONS = ["0.17.0", "0.24.0", "0.27.0"]
+MINIMUM_SUPPORTED_RAGFLOW_VERSION = runtime_capabilities.MINIMUM_SUPPORTED_RAGFLOW_VERSION
+VALIDATED_RAGFLOW_VERSIONS = runtime_capabilities.VALIDATED_RAGFLOW_VERSIONS
 
 
 @dataclass
@@ -40,42 +41,101 @@ class RagflowRuntimeAdapter:
 
     def __init__(self, client: RagflowClient | None = None):
         self.client = client or RagflowClient()
+        self._last_probe_snapshot: dict[str, Any] | None = None
+        self._last_probe_version: str | None = None
+        self._last_probe_reachable: bool = False
 
     async def aclose(self) -> None:
         await self.client.aclose()
 
+    async def get_runtime_version(self) -> str | None:
+        return await runtime_capabilities.probe_runtime_version(self.client)
+
+    async def probe_capabilities(self) -> dict[str, Any]:
+        reachable, version, caps = await runtime_capabilities.probe_runtime(self.client)
+        self._last_probe_reachable = reachable
+        self._last_probe_version = version
+        self._last_probe_snapshot = caps
+        return caps
+
     async def discover_capabilities(self) -> dict[str, Any]:
-        health = await self.check_health()
-        return health.capabilities
+        return await self.probe_capabilities()
 
     async def check_health(self) -> RuntimeHealth:
-        reachable = False
-        version: str | None = None
-        try:
-            reachable = await self.client.system_health()
-        except Exception:
-            reachable = False
-        capabilities = {
-            "supports_chunk": reachable,
-            "supports_auto_questions": False,
-            "supports_raptor": False,
-            "supports_graph": False,
-            "supports_metadata_filter": True,
-            "supports_table": False,
-            "supports_outline": False,
-            "ragflow_version": version,
-        }
+        reachable, version, caps = await runtime_capabilities.probe_runtime(self.client)
         degraded: list[str] = []
         if not reachable:
             degraded.append("ragflow_unreachable")
-        chunk_ok = bool(reachable)
+        chunk_entry = caps.get("supports_chunk")
+        chunk_ok = reachable and _capability_enabled(chunk_entry)
         return RuntimeHealth(
             reachable=reachable,
             version=version,
             chunk_retrieval_ok=chunk_ok,
-            capabilities=capabilities,
+            capabilities=caps,
             degraded_reasons=degraded,
         )
+
+    def get_probe_snapshot(self) -> tuple[dict[str, Any] | None, str | None]:
+        return self._last_probe_snapshot, self._last_probe_version
+
+    async def get_dataset_runtime_config(self, dataset_id: str) -> dict[str, Any] | None:
+        return await self.client.get_dataset(dataset_id)
+
+    async def configure_index(
+        self,
+        dataset_id: str,
+        *,
+        parser_config: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        return await self.client.update_dataset_parser_config(dataset_id, parser_config=parser_config)
+
+    async def trigger_index_build(self, dataset_id: str, document_ids: list[str] | None = None) -> None:
+        if document_ids:
+            await self.client.parse_documents(dataset_id, document_ids)
+            return
+        docs = await self.client.list_documents(dataset_id, page=1, page_size=1)
+        if docs:
+            await self.client.parse_documents(dataset_id, [docs[0].id])
+
+    async def get_index_build_status(self, dataset_id: str, document_id: str) -> dict[str, Any] | None:
+        docs = await self.client.list_documents(dataset_id, id=document_id, page=1, page_size=1)
+        if not docs:
+            return None
+        doc = docs[0]
+        return {
+            "document_id": doc.id,
+            "run": doc.run,
+            "progress": doc.progress,
+            "chunk_count": doc.chunk_count,
+        }
+
+    async def retrieve_index(
+        self,
+        *,
+        dataset_ids: list[str],
+        question: str,
+        top_k: int = 8,
+        document_ids: list[str] | None = None,
+    ):
+        return await self.client.retrieve(
+            question=question,
+            dataset_ids=dataset_ids,
+            document_ids=document_ids,
+            top_k=top_k,
+        )
+
+    async def validate_index_retrieval(
+        self,
+        *,
+        dataset_id: str,
+        question: str = "health check",
+    ) -> bool:
+        try:
+            result = await self.retrieve_index(dataset_ids=[dataset_id], question=question, top_k=1)
+            return result is not None
+        except Exception:
+            return False
 
     async def provision_binding(
         self,
@@ -109,20 +169,25 @@ class RagflowRuntimeAdapter:
             permission="me",
             description=description,
         )
-        health = await self.check_health()
+        probe_result = await runtime_binding_service.probe_and_persist_binding_capabilities(
+            db,
+            knowledge_base_id=kb.id,
+            adapter=self,
+        )
         binding = await runtime_binding_service.upsert_ragflow_dataset_binding(
             db,
             org_id=org_id,
             knowledge_base_id=kb.id,
             resource_id=dataset_id,
             status=RuntimeBindingStatus.ready.value,
-            runtime_version=health.version,
-            capabilities=health.capabilities,
+            runtime_version=probe_result.runtime_version,
+            capabilities=probe_result.capabilities,
             runtime_config={
                 "embedding_model": embedding_model,
                 "chunk_method": chunk_method,
                 "parser_config": parser_config,
             },
+            from_probe=True,
         )
         await runtime_binding_service.mirror_dataset_id_to_kb(db, kb, dataset_id)
         return RuntimeBindingResult(
@@ -144,3 +209,9 @@ class RagflowRuntimeAdapter:
         if binding is not None:
             binding.status = RuntimeBindingStatus.deleting.value
             binding.soft_delete()
+
+
+def _capability_enabled(cap_value: Any) -> bool:
+    if isinstance(cap_value, dict):
+        return bool(cap_value.get("build_supported") or cap_value.get("retrieval_supported"))
+    return bool(cap_value)

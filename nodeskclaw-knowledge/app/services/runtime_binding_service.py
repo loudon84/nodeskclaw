@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,6 +15,82 @@ from app.models.base import not_deleted
 from app.models.enums import RuntimeBindingStatus, RuntimeResourceType, RuntimeType
 from app.models.knowledge_base import KnowledgeBase
 from app.models.runtime_binding import KnowledgeRuntimeBinding
+
+if TYPE_CHECKING:
+    from app.runtime.ragflow import RagflowRuntimeAdapter
+
+
+@dataclass
+class ProbePersistResult:
+    capabilities: dict[str, Any]
+    runtime_version: str | None
+    probe_error: str | None = None
+
+
+async def probe_and_persist_binding_capabilities(
+    db: AsyncSession,
+    *,
+    knowledge_base_id: str,
+    adapter: RagflowRuntimeAdapter,
+) -> ProbePersistResult:
+    from app.runtime import capabilities as runtime_capabilities
+
+    now = datetime.now(UTC)
+    probe_error: str | None = None
+    capabilities: dict[str, Any]
+    runtime_version: str | None
+    try:
+        reachable, runtime_version, capabilities = await runtime_capabilities.probe_runtime(adapter.client)
+        if not reachable:
+            probe_error = "ragflow_unreachable"
+    except Exception as exc:
+        probe_error = str(exc)
+        snapshot, version = adapter.get_probe_snapshot()
+        if snapshot:
+            capabilities = snapshot
+            runtime_version = version
+        else:
+            binding = await get_binding(db, knowledge_base_id)
+            capabilities = (binding.capabilities if binding else None) or {}
+            runtime_version = binding.runtime_version if binding else None
+
+    binding = await get_binding(db, knowledge_base_id)
+    if binding is not None:
+        if probe_error is None:
+            binding.capabilities = capabilities
+            binding.runtime_version = runtime_version
+            binding.last_capability_probe_at = now
+            binding.last_capability_probe_error = None
+        else:
+            binding.last_capability_probe_at = now
+            binding.last_capability_probe_error = probe_error
+        await db.flush()
+
+    return ProbePersistResult(
+        capabilities=capabilities,
+        runtime_version=runtime_version,
+        probe_error=probe_error,
+    )
+
+
+async def probe_all_bindings(db: AsyncSession, adapter: RagflowRuntimeAdapter) -> dict[str, int]:
+    result = await db.execute(
+        select(KnowledgeRuntimeBinding).where(not_deleted(KnowledgeRuntimeBinding))
+    )
+    probed = 0
+    failed = 0
+    for binding in result.scalars().all():
+        probe_result = await probe_and_persist_binding_capabilities(
+            db,
+            knowledge_base_id=binding.knowledge_base_id,
+            adapter=adapter,
+        )
+        if probe_result.probe_error:
+            failed += 1
+        else:
+            probed += 1
+    await db.flush()
+    return {"probed": probed, "failed": failed}
 
 
 async def get_binding(
@@ -66,6 +144,7 @@ async def upsert_ragflow_dataset_binding(
     runtime_version: str | None = None,
     capabilities: dict | None = None,
     runtime_config: dict | None = None,
+    from_probe: bool = False,
 ) -> KnowledgeRuntimeBinding:
     existing = await get_binding(db, knowledge_base_id)
     now = datetime.now(UTC)
@@ -73,7 +152,11 @@ async def upsert_ragflow_dataset_binding(
         existing.resource_id = resource_id
         existing.status = status
         existing.runtime_version = runtime_version
-        if capabilities is not None:
+        if capabilities is not None and from_probe:
+            existing.capabilities = capabilities
+            existing.last_capability_probe_at = now
+            existing.last_capability_probe_error = None
+        elif capabilities is not None and existing.capabilities is None:
             existing.capabilities = capabilities
         if runtime_config is not None:
             existing.runtime_config = runtime_config
@@ -92,6 +175,7 @@ async def upsert_ragflow_dataset_binding(
         capabilities=capabilities,
         runtime_config=runtime_config,
         last_synced_at=now,
+        last_capability_probe_at=now if from_probe and capabilities is not None else None,
     )
     db.add(row)
     await db.flush()
