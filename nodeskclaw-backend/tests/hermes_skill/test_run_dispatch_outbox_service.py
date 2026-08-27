@@ -92,3 +92,36 @@ async def test_deliver_entry_failure_retries_and_dead_letters():
     assert entry.status == RunDispatchStatus.DEAD_LETTER.value
     assert entry.retry_count == 5
     assert "HTTP 500" in entry.last_error
+
+
+@pytest.mark.asyncio
+async def test_deliver_entry_422_400_dead_letters_immediately():
+    db = AsyncMock()
+    entry = RunDispatchOutbox(
+        run_id="run-1",
+        dispatch_id="disp-1",
+        org_id="org-1",
+        user_id="user-1",
+        tool_name="test_tool",
+        status=RunDispatchStatus.DELIVERING.value,
+        payload={"run_id": "run-1"},
+        command_digest="digest-1",
+        retry_count=0,
+        max_retries=5,
+    )
+
+    # 422 Unprocessable Entity (e.g. missing header, validation failure)
+    mock_resp = MagicMock()
+    mock_resp.status_code = 422
+    mock_resp.text = "missing execution context header"
+
+    service = RunDispatchOutboxService(db)
+    with patch("httpx.AsyncClient.post", new=AsyncMock(return_value=mock_resp)):
+        ok = await service.deliver_entry(entry)
+
+    assert ok is False
+    # Immediately dead letter without waiting for 5 retries
+    assert entry.status == RunDispatchStatus.DEAD_LETTER.value
+    assert entry.retry_count == 1
+    assert entry.next_retry_at is None
+    assert "HTTP 422" in entry.last_error

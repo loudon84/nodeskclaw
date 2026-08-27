@@ -85,25 +85,35 @@ class RunDispatchOutboxService:
                     return True
                 else:
                     err_msg = f"HTTP {res.status_code}: {res.text[:256]}"
-                    self._record_failure(entry, err_msg, now)
+                    # Permanent 4xx client/schema/auth errors (except transient 408 Request Timeout / 429 Too Many Requests) -> Dead Letter directly
+                    is_permanent_error = (400 <= res.status_code < 500) and res.status_code not in (408, 429)
+                    self._record_failure(entry, err_msg, now, dead_letter_immediately=is_permanent_error)
                     return False
         except Exception as exc:
             err_msg = f"Connection/Transport error: {str(exc)[:256]}"
-            self._record_failure(entry, err_msg, now)
+            self._record_failure(entry, err_msg, now, dead_letter_immediately=False)
             return False
 
-    def _record_failure(self, entry: RunDispatchOutbox, error_message: str, now: datetime) -> None:
+    def _record_failure(
+        self,
+        entry: RunDispatchOutbox,
+        error_message: str,
+        now: datetime,
+        *,
+        dead_letter_immediately: bool = False,
+    ) -> None:
         entry.retry_count += 1
         entry.last_error = error_message
         entry.lease_until = None
-        if entry.retry_count >= entry.max_retries:
+        if dead_letter_immediately or entry.retry_count >= entry.max_retries:
             entry.status = RunDispatchStatus.DEAD_LETTER.value
             entry.next_retry_at = None
             logger.warning(
-                "Outbox dispatch dead-lettered: run_id=%s dispatch_id=%s retries=%d error=%s",
+                "Outbox dispatch dead-lettered: run_id=%s dispatch_id=%s retries=%d immediate=%s error=%s",
                 entry.run_id,
                 entry.dispatch_id,
                 entry.retry_count,
+                dead_letter_immediately,
                 error_message,
             )
         else:
@@ -151,6 +161,10 @@ class RunDispatchWorker:
                 async with async_session_factory() as item_db:
                     item_service = RunDispatchOutboxService(item_db, dispatcher_id=self._dispatcher_id)
                     item = await item_db.get(RunDispatchOutbox, entry.id)
-                    if item and item.status == RunDispatchStatus.DELIVERING.value:
+                    if (
+                        item
+                        and item.status == RunDispatchStatus.DELIVERING.value
+                        and item.dispatcher_id == self._dispatcher_id
+                    ):
                         await item_service.deliver_entry(item)
                         await item_db.commit()
