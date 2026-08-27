@@ -1,10 +1,10 @@
 ---
 work_item_id: knowledge-v2.2-ragflow-integration-closure
 version: v2.2
-status: REVIEW_REQUIRED
+status: APPROVED
 target_branch: main
-review_verdict:
-approved_at:
+review_verdict: PASS
+approved_at: 2026-08-27T15:33:31+08:00
 ---
 
 # PRD — nodeskclaw-knowledge v2.2
@@ -15,52 +15,6 @@ approved_at:
 **阶段定位**：RAGFlow Managed Runtime Integration
 **核心目标**：完成 Knowledge 管理面、KnowledgeApplication 执行面与 RAGFlow 的真实运行时契约闭环
 **Runtime 原则**：RAGFlow 继续是唯一正式 Knowledge Runtime；nodeskclaw-knowledge 是企业 Knowledge Control & Execution Plane。
-
----
-
-## Grounding Summary
-
-**Mode**: `revision`
-
-本轮只关闭 Review Findings F1–F5。下方 verify 证据表为上一轮抽查结果，不重做 discovery。
-
-### 上一轮 verify 证据（保留）
-
-输入 PRD 由外部分析（ChatGPT）基于源码检查产出，包含具体文件/符号级锚点。verify 轮对全部十条"核心差距"主张及关键 ADD 主张做了源码抽查，全部复现。
-
-### 验证结果
-
-| PRD 主张 | 证据 | 结论 |
-|---|---|---|
-| §4 Capability 为声明式硬编码 | `app/runtime/capabilities.py` — `probe_index_capabilities` 对 reachable runtime 固定返回 chunk/questions/raptor build=true retrieval=true、graph retrieval_supported=false；`VALIDATED_RAGFLOW_VERSIONS` 按版本号推断 | 复现 |
-| §5 Multi-Index slice 调用同一 retrieval + 本地打标 | `app/services/retrieval_merge_service.py` — `_tag_chunks_for_index` 注入 `nk_index_type`/`nk_evidence_type`；所有 slice 走同一 `ragflow.retrieve()` | 复现 |
-| §6 50/200 限制 | `app/services/build_executors.py` — `list_documents(..., page_size=200)`（两处）、`trigger_index_build(..., document_ids=doc_ids[:50])` | 复现 |
-| §7 Capability 按 KB 聚合丢失差异 | `app/services/retrieval_service.py` — `merged_capabilities.update(binding.capabilities)`、`build_states[state.index_type] = state.status` 跨 KB 合并为全局 dict | 复现 |
-| §10 业务 Service 直接 patch RAGFlow | `app/services/knowledge_base_service.py` — 直接 `ragflow.update_dataset(...)`；`build_executors.py` — 直接 `parser_config.update(parser_patch)` + `configure_index` | 复现 |
-| §11 Publish 无 Readiness Gate | `app/services/knowledge_application_service.py` — `publish_application` 仅 `app.status = active` | 复现 |
-| §12 生产拓扑只有单 Worker | 根 `docker-compose.yml` — 仅 `nodeskclaw-knowledge-worker` → `ingestion_worker --with-reconciliation` | 复现 |
-| §13 Translation dummy source | `app/services/translation_service.py` — `source_text=f"[page {page.page_no}]"` | 复现 |
-| §19 retrieve() 缺新参数 | `app/integrations/ragflow/client.py` — `retrieve()` 无 `use_kg`/`toc_enhance`/`include_knowledge_compilation`/`knn_top_k`（已有 `metadata_condition`） | 复现 |
-| §22 Binding 无 Desired/Observed | `app/models/runtime_binding.py` — 仅 `runtime_config`/`capabilities` JSONB | 复现 |
-| §20/21 Dataset Search / Graph 为真实 ADD | `client.py` 无 `search_dataset`/`get_dataset_graph` | 复现（真 ADD） |
-| §55/57 Readiness / Reconcile API 为真实 ADD | `app/api/` 无 `readiness`/`reconcile` 路由 | 复现（真 ADD） |
-
-### Verify 阶段的 Owner 修正（相对原始输入）
-
-1. **`RuntimeManagementService`（原 §27）不新建**：现有 `app/services/runtime_binding_service.py` 已是 Dataset Binding 的 Production Owner（`upsert_ragflow_dataset_binding`、`probe_and_persist_binding_capabilities`）。Dataset 生命周期写操作统一收敛进 `runtime_binding_service`，避免第二 Owner。
-2. **Runtime Config Reconciliation（原 §25）不新建**：现有 `app/services/reconciliation_service.py` 已拥有 drift 检测与删除恢复（`_check_binding_drift`、`_repair_metadata_drift`、`_retry_deleting_*`）。Config reconcile 作为该服务的扩展（MODIFY），不新增平行服务。
-3. **`nk_*` 标签注入的移除有真实消费者**：`app/services/chunk_security_service.py` 将 `nk_index_type`/`nk_evidence_type` 作为 override authority 消费。移除标签注入必须同步迁移该消费者，已纳入 Replacement / Removal Matrix。
-4. **`reconciliation_worker.py` 代码已存在但不在 Compose 拓扑中**：原 §72/73 分类修正为"Compose MODIFY + 已有 worker 代码 KEEP"，而非全新增。
-
-### Grounding Closure Table
-
-| Finding | Reproduced | Resolution | Evidence | Status |
-|---|---|---|---|---|
-| F1 现有 Runtime Facade 未入库 | YES | `RagflowRuntimeAdapter` 列为 RAGFlow runtime facade 唯一 Production Owner（MODIFY）。`client.py` 仅为 transport。`ragflow_contract.py` 是 Adapter 消费的合同模块，不是第二条 probe 入口。`configure_index` / `provision_binding` 不再是 parser_config 权威；对 RAGFlow 的 config apply 只由 `reconciliation_service` 调用 Adapter primitive | `app/runtime/ragflow.py#RagflowRuntimeAdapter`；`knowledge_base_service.create_knowledge_base` 走 `provision_binding`；`build_executors` 走 `configure_index`；`runtime_admin` 走 `probe_capabilities` | CLOSED |
-| F2 `expand_plan_for_indexes` 才是复制 Slice 的现有 Owner | YES | `retrieval_planner.build_retrieval_plan` = MODIFY（唯一 `RuntimeExecutionSlice` 发射 Owner）。`capability_planner` 只输出 per-KB mode/policy，不发射 slice。`expand_plan_for_indexes` = REPLACE+REMOVE。架构图删除独立 Runtime Feature Planner | `retrieval_planner.py#expand_plan_for_indexes`；`retrieval_service.retrieve` 调用链 `build_capability_plan` → `build_retrieval_plan` → `expand_plan_for_indexes` | CLOSED |
-| F3 聚合安全无最终 enforcement owner | YES | 最终 Owner = `retrieval_merge_service`：向 RAGFlow 发请求前按 slice `access_scope` 拒绝 dataset-level aggregate feature，不依赖 Planner 是否把 flag 设对。`aggregate_runtime_policy` 是该 Owner 执行的策略。`Adapter.retrieve_index` 限定为内部 artifact/probe，不是用户检索入口 | 用户检索入口（API v1/v2、playground、chat、evaluation、MCP/`agent_tools`）均汇入 `retrieval_service` → merge；`retrieve_index` 仅被 `validate_index_retrieval` 使用 | CLOSED |
-| F4 mode 标识冲突 | YES | 冻结唯一枚举 `RuntimeRetrievalMode`：`semantic` / `compiled_assisted` / `graph_assisted` / `toc_enhanced`。删除 `semantic_with_question_enrichment` 与作为独立请求 mode 的 `semantic_enriched`。Question enrichment 是 `semantic` slice 上的 `retrieval_features: [auto_questions]`，同一 KB 不得因此再发一次相同检索 | 原 §G 与 §K 标识不一致；Question 不改变 RAGFlow 请求参数 | CLOSED |
-| F5 Question READY 缺 Chunk read 合同 | YES | Adapter/Client Target 增加 Document Chunk 读取合同（观察 `questions` / `question_kwd` 或 runtime 等价字段）。无 enrichment 字段或 count=0 → Question 不得 READY。此为现有 Adapter/Client 的 MODIFY，不新建 Owner | 现有 `client.py` `/chunks` 仅 `parse_documents` / `stop_parsing`；无 chunk 字段读取 | CLOSED |
 
 ---
 
@@ -198,7 +152,7 @@ v2.3  Knowledge Intelligence & Derived Index   Outline / Table / LLM Planner / C
 
 v2.2 完成之前，不进入 v2.3。
 
-## 已验证的当前差距（Grounding Evidence 见 Grounding Summary）
+## 当前差距
 
 1. **Capability Probe 仍是声明式**：能力值由 reachable + 版本号 + 硬编码假设生成；Graph 固定 `retrieval_supported=false`，但 RAGFlow main 的 `/api/v1/retrieval` 已支持 `use_kg`。
 2. **Multi-Index Retrieval 不是不同 Runtime Path**：每个 slice 调用参数基本相同，随后用 `nk_index_type`/`nk_evidence_type` 本地重标。
