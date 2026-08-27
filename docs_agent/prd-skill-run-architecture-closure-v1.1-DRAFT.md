@@ -13,7 +13,7 @@ approved_at:
 
 ## Document Status
 
-本文处于 `REVIEW_REQUIRED`（待审查）状态，Grounding Mode（校准模式）为 `discover`（发现模式）。本文尚未获得 `APPROVED`（已批准）或 `PASS`（通过）结论，不得直接作为实施授权。
+本文处于 `REVIEW_REQUIRED`（待审查）状态。本轮 Grounding Mode（校准模式）为 `revision`（修订模式），只关闭上一轮 initial Review（初次审查）的 Finding；初稿发现基线仍来自 `discover`（发现模式）。本文尚未获得 `APPROVED`（已批准）或 `PASS`（通过）结论，不得直接作为实施授权。
 
 - Predecessor PRD（前序需求文档）：`docs_agent/prd-skill-run-production-hardening-v1.0.md`。
 - Product Baseline（产品基线）：`docs_agent/prd-skill-platform-v1.0.md`。
@@ -87,7 +87,8 @@ approved_at:
 
 | Capability（能力） | Current Owner（当前所有者） | Current Behaviour（当前行为） | Status（状态） |
 |---|---|---|---|
-| Run Authorization（运行授权） | Backend | 员工接口已依赖 HermesTask 投影并复核部分 Agent 租户字段，主路径已趋向 fail-closed（失败时拒绝） | EXISTS / KEEP |
+| Run Authorization（运行授权） | Backend | 员工入口已依赖 HermesTask 投影，但部分 Agent Result/Artifact/Event（结果、产物、事件）内部读取只按 `run_id` 查询，响应缺少强制 `org_id` 身份信封，Backend 仍存在“字段缺失则跳过复核”的路径 | PARTIAL / MODIFY |
+| HermesTask C2 Projection Lifecycle（兼容投影生命周期） | Backend | HermesTask 已作为真实 C2 读取投影，Task Result（任务结果）仍读取其状态与 `result_content`；agent-owned Run 没有从 Agent Event Log 持续同步终态、结果和产物的唯一生产 Updater | PARTIAL / MODIFY |
 | Backend Worker Isolation（后端执行隔离） | Backend | Agent 所有的生产 Run 已通过 `execution_owner`（执行所有者）与 Worker 规则隔离 | EXISTS / KEEP |
 | Edge Placement Exclusion（边缘放置排除） | Agent | central Worker 已排除 `placement.role=edge`（边缘角色） | EXISTS / KEEP |
 | Dispatch Outbox Model（派发发件箱模型） | Backend | 已能在业务事务中创建 Outbox 行，但生产代码没有持续投递、重试、死信和恢复 Owner | PARTIAL / MODIFY |
@@ -97,7 +98,7 @@ approved_at:
 | Event Ordering（事件排序） | Agent | 事件持久化仍以 `MAX(event_seq)+1` 分配序号，缺少来源事件幂等键，Attempt 校验与写入不是同一原子条件 | CONFLICT / REPLACE |
 | Terminal State Protection（终态保护） | Agent | 状态更新仍可能由旧 Worker 在读取后无条件写回，终态缺少统一 CAS（比较并交换）门禁 | CONFLICT / REPLACE |
 | Edge Transport（边缘传输） | Backend + Edge Worker | EdgeJob 可被认领，但没有可恢复租约与 delivery generation（投递代次）；事件在任务结束后批量上报 | PARTIAL / MODIFY |
-| Hybrid Execution（混合执行） | Agent | 已识别 hybrid 放置，但执行分支尚未完成 step（步骤）编排与回收 | MISSING / NEW |
+| Hybrid Execution（混合执行） | Agent | Backend 已有 hybrid placement resolver（混合放置解析器），Agent 已有 `needs_edge_jobs`（边缘作业检测）与 Worker 分支，但 step（步骤）编排与回收仍为 no-op（空操作） | PARTIAL / MODIFY |
 | Event Forwarding（事件转发） | Backend | Edge 事件转发失败采用 best-effort（尽力而为）并仍确认成功，无法保证重放 | CONFLICT / REPLACE |
 | Cancel State Machine（取消状态机） | Agent | 取消直接写终态，没有 `CANCELLING`（取消中）、Engine Cancel Port（引擎取消端口）和 fencing | PARTIAL / MODIFY |
 | Approval Evidence（审批证据） | Agent | 请求已携带 `approval_id`（审批标识）和 evidence（证据）字段，但缺少独立审批记录、策略摘要和决策幂等 | PARTIAL / MODIFY |
@@ -137,12 +138,13 @@ approved_at:
 6. Run 一旦进入 Terminal State，不得回退到非终态，也不得被不同终态覆盖；唯一例外是明确建模的补偿记录，不修改原终态事实。
 7. EdgeJob 只描述传输，不决定 Run 最终状态；每个 Edge Step（边缘步骤）只有一个有效 delivery generation。
 8. Event Log（事件日志）是 replay 事实源；通知、SSE（服务端推送）和 Agent-to-Backend Signal（执行代理到后端信号）只负责唤醒。
-9. Snapshot、Outbox、EdgeJob、Event、Audit Log（审计日志）不得保存明文长期凭证、环境变量文件内容或 Connector 密钥。
-10. Connector 运行目标来自已发布且经过策略校验的不可变 Route Snapshot（路由快照）；业务参数只能填充工具 Schema（模式）声明的业务字段。
-11. Installation Desired State 只由 Backend 修改；remote 与 edge Executor（执行器）只提交带 generation 的 Actual State。
-12. Session、Workspace、Attachment 和 Knowledge 都以不可变引用进入 Snapshot；执行时必须再次校验组织、可见性、版本和完整性。
-13. 外部员工流量只进入 Backend；Agent `/internal/v1/*`（内部接口）只接受可轮换的服务身份。
-14. `HermesTask` 兼容投影在本 PRD 中继续存在，但不得重新获得 Run 执行事实源所有权。
+9. 对 agent-owned Run（执行代理拥有的运行），只有 Backend Projection Updater（后端投影更新器）可把 Agent 事实写入 HermesTask、Result、Event 和 Artifact C2 兼容投影；其它 Backend Worker 不得生产执行事实。
+10. Snapshot、Outbox、EdgeJob、Event、Audit Log（审计日志）不得保存明文长期凭证、环境变量文件内容或 Connector 密钥。
+11. Connector 运行目标来自已发布且经过策略校验的不可变 Route Snapshot（路由快照）；业务参数只能填充工具 Schema（模式）声明的业务字段。
+12. Installation Desired State 只由 Backend 修改；remote 与 edge Executor（执行器）只提交带 generation 的 Actual State。
+13. Session、Workspace、Attachment 和 Knowledge 都以不可变引用进入 Snapshot；执行时必须再次校验组织、可见性、版本和完整性。
+14. 外部员工流量只进入 Backend；Agent `/internal/v1/*`（内部接口）只接受可轮换的服务身份，且所有 Run 读取与写入都绑定可信组织上下文。
+15. `HermesTask` 兼容投影在本 PRD 中继续存在，但不得重新获得 Run 执行事实源所有权。
 
 ## Target End-State Inventory
 
@@ -151,9 +153,10 @@ approved_at:
 | Employee Run Access（员工运行访问） | Backend | HermesTask 投影缺失、租户不一致或 Agent 回包身份不一致时统一拒绝 |
 | Dispatch Transaction（派发事务） | Backend | HermesTask 与 Outbox 同事务提交，独立 Dispatcher 持续投递并保存回执 |
 | Idempotent Create（幂等创建） | Agent | 唯一幂等约束、语义摘要校验、重复请求返回原 Run、并发冲突可确定恢复 |
-| Credential Resolution（凭证解析） | Backend Broker + Agent Executor | 持久化层只保存 SecretRef（密钥引用）或 LeaseRef（租约引用），执行时按 Attempt 获取短期凭证 |
+| Credential Resolution（凭证解析） | Backend Credential Lease Broker（后端凭证租约代理） | 持久化层只保存 SecretRef（密钥引用）或 LeaseRef（租约引用）；Agent 是经过认证的凭证消费者，在执行时按 Attempt 获取短期凭证 |
 | Attempt / Lease / Fencing | Agent | 独立 Attempt generation、原子认领、续租、过期重取和 stale writer rejection（过期写入者拒绝） |
 | Event Log / Live-tail | Agent SoT + Backend Signal | 原子事件序号、来源幂等、增量上报、持久化重放与跨 Pod 恢复 |
+| HermesTask C2 Projection Sync（兼容投影同步） | Backend Projection Updater（后端投影更新器） | 以 Agent Event Log cursor（事件日志游标）幂等、单调地更新既有 HermesTask、Result、Event 与 Artifact 兼容投影；通知只负责唤醒 |
 | Central Execution（中心执行） | Agent central Worker | 仅认领 central 或 hybrid 的中心阶段，不认领 edge 阶段 |
 | Edge Execution（边缘执行） | Edge Worker | 仅通过 EdgeJob 租约执行，事件和结果以 generation 幂等回写 Agent |
 | Hybrid Orchestration（混合编排） | Agent | 按不可变 Execution Plan（执行计划）推进 central/edge step，并以 Run Attempt 汇总 |
@@ -200,9 +203,25 @@ Agent 的 Run 与 Attempt 是执行一致性边界。Worker 取得租约时生�
 
 EdgeJob 是 Backend 的可靠传输信封。Agent 决定某个 Edge Step 需要执行后，由 Backend 创建或返回同一存活作业；Edge Worker 按 lease 与 delivery generation 认领。Edge 回传先持久化到 Agent Event Log，再由 Backend 发送唤醒信号，禁止以 Backend 内存或 Edge 进程内列表作为事实源。
 
+### Projection Consistency Boundary
+
+Agent Event Log 是执行事实源；Backend Projection Updater 是 agent-owned Run 写入 HermesTask C2 兼容投影的唯一 Owner。Updater 以已持久化 `event_seq`（事件序号）为单调游标，通知只用于唤醒；通知丢失时从最后成功游标补拉，重复事件不得重复推进状态或结果。
+
+Projection Updater 只映射既有 Work Expert Contract（工作端专家合同）状态：Agent `CREATED/QUEUED` 映射为 queued，`PREPARING/RUNNING/WAITING_APPROVAL/RESUMING/CANCELLING` 映射为 running，`COMPLETED/FAILED/TIMED_OUT/CANCELLED` 映射为对应既有终态。Result、Event 和 Artifact Descriptor（结果、事件与产物描述符）仅形成 C2 读取投影，不取代 Agent SoT（执行代理事实源）。
+
 ## Detailed Solution
 
-### 1. Durable Outbox Dispatch
+### 1. Fail-Closed Run Access and Trusted Org Context
+
+Backend 继续以 HermesTask 作为员工 Run Access Projection（运行访问投影），但所有 Agent 内部读取与写入必须同时绑定服务身份和可信组织上下文：
+
+- Backend 在调用 Agent Run、Event、Result、Artifact、Artifact Bytes、Cancel 和 Approval 接口时传递由当前授权上下文派生的 `org_id`，不得从客户端请求体透传租户身份。
+- Agent 对所有读取与写入都以 `run_id + org_id` 作为最小查询条件；只按 `run_id` 查询的内部入口必须被替换。
+- Run、Event、Result 和 Artifact 元数据响应必须携带不可省略的 `run_id` 与 `org_id` 身份信封；Backend 对缺失或不一致统一 fail-closed（失败时拒绝）。
+- Artifact Bytes（产物字节）只在相同组织与 Run 的元数据校验通过后返回，字节读取入口自身也必须重复执行 `run_id + org_id + artifact_id` 约束。
+- HermesTask 不存在、投影组织不一致或 Agent 身份信封缺失时，不调用或不信任后续 Agent 数据，且不得泄漏 Run 是否存在。
+
+### 2. Durable Outbox Dispatch
 
 Backend 必须为现有 RunDispatchOutbox 建立单一生产 Dispatcher Owner（投递器所有者）。Dispatcher 的职责边界如下：
 
@@ -211,11 +230,11 @@ Backend 必须为现有 RunDispatchOutbox 建立单一生产 Dispatcher Owner（
 - 将 Agent 返回的 `run_id`、`org_id` 和创建结果与本地投影比对；不一致时进入死信并产生安全审计。
 - 对超时和未知结果执行安全重试，不把网络超时等同于创建失败。
 - 对不可重试合同错误进入 Dead Letter，并向健康与指标系统暴露。
-- 员工读取在派发完成前返回稳定的 Pending/Dispatching（待派发/派发中）兼容投影，不回退到 Backend Worker 执行。
+- 员工读取在派发完成前返回稳定的 `DISPATCH_PENDING`（派发中）兼容投影，不回退到 Backend Worker 执行。
 
 Agent 必须以数据库唯一约束而非应用层先查后写保证幂等。重复键且摘要相同时返回原 Run；重复键但组织、发布版本、参数或策略摘要不同时返回冲突。
 
-### 2. Secret-free Credential Broker
+### 3. Secret-free Credential Broker
 
 当前将 Token 放入 route/outbox payload 的实现必须被替换。目标行为如下：
 
@@ -226,7 +245,7 @@ Agent 必须以数据库唯一约束而非应用层先查后写保证幂等。�
 - Connector Secret（连接器密钥）继续由 Agent/Edge SecretStore 解析，Broker 不接管其所有权。
 - Edge 执行需要凭证时只获得针对该 Edge Step、Node（节点）和期限的最小权限凭证。
 
-### 3. Atomic Attempt, Lease and Terminal State
+### 4. Atomic Attempt, Lease and Terminal State
 
 Agent 必须把 Attempt 从辅助记录提升为所有执行写入的授权实体：
 
@@ -236,9 +255,9 @@ Agent 必须把 Attempt 从辅助记录提升为所有执行写入的授权实�
 - `PREPARING`、`RUNNING`、`CANCELLING` 和可恢复的 `RESUMING` 均可在租约过期后重新认领。
 - 状态更新采用 expected state（期望状态）与 generation 条件；零行更新视为失去所有权。
 - Terminal State 通过统一门禁提交，并记录 winning attempt（获胜尝试）。旧 Attempt 的事件、结果、Artifact 和终态全部拒绝。
-- 恢复前必须根据 Engine Adapter 的副作用语义决定 Resume（续跑）、Retry（重试）或 Manual Intervention（人工介入），不得盲目重复非幂等外部调用。
+- 恢复前必须根据 Engine Adapter 的副作用语义决定 Resume（续跑）、Retry（重试）或以 `FAILED` + `manual_intervention_required`（需要人工介入）失败分类结束，不得盲目重复非幂等外部调用。
 
-### 4. Ordered and Replayable Events
+### 5. Ordered and Replayable Events
 
 事件链路必须同时满足顺序、幂等和实时性：
 
@@ -250,7 +269,18 @@ Agent 必须把 Attempt 从辅助记录提升为所有执行写入的授权实�
 - Agent-to-Backend Signal 只携带 run/event cursor（运行与事件游标）并用于唤醒 SSE，不携带事件事实。
 - Consumer 使用 `after_seq`（起始序号）重放时，无论跨 Pod 或错过通知，都获得无缺口、无重复的有序事件。
 
-### 5. Single Owner for Central, Edge and Hybrid
+### 6. HermesTask Projection Reconciliation
+
+Backend Projection Updater 必须把 Agent 执行事实可靠地映射到现有 C2 读取面：
+
+- 每个 agent-owned Run 保存最后成功投影的 Agent `event_seq`，按序消费并幂等推进 HermesTask 状态、兼容 Event、Result 与 Artifact Descriptor 投影。
+- Agent-to-Backend Signal 只通知“某 Run 已到达某游标”；Updater 始终从 Agent Event Log 拉取事实，不信任通知载荷直接改写终态。
+- 通知丢失、Backend Pod 重启或单次同步失败后，Updater 从持久化游标继续补拉；运维可触发按 Run 全量重建兼容投影。
+- 状态映射只能产生 Work Expert Contract v1.0.2 已有状态，不得向 `/hermes/tasks/*` 暴露 `DISPATCH_PENDING`、`WAITING_APPROVAL`、`CANCELLING` 或其它新状态。
+- `COMPLETED` 结果按冻结合同投影 `result_content`、`result_summary` 和 pull-only Artifact（仅拉取产物）可用性；重复完成事件不得产生第二结果或重复 Artifact 投影。
+- 投影失败不回写或回滚 Agent Run；它保持可重试并暴露 lag（延迟）、错误与最后成功游标。
+
+### 7. Single Owner for Central, Edge and Hybrid
 
 三种 Placement 必须使用同一 Run Attempt，但执行责任清晰分段：
 
@@ -259,9 +289,9 @@ Agent 必须把 Attempt 从辅助记录提升为所有执行写入的授权实�
 - `hybrid`（混合）Run 由 Agent 持有不可变 step graph（步骤图）；每个 step 明确 `central` 或 `edge` Owner，只有当前可运行 step 可被派发。
 - EdgeJob 使用 `(run_id, attempt_generation, step_id)`（运行、尝试代次、步骤）存活唯一性和 delivery generation，过期租约可重取，旧回执被拒绝。
 - Run 的最终状态由 Agent 在全部必需 step 收敛后提交；Backend EdgeJob 状态不得直接覆盖 Run。
-- 相同 idempotency scope（幂等作用域）的 Connector 副作用必须携带稳定业务幂等键；无法幂等的动作在未知结果时进入人工介入状态。
+- 相同 idempotency scope（幂等作用域）的 Connector 副作用必须携带稳定业务幂等键；无法幂等的动作在未知结果时以 `FAILED` + `manual_intervention_required` 失败分类结束。
 
-### 6. Real Cancel State Machine
+### 8. Real Cancel State Machine
 
 取消采用 Request（请求）、Interrupt（中断）和 Commit（提交）三阶段语义：
 
@@ -270,9 +300,9 @@ Agent 必须把 Attempt 从辅助记录提升为所有执行写入的授权实�
 - 当前 Attempt 收到取消信号后调用 Engine Cancel Port；Edge Step 同时收到带 generation 的取消命令。
 - 引擎确认停止或租约/fencing 已确保旧执行者不能再提交后，Agent 才写入 `CANCELLED`。
 - 已进入其它终态时，重复取消返回当前终态且不改写事实。
-- 超时无法确认中断时保持可观测的 CANCELLING 或进入人工介入状态，不伪造取消成功。
+- 超时无法确认中断时保持可观测的 CANCELLING，或以 `FAILED` + `manual_intervention_required` 失败分类结束，不伪造取消成功。
 
-### 7. Approval Record and Resume Policy
+### 9. Approval Record and Resume Policy
 
 Approval 必须从 Run 状态字段中独立出来，成为可审计事实：
 
@@ -283,7 +313,7 @@ Approval 必须从 Run 状态字段中独立出来，成为可审计事实：
 - 只有批准决策可产生新的 Resume Attempt（恢复尝试）；拒绝或过期不得复用通用 resume 接口绕过。
 - 审批证据进入审计与事件，但敏感字段只保存摘要或引用。
 
-### 8. Connector Security Boundary
+### 10. Connector Security Boundary
 
 Connector 安全必须由发布门禁与运行时门禁双重保证：
 
@@ -293,7 +323,7 @@ Connector 安全必须由发布门禁与运行时门禁双重保证：
 - DB Connector 使用只读数据库角色或只读事务，并设置语句超时、行数、响应字节和并发限制；文本解析只作为附加门禁。
 - 最终解析目标、策略版本和拒绝原因进入安全审计，凭证和敏感参数必须脱敏。
 
-### 9. Agent Production Lifecycle
+### 11. Agent Production Lifecycle
 
 Agent 必须具备独立服务的生产生命周期：
 
@@ -305,7 +335,7 @@ Agent 必须具备独立服务的生产生命周期：
 - 审计覆盖内部鉴权失败、凭证签发、审批、取消、路由拒绝、安装调谐和人工介入。
 - 禁止不安全默认 Token；至少支持 current/next credential（当前与下一凭证）重叠轮换，生产目标支持 mTLS（双向 TLS）或短期服务凭证。
 
-### 10. Installation Reconcile for Remote and Edge
+### 12. Installation Reconcile for Remote and Edge
 
 本阶段关闭前序 PRD 为 remote SkillInstaller（远程技能安装器）保留的兼容例外：
 
@@ -317,7 +347,7 @@ Agent 必须具备独立服务的生产生命周期：
 - Backend SkillInstaller 不再作为生产执行 Owner；兼容入口只创建 Desired，不直接复制 Runtime 文件。
 - 发布前必须证明 remote 与 edge 的安装、升级、卸载、失败重试和代次竞争均可收敛。
 
-### 11. Session, Attachment and Knowledge Execution Contract
+### 13. Session, Attachment and Knowledge Execution Contract
 
 Run 创建与 Snapshot 必须补齐原架构要求的执行上下文：
 
@@ -329,7 +359,7 @@ Run 创建与 Snapshot 必须补齐原架构要求的执行上下文：
 - 解析得到的短期 URL（地址）或 Token 只存在于当前 Attempt 内存，禁止写回 Snapshot、Event 或 Artifact 元数据。
 - 引用不可用、版本漂移或权限撤销时，Run 以稳定错误分类失败或进入可审批状态，不静默使用最新版本。
 
-### 12. Contract Publication and Compatibility
+### 14. Contract Publication and Compatibility
 
 Skill Run Contract 必须成为可发布制品：
 
@@ -345,7 +375,10 @@ Run 状态用于员工可见生命周期，Attempt 状态用于执行所有权�
 
 ```text
 Run:
-PENDING_DISPATCH -> QUEUED -> PREPARING -> RUNNING
+DISPATCH_PENDING (Backend projection only)
+                      |
+                      v
+CREATED -> QUEUED -> PREPARING -> RUNNING
                                       |        |
                                       v        v
                               WAITING_APPROVAL CANCELLING
@@ -355,15 +388,16 @@ PENDING_DISPATCH -> QUEUED -> PREPARING -> RUNNING
                                       |
                                       +------> QUEUED
 
-RUNNING / PREPARING / RESUMING -> SUCCEEDED | FAILED | MANUAL_INTERVENTION
+RUNNING / PREPARING / RESUMING -> COMPLETED | FAILED | TIMED_OUT
 
 Attempt:
-CLAIMED -> ACTIVE -> SUCCEEDED | FAILED | CANCELLED | EXPIRED | FENCED
+CLAIMED -> ACTIVE -> COMPLETED | FAILED | CANCELLED | EXPIRED | FENCED
 ```
 
 状态机必须满足：
 
-- `PENDING_DISPATCH` 与 `DISPATCHING` 可以由 Backend 兼容投影表达，但 Agent Run 只在幂等创建后成为执行事实。
+- `DISPATCH_PENDING` 只由 Backend HermesTask + Outbox 兼容投影表达；Agent Run 只在幂等创建后成为执行事实。
+- 本 PRD 不替换 v1.0 已发布的公开 Run 状态枚举；需要人工介入的未知副作用使用 `FAILED` + `manual_intervention_required` 失败分类表达，不新增公开终态。
 - Attempt 租约过期产生新 generation，旧 Attempt 进入 EXPIRED/FENCED（过期/隔离）。
 - Approval resume（审批恢复）创建新 Attempt，不复活旧 Attempt。
 - Cancel、失败恢复和人工介入的每次决策都有独立事件与审计记录。
@@ -382,9 +416,11 @@ CLAIMED -> ACTIVE -> SUCCEEDED | FAILED | CANCELLED | EXPIRED | FENCED
 - Routing（路由）：不可变 placement、engine、connector 与 capability reference（能力引用），不含明文 Secret。
 - Delivery（投递）：request digest、contract version（合同版本）和 dispatch correlation（派发关联）。
 
-### Agent Mutation Contract
+### Agent Read and Mutation Contract
 
-所有执行写接口必须携带或由服务身份绑定：
+所有内部 Run 读取与写入都必须由服务身份绑定可信 `org_id + run_id`。读取查询不得只按 `run_id`；Run、Event、Result 和 Artifact 元数据响应必须返回不可省略的 `org_id + run_id` 身份信封，Backend 对字段缺失或不一致统一拒绝。
+
+所有执行写接口还必须携带或由服务身份绑定：
 
 - `org_id`、`run_id`、`attempt_id`、`attempt_generation`。
 - 对事件还包含 `source_event_id` 与 source sequence（来源序号）。
@@ -396,16 +432,16 @@ CLAIMED -> ACTIVE -> SUCCEEDED | FAILED | CANCELLED | EXPIRED | FENCED
 
 ### Employee Projection Contract
 
-Backend 对外继续提供统一 Run API，并把 Agent 执行事实映射到 HermesTask 兼容投影。投影同步失败不得改变 Agent 的事实，但必须可重试、可告警；员工权限判断始终基于 Backend 投影和 Agent 租户复核，禁止仅凭 `run_id` 访问。
+Backend 对外继续提供统一 Run API，并由 Backend Projection Updater 把 Agent Event Log 中的执行事实按单调游标映射到 HermesTask 兼容投影。投影同步失败不得改变 Agent 的事实，但必须可重试、可告警并支持重建；员工权限判断始终基于 Backend 投影和 Agent 租户复核，禁止仅凭 `run_id` 访问。
 
 ## Observable Behaviour
 
 ### Employee and MCP Consumer
 
-- Run 提交成功后立即获得稳定 `run_id`；派发尚未完成时看到明确的 Pending/Dispatching 状态。
+- Run 提交成功后立即获得稳定 `run_id`；派发尚未完成时看到明确的 `DISPATCH_PENDING` 状态。
 - 重复提交同一幂等请求返回同一 Run；语义不同的重复键返回冲突。
 - 事件在执行期间持续可见，断线后从游标恢复，不重复展示同一来源事件。
-- 取消只在引擎停止或被 fencing 后成为 CANCELLED；无法确认时显示处理中或人工介入。
+- 取消只在引擎停止或被 fencing 后成为 CANCELLED；无法确认时显示 CANCELLING，或最终显示带 `manual_intervention_required` 失败分类的 FAILED。
 - 审批页面可获得稳定审批标识、动作摘要、过期时间和最终决策，但不暴露敏感凭证。
 - 附件或知识引用失效时获得明确错误，不静默切换到其它版本。
 
@@ -427,9 +463,10 @@ Backend 对外继续提供统一 Run API，并把 Agent 执行事实映射到 He
 | Dispatcher Pod 崩溃 | 投递租约过期后由其它 Pod 重新认领 |
 | Worker Pod 崩溃 | Attempt 租约过期，新 generation 恢复；旧 Worker 写入被拒绝 |
 | Edge 断网 | 事件留在持久化 Spool，恢复后按来源标识重放 |
-| Edge 回执未知 | 同一 delivery generation 安全重试；非幂等副作用进入人工介入 |
+| Edge 回执未知 | 同一 delivery generation 安全重试；非幂等副作用以 `FAILED` + `manual_intervention_required` 结束 |
 | Credential Broker 不可用 | Run 保持可恢复状态，不把长期凭证降级写入 Snapshot |
-| Cancel 中断超时 | 保持 CANCELLING 或进入 MANUAL_INTERVENTION，不伪造成功 |
+| Cancel 中断超时 | 保持 CANCELLING，或以 `FAILED` + `manual_intervention_required` 结束，不伪造成功 |
+| Projection Signal 丢失 | Backend Projection Updater 从最后成功 `event_seq` 补拉并恢复 C2 投影，不要求 Agent 重写事实 |
 | Approval 决策重复 | 返回原决策；冲突决策拒绝并审计 |
 | Installation generation 过期 | 拒绝覆盖新 Desired，Executor 拉取最新 generation 重新调谐 |
 | Attachment/Knowledge 引用失效 | 使用稳定错误分类失败或等待批准，不读取未授权最新内容 |
@@ -440,6 +477,8 @@ Backend 对外继续提供统一 Run API，并把 Agent 执行事实映射到 He
 | Capability（能力） | Classification（分类） | Decision（决策） |
 |---|---|---|
 | HermesTask Run Access Projection | KEEP | 本 PRD 保留现有投影与员工授权边界，不建立第二套访问表 |
+| Run Authorization and Agent Tenant Binding（运行授权与执行代理租户绑定） | MODIFY | 保留 Backend HermesTask 权限判断，补齐所有 Agent 内部读取、写入和响应身份信封的 `org_id + run_id` 强约束 |
+| HermesTask C2 Projection Sync（兼容投影同步） | MODIFY | 复用既有 HermesTask、Result、Event 与 Artifact 读取投影，增加 Backend 唯一 Updater、单调游标、重试与重建；不新增第二事实源 |
 | Backend Agent-owned Worker Isolation | KEEP | 保留已实现的单 Owner 隔离，不恢复 Backend 生产执行 |
 | Edge Placement Exclusion | KEEP | 保留 central Worker 对 edge 放置的排除规则 |
 | RunDispatchOutbox Model | MODIFY | 在现有表与事务写入基础上补齐 Dispatcher、租约、重试、死信与回执 |
@@ -449,7 +488,7 @@ Backend 对外继续提供统一 Run API，并把 Agent 执行事实映射到 He
 | Event `MAX+1` Allocation | REPLACE | 用数据库原子序号分配与来源事件幂等替换 |
 | Unconditional Status Update | REPLACE | 用 expected state + generation CAS 替换 |
 | Edge Batch Event Upload | REPLACE | 用持久化 Spool、增量上报和 ack cursor 替换 |
-| Hybrid no-op Branch | NEW | 新增可恢复的 central/edge step 编排 |
+| Hybrid no-op Branch | MODIFY | 复用现有 placement resolver、`needs_edge_jobs` 与 Worker 分支，补齐可恢复的 central/edge step 编排 |
 | Direct Cancel Terminal Write | REPLACE | 用 CANCELLING、Engine Cancel Port 与终态门禁替换 |
 | Shared Resume/Approval Behaviour | REPLACE | 用独立 Approval Record 和决策状态机替换 |
 | Client-controlled Connector Target | REMOVE | 移除通过业务参数覆盖网络或数据库目标的能力 |
@@ -483,7 +522,7 @@ Backend 对外继续提供统一 Run API，并把 Agent 执行事实映射到 He
 - Current Consumer（当前消费者）：`smc-copilot/apps/work` 与现有 `/api/v1/expert/mcp/*`（专家 MCP 接口）链路。
 - Reason（保留原因）：本 PRD 仅关闭 Backend–Agent 执行平面，不授权修改 Work Consumer（工作端消费者）或 Expert Contract（专家合同）。
 - Removal Condition（移除条件）：独立 Work Consumer PRD 获得批准，Skill-first（技能优先）读取、事件、审批和 Artifact 消费完成灰度，且 C2 流量与回滚窗口清零。
-- Removal Version（移除版本）：由独立 Work Consumer PRD 明确；在该版本前不得提前删除，也不得以本 PRD v1.1 推断已完成退场。
+- Removal Version（移除版本）：`Skill Platform Contract v1.1`（技能平台合同 v1.1），沿用前序已批准 PRD 的退场版本。实际 Work 改造仍由独立 Work Consumer PRD 实施，但未完成该退场条件前不得宣称整个 Skill Platform Contract v1.1 已完成；本文档自身的 v1.1 仅表示本 PRD 版本。
 
 ### Backend Remote SkillInstaller
 
@@ -507,7 +546,7 @@ Backend 对外继续提供统一 Run API，并把 Agent 执行事实映射到 He
 
 - 完成 Outbox Dispatcher、幂等回执、租约重取、重试、死信与指标。
 - 将持久化 Token 替换为 LeaseRef 与 Attempt-time Broker。
-- 固化员工 Pending/Dispatching 投影和 fail-closed 身份复核。
+- 固化员工 `DISPATCH_PENDING` 投影和 fail-closed 身份复核。
 
 ### Slice 2 — Execution Fencing and State Machines
 
@@ -516,6 +555,7 @@ Backend 对外继续提供统一 Run API，并把 Agent 执行事实映射到 He
 - 完成 Attempt generation、续租、过期恢复、原子事件与终态门禁。
 - 完成 Cancel Engine Port 与独立 Approval Record。
 - 统一 Result、Artifact、Event、Edge 回执的 fencing。
+- 完成 Backend Projection Updater 的单调游标、状态映射、重试与重建，使 C2 投影持续跟随 Agent 事实。
 
 ### Slice 3 — Edge, Hybrid and Security
 
@@ -539,6 +579,7 @@ Backend 对外继续提供统一 Run API，并把 Agent 执行事实映射到 He
 
 - 补齐 Manifest、SHA256SUMS、Fixture 与兼容规则。
 - 执行 Backend/Agent 双向合同验证、故障注入与跨 Pod 恢复验证。
+- 在目标行为实现后同步架构文档中的 Outbox 入队顺序、Projection Updater Owner 和状态映射，禁止继续保留“先创建 Agent Run、后写 HermesTask”的过期描述。
 - 在所有 Release Gate 通过后发布不可变合同版本标识。
 
 ## Acceptance Criteria
@@ -550,7 +591,7 @@ Backend 对外继续提供统一 Run API，并把 Agent 执行事实映射到 He
 3. Agent 创建成功但响应丢失后，重试返回同一 `run_id`；数据库中只有一个 Run 和一个初始 Snapshot。
 4. 同一幂等键携带不同组织、发布版本、参数或策略摘要时返回稳定冲突错误，不执行请求。
 5. Outbox 可重试故障自动退避，不可重试合同故障进入死信；两者均有指标、审计和运维可见性。
-6. HermesTask 缺失、组织不一致或 Agent 回包身份不一致时，所有员工 Result、Artifact、Cancel、Approval 和 Event 接口统一拒绝。
+6. HermesTask 缺失、可信组织上下文缺失、组织不一致、Agent 回包 `org_id/run_id` 缺失或不一致时，所有员工 Run、Result、Artifact、Artifact Bytes、Cancel、Approval 和 Event 接口统一拒绝；Agent 内部查询证明使用 `run_id + org_id` 而非单独 `run_id`。
 
 ### Credential and Snapshot Safety
 
@@ -565,7 +606,7 @@ Backend 对外继续提供统一 Run API，并把 Agent 执行事实映射到 He
 12. 旧 Attempt 在新 generation 建立后提交状态、事件、结果或 Artifact 时均被拒绝且不改变 Run。
 13. 租约续期与状态迁移采用原子条件；零行更新会立即停止该 Worker 的后续提交。
 14. 并发成功、失败、取消和租约过期竞争时，Run 只有一个 winning terminal state（获胜终态）。
-15. 非幂等外部副作用结果未知时进入 MANUAL_INTERVENTION，不自动重复执行。
+15. 非幂等外部副作用结果未知时以 `FAILED` + `manual_intervention_required` 失败分类结束，不自动重复执行。
 
 ### Event and Edge Recovery
 
@@ -577,50 +618,52 @@ Backend 对外继续提供统一 Run API，并把 Agent 执行事实映射到 He
 21. SSE Consumer 跨 Backend Pod、错过通知或断线重连后，使用 `after_seq` 得到无缺口且无重复的事件流。
 22. EdgeJob 租约过期可由其它 Worker 重取；旧 delivery generation 的事件、结果和取消回执全部拒绝。
 23. hybrid Run 的 central 与 edge step 各只执行一次有效副作用，最终状态只由 Agent 汇总提交。
+24. Backend Projection Updater 按 Agent `event_seq` 单调、幂等地把 agent-owned Run 映射到既有 HermesTask 状态、Result、Event 和 Artifact C2 投影；重复事件不重复推进结果或产物。
+25. Agent-to-Backend Signal 丢失、Backend Pod 重启或投影写入失败后，Updater 从持久化游标补拉或重建；C2 最终收敛到 Agent 事实，且 `/hermes/tasks/*` 不出现新状态名。
 
 ### Cancel and Approval
 
-24. RUNNING Run 取消后先进入 CANCELLING；引擎停止或 fencing 生效后才进入 CANCELLED。
-25. 取消与成功结果并发时，状态机按原子竞争保留唯一终态，失败一方得到明确冲突结果。
-26. 每个审批请求都有稳定 `approval_id`、Attempt、动作摘要、策略摘要、过期时间和请求证据。
-27. 未授权、过期、策略变化、错误 Attempt 或错误组织的审批决策全部拒绝并审计。
-28. 同一审批重复提交相同决策返回原结果，提交冲突决策不会改变已有事实。
-29. 通用 resume 不能绕过 WAITING_APPROVAL；只有有效 approve decision（批准决策）能创建恢复 Attempt。
+26. RUNNING Run 取消后先进入 CANCELLING；引擎停止或 fencing 生效后才进入 CANCELLED。
+27. 取消与成功结果并发时，状态机按原子竞争保留唯一终态，失败一方得到明确冲突结果。
+28. 每个审批请求都有稳定 `approval_id`、Attempt、动作摘要、策略摘要、过期时间和请求证据。
+29. 未授权、过期、策略变化、错误 Attempt 或错误组织的审批决策全部拒绝并审计。
+30. 同一审批重复提交相同决策返回原结果，提交冲突决策不会改变已有事实。
+31. 通用 resume 不能绕过 WAITING_APPROVAL；只有有效 approve decision（批准决策）能创建恢复 Attempt。
 
 ### Connector and Installation Security
 
-30. 客户端通过 `url`、`endpoint`、`db_url`、headers、proxy 或 credential ref 改变发布目标的请求全部被拒绝。
-31. REST/MCP Connector 对私网、保留地址、非法协议、禁止端口、重定向绕过和 DNS 重绑定执行运行时门禁。
-32. DB Connector 在只读角色或事务中运行，并对语句时长、行数、响应大小和并发进行限制。
-33. remote 与 edge 安装均按 desired/observed generation 调谐；旧 Actual 不覆盖新 Desired。
-34. remote/edge 安装、升级、卸载、失败重试和 Executor 重启后均最终收敛。
-35. Backend 兼容安装入口只修改 Desired，不再直接复制或删除生产 Runtime 文件。
+32. 客户端通过 `url`、`endpoint`、`db_url`、headers、proxy 或 credential ref 改变发布目标的请求全部被拒绝。
+33. REST/MCP Connector 对私网、保留地址、非法协议、禁止端口、重定向绕过和 DNS 重绑定执行运行时门禁。
+34. DB Connector 在只读角色或事务中运行，并对语句时长、行数、响应大小和并发进行限制。
+35. remote 与 edge 安装均按 desired/observed generation 调谐；旧 Actual 不覆盖新 Desired。
+36. remote/edge 安装、升级、卸载、失败重试和 Executor 重启后均最终收敛。
+37. Backend 兼容安装入口只修改 Desired，不再直接复制或删除生产 Runtime 文件。
 
 ### Agent Operations and Context
 
-36. Agent 可从空库和前序结构升级到同一 Alembic head；多 Pod 启动不执行并发建表 DDL。
-37. liveness 与 readiness 分离；数据库、Artifact Storage、Broker 或 Worker loop 不可用时 readiness 返回失败并指明依赖类别。
-38. Pod 重建后，已成功 Artifact 仍能按组织、Run、Descriptor 和内容哈希读取。
-39. 内部服务凭证可在 current/next 重叠窗口无中断轮换；生产配置使用默认 Token 时启动失败。
-40. `session_id`、`workspace_id`、`attachment_refs`、`knowledge_refs` 和 `policy_snapshot_ref` 可从 Backend 创建合同进入不可变 Snapshot。
-41. 跨租户、版本漂移、内容哈希不匹配或权限撤销的附件/知识引用在执行时被拒绝。
-42. 引用解析生成的临时 URL 或 Token 不进入 Snapshot、Event、Artifact 元数据或审计正文。
+38. Agent 可从空库和前序结构升级到同一 Alembic head；多 Pod 启动不执行并发建表 DDL。
+39. liveness 与 readiness 分离；数据库、Artifact Storage、Broker 或 Worker loop 不可用时 readiness 返回失败并指明依赖类别。
+40. Pod 重建后，已成功 Artifact 仍能按组织、Run、Descriptor 和内容哈希读取。
+41. 内部服务凭证可在 current/next 重叠窗口无中断轮换；生产配置使用默认 Token 时启动失败。
+42. `session_id`、`workspace_id`、`attachment_refs`、`knowledge_refs` 和 `policy_snapshot_ref` 可从 Backend 创建合同进入不可变 Snapshot。
+43. 跨租户、版本漂移、内容哈希不匹配或权限撤销的附件/知识引用在执行时被拒绝。
+44. 引用解析生成的临时 URL 或 Token 不进入 Snapshot、Event、Artifact 元数据或审计正文。
 
 ### Contract and Release
 
-43. Manifest 与 SHA256SUMS 覆盖全部 Run/Snapshot/Attempt/Event/Approval/Artifact/Edge/Error Schema 和 Fixture。
-44. Backend 与 Agent 在持续集成中分别验证生产请求、响应与 Fixture，合同不一致会阻断合并。
-45. 合同发布标识指向包含匹配实现的干净提交，并能由独立 Consumer 校验完整性。
-46. `lat check`（架构文档检查）、Backend 测试、Agent 测试、静态检查、合同测试和故障注入套件全部通过。
-47. 上述验收全部通过前，不得把本文状态改为 APPROVED，也不得把 Work Consumer 或 C2 退场宣称为本阶段已完成。
+45. Manifest 与 SHA256SUMS 覆盖全部 Run/Snapshot/Attempt/Event/Approval/Artifact/Edge/Error Schema 和 Fixture。
+46. Backend 与 Agent 在持续集成中分别验证生产请求、响应与 Fixture，合同不一致会阻断合并。
+47. 合同发布标识指向包含匹配实现的干净提交，并能由独立 Consumer 校验完整性。
+48. `lat check`（架构文档检查）、Backend 测试、Agent 测试、静态检查、合同测试和故障注入套件全部通过。
+49. 本文在 Architecture Review（架构审查）获得 PASS 后可由 `smc-prd-converge` 收敛为 APPROVED；第 1–48 条用于阻断实现发布，而不是阻断 PRD 批准。Work Consumer 改造和 C2 退场未满足独立合同前，不得宣称整个 Skill Platform Contract v1.1 已完成。
 
 ## Release Gates
 
 本 PRD 的发布门禁按以下顺序执行：
 
 1. Security Gate（安全门禁）：无 fail-open（失败放行）授权、无持久化明文凭证、Connector 绕过测试通过。
-2. Consistency Gate（一致性门禁）：Outbox 幂等、Attempt fencing、终态竞争和事件顺序测试通过。
-3. Recovery Gate（恢复门禁）：Dispatcher、central Worker、Edge Worker、Backend Pod 和 Agent Pod 故障注入通过。
+2. Consistency Gate（一致性门禁）：Outbox 幂等、Attempt fencing、终态竞争、事件顺序和 HermesTask 单调投影测试通过。
+3. Recovery Gate（恢复门禁）：Dispatcher、central Worker、Edge Worker、Backend Projection Updater、Backend Pod 和 Agent Pod 故障注入通过。
 4. State-machine Gate（状态机门禁）：Cancel、Approval、Installation generation 和 hybrid step 收敛通过。
 5. Operations Gate（运维门禁）：迁移、对象存储、探针、指标、审计和凭证轮换通过。
 6. Contract Gate（合同门禁）：合同清单、校验和、双向验证和不可变发布标识通过。
@@ -643,13 +686,28 @@ Backend 对外继续提供统一 Run API，并把 Agent 执行事实映射到 He
 
 ## Grounding Summary
 
-本 PRD 采用 `discover` 模式完成校准，结论如下：
+本 PRD 初稿采用 `discover` 模式完成能力发现；本轮采用 `revision` 模式，只按上一轮 Finding 收敛以下结论：
 
-- Reused（复用）：HermesTask 访问投影、Backend/Agent Owner 边界、现有 RunDispatchOutbox 模型、Agent 幂等键与摘要、Attempt/Lease 骨架、EdgeJob 传输模型、Agent Event SoT（事件事实源）和现有合同目录。
-- Modified（修改）：Outbox 投递、Attempt fencing、事件顺序、Edge 可靠性、Cancel、Approval、安装调谐、Agent 运维与 Run Context 合同。
+- Reused（复用）：HermesTask 访问与 C2 读取投影、Backend/Agent Owner 边界、现有 RunDispatchOutbox 模型、Agent 幂等键与摘要、Attempt/Lease 骨架、hybrid placement resolver、`needs_edge_jobs`、EdgeJob 传输模型、Agent Event SoT（事件事实源）和现有合同目录。
+- Modified（修改）：Run 授权与 Agent 租户绑定、HermesTask C2 投影同步、Outbox 投递、Attempt fencing、事件顺序、Hybrid 编排、Edge 可靠性、Cancel、Approval、安装调谐、Agent 运维与 Run Context 合同。
 - Replaced（替换）：持久化凭证、`MAX+1` 事件序号、非原子状态更新、Edge 批量事件、通用 resume 审批、Backend 直接 remote 安装和启动 DDL。
 - Removed（移除）：客户端覆盖 Connector 目标、生产 `/tmp` Artifact 默认和不安全静态 Token 默认值。
 - Deferred（延期）：`smc-copilot/apps/work` 迁移、C2 HermesTask 投影退场、Expert Contract 升级、知识库与 RAG 能力建设。
+
+## Grounding Closure Table
+
+本表以 2026-08-27 initial Review 的 Finding 为主键，记录本轮 `revision` 的最小关闭结果。
+
+| Finding | Reproduced | Resolution | Evidence | Status |
+|---|---|---|---|---|
+| F-01 Run 状态模型与现有合同冲突 | YES | 公开 Run 终态统一为 `COMPLETED/FAILED/CANCELLED/TIMED_OUT`，派发投影统一为 `DISPATCH_PENDING`；未知副作用改用 `FAILED` + `manual_intervention_required`，不新增公开终态 | `Run State and Attempt Semantics`、`Failure Semantics`、AC-15 | CLOSED |
+| F-02 Run Authorization 错误分类为 KEEP | YES | 改为 `PARTIAL / MODIFY`；所有 Agent 内部读取与写入绑定可信 `org_id + run_id`，身份信封缺失即拒绝，Artifact Bytes 重复组织过滤 | `Current Capability Inventory`、`Fail-Closed Run Access and Trusted Org Context`、`Agent Read and Mutation Contract`、AC-06 | CLOSED |
+| F-03 HermesTask C2 投影缺少生命周期同步方案 | YES | 指定 Backend Projection Updater 为 agent-owned Run C2 投影唯一写入 Owner；以 Agent `event_seq` 单调游标补拉、重试和重建，并冻结 C2 状态映射 | `Projection Consistency Boundary`、`HermesTask Projection Reconciliation`、AC-24/25 | CLOSED |
+| F-04 Hybrid Existing Capability 被误判为 NEW | YES | 改为 `PARTIAL / MODIFY`，明确复用现有 placement resolver、`needs_edge_jobs` 与 Worker 分支，只补 step 编排和恢复 | `Current Capability Inventory`、`Change Classification` | CLOSED |
+| F-05 C2 Compatibility 没有具体 Removal Version | YES | 恢复前序批准基线 `Skill Platform Contract v1.1`，并明确独立 Work PRD 是该平台合同完成声明的外部依赖 | `Compatibility Contract / HermesTask C2 Projection`、AC-49 | CLOSED |
+| M-01 PRD 批准与实现验收形成流程死锁 | YES | Architecture Review PASS 后即可 converge；实现 AC 改为发布门禁 | AC-49 | CLOSED |
+| M-02 Credential Resolution Owner 表达为双 Owner | YES | 明确 Backend Credential Lease Broker 是唯一 Owner，Agent 仅为认证消费者 | `Target End-State Inventory` | CLOSED |
+| M-03 lat Enqueue Path 保留过期顺序 | YES | 不在本 PRD 修订中改写已实施架构事实；Delivery Slice 5 明确实现后同步 Outbox 顺序、Projection Owner 与状态映射 | `Delivery Sequence / Slice 5` | CLOSED |
 
 ## Review Request
 
