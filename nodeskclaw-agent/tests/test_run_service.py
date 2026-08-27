@@ -256,6 +256,39 @@ async def test_cancel_run_three_phase_transitions(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_add_artifact_rejects_stale_attempt():
+    db = AsyncMock()
+    scalar = MagicMock()
+    scalar.scalar_one_or_none.return_value = "attempt-current"
+    db.execute = AsyncMock(return_value=scalar)
+
+    with pytest.raises(RuntimeError, match="stale attempt"):
+        await run_service.add_artifact(
+            db,
+            "run-1",
+            name="test.txt",
+            attempt_id="attempt-old",
+        )
+
+
+@pytest.mark.asyncio
+async def test_store_artifact_bytes_rejects_stale_attempt():
+    db = AsyncMock()
+    scalar = MagicMock()
+    scalar.scalar_one_or_none.return_value = "attempt-current"
+    db.execute = AsyncMock(return_value=scalar)
+
+    with pytest.raises(RuntimeError, match="stale attempt"):
+        await run_service.store_artifact_bytes(
+            db,
+            "run-1",
+            name="test.txt",
+            content=b"abc",
+            attempt_id="attempt-old",
+        )
+
+
+@pytest.mark.asyncio
 async def test_get_artifact_bytes_returns_content():
     db = AsyncMock()
     mapping_res = MagicMock()
@@ -277,3 +310,5 @@ async def test_get_artifact_bytes_returns_content():
     meta, content = packed
     assert meta["name"] == "report.pdf"
     assert content == b"hello world"
+
+

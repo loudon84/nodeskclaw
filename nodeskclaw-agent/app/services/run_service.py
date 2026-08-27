@@ -537,20 +537,31 @@ async def add_artifact(
     checksum_sha256: str | None = None,
     attempt_id: str | None = None,
 ) -> ArtifactDescriptor:
+    if attempt_id:
+        current = (
+            await db.execute(
+                text(f'SELECT attempt_id FROM "{SCHEMA}".runs WHERE id = :id'),
+                {"id": run_id},
+            )
+        ).scalar_one_or_none()
+        if current and current != attempt_id:
+            raise RuntimeError("stale attempt cannot write artifacts")
+
     artifact_id = str(uuid.uuid4())
     await db.execute(
         text(
             f"""
             INSERT INTO "{SCHEMA}".run_artifacts (
-                id, run_id, name, content_type, size_bytes, storage_ref, checksum_sha256
+                id, run_id, attempt_id, name, content_type, size_bytes, storage_ref, checksum_sha256
             ) VALUES (
-                :id, :run_id, :name, :content_type, :size_bytes, :storage_ref, :checksum_sha256
+                :id, :run_id, :attempt_id, :name, :content_type, :size_bytes, :storage_ref, :checksum_sha256
             )
             """
         ),
         {
             "id": artifact_id,
             "run_id": run_id,
+            "attempt_id": attempt_id,
             "name": name,
             "content_type": content_type,
             "size_bytes": size_bytes,
@@ -584,6 +595,16 @@ async def store_artifact_bytes(
     content_type: str | None = "text/plain",
     attempt_id: str | None = None,
 ) -> ArtifactDescriptor:
+    if attempt_id:
+        current = (
+            await db.execute(
+                text(f'SELECT attempt_id FROM "{SCHEMA}".runs WHERE id = :id'),
+                {"id": run_id},
+            )
+        ).scalar_one_or_none()
+        if current and current != attempt_id:
+            raise RuntimeError("stale attempt cannot write artifacts")
+
     from pathlib import Path
 
     root = Path(settings.SKILL_AGENT_ARTIFACT_DIR) / run_id
@@ -596,15 +617,16 @@ async def store_artifact_bytes(
         text(
             f"""
             INSERT INTO "{SCHEMA}".run_artifacts (
-                id, run_id, name, content_type, size_bytes, storage_ref, checksum_sha256
+                id, run_id, attempt_id, name, content_type, size_bytes, storage_ref, checksum_sha256
             ) VALUES (
-                :id, :run_id, :name, :content_type, :size_bytes, :storage_ref, :checksum_sha256
+                :id, :run_id, :attempt_id, :name, :content_type, :size_bytes, :storage_ref, :checksum_sha256
             )
             """
         ),
         {
             "id": artifact_id,
             "run_id": run_id,
+            "attempt_id": attempt_id,
             "name": name,
             "content_type": content_type,
             "size_bytes": len(content),
