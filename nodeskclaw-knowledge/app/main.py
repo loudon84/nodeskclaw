@@ -103,7 +103,6 @@ async def health_live():
 @app.get("/health/ready")
 async def health_ready():
     checks: dict[str, bool] = {}
-    details: dict = {}
     try:
         async with async_session_factory() as session:
             await session.execute(text("SELECT 1"))
@@ -117,9 +116,6 @@ async def health_ready():
     try:
         health = await adapter.check_health()
         checks["ragflow"] = health.chunk_retrieval_ok
-        details["ragflow_version"] = health.version
-        details["ragflow_capabilities"] = health.capabilities
-        details["ragflow_degraded"] = health.degraded_reasons
     finally:
         await adapter.aclose()
 
@@ -133,7 +129,6 @@ async def health_ready():
     payload = {
         "status": "ok" if ready else "not_ready",
         "checks": checks,
-        "details": details,
     }
     if not ready:
         return JSONResponse(status_code=503, content=payload)
