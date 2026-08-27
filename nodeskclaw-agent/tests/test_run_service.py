@@ -13,9 +13,9 @@ from app.services import run_service
 @pytest.mark.asyncio
 async def test_append_event_rejects_stale_attempt():
     db = AsyncMock()
-    scalar = MagicMock()
-    scalar.scalar_one_or_none.return_value = "attempt-current"
-    db.execute = AsyncMock(return_value=scalar)
+    mock_res = MagicMock()
+    mock_res.mappings.return_value.first.return_value = None
+    db.execute = AsyncMock(return_value=mock_res)
 
     with pytest.raises(RuntimeError, match="stale attempt"):
         await run_service.append_event(
@@ -137,9 +137,9 @@ async def test_waiting_approval_create_status(monkeypatch):
 @pytest.mark.asyncio
 async def test_set_status_rejects_stale_attempt():
     db = AsyncMock()
-    scalar = MagicMock()
-    scalar.scalar_one_or_none.return_value = "attempt-current"
-    db.execute = AsyncMock(return_value=scalar)
+    mock_res = MagicMock()
+    mock_res.rowcount = 0
+    db.execute = AsyncMock(return_value=mock_res)
 
     with pytest.raises(RuntimeError, match="stale attempt"):
         await run_service.set_status(
@@ -258,9 +258,9 @@ async def test_cancel_run_three_phase_transitions(monkeypatch):
 @pytest.mark.asyncio
 async def test_add_artifact_rejects_stale_attempt():
     db = AsyncMock()
-    scalar = MagicMock()
-    scalar.scalar_one_or_none.return_value = "attempt-current"
-    db.execute = AsyncMock(return_value=scalar)
+    mock_res = MagicMock()
+    mock_res.mappings.return_value.first.return_value = None
+    db.execute = AsyncMock(return_value=mock_res)
 
     with pytest.raises(RuntimeError, match="stale attempt"):
         await run_service.add_artifact(
@@ -275,9 +275,9 @@ async def test_add_artifact_rejects_stale_attempt():
 async def test_store_and_get_artifact_bytes_local_file(tmp_path, monkeypatch):
     monkeypatch.setattr("app.services.run_service.settings.SKILL_AGENT_ARTIFACT_DIR", str(tmp_path))
     db = AsyncMock()
-    scalar = MagicMock()
-    scalar.scalar_one_or_none.return_value = "att-1"
-    db.execute = AsyncMock(return_value=scalar)
+    mock_seq = MagicMock()
+    mock_seq.mappings.return_value.first.return_value = {"next_event_seq": 1}
+    db.execute = AsyncMock(return_value=mock_seq)
 
     # Store
     desc = await run_service.store_artifact_bytes(
@@ -407,6 +407,56 @@ def test_build_hybrid_step_plan_deterministic():
     assert plan3[0]["step"] == "central_hermes"
     assert plan3[1]["step"] == "edge_connector_b1"
     assert plan3[1]["role"] == "edge"
+
+
+@pytest.mark.asyncio
+async def test_mutation_gate_generation_fencing():
+    db = AsyncMock()
+    mock_res = MagicMock()
+    mock_res.rowcount = 0
+    db.execute = AsyncMock(return_value=mock_res)
+
+    with pytest.raises(RuntimeError, match="stale attempt"):
+        await run_service.set_status(
+            db,
+            "run-1",
+            "COMPLETED",
+            org_id="org-1",
+            attempt_id="att-1",
+            generation=1,
+        )
+
+    mock_seq = MagicMock()
+    mock_seq.mappings.return_value.first.return_value = None
+    db.execute = AsyncMock(return_value=mock_seq)
+
+    with pytest.raises(RuntimeError, match="stale attempt or invalid generation"):
+        await run_service.append_event(
+            db,
+            "run-1",
+            "run.progress",
+            {"step": 1},
+            org_id="org-1",
+            attempt_id="att-1",
+            generation=1,
+        )
+
+
+@pytest.mark.asyncio
+async def test_terminal_status_cannot_be_overwritten():
+    db = AsyncMock()
+    mock_res = MagicMock()
+    mock_res.rowcount = 0
+    db.execute = AsyncMock(return_value=mock_res)
+
+    # When expected_status or terminal CAS fails to match, returns False if no attempt_id
+    success = await run_service.set_status(
+        db,
+        "run-1",
+        "COMPLETED",
+        org_id="org-1",
+    )
+    assert success is False
 
 
 

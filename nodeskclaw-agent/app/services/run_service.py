@@ -229,20 +229,12 @@ async def append_event(
     event_type: str,
     payload: dict[str, Any] | None = None,
     *,
+    org_id: str | None = None,
     attempt_id: str | None = None,
+    generation: int | None = None,
     source: str = "agent",
     source_event_id: str | None = None,
 ) -> RunEventView:
-    if attempt_id:
-        current = (
-            await db.execute(
-                text(f'SELECT attempt_id FROM "{SCHEMA}".runs WHERE id = :id'),
-                {"id": run_id},
-            )
-        ).scalar_one_or_none()
-        if current and current != attempt_id:
-            raise RuntimeError("stale attempt cannot write events")
-
     payload = payload or {}
     now = _utcnow()
 
@@ -280,7 +272,20 @@ async def append_event(
 
     event_id = str(uuid.uuid4())
 
-    # Per-run atomic event sequence allocator via UPDATE runs ... RETURNING next_event_seq
+    # Single-statement atomic sequence allocation and attempt/generation verification
+    conditions = ['id = :run_id']
+    params: dict[str, Any] = {"run_id": run_id, "now": now}
+    if org_id is not None:
+        conditions.append('org_id = :org_id')
+        params["org_id"] = org_id
+    if attempt_id is not None:
+        conditions.append('attempt_id = :attempt_id')
+        params["attempt_id"] = attempt_id
+    if generation is not None:
+        conditions.append('generation = :generation')
+        params["generation"] = generation
+
+    where_clause = " AND ".join(conditions)
     seq_row = (
         await db.execute(
             text(
@@ -288,15 +293,18 @@ async def append_event(
                 UPDATE "{SCHEMA}".runs
                 SET next_event_seq = COALESCE(next_event_seq, 0) + 1,
                     updated_at = :now
-                WHERE id = :run_id
+                WHERE {where_clause}
                 RETURNING next_event_seq
                 """
             ),
-            {"run_id": run_id, "now": now},
+            params,
         )
     ).mappings().first()
 
-    event_seq = seq_row["next_event_seq"] if seq_row else 1
+    if not seq_row:
+        raise RuntimeError("stale attempt or invalid generation cannot write events")
+
+    event_seq = seq_row["next_event_seq"]
 
     await db.execute(
         text(
@@ -397,20 +405,12 @@ async def set_status(
     run_id: str,
     status: str,
     *,
+    org_id: str | None = None,
     attempt_id: str | None = None,
-    expected_status: str | list[str] | None = None,
+    generation: int | None = None,
+    expected_status: str | list[str] | set[str] | tuple[str, ...] | None = None,
     result: dict[str, Any] | None = None,
 ) -> bool:
-    if attempt_id:
-        current = (
-            await db.execute(
-                text(f'SELECT attempt_id FROM "{SCHEMA}".runs WHERE id = :id'),
-                {"id": run_id},
-            )
-        ).scalar_one_or_none()
-        if current and current != attempt_id:
-            raise RuntimeError("stale attempt cannot update status")
-
     conditions = ['id = :id']
     params: dict[str, Any] = {
         "id": run_id,
@@ -418,9 +418,15 @@ async def set_status(
         "result": json.dumps(result) if result is not None else None,
         "updated_at": _utcnow(),
     }
+    if org_id is not None:
+        conditions.append('org_id = :org_id')
+        params["org_id"] = org_id
     if attempt_id is not None:
         conditions.append('attempt_id = :attempt_id')
         params["attempt_id"] = attempt_id
+    if generation is not None:
+        conditions.append('generation = :generation')
+        params["generation"] = generation
 
     if expected_status is not None:
         if isinstance(expected_status, str):
@@ -431,6 +437,12 @@ async def set_status(
             for i, st in enumerate(expected_status):
                 params[f"st_{i}"] = st
             conditions.append(f'status IN ({", ".join(status_params)})')
+    else:
+        # Non-terminal transitions cannot overwrite terminal status,
+        # and terminal status cannot overwrite another terminal status (terminal CAS)
+        if status in TERMINAL:
+            terminal_list = ", ".join([f"'{s}'" for s in TERMINAL])
+            conditions.append(f"status NOT IN ({terminal_list})")
 
     where_clause = " AND ".join(conditions)
     res = await db.execute(
@@ -445,8 +457,12 @@ async def set_status(
         ),
         params,
     )
-    rowcount = getattr(res, "rowcount", 1)
-    return (rowcount or 0) > 0
+    rowcount = getattr(res, "rowcount", None)
+    if rowcount is None or rowcount == 0:
+        if attempt_id is not None:
+            raise RuntimeError("stale attempt cannot update status")
+        return False
+    return True
 
 
 async def resume_run(
@@ -558,18 +574,10 @@ async def add_artifact(
     size_bytes: int | None = None,
     storage_ref: str | None = None,
     checksum_sha256: str | None = None,
+    org_id: str | None = None,
     attempt_id: str | None = None,
+    generation: int | None = None,
 ) -> ArtifactDescriptor:
-    if attempt_id:
-        current = (
-            await db.execute(
-                text(f'SELECT attempt_id FROM "{SCHEMA}".runs WHERE id = :id'),
-                {"id": run_id},
-            )
-        ).scalar_one_or_none()
-        if current and current != attempt_id:
-            raise RuntimeError("stale attempt cannot write artifacts")
-
     artifact_id = str(uuid.uuid4())
     await db.execute(
         text(
@@ -597,7 +605,9 @@ async def add_artifact(
         run_id,
         "run.artifact_ready",
         {"artifact_id": artifact_id, "name": name},
+        org_id=org_id,
         attempt_id=attempt_id,
+        generation=generation,
     )
     return ArtifactDescriptor(
         artifact_id=artifact_id,
@@ -616,18 +626,10 @@ async def store_artifact_bytes(
     name: str,
     content: bytes,
     content_type: str | None = "text/plain",
+    org_id: str | None = None,
     attempt_id: str | None = None,
+    generation: int | None = None,
 ) -> ArtifactDescriptor:
-    if attempt_id:
-        current = (
-            await db.execute(
-                text(f'SELECT attempt_id FROM "{SCHEMA}".runs WHERE id = :id'),
-                {"id": run_id},
-            )
-        ).scalar_one_or_none()
-        if current and current != attempt_id:
-            raise RuntimeError("stale attempt cannot write artifacts")
-
     from pathlib import Path
 
     root = Path(settings.SKILL_AGENT_ARTIFACT_DIR) / run_id
@@ -662,7 +664,9 @@ async def store_artifact_bytes(
         run_id,
         "run.artifact_ready",
         {"artifact_id": artifact_id, "name": name},
+        org_id=org_id,
         attempt_id=attempt_id,
+        generation=generation,
     )
     return ArtifactDescriptor(
         artifact_id=artifact_id,

@@ -163,7 +163,7 @@ class RunWorker:
                 await db.execute(
                     text(
                         f"""
-                        SELECT id, tool_name, arguments, snapshot, status
+                        SELECT id, org_id, tool_name, arguments, snapshot, status
                         FROM "{SCHEMA}".runs
                         WHERE status IN ('QUEUED', 'RESUMING')
                           AND (lease_until IS NULL OR lease_until < NOW())
@@ -239,6 +239,7 @@ class RunWorker:
             await db.commit()
             return {
                 "id": row["id"],
+                "org_id": row.get("org_id"),
                 "tool_name": row["tool_name"],
                 "arguments": row["arguments"] or {},
                 "snapshot": row["snapshot"] or {},
@@ -246,18 +247,29 @@ class RunWorker:
                 "generation": attempt_no,
             }
 
-    async def _renew_lease(self, run_id: str, attempt_id: str) -> bool:
+    async def _renew_lease(self, run_id: str, attempt_id: str, generation: int | None = None) -> bool:
         lease_until = datetime.now(timezone.utc) + timedelta(seconds=settings.SKILL_AGENT_LEASE_SECONDS)
+        conditions = [
+            'id = :id',
+            'attempt_id = :attempt_id',
+            "status IN ('PREPARING', 'RUNNING')",
+        ]
+        params: dict[str, Any] = {"id": run_id, "attempt_id": attempt_id, "lease_until": lease_until}
+        if generation is not None:
+            conditions.append('generation = :generation')
+            params["generation"] = generation
+
+        where_clause = " AND ".join(conditions)
         async with SessionLocal() as db:
             res = await db.execute(
                 text(
                     f"""
                     UPDATE "{SCHEMA}".runs
                     SET lease_until = :lease_until, updated_at = NOW()
-                    WHERE id = :id AND attempt_id = :attempt_id AND status IN ('PREPARING', 'RUNNING')
+                    WHERE {where_clause}
                     """
                 ),
-                {"id": run_id, "attempt_id": attempt_id, "lease_until": lease_until},
+                params,
             )
             if res.rowcount == 0:
                 return False
@@ -277,6 +289,8 @@ class RunWorker:
     async def _execute(self, claimed: dict) -> None:
         run_id = claimed["id"]
         attempt_id = claimed["attempt_id"]
+        generation = claimed.get("generation")
+        org_id = claimed.get("org_id")
 
         stop_renew = asyncio.Event()
 
@@ -287,9 +301,10 @@ class RunWorker:
                     await asyncio.sleep(interval)
                     if stop_renew.is_set():
                         break
-                    ok = await self._renew_lease(run_id, attempt_id)
+                    ok = await self._renew_lease(run_id, attempt_id, generation)
                     if not ok:
                         logger.warning("failed to renew lease for run_id=%s attempt_id=%s (fenced)", run_id, attempt_id)
+                        cancel_event.set()
                         break
                 except Exception:
                     logger.debug("lease renew exception", exc_info=True)
@@ -315,13 +330,23 @@ class RunWorker:
 
         async with SessionLocal() as db:
             try:
-                await run_service.set_status(db, run_id, "RUNNING", attempt_id=attempt_id)
+                await run_service.set_status(
+                    db,
+                    run_id,
+                    "RUNNING",
+                    org_id=org_id,
+                    attempt_id=attempt_id,
+                    generation=generation,
+                    expected_status=["PREPARING", "QUEUED", "RESUMING"],
+                )
                 await run_service.append_event(
                     db,
                     run_id,
                     "run.started",
                     {"status": "RUNNING", "attempt_id": attempt_id},
+                    org_id=org_id,
                     attempt_id=attempt_id,
+                    generation=generation,
                 )
                 await db.commit()
 
@@ -353,7 +378,10 @@ class RunWorker:
                             db,
                             run_id,
                             "COMPLETED",
+                            org_id=org_id,
                             attempt_id=attempt_id,
+                            generation=generation,
+                            expected_status=["RUNNING", "PREPARING", "RESUMING"],
                             result=payload,
                         )
                         await run_service.append_event(
@@ -361,7 +389,9 @@ class RunWorker:
                             run_id,
                             "run.completed",
                             payload,
+                            org_id=org_id,
                             attempt_id=attempt_id,
+                            generation=generation,
                             source=source,
                             source_event_id=source_event_id,
                         )
@@ -375,14 +405,18 @@ class RunWorker:
                             name="result.txt",
                             content=bytes(raw),
                             content_type="text/plain; charset=utf-8",
+                            org_id=org_id,
                             attempt_id=attempt_id,
+                            generation=generation,
                         )
                     elif event_type == "run.cancelled":
                         await run_service.set_status(
                             db,
                             run_id,
                             "CANCELLED",
+                            org_id=org_id,
                             attempt_id=attempt_id,
+                            generation=generation,
                             result=payload,
                         )
                         await run_service.append_event(
@@ -390,7 +424,9 @@ class RunWorker:
                             run_id,
                             "run.cancelled",
                             payload,
+                            org_id=org_id,
                             attempt_id=attempt_id,
+                            generation=generation,
                             source=source,
                             source_event_id=source_event_id,
                         )
@@ -399,7 +435,9 @@ class RunWorker:
                             db,
                             run_id,
                             "FAILED",
+                            org_id=org_id,
                             attempt_id=attempt_id,
+                            generation=generation,
                             result=payload,
                         )
                         await run_service.append_event(
@@ -407,7 +445,9 @@ class RunWorker:
                             run_id,
                             "run.failed",
                             payload,
+                            org_id=org_id,
                             attempt_id=attempt_id,
+                            generation=generation,
                             source=source,
                             source_event_id=source_event_id,
                         )
@@ -417,7 +457,9 @@ class RunWorker:
                             run_id,
                             event_type,
                             payload,
+                            org_id=org_id,
                             attempt_id=attempt_id,
+                            generation=generation,
                             source=source,
                             source_event_id=source_event_id,
                         )
@@ -436,7 +478,9 @@ class RunWorker:
                             err_db,
                             run_id,
                             "FAILED",
+                            org_id=org_id,
                             attempt_id=attempt_id,
+                            generation=generation,
                             result={"error": str(exc)[:500]},
                         )
                         await run_service.append_event(
@@ -444,7 +488,9 @@ class RunWorker:
                             run_id,
                             "run.failed",
                             {"error": str(exc)[:500]},
+                            org_id=org_id,
                             attempt_id=attempt_id,
+                            generation=generation,
                         )
                         await err_db.commit()
                     except Exception:

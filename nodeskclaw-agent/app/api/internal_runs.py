@@ -153,14 +153,35 @@ async def ingest_internal_events(
         source = str(event.get("source") or "edge")
         source_event_id = event.get("source_event_id") or event.get("event_id")
         if event_type == "run.completed":
-            await run_service.set_status(db, run_id, "COMPLETED", result=payload)
+            await run_service.set_status(
+                db,
+                run_id,
+                "COMPLETED",
+                org_id=x_exec_org_id,
+                attempt_id=run.attempt_id,
+                generation=run.generation,
+                expected_status=["RUNNING", "PREPARING", "RESUMING", "WAITING_EDGE"],
+                result=payload,
+            )
         elif event_type == "run.failed":
-            await run_service.set_status(db, run_id, "FAILED", result=payload)
+            await run_service.set_status(
+                db,
+                run_id,
+                "FAILED",
+                org_id=x_exec_org_id,
+                attempt_id=run.attempt_id,
+                generation=run.generation,
+                expected_status=["RUNNING", "PREPARING", "RESUMING", "WAITING_EDGE"],
+                result=payload,
+            )
         await run_service.append_event(
             db,
             run_id,
             event_type,
             payload,
+            org_id=x_exec_org_id,
+            attempt_id=run.attempt_id,
+            generation=run.generation,
             source=source,
             source_event_id=source_event_id,
         )
