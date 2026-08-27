@@ -13,7 +13,7 @@ approved_at:
 
 ## Baselines
 
-- Grounding Mode（校准模式）：`discover`。
+- Grounding Mode（校准模式）：`revision`。
 - Predecessor PRD（前序需求文档）：`docs_agent/prd-skill-run-conformance-and-operational-closure-v1.2.md`。
 - Architecture Baseline（架构基线）：`lat.md/architecture/architecture.md`、`lat.md/architecture/skill-agent.md`、`lat.md/decisions/skill-platform-execution.md`、`lat.md/decisions/work-expert-contract.md`。
 - Source Baseline（源码基线）：`main@6e46c295e6fb10b2808ff0728a063a7e1332158a`。
@@ -23,7 +23,7 @@ approved_at:
 
 v1.2 实施已经关闭部分基础缺口：Agent 内部 Run API（运行接口）要求组织上下文，Backend Projection Updater（投影更新器）能够消费当前 Agent 的事件、结果与 Artifact（产物）结构，事件序号改为数据库计数器，Agent CI（持续集成）、基础健康接口、指标接口、Token（令牌）轮换字段、SSRF（服务端请求伪造）地址检查和 Installation Reconciled Status（安装对齐状态）已经出现。
 
-但当前代码仍不能满足 v1.2 自身定义的发布门禁：Hybrid（混合执行）边缘步骤仍为 no-op（空操作）；通用 Resume（恢复）可以恢复 `WAITING_APPROVAL`（等待审批）；Attempt Generation（尝试代次）没有原子约束全部事实写入；Edge Delivery Generation（边缘投递代次）缺失时仍放行；Connector（连接器）地址仍可由业务参数补充；Backend 仍直接执行 Skill 文件安装；Agent 仍在启动时执行 DDL（数据定义语言）并将 Artifact 默认写入临时目录；合同制品不完整且没有不可变 Tag（标签）。
+但当前代码仍不能满足 v1.2 自身定义的发布门禁：Hybrid（混合执行）边缘步骤仍为 no-op（空操作）；通用 Resume（恢复）可以恢复 `WAITING_APPROVAL`（等待审批）；Attempt Generation（尝试代次）没有原子约束全部事实写入；Edge Delivery Generation（边缘投递代次）缺失时仍放行；Credential Broker（凭证代理）失败后仍可回退 Snapshot 内凭证；运行上下文引用没有使用前撤权复核；Connector（连接器）地址仍可由业务参数补充；Backend 仍直接执行 Skill 文件安装；Agent 仍在启动时执行 DDL（数据定义语言）并将 Artifact 默认写入临时目录；合同制品不完整且没有不可变 Tag（标签）。
 
 因此 v1.3 的目标不是新增第二套组件，而是将这些 PARTIAL（部分完成）或 CONFLICT（冲突）能力收敛到既有 Production Owner（生产负责人），并以真实数据库并发、跨服务 HTTP、进程重启、跨 Pod（容器实例）接管和故障注入证据决定是否允许上线。
 
@@ -37,9 +37,11 @@ v1.2 实施已经关闭部分基础缺口：Agent 内部 Run API（运行接口�
 4. 强制 Edge 回传绑定组织、节点、Run、Step、EdgeJob 与 Delivery Generation，缺少任何身份或代次都拒绝。
 5. 删除 Connector 运行时地址回退，并以可信发布快照、逐跳网络校验和数据库真实只读会话约束连接边界。
 6. 将 Installation 收敛为 Backend Desired State（期望态）与 Agent Actual State（实际态）的 generation reconcile loop（代次调谐循环），移除 Backend 直接生产文件操作。
-7. 完成 Agent Alembic（数据库迁移）、持久化 Artifact Storage（产物存储）、独立探针、Worker freshness（工作进程新鲜度）、指标、审计和安全启动门禁。
-8. 发布覆盖完整 Run 执行面的不可变 Skill Run Contract（技能运行合同），并让 Provider（提供方）与 Consumer（消费方）在 CI 中共同验证。
-9. 用可重复的 Release Evidence（发布证据）证明 v1.3 可以在多进程、多 Pod、重放、租约丢失和依赖故障场景下保持不变量。
+7. 关闭 Dispatch Outbox（派发发件箱）的租约提交竞争、Dead Letter（死信）重放、审计和指标缺口。
+8. 强制 Agent 只通过 Credential Lease Ref（凭证租约引用）获取短期凭证，并在使用 Session、Workspace、Attachment、Knowledge 与 Policy 引用前完成授权复核。
+9. 完成 Agent Alembic（数据库迁移）、持久化 Artifact Storage（产物存储）、独立探针、Worker freshness（工作进程新鲜度）、指标、审计和安全启动门禁。
+10. 发布覆盖完整 Run 执行面的不可变 Skill Run Contract（技能运行合同），并让 Provider（提供方）与 Consumer（消费方）在 CI 中共同验证。
+11. 用可重复的 Release Evidence（发布证据）证明 v1.3 可以在多进程、多 Pod、重放、租约丢失和依赖故障场景下保持不变量。
 
 ## Non-Goals
 
@@ -65,14 +67,20 @@ v1.2 实施已经关闭部分基础缺口：Agent 内部 Run API（运行接口�
 - `nodeskclaw-agent/app/services/run_service.py#store_artifact_bytes`
 - `nodeskclaw-agent/app/services/worker.py#build_hybrid_step_plan`
 - `nodeskclaw-agent/app/services/worker.py#RunWorker`
+- `nodeskclaw-agent/app/services/hermes_engine.py#fetch_credential_lease`
+- `nodeskclaw-agent/app/services/hermes_engine.py#execute_hermes_run`
 - `nodeskclaw-agent/app/services/connector_router.py#execute_connector_run`
 - `nodeskclaw-agent/app/services/edge_worker.py#EdgeWorker`
 - `nodeskclaw-agent/app/db.py#init_schema`
 - `nodeskclaw-agent/app/main.py#lifespan`
 - `nodeskclaw-backend/app/api/internal_edge.py#claim_edge_job`
 - `nodeskclaw-backend/app/api/internal_edge.py#post_edge_job_events`
+- `nodeskclaw-backend/app/models/operation_audit_log.py#OperationAuditLog`
 - `nodeskclaw-backend/app/services/connector/edge_node_service.py#EdgeNodeService#enqueue_edge_job`
+- `nodeskclaw-backend/app/services/hermes_skill/run_dispatch_outbox_service.py#RunDispatchOutboxService`
 - `nodeskclaw-backend/app/services/hermes_skill/run_projection_updater_service.py#RunProjectionUpdaterService`
+- `nodeskclaw-backend/app/services/hermes_skill/runtime_skill_run_service.py#RuntimeSkillRunService`
+- `nodeskclaw-backend/app/services/hermes_skill/skill_audit_logger.py#SkillAuditLogger`
 - `nodeskclaw-backend/app/services/hermes_skill/skill_installer.py#SkillInstaller`
 - `nodeskclaw-backend/contracts/skill-run/v1.0.0/manifest.json`
 - `nodeskclaw-backend/scripts/contracts.py`
@@ -83,7 +91,7 @@ v1.2 实施已经关闭部分基础缺口：Agent 内部 Run API（运行接口�
 |---|---|---|---|---|
 | Run Tenant Binding（运行租户绑定） | Agent | 内部 Run 路由要求 `X-Exec-Org-Id`，`get_run` 强制按 `run_id + org_id` 查询 | `internal_runs.py`、`run_service.py#get_run` | EXISTS / KEEP |
 | C2 Projection Contract（C2 投影合同） | Backend Projection Updater | 已按 Agent 当前 `items/result` 结构增量同步事件、结果和 Artifact，并映射超时语义 | `run_projection_updater_service.py#RunProjectionUpdaterService` | EXISTS / KEEP |
-| Dispatch Outbox（派发发件箱） | Backend | 已有事务入队、租约、重试和死信，但错误分类、租约代次提交与发布指标证据仍不完整 | `run_dispatch_outbox_service.py#RunDispatchOutboxService` | PARTIAL / MODIFY |
+| Dispatch Outbox（派发发件箱） | Backend | 已有事务入队、租约、重试和死信，并把除 408/429 外的 4xx 归为永久失败；仍缺少租约代次提交门禁、授权重放、审计和发布指标 | `run_dispatch_outbox_service.py#RunDispatchOutboxService` | PARTIAL / MODIFY |
 | Run Create Idempotency（运行创建幂等） | Agent | 已有幂等键唯一约束、请求摘要冲突和重复请求回读 | `run_service.py#create_run` | EXISTS / KEEP |
 | Event Sequence Allocation（事件序号分配） | Agent | 已用 Run 级数据库计数器替代 `MAX+1`；事件写入仍未同时绑定 Attempt Generation | `run_service.py#append_event` | PARTIAL / MODIFY |
 | Execution Mutation Fencing（执行变更隔离） | Agent | 多数路径可传 `attempt_id`，但状态、事件和 Artifact 仍使用先查后写或缺少 generation，旧 Attempt 存在竞争窗口 | `run_service.py#append_event`、`set_status`、`add_artifact` | CONFLICT / REPLACE |
@@ -92,6 +100,8 @@ v1.2 实施已经关闭部分基础缺口：Agent 内部 Run API（运行接口�
 | Edge Delivery Fencing（边缘投递隔离） | Backend Edge Queue + Agent Run SoT | generation 不匹配会拒绝，但请求缺少 generation 时仍放行，Agent 回写未原子绑定 Step 与 Attempt | `internal_edge.py#post_edge_job_events` | CONFLICT / REPLACE |
 | Cancel State Machine（取消状态机） | Agent | 已有 `CANCELLING` 和部分引擎取消信号，但 Edge/Hybrid 回执、租约丢失和终态竞争未统一进入变更门禁 | `run_service.py#cancel_run`、`worker.py#RunWorker` | PARTIAL / MODIFY |
 | Approval Decision（审批决策） | Agent，Backend 授权 | 路由已分离，但通用 Resume 仍可恢复等待审批；审批 ID 可自动生成，记录失败会被忽略 | `internal_runs.py`、`run_service.py#resume_run`、`approve_run` | CONFLICT / REPLACE |
+| Credential Lease（凭证租约） | Backend Credential Broker | Snapshot 已使用 `credential_lease_ref`，Agent 可在 Attempt 期间领取短期凭证；Broker 失败后仍回退 `credential_lease/gateway_token/api_token` | `hermes_engine.py#fetch_credential_lease`、`execute_hermes_run` | PARTIAL / MODIFY |
+| Run Context Resolution（运行上下文解析） | Backend Authorization Resolver（授权解析器）；Agent 为 Consumer（消费者） | Snapshot 可携带 Session、Workspace、Attachment、Knowledge 与 Policy 引用；Agent 未在首次使用前复核组织、版本、哈希和撤权状态 | `runtime_skill_run_service.py#RuntimeSkillRunService`、`run_service.py#create_run` | PARTIAL / MODIFY |
 | Connector Route Guard（连接器路由门禁） | Backend 发布门禁 + Agent Runtime Guard | SSRF 地址类型检查已增强，但 REST、MCP 和 DB 仍可回退到业务参数地址，重定向与 DNS 变化缺少逐跳约束 | `connector_router.py#execute_connector_run` | CONFLICT / REPLACE |
 | Database Read-only（数据库只读） | Agent | 仅以 SQL 前缀判断查询类型，没有只读角色或事务证明及资源上限 | `connector_router.py#READ_ONLY_SQL_RE` | CONFLICT / REPLACE |
 | Installation Status Projection（安装状态投影） | Backend | 已能计算 Desired/Actual 的 `reconciled_status`，Edge 可以上报 Actual | `installations_router.py#compute_reconciled_status`、`internal_edge.py` | PARTIAL / MODIFY |
@@ -99,9 +109,10 @@ v1.2 实施已经关闭部分基础缺口：Agent 内部 Run API（运行接口�
 | Agent Schema Lifecycle（Agent 结构生命周期） | Agent | 依赖已声明 Alembic，但没有迁移目录；启动仍执行 `CREATE/ALTER TABLE` | `db.py#init_schema`、`main.py#lifespan` | CONFLICT / REPLACE |
 | Artifact Persistence（产物持久化） | Agent | Artifact 描述符和哈希已存在，字节仍默认写入 `/tmp` 本地目录 | `run_service.py#store_artifact_bytes`、`config.py` | PARTIAL / MODIFY |
 | Health and Metrics（健康与指标） | Agent | 已有 `/health` 和 `/metrics`，但未分离 liveness/readiness，未检查迁移、存储、凭证代理和 Worker freshness | `main.py#health`、`main.py#metrics` | PARTIAL / MODIFY |
-| Execution Audit（执行审计） | Agent + Backend Audit Projection | 现有日志和事件不能形成结构化的授权、认领、审批、取消、路由与代次证据链 | Agent/Backend 相关服务 | MISSING / ADD |
+| Agent Execution Audit Evidence（Agent 执行审计证据） | Agent Event Log | 已有唯一执行事件事实源，但缺少覆盖授权、认领、审批、取消、路由、代次拒绝和安装调谐的稳定审计分类与脱敏约束 | `run_service.py#append_event` | PARTIAL / MODIFY |
+| Backend Operation Audit（Backend 操作审计） | Backend OperationAuditLog | 已有 append-only（仅追加）全局审计模型和 Skill 审计写入服务，但未形成 Agent 执行证据的幂等访问投影 | `operation_audit_log.py#OperationAuditLog`、`skill_audit_logger.py#SkillAuditLogger` | PARTIAL / MODIFY |
 | Internal Service Identity（内部服务身份） | Backend + Agent | 支持 current/previous Token 轮换，默认 Token 仍可用于启动，未形成生产 fail-closed（失败关闭）门禁 | Backend/Agent `config.py`、Agent `auth.py` | PARTIAL / MODIFY |
-| Skill Run Contract Package（技能运行合同包） | Backend Contract Package | `runs/*.schema.json` 未进入 Manifest 与 SHA，提交绑定不匹配当前 HEAD，缺少发布 Tag | `contracts/skill-run/v1.0.0`、`scripts/contracts.py` | CONFLICT / REPLACE |
+| Skill Run Contract Package（技能运行合同包） | Backend Contract Package | Git 中已有未完整校验的 `v1.0.0` 目录，但没有 `skill-run-contract-v1.0.0` Tag 且 Release Check 失败，因此仍是 UNRELEASED（未发布）；首次 Tag 前允许确定性重生成 | `contracts/skill-run/v1.0.0`、`scripts/contracts.py` | PARTIAL / MODIFY |
 | Cross-service Release Evidence（跨服务发布证据） | Backend + Agent CI | 现有单元测试通过，但缺少真实 HTTP、数据库竞争、跨 Pod 接管、重启重放和依赖故障门禁 | Backend/Agent CI | PARTIAL / MODIFY |
 
 ## Problem Statement
@@ -135,11 +146,15 @@ v1.3 覆盖 Backend–Agent 执行平面的原子变更门禁、Hybrid/Edge 状�
 6. Event Log（事件日志）是执行 replay（重放）的唯一事实源；同一来源事件由稳定事件 ID 幂等去重。
 7. Hybrid Orchestrator 属于 Agent；Backend 仅提供幂等 EdgeJob Transport Port，不决定 Run 最终状态。
 8. Resume 不具备审批权；Approval Decision 必须引用已存在、未过期、策略摘要匹配且绑定当前 Run/Attempt 的记录。
-9. Connector 的目标、协议、凭证引用和网络策略只能来自已发布的可信快照，业务参数不能改变连接边界。
-10. Backend Installation API 只写 Desired State；remote 与 edge Agent Reconciler 只执行属于自身 target 且 generation 最新的副作用。
-11. Agent 生产启动不得执行建表 DDL、接受默认共享 Token 或把 Artifact 默认写入临时文件系统。
-12. HermesTask C2 只保留访问和兼容投影，不重新成为执行事实源。
-13. Contract Release 必须覆盖目录内全部合同制品，并绑定 Provider、Consumer、干净提交与不可变 Tag。
+9. Agent 执行时只接受 Credential Broker 签发的当前 Attempt 短期凭证；Snapshot、Event、Artifact 元数据和审计不得保存可直接使用的凭证。
+10. Session、Workspace、Attachment、Knowledge 与 Policy 引用必须在首次使用前由 Backend 授权解析端口复核组织、版本、哈希和撤权状态。
+11. Connector 的目标、协议、凭证引用和网络策略只能来自已发布的可信快照，业务参数不能改变连接边界。
+12. Backend Installation API 只写 Desired State；remote 与 edge Agent Reconciler 只执行属于自身 target 且 generation 最新的副作用。
+13. Agent Event Log 是执行审计证据事实源；Backend OperationAuditLog 只保存控制面操作和执行证据访问投影，不建立第二执行事实源。
+14. Agent 生产启动不得执行建表 DDL、接受默认共享 Token 或把 Artifact 默认写入临时文件系统。
+15. HermesTask C2 只保留访问和兼容投影，不重新成为执行事实源。
+16. 当前 `skill-run/v1.0.0` 在正式 Tag 前属于 UNRELEASED，可确定性重生成；首次 Tag 后目录与校验和永久冻结。
+17. Contract Release 必须覆盖目录内全部合同制品，并绑定 Provider、Consumer、干净提交与不可变 Tag。
 
 ## Target End-State Inventory
 
@@ -152,10 +167,14 @@ v1.3 覆盖 Backend–Agent 执行平面的原子变更门禁、Hybrid/Edge 状�
 | Hybrid Orchestration（混合编排） | Agent | 持久化 Step Plan、单 Step Owner、幂等派发、恢复和唯一最终汇总 |
 | Edge Transport（边缘传输） | Backend Queue + Edge Worker | Delivery Generation 必填，认领、续租、回传和取消全链路隔离 |
 | Cancel / Approval（取消与审批） | Agent，Backend 授权 | 独立状态机、当前 Attempt 证据、幂等决策和冲突拒绝 |
+| Credential Lease（凭证租约） | Backend Credential Broker | Snapshot 只保存 LeaseRef；Agent 在 Attempt 期间领取短期凭证，领取失败时在副作用前 fail-closed |
+| Run Context Resolution（运行上下文解析） | Backend Authorization Resolver | Agent 在首次使用前消费授权决定并 fail-closed；引用复核组织、版本、哈希和撤权，解析结果仅在当前 Attempt 的有界 TTL 内有效 |
 | Connector Security（连接器安全） | Backend 发布门禁 + Agent Runtime Guard | 固定路由、逐跳网络校验、Edge allowlist（允许列表）、真实数据库只读和资源上限 |
 | Installation Reconcile（安装调谐） | Backend Desired + Agent Actual | remote/edge generation reconcile，Backend 无生产文件副作用 |
-| Schema / Storage / Operations（结构、存储与运维） | Agent | Alembic、持久化存储、独立探针、指标、审计和安全启动门禁 |
-| Skill Run Contract Release（技能运行合同发布） | Backend Contract Package + 双端 CI | 完整制品、Schema、Fixture、Checksum、实现提交和 Tag 可独立验证 |
+| Agent Execution Audit Evidence（Agent 执行审计证据） | Agent Event Log | 以稳定事件分类记录执行与安全决策，保持唯一执行证据事实源 |
+| Backend Operation Audit Projection（Backend 操作审计投影） | Backend OperationAuditLog | 复用现有 append-only 模型，幂等投影必要执行证据并提供授权查询 |
+| Schema / Storage / Operations（结构、存储与运维） | Agent | Alembic、持久化存储、独立探针、指标和安全启动门禁 |
+| Skill Run Contract Release（技能运行合同发布） | Backend Contract Package | 将 UNRELEASED `v1.0.0` 完整生成并首次发布；Provider/Consumer CI 只负责验证 |
 | Release Evidence（发布证据） | Backend + Agent CI | 真实跨服务、并发、重启、跨 Pod、故障注入和回滚检查全部通过 |
 
 ## Target Architecture
@@ -193,6 +212,16 @@ Agent 必须提供一个逻辑上统一的 Execution Mutation Gate，所有生�
 - 终态写入必须声明允许的前置状态；任何终态都不能被后续 Worker 或 Edge 回执覆盖。
 - 事件来源使用稳定 `source_event_id` 幂等去重；重放返回既有事实，不重复推进状态机。
 
+### Dispatch Outbox Reliability
+
+Backend Outbox Dispatcher（发件箱投递器）继续作为 Run 创建后向 Agent 派发的唯一可靠传输 Owner，不建立第二队列。
+
+- 保留现有永久 4xx 与临时 408/429、5xx、传输错误分类；未识别错误必须有稳定的可重试性决定。
+- 每次认领生成不可复用的 Lease Generation（租约代次），Delivered（已投递）、Retry（重试）和 Dead Letter 提交必须同时匹配当前 Dispatcher 与 Lease Generation。
+- 过期 Dispatcher 的提交零行生效，不能覆盖新租约的投递结果。
+- Dead Letter 重放必须经过 Backend 授权，复用原 `dispatch_id` 与 Run 创建幂等语义，并记录 Actor、原因和结果。
+- 队列深度、投递延迟、错误分类、重试、租约接管、死信和重放结果进入指标与 Backend Operation Audit。
+
 ### Hybrid and Edge State Machine
 
 Agent 持久化不可变 Step Plan，每个 Step 包含稳定 Step ID、Owner Role（负责人角色）、依赖关系、状态、Attempt Generation 和必要的 Edge Delivery 引用。
@@ -214,6 +243,17 @@ Cancel、Resume 和 Approval 是三个独立操作：
 - Approval Decision 必须包含已有 Approval ID、Actor（操作主体）、决策、策略摘要、有效期和当前 Attempt 身份。
 - Approval 记录必须先持久化成功，状态机才可推进；重复相同决策幂等返回，冲突决策明确拒绝。
 - 策略变化、记录过期、Attempt 变化或组织不匹配时，审批不能恢复执行。
+
+### Credential and Run Context Resolution
+
+Backend Credential Broker 是短期执行凭证的唯一签发 Owner；Backend 授权解析端口是运行上下文引用的唯一授权判定 Owner。Agent 只在当前 Attempt 内消费解析结果。
+
+- Snapshot 只保存 `credential_lease_ref` 与不可变 Context Ref（上下文引用），不得保存 `credential_lease`、`gateway_token`、`api_token` 或等价可用凭证。
+- Agent 在产生外部副作用前按组织、Run、Attempt 和 scope（权限范围）领取短期凭证；签发失败、引用缺失或 scope 不匹配时 fail-closed。
+- Session、Workspace、Attachment、Knowledge 与 Policy 引用在首次使用前批量复核组织、可见性、版本、内容哈希和撤权状态。
+- 解析结果只在当前 Attempt 和明确 TTL（有效期）内使用；Attempt 变化或 TTL 到期后必须重新解析。
+- 临时 URL、Token、解密内容和授权响应正文不得回写 Snapshot、Event、Artifact 元数据或审计正文。
+- 任一必要引用失效时，Run 在执行副作用前以稳定失败分类结束，并产生脱敏审计证据。
 
 ### Connector Security Boundary
 
@@ -246,18 +286,21 @@ Agent 生产就绪必须同时覆盖 Schema（数据库结构）、Storage（存
 - Artifact 字节通过持久化 Storage Port 保存；生产配置不得使用临时目录，元数据保存稳定对象引用与校验和。
 - liveness（存活探针）只表示进程存活；readiness（就绪探针）验证数据库、迁移版本、Artifact Storage、Credential Broker（凭证代理）和 Worker loop freshness。
 - 指标至少覆盖队列深度、认领、租约丢失、Attempt 代次冲突、Step 延迟、Edge Spool（边缘缓冲）、审批等待、取消、安装调谐、Artifact 和依赖健康。
-- 审计记录组织、Run、Attempt、Step、Actor、决策、路由摘要、代次与结果分类，不保存 Secret（密钥）或完整敏感输入。
+- Agent Event Log 以稳定事件分类记录组织、Run、Attempt、Step、Actor、决策、路由摘要、代次与结果分类，作为执行审计证据事实源。
+- Backend 复用 OperationAuditLog 与 SkillAuditLogger 保存控制面操作，并按稳定来源事件 ID 幂等投影需要授权查询的执行证据；投影延迟或失败不改变 Agent 执行事实。
+- Agent 与 Backend 审计正文都不得保存 Secret（密钥）、临时 URL、凭证或完整敏感输入。
 - 生产环境使用默认 Token、空 Token 或不可用持久化存储时 readiness 失败，并拒绝接收新 Run。
 
 ### Contract Release and Evidence
 
-Skill Run Contract Package 必须覆盖 Backend 与 Agent 实际交换的完整结构：
+当前 `contracts/skill-run/v1.0.0` 因缺少正式 Tag 且 Release Check 失败，明确属于 UNRELEASED。v1.3 在不改变 `SKILL_RUN_CONTRACT_VERSION = 1.0.0` 的前提下完成首次正式发布；在 `skill-run-contract-v1.0.0` 创建前允许确定性重生成，Tag 创建后永久冻结。
 
 - Manifest 与 SHA256SUMS 纳入目录内全部 Run、Execution Snapshot、Event、Result、Artifact、Attempt、Approval、Edge Delivery 和错误语义制品。
 - Provider 与 Consumer 使用同一 Fixture（样例）验证，不允许各自维护形状不同的 mock（模拟数据）。
 - 合同生成与检查具有确定性；同一输入重复生成不产生无意义差异。
 - Release Check 验证工作树干净、Manifest 提交匹配、双端测试通过且 Tag 指向同一提交。
-- 已发布合同不可原地改写；兼容扩展进入新的合同版本。
+- Backend Contract Package 是合同制品的唯一 Owner；Provider 与 Consumer CI 是验证者，不拥有或生成平行合同。
+- `skill-run-contract-v1.0.0` 创建后目录、Manifest 和 SHA256SUMS 不可原地改写；后续兼容扩展进入新的合同版本。
 
 ## Observable Behaviour
 
@@ -265,6 +308,9 @@ Skill Run Contract Package 必须覆盖 Backend 与 Agent 实际交换的完整�
 - Hybrid Run 在 central 阶段完成后保持运行态，Edge Step 可被观察、取消、重放和恢复，全部必需 Step 完成后才产生 Run 终态。
 - 对等待审批的 Run 调用通用 Resume 返回明确拒绝，不生成排队事件。
 - 审批记录写入失败、过期或策略不匹配时，Run 保持等待审批。
+- Outbox 旧租约提交不能覆盖新 Dispatcher 的投递结果；授权重放返回原 Run，不重复创建。
+- Credential Broker 或上下文授权解析失败时，Run 在调用引擎或 Connector 前失败，不使用 Snapshot 回退凭证。
+- 被撤权或哈希变化的 Session、Workspace、Attachment、Knowledge 与 Policy 引用不能进入执行输入。
 - Edge 回传缺少或携带过期 Delivery Generation 时明确拒绝，不推进 Step、Run 或投影。
 - Connector 配置缺少固定目标时执行失败；业务参数即使包含地址也不能改变请求目标。
 - Installation API 返回 Desired 已接受；Actual 与 reconciled 状态由 Agent 调谐异步推进。
@@ -283,6 +329,10 @@ Skill Run Contract Package 必须覆盖 Backend 与 Agent 实际交换的完整�
 | Hybrid 派发超时 | 保持可恢复非终态，按相同 Step 幂等重试 |
 | 取消无法确认外部副作用 | 保留未知副作用证据，不伪造 `CANCELLED` 成功 |
 | Approval 记录失败或冲突 | Run 保持等待审批，返回明确冲突或依赖错误 |
+| Outbox Lease Generation 过期 | 提交零行生效；新 Dispatcher 的状态保持不变 |
+| Dead Letter 未授权重放 | 拒绝且不改变 Outbox 或 Run；记录访问审计 |
+| Credential Broker 不可用或拒绝 | 在外部副作用前失败，不读取 Snapshot 中的旧凭证 |
+| Context Ref 过期、撤权或哈希不匹配 | 在外部副作用前以稳定分类失败，解析内容不持久化 |
 | Connector 目标缺失、解析变化或越界 | 执行前或重定向前拒绝，生成脱敏审计 |
 | DB 只读约束无法建立 | 拒绝执行，不能降级为 SQL 前缀检查 |
 | Installation generation 过期 | 不执行或不提交 Actual，重新读取最新 Desired |
@@ -296,7 +346,7 @@ Skill Run Contract Package 必须覆盖 Backend 与 Agent 实际交换的完整�
 |---|---|---|---|
 | Run Tenant Binding | KEEP | Agent | 保持当前强制组织上下文 |
 | C2 Projection Contract | KEEP | Backend Projection Updater | 保持现有真实结构与增量游标 |
-| Dispatch Outbox | MODIFY | Backend | 增加错误分类、租约 fencing、指标与可审计重放 |
+| Dispatch Outbox | MODIFY | Backend | 保留现有错误分类，增加租约 fencing、指标与可审计重放 |
 | Run Create Idempotency | KEEP | Agent | 不建立第二幂等 Owner |
 | Event Sequence Allocation | MODIFY | Agent | 保留原子计数器并纳入 Generation 门禁 |
 | Execution Mutation Fencing | REPLACE | Agent | 用统一原子门禁替换先查后写和无代次写入 |
@@ -304,6 +354,8 @@ Skill Run Contract Package 必须覆盖 Backend 与 Agent 实际交换的完整�
 | Edge Delivery Fencing | REPLACE | Backend Edge Queue + Agent Run SoT | 强制完整身份和 Generation，不允许缺失放行 |
 | Cancel State Machine | MODIFY | Agent | 补齐 central/edge 取消确认和终态竞争 |
 | Approval Decision | REPLACE | Agent，Backend 授权 | 移除 Resume 审批能力和默认审批 ID |
+| Credential Lease | MODIFY | Backend Credential Broker | 保留 LeaseRef 与 Attempt 时签发，移除 Snapshot 凭证回退并补 fail-closed 语义 |
+| Run Context Resolution | MODIFY | Backend Authorization Resolver | 扩展既有 Snapshot 引用；Agent 在首次使用前消费授权决定并复核组织、版本、哈希和撤权 |
 | Connector Route Guard | REPLACE | Backend 发布门禁 + Agent Runtime Guard | 删除业务参数地址回退，增加逐跳检查 |
 | Database Read-only | REPLACE | Agent | 用数据库会话级约束替代仅前缀判断 |
 | Installation Status Projection | MODIFY | Backend | 保留 Desired/Actual 与 reconciled 展示 |
@@ -311,9 +363,10 @@ Skill Run Contract Package 必须覆盖 Backend 与 Agent 实际交换的完整�
 | Agent Schema Lifecycle | REPLACE | Agent Alembic | 移除启动 DDL，建立版本化迁移链 |
 | Artifact Persistence | MODIFY | Agent | 复用描述符，字节切换到持久化 Storage Port |
 | Health and Metrics | MODIFY | Agent | 分离探针并补齐生产依赖与指标 |
-| Execution Audit | ADD | Agent + Backend Audit Projection | 在既有事实源上增加结构化审计，不新增执行 Owner |
+| Agent Execution Audit Evidence | MODIFY | Agent Event Log | 扩展现有执行事件分类与脱敏约束，不新增审计事实源 |
+| Backend Operation Audit | MODIFY | Backend OperationAuditLog | 复用现有 append-only 模型与 SkillAuditLogger，增加幂等执行证据投影 |
 | Internal Service Identity | MODIFY | Backend + Agent | 保持双 Token 轮换并增加生产启动门禁 |
-| Skill Run Contract Package | REPLACE | Backend Contract Package + 双端 CI | 生成完整不可变合同并发布 Tag |
+| Skill Run Contract Package | MODIFY | Backend Contract Package | 完整重生成 UNRELEASED `v1.0.0` 并创建首次不可变 Tag；双端 CI 只验证 |
 | Cross-service Release Evidence | MODIFY | Backend + Agent CI | 从单元样例扩展为真实跨服务与故障验证 |
 
 ## Replacement / Removal Matrix
@@ -323,12 +376,12 @@ Skill Run Contract Package 必须覆盖 Backend 与 Agent 实际交换的完整�
 | 执行事实先查 Attempt 后无条件写入 | Agent Execution Mutation Gate | 所有生产写路径接入门禁，静态检查和竞争测试证明无绕过 |
 | Edge generation 缺失时放行 | 强制 Edge Delivery Envelope（边缘投递信封） | 缺失字段与过期字段统一拒绝，旧接口样例只保留为负向测试 |
 | Resume 恢复 `WAITING_APPROVAL` | 独立 Approval Decision 状态机 | Resume 对审批等待永久拒绝，默认 Approval ID 行为移除 |
+| Snapshot 内 `credential_lease/gateway_token/api_token` 回退 | Attempt 时 Credential Lease | 删除全部可用凭证回退，Broker 失败时在副作用前失败 |
 | Connector 从业务参数读取 URL/DB URL | 可信发布快照固定路由 | 删除全部地址回退；历史输入只保留为拒绝 Fixture |
 | SQL 前缀作为只读证明 | 数据库只读身份或事务与资源门禁 | 前缀检查不再单独授权执行 |
 | Backend 直接安装和清理文件 | Backend Desired + Agent Reconciler | v1.3 GA（正式发布）前生产调用链无 Backend 文件副作用 |
 | Agent 启动时执行 DDL | Alembic 迁移链 | 生产 lifespan 不调用建表或补列逻辑 |
 | 生产 Artifact 默认写 `/tmp` | 持久化 Artifact Storage Port | 生产配置无临时目录回退；本地模式仅用于显式开发环境 |
-| 不完整合同目录与开发检查 | 完整 Contract Release Gate | 新版本制品包含全部 Schema/Fixture/Checksum/Commit/Tag |
 
 ## Compatibility Contract
 
@@ -350,7 +403,7 @@ Skill Run Contract Package 必须覆盖 Backend 与 Agent 实际交换的完整�
 
 ### Slice 1 — Mutation and State Correctness
 
-先建立统一 Execution Mutation Gate，并把状态、事件、结果、Artifact、Cancel 和 Approval 写入全部接入。完成终态保护、事件幂等和旧 Attempt 隔离后，才允许继续扩展 Hybrid 执行。
+先建立统一 Execution Mutation Gate，并把状态、事件、结果、Artifact、Cancel 和 Approval 写入全部接入；同时补齐 Outbox Lease Generation 与过期提交隔离。完成终态保护、事件幂等、旧 Attempt 和旧 Dispatcher 隔离后，才允许继续扩展 Hybrid 执行。
 
 ### Slice 2 — Hybrid and Edge Closure
 
@@ -358,7 +411,7 @@ Skill Run Contract Package 必须覆盖 Backend 与 Agent 实际交换的完整�
 
 ### Slice 3 — Connector and Installation Boundaries
 
-删除 Connector 地址回退，建立逐跳网络与数据库只读门禁；同时启用 Installation Desired/Actual Reconciler，并移除 Backend 生产文件副作用。
+删除 Snapshot 凭证回退，建立 Run Context 使用前复核；删除 Connector 地址回退，建立逐跳网络与数据库只读门禁；同时启用 Installation Desired/Actual Reconciler，并移除 Backend 生产文件副作用。
 
 ### Slice 4 — Agent Operational Readiness
 
@@ -428,28 +481,53 @@ Skill Run Contract Package 必须覆盖 Backend 与 Agent 实际交换的完整�
 39. 结构化审计覆盖授权、认领、路由、审批、取消、代次拒绝、Installation 和最终结果，且不记录 Secret 或完整敏感输入。
 40. current/previous Token 轮换期间双端可连续通信；撤销旧 Token 后旧凭证立即失败。
 
+### Dispatch, Credential, Context and Audit Closure
+
+41. Outbox 保留永久 4xx 与临时 408/429、5xx、传输错误分类，稳定决定重试或 Dead Letter，不无限重试合同错误。
+42. 每次 Outbox 认领生成 Lease Generation；Delivered、Retry 和 Dead Letter 提交同时匹配 Dispatcher 与 Generation。
+43. Outbox 租约被接管后，旧 Dispatcher 的提交零行生效，不能覆盖新租约状态。
+44. Dead Letter 重放必须经过 Backend 授权，复用原 `dispatch_id` 并记录 Actor、原因和结果；重复重放不重复创建 Run。
+45. Outbox 指标覆盖队列深度、投递延迟、错误分类、重试、租约接管、死信和重放结果。
+46. Snapshot 只保存 `credential_lease_ref`；`credential_lease`、`gateway_token`、`api_token` 和等价可用凭证不进入 Snapshot、Event、Artifact 元数据或审计。
+47. Credential Broker 不可用、拒绝、scope 不匹配或返回过期凭证时，Run 在调用引擎或 Connector 前失败，不使用持久化回退。
+48. Session、Workspace、Attachment、Knowledge 和 Policy 引用在首次使用前完成组织、可见性、版本、内容哈希和撤权复核。
+49. Context 解析结果只在当前 Attempt 与有界 TTL 内使用；Attempt 变化或 TTL 到期后重新解析，临时 URL、Token 和解密内容不持久化。
+50. Agent Event Log 记录稳定的执行审计分类；Backend OperationAuditLog 按来源事件 ID 幂等投影必要证据，重放不产生重复审计记录。
+
 ### Contract and Release Evidence
 
-41. Contract Manifest 与 SHA256SUMS 覆盖发布目录内全部受支持制品，包含 Run、Snapshot、Event、Result、Artifact、Attempt、Approval 和 Edge Delivery。
-42. Provider 与 Consumer 以同一合同 Fixture 验证真实 HTTP 请求和响应，不使用形状不同的专用 mock。
-43. Contract Release Check 在 Manifest 提交不匹配、工作树不干净、制品缺失、Checksum 不符或 Tag 缺失时失败。
-44. 正式合同 Tag 指向同时包含匹配 Backend、Agent 与合同制品的提交，已发布目录不可原地改写。
-45. Agent 全量测试、Backend 相关全量测试、合同检查和 `lat check` 全部通过且没有未处理 Runtime Warning（运行时警告）。
-46. 故障注入覆盖数据库短暂不可用、存储不可用、Credential Broker 不可用、Worker 崩溃、Edge 断线、租约丢失和重放。
-47. 发布证据包含至少两个 Agent Pod 的认领竞争和接管验证，以及 Edge Worker 重启后的 Spool 重放验证。
-48. 第 1–47 条全部通过后，v1.3 才可标记为生产就绪；任何豁免必须阻止 Release Tag 创建。
+51. `contracts/skill-run/v1.0.0` 在正式 Tag 前被识别为 UNRELEASED，并由 Backend Contract Package 确定性重生成。
+52. Contract Manifest 与 SHA256SUMS 覆盖发布目录内全部受支持制品，包含 Run、Snapshot、Event、Result、Artifact、Attempt、Approval 和 Edge Delivery。
+53. Provider 与 Consumer 以同一合同 Fixture 验证真实 HTTP 请求和响应，不使用形状不同的专用 mock。
+54. Contract Release Check 在 Manifest 提交不匹配、工作树不干净、制品缺失、Checksum 不符或 Tag 缺失时失败。
+55. `skill-run-contract-v1.0.0` 指向同时包含匹配 Backend、Agent 与合同制品的提交；Tag 创建后 `v1.0.0` 目录与校验和不可原地改写。
+56. Agent 全量测试、Backend 相关全量测试、合同检查和 `lat check` 全部通过且没有未处理 Runtime Warning（运行时警告）。
+57. 故障注入覆盖数据库短暂不可用、存储不可用、Credential Broker 不可用、Context 撤权、Worker 崩溃、Edge 断线、租约丢失和重放。
+58. 发布证据包含至少两个 Agent Pod 的认领竞争和接管验证，以及 Edge Worker 重启后的 Spool 重放验证。
+59. 第 1–58 条全部通过后，v1.3 才可标记为生产就绪；任何豁免必须阻止 `skill-run-contract-v1.0.0` 创建。
 
 ## Release Gates
 
 发布门禁必须按以下顺序全部通过：
 
-1. Mutation Gate（变更门禁）：Attempt/Generation、事件幂等、终态竞争和租约接管通过。
+1. Dispatch and Mutation Gate（派发与变更门禁）：Outbox Lease Generation、Attempt/Generation、事件幂等、终态竞争和租约接管通过。
 2. Workflow Gate（工作流门禁）：Hybrid、Edge、Cancel 和 Approval 的真实状态机与恢复通过。
-3. Security Gate（安全门禁）：固定 Connector 路由、逐跳网络检查、数据库只读、Secret 脱敏和 Token 启动门禁通过。
+3. Security Gate（安全门禁）：Credential Lease、Context 使用前复核、固定 Connector 路由、逐跳网络检查、数据库只读、Secret 脱敏和 Token 启动门禁通过。
 4. Reconcile Gate（调谐门禁）：remote/edge Installation Desired/Actual generation 对账和旧 Executor 移除通过。
-5. Operational Gate（运维门禁）：Alembic、持久化 Artifact、独立探针、指标、审计和依赖故障通过。
+5. Operational Gate（运维门禁）：Alembic、持久化 Artifact、独立探针、指标、Agent 执行证据、Backend 审计投影和依赖故障通过。
 6. Integration Gate（集成门禁）：真实 Backend–Agent HTTP、PostgreSQL 并发、跨 Pod 接管、Edge 断线重放和 C2 最终一致性通过。
-7. Contract Release Gate（合同发布门禁）：完整制品、双端验证、干净提交、Checksum、Release Check、不可变 Tag 和 `lat check` 通过。
+7. Contract Release Gate（合同发布门禁）：UNRELEASED `v1.0.0` 完整制品、双端验证、干净提交、Checksum、Release Check、首次不可变 Tag 和 `lat check` 通过。
+
+## Grounding Closure Table
+
+本表仅记录 initial Review（初次审查）的 4 个 MAJOR Finding 及本轮 revision（修订）闭环，不扩展新的审查范围。
+
+| Finding | Reproduced | Resolution | Evidence | Status |
+|---|---|---|---|---|
+| F-01 Credential Lease 与 Run Context Resolution 遗漏 | YES | 恢复两个 PARTIAL/MODIFY 能力，冻结 fail-closed、使用前复核、TTL 与禁止持久化凭证语义，并增加 AC 46–49 | Current/Target Inventory、Credential and Run Context Resolution、AC 46–49 | CLOSED |
+| F-02 Dispatch Outbox 无验收且当前描述不准确 | YES | 保留现有永久/临时错误分类事实，补 Lease Generation、过期提交隔离、授权重放、审计、指标与 AC 41–45 | Dispatch Outbox Reliability、AC 41–45 | CLOSED |
+| F-03 Execution Audit False MISSING / ADD | YES | 拆分为 Agent Event Log 执行证据与 Backend OperationAuditLog 投影，均为 MODIFY，并明确唯一事实源 | Current/Target Inventory、Architecture Invariant 13、AC 50 | CLOSED |
+| F-04 合同版本与不可变边界未冻结 | YES | 明确当前 `v1.0.0` 为 UNRELEASED，首次 Tag 前可确定性重生成，`skill-run-contract-v1.0.0` 后永久冻结；Backend Contract Package 为唯一 Owner | Contract Release and Evidence、AC 51–59 | CLOSED |
 
 ## Risks and Mitigations
 
