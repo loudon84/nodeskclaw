@@ -5,7 +5,7 @@ from app.services.mcp_skill_gateway.handler import dispatch_authenticated
 
 
 @pytest.mark.asyncio
-async def test_tools_call_success_writes_audit():
+async def test_tools_call_removed_ops_tool_is_rejected():
     user = MagicMock()
     user.id = "user-1"
     org = MagicMock()
@@ -22,21 +22,11 @@ async def test_tools_call_success_writes_audit():
     db = AsyncMock()
 
     with patch(
-        "app.services.mcp_skill_gateway.handler.HermesDockerToolProvider",
-    ) as provider_cls, patch(
         "app.services.mcp_skill_gateway.handler.log_mcp_call",
         new=AsyncMock(),
     ) as log_mock:
-        provider = AsyncMock()
-        provider.call_tool.return_value = {"instances": [{"instance_id": "inst-1"}]}
-        provider_cls.return_value = provider
+        result = await dispatch_authenticated(body, (user, org), db)
 
-        await dispatch_authenticated(body, (user, org), db)
-
-    log_mock.assert_awaited_once()
-    kwargs = log_mock.await_args.kwargs
-    assert kwargs["status"] == "success"
-    assert kwargs["tool_name"] == "hermes.instances.list"
-    assert kwargs["permission"] == "read"
-    assert kwargs["risk_level"] == "low"
-    assert kwargs["result_summary"] == {"instances_count": 1}
+    assert "error" in result
+    assert "not available on employee MCP catalog" in result["error"]["message"]
+    log_mock.assert_not_awaited()

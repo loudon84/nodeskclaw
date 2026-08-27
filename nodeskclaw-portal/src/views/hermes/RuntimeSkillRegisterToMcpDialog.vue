@@ -127,6 +127,10 @@ async function submit() {
         </div>
       </div>
 
+      <div class="rounded-lg border border-border bg-muted/30 p-3 text-sm text-muted-foreground">
+        {{ t('hermes.profiles.skills.orgMcpRegister.hint') }}
+      </div>
+
       <div class="rounded-lg border border-border p-3 space-y-2">
         <label class="flex items-center gap-2 text-sm">
           <Checkbox v-model:checked="grantOrg" />

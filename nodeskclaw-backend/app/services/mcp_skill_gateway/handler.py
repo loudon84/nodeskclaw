@@ -1,7 +1,6 @@
 import json
 import logging
 import time
-from types import SimpleNamespace
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,14 +8,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.exceptions import BadRequestError, ForbiddenError, NotFoundError
 from app.services.hermes_skill.mcp_tool_mapper import McpToolMapper
-from app.services.mcp_skill_gateway.builtin_task_tool_executor import BuiltinTaskToolExecutor
-from app.services.mcp_skill_gateway.builtin_task_tools import (
-    is_builtin_task_tool,
-    list_builtin_task_tool_descriptors,
-)
+from app.services.mcp_skill_gateway.builtin_task_tools import is_builtin_task_tool
 from app.services.mcp_skill_gateway.mcp_task_dedup_service import build_mcp_task_dedup_key
 from app.services.mcp_skill_gateway.mcp_execution_mode import strip_mcp_control_args
-from app.services.mcp_skill_gateway.approval_service import check_tool_grant, get_grant_annotation
+from app.services.mcp_skill_gateway.approval_service import check_tool_grant
 from app.services.mcp_skill_gateway.audit_service import log_mcp_call
 from app.services.mcp_skill_gateway.auth import McpAuthContext, McpAuthFailure, resolve_mcp_user
 from app.services.mcp_skill_gateway.constants import MCP_PROTOCOL_VERSION, MCP_SERVER_NAME
@@ -30,22 +25,16 @@ from app.services.mcp_skill_gateway.errors import (
     mcp_success,
 )
 from app.services.mcp_skill_gateway.genehub_tools import (
-    GeneHubMcpToolProvider,
     extract_genehub_error_context,
     is_genehub_tool,
-    summarize_genehub_result,
 )
 from app.services.mcp_skill_gateway.hermes_docker_tools import (
-    HermesDockerToolProvider,
     extract_instance_id_from_arguments,
     is_hermes_docker_tool,
-    summarize_tool_result,
 )
 from app.services.mcp_skill_gateway.hermes_instance_resolver import resolve_instance_ref
 from app.services.mcp_skill_gateway.mcp_tool_registry import (
-    build_tool_descriptor,
     get_tool,
-    list_enabled_tools,
     resolve_approval_mode,
 )
 from app.services.hermes_skill.hermes_client_service import (
@@ -649,51 +638,24 @@ async def _handle_initialize(
     )
 
 
+_CATALOG_ADDRESSING_PARAMS = ("agent_alias", "profile", "workspace_id")
+
+
 async def _collect_tools(
     user_id: str,
     org_id: str,
     db: AsyncSession,
     *,
-    agent_alias: str | None = None,
-    profile: str | None = None,
-    workspace_id: str | None = None,
     allowed_skills: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     mapper = McpToolMapper(db)
-    skill_tools = await mapper.list_tools(
-        org_id,
-        user_id=user_id,
-        agent_alias=agent_alias,
-        profile=profile,
-        workspace_id=workspace_id,
-    )
+    skill_tools = await mapper.list_tools(org_id, user_id=user_id)
     if allowed_skills:
         allowed_set = set(allowed_skills)
         skill_tools = [t for t in skill_tools if t.get("name") in allowed_set]
-    registry_tools: list[dict[str, Any]] = []
-    if allowed_skills is None:
-        for tool in list_enabled_tools():
-            auth_annotations = None
-            mode = resolve_approval_mode(tool)
-            if mode in ("server", "hybrid"):
-                auth_annotations = await get_grant_annotation(
-                    db,
-                    org_id=org_id,
-                    user_id=user_id,
-                    instance_id=None,
-                    tool_name=tool.name,
-                    tool=tool,
-                )
-            registry_tools.append(build_tool_descriptor(tool, auth_annotations))
     merged: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for tool in registry_tools + skill_tools:
-        name = tool.get("name")
-        if not name or name in seen:
-            continue
-        seen.add(name)
-        merged.append(tool)
-    for tool in list_builtin_task_tool_descriptors():
+    for tool in skill_tools:
         name = tool.get("name")
         if not name or name in seen:
             continue
@@ -714,27 +676,33 @@ async def _handle_tools_list(
 ) -> dict:
     try:
         params = params or {}
-        normalized = _normalize_headers(request_headers)
-        agent_alias = params.get("agent_alias")
-        profile = params.get("profile")
-        workspace_id = params.get("workspace_id")
-        if not profile and auth_ctx and auth_ctx.profile:
-            profile = auth_ctx.profile
-        if not profile:
-            profile = normalized.get(HEADER_HERMES_PROFILE.lower())
-        if not workspace_id and auth_ctx and auth_ctx.workspace_id:
-            workspace_id = auth_ctx.workspace_id
+        addressing = [key for key in _CATALOG_ADDRESSING_PARAMS if params.get(key)]
+        if addressing:
+            raise BadRequestError(
+                "员工 MCP Catalog 不接受运行时寻址参数，请直接选择已发布 Skill",
+                "errors.mcp.catalog_addressing_not_allowed",
+                details={
+                    "rejected_params": addressing,
+                    "hint": "Do not pass agent_alias, profile, or workspace_id to tools/list",
+                },
+            )
         allowed_skills = auth_ctx.allowed_skills if auth_ctx and auth_ctx.auth_type == "mcp_client_token" else None
         tools = await _collect_tools(
             user_id,
             org_id,
             db,
-            agent_alias=agent_alias,
-            profile=profile,
-            workspace_id=workspace_id,
             allowed_skills=allowed_skills,
         )
         return mcp_success(jsonrpc_id, {"tools": tools})
+    except BadRequestError as exc:
+        _log_mcp_error(
+            exc.message_key or MCP_INVALID_ARGUMENTS,
+            "tools/list",
+            user_id=user_id,
+            org_id=org_id,
+            reason=exc.message,
+        )
+        return map_app_error(jsonrpc_id, exc.message_key, exc.message, extra_data=_extra_error_data(exc, params or {}))
     except ForbiddenError as exc:
         _log_mcp_error(
             exc.message_key or MCP_INTERNAL_ERROR,
@@ -791,120 +759,24 @@ async def _handle_tools_call(
     if not isinstance(arguments, dict):
         arguments = {}
 
+    if (
+        is_builtin_task_tool(tool_name)
+        or _is_genehub_gateway_tool(tool_name)
+        or _is_hermes_gateway_tool(tool_name)
+    ):
+        return mcp_error_v2(
+            jsonrpc_id,
+            MCP_METHOD_NOT_FOUND,
+            "Tool not available on employee MCP catalog; use Portal REST or /api/v1/runs",
+        )
+
     if auth_ctx and auth_ctx.auth_type == "mcp_client_token":
-        if _is_genehub_gateway_tool(tool_name) or _is_hermes_gateway_tool(tool_name):
+        if auth_ctx.allowed_skills and tool_name not in set(auth_ctx.allowed_skills):
             return mcp_error_v2(jsonrpc_id, MCP_INTERNAL_ERROR, "Tool not allowed for MCP client token")
-        if not is_builtin_task_tool(tool_name):
-            if auth_ctx.allowed_skills and tool_name not in set(auth_ctx.allowed_skills):
-                return mcp_error_v2(jsonrpc_id, MCP_INTERNAL_ERROR, "Tool not allowed for MCP client token")
 
     tool_meta = get_tool(tool_name)
     client_name = get_client_name(user_id, org_id)
     started = time.perf_counter()
-
-    if is_builtin_task_tool(tool_name):
-        effective_ctx = auth_ctx or McpAuthContext(
-            user=user,
-            org=SimpleNamespace(id=org_id),
-            auth_type="user_jwt",
-        )
-        try:
-            result = await BuiltinTaskToolExecutor(db).call(
-                tool_name=tool_name,
-                arguments=arguments,
-                auth_ctx=effective_ctx,
-            )
-            duration_ms = int((time.perf_counter() - started) * 1000)
-            await log_mcp_call(
-                db,
-                org_id=org_id,
-                user_id=user_id,
-                tool_name=tool_name,
-                status="success",
-                duration_ms=duration_ms,
-                arguments=arguments,
-                result_summary={"tool": tool_name},
-                client_name=client_name,
-            )
-            return mcp_success(jsonrpc_id, result)
-        except (NotFoundError, BadRequestError, ForbiddenError) as exc:
-            error_response = map_app_error(
-                jsonrpc_id,
-                exc.message_key,
-                exc.message,
-                extra_data=_extra_error_data(exc, arguments),
-            )
-            duration_ms = int((time.perf_counter() - started) * 1000)
-            error_data = error_response.get("error", {}).get("data", {})
-            await log_mcp_call(
-                db,
-                org_id=org_id,
-                user_id=user_id,
-                tool_name=tool_name,
-                status="failed",
-                duration_ms=duration_ms,
-                arguments=arguments,
-                error_code=error_data.get("errorCode"),
-                error_message=exc.message,
-                client_name=client_name,
-            )
-            _log_mcp_error(
-                error_data.get("errorCode", MCP_INTERNAL_ERROR),
-                "tools/call",
-                user_id=user_id,
-                org_id=org_id,
-                reason=exc.message,
-            )
-            return error_response
-        except Exception as exc:
-            reason = str(exc)[:256]
-            duration_ms = int((time.perf_counter() - started) * 1000)
-            await log_mcp_call(
-                db,
-                org_id=org_id,
-                user_id=user_id,
-                tool_name=tool_name,
-                status="failed",
-                duration_ms=duration_ms,
-                arguments=arguments,
-                error_code=MCP_INTERNAL_ERROR,
-                error_message=reason,
-                client_name=client_name,
-            )
-            _log_mcp_error(
-                MCP_INTERNAL_ERROR,
-                "tools/call",
-                user_id=user_id,
-                org_id=org_id,
-                reason=reason,
-            )
-            return mcp_error_v2(jsonrpc_id, MCP_INTERNAL_ERROR, reason)
-
-    if _is_genehub_gateway_tool(tool_name):
-        return await _execute_gateway_tool_call(
-            jsonrpc_id=jsonrpc_id,
-            tool_name=tool_name,
-            arguments=arguments,
-            org_id=org_id,
-            user_id=user_id,
-            user=user,
-            db=db,
-            provider=GeneHubMcpToolProvider(db),
-            summarize_fn=summarize_genehub_result,
-        )
-
-    if _is_hermes_gateway_tool(tool_name):
-        return await _execute_gateway_tool_call(
-            jsonrpc_id=jsonrpc_id,
-            tool_name=tool_name,
-            arguments=arguments,
-            org_id=org_id,
-            user_id=user_id,
-            user=user,
-            db=db,
-            provider=HermesDockerToolProvider(db),
-            summarize_fn=summarize_tool_result,
-        )
 
     mapper = McpToolMapper(db)
     normalized = _normalize_headers(request_headers)

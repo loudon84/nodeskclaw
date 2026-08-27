@@ -45,7 +45,15 @@ async def test_start_builds_hermes_api_server_route_and_contract():
         "app.services.hermes_skill.runtime_skill_run_service.TaskService"
     ) as task_svc_cls, patch(
         "app.services.hermes_skill.runtime_skill_run_service.TaskEventTokenService"
-    ) as token_svc_cls:
+    ) as token_svc_cls, patch.object(
+        RuntimeSkillRunService,
+        "_resolve_release_meta",
+        AsyncMock(return_value={"skill_version": "1.0.0", "snapshot_hash": "hash-1"}),
+    ), patch.object(
+        RuntimeSkillRunService,
+        "_enrich_route_snapshot",
+        AsyncMock(return_value={"gateway_url": "http://example.com"}),
+    ):
         task_svc = AsyncMock()
         task_svc.create_task.return_value = task
         task_svc_cls.return_value = task_svc
@@ -67,9 +75,9 @@ async def test_start_builds_hermes_api_server_route_and_contract():
     assert routing_metadata["task_source"] == "org_mcp"
 
     content = result.structured_content
-    assert content["task_id"] == "task-1"
+    assert content["run_id"] == "task-1"
     assert content["event_stream"].endswith("token=sse_test")
-    assert content["result_url"] == "/api/v1/hermes/tasks/task-1/result"
+    assert content["result_url"] == "/api/v1/runs/task-1/result"
     assert content["committed"] is True
     assert "taskId" not in content
     assert "eventSseUrl" not in content
@@ -104,7 +112,15 @@ async def test_start_expert_mcp_includes_catalog_fields():
         "app.services.hermes_skill.runtime_skill_run_service.TaskService"
     ) as task_svc_cls, patch(
         "app.services.hermes_skill.runtime_skill_run_service.TaskEventTokenService"
-    ) as token_svc_cls:
+    ) as token_svc_cls, patch.object(
+        RuntimeSkillRunService,
+        "_resolve_release_meta",
+        AsyncMock(return_value={"skill_version": "1.0.0", "snapshot_hash": "hash-1"}),
+    ), patch.object(
+        RuntimeSkillRunService,
+        "_enrich_route_snapshot",
+        AsyncMock(return_value={"gateway_url": "http://example.com"}),
+    ):
         task_svc = AsyncMock()
         task_svc.create_task.return_value = task
         task_svc_cls.return_value = task_svc

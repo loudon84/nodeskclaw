@@ -2,6 +2,7 @@ from app.core.feature_gate import feature_gate
 from fastapi import APIRouter
 
 from app.api.hermes_skill.skills_router import router as skills_router
+from app.api.hermes_skill.releases_router import router as releases_router
 from app.api.hermes_skill.installations_router import router as installations_router
 from app.api.hermes_skill.collections_router import router as collections_router
 from app.api.hermes_skill.registries_router import router as registries_router
@@ -30,10 +31,13 @@ from app.api.hermes_skill.metrics_router import router as metrics_router
 from app.api.hermes_skill.client_router import router as client_router
 from app.api.hermes_skill.task_result_router import router as task_result_router
 from app.api.hermes_skill.kb_ingestion_router import router as kb_ingestion_router
+from app.api.hermes_skill.connectors_router import router as connectors_router
+from app.api.hermes_skill.edge_nodes_router import router as edge_nodes_router
 
 router = APIRouter()
 
 router.include_router(skills_router)
+router.include_router(releases_router)
 router.include_router(installations_router)
 router.include_router(collections_router)
 router.include_router(registries_router)
@@ -59,6 +63,8 @@ router.include_router(metrics_router)
 router.include_router(client_router)
 router.include_router(task_result_router)
 router.include_router(kb_ingestion_router)
+router.include_router(connectors_router)
+router.include_router(edge_nodes_router)
 
 router.include_router(artifacts_router)
 router.include_router(compat_router)

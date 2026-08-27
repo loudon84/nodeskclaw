@@ -158,6 +158,7 @@ async def init_schema() -> None:
                 """
             )
         )
+        await conn.execute(text(f'ALTER TABLE "{schema}".run_artifacts ADD COLUMN IF NOT EXISTS attempt_id VARCHAR(36)'))
         await conn.execute(
             text(
                 f'CREATE INDEX IF NOT EXISTS idx_agent_runs_status ON "{schema}".runs (status, created_at)'

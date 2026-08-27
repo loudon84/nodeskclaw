@@ -24,7 +24,7 @@ async def test_mcp_tools_call_requires_invoke_permission():
 @pytest.mark.asyncio
 async def test_non_org_member_denied():
     db = AsyncMock()
-    with patch.object(PermissionChecker, "get_user_role", return_value=None):
+    with patch.object(PermissionChecker, "get_user_role", new=AsyncMock(return_value=None)):
         result = await PermissionChecker.has_permission(db, "user-1", "org-1", "skill:view")
     assert result is False
 
@@ -46,12 +46,15 @@ async def test_list_tools_returns_installed_active_exposed():
     db.execute = AsyncMock(return_value=mock_result)
 
     mapper = McpToolMapper(db)
-    with patch.object(PermissionChecker, "has_permission", return_value=True):
+    with patch.object(PermissionChecker, "has_permission", return_value=True), \
+         patch.object(PermissionChecker, "get_user_role", AsyncMock(return_value="admin")), \
+         patch.object(mapper, "_skill_to_tool_dict", AsyncMock(return_value={"name": "my_tool", "description": "A test tool"})), \
+         patch.object(mapper, "_list_public_connector_tools", AsyncMock(return_value=[{"name": "crm_lookup", "kind": "connector"}])):
         tools = await mapper.list_tools("org-1", "user-1")
 
-    assert len(tools) >= 1
+    assert len(tools) >= 2
     assert tools[0]["name"] == "my_tool"
-    assert tools[0]["description"] == "A test tool"
+    assert tools[1]["name"] == "crm_lookup"
 
 
 @pytest.mark.asyncio

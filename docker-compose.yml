@@ -28,6 +28,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      nodeskclaw-agent:
+        condition: service_started
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -54,6 +56,9 @@ services:
       # 若管理远端 K8s 集群上的 AI 员工，必须改为 K8s Pod 可达的外部地址
       AGENT_API_BASE_URL: ${AGENT_API_BASE_URL:-http://localhost:4510/api/v1}
       AGENT_FILE_DOWNLOAD_BASE_URL: ${AGENT_FILE_DOWNLOAD_BASE_URL:-}
+      SKILL_AGENT_BASE_URL: ${SKILL_AGENT_BASE_URL:-http://nodeskclaw-agent:4520}
+      SKILL_AGENT_INTERNAL_TOKEN: ${SKILL_AGENT_INTERNAL_TOKEN:-change-me-skill-agent-token}
+      SKILL_AGENT_ENABLED: ${SKILL_AGENT_ENABLED:-true}
       UPLOAD_STORAGE_BACKEND: ${UPLOAD_STORAGE_BACKEND:-auto}
       UPLOAD_GATEWAY_PROXY_BODY_SIZE_MB: ${UPLOAD_GATEWAY_PROXY_BODY_SIZE_MB:-50}
       UPLOAD_PROXY_READ_TIMEOUT_SECONDS: ${UPLOAD_PROXY_READ_TIMEOUT_SECONDS:-300}
@@ -70,6 +75,28 @@ services:
       TZ: ${TZ:-Asia/Shanghai}
     ports:
       - "${BACKEND_PORT:-4510}:8000"
+    restart: unless-stopped
+
+  nodeskclaw-agent:
+    image: nodesk-center-cn-beijing.cr.volces.com/public/nodeskclaw-agent:${DESKCLAW_VERSION:-latest}
+    build:
+      context: .
+      dockerfile: nodeskclaw-agent/Dockerfile
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-}
+        PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://nodeskclaw:nodeskclaw@postgres:5432/nodeskclaw}
+      SKILL_AGENT_INTERNAL_TOKEN: ${SKILL_AGENT_INTERNAL_TOKEN:-change-me-skill-agent-token}
+      SKILL_AGENT_WORKER_ENABLED: ${SKILL_AGENT_WORKER_ENABLED:-true}
+      SKILL_AGENT_SCHEMA: agent
+      SKILL_AGENT_ROLE: ${SKILL_AGENT_ROLE:-central}
+      TZ: ${TZ:-Asia/Shanghai}
+    ports:
+      - "${SKILL_AGENT_PORT:-4520}:4520"
     restart: unless-stopped
 
   llm-proxy:

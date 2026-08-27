@@ -114,6 +114,9 @@ class HermesTaskWorker:
         for task in candidates:
             if len(accepted) >= settings.HERMES_TASK_WORKER_BATCH_SIZE:
                 break
+            routing = task.routing_metadata if isinstance(task.routing_metadata, dict) else {}
+            if routing.get("execution_owner") != "backend":
+                continue
             if await control.is_worker_paused(task.org_id):
                 continue
             if task.not_before and task.not_before > now:

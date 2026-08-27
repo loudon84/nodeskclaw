@@ -1,12 +1,10 @@
 ---
 work_item_id: SKILL-RUN-PRODUCTION-HARDENING
 version: 1.0.0
-status: REVIEW_REQUIRED
+status: APPROVED
 target_branch: main
-review_verdict:
-approved_at:
-grounding_mode: discover
-grounding_commit: ddd427c3caaa74ac6f05fb24cc750416aba1934d
+review_verdict: PASS
+approved_at: 2026-08-26T21:03:42+08:00
 ---
 
 # NoDeskClaw Skill Run Production Hardening PRD v1.0
@@ -15,10 +13,8 @@ grounding_commit: ddd427c3caaa74ac6f05fb24cc750416aba1934d
 
 ## Document Status
 
-本文为 `REVIEW_REQUIRED`（待独立审查）状态的工程级 PRD-DRAFT（产品需求草案），尚未获得 `APPROVED`（已批准）状态，不得直接进入实施 Plan（实施计划）。
+本文为 `APPROVED`（已批准）状态的工程级 PRD，可进入 `smc-plan-from-approved-prd`（从已批准 PRD 生成实施计划）。
 
-- Grounding Mode（源码校准模式）：`discover`（发现模式）。
-- Grounding Baseline（源码校准基线）：`main` 分支，HEAD `ddd427c3caaa74ac6f05fb24cc750416aba1934d`，并包含 2026-08-26 工作区内待提交的 Skill Platform 实现切片。
 - Parent PRD（上位产品需求）：`docs_agent/prd-skill-platform-v1.0.md`。
 - Architecture Baseline（架构基线）：`lat.md/decisions/skill-platform-execution.md`。
 
@@ -28,12 +24,13 @@ grounding_commit: ddd427c3caaa74ac6f05fb24cc750416aba1934d
 
 本 PRD 选择以下唯一目标方案：
 
-1. Backend 继续拥有 Auth/RBAC（鉴权与基于角色的访问控制）、SkillRelease（技能发布版本）、Execution Routing（执行路由）、员工 Run Projection（运行投影）和 Edge Transport Queue（边缘传输队列）。
-2. Agent 继续拥有 Run、ExecutionSnapshot（执行快照）、RunAttempt（执行尝试）、Lease（租约）、Fencing（代次隔离）、RunEvent（运行事件）、RunApproval（运行审批证据）和 Artifact（运行产物）的执行事实源。
-3. Backend 通过 Transactional Outbox（事务发件箱）在本地事务内先提交 Run Projection 与 Dispatch Command（派发命令），再异步、可重试地幂等创建 Agent Run，禁止“先创建 Agent Run、后写 Backend 投影”。
+1. Backend 继续拥有 Auth/RBAC（鉴权与基于角色的访问控制）、SkillRelease（技能发布版本）、Execution Routing（执行路由）、员工 Run Access Projection（运行访问投影）和 Edge Transport Queue（边缘传输队列）。v1.0 访问投影就是已有 `HermesTask`（兼容任务），禁止再新增第二套访问投影表。
+2. Agent 继续拥有 Run、ExecutionSnapshot（执行快照）、Attempt/Lease/Fencing（尝试、租约、代次隔离）、RunEvent（运行事件）、Approval Execution Evidence（审批执行证据）和 Artifact（运行产物）的执行事实源。
+3. Backend `RuntimeSkillRunService`（运行时技能入队服务）在本地事务内先提交 HermesTask 与 Dispatch Command（派发命令），再由同一 Owner 的 Outbox 投递幂等创建 Agent Run，禁止“先创建 Agent Run、后写 Backend 投影”。Outbox 投递器不生成 `run_id`，不另建访问投影。
 4. EdgeJob（边缘作业）仅是 Backend 拥有的传输投影，不得成为第二套 Run、Attempt、Event 或 Result（结果）事实源。
-5. Snapshot 仅保存不可变引用和策略，不保存明文 Token（令牌）、`env_file`（环境变量文件内容）或 Connector Credential（连接器凭证）。
+5. Snapshot 仅保存不可变引用和策略，不保存明文 Token（令牌）、`env_file`（环境变量文件内容）或 Connector Credential（连接器凭证）。Hermes 网关凭证由 Backend 按 Attempt 签发短期 Lease（租约）；Connector 明文仍只存在于 Agent/Edge 本地 SecretStore（密钥存储），不得被新 Broker（凭证代理）接管。
 6. 所有状态写入采用原子状态迁移与 Attempt Generation（尝试代次）校验；旧 Attempt 不得覆盖新 Attempt 或终态。
+7. `SKILL_AGENT_ENABLED`（Skill Agent 启用开关）为真时，Backend `HermesTaskWorker`（后端任务执行器）不得认领生产 Skill/Connector Run，即使 `execution_owner`（执行所有者）元数据缺失。
 
 ## Goals
 
@@ -66,6 +63,7 @@ grounding_commit: ddd427c3caaa74ac6f05fb24cc750416aba1934d
 - `nodeskclaw-backend/app/api/runs.py#stream_run_events`
 - `nodeskclaw-backend/app/services/hermes_skill/runtime_skill_run_service.py#RuntimeSkillRunService`
 - `nodeskclaw-backend/app/services/hermes_skill/mcp_tool_mapper.py#McpToolMapper`
+- `nodeskclaw-backend/app/services/hermes_skill/hermes_task_worker.py#HermesTaskWorker`
 - `nodeskclaw-backend/app/api/internal_edge.py#claim_edge_job`
 - `nodeskclaw-backend/app/api/internal_edge.py#post_edge_job_events`
 - `nodeskclaw-agent/app/api/internal_runs.py#create_internal_run`
@@ -73,31 +71,41 @@ grounding_commit: ddd427c3caaa74ac6f05fb24cc750416aba1934d
 - `nodeskclaw-agent/app/services/worker.py#RunWorker`
 - `nodeskclaw-agent/app/services/edge_worker.py#EdgeWorker`
 - `nodeskclaw-agent/app/services/connector_router.py#execute_connector_run`
-- `nodeskclaw-agent/app/services/hermes_engine.py#execute_hermes_run`
+- `nodeskclaw-agent/app/services/secret_store.py#SecretStore`
+- `nodeskclaw-agent/app/db.py#init_schema`
 
 ## Current Capability Inventory
 
 | Capability（能力） | Existing Owner（现有所有者） | Current Behaviour（当前行为） | Evidence（依据） | Result（结论） |
 |---|---|---|---|---|
-| Employee Run Authorization（员工 Run 授权） | Backend | 检查 `skill:view`（技能查看权限）和 HermesTask（兼容任务投影）；投影不存在时放行，部分子资源未复核 Agent 租户字段 | `app/api/runs.py#_authorize_run` | CONFLICT |
-| Run Enqueue（Run 入队） | Backend + Agent | Backend 先调用 Agent 创建 Run，再创建 HermesTask 投影；跨服务失败会留下孤儿 Run | `RuntimeSkillRunService#start` | CONFLICT |
-| Internal Create Idempotency（内部创建幂等） | Agent | 请求包含 `idempotency_key`（幂等键），但 Agent 未持久化唯一约束，也未返回既有 Run | `run_service.py#create_run` | PARTIAL |
-| Central Claim（中心认领） | Agent central | 使用 `SKIP LOCKED`（跳过已锁行）认领 `QUEUED/RESUMING`，把租约字段写回 Run 行 | `worker.py#RunWorker` | PARTIAL |
-| Attempt / Lease / Fencing（尝试、租约、代次隔离） | Agent | 没有独立 Attempt；没有续租；`PREPARING/RUNNING` 崩溃后不可重取；旧 Attempt 校验不是原子写条件 | `worker.py#RunWorker`、`run_service.py#set_status` | MISSING |
-| Edge Dispatch（边缘派发） | Backend | Backend EdgeJob 队列负责 Edge 出站领取；同一 connector Run 仍可能被 central Worker 认领 | `internal_edge.py#claim_edge_job`、`McpToolMapper#_call_connector_tool` | CONFLICT |
-| Hybrid Execution（混合执行） | Agent | 检测 edge binding，但 hybrid 分支当前不执行派发 | `worker.py#needs_edge_jobs` | PARTIAL |
-| Execution Snapshot（执行快照） | Agent | 保存 Release 与路由快照，但可持久化 `gateway_token`、`env_file` 和不完整 hash（哈希）范围 | `RuntimeSkillRunService#_enrich_route_snapshot`、`run_service.py#build_snapshot` | CONFLICT |
-| Run Event SoT（运行事件事实源） | Agent | PostgreSQL 保存事件；序号通过 `MAX + 1` 生成；并发写有冲突风险 | `run_service.py#append_event` | PARTIAL |
-| Event Live-tail（事件实时尾读） | Backend + Agent | Backend SSE（服务端推送）每秒轮询 Agent；Edge 执行完成后整批上报；通知链未闭环 | `runs.py#stream_run_events`、`edge_worker.py#_execute_job` | PARTIAL |
-| Cancel（取消） | Agent | 直接写 `CANCELLED`，不向 Engine 发出取消，也不阻止运行中的旧 Attempt 覆盖终态 | `run_service.py#cancel_run` | CONFLICT |
-| Approval（审批） | Backend + Agent | Backend 做权限代理；Agent 忽略 `approval_id`，没有审批证据与合法迁移校验 | `internal_runs.py#approve_internal_run` | PARTIAL |
-| Artifact Metadata / Bytes（产物元数据与字节） | Agent | 元数据在 Agent schema（数据库模式），字节写入容器 `/tmp`，不具备共享持久化 | `run_service.py#store_artifact_bytes`、`app/config.py` | PARTIAL |
-| Installation Desired/Actual（安装期望态与实际态） | Backend + Agent edge | Backend 有 Desired 字段和 Actual 上报接口；Edge 没有 reconcile loop（调谐循环）与 generation（版本代次） | `internal_edge.py#report_installation_actual` | PARTIAL |
-| Connector Route Security（连接器路由安全） | Backend + Agent | Connector target（目标地址）可被业务参数覆盖；DB（数据库）只用 SQL 文本前缀做只读判断 | `connector_router.py#execute_connector_run` | CONFLICT |
-| Agent Schema Migration（Agent 数据库迁移） | Agent | 服务启动时执行 `CREATE TABLE IF NOT EXISTS`，没有 Alembic（数据库迁移工具）版本链 | `app/db.py#init_schema` | CONFLICT |
-| Agent Health / Metrics / Audit（健康、指标与审计） | Agent | 只有单一 `/health`；未证明 DB、Storage、Worker readiness（就绪状态） | `app/main.py#health` | PARTIAL |
-| Internal Service Authentication（内部服务认证） | Backend + Agent | 使用单个静态共享 Token，默认值为 `change-me-skill-agent-token` | `app/auth.py#require_internal_token`、双方配置 | PARTIAL |
-| Skill Run Contract（技能运行合同） | Backend | 已生成 MCP、Event、Run schema（模式）草案，但 Run schema 未进入 manifest/checksum（清单与校验和），合同尚未发布 tag（标签） | `contracts/skill-run/v1.0.0/manifest.json` | PARTIAL |
+| Employee Run Authorization（员工 Run 授权） | Backend | 检查 `skill:view`（技能查看权限）和 HermesTask；任务不存在时直接放行。`get_run` / SSE 会复核 Agent `org_id`，但 Result、Artifact、Download、Cancel、Resume 不复核 | `app/api/runs.py#_authorize_run` | PARTIAL |
+| Run Access Projection（运行访问投影） | Backend `TaskService` / `HermesTask` | `HermesTask.id` 等于 `run_id`，是员工与 C2 唯一访问行；不是独立 Access 表 | `RuntimeSkillRunService#start` | PARTIAL |
+| Run Enqueue Ordering（Run 入队顺序） | Backend `RuntimeSkillRunService` | `SKILL_AGENT_ENABLED` 时先 `POST /internal/v1/runs` 再 `create_task`；Agent 成功而投影失败会留下可执行孤儿 Run | `RuntimeSkillRunService#start` | CONFLICT |
+| Dispatch Outbox（派发发件箱） | 无 | 仓库内无 Outbox 表或 Dispatcher；不存在可扩展等价 Owner | 以 `desired_generation` / `RunDispatchOutbox` / `CredentialBroker` 搜索生产代码无命中 | MISSING |
+| Internal Create Idempotency（内部创建幂等） | Agent | 请求可带 `idempotency_key`，但不持久化、无唯一约束；缺 `run_id` 时新建 UUID（通用唯一标识） | `run_service.py#create_run` | PARTIAL |
+| Backend Worker Isolation（后端执行隔离） | Backend `HermesTaskWorker` | `execution_owner == agent` 时 skip（跳过）但仍参与轮询；元数据缺失时仍可认领 | `hermes_task_worker.py#HermesTaskWorker` | PARTIAL |
+| Central Claim（中心认领） | Agent central | `SKIP LOCKED` 认领 `QUEUED/RESUMING`，租约写在 Run 行；不排除 `placement.role=edge` | `worker.py#RunWorker` | PARTIAL |
+| Attempt / Lease / Fencing（尝试、租约、代次隔离） | Agent | Run 行已有 `attempt_id` / `lease_until`；无独立 Attempt、无续租、`PREPARING/RUNNING` 不可重取；fencing 为先读后写 | `worker.py#RunWorker`、`run_service.py#set_status` | PARTIAL |
+| Edge Dispatch（边缘派发） | Backend EdgeJob + Agent central Worker | 创建 EdgeJob 的同时，central Worker 仍可认领同一 QUEUED connector Run | `McpToolMapper#_call_connector_tool`、`worker.py#_claim_one` | CONFLICT |
+| Edge Transport Lease（边缘传输租约） | Backend | claim 使用 `SKIP LOCKED`，无 `lease_until`、无 delivery generation、无 `(run_id, step_id)` 存活唯一约束 | `internal_edge.py#claim_edge_job`、`models/connector/edge_job.py#EdgeJob` | PARTIAL |
+| Hybrid Execution（混合执行） | Agent | 检测 edge binding，hybrid 分支为 no-op（空操作） | `worker.py#needs_edge_jobs` | PARTIAL |
+| Execution Snapshot（执行快照） | Agent 持久化；Backend 注入 | `_enrich_route_snapshot` 把 `gateway_token` 与 `env_file` 写入 `route_snapshot`，Agent `build_snapshot` 原样存入 `runtime_policy` | `RuntimeSkillRunService#_enrich_route_snapshot`、`run_service.py#build_snapshot` | CONFLICT |
+| Connector Secret Resolution（连接器密钥解析） | Backend `SecretRef` 元数据 + Agent/Edge `SecretStore` 明文 | Snapshot 只带 `connector_secret_ref_id`；明文在本地文件/环境变量解析，不入库 | `secret_store.py#SecretStore`、`models/connector/secret_ref.py#SecretRef` | EXISTS |
+| Run Event SoT（运行事件事实源） | Agent | PostgreSQL 保存事件；`MAX + 1` 分配序号；存在 `(run_id, event_seq)` 唯一约束但并发仍会冲突失败 | `run_service.py#append_event`、`db.py#init_schema` | PARTIAL |
+| Event Live-tail（事件实时尾读） | Backend SSE + Agent Event SoT | SSE 在 NOTIFY（数据库通知）丢失时 1s 轮询；Edge 整批上报；`post_edge_job_events` 转发失败仍返回成功 | `runs.py#stream_run_events`、`edge_worker.py#_execute_job`、`internal_edge.py#post_edge_job_events` | PARTIAL |
+| Cancel（取消） | Agent | 直接写 `CANCELLED`，无 Engine Cancel Port，无终态 CAS（比较并交换） | `run_service.py#cancel_run` | PARTIAL |
+| Approval Authorization（审批授权） | Backend | Resume/Approval 检查 `skill:invoke`，但复用 fail-open 的 `_authorize_run` | `runs.py#resume_or_approve_run` | PARTIAL |
+| Approval Execution Evidence（审批执行证据） | Agent | `approve_run` 可推进 `WAITING_APPROVAL`；忽略 `approval_id`，不持久化 actor/policy/expiry | `internal_runs.py#approve_internal_run` | PARTIAL |
+| Artifact Metadata / Bytes（产物元数据与字节） | Agent | 元数据在 Agent schema；默认目录 `/tmp/nodeskclaw-agent-artifacts` | `run_service.py#store_artifact_bytes`、`app/config.py` | PARTIAL |
+| Installation Desired State（安装期望态） | Backend `HermesSkillInstallation` | 已有 `target_kind` / `edge_node_id` / `actual_status`；无 `desired_generation` | `models/hermes_skill/skill_installation.py#HermesSkillInstallation` | PARTIAL |
+| Remote Installation Execution（远程安装执行） | Backend `SkillInstaller` | Portal/运营 remote 安装仍由 Backend 复制到目标 Runtime | `skill_installer.py#SkillInstaller` | EXISTS |
+| Edge Installation Reconcile（边缘安装调谐） | 无 | Edge 只有 Actual 上报接口，没有拉取 Desired 的调谐循环 | `internal_edge.py#report_installation_actual` | MISSING |
+| Connector Argument Gate（连接器参数门禁） | Backend | 仅拒绝 `_routing` / `_execution` / `route_config`，不拒绝 `url` / `endpoint` / `db_url` / `headers` | `McpToolMapper#_has_explicit_runtime_route_override` | PARTIAL |
+| Connector Runtime Enforcement（连接器运行时门禁） | Agent | REST/MCP/DB 目标可被 `arguments.url` / `arguments.db_url` 覆盖；DB 只读仅靠 SQL 文本前缀 | `connector_router.py#execute_connector_run` | PARTIAL |
+| Agent Schema Migration（Agent 数据库迁移） | Agent startup DDL | `CREATE SCHEMA/TABLE IF NOT EXISTS`；Agent 树内无 Alembic | `app/db.py#init_schema` | CONFLICT |
+| Agent Health / Metrics / Audit（健康、指标与审计） | Agent | 只有单一 `/health`，不检查 DB / Storage / Worker | `app/main.py#health` | PARTIAL |
+| Internal Service Authentication（内部服务认证） | Backend 配置 + Agent verifier | 单个静态 Token，默认 `change-me-skill-agent-token`；比较非恒定时间 | `app/auth.py#require_internal_token`、双方 config 默认值 | PARTIAL |
+| Skill Run Contract（技能运行合同） | Backend 合同目录 | `runs/*.schema.json` 已存在，但未进入 `manifest.json` / `SHA256SUMS`；合同 tag 未发布 | `contracts/skill-run/v1.0.0/manifest.json` | PARTIAL |
 
 ## Problem Statement
 
@@ -106,6 +114,7 @@ grounding_commit: ddd427c3caaa74ac6f05fb24cc750416aba1934d
 - 知道 `run_id` 的组织成员可能访问或操作不属于本组织的孤儿 Run。
 - Backend 写入失败后，Agent 仍可能执行没有员工可见投影的 Run。
 - Edge Connector（边缘连接器）可能被 central 与 edge 重复执行，造成重复外部副作用。
+- `SKILL_AGENT_ENABLED` 时，若 `execution_owner` 缺失，Backend `HermesTaskWorker` 仍可能认领本应由 Agent 执行的 Run。
 - Worker 崩溃会让 Run 永久停留在 `PREPARING/RUNNING`，或者旧 Worker 覆盖重试后的结果。
 - Snapshot 与日志可能持久化长期有效凭证。
 - Edge 长任务期间没有实时事件，网络抖动可能导致事件重复、丢失或终态不一致。
@@ -117,37 +126,47 @@ grounding_commit: ddd427c3caaa74ac6f05fb24cc750416aba1934d
 以下不变量必须同时成立：
 
 1. 一个 Capability（能力）只有一个 Production Owner（生产所有者）。
-2. Agent 是 Run、Snapshot、Attempt、Event、Approval Execution Evidence（审批执行证据）、Result 与 Artifact Descriptor（产物描述）的唯一执行事实源。
-3. Backend 是员工身份、组织、权限、SkillRelease、路由策略、Run Access Projection（运行访问投影）、Dispatch Outbox（派发发件箱）、Edge Transport Queue 的唯一事实源。
-4. Backend 只有在本地 Run Projection 与 Outbox 已提交后，才允许 Agent 获得可执行 Run。
-5. Agent 的同一 `run_id` 只能有一个 Active Attempt（活动尝试）；所有写操作必须携带 `attempt_id` 与 `attempt_generation`（尝试代次）。
-6. Run 进入 Terminal State（终态）后不可被任何非终态或不同终态覆盖。
-7. EdgeJob 只承载传输状态；Run status、event_seq、result 和 artifact 不以 EdgeJob 为事实源。
-8. Snapshot 不得保存 Plaintext Secret（明文密钥）、长期 Token、环境变量文件内容或客户端可控网络目标。
-9. PostgreSQL Event Log（事件日志）是 replay（重放）事实源；NOTIFY（数据库通知）或其它 live-tail 信号只用于唤醒，不得替代事件日志。
-10. 外部员工流量只进入 Backend；Agent `/internal/v1/*`（内部接口）不得接受员工 JWT（登录令牌）或 MCP Client Token（MCP 客户端令牌）。
-11. Agent schema 只由 Agent Alembic 迁移链管理；Backend ORM（对象关系映射）不得映射或写入 Agent 表。
-12. 所有数据删除遵循逻辑删除；Artifact 字节的物理清理由逻辑删除后的 Retention Job（保留期清理任务）异步执行。
+2. Agent 是 Run、Snapshot、Attempt、Event、Approval Execution Evidence、Result 与 Artifact Descriptor 的唯一执行事实源。
+3. Backend 是员工身份、组织、权限、SkillRelease、路由策略、Run Access Projection、Dispatch Outbox、Edge Transport Queue 和 Hermes Credential Lease 的唯一事实源。
+4. v1.0 员工 Run Access Projection 就是 `HermesTask`；授权不得新增第二套投影表，也不得在投影缺失时回退查询 Agent。
+5. Backend 只有在本地 HermesTask 与 Outbox 已提交后，才允许 Agent 获得可执行 Run。Outbox 未 delivered 时，员工 `/api/v1/runs/*` 只读 HermesTask 投影，不得因 Agent 缺少 Run 而返回「不存在」；C2 `/hermes/tasks/*` 不得新增 Expert 合同没有的状态名。
+6. `SKILL_AGENT_ENABLED` 为真时，`HermesTaskWorker` 不得认领生产 Skill/Connector Run，包括 `execution_owner` 缺失的行。
+7. Agent 的同一 `run_id` 只能有一个 Active Attempt；所有写操作必须携带 `attempt_id` 与 `attempt_generation`。
+8. Run 进入 Terminal State 后不可被任何非终态或不同终态覆盖。
+9. EdgeJob 只承载传输状态；Run status、event_seq、result 和 artifact 不以 EdgeJob 为事实源。
+10. Snapshot 不得保存 Plaintext Secret、长期 Token、环境变量文件内容或客户端可控网络目标。
+11. Connector 明文密钥只由 Agent/Edge `SecretStore` 解析；Backend `SecretRef` 只保存引用。新的 Hermes Credential Lease 不得接管 Connector 密钥 Owner。
+12. PostgreSQL Event Log 是 replay 事实源；NOTIFY 或其它 live-tail 信号只用于唤醒，不得替代事件日志。
+13. 外部员工流量只进入 Backend；Agent `/internal/v1/*` 不得接受员工 JWT 或 MCP Client Token。
+14. Agent schema 只由 Agent Alembic 迁移链管理；Backend ORM 不得映射或写入 Agent 表。
+15. 所有数据删除遵循逻辑删除；Artifact 字节的物理清理由逻辑删除后的 Retention Job 异步执行。
 
 ## Target End-State Inventory
 
 | Capability（能力） | Target Owner（目标所有者） | Target Behaviour（目标行为） |
 |---|---|---|
-| Run Access Projection（运行访问投影） | Backend | 每个员工 Run 都有已提交的组织、发起人、访问策略和 `run_id` 投影；不存在即拒绝 |
-| Dispatch Transaction（派发事务） | Backend | 同一数据库事务提交 Run Projection 与 Outbox Command；Dispatcher（派发器）可安全重试 |
+| Run Access Projection（运行访问投影） | Backend `HermesTask` / `TaskService` | 每个员工 Run 都有已提交的组织、发起人、访问策略和 `run_id`；不存在即拒绝。不新增第二套 Access 表 |
+| Dispatch Transaction（派发事务） | Backend `RuntimeSkillRunService` | 同一数据库事务提交 HermesTask 与 Outbox Command；同一 Owner 投递已提交命令，不另建入队服务 |
+| Backend Worker Isolation（后端执行隔离） | Backend `HermesTaskWorker` | `SKILL_AGENT_ENABLED` 时永不认领生产 Skill/Connector Run |
 | Agent Run Creation（Agent Run 创建） | Agent | 使用确定性 `run_id`、`dispatch_id`（派发标识）和 `idempotency_key` 幂等创建或返回既有 Run |
 | Run Execution（Run 执行） | Agent | 根据冻结 placement（执行位置）选择 central、edge 或 hybrid；同一 Run 不出现双 Owner |
-| Run Attempt（执行尝试） | Agent | 独立持久化 Attempt、Lease、Heartbeat（心跳）、Generation 和 Fencing Token（代次令牌） |
+| Run Attempt（执行尝试） | Agent | 在现有 Run 行租约之上独立持久化 Attempt、Lease、Heartbeat（心跳）、Generation 和 Fencing Token（代次令牌） |
 | Edge Transport（边缘传输） | Backend | EdgeJob 提供 outbound（出站）领取、租约、重投和结果中继；不拥有 Run 状态 |
-| Snapshot / Secret（快照与凭证） | Agent + Backend Credential Broker（凭证代理） | Snapshot 只存引用；Agent 执行时按 Attempt 获取短期 Credential Lease（凭证租约） |
+| Execution Snapshot（执行快照） | Agent | 只存 Binding/Secret/Release 引用与非敏感策略；禁止明文 |
+| Hermes Credential Lease（Hermes 凭证租约） | Backend | 仅对 Backend 持有的网关凭证按 Attempt 签发短期 Lease；不拥有 Connector 明文 |
+| Connector SecretRef Metadata（连接器密钥引用） | Backend `SecretRef` | 只保存引用与绑定；不保存明文 |
+| Connector SecretStore Bytes（连接器密钥明文） | Agent/Edge `SecretStore` | 本地解析；Edge 明文不下发 central |
 | Run Event（运行事件） | Agent | 事务内分配稳定序号，按 `source_event_id`（来源事件标识）幂等写入并可重放 |
 | Run SSE（运行事件推送） | Backend | 鉴权后从 Agent Event SoT 拉取；支持 `Last-Event-ID`；通知失败时轮询兜底 |
 | Cancel（取消） | Agent | 记录 cancellation request（取消请求），调用 Engine Cancel Port（引擎取消端口），只由合法 Attempt 确认终态 |
 | Approval Decision（审批决策授权） | Backend | 校验审批人、组织、权限与审批对象，记录控制面审计并转发可信 Actor Context（操作者上下文） |
-| Approval Execution Evidence（审批执行证据） | Agent | 持久化 approval_id、decision、actor、policy digest（策略摘要）和状态迁移证据 |
+| Approval Execution Evidence（审批执行证据） | Agent | 在现有 `approve_run` 路径上持久化 approval_id、decision、actor、policy digest（策略摘要）和状态迁移证据 |
 | Artifact（运行产物） | Agent | Descriptor 与对象引用为 SoT；字节落共享持久化 Storage；Backend 只鉴权代理 |
-| Installation Reconcile（安装调谐） | Agent edge | 拉取 Backend Desired generation，幂等执行安装/卸载并回报 observed generation（已观察代次） |
-| Connector Enforcement（连接器执行门禁） | Agent | 只使用冻结配置和 SecretRef；强制网络、协议、DB 只读和输出限制 |
+| Installation Desired State（安装期望态） | Backend | 增加单调 `desired_generation` 和目标 digest；仍是 Desired SoT |
+| Remote Installation Execution（远程安装执行） | Backend `SkillInstaller` | v1.0 例外：remote 仍由现有 SkillInstaller 执行；不得扩展到 edge |
+| Edge Installation Reconcile（边缘安装调谐） | Agent edge | 拉取 Backend Desired generation，幂等执行 edge 安装/卸载并回报 observed generation |
+| Connector Argument Gate（连接器参数门禁） | Backend | 只接受 Tool Schema 声明的业务参数，拒绝路由或凭证覆盖字段 |
+| Connector Runtime Enforcement（连接器运行时门禁） | Agent | 只使用冻结配置和 SecretRef；强制网络、协议、DB 只读和输出限制 |
 | Agent Operations（Agent 生产运维） | Agent | Alembic、liveness/readiness（存活/就绪）、Metrics（指标）、Audit（审计）、安全默认配置 |
 | Skill Run Contract（技能运行合同） | Backend 合同目录 | MCP、Run、Snapshot、Event、Approval、Artifact schema 全部进入 manifest/checksum 并发布不可变 tag |
 
@@ -160,8 +179,8 @@ Employee / Work / MCP Client
             |
             v
 nodeskclaw-backend
-  Auth / RBAC / SkillRelease / Routing / Run Access Projection
-  Dispatch Outbox / Credential Broker / Edge Transport Queue
+  Auth / RBAC / SkillRelease / Routing / HermesTask Access Projection
+  Dispatch Outbox / Hermes Credential Lease / SecretRef metadata / Edge Transport
             |
             | internal service identity + execution context
             v
@@ -172,7 +191,7 @@ nodeskclaw-agent central
             | edge transport through Backend, one fenced attempt
             v
 nodeskclaw-agent edge
-  Local Secret Resolver / Connector Executor / Event Spool
+  Local SecretStore / Connector Executor / Event Spool
 ```
 
 ### Control Plane and Execution Plane Isolation
@@ -202,9 +221,10 @@ Backend `/api/v1/runs/{run_id}/*`（员工 Run 接口）统一使用一条授权
 
 1. 校验当前用户属于当前组织。
 2. 校验所需操作权限：读操作至少需要 `skill:view`（技能查看权限），执行控制至少需要 `skill:invoke`（技能调用权限），审批还需要目标策略要求的审批权限。
-3. 查询 Backend Run Access Projection；投影不存在、逻辑删除、组织不匹配或用户不可访问时立即拒绝，禁止回退为“只要有 skill:view 就允许”。
-4. 调用 Agent 后，Backend 必须校验响应中的 `run_id` 与 `org_id` 和投影一致；Result、Artifact、Download、Cancel、Resume、Approval 和 Event 都执行相同复核。
-5. Artifact 下载还必须验证 `artifact_id` 属于当前 `run_id`，并由 Backend 生成安全 `Content-Disposition`（下载文件名响应头）。
+3. 查询 Backend `HermesTask`（v1.0 唯一 Run Access Projection）；任务不存在、逻辑删除、组织不匹配或用户不可访问时立即拒绝，禁止回退为“只要有 skill:view 就允许”，也禁止另建第二套 Access 表。
+4. Outbox 未 delivered 时，员工 GET/SSE/result/artifacts 只由 HermesTask 投影回答（`DISPATCH_PENDING` 或 dispatch failed）。此阶段不得调用 Agent 获取员工数据，也不得把 Agent 404 映射成「Run 不存在」。
+5. Outbox 已 delivered 后调用 Agent，Backend 必须校验响应中的 `run_id` 与 `org_id` 和 HermesTask 一致；Result、Artifact、Download、Cancel、Resume、Approval 和 Event 都执行相同复核。未 delivered 时 Cancel 只作用投影与 Outbox，不要求 Agent Run 存在；Resume/Approval 拒绝。
+6. Artifact 下载还必须验证 `artifact_id` 属于当前 `run_id`，并由 Backend 生成安全 `Content-Disposition`（下载文件名响应头）。
 
 Backend 返回统一 `error_code + message_key + message`（错误码、消息键和消息）合同，不向员工暴露 Agent 内部状态、Token 或路由快照。
 
@@ -212,9 +232,9 @@ Backend 返回统一 `error_code + message_key + message`（错误码、消息�
 
 Run 创建采用 Transactional Outbox（事务发件箱）方案，禁止依赖跨数据库分布式事务：
 
-1. Backend 在单个本地事务中创建 Run Access Projection、C2 HermesTask Projection 和 RunDispatchOutbox（运行派发发件箱）。
-2. 三者使用同一确定性 `run_id`；Outbox 保存版本化 Dispatch Command，不保存明文凭证。
-3. 事务提交后 Dispatcher 才能调用 Agent `POST /internal/v1/runs`（内部 Run 创建接口）。
+1. `RuntimeSkillRunService` 在单个本地事务中创建 `HermesTask`（员工访问投影兼 C2 读取投影）和 RunDispatchOutbox。禁止再写第二套访问投影。`run_id` 只在此事务内生成。
+2. Outbox 保存版本化 Dispatch Command，不保存明文凭证。
+3. 事务提交后，同一 Owner 的 Outbox 投递器才能调用 Agent `POST /internal/v1/runs`。投递器不生成 `run_id`，不创建 HermesTask，不成为第二入队 Owner。
 4. Agent 在一个 Agent 数据库事务内校验服务身份与 Execution Context（执行上下文），按 `run_id`、`dispatch_id` 和归一化 `idempotency_key` 幂等创建 Run、Snapshot 与初始 Event。
 5. 重复命令且内容 digest（摘要）一致时返回原 Run；标识相同但内容 digest 不一致时拒绝 conflict（冲突）。
 6. Backend 收到 Agent accepted（已受理）后更新 Outbox 为 delivered（已投递）；超时或 5xx（服务端错误）按退避策略重试。
@@ -230,6 +250,8 @@ ExecutionSnapshot 必须冻结 `execution_owner`（执行所有者）：
 - `edge`（边缘执行）：Agent central Worker 必须排除；Backend 只为指定 Edge Node（边缘节点）创建一个唯一 EdgeJob 传输记录。
 - `hybrid`（混合执行）：Agent central 是根 Run Orchestrator（根运行编排者）；具体 Edge Connector Step（边缘连接器步骤）由 Agent central 通过内部 Edge Dispatch Contract（边缘派发合同）请求 Backend 建立子作业。根 Run 仍只有 Agent central 一个状态所有者。
 
+当 `SKILL_AGENT_ENABLED` 为真时，Backend `HermesTaskWorker` 不得认领上述任何生产 Run，包括 `execution_owner` 元数据缺失的行。skip-by-flag 不算最终防线。
+
 EdgeJob 必须满足：
 
 - `(run_id, step_id)`（运行标识与步骤标识）存活记录唯一。
@@ -239,7 +261,7 @@ EdgeJob 必须满足：
 
 ### 4. Durable Attempt, Lease and Fencing
 
-Agent 新增独立 RunAttempt（运行尝试）能力，Run 行不再兼任完整 Attempt 事实源。
+Agent 在现有 Run 行 `attempt_id` / `lease_until` 之上演进为独立 RunAttempt（运行尝试）事实源；不另建第二套执行 Worker。
 
 每个 Attempt 至少表达：
 
@@ -275,9 +297,9 @@ ExecutionSnapshot 禁止保存：
 - Authorization header（认证请求头）、Cookie（会话数据）、数据库密码或完整凭证 URL。
 - 员工 arguments（业务参数）中的路由、地址或凭证覆盖值。
 
-Agent central 在 Attempt 开始时通过 Backend Credential Broker（凭证代理）使用服务身份、`run_id`、`attempt_id` 和 SecretRef 获取短期 Credential Lease。Lease 仅存在内存，不写 Snapshot、Event、Result、Artifact、日志或异常文本。
+Agent central 在 Attempt 开始时向 Backend Hermes Credential Lease 使用服务身份、`run_id`、`attempt_id` 和 `gateway_binding_ref` 获取短期网关凭证。Lease 仅存在内存，不写 Snapshot、Event、Result、Artifact、日志或异常文本。该 Lease 只覆盖 Backend 持有的 Hermes 网关凭证，不得成为 Connector 密钥的第二 Owner。
 
-Agent edge 只从本地 Secret Store（密钥存储）解析 Edge SecretRef；Backend 不把 Edge 明文凭证下发到 central。
+Agent/Edge 继续用现有 `SecretStore` 解析 `connector_secret_ref_id`；Backend 不把 Edge 明文凭证下发到 central。
 
 ### 6. Replayable Event and Live-Tail
 
@@ -359,22 +381,24 @@ Backend 审批入口必须校验组织、Run Access Projection、审批权限和
 
 ### 10. Installation Reconcile
 
-Backend Desired State（期望状态）增加单调 `desired_generation`（期望代次）和目标 Release/Connector digest（发布与连接器摘要）。
+Backend Desired State 在现有 `HermesSkillInstallation` 上增加单调 `desired_generation` 和目标 digest。Desired SoT 仍是 Backend。
 
-Agent edge 必须：
+本 PRD 对上位「安装执行迁到 Agent」给出 v1.0 例外：`target_kind=remote` 的生产安装继续由 Backend `SkillInstaller` 执行，且不得把 SkillInstaller 扩展到 edge。退场见 Compatibility Contract。
+
+Agent edge 只负责 `target_kind=edge`：
 
 1. 通过出站通道按 Edge Node 与组织拉取授权范围内的 Desired State。
 2. 本地幂等安装、更新或卸载，不执行其它节点的 Installation。
-3. 回报 `observed_generation`、`actual_status`（实际状态）、实际 digest、时间和脱敏错误摘要。
-4. 重启后从持久化 checkpoint（检查点）继续；同一 generation 不重复产生外部副作用。
-5. Desired 变化期间，Backend 只有在 Actual 与 generation/digest 一致时才把 Connector 标记为 runnable（可运行）。
+3. 回报 `observed_generation`、`actual_status`、实际 digest、时间和脱敏错误摘要。
+4. 重启后从持久化 checkpoint 继续；同一 generation 不重复产生外部副作用。
+5. Desired 变化期间，Backend 只有在 Actual 与 generation/digest 一致时才把 Connector 标记为 runnable。
 
 ### 11. Connector Security Enforcement
 
-Backend 与 Agent 同时承担不同层次的门禁：
+这是两层独立 Capability，不是双 Owner：
 
-- Backend 只接受 Tool Schema（工具模式）声明的业务参数，拒绝 `url`、`endpoint`、`db_url`、`headers`、`credential`、`secret_ref_id`、`runtime_id`、`agent_id`、`profile_id`、`route_config` 等路由或凭证覆盖字段。
-- Agent 只使用 Snapshot 中冻结的 Connector Definition/Binding Ref（连接器定义与绑定引用）；业务参数不得覆盖 target、protocol（协议）、placement 或 credential。
+- Backend Argument Gate：只接受 Tool Schema（工具模式）声明的业务参数，拒绝 `url`、`endpoint`、`db_url`、`headers`、`credential`、`secret_ref_id`、`runtime_id`、`agent_id`、`profile_id`、`route_config` 等路由或凭证覆盖字段。现有 `_routing` / `_execution` / `route_config` 拒绝必须扩展到上述字段。
+- Agent Runtime Enforcement：只使用 Snapshot 中冻结的 Connector Definition/Binding Ref；业务参数不得覆盖 target、protocol（协议）、placement 或 credential。
 - REST/MCP（HTTP/MCP 协议）执行强制 scheme（协议）、DNS/IP（域名与地址）、端口、重定向和 egress allowlist（出站白名单）策略，阻止 SSRF（服务端请求伪造）。
 - DB Connector（数据库连接器）使用只读数据库角色、只读事务、语句超时、行数和响应大小上限；SQL 文本前缀检查不得作为唯一安全边界。
 - 所有 Connector 输出执行大小限制和 Secret Redaction（密钥脱敏），错误中不返回目标凭证或完整内部地址。
@@ -425,11 +449,13 @@ CREATED
 
 状态约束：
 
-- `DISPATCH_PENDING`（待派发）是 Backend 外部投影状态；Agent Run 在成功创建前不存在。
+- `DISPATCH_PENDING` 只出现在员工 Skill Run 合同（`/api/v1/runs/*`）。它由 HermesTask + Outbox 状态派生，不是 `HermesTask.status` 新枚举值。
+- C2 `/hermes/tasks/*` 在 Outbox pending 时继续返回既有 `queued`；dispatch failed 映射为既有 `failed`。禁止新增 `DISPATCH_PENDING` 或其它 Expert 合同没有的 task status。
+- Agent Run 在成功创建前不存在；员工读路径见 §1 第 4 步。
 - Agent 接受后从 `CREATED` 原子推进到 `QUEUED` 或 `WAITING_APPROVAL`。
 - 只有当前 Attempt Generation 可推进执行状态。
 - `COMPLETED/FAILED/CANCELLED/TIMED_OUT` 为不可逆终态。
-- 所有状态迁移产生同事务 RunEvent。
+- 所有 Agent 状态迁移产生同事务 RunEvent。
 - 非法迁移返回明确 conflict，不进行“尽量写入”。
 
 ## Contract Semantics
@@ -472,12 +498,17 @@ Agent 内部 Run、Event、Result、Artifact、Cancel 与 Approval 接口必须�
 
 员工响应必须剥离 SecretRef 解析细节、内部 endpoint（地址）、worker/edge 身份、Credential Lease 和完整 Snapshot policy（快照策略）。
 
+Outbox 未 delivered 时：GET 返回 `DISPATCH_PENDING` 或 dispatch failed；events 可为空并允许 SSE heartbeat；result/artifacts 为空集合而非「Run 不存在」；Cancel 只取消投影与 Outbox；Resume/Approval 拒绝。不得调用 Agent。
+
+C2 `/hermes/tasks/{task_id}` 在同一阶段只使用既有 `queued` / `failed`，不暴露 `DISPATCH_PENDING`。
+
 ## Observable Behaviour
 
 ### Employee / MCP Consumer
 
 - 接受的 `tools/call` 最终返回唯一 `run_id`；网络重试不会创建第二个 Run。
-- Run 尚未派发时可观察为 `DISPATCH_PENDING`，不会虚报 RUNNING。
+- Run 尚未派发时，员工 `/api/v1/runs/*` 可观察为 `DISPATCH_PENDING`，不会虚报 RUNNING，也不会因 Agent 尚无 Run 而显示不存在。
+- C2 `/hermes/tasks/*` 在派发中保持 `queued`，不出现新状态名。
 - 无权限、跨组织、孤儿或已删除 Run 对所有子资源统一不可见。
 - SSE 断开后使用 `Last-Event-ID` 恢复，事件不重复、不跳号；通知链异常时仍能通过轮询恢复。
 - Cancel 返回后 Run 最终收敛到一个终态，完成结果不会在取消后重新出现。
@@ -496,9 +527,9 @@ Agent 内部 Run、Event、Result、Artifact、Cancel 与 Approval 接口必须�
 | Failure（故障） | Required Behaviour（要求行为） |
 |---|---|
 | Backend 事务失败 | 不产生 Outbox，不调用 Agent，不产生可执行 Run |
-| Agent create 超时 | Dispatcher 使用同一 dispatch_id 重试；Agent 返回同一 Run |
+| Agent create 超时 | Outbox 投递使用同一 dispatch_id 重试；Agent 返回同一 Run |
 | Agent create 成功但响应丢失 | 重试返回既有 Run；不得重复执行 |
-| Dispatcher 长期失败 | Outbox 进入 dead-letter；投影显示派发失败并可由运营重试 |
+| Outbox 投递长期失败 | Outbox 进入 dead-letter；投影显示派发失败并可由运营重试 |
 | Central Worker 崩溃 | Lease 过期后新 generation 重取；旧 Worker 写入被 fencing 拒绝 |
 | Edge 断网 | Edge 本地 Spool 保存未确认事件；重连后按 source_event_id 重传 |
 | Agent 暂时不可用 | Backend SSE 不伪造事件；读取返回统一暂时不可用错误并允许重试 |
@@ -512,51 +543,74 @@ Agent 内部 Run、Event、Result、Artifact、Cancel 与 Approval 接口必须�
 
 | Capability（能力） | Classification（分类） | Existing Owner（现有所有者） | Target Owner（目标所有者） | Required Change（必要变更） |
 |---|---|---|---|---|
-| Run Authorization（Run 授权） | MODIFY | Backend | Backend | 投影不存在即拒绝；所有子资源复核 org/run/access |
-| Direct Cross-service Create（直接跨服务创建） | REPLACE | Backend | Backend Outbox | 以本地事务投影 + Outbox 替代先 Agent 后投影 |
+| Run Authorization（Run 授权） | MODIFY | Backend `_authorize_run` | Backend | HermesTask 不存在即拒绝；所有子资源复核 org/run/access |
+| Direct Cross-service Create（直接跨服务创建） | MODIFY | Backend `RuntimeSkillRunService` | Backend `RuntimeSkillRunService` | 先写 HermesTask + Outbox，再投递 Agent；不转移入队 Owner |
 | Legacy Direct Create Ordering（旧创建顺序） | REMOVE | Backend | 无 | 删除生产调用链中的 Agent-first 顺序 |
+| Dispatch Outbox（派发发件箱） | ADD | 无 | Backend `RuntimeSkillRunService` | 随 MODIFY 引入投递存储；投递器不生成 run_id、不另建访问投影 |
 | Agent Create Idempotency（Agent 创建幂等） | MODIFY | Agent | Agent | 持久化 dispatch/idempotency 唯一约束与 digest 冲突检测 |
-| RunAttempt（运行尝试） | ADD | 无 | Agent | 独立 Attempt、Lease、Heartbeat、Generation、Fencing |
-| Edge Execution Ownership（边缘执行权） | MODIFY | Backend + Agent | Agent Run + Backend transport | central 排除 edge；EdgeJob 降为唯一传输投影 |
+| Backend Worker Isolation（后端执行隔离） | MODIFY | Backend `HermesTaskWorker` | Backend `HermesTaskWorker` | `SKILL_AGENT_ENABLED` 时 fail-closed，不认领生产 Skill/Connector Run |
+| Run Attempt / Lease / Fencing（运行尝试） | MODIFY | Agent Run 行租约 | Agent | 从 Run 行字段演进为独立 Attempt、续租、Recovery 与原子 fencing |
+| Edge Claim Filter（边缘认领过滤） | MODIFY | Agent `RunWorker` | Agent | central 永不认领 `execution_owner=edge` |
+| Edge Transport（边缘传输） | MODIFY | Backend EdgeJob | Backend | 存活唯一、lease、delivery generation；status 仅传输诊断 |
 | Hybrid Orchestration（混合编排） | MODIFY | Agent | Agent | central 根编排，edge 为 fenced 子步骤 |
-| Snapshot Secret Handling（快照密钥处理） | REPLACE | Backend + Agent | Agent Snapshot + Backend Broker | 用 Binding/Secret Ref 与短期 Lease 替代明文注入 |
+| Execution Snapshot（执行快照） | MODIFY | Agent | Agent | 只存引用与非敏感策略 |
+| Hermes Credential Materialization（Hermes 凭证物化） | MODIFY | Backend `_enrich_route_snapshot` | Backend Hermes Credential Lease | 停止把 token/env_file 写入 Snapshot，改为 Attempt 级短期 Lease |
 | Snapshot Plaintext Secret Path（快照明文路径） | REMOVE | Backend | 无 | 删除 gateway_token/env_file 持久化与外部回显路径 |
-| Event Write / Live-tail（事件写入与实时尾读） | MODIFY | Agent + Backend | Agent SoT + Backend projection | 原子序号、幂等来源事件、通知唤醒和增量 Edge 上报 |
-| Cancel Lifecycle（取消生命周期） | MODIFY | Agent | Agent | CANCELLING、Engine cancel、终态 CAS（比较并交换） |
-| Approval Execution Evidence（审批执行证据） | ADD | 无 | Agent | 独立 approval_id、policy、actor、decision 与过期语义 |
-| Approval Authorization（审批授权） | MODIFY | Backend | Backend | 统一 Run 投影、权限和可信 Actor 校验 |
-| Skill Run Contract（技能运行合同） | MODIFY | Backend | Backend 合同目录 | 补全 schema、manifest、checksum、checker 与 tag |
-| Installation Reconcile（安装调谐） | ADD | 无完整 Owner | Agent edge | Desired generation 拉取、幂等执行与 Actual 回报 |
-| Connector Route Enforcement（连接器路由门禁） | MODIFY | Backend + Agent | Backend validation + Agent enforcement | 禁覆盖、SSRF 门禁、DB 只读与输出限制 |
-| Runtime DDL（运行时建表） | REPLACE | Agent startup | Agent Alembic | 用版本化迁移替代启动时 DDL（数据定义语言） |
+| Connector SecretRef Metadata（连接器密钥引用） | KEEP | Backend `SecretRef` | Backend `SecretRef` | 不引入第二 Connector 元数据 Owner |
+| Connector SecretStore Bytes（连接器密钥明文） | KEEP | Agent/Edge `SecretStore` | Agent/Edge `SecretStore` | Edge 明文不下发 central；不被 Hermes Lease 接管 |
+| Event Write / Live-tail（事件写入与实时尾读） | MODIFY | Agent SoT + Backend SSE | Agent SoT + Backend projection | 原子序号、幂等来源事件、通知唤醒、增量 Edge 上报、中继失败不返回成功 |
+| Cancel Lifecycle（取消生命周期） | MODIFY | Agent | Agent | CANCELLING、Engine cancel、终态 CAS |
+| Approval Execution Evidence（审批执行证据） | MODIFY | Agent `approve_run` | Agent | 在现有路径上持久化 approval_id、policy、actor、decision 与过期语义 |
+| Approval Authorization（审批授权） | MODIFY | Backend | Backend | 统一 HermesTask 投影、权限和可信 Actor 校验 |
+| Skill Run Contract（技能运行合同） | MODIFY | Backend 合同目录 | Backend 合同目录 | 已有 runs schema 进入 manifest/checksum，补 checker 与 tag |
+| Installation Desired State（安装期望态） | MODIFY | Backend `HermesSkillInstallation` | Backend | 增加 desired_generation 与 digest |
+| Remote Installation Execution（远程安装执行） | KEEP | Backend `SkillInstaller` | Backend `SkillInstaller` | v1.0 例外；不得扩展到 edge |
+| Edge Installation Reconcile（边缘安装调谐） | ADD | 无 | Agent edge | Desired 拉取、幂等执行与 Actual 回报 |
+| Connector Argument Gate（连接器参数门禁） | MODIFY | Backend `McpToolMapper` | Backend | 拒绝 url/endpoint/db_url/headers/secret/runtime 覆盖 |
+| Connector Runtime Enforcement（连接器运行时门禁） | MODIFY | Agent `execute_connector_run` | Agent | 禁参数覆盖、SSRF 门禁、DB 只读事务与输出限制 |
+| Runtime DDL（运行时建表） | REPLACE | Agent startup `init_schema` | Agent Alembic | 用版本化迁移替代启动时 DDL |
 | Startup CREATE TABLE Path（启动建表路径） | REMOVE | Agent startup | 无 | 删除生产启动时 `CREATE TABLE IF NOT EXISTS` |
 | Artifact Storage（产物存储） | MODIFY | Agent | Agent | 对象存储/持久卷、流式代理和生命周期 |
 | Health / Metrics / Audit（健康、指标与审计） | MODIFY | Agent | Agent | 分离 live/ready，补齐生产指标与脱敏审计 |
-| Service Token Rotation（服务令牌轮换） | MODIFY | Backend + Agent | Backend issuer + Agent verifier | 双 Token 窗口、key_id 和安全默认值 |
+| Service Token Rotation（服务令牌轮换） | MODIFY | Backend config + Agent verifier | Backend issuer + Agent verifier | 双 Token 窗口、key_id 和安全默认值 |
 
 ## Replacement / Removal Matrix
 
 | Replacement（替代能力） | Removed Path（移除路径） | Removal Condition（移除条件） | Removal Version（移除版本） |
 |---|---|---|---|
 | Backend Transactional Outbox | Agent-first Run create 后写 HermesTask | 所有生产 MCP Run 经已提交 Outbox 派发；故障注入证明无孤儿 Run | 本 PRD v1.0 上线时 |
-| SecretRef + Credential Lease | Snapshot 中 `gateway_token`、`env_file`、明文 header/URL credential | Snapshot/Event/Result/日志扫描无明文 Secret，执行可通过 Lease 完成 | 本 PRD v1.0 上线时 |
+| Hermes Credential Lease | Snapshot 中 `gateway_token`、`env_file`、明文 header/URL credential | Snapshot/Event/Result/日志扫描无明文 Secret；Hermes 执行可通过 Lease 完成；Connector 仍走 SecretStore | 本 PRD v1.0 上线时 |
 | Agent Alembic Migration | Agent 启动时 `CREATE SCHEMA/TABLE IF NOT EXISTS` | 新环境与升级环境均只通过迁移到 head，启动代码不再执行 DDL | 本 PRD v1.0 上线时 |
 
 ## Compatibility Contract
 
-本 PRD 不新增 Backend–Agent 的双写兼容路径。已有 C2 HermesTask Projection 继续作为真实 Consumer `WORK-EXPERT-CONTRACT v1.0.2` 的读取兼容投影，但不得参与 Agent Run 执行事实写入。
+本 PRD 不新增 Backend–Agent 的双写兼容路径。
 
-- Current Consumer（当前消费端）：`smc-copilot/apps/work` Expert 生产路径与现有 HermesTask 运营接口。
-- Reason（原因）：Skill Run Consumer 尚未完成独立切换，Expert 合同已冻结。
-- Removal Condition（移除条件）：所有 Work 生产 Skill 调用使用 `run_id + /api/v1/runs/*`，Expert 合同的真实 Consumer 清零，并完成独立迁移审计。
-- Removal Version（移除版本）：Skill Platform 合同 v1.1，与上位 PRD 的 C2 退场版本一致；v1.0 不得扩展 C2 投影的执行职责。
+### C2 HermesTask 读取投影
+
+已有 C2 `HermesTask` 继续作为真实 Consumer `WORK-EXPERT-CONTRACT v1.0.2` 的读取投影，并同时作为 v1.0 员工 Run Access Projection。它不得参与 Agent Run 执行事实写入，也不得再复制出第二套访问表。派发中 C2 只暴露既有 `queued` / `failed`，不新增状态名。
+
+- Current Consumer：`smc-copilot/apps/work` Expert 生产路径与现有 HermesTask 运营接口。
+- Reason：Skill Run Consumer 尚未完成独立切换，Expert 合同已冻结。
+- Removal Condition：所有 Work 生产 Skill 调用使用 `run_id + /api/v1/runs/*`，Expert 合同的真实 Consumer 清零，并完成独立迁移审计。
+- Removal Version：Skill Platform 合同 v1.1；v1.0 不得扩展 C2 投影的执行职责。
+
+### Remote SkillInstaller 例外
+
+上位 PRD 将安装执行 REPLACE 到 Agent。本 PRD v1.0 只 ADD edge reconcile；remote 安装仍由 `SkillInstaller` 执行，且不得把该路径扩展到 edge。
+
+- Current Consumer：Portal / 运营 remote Skill 安装路径。
+- Reason：本 PRD 范围是 Run 生产闭环；remote 复制安装迁到 Agent 会扩大为第二套安装平台改造。
+- Removal Condition：remote 安装生产路径改由 Agent 执行 Desired/Actual；Backend `SkillInstaller` 不再作为生产执行 Owner。
+- Removal Version：Skill Platform 合同 v1.1，与上位 Installation Reconcile REPLACE 对齐。
 
 ## Delivery Sequence
 
 ### Slice 1 — Security and Atomic Dispatch
 
-- Fail-closed Run Authorization（默认拒绝 Run 授权）。
-- Backend Run Projection + Transactional Outbox。
+- Fail-closed Run Authorization（默认拒绝 Run 授权，HermesTask 为唯一访问投影）。
+- HermesTask + Transactional Outbox（`RuntimeSkillRunService` 写入并投递；禁止第二套 Access 表与第二入队 Owner）。
+- Backend Worker Isolation（`SKILL_AGENT_ENABLED` 时不认领）。
 - Agent create idempotency（Agent 创建幂等）。
 - Edge single owner（边缘单一执行权）。
 - Snapshot plaintext secret removal（快照明文密钥移除）。
@@ -591,19 +645,21 @@ Slice 1 完成前不得承载生产员工流量。
 ### Authorization and Tenant Isolation
 
 - **AC-01**：Backend 投影不存在时，Run、Event、Result、Artifact、Download、Cancel、Resume 和 Approval 全部拒绝，不调用 Agent 获取员工数据。
+- **AC-01b**：Outbox 未 delivered 时，员工 GET/SSE/result/artifacts 由 HermesTask 投影返回 `DISPATCH_PENDING` 或 dispatch failed；不得调用 Agent，不得把 Agent 404 映射成「Run 不存在」。C2 `/hermes/tasks/*` 同期只返回既有 `queued` 或 `failed`。
 - **AC-02**：Backend 投影 org、当前 org 与 Agent 返回 org 任一不一致时统一拒绝；跨组织标识枚举不泄露 Run 是否存在。
 - **AC-03**：Artifact 下载同时验证 run_id、artifact_id、org 和用户访问权限，文件名响应头支持非 ASCII（非英文字符）且不可注入响应头。
 
 ### Atomic Dispatch and Idempotency
 
 - **AC-04**：故障注入证明 Backend 本地事务失败时 Agent 不产生 Run。
-- **AC-05**：Agent create 成功但响应丢失后，Dispatcher 重试返回同一 run_id，且只出现一个初始事件和一个可执行 Run。
+- **AC-05**：Agent create 成功但响应丢失后，Outbox 投递重试返回同一 run_id，且只出现一个初始事件和一个可执行 Run。
 - **AC-06**：相同 dispatch/idempotency 标识但不同 digest 被拒绝；相同内容返回原 Run。
 - **AC-07**：Outbox 可观察 pending、delivered、retry 和 dead-letter；dead-letter Run 不显示为 RUNNING。
 
 ### Execution Ownership and Recovery
 
 - **AC-08**：`execution_owner=edge` 的 Run 永不被 central Worker 认领，同一 run/step 只有一个存活 EdgeJob。
+- **AC-08a**：`SKILL_AGENT_ENABLED` 时，即使 `execution_owner` 元数据缺失，Backend `HermesTaskWorker` 也不得认领生产 Skill/Connector Run。
 - **AC-09**：hybrid Run 由 central 根编排，Edge 只执行被派发的 fenced 子步骤；员工只看到一个 run_id 与一条统一事件线。
 - **AC-10**：Worker 在 PREPARING 或 RUNNING 崩溃，租约过期后新 generation 自动恢复；旧 Worker 的 Event、Result、Artifact 和 Status 写入全部被拒绝。
 - **AC-11**：Worker 正常执行期间续租，不会被第二 Worker 同时认领。
@@ -611,7 +667,7 @@ Slice 1 完成前不得承载生产员工流量。
 ### Snapshot and Credential Safety
 
 - **AC-12**：Agent 数据库 Snapshot、Event、Result、Artifact 元数据和应用日志中不存在 gateway_token、env_file、Authorization header 或 Connector 明文凭证。
-- **AC-13**：Credential Lease 仅向匹配 org/run/attempt/secret ref 的服务身份签发，过期后不可复用，并留下不含 Secret 的审计记录。
+- **AC-13**：Hermes Credential Lease 仅向匹配 org/run/attempt/`gateway_binding_ref` 的服务身份签发，过期后不可复用，并留下不含 Secret 的审计记录。Connector 明文不得经该 Lease 下发。
 - **AC-14**：客户端参数无法覆盖 URL、endpoint、DB URL、header、SecretRef、runtime、agent、profile 或 placement。
 
 ### Event, Cancel and Approval
@@ -643,7 +699,7 @@ Slice 1 完成前不得承载生产员工流量。
 
 必须同时通过以下 Gate（门禁）才能开启生产流量：
 
-1. Security Gate（安全门禁）：AC-01 至 AC-03、AC-12 至 AC-14、AC-22、AC-23、AC-28 全部通过。
+1. Security Gate（安全门禁）：AC-01、AC-01b、AC-02、AC-03、AC-12 至 AC-14、AC-22、AC-23、AC-28 全部通过。
 2. Consistency Gate（一致性门禁）：AC-04 至 AC-11、AC-15、AC-18、AC-19 全部通过。
 3. Recovery Gate（恢复门禁）：Worker crash、Agent restart、Edge disconnect、Backend restart 和通知丢失故障注入全部通过。
 4. Storage Gate（存储门禁）：迁移升级、Artifact 持久化和 checksum 验证通过。
@@ -658,28 +714,7 @@ Slice 1 完成前不得承载生产员工流量。
 |---|---|---|
 | Outbox 增加可观察状态 | Consumer 可能看到 DISPATCH_PENDING | 合同明确该状态，并提供派发失败与运营重试语义 |
 | Attempt fencing 改变旧 Worker 行为 | 旧代码可能收到 stale conflict | 上线前 drain（排空）旧 Worker，禁止跨版本并行写同一 Run |
-| SecretRef broker 增加运行依赖 | Broker 不可用会阻止执行 | 短期 Lease、有限重试、明确失败事件；不回退为 Snapshot 明文 |
+| Hermes Credential Lease 不可用 | 阻止需要网关凭证的 central 执行 | 短期 Lease、有限重试、明确失败事件；不回退为 Snapshot 明文；不改写 Connector SecretStore |
 | Edge 增量事件增加网络请求 | 弱网环境压力上升 | 有界批次、持久化 Spool、幂等重传；仍禁止任务结束后一次性 dump |
 | Agent Alembic 引入独立迁移责任 | 部署顺序错误会导致 readiness 失败 | 独立迁移 Job、版本探针和回滚前置校验 |
 | Artifact 切换对象存储 | 旧本地 Artifact 迁移复杂 | 本 PRD 上线前的测试数据不承诺迁移；真实生产数据必须制定一次性迁移批次 |
-
-## Grounding Summary
-
-本次 `discover` Grounding（发现式源码校准）确认：
-
-- 复用现有 Backend Run API、RuntimeSkillRunService、Edge API、Agent Run Service、Worker、Connector Router 与 Skill Run Contract 目录，不新增第二 Gateway、第二 Run API 或第二 Event SoT。
-- 把现有部分能力优先归类为 MODIFY，而不是以新服务绕开现有 Owner。
-- 仅对确实缺失的 RunAttempt、Approval Evidence、Installation Reconcile 和 Outbox 能力使用 ADD。
-- 对存在结构性冲突的 Agent-first create、Snapshot 明文 Secret 和启动 DDL 使用 REPLACE + REMOVE，并给出明确 Removal Condition。
-- 目标架构保持 Backend 控制面与 Agent 执行面分离；EdgeJob 被限定为传输队列，消除双执行 Owner。
-
-## Review Request
-
-独立 PRD Review（需求审查）应重点验证：
-
-1. Transactional Outbox 是否完整消除孤儿 Run，且没有引入第二 Run 状态事实源。
-2. Edge transport owner 与 Agent Run owner 的职责划分是否仍存在双写或双终态路径。
-3. Attempt Generation、Event idempotency 与 terminal CAS 是否足以覆盖崩溃恢复和旧 Worker 写入。
-4. Credential Broker 与 Edge Local Secret Store 是否满足 Secret 不落 Snapshot 的边界。
-5. C2 HermesTask Projection 的兼容合同是否真实、有限且未扩大执行职责。
-6. Acceptance Criteria 是否能在不依赖具体私有实现的前提下证明所有 P0/P1 缺口关闭。

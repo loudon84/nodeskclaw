@@ -25,6 +25,11 @@ export interface Installation {
   error_message: string | null
   created_at: string
   updated_at: string
+  /** Optional — present once Installation Desired/Actual reconcile lands */
+  target_kind?: string | null
+  edge_node_id?: string | null
+  edge_node_name?: string | null
+  actual_status?: string | null
 }
 
 export interface InstallationListParams {

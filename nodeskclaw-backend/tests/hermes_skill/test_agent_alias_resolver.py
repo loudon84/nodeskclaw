@@ -32,7 +32,7 @@ async def test_resolve_by_agent_alias_in_advanced_config():
     inst = _instance(advanced_config=json.dumps({"agent_alias": "common-writer"}))
     svc = AgentAliasResolver(db)
     build_mock = AsyncMock(return_value=MagicMock(agent_alias="common-writer"))
-    with patch.object(svc, "_list_org_instances", AsyncMock(return_value=[inst])):
+    with patch.object(svc, "_list_bound_instances", AsyncMock(return_value=[inst])):
         with patch.object(svc, "_build_resolution", build_mock):
             result = await svc.resolve("org-1", "common-writer")
     assert result is not None
@@ -46,7 +46,7 @@ async def test_resolve_by_name():
     inst = _instance(name="common-writer")
     svc = AgentAliasResolver(db)
     build_mock = AsyncMock(return_value=MagicMock(agent_alias="common-writer"))
-    with patch.object(svc, "_list_org_instances", AsyncMock(return_value=[inst])):
+    with patch.object(svc, "_list_bound_instances", AsyncMock(return_value=[inst])):
         with patch.object(svc, "_build_resolution", build_mock):
             result = await svc.resolve("org-1", "common-writer")
     assert result is not None
@@ -59,7 +59,7 @@ async def test_resolve_by_agent_id_fallback():
     inst = _instance(instance_id="agent-uuid-1")
     svc = AgentAliasResolver(db)
     build_mock = AsyncMock(return_value=MagicMock(agent_id="agent-uuid-1"))
-    with patch.object(svc, "_list_org_instances", AsyncMock(return_value=[inst])):
+    with patch.object(svc, "_list_bound_instances", AsyncMock(return_value=[inst])):
         with patch.object(svc, "_build_resolution", build_mock):
             result = await svc.resolve("org-1", "agent-uuid-1")
     assert result is not None
@@ -70,8 +70,9 @@ async def test_resolve_by_agent_id_fallback():
 async def test_resolve_not_found():
     db = AsyncMock()
     svc = AgentAliasResolver(db)
-    with patch.object(svc, "_list_org_instances", AsyncMock(return_value=[])):
-        result = await svc.resolve("org-1", "missing-alias")
+    with patch.object(svc, "_list_bound_instances", AsyncMock(return_value=[])):
+        with patch.object(svc.scope, "list_bound_pairs", AsyncMock(return_value=[])):
+            result = await svc.resolve("org-1", "missing-alias")
     assert result is None
 
 
@@ -81,13 +82,6 @@ async def test_list_available_agents_filters_non_routable():
     inst = _instance(advanced_config=json.dumps({"agent_alias": "common-writer"}))
     svc = AgentAliasResolver(db)
 
-    bound_scalars = MagicMock()
-    bound_scalars.all.return_value = []
-    bound_result = MagicMock()
-    bound_result.scalars.return_value = bound_scalars
-    db.execute = AsyncMock(return_value=bound_result)
-
-    with patch.object(svc, "_list_org_instances", AsyncMock(return_value=[inst])):
-        with patch.object(svc.runtime_svc, "is_agent_routable", AsyncMock(return_value=False)):
-            items = await svc.list_available_agents("org-1")
+    with patch.object(svc.scope, "list_dispatchable_pairs", AsyncMock(return_value=[])):
+        items = await svc.list_available_agents("org-1")
     assert items == []

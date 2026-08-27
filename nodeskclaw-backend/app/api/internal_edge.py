@@ -31,6 +31,7 @@ class EdgeHeartbeatBody(BaseModel):
 
 class EdgeJobEventsBody(BaseModel):
     events: list[dict] = Field(default_factory=list)
+    delivery_generation: int | None = None
 
 
 async def _authenticate_edge(
@@ -126,6 +127,7 @@ async def post_edge_job_events(
     body: EdgeJobEventsBody,
     db: AsyncSession = Depends(get_db),
     x_edge_token: str | None = Header(default=None, alias="X-Edge-Token"),
+    x_delivery_generation: str | None = Header(default=None, alias="X-Delivery-Generation"),
 ):
     node = await _authenticate_edge(db, token=x_edge_token)
     result = await db.execute(
@@ -139,6 +141,19 @@ async def post_edge_job_events(
     job = result.scalar_one_or_none()
     if not job:
         raise NotFoundError("Edge job 不存在", "errors.connector.edge_job_not_found")
+
+    # Delivery generation validation: reject stale/mismatched delivery attempts
+    req_gen = None
+    if x_delivery_generation and isinstance(x_delivery_generation, str):
+        try:
+            req_gen = int(x_delivery_generation)
+        except ValueError:
+            pass
+    if req_gen is None and body.delivery_generation is not None:
+        req_gen = body.delivery_generation
+
+    if job.delivery_generation is not None and req_gen is not None and req_gen != job.delivery_generation:
+        raise ForbiddenError("过期的 delivery generation 请求已拒绝", "errors.connector.stale_delivery_generation")
 
     now = datetime.now(timezone.utc)
     terminal = None

@@ -33,6 +33,16 @@ const routingTesting = ref(false)
 const routingResult = ref<RoutingTestResult | null>(null)
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
 
+const showTargetColumns = computed(() =>
+  installations.value.some(
+    (inst) =>
+      inst.target_kind != null
+      || inst.edge_node_id != null
+      || inst.edge_node_name != null
+      || inst.actual_status != null,
+  ),
+)
+
 const statusMap: Record<string, string> = {
   installed: 'bg-emerald-500/15 text-emerald-400',
   pending: 'bg-yellow-500/15 text-yellow-400',
@@ -176,6 +186,24 @@ onMounted(() => {
             <TableHead class="text-left px-4 py-3 font-medium text-muted-foreground">{{ t('hermes.installations.routing.priority') }}</TableHead>
             <TableHead class="text-left px-4 py-3 font-medium text-muted-foreground">{{ t('hermes.installations.routing.scope') }}</TableHead>
             <TableHead class="text-left px-4 py-3 font-medium text-muted-foreground">status</TableHead>
+            <TableHead
+              v-if="showTargetColumns"
+              class="text-left px-4 py-3 font-medium text-muted-foreground"
+            >
+              {{ t('hermes.installations.targetKind') }}
+            </TableHead>
+            <TableHead
+              v-if="showTargetColumns"
+              class="text-left px-4 py-3 font-medium text-muted-foreground"
+            >
+              {{ t('hermes.installations.edgeNode') }}
+            </TableHead>
+            <TableHead
+              v-if="showTargetColumns"
+              class="text-left px-4 py-3 font-medium text-muted-foreground"
+            >
+              {{ t('hermes.installations.actualStatus') }}
+            </TableHead>
             <TableHead class="text-left px-4 py-3 font-medium text-muted-foreground">profile_id</TableHead>
             <TableHead class="text-left px-4 py-3 font-medium text-muted-foreground">workspace_id</TableHead>
             <TableHead class="text-right px-4 py-3 font-medium text-muted-foreground">{{ t('common.settings') }}</TableHead>
@@ -213,6 +241,27 @@ onMounted(() => {
               <Badge variant="outline" :class="statusMap[inst.status] ?? ''" class="text-xs">
                 {{ inst.status }}
               </Badge>
+            </TableCell>
+            <TableCell v-if="showTargetColumns" class="px-4 py-3 text-xs">
+              {{ inst.target_kind || '—' }}
+            </TableCell>
+            <TableCell v-if="showTargetColumns" class="px-4 py-3 font-mono text-xs">
+              {{ inst.edge_node_name || inst.edge_node_id || '—' }}
+            </TableCell>
+            <TableCell v-if="showTargetColumns" class="px-4 py-3">
+              <Badge
+                v-if="inst.actual_status"
+                variant="outline"
+                class="text-xs"
+                :class="
+                  inst.target_kind && inst.actual_status !== inst.target_kind
+                    ? 'bg-amber-500/15 text-amber-400'
+                    : ''
+                "
+              >
+                {{ inst.actual_status }}
+              </Badge>
+              <span v-else class="text-muted-foreground text-xs">—</span>
             </TableCell>
             <TableCell class="px-4 py-3 font-mono text-xs">{{ inst.profile_id ?? '-' }}</TableCell>
             <TableCell class="px-4 py-3 font-mono text-xs">{{ inst.workspace_id ?? '-' }}</TableCell>

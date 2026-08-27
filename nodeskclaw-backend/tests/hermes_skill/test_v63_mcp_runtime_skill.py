@@ -66,9 +66,6 @@ async def test_runtime_skill_tools_list_metadata():
         tool = await mapper._skill_to_tool_dict(
             skill,
             "org-1",
-            None,
-            None,
-            MagicMock(resolve=AsyncMock(return_value=None)),
             "",
         )
 

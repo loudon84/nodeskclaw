@@ -7,9 +7,19 @@ const hermesRoutes: RouteRecordRaw[] = [
     component: () => import('@/views/hermes/SkillsView.vue'),
   },
   {
+    path: '/hermes/connectors',
+    name: 'HermesConnectors',
+    component: () => import('@/views/hermes/ConnectorsView.vue'),
+  },
+  {
     path: '/hermes/installations',
     name: 'HermesInstallations',
     component: () => import('@/views/hermes/InstallationsView.vue'),
+  },
+  {
+    path: '/hermes/edge-nodes',
+    name: 'HermesEdgeNodes',
+    component: () => import('@/views/hermes/EdgeNodesView.vue'),
   },
   {
     path: '/hermes/imports',

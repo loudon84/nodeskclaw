@@ -27,6 +27,7 @@ from app.services.hermes_external.hermes_docker_binding_service import HermesDoc
 from app.services.hermes_external.hermes_env_parser import parse_env_file
 from app.services.hermes_external.hermes_runtime_skill_executor import DEFAULT_INPUT_SCHEMA
 from app.services.hermes_skill.hermes_skill_authorization_service import HermesSkillAuthorizationService
+from app.services.hermes_skill.skill_release_service import SkillReleaseService
 
 logger = logging.getLogger(__name__)
 
@@ -210,6 +211,12 @@ class RuntimeSkillRegistrationService:
             )
 
         await self.db.flush()
+
+        await SkillReleaseService(self.db).ensure_draft_on_register(
+            org_id=org_id,
+            skill=skill,
+            operator_user_id=operator_user_id,
+        )
 
         return RuntimeSkillRegisterResponse(
             skill_db_id=skill.id,

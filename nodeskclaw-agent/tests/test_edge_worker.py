@@ -72,7 +72,7 @@ async def test_edge_worker_incremental_events_and_spool(tmp_path, monkeypatch):
     mock_resp.raise_for_status = MagicMock()
     client.post = AsyncMock(return_value=mock_resp)
 
-    job = {"id": "job-100", "tool_name": "test", "arguments": {}, "snapshot": {}}
+    job = {"id": "job-100", "tool_name": "test", "arguments": {}, "snapshot": {}, "delivery_generation": 3}
     await worker._execute_job(client, job)
 
     assert client.post.call_count == 2
@@ -80,6 +80,9 @@ async def test_edge_worker_incremental_events_and_spool(tmp_path, monkeypatch):
     assert first_call_body["event_type"] == "custom.step"
     assert first_call_body["source"] == "edge"
     assert "job-100" in first_call_body["source_event_id"]
+    assert first_call_body["delivery_generation"] == 3
+    assert client.post.call_args_list[0].kwargs["headers"]["X-Delivery-Generation"] == "3"
+    assert client.post.call_args_list[0].kwargs["json"]["delivery_generation"] == 3
 
     # 2. Post fails -> spool to disk
     client_fail = AsyncMock()

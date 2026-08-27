@@ -114,12 +114,16 @@ class EdgeWorker:
         client: httpx.AsyncClient,
         job_id: str,
         events: list[dict[str, Any]],
+        *,
+        delivery_generation: int = 1,
     ) -> None:
         url = f"{self._base_url}/api/v1/internal/edge/jobs/{job_id}/events"
+        headers = dict(self._headers())
+        headers["X-Delivery-Generation"] = str(delivery_generation)
         response = await client.post(
             url,
-            headers=self._headers(),
-            json={"events": events},
+            headers=headers,
+            json={"events": events, "delivery_generation": delivery_generation},
         )
         response.raise_for_status()
 
@@ -128,9 +132,11 @@ class EdgeWorker:
         client: httpx.AsyncClient,
         job_id: str,
         event: dict[str, Any],
+        *,
+        delivery_generation: int = 1,
     ) -> None:
         try:
-            await self._post_events(client, job_id, [event])
+            await self._post_events(client, job_id, [event], delivery_generation=delivery_generation)
         except Exception:
             logger.warning("failed to stream event for job_id=%s, spooling to disk", job_id)
             await self._spool_events(job_id, [event])
@@ -164,6 +170,7 @@ class EdgeWorker:
         tool_name = str(job.get("tool_name") or "connector")
         arguments = dict(job.get("arguments") or {})
         snapshot = dict(job.get("snapshot") or {})
+        delivery_generation = int(job.get("delivery_generation") or job.get("generation") or 1)
         try:
             prepared = self._prepare_snapshot(snapshot)
             async for event in execute_connector_run(
@@ -176,8 +183,9 @@ class EdgeWorker:
                     "payload": dict(event.get("payload") or {}),
                     "source": "edge",
                     "source_event_id": f"{job_id}:{event.get('event_type')}:{int(asyncio.get_event_loop().time() * 1000)}",
+                    "delivery_generation": delivery_generation,
                 }
-                await self._send_or_spool_event(client, job_id, safe_event)
+                await self._send_or_spool_event(client, job_id, safe_event, delivery_generation=delivery_generation)
         except Exception as exc:
             logger.exception("edge job failed job_id=%s", job_id)
             err_event = {
@@ -185,8 +193,9 @@ class EdgeWorker:
                 "payload": {"error": str(exc)[:500]},
                 "source": "edge",
                 "source_event_id": f"{job_id}:run.failed:{int(asyncio.get_event_loop().time() * 1000)}",
+                "delivery_generation": delivery_generation,
             }
-            await self._send_or_spool_event(client, job_id, err_event)
+            await self._send_or_spool_event(client, job_id, err_event, delivery_generation=delivery_generation)
 
 
 def _looks_like_token(value: str) -> bool:
