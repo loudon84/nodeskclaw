@@ -27,3 +27,7 @@ class RetrievalAudit(BaseModel):
     execution_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
     successful_slice_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     failed_slice_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    query_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    requested_indexes: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    effective_indexes: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    fallback_used: Mapped[bool | None] = mapped_column(nullable=True)

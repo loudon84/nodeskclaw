@@ -29,6 +29,9 @@ class RetrievalSliceResult:
     candidate_count: int
     safe_count: int
     error_code: str | None = None
+    index_type: str = "chunk"
+    fallback_used: bool = False
+    fallback_reason: str | None = None
 
 
 @dataclass
@@ -55,6 +58,47 @@ class MergeExecutionResult:
     timing: MergeTiming | None = None
     filter_counts: dict[str, int] | None = None
     dropped_chunks: list[tuple] | None = None
+    fallback_used: bool = False
+    deduped_count: int = 0
+
+
+_INDEX_EVIDENCE_TYPE: dict[str, str] = {
+    "chunk": "chunk",
+    "question": "question",
+    "hierarchical_summary": "summary",
+    "graph": "graph_path",
+    "outline": "outline",
+    "table": "table_row",
+}
+
+
+def _normalize_content(text: str | None) -> str:
+    return " ".join((text or "").split()).lower()
+
+
+def _dedup_key(chunk: RagflowChunk) -> tuple:
+    meta = chunk.document_metadata or {}
+    page = None
+    for pos in chunk.positions or []:
+        if isinstance(pos, (list, tuple)) and len(pos) >= 1:
+            page = pos[0]
+            break
+    return (
+        meta.get("nk_source_file_id"),
+        meta.get("nk_file_version_id"),
+        page,
+        _normalize_content(chunk.content),
+    )
+
+
+def _tag_chunks_for_index(chunks: list[RagflowChunk], index_type: str) -> list[RagflowChunk]:
+    evidence_type = _INDEX_EVIDENCE_TYPE.get(index_type, "chunk")
+    for chunk in chunks:
+        meta = dict(chunk.document_metadata or {})
+        meta["nk_index_type"] = index_type
+        meta["nk_evidence_type"] = evidence_type
+        chunk.document_metadata = meta
+    return chunks
 
 
 def _slice_error_code(exc: BaseException) -> str:
@@ -77,74 +121,59 @@ async def _retrieve_slice(
     cross_languages: list[str] | None,
     semaphore: asyncio.Semaphore,
 ) -> tuple[RetrievalSliceResult, list[RagflowChunk]]:
+    index_type = slice_.index_type or "chunk"
     started = time.perf_counter()
-    async with semaphore:
+
+    async def _call_retrieve(*, metadata_condition, tag_index: str) -> list[RagflowChunk]:
         document_ids = slice_.document_ids if slice_.kind == RetrievalSliceKind.filtered_documents else None
+        result = await ragflow.retrieve(
+            question=query,
+            dataset_ids=[slice_.dataset_id],
+            document_ids=document_ids,
+            top_k=slice_.top_k or top_k,
+            similarity_threshold=similarity_threshold,
+            vector_similarity_weight=vector_similarity_weight,
+            keyword=keyword,
+            highlight=highlight,
+            rerank_id=rerank_id,
+            cross_languages=cross_languages,
+            metadata_condition=metadata_condition,
+        )
+        return _tag_chunks_for_index(result.chunks, tag_index)
+
+    async with semaphore:
         metadata_condition = slice_.metadata_condition
+        fallback_used = False
+        fallback_reason: str | None = None
+        failure: BaseException | None = None
+        chunks: list[RagflowChunk] = []
+
         try:
-            result = await ragflow.retrieve(
-                question=query,
-                dataset_ids=[slice_.dataset_id],
-                document_ids=document_ids,
-                top_k=top_k,
-                similarity_threshold=similarity_threshold,
-                vector_similarity_weight=vector_similarity_weight,
-                keyword=keyword,
-                highlight=highlight,
-                rerank_id=rerank_id,
-                cross_languages=cross_languages,
-                metadata_condition=metadata_condition,
-            )
-            chunks = result.chunks
-            return (
-                RetrievalSliceResult(
-                    knowledge_base_id=slice_.knowledge_base_id,
-                    dataset_id=slice_.dataset_id,
-                    status="success",
-                    latency_ms=int((time.perf_counter() - started) * 1000),
-                    candidate_count=len(chunks),
-                    safe_count=0,
-                    error_code=None,
-                ),
-                chunks,
-            )
+            chunks = await _call_retrieve(metadata_condition=metadata_condition, tag_index=index_type)
         except Exception as exc:
             failure = exc
-            # Metadata pushdown is optimization only; fall back to ACL document_ids.
             if metadata_condition:
                 try:
-                    result = await ragflow.retrieve(
-                        question=query,
-                        dataset_ids=[slice_.dataset_id],
-                        document_ids=document_ids,
-                        top_k=top_k,
-                        similarity_threshold=similarity_threshold,
-                        vector_similarity_weight=vector_similarity_weight,
-                        keyword=keyword,
-                        highlight=highlight,
-                        rerank_id=rerank_id,
-                        cross_languages=cross_languages,
-                        metadata_condition=None,
-                    )
-                    chunks = result.chunks
-                    return (
-                        RetrievalSliceResult(
-                            knowledge_base_id=slice_.knowledge_base_id,
-                            dataset_id=slice_.dataset_id,
-                            status="success",
-                            latency_ms=int((time.perf_counter() - started) * 1000),
-                            candidate_count=len(chunks),
-                            safe_count=0,
-                            error_code=None,
-                        ),
-                        chunks,
-                    )
+                    chunks = await _call_retrieve(metadata_condition=None, tag_index=index_type)
+                    failure = None
                 except Exception as retry_exc:
                     failure = retry_exc
+
+        if failure is not None and index_type != "chunk":
+            try:
+                chunks = await _call_retrieve(metadata_condition=None, tag_index="chunk")
+                fallback_used = True
+                fallback_reason = _slice_error_code(failure)
+                failure = None
+            except Exception as fallback_exc:
+                failure = fallback_exc
+
+        if failure is not None:
             logger.warning(
-                "retrieval slice failed dataset_id=%s knowledge_base_id=%s: %s",
+                "retrieval slice failed dataset_id=%s knowledge_base_id=%s index_type=%s: %s",
                 slice_.dataset_id,
                 slice_.knowledge_base_id,
+                index_type,
                 failure,
             )
             return (
@@ -156,9 +185,28 @@ async def _retrieve_slice(
                     candidate_count=0,
                     safe_count=0,
                     error_code=_slice_error_code(failure),
+                    index_type=index_type,
+                    fallback_used=fallback_used,
+                    fallback_reason=fallback_reason,
                 ),
                 [],
             )
+
+        return (
+            RetrievalSliceResult(
+                knowledge_base_id=slice_.knowledge_base_id,
+                dataset_id=slice_.dataset_id,
+                status="success",
+                latency_ms=int((time.perf_counter() - started) * 1000),
+                candidate_count=len(chunks),
+                safe_count=0,
+                error_code=None,
+                index_type="chunk" if fallback_used else index_type,
+                fallback_used=fallback_used,
+                fallback_reason=fallback_reason,
+            ),
+            chunks,
+        )
 
 
 def _safe_count_for_slice(slice_: RetrievalSlice, safe_chunks: list[RagflowChunk]) -> int:
@@ -258,19 +306,22 @@ async def execute_and_merge(
             slice_results[index].safe_count = _safe_count_for_slice(slice_, safe_chunks)
 
     merge_started = time.perf_counter()
-    deduped: dict[tuple[str, str], MergedChunk] = {}
+    deduped: dict[tuple, MergedChunk] = {}
     slice_weight_by_dataset: dict[str, float] = {s.dataset_id: s.weight for s in plan.slices}
+    dedup_before = len(safe_chunks)
     for chunk in safe_chunks:
         dataset_id = chunk.dataset_id or chunk.kb_id or ""
         weight = slice_weight_by_dataset.get(dataset_id, 1.0)
         weighted_score = float(chunk.similarity) * weight
-        key = (chunk.id, chunk.document_id)
+        key = _dedup_key(chunk)
         existing = deduped.get(key)
         if existing is None or weighted_score > existing.weighted_score:
             deduped[key] = MergedChunk(chunk=chunk, weighted_score=weighted_score, weight=weight)
 
     ranked = sorted(deduped.values(), key=lambda item: item.weighted_score, reverse=True)[:top_n]
+    deduped_count = max(0, dedup_before - len(deduped))
     merge_ms = int((time.perf_counter() - merge_started) * 1000)
+    any_fallback = any(r.fallback_used for r in slice_results)
     return MergeExecutionResult(
         merged=ranked,
         candidate_count=candidate_count,
@@ -280,4 +331,6 @@ async def execute_and_merge(
         timing=MergeTiming(ragflow_ms=ragflow_ms, security_ms=security_ms, merge_ms=merge_ms),
         filter_counts=clean_result.filter_counts(),
         dropped_chunks=list(clean_result.dropped),
+        fallback_used=any_fallback,
+        deduped_count=deduped_count,
     )

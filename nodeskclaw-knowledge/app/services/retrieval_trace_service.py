@@ -40,9 +40,37 @@ def build_slice_results_summary(slice_results: list[Any]) -> list[dict[str, Any]
             "candidate_count": getattr(item, "candidate_count", 0),
             "safe_count": getattr(item, "safe_count", 0),
             "error_code": getattr(item, "error_code", None),
+            "index_type": getattr(item, "index_type", "chunk"),
+            "fallback_used": getattr(item, "fallback_used", False),
+            "fallback_reason": getattr(item, "fallback_reason", None),
         }
         for item in slice_results
     ]
+
+
+def build_trace_v2_summary(
+    *,
+    query_type: str | None,
+    requested_indexes: list[str] | None,
+    effective_indexes: list[str] | None,
+    fallback_used: bool,
+    fallback_reason: str | None,
+    candidate_count: int,
+    security_drop_count: int,
+    evidence_count: int,
+    timing: dict[str, Any] | None,
+) -> dict[str, Any]:
+    return {
+        "query_type": query_type,
+        "requested_indexes": list(requested_indexes or []),
+        "effective_indexes": list(effective_indexes or []),
+        "fallback_used": fallback_used,
+        "fallback_reason": fallback_reason,
+        "candidate_count": candidate_count,
+        "security_drop_count": security_drop_count,
+        "evidence_count": evidence_count,
+        "timing": timing or {},
+    }
 
 
 def build_chunk_traces(
@@ -99,6 +127,11 @@ async def persist_trace(
     filter_summary: dict[str, Any] | None,
     chunk_traces: list[dict[str, Any]] | None,
     latency_ms: int,
+    query_type: str | None = None,
+    requested_indexes: list[str] | None = None,
+    effective_indexes: list[str] | None = None,
+    fallback_used: bool | None = None,
+    fallback_reason: str | None = None,
 ) -> RetrievalTrace:
     row = RetrievalTrace(
         query_hash=query_hash,
@@ -112,6 +145,11 @@ async def persist_trace(
         filter_summary=filter_summary,
         chunk_traces=chunk_traces,
         latency_ms=latency_ms,
+        query_type=query_type,
+        requested_indexes=list(requested_indexes) if requested_indexes is not None else None,
+        effective_indexes=list(effective_indexes) if effective_indexes is not None else None,
+        fallback_used=fallback_used,
+        fallback_reason=fallback_reason,
     )
     db.add(row)
     await db.flush()

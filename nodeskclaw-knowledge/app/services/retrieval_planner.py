@@ -139,3 +139,36 @@ def build_retrieval_plan(
         allowed_source_file_ids=list(access_plan.source_file_ids),
         metadata_pushdown=bool(condition),
     )
+
+
+def expand_plan_for_indexes(plan: RetrievalPlan, index_types: list[str]) -> RetrievalPlan:
+    """Duplicate access slices per index type for multi-index execution."""
+    if not index_types or len(index_types) <= 1:
+        primary = index_types[0] if index_types else "chunk"
+        for slice_ in plan.slices:
+            if not slice_.index_type or slice_.index_type == "chunk":
+                slice_.index_type = primary
+        return plan
+    expanded: list[RetrievalSlice] = []
+    for slice_ in plan.slices:
+        for index_type in index_types:
+            expanded.append(
+                RetrievalSlice(
+                    kind=slice_.kind,
+                    dataset_id=slice_.dataset_id,
+                    knowledge_base_id=slice_.knowledge_base_id,
+                    document_ids=list(slice_.document_ids),
+                    weight=slice_.weight,
+                    metadata_condition=slice_.metadata_condition,
+                    index_type=index_type,
+                    provider=slice_.provider,
+                    top_k=slice_.top_k,
+                    access_scope=slice_.access_scope,
+                )
+            )
+    return RetrievalPlan(
+        slices=expanded,
+        plan_kind=plan.plan_kind,
+        allowed_source_file_ids=list(plan.allowed_source_file_ids),
+        metadata_pushdown=plan.metadata_pushdown,
+    )

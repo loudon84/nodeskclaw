@@ -25,6 +25,7 @@ def _ks():
         status="active",
         usage_count=0,
         last_used_at=None,
+        deleted_at=None,
     )
 
 
@@ -122,6 +123,18 @@ def _enter_retrieve_patches(stack: ExitStack, *, ks, profile, plan, merge_result
         patch(
             "app.services.retrieval_service.runtime_binding_service.get_dataset_id",
             new=AsyncMock(return_value="ds1"),
+        )
+    )
+    stack.enter_context(
+        patch(
+            "app.services.retrieval_service.runtime_binding_service.get_binding",
+            new=AsyncMock(return_value=None),
+        )
+    )
+    stack.enter_context(
+        patch(
+            "app.services.index_state_service.list_states_for_kb",
+            new=AsyncMock(return_value=[]),
         )
     )
     stack.enter_context(

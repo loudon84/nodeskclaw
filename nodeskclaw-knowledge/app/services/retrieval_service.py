@@ -48,6 +48,19 @@ def _observe_retrieval(status: str, started: float) -> None:
     metrics_service.observe_retrieval(status=status, duration_seconds=time.perf_counter() - started)
 
 
+def _audit_capability_fields(capability_plan, *, fallback_used: bool | None = None) -> dict:
+    from app.services.capability_planner import CapabilityPlan
+
+    if not isinstance(capability_plan, CapabilityPlan):
+        return {}
+    return {
+        "query_type": capability_plan.query_type,
+        "requested_indexes": list(capability_plan.requested_indexes),
+        "effective_indexes": list(capability_plan.effective_indexes),
+        "fallback_used": fallback_used if fallback_used is not None else capability_plan.fallback_used,
+    }
+
+
 async def _dataset_id_by_kb_id(db: AsyncSession, knowledge_bases: list) -> dict[str, str]:
     out: dict[str, str] = {}
     for kb in knowledge_bases:
@@ -467,13 +480,17 @@ async def _retrieve_for_set(
         metadata_condition=metadata_condition,
         dataset_id_by_kb_id=dataset_map,
     )
-    primary_index = (
-        capability_plan.effective_indexes[0]
-        if capability_plan.effective_indexes
-        else "chunk"
-    )
+    if settings.KNOWLEDGE_V2_MULTI_INDEX_RETRIEVAL_ENABLED:
+        plan = retrieval_planner.expand_plan_for_indexes(plan, capability_plan.effective_indexes)
+    else:
+        primary_index = (
+            capability_plan.effective_indexes[0]
+            if capability_plan.effective_indexes
+            else "chunk"
+        )
+        for slice_ in plan.slices:
+            slice_.index_type = primary_index
     for slice_ in plan.slices:
-        slice_.index_type = primary_index
         slice_.top_k = effective_top_k
         slice_.access_scope = plan_access.kind.value
 
@@ -497,6 +514,7 @@ async def _retrieve_for_set(
             execution_status="empty",
             successful_slice_count=0,
             failed_slice_count=0,
+            **_audit_capability_fields(capability_plan),
         )
         db.add(audit)
         for sid in bump_set_ids or [knowledge_set_id]:
@@ -533,6 +551,10 @@ async def _retrieve_for_set(
     successful_slice_count = sum(1 for item in slice_results if item.status == "success")
     failed_slice_count = sum(1 for item in slice_results if item.status == "failed")
     diagnostics = _diagnostics_from_slices(slice_results)
+    if merge_result.fallback_used:
+        diagnostics["fallback_used"] = True
+    if merge_result.deduped_count:
+        diagnostics["deduped_count"] = merge_result.deduped_count
 
     query_id = str(uuid.uuid4())
     latency_ms = int((time.perf_counter() - started) * 1000)
@@ -563,6 +585,10 @@ async def _retrieve_for_set(
             execution_status="failed",
             successful_slice_count=successful_slice_count,
             failed_slice_count=failed_slice_count,
+            **_audit_capability_fields(
+                capability_plan,
+                fallback_used=merge_result.fallback_used,
+            ),
         )
         db.add(audit)
         await db.commit()
@@ -598,6 +624,10 @@ async def _retrieve_for_set(
         execution_status=execution_status,
         successful_slice_count=successful_slice_count,
         failed_slice_count=failed_slice_count,
+        **_audit_capability_fields(
+            capability_plan,
+            fallback_used=merge_result.fallback_used or capability_plan.fallback_used,
+        ),
     )
     db.add(audit)
     if origin != RetrievalOrigin.evaluation.value:

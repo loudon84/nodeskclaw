@@ -60,9 +60,14 @@ class EvidenceItem:
     document_id: str | None = None
     content: str | None = None
     score: float | None = None
+    knowledge_base_id: str | None = None
     document_metadata: dict = field(default_factory=dict)
     source_refs: list[dict] = field(default_factory=list)
     payload: dict = field(default_factory=dict)
+    runtime_payload: dict = field(default_factory=dict)
+    freshness: str | None = None
+    lineage_status: str | None = None
+    index_type: str = "chunk"
 
 
 @dataclass
@@ -84,21 +89,34 @@ class EvidenceCleanResult:
         }
 
 
-def evidence_from_chunk(chunk: RagflowChunk, *, evidence_type: str = "chunk") -> EvidenceItem:
+def evidence_from_chunk(chunk: RagflowChunk, *, evidence_type: str = "chunk", index_type: str = "chunk") -> EvidenceItem:
+    meta = dict(chunk.document_metadata or {})
+    kb_id = meta.get("nk_knowledge_base_id")
+    sf_id = meta.get("nk_source_file_id")
+    fv_id = meta.get("nk_file_version_id")
+    resolved_index = meta.get("nk_index_type") or index_type
+    resolved_type = meta.get("nk_evidence_type") or evidence_type
+    lineage = "active" if fv_id else "unknown"
     return EvidenceItem(
         evidence_id=chunk.id,
-        evidence_type=evidence_type,
+        evidence_type=resolved_type,
         document_id=chunk.document_id,
         content=chunk.content,
         score=getattr(chunk, "similarity", None) or getattr(chunk, "score", None),
-        document_metadata=dict(chunk.document_metadata or {}),
+        knowledge_base_id=kb_id,
+        document_metadata=meta,
         source_refs=[
             {
-                "source_file_id": (chunk.document_metadata or {}).get("nk_source_file_id"),
-                "file_version_id": (chunk.document_metadata or {}).get("nk_file_version_id"),
+                "source_file_id": sf_id,
+                "file_version_id": fv_id,
+                "knowledge_base_id": kb_id,
             }
         ],
         payload={"chunk_id": chunk.id},
+        runtime_payload={"chunk_id": chunk.id, "index_type": resolved_index},
+        freshness=meta.get("nk_freshness"),
+        lineage_status=lineage,
+        index_type=resolved_index,
     )
 
 
