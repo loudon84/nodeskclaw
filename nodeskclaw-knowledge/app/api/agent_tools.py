@@ -38,6 +38,96 @@ def _require_v2() -> None:
         )
 
 
+def strip_runtime_document_ids(data: dict) -> None:
+    for chunk in data.get("chunks") or []:
+        chunk.pop("document_id", None)
+    for ev in data.get("evidence") or []:
+        payload = ev.get("payload") or {}
+        payload.pop("document_id", None)
+        ev["payload"] = payload
+
+
+async def knowledge_search_or_retrieve(
+    db: AsyncSession,
+    member: KnowledgePrincipal,
+    ragflow: RagflowClient,
+    *,
+    query: str,
+    application_id: str | None = None,
+    knowledge_set_id: str | None = None,
+    top_k: int | None = None,
+) -> dict:
+    _require_v2()
+    if application_id:
+        data = await retrieval_service.retrieve_for_application(
+            db,
+            member,
+            ragflow,
+            application_id=application_id,
+            query=query,
+            top_k=top_k,
+        )
+    elif knowledge_set_id:
+        data = await retrieval_service.retrieve(
+            db,
+            member,
+            ragflow,
+            knowledge_set_id=knowledge_set_id,
+            query=query,
+            top_k=top_k,
+            include_capability_plan=True,
+        )
+    else:
+        raise BadRequestError(
+            message="需要 application_id 或 knowledge_set_id",
+            message_key="errors.knowledge.retrieval_target_required",
+        )
+    strip_runtime_document_ids(data)
+    return data
+
+
+async def knowledge_get_document(
+    db: AsyncSession,
+    member: KnowledgePrincipal,
+    *,
+    source_file_id: str,
+) -> dict:
+    _require_v2()
+    if not source_file_id:
+        raise BadRequestError(
+            message="缺少 source_file_id",
+            message_key="errors.knowledge.source_file_id_required",
+        )
+    sf = await source_file_service.get_source_file(db, member, source_file_id)
+    return {
+        "source_file_id": sf.id,
+        "name": sf.name,
+        "status": sf.status,
+        "active_version_id": sf.active_version_id,
+        "knowledge_base_id": sf.knowledge_base_id,
+    }
+
+
+async def knowledge_get_evidence(
+    db: AsyncSession,
+    member: KnowledgePrincipal,
+    *,
+    evidence_id: str,
+) -> dict:
+    _require_v2()
+    try:
+        data = await citation_service.resolve_citation(db, member, evidence_id)
+    except Exception as exc:
+        raise ForbiddenError(
+            message="无权访问该证据",
+            message_key="errors.knowledge.evidence_denied",
+        ) from exc
+    if isinstance(data, dict):
+        data.pop("document_id", None)
+        data.pop("ragflow_document_id", None)
+    return data
+
+
 @router.post("/knowledge.search")
 @router.post("/knowledge.retrieve")
 async def tool_search(
@@ -47,38 +137,15 @@ async def tool_search(
     ragflow: RagflowClient = Depends(get_ragflow_client),
 ):
     """Member Principal required — KNOWLEDGE_SERVICE_TOKEN must not authorize this route."""
-    _require_v2()
-    if body.application_id:
-        data = await retrieval_service.retrieve_for_application(
-            db,
-            member,
-            ragflow,
-            application_id=body.application_id,
-            query=body.query,
-            top_k=body.top_k,
-        )
-    elif body.knowledge_set_id:
-        data = await retrieval_service.retrieve(
-            db,
-            member,
-            ragflow,
-            knowledge_set_id=body.knowledge_set_id,
-            query=body.query,
-            top_k=body.top_k,
-            include_capability_plan=True,
-        )
-    else:
-        raise BadRequestError(
-            message="需要 application_id 或 knowledge_set_id",
-            message_key="errors.knowledge.retrieval_target_required",
-        )
-    # Never expose runtime resource ids
-    for chunk in data.get("chunks") or []:
-        chunk.pop("document_id", None)
-    for ev in data.get("evidence") or []:
-        payload = ev.get("payload") or {}
-        payload.pop("document_id", None)
-        ev["payload"] = payload
+    data = await knowledge_search_or_retrieve(
+        db,
+        member,
+        ragflow,
+        query=body.query,
+        application_id=body.application_id,
+        knowledge_set_id=body.knowledge_set_id,
+        top_k=body.top_k,
+    )
     return ApiResponse(data=data)
 
 
@@ -88,23 +155,12 @@ async def tool_get_document(
     member: KnowledgePrincipal = Depends(get_member_context),
     db: AsyncSession = Depends(get_db),
 ):
-    _require_v2()
-    source_file_id = body.get("source_file_id")
-    if not source_file_id:
-        raise BadRequestError(
-            message="缺少 source_file_id",
-            message_key="errors.knowledge.source_file_id_required",
-        )
-    sf = await source_file_service.get_source_file(db, member, source_file_id)
-    return ApiResponse(
-        data={
-            "source_file_id": sf.id,
-            "name": sf.name,
-            "status": sf.status,
-            "active_version_id": sf.active_version_id,
-            "knowledge_base_id": sf.knowledge_base_id,
-        }
+    data = await knowledge_get_document(
+        db,
+        member,
+        source_file_id=body.get("source_file_id"),
     )
+    return ApiResponse(data=data)
 
 
 @router.post("/knowledge.get_evidence")
@@ -113,16 +169,5 @@ async def tool_get_evidence(
     member: KnowledgePrincipal = Depends(get_member_context),
     db: AsyncSession = Depends(get_db),
 ):
-    _require_v2()
-    # Evidence resolve reuses citation path when persistent; request-scope opaque ids are not stored
-    try:
-        data = await citation_service.resolve_citation(db, member, body.evidence_id)
-    except Exception as exc:
-        raise ForbiddenError(
-            message="无权访问该证据",
-            message_key="errors.knowledge.evidence_denied",
-        ) from exc
-    if isinstance(data, dict):
-        data.pop("document_id", None)
-        data.pop("ragflow_document_id", None)
+    data = await knowledge_get_evidence(db, member, evidence_id=body.evidence_id)
     return ApiResponse(data=data)

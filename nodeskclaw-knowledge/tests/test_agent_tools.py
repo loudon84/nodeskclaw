@@ -2,6 +2,7 @@
 
 from app.api import agent_tools
 from app.api.v2.evidence import router as evidence_router
+from app.mcp_server import MCP_TOOL_NAMES
 
 
 def test_agent_tools_use_member_context_dependency():
@@ -21,3 +22,12 @@ def test_agent_tools_use_member_context_dependency():
             assert "member" in names
         if "knowledge.get_evidence" in route.path:
             assert "member" in names
+
+
+def test_mcp_tools_cover_agent_tool_names():
+    assert set(MCP_TOOL_NAMES) == {
+        "knowledge.search",
+        "knowledge.retrieve",
+        "knowledge.get_document",
+        "knowledge.get_evidence",
+    }
