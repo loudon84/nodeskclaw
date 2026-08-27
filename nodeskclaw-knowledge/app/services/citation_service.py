@@ -17,7 +17,7 @@ from app.models.source_file import SourceFile
 from app.schemas.principal import KnowledgePrincipal
 from app.services.permission_service import has_file_permission
 
-# @lat: [[knowledge#Citation Resolve]]
+# @lat: [[knowledge#Citation And Evidence Resolve]]
 
 
 def _source_freshness(source_file: SourceFile | None) -> str:

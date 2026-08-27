@@ -56,7 +56,7 @@ KnowledgeApplication 是面向用户的检索/Chat 产品面，可绑定多个 K
 
 Runtime Binding 是 KnowledgeBase 到 RAGFlow Dataset 的权威身份映射；`ragflow_dataset_id` 仅作 v1 mirror。
 
-模型：[[nodeskclaw-knowledge/app/models/runtime_binding.py#KnowledgeRuntimeBinding]]。解析：[[nodeskclaw-knowledge/app/services/runtime_binding_service.py#get_dataset_id]]、[[nodeskclaw-knowledge/app/services/runtime_binding_service.py#require_dataset_id]]。启动幂等 backfill：[[nodeskclaw-knowledge/app/services/runtime_binding_service.py#backfill_from_knowledge_bases]]（[[nodeskclaw-knowledge/app/main.py]] lifespan）。
+模型：[[nodeskclaw-knowledge/app/models/runtime_binding.py#KnowledgeRuntimeBinding]]。v2.1 probe 字段 `last_capability_probe_at` / `last_capability_probe_error`；`capabilities` 仅由 probe 写入：[[nodeskclaw-knowledge/app/runtime/capabilities.py#probe_runtime]]、[[nodeskclaw-knowledge/app/services/runtime_binding_service.py#probe_and_persist_binding_capabilities]]。解析：[[nodeskclaw-knowledge/app/services/runtime_binding_service.py#get_dataset_id]]、[[nodeskclaw-knowledge/app/services/runtime_binding_service.py#require_dataset_id]]。启动幂等 backfill：[[nodeskclaw-knowledge/app/services/runtime_binding_service.py#backfill_from_knowledge_bases]]（[[nodeskclaw-knowledge/app/main.py]] lifespan）。
 
 ## Build Profile
 
@@ -66,17 +66,17 @@ Build Profile（Standard/Enhanced/Reasoning）描述要构建的 Index 类型与
 
 ## Index State
 
-Index State 跟踪每 KB×index_type 生命周期：not_built / building / ready / stale / failed / unsupported；Build Worker 执行 `process_build_job` 时将状态置 `building`，终态写回 `ready`/`failed`/`unsupported`。
+Index State 跟踪每 KB×index_type 生命周期：not_built / building / ready / stale / failed / unsupported；v2.1 增加 `retrieval_status`（available / unavailable / degraded / unsupported）表示 query 可用性。
 
-模型：[[nodeskclaw-knowledge/app/models/index_state.py#IndexState]]。服务：[[nodeskclaw-knowledge/app/services/index_state_service.py]]。无稳定 Public API 不得标 READY。
+模型：[[nodeskclaw-knowledge/app/models/index_state.py#IndexState]]。服务：[[nodeskclaw-knowledge/app/services/index_state_service.py]]。无稳定 Public API 不得标 READY；Capability Planner 禁用 stale/building/failed/unsupported/query-unavailable index。
 
 ## Build Job
 
 KnowledgeBuildJob 与 IngestionJob 分表；Build 不修改 `source_file.active_version_id`。Worker 经 `process_build_job` 执行 Stage：`building` → capability 检查 → `EXECUTORS` 分派 → `ready`/`failed`/`unsupported`；chunk 失败且重试用尽时 KB 进入 `degraded`。
 
-`stage_results` 结构化记录 `stage`/`status`/`attempt`/`output`/`error_code`。重试由 `KNOWLEDGE_BUILD_MAX_ATTEMPTS` 与 `KNOWLEDGE_BUILD_RETRY_BACKOFF_SECONDS` 控制：可重试失败回排 `queued` 并设 `next_run_at`，IndexState 暂回 `stale`。secondary index 有 capability 但无 executor 标 `executor_unavailable`（不伪造 READY）。chunk Stage 经 `require_dataset_id` 分页校验 RAGFlow 文档 `run=DONE` 且 `chunk_count>0`；chunk 成功且 KB 为 `degraded` 时恢复为 `active` 并清 `last_error`。
+`stage_results` 结构化记录 `stage`/`status`/`attempt`/`output`/`error_code`。重试由 `KNOWLEDGE_BUILD_MAX_ATTEMPTS` 与 `KNOWLEDGE_BUILD_RETRY_BACKOFF_SECONDS` 控制：可重试失败回排 `queued` 并设 `next_run_at`，IndexState 暂回 `stale`。v2.1 `EXECUTORS` 含 chunk / question / summary / graph；chunk watermark 与 `source_file.active_version_id` 一致性校验。chunk Stage 经 `require_dataset_id` 分页校验 RAGFlow 文档 `run=DONE` 且 `chunk_count>0`；chunk 成功且 KB 为 `degraded` 时恢复为 `active` 并清 `last_error`。
 
-模型：[[nodeskclaw-knowledge/app/models/build_job.py#KnowledgeBuildJob]]。编排：[[nodeskclaw-knowledge/app/services/build_orchestrator.py#process_build_job]]。Stage 执行器：[[nodeskclaw-knowledge/app/services/build_executors.py#execute_chunk_stage]]、[[nodeskclaw-knowledge/app/services/build_executors.py#EXECUTORS]]。
+模型：[[nodeskclaw-knowledge/app/models/build_job.py#KnowledgeBuildJob]]。编排：[[nodeskclaw-knowledge/app/services/build_orchestrator.py#process_build_job]]。Stage 执行器：[[nodeskclaw-knowledge/app/services/build_executors.py#EXECUTORS]]。Worker：[[nodeskclaw-knowledge/app/workers/build_worker.py]]。
 
 ## Knowledge Model
 
@@ -86,21 +86,27 @@ Knowledge Model 存 entity/relation/term/extraction_policy JSON，供 Reasoning 
 
 ## Translation Objects
 
-Translation 按 Document→Page→Revision 工作，默认不替换原文 Source Version；Artifact 存本地路径，signed URL 短 TTL 现算。
+Translation 按 Document→Page→Revision 工作，默认不替换原文 Source Version；Artifact 存本地路径，signed URL 短 TTL 现算。v2.1 `TranslationEngine` 契约驱动 PDF→MinerU→DocuTranslate→Ollama→Revision→Final Artifact。
 
-模型：[[nodeskclaw-knowledge/app/models/translation.py]]。服务：[[nodeskclaw-knowledge/app/services/translation_service.py]]、[[nodeskclaw-knowledge/app/services/artifact_store.py]]。
+模型：[[nodeskclaw-knowledge/app/models/translation.py]]。服务：[[nodeskclaw-knowledge/app/services/translation_service.py]]、[[nodeskclaw-knowledge/app/services/translation_engine.py]]、[[nodeskclaw-knowledge/app/services/artifact_store.py]]。Worker：[[nodeskclaw-knowledge/app/workers/translation_worker.py]]。
 
 ## Retrieval Profile
 
 v1.2 将 Set 的检索参数升级为版本化发布模型：DRAFT / ACTIVE / ARCHIVED，每 Set 同时至多一条 ACTIVE。
 
-表 `knowledge_retrieval_profiles`（soft delete + Partial Unique Index on set+version）：[[nodeskclaw-knowledge/app/models/retrieval_profile.py#RetrievalProfile]]。v2 增加 `scope_type` / `application_id`（旧行 backfill `set`）。生命周期（create DRAFT、update DRAFT、publish、rollback）见 [[nodeskclaw-knowledge/app/services/retrieval_profile_service.py]]。迁移为既有 Set 播种 ACTIVE v1；新建 Set 同步播种。`retrieve` 只读 ACTIVE；缺失时 400 `errors.knowledge.profile_not_active`。Playground 允许指定 DRAFT/ACTIVE 调试，见 [[knowledge#Retrieval Playground And Trace]]。
+表 `knowledge_retrieval_profiles`（soft delete + Partial Unique Index on set+version）：[[nodeskclaw-knowledge/app/models/retrieval_profile.py#RetrievalProfile]]。v2 增加 `scope_type` / `application_id`（旧行 backfill `set`）。生命周期（create DRAFT、update DRAFT、publish、rollback）见 [[nodeskclaw-knowledge/app/services/retrieval_profile_service.py]]；publish 将 ACTIVE config 镜像到 `KnowledgeSet.retrieval_config`（v1 只读兼容）。v1 PATCH `retrieval_config` 经 `sync_v1_retrieval_config_to_active_profile` 桥接至 ACTIVE Profile；v2 PATCH Set 不再接受 `retrieval_config`。`retrieve` 只读 ACTIVE；缺失时 400 `errors.knowledge.profile_not_active`。Playground 允许指定 DRAFT/ACTIVE 调试，见 [[knowledge#Retrieval Playground And Trace]]。
+
+## Knowledge Evidence
+
+`knowledge_chat_citations` 承载 Chat Citation 与检索/agent 持久化 Evidence；`evidence_id` 即行 `id`。
+
+v2.1 扩展 `org_id` / `issued_member_id` / `evidence_type` / `content` / `source_refs` / `runtime_payload` / `origin`；`message_id` 可空。类型含 chunk / question / summary / graph_path。Active Version Security 仍唯一经 [[nodeskclaw-knowledge/app/services/chunk_security_service.py#clean_evidence]]。模型：[[nodeskclaw-knowledge/app/models/chat_citation.py#ChatCitation]]。签发：[[nodeskclaw-knowledge/app/services/retrieval_service.py#_persist_retrieval_evidence]]。
 
 ## Evaluation Objects
 
 评测集绑定 KnowledgeSet：Case 声明 query 与 expected_source_file_ids；Run 异步执行并对齐某 Retrieval Profile。
 
-四表：`knowledge_evaluation_sets` / `cases` / `runs` / `results`：[[nodeskclaw-knowledge/app/models/evaluation.py]]。Run 状态 pending/running/completed/failed，并带 attempt/lease 字段与 `principal_snapshot`（异步执行时还原创建者 ACL 身份）供 Worker 租赁。指标与执行见 [[knowledge#Retrieval Evaluation]]。
+四表：`knowledge_evaluation_sets` / `cases` / `runs` / `results`：[[nodeskclaw-knowledge/app/models/evaluation.py]]。Run 状态 pending/running/completed/failed，并带 attempt/lease 字段与 `principal_snapshot`（异步执行时还原创建者 ACL 身份）供 Worker 租赁。v2.1 Case/Run `details` 与 Run `metrics` 记录 `effective_indexes` / `query_type` / `fallback_used`。指标与执行见 [[knowledge#Retrieval Evaluation]]；Worker：[[nodeskclaw-knowledge/app/workers/maintenance_worker.py]]。
 
 ## Knowledge Principal
 
@@ -115,8 +121,8 @@ v1.1 扩展支持异步入库、Secure Chat 与审计，全部落在 Knowledge �
 - IngestionJob：lease_owner / lease_until / next_run_at / attempt_count；租赁逻辑经 [[nodeskclaw-knowledge/app/workers/job_leasing.py#claim_next]]：[[nodeskclaw-knowledge/app/models/ingestion_job.py#IngestionJob]]
 - Evaluation：Set/Case/Run/Result；Run 复用同一 Job Leasing：见 [[knowledge-objects#Evaluation Objects]]
 - SourceFile：`last_error` 记录删除等可恢复失败，供对账与运营可见：[[nodeskclaw-knowledge/app/models/source_file.py#SourceFile]]
-- Chat：session / message / citation，Session 仅 Owner 可访问：[[nodeskclaw-knowledge/app/models/chat_session.py#ChatSession]]
-- Audit：通用 `knowledge_audit_logs`（含 `METADATA_MISMATCH` / `METADATA_REPAIRED` / `CHUNK_SECURITY_DROP`）+ 增强的 retrieval_audits（含 `origin`）：[[nodeskclaw-knowledge/app/models/audit_log.py#AuditLog]]
+- Chat：session / message / citation（含持久化 Evidence）；Session 仅 Owner 可访问：[[nodeskclaw-knowledge/app/models/chat_session.py#ChatSession]]、[[knowledge-objects#Knowledge Evidence]]
+- Audit：通用 `knowledge_audit_logs`（含 `METADATA_MISMATCH` / `METADATA_REPAIRED` / `CHUNK_SECURITY_DROP`）+ 增强的 retrieval_audits（含 `origin`、`query_type`、`effective_indexes`、`fallback_used`）：[[nodeskclaw-knowledge/app/models/audit_log.py#AuditLog]]、[[nodeskclaw-knowledge/app/models/retrieval_audit.py]]
 - Metadata：KB `metadata_schema` + SourceFile `metadata` / `metadata_revision` / `archived_at`；见 [[knowledge-objects#Metadata Governance]]
 - Retrieval Profile：DRAFT/ACTIVE/ARCHIVED 版本化配置；见 [[knowledge-objects#Retrieval Profile]]
 - Retrieval Trace：Playground 诊断落库（默认无全文）；见 [[knowledge#Retrieval Playground And Trace]]
