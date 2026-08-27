@@ -37,4 +37,7 @@ class IndexState(BaseModel):
     last_build_job_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     runtime_payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    validation_payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    coverage_payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    last_validated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_built_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

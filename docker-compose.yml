@@ -1,3 +1,19 @@
+x-knowledge-environment: &knowledge-environment
+  DATABASE_URL: ${KNOWLEDGE_DATABASE_URL:-postgresql+asyncpg://nodeskclaw:nodeskclaw@postgres:5432/nodeskclaw_knowledge}
+  KNOWLEDGE_SERVICE_TOKEN: ${KNOWLEDGE_SERVICE_TOKEN:-}
+  RAGFLOW_BASE_URL: ${RAGFLOW_BASE_URL:-http://host.docker.internal:9380}
+  RAGFLOW_API_KEY: ${RAGFLOW_API_KEY:-}
+  KNOWLEDGE_UPLOAD_MAX_MB: ${KNOWLEDGE_UPLOAD_MAX_MB:-200}
+  KNOWLEDGE_API_V2_ENABLED: ${KNOWLEDGE_API_V2_ENABLED:-true}
+  KNOWLEDGE_V2_RUNTIME_BINDING_ENABLED: ${KNOWLEDGE_V2_RUNTIME_BINDING_ENABLED:-true}
+  KNOWLEDGE_V2_BUILD_ENABLED: ${KNOWLEDGE_V2_BUILD_ENABLED:-false}
+  KNOWLEDGE_V2_APPLICATION_ENABLED: ${KNOWLEDGE_V2_APPLICATION_ENABLED:-false}
+  KNOWLEDGE_V2_GRAPH_RUNTIME_ENABLED: ${KNOWLEDGE_V2_GRAPH_RUNTIME_ENABLED:-false}
+  KNOWLEDGE_V2_SUMMARY_RUNTIME_ENABLED: ${KNOWLEDGE_V2_SUMMARY_RUNTIME_ENABLED:-false}
+  KNOWLEDGE_V2_TOC_ENHANCE_ENABLED: ${KNOWLEDGE_V2_TOC_ENHANCE_ENABLED:-false}
+  RAGFLOW_BUILD_BATCH_SIZE: ${RAGFLOW_BUILD_BATCH_SIZE:-50}
+  TZ: ${TZ:-Asia/Shanghai}
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -112,14 +128,9 @@ services:
       llm-proxy:
         condition: service_started
     environment:
-      DATABASE_URL: ${KNOWLEDGE_DATABASE_URL:-postgresql+asyncpg://nodeskclaw:nodeskclaw@postgres:5432/nodeskclaw_knowledge}
-      NODESKCLAW_BACKEND_URL: http://nodeskclaw-backend:8000
+      <<: *knowledge-environment
       LLM_PROXY_URL: http://llm-proxy:8080
-      KNOWLEDGE_SERVICE_TOKEN: ${KNOWLEDGE_SERVICE_TOKEN:-}
-      RAGFLOW_BASE_URL: ${RAGFLOW_BASE_URL:-http://host.docker.internal:9380}
-      RAGFLOW_API_KEY: ${RAGFLOW_API_KEY:-}
-      KNOWLEDGE_UPLOAD_MAX_MB: ${KNOWLEDGE_UPLOAD_MAX_MB:-200}
-      TZ: ${TZ:-Asia/Shanghai}
+      NODESKCLAW_BACKEND_URL: http://nodeskclaw-backend:8000
     ports:
       - "${KNOWLEDGE_PORT:-4530}:4530"
     healthcheck:
@@ -138,7 +149,7 @@ services:
       start_period: 40s
     restart: unless-stopped
 
-  nodeskclaw-knowledge-worker:
+  nodeskclaw-knowledge-ingestion-worker:
     image: nodesk-center-cn-beijing.cr.volces.com/public/nodeskclaw-knowledge:${DESKCLAW_VERSION}
     build:
       context: .
@@ -152,13 +163,99 @@ services:
         condition: service_healthy
       nodeskclaw-knowledge:
         condition: service_healthy
-    command: ["uv", "run", "python", "-m", "app.workers.ingestion_worker", "--with-reconciliation"]
+    command: ["uv", "run", "python", "-m", "app.workers.ingestion_worker"]
     environment:
-      DATABASE_URL: ${KNOWLEDGE_DATABASE_URL:-postgresql+asyncpg://nodeskclaw:nodeskclaw@postgres:5432/nodeskclaw_knowledge}
+      <<: *knowledge-environment
       NODESKCLAW_BACKEND_URL: http://nodeskclaw-backend:8000
-      RAGFLOW_BASE_URL: ${RAGFLOW_BASE_URL:-http://host.docker.internal:9380}
-      RAGFLOW_API_KEY: ${RAGFLOW_API_KEY:-}
-      TZ: ${TZ:-Asia/Shanghai}
+    restart: unless-stopped
+
+  nodeskclaw-knowledge-build-worker:
+    image: nodesk-center-cn-beijing.cr.volces.com/public/nodeskclaw-knowledge:${DESKCLAW_VERSION}
+    build:
+      context: .
+      dockerfile: nodeskclaw-knowledge/Dockerfile
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-}
+        PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-}
+        APT_MIRROR: ${APT_MIRROR:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nodeskclaw-knowledge:
+        condition: service_healthy
+    command: ["uv", "run", "python", "-m", "app.workers.build_worker"]
+    environment:
+      <<: *knowledge-environment
+      KNOWLEDGE_V2_BUILD_ENABLED: ${KNOWLEDGE_V2_BUILD_ENABLED:-true}
+    restart: unless-stopped
+
+  nodeskclaw-knowledge-maintenance-worker:
+    image: nodesk-center-cn-beijing.cr.volces.com/public/nodeskclaw-knowledge:${DESKCLAW_VERSION}
+    build:
+      context: .
+      dockerfile: nodeskclaw-knowledge/Dockerfile
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-}
+        PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-}
+        APT_MIRROR: ${APT_MIRROR:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nodeskclaw-knowledge:
+        condition: service_healthy
+    command:
+      [
+        "uv",
+        "run",
+        "python",
+        "-m",
+        "app.workers.maintenance_worker",
+        "--with-reconciliation",
+      ]
+    environment:
+      <<: *knowledge-environment
+      NODESKCLAW_BACKEND_URL: http://nodeskclaw-backend:8000
+    restart: unless-stopped
+
+  nodeskclaw-knowledge-connector-worker:
+    image: nodesk-center-cn-beijing.cr.volces.com/public/nodeskclaw-knowledge:${DESKCLAW_VERSION}
+    build:
+      context: .
+      dockerfile: nodeskclaw-knowledge/Dockerfile
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-}
+        PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-}
+        APT_MIRROR: ${APT_MIRROR:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nodeskclaw-knowledge:
+        condition: service_healthy
+    command: ["uv", "run", "python", "-m", "app.workers.connector_worker"]
+    environment:
+      <<: *knowledge-environment
+      NODESKCLAW_BACKEND_URL: http://nodeskclaw-backend:8000
+    restart: unless-stopped
+
+  nodeskclaw-knowledge-translation-worker:
+    profiles: ["translation"]
+    image: nodesk-center-cn-beijing.cr.volces.com/public/nodeskclaw-knowledge:${DESKCLAW_VERSION}
+    build:
+      context: .
+      dockerfile: nodeskclaw-knowledge/Dockerfile
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-}
+        PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-}
+        APT_MIRROR: ${APT_MIRROR:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nodeskclaw-knowledge:
+        condition: service_healthy
+    command: ["uv", "run", "python", "-m", "app.workers.translation_worker"]
+    environment:
+      <<: *knowledge-environment
+      KNOWLEDGE_TRANSLATION_ENABLED: ${KNOWLEDGE_TRANSLATION_ENABLED:-true}
     restart: unless-stopped
 
   portal:

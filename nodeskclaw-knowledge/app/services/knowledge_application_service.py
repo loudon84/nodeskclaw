@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.exceptions import BadRequestError, ForbiddenError, NotFoundError
+from app.core.exceptions import BadRequestError, ConflictError, ForbiddenError, NotFoundError
 from app.models.base import not_deleted
 from app.models.enums import ApplicationPermission, ApplicationStatus, AuditAction
 from app.models.knowledge_application import KnowledgeApplication, KnowledgeApplicationSetItem
@@ -84,9 +84,18 @@ async def create_application(
 async def publish_application(
     db: AsyncSession, member: KnowledgePrincipal, application_id: str
 ) -> KnowledgeApplication:
+    from app.services import application_readiness_service
+
     app = await get_application(db, member, application_id)
     if not await has_application_permission(db, member, app, ApplicationPermission.manage.value):
         raise ForbiddenError()
+    readiness = await application_readiness_service.check(db, member, application_id)
+    if not readiness.ready:
+        raise ConflictError(
+            message="应用未就绪，无法发布",
+            message_key="errors.knowledge.application_not_ready",
+            details=readiness.to_dict(),
+        )
     app.status = ApplicationStatus.active.value
     await db.commit()
     await db.refresh(app)

@@ -54,12 +54,30 @@ def _audit_capability_fields(capability_plan, *, fallback_used: bool | None = No
 
     if not isinstance(capability_plan, CapabilityPlan):
         return {}
+    effective_modes = sorted(
+        {cap.selected_mode for cap in capability_plan.kb_capabilities.values()}
+    )
     return {
         "query_type": capability_plan.query_type,
-        "requested_indexes": list(capability_plan.requested_indexes),
-        "effective_indexes": list(capability_plan.effective_indexes),
+        "requested_indexes": effective_modes,
+        "effective_indexes": effective_modes,
         "fallback_used": fallback_used if fallback_used is not None else capability_plan.fallback_used,
     }
+
+
+def _kb_access_scopes(access_plan, dataset_id_by_kb_id: dict[str, str]) -> dict[str, str]:
+    kb_to_dataset = {kb_id: ds for kb_id, ds in dataset_id_by_kb_id.items()}
+    dataset_to_kb = {ds: kb_id for kb_id, ds in kb_to_dataset.items()}
+    scopes: dict[str, str] = {}
+    for dataset_id in access_plan.full_dataset_ids:
+        kb_id = dataset_to_kb.get(dataset_id)
+        if kb_id:
+            scopes[kb_id] = "full"
+    for partial in access_plan.partial_slices:
+        kb_id = partial.get("knowledge_base_id")
+        if kb_id:
+            scopes[kb_id] = "filtered"
+    return scopes
 
 
 async def _dataset_id_by_kb_id(db: AsyncSession, knowledge_bases: list) -> dict[str, str]:
@@ -174,7 +192,7 @@ async def retrieve(
     if include_capability_plan or settings.KNOWLEDGE_V2_CAPABILITY_PLANNER_ENABLED:
         from app.services import capability_planner
 
-        plan = capability_planner.build_capability_plan(query)
+        plan = capability_planner.build_capability_plan(query, kb_access_scopes={})
         result["capability_plan"] = plan.to_dict()
     return result
 
@@ -286,7 +304,9 @@ async def retrieve_for_application(
     if "capability_plan" not in result and settings.KNOWLEDGE_V2_CAPABILITY_PLANNER_ENABLED:
         from app.services import capability_planner
 
-        result["capability_plan"] = capability_planner.build_capability_plan(query).to_dict()
+        result["capability_plan"] = capability_planner.build_capability_plan(
+            query, kb_access_scopes={}
+        ).to_dict()
     return result
 
 
@@ -321,7 +341,9 @@ async def _persist_retrieval_evidence(
         source_file = await db.get(SourceFile, sf_id) if sf_id else None
         last_synced_at = getattr(source_file, "last_synced_at", None) if source_file else None
         page = _extract_page(chunk.positions)
-        evidence_type = meta.get("nk_evidence_type") or "chunk"
+        from app.services.evidence_normalizer import classify
+
+        evidence_type = classify(chunk, getattr(item, "slice_mode", "semantic"))
         source_refs = [
             {
                 "source_file_id": meta.get("nk_source_file_id"),
@@ -515,27 +537,49 @@ async def _retrieve_for_set(
     )
     dataset_map = await _dataset_id_by_kb_id(db, kbs)
 
-    build_states: dict[str, str] = {}
-    retrieval_states: dict[str, str] = {}
-    merged_capabilities: dict = {}
+    kb_caps_input: dict[str, dict] = {}
+    kb_index_states: dict[str, dict[str, str]] = {}
+    kb_retrieval_states: dict[str, dict[str, str]] = {}
+    kb_binding_status: dict[str, str] = {}
     from app.services import capability_planner, index_state_service
-    from app.services.index_registry import list_index_types
 
     for kb in kbs:
         binding = await runtime_binding_service.get_binding(db, kb.id)
-        if binding and binding.capabilities:
-            merged_capabilities.update(binding.capabilities)
+        if binding:
+            if binding.capabilities:
+                kb_caps_input[kb.id] = dict(binding.capabilities)
+            kb_binding_status[kb.id] = binding.status
+        build_map: dict[str, str] = {}
+        retrieval_map: dict[str, str] = {}
         for state in await index_state_service.list_states_for_kb(db, kb.id):
-            build_states[state.index_type] = state.status
-            retrieval_states[state.index_type] = state.retrieval_status
+            build_map[state.index_type] = state.status
+            retrieval_map[state.index_type] = state.retrieval_status
+        kb_index_states[kb.id] = build_map
+        kb_retrieval_states[kb.id] = retrieval_map
 
+    kb_access_scopes = _kb_access_scopes(plan_access, dataset_map)
+    profile_policy = {
+        k: config.get(k)
+        for k in (
+            "allow_question_enrichment",
+            "allow_summary",
+            "allow_graph",
+            "allow_toc_enhance",
+            "fallback_policy",
+            "candidate_budget",
+            "rerank_candidates",
+        )
+        if k in config
+    }
     capability_plan = capability_planner.build_capability_plan(
         query,
-        available_indexes=list_index_types(),
-        index_states=build_states,
-        retrieval_states=retrieval_states,
-        capabilities=merged_capabilities,
-        force_chunk_only=not settings.KNOWLEDGE_V2_MULTI_INDEX_RETRIEVAL_ENABLED,
+        kb_access_scopes=kb_access_scopes,
+        kb_capabilities_input=kb_caps_input,
+        kb_index_states=kb_index_states,
+        kb_retrieval_states=kb_retrieval_states,
+        kb_binding_status=kb_binding_status,
+        profile_policy=profile_policy,
+        force_semantic_only=not settings.KNOWLEDGE_V2_MULTI_INDEX_RETRIEVAL_ENABLED,
     )
     for code in capability_plan.reason_codes:
         metrics_service.observe_capability_plan(reason_code=code)
@@ -544,22 +588,11 @@ async def _retrieve_for_set(
         plan_access,
         kbs,
         set_items,
+        kb_capabilities=capability_plan.kb_capabilities,
         metadata_condition=metadata_condition,
         dataset_id_by_kb_id=dataset_map,
+        top_k=effective_top_k,
     )
-    if settings.KNOWLEDGE_V2_MULTI_INDEX_RETRIEVAL_ENABLED:
-        plan = retrieval_planner.expand_plan_for_indexes(plan, capability_plan.effective_indexes)
-    else:
-        primary_index = (
-            capability_plan.effective_indexes[0]
-            if capability_plan.effective_indexes
-            else "chunk"
-        )
-        for slice_ in plan.slices:
-            slice_.index_type = primary_index
-    for slice_ in plan.slices:
-        slice_.top_k = effective_top_k
-        slice_.access_scope = plan_access.kind.value
 
     if plan_access.kind == AccessPlanKind.no_access or not plan.slices:
         query_id = str(uuid.uuid4())
@@ -614,6 +647,7 @@ async def _retrieve_for_set(
         cross_languages=config.get("cross_languages") or [],
         audit_org_id=member.org_id,
         audit_member_id=member.member_id,
+        rerank_candidates_count=int(config.get("rerank_candidates") or 0) or None,
     )
 
     merged = merge_result.merged
@@ -739,11 +773,12 @@ async def _retrieve_for_set(
         payload["execution_plan"] = {
             "slices": [
                 {
-                    "index_type": s.index_type,
+                    "runtime_mode": s.mode.value,
                     "knowledge_base_id": s.knowledge_base_id,
                     "dataset_id": s.dataset_id,
                     "top_k": s.top_k,
                     "access_scope": s.access_scope,
+                    "retrieval_features": list(s.retrieval_features),
                 }
                 for s in plan.slices
             ]
@@ -927,6 +962,7 @@ async def playground_retrieve(
         cross_languages=config.get("cross_languages") or [],
         audit_org_id=member.org_id,
         audit_member_id=member.member_id,
+        rerank_candidates_count=int(config.get("rerank_candidates") or 0) or None,
     )
 
     merge_timing = merge_result.timing
@@ -941,6 +977,12 @@ async def playground_retrieve(
         candidates=merge_result.candidate_count,
         filter_counts=merge_result.filter_counts,
         returned=len(merge_result.merged),
+    )
+    execution_slices = retrieval_trace_service.build_execution_slices(merge_result.slice_results)
+    any_fallback = any(getattr(r, "fallback_used", False) for r in merge_result.slice_results)
+    fallback_reason = next(
+        (getattr(r, "fallback_reason", None) for r in merge_result.slice_results if getattr(r, "fallback_used", False)),
+        None,
     )
     results = _chunks_to_results(merge_result.merged)
 
@@ -960,6 +1002,9 @@ async def playground_retrieve(
                 dropped_chunks=merge_result.dropped_chunks,
             ),
             latency_ms=timing["total_ms"],
+            execution_slices=execution_slices,
+            fallback_used=any_fallback,
+            fallback_reason=fallback_reason,
         )
         await db.commit()
 
@@ -969,4 +1014,10 @@ async def playground_retrieve(
         "timing": timing,
         "results": results,
         "filter_summary": filter_summary,
+        "execution_slices": execution_slices,
+        "diagnostics": {
+            "execution_slices": execution_slices,
+            "fallback_used": any_fallback,
+            "fallback_reason": fallback_reason,
+        },
     }

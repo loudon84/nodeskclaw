@@ -1,7 +1,7 @@
 """Build Profile / Index State / Build Job tests."""
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -338,6 +338,11 @@ async def test_process_build_job_runs_registered_question_executor(monkeypatch):
             )
         ),
     )
+    monkeypatch.setattr(
+        "app.services.reconciliation_service.reconcile_binding_config",
+        AsyncMock(return_value={"status": "success", "config_revision": 1, "drift_status": "in_sync", "applied": False}),
+    )
+    monkeypatch.setattr("app.runtime.ragflow.RagflowRuntimeAdapter", lambda: AsyncMock(aclose=AsyncMock()))
 
     async def fake_question_stage(_db, _job, _kb):
         return build_executors.StageResult(status="succeeded", output={"documents_ready": 1})
@@ -442,3 +447,125 @@ async def test_execute_chunk_stage_retryable_when_documents_pending(monkeypatch)
     assert result.status == "failed"
     assert result.retryable is True
     assert result.error_code == "documents_not_ready"
+
+
+def test_iter_document_batches_respects_batch_size(monkeypatch):
+    from app.services.active_runtime_documents import iter_document_batches
+
+    monkeypatch.setattr(settings, "RAGFLOW_BUILD_BATCH_SIZE", 50)
+    ids = [f"d{i}" for i in range(120)]
+    batches = iter_document_batches(ids, batch_size=50)
+    assert len(batches) == 3
+    assert len(batches[0]) == 50
+    assert len(batches[2]) == 20
+
+
+@pytest.mark.asyncio
+async def test_resolve_active_documents_returns_active_versions(monkeypatch):
+    from app.services import active_runtime_documents
+
+    sf = SimpleNamespace(id="sf1")
+    version = SimpleNamespace(id="v1", ragflow_document_id="doc1")
+    row = (sf, version)
+    result_mock = MagicMock()
+    result_mock.all.return_value = [row]
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=result_mock)
+
+    resolution = await active_runtime_documents.resolve_active_documents(db, "kb1")
+    assert len(resolution.documents) == 1
+    assert resolution.documents[0].ragflow_document_id == "doc1"
+
+
+@pytest.mark.asyncio
+async def test_execute_question_stage_fails_without_enrichment(monkeypatch):
+    from app.services import active_runtime_documents
+
+    db = AsyncMock()
+    kb = _make_kb()
+    job = _make_job(index_type=IndexType.question.value)
+    doc = active_runtime_documents.ActiveRuntimeDocument(
+        source_file_id="sf1",
+        file_version_id="v1",
+        ragflow_document_id="d1",
+    )
+    resolution = active_runtime_documents.ActiveDocumentResolution(documents=[doc])
+
+    class FakeAdapter:
+        async def get_index_build_status(self, _dataset_id, _doc_id):
+            return {"run": "DONE", "chunk_count": 3}
+
+        async def trigger_index_build(self, *_args, **_kwargs):
+            return None
+
+        async def read_document_chunks(self, *_args, **_kwargs):
+            return [{"content": "plain chunk"}]
+
+        client = SimpleNamespace()
+
+        async def aclose(self):
+            return None
+
+    monkeypatch.setattr(
+        build_executors.runtime_binding_service,
+        "get_binding",
+        AsyncMock(return_value=SimpleNamespace(capabilities={"supports_auto_questions": {"build_supported": True}})),
+    )
+    monkeypatch.setattr(
+        build_executors.runtime_binding_service,
+        "require_dataset_id",
+        AsyncMock(return_value="ds1"),
+    )
+    monkeypatch.setattr(build_executors, "_validate_source_watermark", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        active_runtime_documents,
+        "resolve_and_validate_active_documents",
+        AsyncMock(return_value=resolution),
+    )
+    monkeypatch.setattr(build_executors, "RagflowRuntimeAdapter", lambda: FakeAdapter())
+
+    result = await build_executors.execute_question_stage(db, job, kb)
+    assert result.status == "failed"
+    assert result.error_code == "artifact_validation_failed"
+    assert result.validation_payload is not None
+    assert result.validation_payload["question_enriched_chunks"] == 0
+
+
+@pytest.mark.asyncio
+async def test_process_build_job_reconciles_before_secondary_execute(monkeypatch):
+    db = AsyncMock()
+    kb = _make_kb()
+    db.get = AsyncMock(return_value=kb)
+    state = _make_state(status=IndexStateStatus.not_built.value)
+    monkeypatch.setattr(index_state_service, "get_or_create_state", AsyncMock(return_value=state))
+    monkeypatch.setattr(index_state_service, "set_state_status", AsyncMock(return_value=state))
+    monkeypatch.setattr(index_state_service, "persist_validation", AsyncMock(return_value=state))
+    monkeypatch.setattr(
+        build_orchestrator.runtime_binding_service,
+        "get_binding",
+        AsyncMock(
+            return_value=SimpleNamespace(
+                capabilities={"supports_auto_questions": {"build_supported": True}},
+                config_revision=2,
+            )
+        ),
+    )
+    reconcile = AsyncMock(return_value={"status": "success", "config_revision": 2, "drift_status": "in_sync", "applied": False})
+    monkeypatch.setattr("app.services.reconciliation_service.reconcile_binding_config", reconcile)
+    monkeypatch.setattr("app.runtime.ragflow.RagflowRuntimeAdapter", lambda: AsyncMock(aclose=AsyncMock()))
+
+    async def fake_question_stage(_db, _job, _kb):
+        return build_executors.StageResult(
+            status="succeeded",
+            output={"documents_ready": 1},
+            validation_payload={"ready": True},
+            coverage_payload={"coverage_ratio": 1.0},
+        )
+
+    monkeypatch.setitem(build_executors.EXECUTORS, IndexType.question.value, fake_question_stage)
+
+    job = _make_job(index_type=IndexType.question.value)
+    await build_orchestrator.process_build_job(db, job)
+    reconcile.assert_awaited_once()
+    assert job.status == BuildJobStatus.completed.value
+    assert job.stage_results["output"]["config_reconcile"]["drift_status"] == "in_sync"

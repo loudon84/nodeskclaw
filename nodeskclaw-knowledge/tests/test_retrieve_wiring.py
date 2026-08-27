@@ -87,11 +87,13 @@ async def test_retrieve_passes_set_items_to_planner():
     ):
         result = await retrieve(db, member, ragflow, knowledge_set_id="set1", query="hello")
 
-    build.assert_called_once_with(
-        plan_access,
-        kbs,
-        set_items,
-        metadata_condition=None,
-        dataset_id_by_kb_id={"kb1": "ds1"},
-    )
+    build.assert_called_once()
+    call_kwargs = build.call_args.kwargs
+    assert call_kwargs["metadata_condition"] is None
+    assert call_kwargs["dataset_id_by_kb_id"] == {"kb1": "ds1"}
+    assert "kb_capabilities" in call_kwargs
+    assert call_kwargs["kb_capabilities"]["kb1"].knowledge_base_id == "kb1"
+    assert build.call_args.args[0] == plan_access
+    assert build.call_args.args[1] == kbs
+    assert build.call_args.args[2] == set_items
     assert result["chunks"] == []

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 
 from sqlalchemy import select
@@ -19,6 +20,12 @@ from app.services.translation_engine import (
     get_translation_engine,
 )
 from app.workers.job_leasing import claim_next, clear_lease_if_owner
+
+_DUMMY_PAGE_TEXT_RE = re.compile(r"^\[page \d+\]$", re.IGNORECASE)
+
+
+def _is_dummy_source_text(source_text: str | None) -> bool:
+    return bool(_DUMMY_PAGE_TEXT_RE.match((source_text or "").strip()))
 
 
 async def create_translation(
@@ -152,6 +159,15 @@ async def process_translation_job(db: AsyncSession, job: TranslationJob) -> None
 
     page.status = "running"
     engine = get_translation_engine()
+    source_text = f"[page {page.page_no}]"
+    if _is_dummy_source_text(source_text):
+        page.status = "not_ready"
+        page.last_error = "source_not_loaded"
+        job.status = "failed"
+        job.error_message = "source_not_loaded"
+        job.finished_at = datetime.now(UTC)
+        await db.flush()
+        return
     try:
         result = await engine.translate_page(
             TranslationPageRequest(
@@ -161,7 +177,7 @@ async def process_translation_job(db: AsyncSession, job: TranslationJob) -> None
                 source_file_id=doc.source_file_id,
                 file_version_id=doc.file_version_id,
                 target_lang=doc.target_lang,
-                source_text=f"[page {page.page_no}]",
+                source_text=source_text,
             )
         )
     except TranslationEngineError as exc:
@@ -174,6 +190,15 @@ async def process_translation_job(db: AsyncSession, job: TranslationJob) -> None
         return
     finally:
         await engine.aclose()
+
+    if _is_dummy_source_text(result.content):
+        page.status = "not_ready"
+        page.last_error = "source_not_loaded"
+        job.status = "failed"
+        job.error_message = "source_not_loaded"
+        job.finished_at = datetime.now(UTC)
+        await db.flush()
+        return
 
     new_rev = int(page.current_revision) + 1
     relative = f"translations/{doc.id}/{page.id}/r{new_rev}.txt"

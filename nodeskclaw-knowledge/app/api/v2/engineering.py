@@ -77,12 +77,23 @@ def _build_job_out(job: KnowledgeBuildJob) -> dict:
     }
 
 
-def _index_state_out(state) -> dict:
-    payload: dict = {"status": state.status}
-    if state.retrieval_status:
-        payload["retrieval_status"] = state.retrieval_status
+def _index_state_out(state, *, capabilities: dict | None = None) -> dict:
+    payload: dict = {
+        "build_status": state.status,
+        "retrieval_status": state.retrieval_status,
+    }
     if state.last_error:
         payload["last_error"] = state.last_error
+    caps = capabilities or {}
+    runtime_feature = caps.get("index_types") or caps.get("supported_indexes")
+    if runtime_feature is not None:
+        payload["runtime_feature"] = runtime_feature
+    if state.validation_payload is not None:
+        payload["validation"] = state.validation_payload
+    if state.coverage_payload is not None:
+        payload["coverage"] = state.coverage_payload
+    if state.last_validated_at is not None:
+        payload["last_validated_at"] = state.last_validated_at.isoformat()
     return payload
 
 
@@ -118,7 +129,12 @@ async def list_kb_indexes(
         kb=kb,
         capabilities=capabilities,
     )
-    return ApiResponse(data={state.index_type: _index_state_out(state) for state in states})
+    return ApiResponse(
+        data={
+            state.index_type: _index_state_out(state, capabilities=capabilities)
+            for state in states
+        }
+    )
 
 
 @router.get("/knowledge-bases/{kb_id}/build-profile")

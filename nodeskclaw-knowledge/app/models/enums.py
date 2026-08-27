@@ -111,6 +111,13 @@ class RetrievalSliceKind(str, Enum):
     filtered_documents = "filtered_documents"
 
 
+class RuntimeRetrievalMode(str, Enum):
+    semantic = "semantic"
+    compiled_assisted = "compiled_assisted"
+    graph_assisted = "graph_assisted"
+    toc_enhanced = "toc_enhanced"
+
+
 class KnowledgeSetStatus(str, Enum):
     active = "active"
     disabled = "disabled"
@@ -311,6 +318,14 @@ class RuntimeBindingStatus(str, Enum):
     deleting = "deleting"
 
 
+class BindingDriftStatus(str, Enum):
+    unknown = "unknown"
+    in_sync = "in_sync"
+    drifted = "drifted"
+    reconciling = "reconciling"
+    error = "error"
+
+
 class RuntimeType(str, Enum):
     ragflow = "ragflow"
 
@@ -373,4 +388,12 @@ DEFAULT_RETRIEVAL_CONFIG = {
     "failure_policy": "fail_closed",
     "context_max_chunks": 8,
     "context_max_chars": 24000,
+    "retrieval_mode": "adaptive",
+    "allow_question_enrichment": True,
+    "allow_summary": True,
+    "allow_graph": True,
+    "allow_toc_enhance": True,
+    "fallback_policy": "chunk",
+    "candidate_budget": 1024,
+    "rerank_candidates": 64,
 }

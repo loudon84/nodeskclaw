@@ -1,37 +1,92 @@
-"""Build RetrievalPlan slices from AccessPlan."""
+"""Build RetrievalPlan RuntimeExecutionSlice from AccessPlan."""
 
+# @lat: [[knowledge#Retrieval Planner]]
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any
 
 from app.core.config import settings
-from app.models.enums import AccessPlanKind, RetrievalSliceKind
+from app.models.enums import AccessPlanKind, RuntimeRetrievalMode
 from app.models.knowledge_base import KnowledgeBase
 from app.models.knowledge_set_item import KnowledgeSetItem
+from app.services.capability_planner import KnowledgeBaseExecutionCapability
 from app.services.permission_service import AccessPlan
 
 
 @dataclass
-class RetrievalSlice:
-    kind: RetrievalSliceKind
+class RuntimeExecutionSlice:
+    knowledge_base_id: str
     dataset_id: str
-    knowledge_base_id: str | None = None
-    document_ids: list[str] = field(default_factory=list)
+    access_scope: str
+    mode: RuntimeRetrievalMode
+    document_ids: list[str] | None = None
+    retrieval_features: list[str] = field(default_factory=list)
+    use_kg: bool = False
+    include_knowledge_compilation: bool = False
+    toc_enhance: bool = False
+    top_k: int = 1024
     weight: float = 1.0
+    fallback_mode: str = RuntimeRetrievalMode.semantic.value
     metadata_condition: dict[str, Any] | None = None
-    index_type: str = "chunk"
     provider: str = "ragflow"
-    top_k: int | None = None
-    access_scope: str | None = None
 
 
 @dataclass
 class RetrievalPlan:
-    slices: list[RetrievalSlice] = field(default_factory=list)
+    slices: list[RuntimeExecutionSlice] = field(default_factory=list)
     plan_kind: AccessPlanKind = AccessPlanKind.no_access
     allowed_source_file_ids: list[str] = field(default_factory=list)
     metadata_pushdown: bool = False
+
+
+def mode_to_ragflow_flags(mode: RuntimeRetrievalMode) -> dict[str, bool]:
+    return {
+        "use_kg": mode == RuntimeRetrievalMode.graph_assisted,
+        "include_knowledge_compilation": mode == RuntimeRetrievalMode.compiled_assisted,
+        "toc_enhance": mode == RuntimeRetrievalMode.toc_enhanced,
+    }
+
+
+def _build_execution_slice(
+    *,
+    kb_id: str | None,
+    dataset_id: str,
+    access_scope: str,
+    document_ids: list[str] | None,
+    weight: float,
+    kb_capability: KnowledgeBaseExecutionCapability | None,
+    metadata_condition: dict[str, Any] | None,
+    top_k: int,
+) -> RuntimeExecutionSlice:
+    mode_str = (
+        kb_capability.selected_mode
+        if kb_capability
+        else RuntimeRetrievalMode.semantic.value
+    )
+    mode = RuntimeRetrievalMode(mode_str)
+    flags = mode_to_ragflow_flags(mode)
+    features = list(kb_capability.retrieval_features) if kb_capability else []
+    fallback = (
+        kb_capability.fallback_mode
+        if kb_capability
+        else RuntimeRetrievalMode.semantic.value
+    )
+    return RuntimeExecutionSlice(
+        knowledge_base_id=kb_id or "",
+        dataset_id=dataset_id,
+        document_ids=document_ids,
+        access_scope=access_scope,
+        mode=mode,
+        retrieval_features=features,
+        use_kg=flags["use_kg"],
+        include_knowledge_compilation=flags["include_knowledge_compilation"],
+        toc_enhance=flags["toc_enhance"],
+        top_k=top_k,
+        weight=weight,
+        fallback_mode=fallback,
+        metadata_condition=metadata_condition,
+    )
 
 
 def build_metadata_condition(filters: dict[str, list] | None) -> dict[str, Any] | None:
@@ -60,14 +115,18 @@ def build_retrieval_plan(
     knowledge_bases: list[KnowledgeBase],
     set_items: list[KnowledgeSetItem],
     *,
+    kb_capabilities: dict[str, KnowledgeBaseExecutionCapability] | None = None,
     metadata_condition: dict[str, Any] | None = None,
     pushdown_enabled: bool | None = None,
     dataset_id_by_kb_id: dict[str, str] | None = None,
+    top_k: int | None = None,
 ) -> RetrievalPlan:
     use_pushdown = (
         settings.RAGFLOW_METADATA_PUSHDOWN_ENABLED if pushdown_enabled is None else bool(pushdown_enabled)
     )
     condition = metadata_condition if use_pushdown else None
+    effective_top_k = top_k if top_k is not None else 1024
+    kb_caps = kb_capabilities or {}
 
     if access_plan.kind == AccessPlanKind.no_access:
         return RetrievalPlan(plan_kind=AccessPlanKind.no_access, metadata_pushdown=bool(condition))
@@ -82,17 +141,21 @@ def build_retrieval_plan(
     }
     batch_size = max(1, int(settings.RETRIEVAL_DOCUMENT_BATCH_SIZE))
 
-    slices: list[RetrievalSlice] = []
+    slices: list[RuntimeExecutionSlice] = []
     for dataset_id in access_plan.full_dataset_ids:
         kb = kb_by_dataset.get(dataset_id)
         kb_id = kb.id if kb else None
+        cap = kb_caps.get(kb_id or "")
         slices.append(
-            RetrievalSlice(
-                kind=RetrievalSliceKind.full_dataset,
+            _build_execution_slice(
+                kb_id=kb_id,
                 dataset_id=dataset_id,
-                knowledge_base_id=kb_id,
+                access_scope="full",
+                document_ids=None,
                 weight=weights.get(kb_id or "", 1.0),
+                kb_capability=cap,
                 metadata_condition=condition,
+                top_k=effective_top_k,
             )
         )
 
@@ -101,28 +164,33 @@ def build_retrieval_plan(
         document_ids = list(partial.get("document_ids") or [])
         weight = weights.get(kb_id or "", 1.0)
         dataset_id = partial["dataset_id"]
+        cap = kb_caps.get(kb_id or "")
         if not document_ids:
             slices.append(
-                RetrievalSlice(
-                    kind=RetrievalSliceKind.filtered_documents,
+                _build_execution_slice(
+                    kb_id=kb_id,
                     dataset_id=dataset_id,
-                    knowledge_base_id=kb_id,
+                    access_scope="filtered",
                     document_ids=[],
                     weight=weight,
+                    kb_capability=cap,
                     metadata_condition=condition,
+                    top_k=effective_top_k,
                 )
             )
             continue
         for start in range(0, len(document_ids), batch_size):
             batch = document_ids[start : start + batch_size]
             slices.append(
-                RetrievalSlice(
-                    kind=RetrievalSliceKind.filtered_documents,
+                _build_execution_slice(
+                    kb_id=kb_id,
                     dataset_id=dataset_id,
-                    knowledge_base_id=kb_id,
+                    access_scope="filtered",
                     document_ids=batch,
                     weight=weight,
+                    kb_capability=cap,
                     metadata_condition=condition,
+                    top_k=effective_top_k,
                 )
             )
 
@@ -138,37 +206,4 @@ def build_retrieval_plan(
         plan_kind=access_plan.kind,
         allowed_source_file_ids=list(access_plan.source_file_ids),
         metadata_pushdown=bool(condition),
-    )
-
-
-def expand_plan_for_indexes(plan: RetrievalPlan, index_types: list[str]) -> RetrievalPlan:
-    """Duplicate access slices per index type for multi-index execution."""
-    if not index_types or len(index_types) <= 1:
-        primary = index_types[0] if index_types else "chunk"
-        for slice_ in plan.slices:
-            if not slice_.index_type or slice_.index_type == "chunk":
-                slice_.index_type = primary
-        return plan
-    expanded: list[RetrievalSlice] = []
-    for slice_ in plan.slices:
-        for index_type in index_types:
-            expanded.append(
-                RetrievalSlice(
-                    kind=slice_.kind,
-                    dataset_id=slice_.dataset_id,
-                    knowledge_base_id=slice_.knowledge_base_id,
-                    document_ids=list(slice_.document_ids),
-                    weight=slice_.weight,
-                    metadata_condition=slice_.metadata_condition,
-                    index_type=index_type,
-                    provider=slice_.provider,
-                    top_k=slice_.top_k,
-                    access_scope=slice_.access_scope,
-                )
-            )
-    return RetrievalPlan(
-        slices=expanded,
-        plan_kind=plan.plan_kind,
-        allowed_source_file_ids=list(plan.allowed_source_file_ids),
-        metadata_pushdown=plan.metadata_pushdown,
     )

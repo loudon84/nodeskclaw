@@ -41,10 +41,19 @@ def test_new_metrics_labels_are_low_cardinality():
     metrics_service.observe_index_drift(index_type="graph")
     metrics_service.observe_translation_drift(reason="artifact_missing")
     metrics_service.observe_evidence_returned(evidence_type="chunk")
+    metrics_service.observe_runtime_drift(reason="config_drift")
+    metrics_service.observe_runtime_reconcile(status="success")
+    metrics_service.observe_runtime_mode_request(mode="semantic")
+    metrics_service.observe_runtime_contract_probe(level="L1", status="ok")
+    metrics_service.observe_build_validation(index_type="graph", status="ready")
+    metrics_service.observe_aggregate_security_fallback(reason="filtered_access")
+    metrics_service.observe_application_readiness_failure(reason="runtime_chunk_unavailable")
+    metrics_service.observe_worker_heartbeat(worker_role="ingestion")
     body = metrics_service.render_metrics().decode("utf-8")
     assert "knowledge_binding_drift_total" in body
-    assert "knowledge_index_drift_total" in body
-    assert "knowledge_translation_drift_total" in body
+    assert "knowledge_runtime_reconcile_total" in body
+    assert "knowledge_worker_heartbeat_timestamp" in body
+    assert "application_readiness_failure_total" in body
 
 
 def test_translation_engine_registry_default():
@@ -55,6 +64,36 @@ def test_translation_engine_registry_default():
 def test_translation_engine_unknown_raises():
     with pytest.raises(TranslationEngineError):
         get_translation_engine("not-a-real-engine")
+
+
+@pytest.mark.asyncio
+async def test_process_translation_job_dummy_source_not_completed():
+    page = SimpleNamespace(
+        id="p1",
+        document_id="d1",
+        page_no=1,
+        current_revision=0,
+        status="pending",
+        last_error=None,
+    )
+    doc = SimpleNamespace(id="d1", deleted_at=None, source_file_id="sf1", file_version_id="fv1", target_lang="en")
+    job = SimpleNamespace(
+        page_id="p1",
+        document_id="d1",
+        status="running",
+        error_message=None,
+        finished_at=None,
+    )
+    db = AsyncMock()
+    db.get = AsyncMock(side_effect=lambda _model, oid: {"p1": page, "d1": doc}.get(oid))
+    db.flush = AsyncMock()
+
+    await translation_service.process_translation_job(db, job)
+
+    assert job.status == "failed"
+    assert job.error_message == "source_not_loaded"
+    assert page.status == "not_ready"
+    assert page.current_revision == 0
 
 
 @pytest.mark.asyncio
@@ -103,6 +142,7 @@ async def test_process_translation_job_success(tmp_path, monkeypatch):
 
     with (
         patch("app.services.translation_service.get_translation_engine", return_value=_StubEngine()),
+        patch("app.services.translation_service._is_dummy_source_text", return_value=False),
         patch.object(translation_service, "list_pages", AsyncMock(return_value=[page])),
     ):
         await translation_service.process_translation_job(db, job)
@@ -152,7 +192,10 @@ async def test_process_translation_job_engine_failure_is_honest():
         async def aclose(self) -> None:
             return None
 
-    with patch("app.services.translation_service.get_translation_engine", return_value=_FailingEngine()):
+    with (
+        patch("app.services.translation_service.get_translation_engine", return_value=_FailingEngine()),
+        patch("app.services.translation_service._is_dummy_source_text", return_value=False),
+    ):
         await translation_service.process_translation_job(db, job)
 
     assert job.status == "failed"

@@ -250,6 +250,21 @@ async def process_build_job(db: AsyncSession, job: KnowledgeBuildJob) -> None:
         await db.flush()
         return
 
+    reconcile_output: dict | None = None
+    if binding is not None and job.index_type != IndexType.chunk.value:
+        from app.runtime.ragflow import RagflowRuntimeAdapter
+        from app.services import reconciliation_service
+
+        adapter = RagflowRuntimeAdapter()
+        try:
+            reconcile_output = await reconciliation_service.reconcile_binding_config(
+                db,
+                job.knowledge_base_id,
+                adapter,
+            )
+        finally:
+            await adapter.aclose()
+
     executor = build_executors.EXECUTORS.get(job.index_type)
     if executor is None:
         finished_at = datetime.now(UTC)
@@ -324,13 +339,26 @@ async def process_build_job(db: AsyncSession, job: KnowledgeBuildJob) -> None:
             build_job_id=job.id,
             capabilities=capabilities,
         )
+        if result.validation_payload is not None or result.coverage_payload is not None:
+            await index_state_service.persist_validation(
+                state,
+                validation_payload=result.validation_payload,
+                coverage_payload=result.coverage_payload,
+            )
+        stage_output = dict(result.output)
+        if reconcile_output:
+            stage_output["runtime_config_revision"] = reconcile_output.get("config_revision")
+            stage_output["config_reconcile"] = {
+                "drift_status": reconcile_output.get("drift_status"),
+                "applied": reconcile_output.get("applied"),
+            }
         job.stage_results = _stage_results_payload(
             index_type=job.index_type,
             status="succeeded",
             started_at=started_at,
             finished_at=finished_at,
             attempt=int(job.attempt_count or 0),
-            output=result.output,
+            output=stage_output,
         )
         job.status = BuildJobStatus.completed.value
         job.progress = 100
@@ -376,6 +404,12 @@ async def process_build_job(db: AsyncSession, job: KnowledgeBuildJob) -> None:
         error_message=result.error_message or "build stage failed",
         output=result.output,
     )
+    if result.validation_payload is not None or result.coverage_payload is not None:
+        await index_state_service.persist_validation(
+            state,
+            validation_payload=result.validation_payload,
+            coverage_payload=result.coverage_payload,
+        )
     await db.flush()
 
 

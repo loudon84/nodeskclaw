@@ -168,3 +168,18 @@ async def set_state_status(
     elif status == IndexStateStatus.unsupported.value:
         state.retrieval_status = IndexRetrievalStatus.unsupported.value
     return state
+
+
+async def persist_validation(
+    state: IndexState,
+    *,
+    validation_payload: dict | None = None,
+    coverage_payload: dict | None = None,
+) -> IndexState:
+    if validation_payload is not None:
+        state.validation_payload = validation_payload
+    if coverage_payload is not None:
+        state.coverage_payload = coverage_payload
+    if validation_payload is not None or coverage_payload is not None:
+        state.last_validated_at = datetime.now(UTC)
+    return state

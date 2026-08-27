@@ -27,3 +27,4 @@ class RetrievalTrace(BaseModel):
     effective_indexes: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     fallback_used: Mapped[bool | None] = mapped_column(nullable=True)
     fallback_reason: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    execution_slices: Mapped[list | None] = mapped_column(JSONB, nullable=True)

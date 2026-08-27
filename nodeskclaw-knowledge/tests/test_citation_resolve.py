@@ -348,3 +348,29 @@ async def test_resolve_retrieval_no_permission_forbidden():
     ):
         with pytest.raises(ForbiddenError):
             await citation_service.resolve_citation(db, member, "cit1")
+
+
+def test_evidence_normalizer_classify_summary():
+    from app.integrations.ragflow.models import RagflowChunk
+    from app.services.evidence_normalizer import classify
+
+    chunk = RagflowChunk(
+        id="c1",
+        content="compiled summary",
+        document_id="d1",
+        document_metadata={"raptor": True},
+    )
+    assert classify(chunk, "compiled_assisted") == "summary"
+
+
+def test_evidence_normalizer_ignores_nk_evidence_type():
+    from app.integrations.ragflow.models import RagflowChunk
+    from app.services.evidence_normalizer import classify
+
+    chunk = RagflowChunk(
+        id="c1",
+        content="plain",
+        document_id="d1",
+        document_metadata={"nk_evidence_type": "graph_path"},
+    )
+    assert classify(chunk, "semantic") == "chunk"

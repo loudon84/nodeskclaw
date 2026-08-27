@@ -11,7 +11,7 @@ import uuid
 
 from app.core.config import settings
 from app.core.deps import async_session_factory
-from app.services import translation_service
+from app.services import metrics_service, translation_service
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +29,7 @@ async def _run_loop() -> None:
     lease_owner = _lease_owner()
     logger.info("translation worker started lease_owner=%s", lease_owner)
     while True:
+        metrics_service.observe_worker_heartbeat(worker_role="translation")
         processed = False
         async with async_session_factory() as db:
             claimed = await translation_service.claim_next_translation_job(

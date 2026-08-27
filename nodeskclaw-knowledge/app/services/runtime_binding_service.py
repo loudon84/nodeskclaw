@@ -12,12 +12,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.exceptions import BadRequestError
 from app.models.base import not_deleted
-from app.models.enums import RuntimeBindingStatus, RuntimeResourceType, RuntimeType
+from app.models.enums import BindingDriftStatus, RuntimeBindingStatus, RuntimeResourceType, RuntimeType
 from app.models.knowledge_base import KnowledgeBase
 from app.models.runtime_binding import KnowledgeRuntimeBinding
+from app.services import build_profile_service, runtime_config_compiler
 
 if TYPE_CHECKING:
     from app.runtime.ragflow import RagflowRuntimeAdapter
+    from app.runtime.ragflow_contract import RagflowCompatibilityProfile
 
 
 @dataclass
@@ -40,7 +42,10 @@ async def probe_and_persist_binding_capabilities(
     capabilities: dict[str, Any]
     runtime_version: str | None
     try:
-        reachable, runtime_version, capabilities = await runtime_capabilities.probe_runtime(adapter.client)
+        reachable, runtime_version, capabilities = await runtime_capabilities.probe_runtime(
+            adapter.client,
+            dataset_id=None,
+        )
         if not reachable:
             probe_error = "ragflow_unreachable"
     except Exception as exc:
@@ -71,6 +76,141 @@ async def probe_and_persist_binding_capabilities(
         runtime_version=runtime_version,
         probe_error=probe_error,
     )
+
+
+def runtime_dataset_name(kb: KnowledgeBase, *, org_id: str | None = None) -> str:
+    display = kb.name or "kb"
+    return f"nk:{kb.id}:{display}"
+
+
+def runtime_dataset_prefix(kb_id: str) -> str:
+    return f"nk:{kb_id}:"
+
+
+async def _find_dataset_id_by_prefix(adapter: RagflowRuntimeAdapter, kb_id: str) -> str | None:
+    prefix = runtime_dataset_prefix(kb_id)
+    page = 1
+    while True:
+        datasets = await adapter.client.list_datasets(page=page, page_size=50)
+        for dataset in datasets:
+            name = getattr(dataset, "name", None) or ""
+            if name.startswith(prefix):
+                return str(getattr(dataset, "id", "") or "")
+        if len(datasets) < 50:
+            break
+        page += 1
+    return None
+
+
+async def compile_and_persist_desired_config(
+    db: AsyncSession,
+    kb: KnowledgeBase,
+    binding: KnowledgeRuntimeBinding,
+    *,
+    compat_profile: RagflowCompatibilityProfile | dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    profile = await build_profile_service.resolve_profile_for_kb(db, kb)
+    knowledge_model = None
+    if getattr(kb, "knowledge_model_id", None):
+        from app.models.knowledge_model import KnowledgeModel
+
+        knowledge_model = await db.get(KnowledgeModel, kb.knowledge_model_id)
+        if knowledge_model is not None and knowledge_model.deleted_at is not None:
+            knowledge_model = None
+    caps = compat_profile or binding.capabilities
+    desired = runtime_config_compiler.compile_desired_config(kb, profile, knowledge_model, caps)
+    desired["name"] = runtime_dataset_name(kb, org_id=kb.org_id)
+    binding.desired_config = desired
+    binding.config_revision = int(binding.config_revision or 0) + 1
+    await db.flush()
+    return desired
+
+
+async def persist_observed_config(
+    binding: KnowledgeRuntimeBinding,
+    observed_config: dict[str, Any],
+    *,
+    drift_status: str = BindingDriftStatus.in_sync.value,
+) -> None:
+    binding.observed_config = observed_config
+    binding.observed_revision = int(binding.observed_revision or 0) + 1
+    binding.drift_status = drift_status
+    binding.last_observed_at = datetime.now(UTC)
+    binding.last_reconciled_at = datetime.now(UTC)
+
+
+async def create_dataset_idempotent(
+    db: AsyncSession,
+    adapter: RagflowRuntimeAdapter,
+    *,
+    kb: KnowledgeBase,
+    org_id: str,
+    embedding_model: str,
+    chunk_method: str,
+    parser_config: dict | None,
+    description: str | None,
+) -> str:
+    runtime_name = runtime_dataset_name(kb, org_id=org_id)
+    from app.integrations.ragflow.exceptions import RagflowError
+
+    try:
+        dataset_id = await adapter.client.create_dataset(
+            name=runtime_name,
+            embedding_model=embedding_model,
+            chunk_method=chunk_method,
+            parser_config=parser_config,
+            permission="me",
+            description=description,
+        )
+    except RagflowError:
+        recovered = await _find_dataset_id_by_prefix(adapter, kb.id)
+        if recovered:
+            return recovered
+        raise
+    return dataset_id
+
+
+async def update_dataset_metadata(
+    db: AsyncSession,
+    adapter: RagflowRuntimeAdapter,
+    kb: KnowledgeBase,
+    *,
+    name: str | None = None,
+    description: str | None = None,
+) -> None:
+    binding = await get_binding(db, kb.id)
+    if binding is None:
+        return
+    await compile_and_persist_desired_config(db, kb, binding)
+    from app.services import reconciliation_service
+
+    await reconciliation_service.reconcile_binding_config(
+        db,
+        kb.id,
+        adapter,
+        metadata_overrides={"name": name, "description": description} if name or description else None,
+    )
+
+
+async def delete_dataset_idempotent(
+    db: AsyncSession,
+    adapter: RagflowRuntimeAdapter,
+    kb: KnowledgeBase,
+) -> None:
+    from app.integrations.ragflow.exceptions import RagflowError
+
+    dataset_id = await get_dataset_id(db, kb)
+    if not dataset_id:
+        return
+    binding = await get_binding(db, kb.id)
+    try:
+        await adapter.client.delete_dataset(dataset_id)
+    except RagflowError as exc:
+        if "404" not in str(exc.message).lower() and exc.message_key != "errors.knowledge.ragflow_not_found":
+            raise
+    if binding is not None:
+        binding.status = RuntimeBindingStatus.deleting.value
+        binding.soft_delete()
 
 
 async def probe_all_bindings(db: AsyncSession, adapter: RagflowRuntimeAdapter) -> dict[str, int]:

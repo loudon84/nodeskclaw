@@ -1,41 +1,60 @@
 """Capability planner and evidence cleaner tests."""
 
 from app.integrations.ragflow.models import RagflowChunk
+from app.models.enums import RuntimeRetrievalMode
 from app.services import capability_planner
 from app.services.chunk_security_service import EvidenceItem, evidence_from_chunk
 
 
-def test_capability_plan_default_chunk():
-    plan = capability_planner.build_capability_plan("hello world")
-    assert "chunk" in plan.effective_indexes
+def test_capability_plan_default_semantic():
+    plan = capability_planner.build_capability_plan(
+        "hello world",
+        kb_access_scopes={"kb1": "full"},
+    )
+    assert "kb1" in plan.kb_capabilities
+    assert plan.kb_capabilities["kb1"].selected_mode == RuntimeRetrievalMode.semantic.value
     assert "rule_default_chunk" in plan.reason_codes
 
 
 def test_capability_plan_graph_keywords_degrade_when_unsupported():
     plan = capability_planner.build_capability_plan(
         "查找实体关系图谱",
-        available_indexes=["chunk", "graph"],
-        index_states={"graph": "unsupported", "chunk": "ready"},
-        retrieval_states={"graph": "unsupported", "chunk": "ready"},
+        kb_access_scopes={"kb1": "full"},
+        kb_index_states={"kb1": {"graph": "unsupported", "chunk": "ready"}},
+        kb_retrieval_states={"kb1": {"graph": "unsupported", "chunk": "ready"}},
     )
-    assert "chunk" in plan.effective_indexes
-    assert any(d.startswith("graph:") for d in plan.degraded)
-    assert "graph" not in plan.effective_indexes
+    cap = plan.kb_capabilities["kb1"]
+    assert cap.selected_mode == RuntimeRetrievalMode.semantic.value
+    assert any(d.startswith("graph_assisted:") for d in cap.degraded)
+    assert RuntimeRetrievalMode.graph_assisted.value in cap.denied_modes
 
 
-def test_capability_plan_force_chunk_only_flag():
+def test_capability_plan_force_semantic_only():
     plan = capability_planner.build_capability_plan(
         "查找实体关系图谱",
-        available_indexes=["chunk", "graph"],
-        index_states={"graph": "ready", "chunk": "ready"},
-        retrieval_states={"graph": "ready", "chunk": "ready"},
-        force_chunk_only=True,
+        kb_access_scopes={"kb1": "full"},
+        kb_index_states={"kb1": {"graph": "ready", "chunk": "ready"}},
+        kb_retrieval_states={"kb1": {"graph": "ready", "chunk": "ready"}},
+        force_semantic_only=True,
     )
-    assert plan.effective_indexes == ["chunk"]
-    assert "flag_force_chunk_only" in plan.reason_codes
+    assert plan.kb_capabilities["kb1"].selected_mode == RuntimeRetrievalMode.semantic.value
 
 
-def test_evidence_from_chunk():
+def test_filtered_access_denies_aggregate_modes():
+    plan = capability_planner.build_capability_plan(
+        "查找实体关系图谱",
+        kb_access_scopes={"kb1": "filtered"},
+        kb_index_states={"kb1": {"graph": "ready", "chunk": "ready"}},
+        kb_retrieval_states={"kb1": {"graph": "ready", "chunk": "ready"}},
+        profile_policy={"allow_graph": True, "allow_summary": True},
+    )
+    cap = plan.kb_capabilities["kb1"]
+    assert RuntimeRetrievalMode.graph_assisted.value in cap.denied_modes
+    assert RuntimeRetrievalMode.compiled_assisted.value in cap.denied_modes
+    assert cap.selected_mode == RuntimeRetrievalMode.semantic.value
+
+
+def test_evidence_from_chunk_uses_normalizer():
     chunk = RagflowChunk(
         id="c1",
         content="x",
@@ -45,6 +64,17 @@ def test_evidence_from_chunk():
     item = evidence_from_chunk(chunk)
     assert item.evidence_type == "chunk"
     assert item.source_refs[0]["source_file_id"] == "sf1"
+
+
+def test_evidence_from_chunk_summary_marker():
+    chunk = RagflowChunk(
+        id="c2",
+        content="summary text",
+        document_id="d2",
+        document_metadata={"raptor": True, "nk_source_file_id": "sf1"},
+    )
+    item = evidence_from_chunk(chunk, slice_mode="compiled_assisted")
+    assert item.evidence_type == "summary"
 
 
 def test_graph_without_refs_is_evidence_item():

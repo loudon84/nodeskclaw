@@ -6,18 +6,19 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from app.integrations.ragflow.models import RagflowChunk
-from app.models.enums import RetrievalSliceKind
+from app.models.enums import RuntimeRetrievalMode
 from app.services.chunk_security_service import evidence_from_chunk
 from app.services.retrieval_merge_service import (
     MergeExecutionResult,
+    _apply_aggregate_gate,
     _dedup_key,
     _normalize_content,
     execute_and_merge,
 )
-from app.services.retrieval_planner import RetrievalPlan, RetrievalSlice
+from app.services.retrieval_planner import RetrievalPlan, RuntimeExecutionSlice
 
 
-def test_evidence_from_chunk_includes_lineage_fields():
+def test_evidence_from_chunk_uses_normalizer_not_nk_tags():
     chunk = RagflowChunk(
         id="c1",
         content="hello",
@@ -30,9 +31,9 @@ def test_evidence_from_chunk_includes_lineage_fields():
             "nk_evidence_type": "graph_path",
         },
     )
-    item = evidence_from_chunk(chunk)
-    assert item.evidence_type == "graph_path"
-    assert item.index_type == "graph"
+    item = evidence_from_chunk(chunk, slice_mode="semantic")
+    assert item.evidence_type == "chunk"
+    assert item.index_type == "semantic"
     assert item.lineage_status == "active"
     assert item.source_refs[0]["knowledge_base_id"] == "kb1"
 
@@ -45,39 +46,70 @@ def test_dedup_key_same_content():
     assert _normalize_content("  A  B ") == "a b"
 
 
+def test_aggregate_gate_filtered_denies_graph():
+    slice_ = RuntimeExecutionSlice(
+        knowledge_base_id="kb1",
+        dataset_id="ds1",
+        access_scope="filtered",
+        mode=RuntimeRetrievalMode.graph_assisted,
+        document_ids=["d1"],
+        use_kg=True,
+    )
+    gated, fallback = _apply_aggregate_gate(slice_)
+    assert fallback is True
+    assert gated.mode == RuntimeRetrievalMode.semantic
+    assert gated.use_kg is False
+    assert gated.include_knowledge_compilation is False
+
+
+def test_aggregate_gate_full_allows_graph():
+    slice_ = RuntimeExecutionSlice(
+        knowledge_base_id="kb1",
+        dataset_id="ds1",
+        access_scope="full",
+        mode=RuntimeRetrievalMode.graph_assisted,
+        use_kg=True,
+    )
+    gated, fallback = _apply_aggregate_gate(slice_)
+    assert fallback is False
+    assert gated.use_kg is True
+
+
 @pytest.mark.asyncio
-async def test_non_chunk_slice_fallback_to_chunk_on_failure():
+async def test_non_semantic_slice_fallback_to_semantic_on_failure():
     db = MagicMock()
     ragflow = AsyncMock()
-    calls = {"n": 0}
+    calls: list[dict] = []
 
     async def _retrieve(**kwargs):
-        calls["n"] += 1
-        if calls["n"] == 1:
+        calls.append(kwargs)
+        if len(calls) == 1:
             raise RuntimeError("graph unavailable")
         return SimpleNamespace(chunks=[RagflowChunk(id="c1", content="ok", document_id="d1", similarity=0.9)])
 
     ragflow.retrieve = _retrieve
     plan = RetrievalPlan(
         slices=[
-            RetrievalSlice(
-                kind=RetrievalSliceKind.full_dataset,
-                dataset_id="ds1",
+            RuntimeExecutionSlice(
                 knowledge_base_id="kb1",
-                index_type="graph",
+                dataset_id="ds1",
+                access_scope="full",
+                mode=RuntimeRetrievalMode.graph_assisted,
+                use_kg=True,
             )
         ]
     )
 
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(
-            "app.services.retrieval_merge_service.chunk_security_service.clean_chunks",
+            "app.services.retrieval_merge_service.chunk_security_service.clean_chunks_with_modes",
             AsyncMock(
                 return_value=SimpleNamespace(
                     safe_chunks=[RagflowChunk(id="c1", content="ok", document_id="d1", similarity=0.9)],
                     filtered_count=0,
                     filter_counts=lambda: {},
                     dropped=[],
+                    chunk_modes=[(RagflowChunk(id="c1", content="ok", document_id="d1", similarity=0.9), "semantic")],
                 )
             ),
         )
@@ -100,4 +132,6 @@ async def test_non_chunk_slice_fallback_to_chunk_on_failure():
     assert isinstance(result, MergeExecutionResult)
     assert result.slice_results[0].fallback_used is True
     assert result.fallback_used is True
-    assert calls["n"] == 2
+    assert len(calls) == 2
+    assert calls[0].get("use_kg") is True
+    assert calls[1].get("use_kg") in {None, False}

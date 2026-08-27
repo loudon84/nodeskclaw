@@ -1,13 +1,17 @@
-"""Runtime capability probe — facts-driven capability snapshot for RuntimeBinding."""
+"""Runtime capability snapshot — facts-driven capability shape for RuntimeBinding persistence."""
 
 from __future__ import annotations
 
 from typing import Any
 
 from app.integrations.ragflow.client import RagflowClient
+from app.runtime.ragflow_contract import (
+    MINIMUM_SUPPORTED_RAGFLOW_VERSION,
+    RagflowCompatibilityProfile,
+    probe_compatibility_profile,
+)
 
-MINIMUM_SUPPORTED_RAGFLOW_VERSION = "0.17.0"
-VALIDATED_RAGFLOW_VERSIONS = ["0.17.0", "0.24.0", "0.27.0"]
+VALIDATED_RAGFLOW_VERSIONS: list[str] = []
 
 
 def _cap_entry(
@@ -35,51 +39,21 @@ def _cap_entry(
     }
 
 
-def _version_validated(version: str | None) -> bool:
-    if not version:
-        return False
-    normalized = version.lstrip("v").split("-", 1)[0]
-    return normalized in VALIDATED_RAGFLOW_VERSIONS
-
-
-async def probe_runtime_version(client: RagflowClient) -> str | None:
-    return await client.get_system_version()
-
-
-async def probe_index_capabilities(
-    client: RagflowClient,
-    *,
-    reachable: bool,
-    runtime_version: str | None,
-) -> dict[str, Any]:
-    validated = _version_validated(runtime_version)
-    if not reachable:
+def capabilities_from_profile(profile: RagflowCompatibilityProfile) -> dict[str, Any]:
+    runtime_version = profile.runtime_version
+    if not profile.reachable:
+        unreachable = _cap_entry(
+            build_supported=False,
+            retrieval_supported=False,
+            runtime_version=runtime_version,
+            reason="ragflow_unreachable",
+        )
         return {
-            "supports_chunk": _cap_entry(
-                build_supported=False,
-                retrieval_supported=False,
-                runtime_version=runtime_version,
-                reason="ragflow_unreachable",
-            ),
-            "supports_auto_questions": _cap_entry(
-                build_supported=False,
-                retrieval_supported=False,
-                runtime_version=runtime_version,
-                reason="ragflow_unreachable",
-            ),
-            "supports_raptor": _cap_entry(
-                build_supported=False,
-                retrieval_supported=False,
-                runtime_version=runtime_version,
-                reason="ragflow_unreachable",
-            ),
-            "supports_graph": _cap_entry(
-                build_supported=False,
-                retrieval_supported=False,
-                runtime_version=runtime_version,
-                reason="ragflow_unreachable",
-            ),
-            "supports_metadata_filter": True,
+            "supports_chunk": unreachable,
+            "supports_auto_questions": unreachable,
+            "supports_raptor": unreachable,
+            "supports_graph": unreachable,
+            "supports_metadata_filter": False,
             "supports_table": _cap_entry(
                 build_supported=False,
                 retrieval_supported=False,
@@ -93,45 +67,47 @@ async def probe_index_capabilities(
                 reason="ragflow_unreachable",
             ),
             "ragflow_version": runtime_version,
+            "compat_profile": profile.to_dict(),
         }
 
     chunk = _cap_entry(
-        build_supported=True,
-        retrieval_supported=True,
+        build_supported=profile.dataset_api and profile.document_api,
+        retrieval_supported=profile.chunk_retrieval,
         runtime_version=runtime_version,
-        validated=validated,
+        validated=profile.chunk_retrieval,
     )
     questions = _cap_entry(
-        build_supported=True,
-        retrieval_supported=True,
+        build_supported=profile.auto_questions_build,
+        retrieval_supported=profile.question_fields_visible and profile.chunk_retrieval,
         runtime_version=runtime_version,
-        validated=validated,
+        validated=profile.question_fields_visible,
         requires_reparse=True,
-        experimental=not validated,
-        reason=None if validated else "runtime_version_not_validated",
+        experimental=not profile.question_fields_visible,
+        reason=None if profile.question_fields_visible else "question_fields_not_visible",
     )
     raptor = _cap_entry(
-        build_supported=True,
-        retrieval_supported=True,
+        build_supported=profile.raptor_build or profile.knowledge_compilation,
+        retrieval_supported=profile.knowledge_compilation,
         runtime_version=runtime_version,
-        validated=validated,
-        experimental=not validated,
-        reason=None if validated else "runtime_version_not_validated",
+        validated=profile.knowledge_compilation,
+        experimental=not profile.knowledge_compilation,
+        reason=None if profile.knowledge_compilation else "knowledge_compilation_unavailable",
     )
     graph = _cap_entry(
-        build_supported=True,
-        retrieval_supported=False,
+        build_supported=profile.dataset_graph,
+        retrieval_supported=profile.kg_retrieval,
         runtime_version=runtime_version,
-        validated=validated,
-        experimental=True,
-        reason="graph_query_unsupported",
+        validated=profile.kg_retrieval,
+        experimental=not profile.kg_retrieval,
+        reason=None if profile.kg_retrieval else "kg_retrieval_unavailable",
     )
     return {
         "supports_chunk": chunk,
         "supports_auto_questions": questions,
         "supports_raptor": raptor,
         "supports_graph": graph,
-        "supports_metadata_filter": True,
+        "supports_metadata_filter": profile.metadata_filter,
+        "supports_toc_enhance": profile.toc_enhance,
         "supports_table": _cap_entry(
             build_supported=False,
             retrieval_supported=False,
@@ -145,18 +121,35 @@ async def probe_index_capabilities(
             reason="outline_index_not_implemented",
         ),
         "ragflow_version": runtime_version,
+        "compat_profile": profile.to_dict(),
     }
 
 
-async def probe_runtime(client: RagflowClient) -> tuple[bool, str | None, dict[str, Any]]:
-    try:
-        reachable = await client.system_health()
-    except Exception:
-        reachable = False
-    version = await probe_runtime_version(client) if reachable else None
-    capabilities = await probe_index_capabilities(
-        client,
-        reachable=reachable,
-        runtime_version=version,
-    )
-    return reachable, version, capabilities
+async def probe_runtime_version(client: RagflowClient) -> str | None:
+    return await client.get_system_version()
+
+
+async def probe_index_capabilities(
+    client: RagflowClient,
+    *,
+    reachable: bool,
+    runtime_version: str | None,
+    profile: RagflowCompatibilityProfile | None = None,
+) -> dict[str, Any]:
+    if profile is not None:
+        return capabilities_from_profile(profile)
+    if not reachable:
+        return capabilities_from_profile(RagflowCompatibilityProfile(reachable=False, runtime_version=runtime_version))
+    discovered = await probe_compatibility_profile(client)
+    return capabilities_from_profile(discovered)
+
+
+async def probe_runtime(
+    client: RagflowClient,
+    *,
+    dataset_id: str | None = None,
+    document_id: str | None = None,
+) -> tuple[bool, str | None, dict[str, Any]]:
+    profile = await probe_compatibility_profile(client, dataset_id=dataset_id, document_id=document_id)
+    capabilities = capabilities_from_profile(profile)
+    return profile.reachable, profile.runtime_version, capabilities

@@ -10,7 +10,7 @@ from app.api.v2.assets import router as assets_router
 from app.api.v2.engineering import router as engineering_router
 from app.api.v2.evidence import router as evidence_router
 from app.api.v2.retrieval import router as retrieval_router
-from app.api.v2.runtime_admin import router as runtime_admin_router
+from app.api.v2.runtime_admin import kb_runtime_router, router as runtime_admin_router
 from app.api.v2.translations import router as translations_router
 from app.mcp_server import router as mcp_router
 
@@ -22,5 +22,6 @@ router.include_router(retrieval_router)
 router.include_router(evidence_router)
 router.include_router(translations_router)
 router.include_router(runtime_admin_router)
+router.include_router(kb_runtime_router)
 router.include_router(agent_tools_router)
 router.include_router(mcp_router)

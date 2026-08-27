@@ -39,6 +39,7 @@ class ChunkCleanResult:
     metadata_mismatch: int = 0
     unknown: int = 0
     dropped: list[tuple[RagflowChunk, str]] = field(default_factory=list)
+    chunk_modes: list[tuple[RagflowChunk, str]] = field(default_factory=list)
 
     def __iter__(self) -> Iterator[list[RagflowChunk] | int]:
         yield self.safe_chunks
@@ -68,6 +69,7 @@ class EvidenceItem:
     freshness: str | None = None
     lineage_status: str | None = None
     index_type: str = "chunk"
+    citation_eligible: bool = False
 
 
 @dataclass
@@ -89,14 +91,31 @@ class EvidenceCleanResult:
         }
 
 
-def evidence_from_chunk(chunk: RagflowChunk, *, evidence_type: str = "chunk", index_type: str = "chunk") -> EvidenceItem:
+def evidence_from_chunk(
+    chunk: RagflowChunk,
+    *,
+    slice_mode: str = "semantic",
+    evidence_type: str | None = None,
+) -> EvidenceItem:
+    from app.services.evidence_normalizer import classify
+
     meta = dict(chunk.document_metadata or {})
     kb_id = meta.get("nk_knowledge_base_id")
     sf_id = meta.get("nk_source_file_id")
     fv_id = meta.get("nk_file_version_id")
-    resolved_index = meta.get("nk_index_type") or index_type
-    resolved_type = meta.get("nk_evidence_type") or evidence_type
+    resolved_type = evidence_type or classify(chunk, slice_mode)
     lineage = "active" if fv_id else "unknown"
+    source_refs = (
+        [
+            {
+                "source_file_id": sf_id,
+                "file_version_id": fv_id,
+                "knowledge_base_id": kb_id,
+            }
+        ]
+        if sf_id
+        else []
+    )
     return EvidenceItem(
         evidence_id=chunk.id,
         evidence_type=resolved_type,
@@ -105,18 +124,61 @@ def evidence_from_chunk(chunk: RagflowChunk, *, evidence_type: str = "chunk", in
         score=getattr(chunk, "similarity", None) or getattr(chunk, "score", None),
         knowledge_base_id=kb_id,
         document_metadata=meta,
-        source_refs=[
-            {
-                "source_file_id": sf_id,
-                "file_version_id": fv_id,
-                "knowledge_base_id": kb_id,
-            }
-        ],
+        source_refs=source_refs,
         payload={"chunk_id": chunk.id},
-        runtime_payload={"chunk_id": chunk.id, "index_type": resolved_index},
+        runtime_payload={"chunk_id": chunk.id, "slice_mode": slice_mode},
         freshness=meta.get("nk_freshness"),
         lineage_status=lineage,
-        index_type=resolved_index,
+        index_type=slice_mode,
+        citation_eligible=False,
+    )
+
+
+async def clean_chunks_with_modes(
+    db: AsyncSession,
+    ragflow: RagflowClient,
+    chunks_with_modes: list[tuple[RagflowChunk, str]],
+    *,
+    allowed_source_file_ids: set[str],
+    dataset_id_by_document: dict[str, str] | None = None,
+    audit_org_id: str | None = None,
+    audit_member_id: str | None = None,
+) -> ChunkCleanResult:
+    evidence = [evidence_from_chunk(c, slice_mode=mode) for c, mode in chunks_with_modes]
+    cleaned = await clean_evidence(
+        db,
+        ragflow,
+        evidence,
+        allowed_source_file_ids=allowed_source_file_ids,
+        dataset_id_by_document=dataset_id_by_document,
+        audit_org_id=audit_org_id,
+        audit_member_id=audit_member_id,
+    )
+    id_to_mode = {c.id: mode for c, mode in chunks_with_modes}
+    id_to_chunk = {c.id: c for c, _ in chunks_with_modes}
+    safe_chunks: list[RagflowChunk] = []
+    chunk_modes: list[tuple[RagflowChunk, str]] = []
+    dropped_chunks: list[tuple[RagflowChunk, str]] = []
+    for item in cleaned.safe_evidence:
+        chunk = id_to_chunk.get(item.evidence_id)
+        if chunk is None:
+            continue
+        chunk.document_metadata = dict(item.document_metadata)
+        safe_chunks.append(chunk)
+        chunk_modes.append((chunk, id_to_mode.get(item.evidence_id, "semantic")))
+    for item, reason in cleaned.dropped:
+        chunk = id_to_chunk.get(item.evidence_id)
+        if chunk is not None:
+            dropped_chunks.append((chunk, reason))
+    return ChunkCleanResult(
+        safe_chunks=safe_chunks,
+        filtered_count=cleaned.filtered_count,
+        unauthorized=cleaned.unauthorized,
+        superseded=cleaned.superseded,
+        metadata_mismatch=cleaned.metadata_mismatch,
+        unknown=cleaned.unknown,
+        dropped=dropped_chunks,
+        chunk_modes=chunk_modes,
     )
 
 
@@ -130,37 +192,14 @@ async def clean_chunks(
     audit_org_id: str | None = None,
     audit_member_id: str | None = None,
 ) -> ChunkCleanResult:
-    evidence = [evidence_from_chunk(c) for c in chunks]
-    cleaned = await clean_evidence(
+    return await clean_chunks_with_modes(
         db,
         ragflow,
-        evidence,
+        [(c, "semantic") for c in chunks],
         allowed_source_file_ids=allowed_source_file_ids,
         dataset_id_by_document=dataset_id_by_document,
         audit_org_id=audit_org_id,
         audit_member_id=audit_member_id,
-    )
-    id_to_chunk = {c.id: c for c in chunks}
-    safe_chunks: list[RagflowChunk] = []
-    dropped_chunks: list[tuple[RagflowChunk, str]] = []
-    for item in cleaned.safe_evidence:
-        chunk = id_to_chunk.get(item.evidence_id)
-        if chunk is None:
-            continue
-        chunk.document_metadata = dict(item.document_metadata)
-        safe_chunks.append(chunk)
-    for item, reason in cleaned.dropped:
-        chunk = id_to_chunk.get(item.evidence_id)
-        if chunk is not None:
-            dropped_chunks.append((chunk, reason))
-    return ChunkCleanResult(
-        safe_chunks=safe_chunks,
-        filtered_count=cleaned.filtered_count,
-        unauthorized=cleaned.unauthorized,
-        superseded=cleaned.superseded,
-        metadata_mismatch=cleaned.metadata_mismatch,
-        unknown=cleaned.unknown,
-        dropped=dropped_chunks,
     )
 
 
@@ -179,10 +218,8 @@ async def clean_evidence(
         return EvidenceCleanResult(safe_evidence=[], filtered_count=0)
 
     document_ids = [e.document_id for e in evidence_items if e.document_id]
-    # graph/summary may carry source_refs without document_id
     for item in evidence_items:
         for ref in item.source_refs or []:
-            # no document id enrichment here; identity still requires document_id
             _ = ref
     identity_map = await _build_active_document_map(db, document_ids)
 
@@ -196,8 +233,9 @@ async def clean_evidence(
     doc_meta_cache: dict[str, dict] = {}
 
     for item in evidence_items:
-        # Graph without any source ref must be rejected (PRD)
         if item.evidence_type == "graph_path" and not item.document_id and not item.source_refs:
+            reason = "unauthorized"
+        elif item.evidence_type == "graph_hint":
             reason = "unauthorized"
         else:
             proxy = RagflowChunk(
@@ -207,7 +245,6 @@ async def clean_evidence(
                 document_metadata=dict(item.document_metadata or {}),
             )
             if not proxy.document_id and item.source_refs:
-                # Prefer first ref's file identity via metadata injection
                 ref0 = item.source_refs[0]
                 proxy.document_metadata = {
                     **proxy.document_metadata,
@@ -223,6 +260,7 @@ async def clean_evidence(
             )
             if reason is None:
                 item.document_metadata = dict(proxy.document_metadata or {})
+                item.citation_eligible = _is_citation_eligible(item, allowed_source_file_ids)
         if reason:
             filtered += 1
             dropped.append((item, reason))
@@ -263,6 +301,7 @@ async def clean_evidence(
         dropped=dropped,
     )
 
+
 async def _audit_security_drop(
     db: AsyncSession,
     *,
@@ -295,6 +334,18 @@ async def _audit_security_drop(
             "file_version_id": (chunk.document_metadata or {}).get("nk_file_version_id"),
         },
     )
+
+
+def _is_citation_eligible(item: EvidenceItem, allowed_source_file_ids: set[str]) -> bool:
+    if item.evidence_type in {"graph_hint"}:
+        return False
+    if not item.source_refs:
+        return False
+    for ref in item.source_refs:
+        sf_id = ref.get("source_file_id")
+        if not sf_id or sf_id not in allowed_source_file_ids:
+            return False
+    return True
 
 
 def _evaluate_chunk(

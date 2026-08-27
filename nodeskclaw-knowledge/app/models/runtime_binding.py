@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Index, String, Text, text
+from sqlalchemy import DateTime, Index, Integer, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -40,6 +40,12 @@ class KnowledgeRuntimeBinding(BaseModel):
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="ready")
     capabilities: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     runtime_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    desired_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    observed_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    config_revision: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    observed_revision: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    drift_status: Mapped[str] = mapped_column(String(32), nullable=False, default="unknown")
+    last_observed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_reconciled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_capability_probe_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

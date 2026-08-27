@@ -11,7 +11,7 @@ import uuid
 
 from app.core.deps import async_session_factory
 from app.integrations.ragflow.client import RagflowClient
-from app.services import evaluation_runner, evaluation_service, reconciliation_service
+from app.services import evaluation_runner, evaluation_service, metrics_service, reconciliation_service
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +34,7 @@ async def _run_loop(*, with_reconciliation: bool) -> None:
     )
     try:
         while True:
+            metrics_service.observe_worker_heartbeat(worker_role="maintenance")
             processed = False
             async with async_session_factory() as db:
                 claimed_eval = await evaluation_service.claim_next_evaluation_run(

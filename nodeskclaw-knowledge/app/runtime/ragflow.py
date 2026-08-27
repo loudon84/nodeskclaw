@@ -10,13 +10,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.integrations.ragflow.client import RagflowClient
 from app.integrations.ragflow.exceptions import RagflowError
+from app.integrations.ragflow.models import RagflowRetrievalResult
 from app.models.enums import RuntimeBindingStatus
 from app.models.knowledge_base import KnowledgeBase
 from app.runtime import capabilities as runtime_capabilities
+from app.runtime.ragflow_contract import RagflowCompatibilityProfile, probe_compatibility_profile
 from app.services import runtime_binding_service
 
 MINIMUM_SUPPORTED_RAGFLOW_VERSION = runtime_capabilities.MINIMUM_SUPPORTED_RAGFLOW_VERSION
-VALIDATED_RAGFLOW_VERSIONS = runtime_capabilities.VALIDATED_RAGFLOW_VERSIONS
 
 
 @dataclass
@@ -44,6 +45,7 @@ class RagflowRuntimeAdapter:
         self._last_probe_snapshot: dict[str, Any] | None = None
         self._last_probe_version: str | None = None
         self._last_probe_reachable: bool = False
+        self._last_compat_profile: RagflowCompatibilityProfile | None = None
 
     async def aclose(self) -> None:
         await self.client.aclose()
@@ -51,18 +53,31 @@ class RagflowRuntimeAdapter:
     async def get_runtime_version(self) -> str | None:
         return await runtime_capabilities.probe_runtime_version(self.client)
 
-    async def probe_capabilities(self) -> dict[str, Any]:
-        reachable, version, caps = await runtime_capabilities.probe_runtime(self.client)
-        self._last_probe_reachable = reachable
-        self._last_probe_version = version
+    async def probe_capabilities(
+        self,
+        *,
+        dataset_id: str | None = None,
+        document_id: str | None = None,
+    ) -> dict[str, Any]:
+        profile = await probe_compatibility_profile(
+            self.client,
+            dataset_id=dataset_id,
+            document_id=document_id,
+        )
+        caps = runtime_capabilities.capabilities_from_profile(profile)
+        self._last_probe_reachable = profile.reachable
+        self._last_probe_version = profile.runtime_version
         self._last_probe_snapshot = caps
+        self._last_compat_profile = profile
         return caps
 
     async def discover_capabilities(self) -> dict[str, Any]:
         return await self.probe_capabilities()
 
     async def check_health(self) -> RuntimeHealth:
-        reachable, version, caps = await runtime_capabilities.probe_runtime(self.client)
+        caps = await self.probe_capabilities()
+        reachable = self._last_probe_reachable
+        version = self._last_probe_version
         degraded: list[str] = []
         if not reachable:
             degraded.append("ragflow_unreachable")
@@ -78,6 +93,9 @@ class RagflowRuntimeAdapter:
 
     def get_probe_snapshot(self) -> tuple[dict[str, Any] | None, str | None]:
         return self._last_probe_snapshot, self._last_probe_version
+
+    def get_compat_profile(self) -> RagflowCompatibilityProfile | None:
+        return self._last_compat_profile
 
     async def get_dataset_runtime_config(self, dataset_id: str) -> dict[str, Any] | None:
         return await self.client.get_dataset(dataset_id)
@@ -110,6 +128,68 @@ class RagflowRuntimeAdapter:
             "chunk_count": doc.chunk_count,
         }
 
+    async def feature_retrieve(
+        self,
+        *,
+        dataset_ids: list[str],
+        question: str,
+        document_ids: list[str] | None = None,
+        top_k: int = 8,
+        knn_top_k: int | None = None,
+        knn_num_candidates: int | None = None,
+        rerank_candidates_count: int | None = None,
+        use_kg: bool | None = None,
+        toc_enhance: bool | None = None,
+        include_knowledge_compilation: bool | None = None,
+        metadata_condition: dict[str, Any] | None = None,
+    ) -> RagflowRetrievalResult:
+        return await self.client.retrieve(
+            question=question,
+            dataset_ids=dataset_ids,
+            document_ids=document_ids,
+            top_k=top_k,
+            knn_top_k=knn_top_k,
+            knn_num_candidates=knn_num_candidates,
+            rerank_candidates_count=rerank_candidates_count,
+            use_kg=use_kg,
+            toc_enhance=toc_enhance,
+            include_knowledge_compilation=include_knowledge_compilation,
+            metadata_condition=metadata_condition,
+        )
+
+    async def search_dataset(
+        self,
+        dataset_id: str,
+        *,
+        question: str,
+        top_k: int = 8,
+        document_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
+        return await self.client.search_dataset(
+            dataset_id,
+            question=question,
+            top_k=top_k,
+            document_ids=document_ids,
+        )
+
+    async def get_dataset_graph(self, dataset_id: str) -> dict[str, Any]:
+        return await self.client.get_dataset_graph(dataset_id)
+
+    async def read_document_chunks(
+        self,
+        dataset_id: str,
+        document_id: str,
+        *,
+        page: int = 1,
+        page_size: int = 30,
+    ) -> list[dict[str, Any]]:
+        return await self.client.list_document_chunks(
+            dataset_id,
+            document_id,
+            page=page,
+            page_size=page_size,
+        )
+
     async def retrieve_index(
         self,
         *,
@@ -118,11 +198,11 @@ class RagflowRuntimeAdapter:
         top_k: int = 8,
         document_ids: list[str] | None = None,
     ):
-        return await self.client.retrieve(
-            question=question,
+        return await self.feature_retrieve(
             dataset_ids=dataset_ids,
-            document_ids=document_ids,
+            question=question,
             top_k=top_k,
+            document_ids=document_ids,
         )
 
     async def validate_index_retrieval(
@@ -161,12 +241,14 @@ class RagflowRuntimeAdapter:
             kb.ragflow_dataset_id = dataset_id
             return RuntimeBindingResult(resource_id=dataset_id, status=RuntimeBindingStatus.ready.value)
 
-        dataset_id = await self.client.create_dataset(
-            name=name,
+        dataset_id = await runtime_binding_service.create_dataset_idempotent(
+            db,
+            self,
+            kb=kb,
+            org_id=org_id,
             embedding_model=embedding_model,
             chunk_method=chunk_method,
             parser_config=parser_config,
-            permission="me",
             description=description,
         )
         probe_result = await runtime_binding_service.probe_and_persist_binding_capabilities(
@@ -189,6 +271,7 @@ class RagflowRuntimeAdapter:
             },
             from_probe=True,
         )
+        await runtime_binding_service.compile_and_persist_desired_config(db, kb, binding, compat_profile=probe_result.capabilities)
         await runtime_binding_service.mirror_dataset_id_to_kb(db, kb, dataset_id)
         return RuntimeBindingResult(
             resource_id=binding.resource_id,

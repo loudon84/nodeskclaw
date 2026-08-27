@@ -46,6 +46,7 @@ async def _run_loop() -> None:
     logger.info("ingestion worker started lease_owner=%s", lease_owner)
     try:
         while True:
+            metrics_service.observe_worker_heartbeat(worker_role="ingestion")
             processed = False
             async with async_session_factory() as db:
                 claimed = await ingestion_service.claim_next_job(db, lease_owner=lease_owner)

@@ -30,6 +30,33 @@ def build_filter_summary(
     }
 
 
+def build_execution_slices(slice_results: list[Any]) -> list[dict[str, Any]]:
+    slices: list[dict[str, Any]] = []
+    for item in slice_results:
+        params_safe_view = {
+            "dataset_id": getattr(item, "dataset_id", None),
+            "runtime_mode": getattr(item, "runtime_mode", None),
+            "access_scope": getattr(item, "access_scope", None),
+            "aggregate_security_fallback": getattr(item, "aggregate_security_fallback", False),
+        }
+        slices.append(
+            {
+                "knowledge_base_id": getattr(item, "knowledge_base_id", None),
+                "access_scope": getattr(item, "access_scope", None),
+                "runtime_mode": getattr(item, "runtime_mode", None),
+                "params_safe_view": params_safe_view,
+                "candidate_count": getattr(item, "candidate_count", 0),
+                "safe_count": getattr(item, "safe_count", 0),
+                "fallback": getattr(item, "fallback_used", False),
+                "fallback_reason": getattr(item, "fallback_reason", None),
+                "latency_ms": getattr(item, "latency_ms", 0),
+                "status": getattr(item, "status", None),
+                "error_code": getattr(item, "error_code", None),
+            }
+        )
+    return slices
+
+
 def build_slice_results_summary(slice_results: list[Any]) -> list[dict[str, Any]]:
     return [
         {
@@ -41,6 +68,8 @@ def build_slice_results_summary(slice_results: list[Any]) -> list[dict[str, Any]
             "safe_count": getattr(item, "safe_count", 0),
             "error_code": getattr(item, "error_code", None),
             "index_type": getattr(item, "index_type", "chunk"),
+            "runtime_mode": getattr(item, "runtime_mode", None),
+            "access_scope": getattr(item, "access_scope", None),
             "fallback_used": getattr(item, "fallback_used", False),
             "fallback_reason": getattr(item, "fallback_reason", None),
         }
@@ -132,6 +161,7 @@ async def persist_trace(
     effective_indexes: list[str] | None = None,
     fallback_used: bool | None = None,
     fallback_reason: str | None = None,
+    execution_slices: list[dict[str, Any]] | None = None,
 ) -> RetrievalTrace:
     row = RetrievalTrace(
         query_hash=query_hash,
@@ -150,6 +180,7 @@ async def persist_trace(
         effective_indexes=list(effective_indexes) if effective_indexes is not None else None,
         fallback_used=fallback_used,
         fallback_reason=fallback_reason,
+        execution_slices=execution_slices,
     )
     db.add(row)
     await db.flush()

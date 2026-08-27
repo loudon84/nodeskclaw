@@ -84,15 +84,15 @@ async def retrieval_playground_v2(
             profile_id=body.profile_id,
         )
     elif body.knowledge_set_id:
-        data = await retrieval_service.retrieve(
+        data = await retrieval_service.playground_retrieve(
             db,
             member,
             ragflow,
             knowledge_set_id=body.knowledge_set_id,
             query=body.query,
-            filters=body.filters,
             profile_id=body.profile_id,
-            include_capability_plan=True,
+            filters=body.filters,
+            include_trace=body.include_trace,
         )
     else:
         raise BadRequestError(

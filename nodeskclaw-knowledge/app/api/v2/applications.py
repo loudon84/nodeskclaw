@@ -16,7 +16,7 @@ from app.schemas.knowledge import (
     KnowledgeApplicationUpdate,
 )
 from app.schemas.principal import KnowledgePrincipal
-from app.services import knowledge_application_service
+from app.services import application_readiness_service, knowledge_application_service
 
 router = APIRouter(tags=["v2-applications"])
 
@@ -104,6 +104,17 @@ async def patch_application_v2(
     )
     data = await knowledge_application_service.application_to_out(db, app)
     return ApiResponse(data=KnowledgeApplicationOut.model_validate(data))
+
+
+@router.get("/applications/{application_id}/readiness", response_model=ApiResponse)
+async def application_readiness_v2(
+    application_id: str,
+    member: KnowledgePrincipal = Depends(get_member_context),
+    db: AsyncSession = Depends(get_db),
+):
+    _require_application()
+    result = await application_readiness_service.check(db, member, application_id)
+    return ApiResponse(data=result.to_dict())
 
 
 @router.post("/applications/{application_id}/publish", response_model=ApiResponse[KnowledgeApplicationOut])

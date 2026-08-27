@@ -7,10 +7,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.core.exceptions import ServiceUnavailableError
-from app.models.enums import AccessPlanKind, RetrievalOrigin, RetrievalSliceKind
+from app.models.enums import AccessPlanKind, RetrievalOrigin, RuntimeRetrievalMode
 from app.services.permission_service import AccessPlan
 from app.services.retrieval_merge_service import MergeExecutionResult, RetrievalSliceResult
-from app.services.retrieval_planner import RetrievalPlan, RetrievalSlice
+from app.services.retrieval_planner import RetrievalPlan, RuntimeExecutionSlice
 from app.services.retrieval_service import retrieve
 
 
@@ -62,15 +62,17 @@ def _plan_with_slices():
         plan_kind=AccessPlanKind.filtered_access,
         allowed_source_file_ids=["sf1"],
         slices=[
-            RetrievalSlice(
-                kind=RetrievalSliceKind.full_dataset,
-                dataset_id="ds1",
+            RuntimeExecutionSlice(
                 knowledge_base_id="kb1",
+                dataset_id="ds1",
+                access_scope="full",
+                mode=RuntimeRetrievalMode.semantic,
             ),
-            RetrievalSlice(
-                kind=RetrievalSliceKind.full_dataset,
-                dataset_id="ds2",
+            RuntimeExecutionSlice(
                 knowledge_base_id="kb2",
+                dataset_id="ds2",
+                access_scope="full",
+                mode=RuntimeRetrievalMode.semantic,
             ),
         ],
     )

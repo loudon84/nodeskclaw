@@ -272,10 +272,21 @@ async def update_knowledge_base(
 
     dataset_id = await runtime_binding_service.get_dataset_id(db, kb)
     if dataset_id and ragflow_fields:
+        from app.runtime.ragflow import RagflowRuntimeAdapter
+
+        adapter = RagflowRuntimeAdapter(client=ragflow)
         try:
-            await ragflow.update_dataset(dataset_id, **ragflow_fields)
+            await runtime_binding_service.update_dataset_metadata(
+                db,
+                adapter,
+                kb,
+                name=ragflow_fields.get("name"),
+                description=ragflow_fields.get("description"),
+            )
         except RagflowError as exc:
             raise BadRequestError(message=exc.message, message_key=exc.message_key) from exc
+        finally:
+            await adapter.aclose()
     if changes:
         await write_audit(
             db,

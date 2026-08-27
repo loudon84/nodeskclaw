@@ -345,6 +345,12 @@ class RagflowClient:
         dataset_ids: list[str],
         document_ids: list[str] | None = None,
         top_k: int = 20,
+        knn_top_k: int | None = None,
+        knn_num_candidates: int | None = None,
+        rerank_candidates_count: int | None = None,
+        use_kg: bool | None = None,
+        toc_enhance: bool | None = None,
+        include_knowledge_compilation: bool | None = None,
         similarity_threshold: float | None = None,
         vector_similarity_weight: float | None = None,
         page: int = 1,
@@ -355,10 +361,12 @@ class RagflowClient:
         cross_languages: list[str] | None = None,
         metadata_condition: dict[str, Any] | None = None,
     ) -> RagflowRetrievalResult:
+        effective_knn_top_k = knn_top_k if knn_top_k is not None else top_k
         body: dict[str, Any] = {
             "question": question,
             "dataset_ids": dataset_ids,
             "top_k": top_k,
+            "knn_top_k": effective_knn_top_k,
             "page": page,
             "page_size": page_size,
             "keyword": keyword,
@@ -366,6 +374,16 @@ class RagflowClient:
         }
         if document_ids:
             body["document_ids"] = document_ids
+        if knn_num_candidates is not None:
+            body["knn_num_candidates"] = knn_num_candidates
+        if rerank_candidates_count is not None:
+            body["rerank_candidates_count"] = rerank_candidates_count
+        if use_kg is not None:
+            body["use_kg"] = use_kg
+        if toc_enhance is not None:
+            body["toc_enhance"] = toc_enhance
+        if include_knowledge_compilation is not None:
+            body["include_knowledge_compilation"] = include_knowledge_compilation
         if similarity_threshold is not None:
             body["similarity_threshold"] = similarity_threshold
         if vector_similarity_weight is not None:
@@ -448,3 +466,154 @@ class RagflowClient:
             json={"parser_config": parser_config},
         )
         return data if isinstance(data, dict) else None
+
+    async def search_dataset(
+        self,
+        dataset_id: str,
+        *,
+        question: str,
+        top_k: int = 1,
+        document_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {"question": question, "top_k": top_k}
+        if document_ids:
+            body["document_ids"] = document_ids
+        data = await self._request(
+            "POST",
+            f"/api/v1/datasets/{dataset_id}/search",
+            json=body,
+        )
+        return data if isinstance(data, dict) else {"data": data}
+
+    async def get_dataset_graph(self, dataset_id: str) -> dict[str, Any]:
+        data = await self._request("GET", f"/api/v1/datasets/{dataset_id}/graph")
+        return data if isinstance(data, dict) else {"data": data}
+
+    async def list_document_chunks(
+        self,
+        dataset_id: str,
+        document_id: str,
+        *,
+        page: int = 1,
+        page_size: int = 30,
+    ) -> list[dict[str, Any]]:
+        data = await self._request(
+            "GET",
+            f"/api/v1/datasets/{dataset_id}/documents/{document_id}/chunks",
+            params={"page": page, "page_size": page_size},
+        )
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict):
+            items = data.get("chunks") or data.get("data") or []
+            return items if isinstance(items, list) else []
+        return []
+
+    async def probe_retrieval_endpoint(self) -> bool:
+        try:
+            await self._request(
+                "POST",
+                "/api/v1/retrieval",
+                json={"question": "probe", "dataset_ids": [], "top_k": 1, "page": 1, "page_size": 1},
+            )
+            return True
+        except RagflowError as exc:
+            message = str(exc).lower()
+            if "dataset" in message or "empty" in message or "required" in message:
+                return True
+            return False
+        except Exception:
+            return False
+
+    async def probe_dataset_search(self, dataset_id: str) -> bool:
+        try:
+            await self.search_dataset(dataset_id, question="probe", top_k=1)
+            return True
+        except RagflowError:
+            return False
+        except Exception:
+            return False
+
+    async def probe_dataset_graph(self, dataset_id: str) -> bool:
+        try:
+            data = await self.get_dataset_graph(dataset_id)
+            return isinstance(data, dict)
+        except RagflowError:
+            return False
+        except Exception:
+            return False
+
+    async def probe_document_chunks(self, dataset_id: str, document_id: str) -> dict[str, Any]:
+        result = {
+            "chunk_retrieval": False,
+            "question_fields_visible": False,
+            "knowledge_compilation": False,
+            "raptor_source_lineage": False,
+        }
+        try:
+            chunks = await self.list_document_chunks(dataset_id, document_id, page=1, page_size=5)
+        except Exception:
+            return result
+        if not chunks:
+            return result
+        result["chunk_retrieval"] = True
+        for item in chunks:
+            if not isinstance(item, dict):
+                continue
+            questions = item.get("questions") or item.get("question_kwd")
+            if questions:
+                result["question_fields_visible"] = True
+            if item.get("important_kwd") or item.get("raptor") or item.get("compiled"):
+                result["knowledge_compilation"] = True
+            meta = item.get("document_metadata") or item.get("meta_fields") or {}
+            if isinstance(meta, dict) and (meta.get("source_chunk_ids") or meta.get("nk_source_chunk_ids")):
+                result["raptor_source_lineage"] = True
+        return result
+
+    async def probe_retrieval_features(self, dataset_id: str) -> dict[str, bool]:
+        features = {
+            "kg_retrieval": False,
+            "toc_enhance": False,
+            "metadata_filter": False,
+            "knn_top_k": False,
+            "knn_num_candidates": False,
+            "rerank_candidates_count": False,
+            "knowledge_compilation": False,
+        }
+        probes = [
+            ("kg_retrieval", {"use_kg": True}),
+            ("toc_enhance", {"toc_enhance": True}),
+            ("knowledge_compilation", {"include_knowledge_compilation": True}),
+            ("knn_top_k", {"knn_top_k": 1}),
+            ("knn_num_candidates", {"knn_num_candidates": 1}),
+            ("rerank_candidates_count", {"rerank_candidates_count": 1}),
+            (
+                "metadata_filter",
+                {
+                    "metadata_condition": {
+                        "logic": "and",
+                        "conditions": [{"name": "nk_probe", "comparison_operator": "is", "value": "probe"}],
+                    }
+                },
+            ),
+        ]
+        for name, extra in probes:
+            try:
+                await self.retrieve(
+                    question="probe",
+                    dataset_ids=[dataset_id],
+                    top_k=1,
+                    page=1,
+                    page_size=1,
+                    **extra,
+                )
+                features[name] = True
+            except RagflowError as exc:
+                message = str(exc).lower()
+                if "unsupported" in message or "unknown" in message or "invalid" in message:
+                    features[name] = False
+                else:
+                    features[name] = True
+            except Exception:
+                features[name] = False
+        return features

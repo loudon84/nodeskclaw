@@ -10,8 +10,8 @@ from app.integrations.ragflow.exceptions import RagflowUploadUnknownError
 from app.integrations.ragflow.models import RagflowDocument
 from app.integrations.ragflow.upload_token import build_upload_token, deterministic_upload_filename
 from app.services.retrieval_merge_service import _retrieve_slice
-from app.services.retrieval_planner import RetrievalSlice, build_metadata_condition, build_retrieval_plan
-from app.models.enums import AccessPlanKind, RetrievalSliceKind
+from app.services.retrieval_planner import RuntimeExecutionSlice, build_metadata_condition, build_retrieval_plan
+from app.models.enums import AccessPlanKind, RuntimeRetrievalMode
 from app.services.permission_service import AccessPlan
 
 
@@ -151,9 +151,11 @@ def test_pushdown_disabled_omits_condition(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_pushdown_fallback_retries_without_condition():
-    slice_ = RetrievalSlice(
-        kind=RetrievalSliceKind.filtered_documents,
+    slice_ = RuntimeExecutionSlice(
+        knowledge_base_id="kb1",
         dataset_id="ds1",
+        access_scope="filtered",
+        mode=RuntimeRetrievalMode.semantic,
         document_ids=["d1"],
         metadata_condition={"logic": "and", "conditions": [{"name": "biz_x", "comparison_operator": "is", "value": "1"}]},
     )
@@ -177,6 +179,7 @@ async def test_pushdown_fallback_retries_without_condition():
         highlight=False,
         rerank_id=None,
         cross_languages=None,
+        rerank_candidates_count=None,
         semaphore=__import__("asyncio").Semaphore(1),
     )
     assert result.status == "success"

@@ -18,7 +18,7 @@ from app.models.base import not_deleted
 from app.models.connector import ConnectorSyncItem, ConnectorSyncRun, KnowledgeSourceConnector
 from app.models.enums import ConnectorSyncItemStatus, ConnectorSyncRunStatus, IngestionJobStatus
 from app.models.ingestion_job import IngestionJob
-from app.services import connector_service, connector_sync_service
+from app.services import connector_service, connector_sync_service, metrics_service
 from app.workers import job_leasing
 
 logger = logging.getLogger(__name__)
@@ -234,6 +234,7 @@ async def _run_loop() -> None:
     logger.info("connector worker started lease_owner=%s", lease_owner)
     try:
         while True:
+            metrics_service.observe_worker_heartbeat(worker_role="connector")
             processed = False
             loop_count += 1
             if loop_count % SCHEDULE_EVERY_LOOPS == 0:
