@@ -144,6 +144,7 @@ async def set_state_status(
     *,
     build_job_id: str | None = None,
     error: str | None = None,
+    capabilities: dict | None = None,
 ) -> IndexState:
     if status == IndexStateStatus.ready.value and state.status == IndexStateStatus.unsupported.value:
         return state
@@ -157,7 +158,10 @@ async def set_state_status(
     if status == IndexStateStatus.ready.value:
         state.last_built_at = datetime.now(UTC)
         state.build_version = int(state.build_version or 0) + 1
-        state.retrieval_status = IndexRetrievalStatus.ready.value
+        if capabilities is not None:
+            _sync_retrieval_status(state, state.index_type, capabilities)
+        else:
+            state.retrieval_status = IndexRetrievalStatus.ready.value
     elif status in {IndexStateStatus.failed.value, IndexStateStatus.stale.value}:
         if state.retrieval_status == IndexRetrievalStatus.ready.value:
             state.retrieval_status = IndexRetrievalStatus.degraded.value

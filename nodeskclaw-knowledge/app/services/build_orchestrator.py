@@ -322,6 +322,7 @@ async def process_build_job(db: AsyncSession, job: KnowledgeBuildJob) -> None:
             state,
             IndexStateStatus.ready.value,
             build_job_id=job.id,
+            capabilities=capabilities,
         )
         job.stage_results = _stage_results_payload(
             index_type=job.index_type,

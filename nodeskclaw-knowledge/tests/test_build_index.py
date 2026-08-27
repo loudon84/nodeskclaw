@@ -33,6 +33,7 @@ def _make_job(**overrides):
 def _make_kb(**overrides):
     defaults = {
         "id": "kb1",
+        "org_id": "o1",
         "deleted_at": None,
         "status": KnowledgeBaseStatus.active.value,
         "last_error": None,
@@ -76,6 +77,12 @@ def test_unsupported_without_capability():
     assert index_registry.is_runtime_supported(IndexType.chunk.value, {}) is True
     assert index_registry.is_runtime_supported(IndexType.graph.value, {}) is False
     assert index_registry.is_runtime_supported(IndexType.graph.value, {"supports_graph": True}) is True
+
+
+def test_executors_registry_includes_secondary_indexes():
+    assert IndexType.question.value in build_executors.EXECUTORS
+    assert IndexType.hierarchical_summary.value in build_executors.EXECUTORS
+    assert IndexType.graph.value in build_executors.EXECUTORS
 
 
 @pytest.mark.asyncio
@@ -314,7 +321,7 @@ async def test_process_build_job_chunk_max_attempts_marks_kb_degraded(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_process_build_job_executor_unavailable_for_secondary_index(monkeypatch):
+async def test_process_build_job_runs_registered_question_executor(monkeypatch):
     db = AsyncMock()
     kb = _make_kb()
     db.get = AsyncMock(return_value=kb)
@@ -327,21 +334,20 @@ async def test_process_build_job_executor_unavailable_for_secondary_index(monkey
         "get_binding",
         AsyncMock(
             return_value=SimpleNamespace(
-                capabilities={"supports_auto_questions": True},
+                capabilities={"supports_auto_questions": {"build_supported": True}},
             )
         ),
     )
 
+    async def fake_question_stage(_db, _job, _kb):
+        return build_executors.StageResult(status="succeeded", output={"documents_ready": 1})
+
+    monkeypatch.setitem(build_executors.EXECUTORS, IndexType.question.value, fake_question_stage)
+
     job = _make_job(index_type=IndexType.question.value)
     await build_orchestrator.process_build_job(db, job)
-    assert job.status == BuildJobStatus.failed.value
-    assert job.error_code == "executor_unavailable"
-    failed_calls = [
-        call
-        for call in set_status.await_args_list
-        if len(call.args) > 2 and call.args[2] == IndexStateStatus.failed.value
-    ]
-    assert failed_calls
+    assert job.status == BuildJobStatus.completed.value
+    assert job.stage_results["status"] == "succeeded"
 
 
 @pytest.mark.asyncio
@@ -401,6 +407,7 @@ async def test_execute_chunk_stage_succeeds_when_all_documents_ready(monkeypatch
         "require_dataset_id",
         AsyncMock(return_value="ds1"),
     )
+    monkeypatch.setattr(build_executors, "_validate_source_watermark", AsyncMock(return_value=None))
     monkeypatch.setattr(build_executors, "RagflowClient", lambda: FakeRagflow())
 
     result = await build_executors.execute_chunk_stage(db, job, kb)
@@ -428,6 +435,7 @@ async def test_execute_chunk_stage_retryable_when_documents_pending(monkeypatch)
         "require_dataset_id",
         AsyncMock(return_value="ds1"),
     )
+    monkeypatch.setattr(build_executors, "_validate_source_watermark", AsyncMock(return_value=None))
     monkeypatch.setattr(build_executors, "RagflowClient", lambda: FakeRagflow())
 
     result = await build_executors.execute_chunk_stage(db, job, kb)
