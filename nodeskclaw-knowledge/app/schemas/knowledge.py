@@ -405,8 +405,15 @@ class ChatMessageOut(BaseModel):
 
 
 class CitationResolveOut(BaseModel):
+    evidence_id: str
     citation_id: str
-    message_id: str
+    message_id: str | None = None
+    org_id: str
+    issued_member_id: str
+    evidence_type: str
+    content: str | None = None
+    source_refs: list | None = None
+    origin: str
     knowledge_base_id: str
     source_file_id: str
     file_version_id: str
@@ -418,6 +425,19 @@ class CitationResolveOut(BaseModel):
     quote: str | None = None
     accessible: bool
     reason: str
+    source_kind: str | None = None
+    connector_type: str | None = None
+    connector_name: str | None = None
+    source_path: str | None = None
+    source_revision: str | None = None
+    source_modified_at: str | None = None
+    last_synced_at: str | None = None
+    sync_state: str | None = None
+    source_freshness: str | None = None
+
+
+class EvidenceResolveOut(CitationResolveOut):
+    pass
 
 
 class AuditLogOut(BaseModel):

@@ -29,6 +29,8 @@ def _member(**kwargs) -> KnowledgePrincipal:
 def _citation(**kwargs):
     data = dict(
         id="cit1",
+        org_id="o1",
+        issued_member_id="m1",
         message_id="msg1",
         knowledge_base_id="kb1",
         source_file_id="sf1",
@@ -39,6 +41,16 @@ def _citation(**kwargs):
         positions=[[1, 2, 3, 4]],
         score=0.91,
         quote="hello",
+        evidence_type="chunk",
+        content="hello",
+        source_refs=[
+            {
+                "source_file_id": "sf1",
+                "file_version_id": "v1",
+                "knowledge_base_id": "kb1",
+            }
+        ],
+        origin="chat",
         deleted_at=None,
     )
     data.update(kwargs)
@@ -118,6 +130,9 @@ async def test_resolve_ok_for_session_owner():
         result = await citation_service.resolve_citation(db, member, "cit1")
 
     assert result["citation_id"] == "cit1"
+    assert result["evidence_id"] == "cit1"
+    assert result["evidence_type"] == "chunk"
+    assert result["origin"] == "chat"
     assert result["accessible"] is True
     assert result["reason"] == "ok"
     assert result["page"] == 3
@@ -286,3 +301,50 @@ async def test_resolve_same_org_non_owner_with_file_read_allowed():
 
     assert result["accessible"] is True
     assert result["reason"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_resolve_retrieval_evidence_ok():
+    db = MagicMock()
+    cit = _citation(message_id=None, origin="direct_retrieval", issued_member_id="m1")
+    sf = _sf()
+    db.get = AsyncMock(side_effect=await _db_get_side_effect(cit, None, None, sf))
+    member = _member()
+
+    with patch(
+        "app.services.citation_service.has_file_permission",
+        new=AsyncMock(return_value=True),
+    ):
+        result = await citation_service.resolve_citation(db, member, "cit1")
+
+    assert result["evidence_id"] == "cit1"
+    assert result["message_id"] is None
+    assert result["origin"] == "direct_retrieval"
+    assert result["accessible"] is True
+
+
+@pytest.mark.asyncio
+async def test_resolve_retrieval_wrong_org_not_found():
+    db = MagicMock()
+    cit = _citation(message_id=None, org_id="other-org", origin="direct_retrieval")
+    db.get = AsyncMock(return_value=cit)
+    member = _member()
+
+    with pytest.raises(NotFoundError):
+        await citation_service.resolve_citation(db, member, "cit1")
+
+
+@pytest.mark.asyncio
+async def test_resolve_retrieval_no_permission_forbidden():
+    db = MagicMock()
+    cit = _citation(message_id=None, origin="direct_retrieval")
+    sf = _sf()
+    db.get = AsyncMock(side_effect=await _db_get_side_effect(cit, None, None, sf))
+    member = _member()
+
+    with patch(
+        "app.services.citation_service.has_file_permission",
+        new=AsyncMock(return_value=False),
+    ):
+        with pytest.raises(ForbiddenError):
+            await citation_service.resolve_citation(db, member, "cit1")

@@ -45,8 +45,15 @@ def _citation_payload(
     connector: KnowledgeSourceConnector | None = None,
 ) -> dict:
     payload = {
+        "evidence_id": citation.id,
         "citation_id": citation.id,
         "message_id": citation.message_id,
+        "org_id": citation.org_id,
+        "issued_member_id": citation.issued_member_id,
+        "evidence_type": citation.evidence_type,
+        "content": citation.content,
+        "source_refs": citation.source_refs,
+        "origin": citation.origin,
         "knowledge_base_id": citation.knowledge_base_id,
         "source_file_id": citation.source_file_id,
         "file_version_id": citation.file_version_id,
@@ -77,33 +84,19 @@ def _citation_payload(
     return payload
 
 
-async def resolve_citation(
+async def _resolve_source_access(
     db: AsyncSession,
     member: KnowledgePrincipal,
-    citation_id: str,
+    citation: ChatCitation,
+    *,
+    strict_missing_file: bool,
 ) -> dict:
-    citation = await db.get(ChatCitation, citation_id)
-    if citation is None or citation.deleted_at is not None:
-        raise NotFoundError(message="引用不存在", message_key="errors.knowledge.citation_not_found")
-
-    message = await db.get(ChatMessage, citation.message_id)
-    if message is None or message.deleted_at is not None:
-        raise NotFoundError(message="引用不存在", message_key="errors.knowledge.citation_not_found")
-
-    session = await db.get(ChatSession, message.session_id)
-    if session is None or session.deleted_at is not None:
-        raise NotFoundError(message="引用不存在", message_key="errors.knowledge.citation_not_found")
-
-    if session.org_id != member.org_id:
-        raise NotFoundError(message="引用不存在", message_key="errors.knowledge.citation_not_found")
-
-    is_owner = session.member_id == member.member_id
     source_file = await db.get(SourceFile, citation.source_file_id)
     connector = None
     if source_file and source_file.connector_id:
         connector = await db.get(KnowledgeSourceConnector, source_file.connector_id)
 
-    if not is_owner:
+    if strict_missing_file:
         if source_file is None or source_file.deleted_at is not None:
             raise ForbiddenError()
         if not await has_file_permission(db, member, source_file, FilePermission.read.value):
@@ -129,4 +122,38 @@ async def resolve_citation(
         )
     return _citation_payload(
         citation, accessible=True, reason="ok", source_file=source_file, connector=connector
+    )
+
+
+async def resolve_citation(
+    db: AsyncSession,
+    member: KnowledgePrincipal,
+    citation_id: str,
+) -> dict:
+    citation = await db.get(ChatCitation, citation_id)
+    if citation is None or citation.deleted_at is not None:
+        raise NotFoundError(message="引用不存在", message_key="errors.knowledge.citation_not_found")
+
+    if citation.message_id is None:
+        if citation.org_id != member.org_id:
+            raise NotFoundError(message="引用不存在", message_key="errors.knowledge.citation_not_found")
+        return await _resolve_source_access(db, member, citation, strict_missing_file=True)
+
+    message = await db.get(ChatMessage, citation.message_id)
+    if message is None or message.deleted_at is not None:
+        raise NotFoundError(message="引用不存在", message_key="errors.knowledge.citation_not_found")
+
+    session = await db.get(ChatSession, message.session_id)
+    if session is None or session.deleted_at is not None:
+        raise NotFoundError(message="引用不存在", message_key="errors.knowledge.citation_not_found")
+
+    if session.org_id != member.org_id:
+        raise NotFoundError(message="引用不存在", message_key="errors.knowledge.citation_not_found")
+
+    is_owner = session.member_id == member.member_id
+    return await _resolve_source_access(
+        db,
+        member,
+        citation,
+        strict_missing_file=not is_owner,
     )

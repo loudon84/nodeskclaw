@@ -24,6 +24,7 @@ from app.models.enums import (
     SourceSyncState,
 )
 from app.models.retrieval_audit import RetrievalAudit
+from app.models.chat_citation import ChatCitation
 from app.models.source_file import SourceFile
 from app.schemas.knowledge import RetrievalOptions
 from app.schemas.principal import KnowledgePrincipal
@@ -175,7 +176,6 @@ async def retrieve(
 
         plan = capability_planner.build_capability_plan(query)
         result["capability_plan"] = plan.to_dict()
-        result["evidence"] = _chunks_to_evidence(result.get("chunks") or [])
     return result
 
 
@@ -287,34 +287,98 @@ async def retrieve_for_application(
         from app.services import capability_planner
 
         result["capability_plan"] = capability_planner.build_capability_plan(query).to_dict()
-    result["evidence"] = _chunks_to_evidence(result.get("chunks") or [])
     return result
 
 
-def _chunks_to_evidence(chunks: list[dict]) -> list[dict]:
-    evidence = []
-    for chunk in chunks:
-        evidence.append(
+def _evidence_response_payload(citation: ChatCitation, *, highlight: str | None = None) -> dict:
+    runtime_payload = citation.runtime_payload or {}
+    return {
+        "evidence_id": citation.id,
+        "evidence_type": citation.evidence_type,
+        "content": citation.content,
+        "score": citation.score,
+        "source_refs": citation.source_refs or [],
+        "payload": {
+            "page": citation.page or runtime_payload.get("page"),
+            "highlight": highlight if highlight is not None else runtime_payload.get("highlight"),
+        },
+    }
+
+
+async def _persist_retrieval_evidence(
+    db: AsyncSession,
+    member: KnowledgePrincipal,
+    merged: list,
+    *,
+    origin: str,
+) -> tuple[list[dict], list[dict]]:
+    chunks_out: list[dict] = []
+    evidence_out: list[dict] = []
+    for item in merged:
+        chunk = item.chunk
+        meta = chunk.document_metadata or {}
+        sf_id = meta.get("nk_source_file_id")
+        source_file = await db.get(SourceFile, sf_id) if sf_id else None
+        last_synced_at = getattr(source_file, "last_synced_at", None) if source_file else None
+        page = _extract_page(chunk.positions)
+        evidence_type = meta.get("nk_evidence_type") or "chunk"
+        source_refs = [
             {
-                "evidence_id": chunk.get("chunk_id"),
-                "evidence_type": "chunk",
-                "content": chunk.get("content"),
-                "score": chunk.get("similarity"),
-                "source_refs": [
-                    {
-                        "source_file_id": chunk.get("source_file_id"),
-                        "file_version_id": chunk.get("file_version_id"),
-                        "knowledge_base_id": chunk.get("knowledge_base_id"),
-                    }
-                ],
-                "payload": {
-                    "document_id": chunk.get("document_id"),
-                    "page": chunk.get("page"),
-                    "highlight": chunk.get("highlight"),
-                },
+                "source_file_id": meta.get("nk_source_file_id"),
+                "file_version_id": meta.get("nk_file_version_id"),
+                "knowledge_base_id": meta.get("nk_knowledge_base_id"),
+            }
+        ]
+        runtime_payload = {
+            "document_id": chunk.document_id,
+            "chunk_id": chunk.id,
+            "page": page,
+            "highlight": chunk.highlight,
+            "positions": chunk.positions,
+        }
+        chunks_out.append(
+            {
+                "chunk_id": chunk.id,
+                "knowledge_base_id": meta.get("nk_knowledge_base_id"),
+                "source_file_id": meta.get("nk_source_file_id"),
+                "file_version_id": meta.get("nk_file_version_id"),
+                "document_id": chunk.document_id,
+                "file_name": chunk.document_name or chunk.document_keyword,
+                "content": chunk.content,
+                "similarity": chunk.similarity,
+                "weighted_score": item.weighted_score,
+                "page": page,
+                "positions": chunk.positions,
+                "term_similarity": chunk.term_similarity,
+                "vector_similarity": chunk.vector_similarity,
+                "highlight": chunk.highlight,
+                "source_freshness": _compute_source_freshness(source_file),
+                "last_synced_at": last_synced_at.isoformat() if last_synced_at else None,
             }
         )
-    return evidence
+        citation = ChatCitation(
+            org_id=member.org_id,
+            issued_member_id=member.member_id,
+            message_id=None,
+            knowledge_base_id=str(meta.get("nk_knowledge_base_id") or ""),
+            source_file_id=str(meta.get("nk_source_file_id") or ""),
+            file_version_id=str(meta.get("nk_file_version_id") or ""),
+            ragflow_document_id=chunk.document_id,
+            ragflow_chunk_id=chunk.id,
+            page=page,
+            positions=chunk.positions,
+            score=chunk.similarity,
+            quote=(chunk.content or "")[:500],
+            evidence_type=evidence_type,
+            content=chunk.content,
+            source_refs=source_refs,
+            runtime_payload=runtime_payload,
+            origin=origin,
+        )
+        db.add(citation)
+        await db.flush()
+        evidence_out.append(_evidence_response_payload(citation, highlight=chunk.highlight))
+    return chunks_out, evidence_out
 
 
 async def _retrieve_for_set(
@@ -523,7 +587,13 @@ async def _retrieve_for_set(
             row.last_used_at = datetime.now(UTC)
         await db.commit()
         _observe_retrieval("empty", started)
-        return {"query_id": query_id, "chunks": [], "status": "empty", "diagnostics": {"slice_count": 0}}
+        return {
+            "query_id": query_id,
+            "chunks": [],
+            "evidence": [],
+            "status": "empty",
+            "diagnostics": {"slice_count": 0},
+        }
 
     merge_result = await retrieval_merge_service.execute_and_merge(
         db,
@@ -638,41 +708,21 @@ async def _retrieve_for_set(
             if row is not None and row.deleted_at is None:
                 row.usage_count += 1
                 row.last_used_at = datetime.now(UTC)
-    await db.commit()
 
-    chunks_out = []
-    for item in merged:
-        chunk = item.chunk
-        meta = chunk.document_metadata or {}
-        sf_id = meta.get("nk_source_file_id")
-        source_file = await db.get(SourceFile, sf_id) if sf_id else None
-        last_synced_at = getattr(source_file, "last_synced_at", None) if source_file else None
-        chunks_out.append(
-            {
-                "chunk_id": chunk.id,
-                "knowledge_base_id": meta.get("nk_knowledge_base_id"),
-                "source_file_id": meta.get("nk_source_file_id"),
-                "file_version_id": meta.get("nk_file_version_id"),
-                "document_id": chunk.document_id,
-                "file_name": chunk.document_name or chunk.document_keyword,
-                "content": chunk.content,
-                "similarity": chunk.similarity,
-                "weighted_score": item.weighted_score,
-                "page": _extract_page(chunk.positions),
-                "positions": chunk.positions,
-                "term_similarity": chunk.term_similarity,
-                "vector_similarity": chunk.vector_similarity,
-                "highlight": chunk.highlight,
-                "source_freshness": _compute_source_freshness(source_file),
-                "last_synced_at": last_synced_at.isoformat() if last_synced_at else None,
-            }
-        )
+    chunks_out, evidence_out = await _persist_retrieval_evidence(
+        db,
+        member,
+        merged,
+        origin=origin,
+    )
+    await db.commit()
 
     _observe_retrieval(execution_status, started)
     diagnostics["metadata_pushdown"] = bool(getattr(plan, "metadata_pushdown", False))
     payload = {
         "query_id": query_id,
         "chunks": chunks_out,
+        "evidence": evidence_out,
         "status": execution_status,
         "diagnostics": diagnostics,
         "latency_ms": latency_ms,

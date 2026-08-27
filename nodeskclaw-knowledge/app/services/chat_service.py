@@ -338,8 +338,23 @@ async def send_message_stream(
         assistant.model = model
 
         for cit in citations:
+            source_refs = [
+                {
+                    "source_file_id": cit.get("source_file_id"),
+                    "file_version_id": cit.get("file_version_id"),
+                    "knowledge_base_id": cit.get("knowledge_base_id"),
+                }
+            ]
+            runtime_payload = {
+                "document_id": cit.get("document_id"),
+                "chunk_id": cit.get("chunk_id"),
+                "page": cit.get("page"),
+                "positions": cit.get("positions"),
+            }
             db.add(
                 ChatCitation(
+                    org_id=member.org_id,
+                    issued_member_id=member.member_id,
                     message_id=assistant.id,
                     knowledge_base_id=str(cit.get("knowledge_base_id") or ""),
                     source_file_id=str(cit.get("source_file_id") or ""),
@@ -350,6 +365,11 @@ async def send_message_stream(
                     quote=cit.get("quote"),
                     page=cit.get("page"),
                     positions=cit.get("positions"),
+                    evidence_type="chunk",
+                    content=cit.get("quote"),
+                    source_refs=source_refs,
+                    runtime_payload=runtime_payload,
+                    origin=RetrievalOrigin.chat.value,
                 )
             )
 
