@@ -48,9 +48,11 @@ v1.2 强制闸：`status=disabled` 时用户 Retrieval、Chat 发消息与新建
 
 ## Knowledge Application
 
-KnowledgeApplication 是面向用户的检索/Chat 产品面，可绑定多个 KnowledgeSet；Answer Model Authority 在 Application。v2.2 publish 前必须 readiness gate；v2.3 publish 写入 `runtime_snapshot`，PATCH 禁止直接改 `status`，停用走 `POST .../disable`。
+KnowledgeApplication 是面向用户的检索/Chat 产品面，绑定多个 KnowledgeSet；Answer Model Authority 在 Application 层。
 
-表与 ACL：[[nodeskclaw-knowledge/app/models/knowledge_application.py]]、[[nodeskclaw-knowledge/app/models/knowledge_application_acl.py]]。Readiness：[[nodeskclaw-knowledge/app/services/application_readiness_service.py#check]]；未就绪 publish 返回 409。Publish/disable：[[nodeskclaw-knowledge/app/services/knowledge_application_service.py#publish_application]]、[[nodeskclaw-knowledge/app/services/knowledge_application_service.py#disable_application]]；v2 HTTP：[[nodeskclaw-knowledge/app/api/v2/applications.py]]。USE 判定：[[nodeskclaw-knowledge/app/services/permission_service.py#has_application_permission]]。检索：[[nodeskclaw-knowledge/app/services/retrieval_service.py#retrieve_for_application]]。
+v2.2 publish 前必须 readiness gate；v2.3 publish 写入 `runtime_snapshot`（审计投影）；v2.4 启用 `KNOWLEDGE_V24_RELEASE_ENABLED` 时产品路径为 `application_id + channel → Release Manifest`，禁止生产读 `runtime_snapshot`。
+
+表与 ACL：[[nodeskclaw-knowledge/app/models/knowledge_application.py]]、[[nodeskclaw-knowledge/app/models/knowledge_application_acl.py]]。Release/Channel：[[knowledge-objects#Application Release]]。Readiness：[[nodeskclaw-knowledge/app/services/application_readiness_service.py#check]]；未就绪 publish 返回 409。Publish/disable：[[nodeskclaw-knowledge/app/services/knowledge_application_service.py#publish_application]]、[[nodeskclaw-knowledge/app/services/knowledge_application_service.py#disable_application]]；v2 HTTP：[[nodeskclaw-knowledge/app/api/v2/applications.py]]。USE 判定：[[nodeskclaw-knowledge/app/services/permission_service.py#has_application_permission]]。检索：[[nodeskclaw-knowledge/app/services/retrieval_service.py#retrieve_for_application]]。
 
 ## Runtime Binding
 
@@ -60,7 +62,7 @@ Runtime Binding 是 KnowledgeBase 到 RAGFlow Dataset 的权威身份映射；`r
 
 ## Build Profile
 
-Build Profile（Standard/Enhanced/Reasoning）描述要构建的 Index 类型与触发策略，具体 Runtime 配置只在 Adapter 内转换。
+Build Profile（Standard/Enhanced/Reasoning）描述要构建的 Index 类型与触发策略，具体 Runtime 配置只在 Adapter 内转换。v2.4 增加 `artifact_types` / `artifact_trigger_policy` 声明 Derived Artifact 构建范围。
 
 模型：[[nodeskclaw-knowledge/app/models/build_profile.py#BuildProfile]]。服务：[[nodeskclaw-knowledge/app/services/build_profile_service.py]]。Registry：[[nodeskclaw-knowledge/app/services/index_registry.py]]。
 
@@ -72,21 +74,41 @@ Index State 跟踪每 KB×index_type 的 build/retrieval 生命周期与 validat
 
 ## Build Job
 
-KnowledgeBuildJob 与 IngestionJob 分表；Build 不修改 `source_file.active_version_id`。v2.2 每次 Build 走 Compile→Reconcile→Execute→Validate；v2.3 增加 `target_kind` / `target_key` / `input_manifest_hash` 与增量 BuildDelta（`KNOWLEDGE_V23_INCREMENTAL_BUILD_ENABLED`）。
+KnowledgeBuildJob 与 IngestionJob 分表；Build 不修改 `source_file.active_version_id`。v2.4 起 `process_build_job` 先按 `target_kind` 分发 index / artifact / release_validation。
 
-Worker 经 `process_build_job` 执行：Compile desired config → Reconcile once（advisory lock）→ Executor → Validate artifact。输入由 [[nodeskclaw-knowledge/app/services/active_runtime_documents.py#resolve_active_documents]] 分页覆盖全部 ACTIVE 文档（`RAGFLOW_BUILD_BATCH_SIZE`），禁止 50/200 截断；v2.3 以 [[nodeskclaw-knowledge/app/services/build_input_manifest_service.py#compute_build_delta]] 决定增量/full rebuild。`stage_results` 含 `runtime_operation` / `artifact_validation` / `retrieval_validation` 等。chunk 失败且重试用尽时 KB 进入 `degraded`。模型：[[nodeskclaw-knowledge/app/models/build_job.py#KnowledgeBuildJob]]。编排：[[nodeskclaw-knowledge/app/services/build_orchestrator.py#process_build_job]]。Stage 执行器：[[nodeskclaw-knowledge/app/services/build_executors.py#EXECUTORS]]。Worker：[[nodeskclaw-knowledge/app/workers/build_worker.py]]。
+v2.2 每次 Build 走 Compile→Reconcile→Execute→Validate；v2.3 增加 `target_kind` / `target_key` / `input_manifest_hash` 与增量 BuildDelta（`KNOWLEDGE_V23_INCREMENTAL_BUILD_ENABLED`）；v2.4 增加 `knowledge_model_revision_id` / `release_candidate_id` pin 与 incremental no-op / removal-only 语义。
+
+Worker 经 `process_build_job` 执行：Compile desired config → Reconcile once（advisory lock）→ Executor → Validate artifact。输入由 [[nodeskclaw-knowledge/app/services/active_runtime_documents.py#resolve_active_documents]] 分页覆盖全部 ACTIVE 文档（`RAGFLOW_BUILD_BATCH_SIZE`），禁止 50/200 截断；v2.3 以 [[nodeskclaw-knowledge/app/services/build_input_manifest_service.py#compute_build_delta]] 决定增量/full rebuild。`stage_results` 含 `runtime_operation` / `artifact_validation` / `retrieval_validation` 等。chunk 失败且重试用尽时 KB 进入 `degraded`。模型：[[nodeskclaw-knowledge/app/models/build_job.py#KnowledgeBuildJob]]。编排：[[nodeskclaw-knowledge/app/services/build_orchestrator.py#process_build_job]]。Stage 执行器：[[nodeskclaw-knowledge/app/services/build_executors.py#EXECUTORS]]、Artifact：[[nodeskclaw-knowledge/app/services/build_executors.py#execute_artifact_stage]]。Worker：[[nodeskclaw-knowledge/app/workers/build_worker.py]]。
 
 ## Knowledge Model
 
-Knowledge Model 存 entity/relation/term/extraction_policy JSON，供 Reasoning Build 与抽取策略引用；v2.3 引入不可变 Revision，update 创建 draft revision，publish 切换 `active_revision_id`。
+Knowledge Model 存 entity/relation/term/extraction_policy JSON，供 Reasoning Build 与抽取策略引用；v2.3 引入不可变 Revision，update 创建 draft revision，publish 切换 `active_revision_id`；v2.4 publish 归档旧 ACTIVE 并 Partial Unique 保证每 model 仅一条 ACTIVE。
 
 模型：[[nodeskclaw-knowledge/app/models/knowledge_model.py#KnowledgeModel]]、[[nodeskclaw-knowledge/app/models/knowledge_model_revision.py#KnowledgeModelRevision]]。服务：[[nodeskclaw-knowledge/app/services/knowledge_model_service.py]]。Revision API：[[nodeskclaw-knowledge/app/api/v2/knowledge_models.py]]。
 
 ## Knowledge Artifact
 
-KnowledgeArtifact catalog 记录 Outline/Table/Graph 等 Derived Artifact 构建态与 manifest 绑定；Provider SPI 经 Runtime Adapter 读写 RAGFlow native artifact，禁止业务层直连 Client。
+KnowledgeArtifact 是稳定 identity（org+kb+artifact_type+scope+source_file_id）；不可变物化在 KnowledgeArtifactRevision，每 identity 仅一条 `ready` revision，新 build 插入 revision 并将旧 ready 标 `stale`，不覆盖历史行。
 
-模型：[[nodeskclaw-knowledge/app/models/knowledge_artifact.py#KnowledgeArtifact]]。Provider：[[nodeskclaw-knowledge/app/knowledge_artifacts/outline.py]]、[[nodeskclaw-knowledge/app/knowledge_artifacts/table.py]]、[[nodeskclaw-knowledge/app/knowledge_artifacts/ragflow_compilation.py]]。HTTP：[[nodeskclaw-knowledge/app/api/v2/artifacts.py]]。Table row 检索经 ACL 过滤：[[nodeskclaw-knowledge/app/knowledge_artifacts/table.py#filter_table_candidates_by_acl]]。
+模型：[[nodeskclaw-knowledge/app/models/knowledge_artifact.py#KnowledgeArtifact]]、[[nodeskclaw-knowledge/app/models/knowledge_artifact.py#KnowledgeArtifactRevision]]。Identity/Revision 服务：[[nodeskclaw-knowledge/app/services/artifact_revision_service.py#get_or_create_identity]]、[[nodeskclaw-knowledge/app/services/artifact_revision_service.py#publish_revision]]。v2.4 ACL adapter：[[nodeskclaw-knowledge/app/services/artifact_security_service.py]]。Provider SPI 经 Runtime Adapter 读写 RAGFlow native artifact：[[nodeskclaw-knowledge/app/knowledge_artifacts/outline.py]]、[[nodeskclaw-knowledge/app/knowledge_artifacts/table.py]]、[[nodeskclaw-knowledge/app/knowledge_artifacts/ragflow_compilation.py]]。Build API 只入队 `target_kind=artifact`：[[nodeskclaw-knowledge/app/api/v2/artifacts.py#enqueue_artifact_build]]。Table row 检索经 ACL 过滤：[[nodeskclaw-knowledge/app/knowledge_artifacts/table.py#filter_table_candidates_by_acl]]。
+
+## Application Release
+
+ApplicationRelease 是不可变产品快照；Channel（preview/stable）持有 `active_release_id` 读指针，写入唯一经 ReleasePromotionService。
+
+Release 状态：draft → validating → validated → promoted/superseded/retired/failed。create 拼装 pin 住的 manifest（sets/kbs/binding/index/artifact/model/policy revision）；validate 后 manifest 不可变。模型：[[nodeskclaw-knowledge/app/models/knowledge_application_release.py#KnowledgeApplicationRelease]]、[[nodeskclaw-knowledge/app/models/knowledge_application_release.py#KnowledgeReleaseChannel]]。Promotion：[[nodeskclaw-knowledge/app/services/release_promotion_service.py]]。Channel resolve：[[nodeskclaw-knowledge/app/services/release_runtime_service.py#resolve_application_release]]。API：[[nodeskclaw-knowledge/app/api/v2/applications.py]]。
+
+## Application Retrieval Policy
+
+ApplicationRetrievalPolicyRevision 是 Application Release Runtime 的检索策略权威（QI/provider/weights/budgets/fallback/artifact/fusion）；Set RetrievalProfile 仍用于 Set-scoped retrieve，不得作为 Application fallback。
+
+publish 归档旧 ACTIVE；Release create 必须 pin `retrieval_policy_revision_id`。模型：[[nodeskclaw-knowledge/app/models/application_retrieval_policy_revision.py#ApplicationRetrievalPolicyRevision]]。服务：[[nodeskclaw-knowledge/app/services/application_retrieval_policy_service.py]]。
+
+## Quality Snapshot
+
+KnowledgeQualitySnapshot 持久化 KB/Application 质量子分与 gate 结果；history API 查表而非返回伪造 `[current]`。stable promote 要求最新 snapshot gate PASS。
+
+模型：[[nodeskclaw-knowledge/app/models/knowledge_quality_snapshot.py#KnowledgeQualitySnapshot]]、[[nodeskclaw-knowledge/app/models/knowledge_quality_snapshot.py#KnowledgeQualityGatePolicy]]。计算与 gate：[[nodeskclaw-knowledge/app/services/knowledge_quality_service.py]]。API：[[nodeskclaw-knowledge/app/api/v2/quality.py]]。Quality 使用 `RuntimeBindingStatus.ready` 判定 binding 就绪（非 `active`）。
 
 ## Translation Objects
 

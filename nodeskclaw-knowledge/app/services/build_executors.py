@@ -480,6 +480,40 @@ async def _execute_secondary_stage(
         target_documents = resolution.documents
         if incremental_enabled:
             if index_type in {IndexType.question.value, IndexType.hierarchical_summary.value}:
+                if not (build_delta.added or build_delta.changed or build_delta.removed):
+                    return StageResult(
+                        status="succeeded",
+                        retryable=False,
+                        output={
+                            "runtime_operation": runtime_operation,
+                            "runtime_config_revision": getattr(binding, "config_revision", None),
+                            "active_document_count": len(resolution.documents),
+                            "processed_document_count": 0,
+                            "capability_key": capability_key,
+                            "retrieval_ready": is_index_retrieval_ready(index_type, capabilities),
+                            "incremental_build": True,
+                            "incremental_noop": True,
+                            "full_rebuild": False,
+                            "build_delta": build_delta.to_summary(),
+                        },
+                    )
+                if build_delta.removed and not build_delta.changed_source_file_ids:
+                    return StageResult(
+                        status="succeeded",
+                        retryable=False,
+                        output={
+                            "runtime_operation": runtime_operation,
+                            "runtime_config_revision": getattr(binding, "config_revision", None),
+                            "active_document_count": len(resolution.documents),
+                            "processed_document_count": 0,
+                            "capability_key": capability_key,
+                            "retrieval_ready": is_index_retrieval_ready(index_type, capabilities),
+                            "incremental_build": True,
+                            "incremental_removal_only": True,
+                            "full_rebuild": False,
+                            "build_delta": build_delta.to_summary(),
+                        },
+                    )
                 changed_ids = build_delta.changed_source_file_ids
                 if changed_ids:
                     target_documents = [
@@ -621,3 +655,136 @@ EXECUTORS: dict[str, StageExecutor] = {
     IndexType.hierarchical_summary.value: execute_summary_stage,
     IndexType.graph.value: execute_graph_stage,
 }
+
+
+# @lat: [[knowledge-objects#Build Job]]
+async def execute_artifact_stage(
+    db: AsyncSession,
+    job: KnowledgeBuildJob,
+    kb: KnowledgeBase,
+) -> StageResult:
+    from app.knowledge_artifacts.base import ArtifactBuildContext, ArtifactBuildResult
+    from app.knowledge_artifacts.registry import ensure_default_providers, get_provider
+    from app.models.knowledge_artifact import KnowledgeArtifact
+    from app.services import artifact_revision_service
+
+    input_payload = ((job.stage_results or {}).get("input") if isinstance(job.stage_results, dict) else None) or {}
+    artifact_id = input_payload.get("artifact_id")
+    artifact_type = job.target_key or job.index_type
+    artifact: KnowledgeArtifact | None = None
+    if artifact_id:
+        artifact = await db.get(KnowledgeArtifact, artifact_id)
+    if artifact is None or artifact.deleted_at is not None:
+        stmt = select(KnowledgeArtifact).where(
+            KnowledgeArtifact.knowledge_base_id == kb.id,
+            KnowledgeArtifact.org_id == kb.org_id,
+            KnowledgeArtifact.artifact_type == artifact_type,
+            KnowledgeArtifact.status == "building",
+            not_deleted(KnowledgeArtifact),
+        )
+        source_file_id = input_payload.get("source_file_id")
+        if source_file_id:
+            stmt = stmt.where(KnowledgeArtifact.source_file_id == source_file_id)
+        else:
+            stmt = stmt.where(KnowledgeArtifact.source_file_id.is_(None))
+        artifact = await db.scalar(stmt)
+    if artifact is None:
+        return StageResult(
+            status="failed",
+            retryable=False,
+            error_code="artifact_missing",
+            error_message="artifact identity not found for build job",
+        )
+
+    ensure_default_providers()
+    provider = get_provider(artifact_type)
+    if provider is None:
+        return StageResult(
+            status="failed",
+            retryable=False,
+            error_code="artifact_type_unsupported",
+            error_message=f"unsupported artifact type: {artifact_type}",
+        )
+
+    manifest_hash = job.input_manifest_hash
+    if not manifest_hash:
+        manifest_hash, _items, manifest_summary = await build_input_manifest_service.compute_manifest(db, kb)
+    else:
+        _current_hash, _items, manifest_summary = await build_input_manifest_service.compute_manifest(db, kb)
+
+    dataset_id = await runtime_binding_service.require_dataset_id(db, kb)
+    adapter = RagflowRuntimeAdapter()
+    try:
+        build_context = ArtifactBuildContext(
+            org_id=kb.org_id,
+            knowledge_base_id=kb.id,
+            dataset_id=dataset_id,
+            adapter=adapter,
+            manifest_hash=manifest_hash,
+            manifest_summary=manifest_summary,
+            source_file_id=input_payload.get("source_file_id") or artifact.source_file_id,
+            file_version_id=input_payload.get("file_version_id") or artifact.file_version_id,
+            ragflow_document_id=input_payload.get("ragflow_document_id"),
+        )
+        build_result = await provider.build(build_context)
+        if build_result.status == "succeeded":
+            validation = await provider.validate(build_context)
+            if not validation.ready:
+                build_result = ArtifactBuildResult(
+                    status="failed",
+                    artifact_uri=build_result.artifact_uri,
+                    provider_payload=build_result.provider_payload,
+                    validation_payload=validation.validation_payload,
+                    coverage_payload=validation.coverage_payload,
+                    error_code="artifact_validation_failed",
+                    error_message="artifact validation failed",
+                )
+            else:
+                build_result = ArtifactBuildResult(
+                    status=build_result.status,
+                    artifact_uri=build_result.artifact_uri,
+                    provider_payload=build_result.provider_payload,
+                    validation_payload=validation.validation_payload or build_result.validation_payload,
+                    coverage_payload=validation.coverage_payload or build_result.coverage_payload,
+                )
+        revision = await artifact_revision_service.publish_revision(
+            db,
+            artifact=artifact,
+            build_result=build_result,
+            input_manifest_hash=manifest_hash,
+            file_version_id=input_payload.get("file_version_id") or artifact.file_version_id,
+        )
+        output = {
+            "runtime_operation": "artifact_build",
+            "artifact_id": artifact.id,
+            "artifact_type": artifact_type,
+            "revision_id": revision.id,
+            "revision_number": revision.revision_number,
+            "revision_status": revision.status,
+        }
+        if build_result.status != "succeeded":
+            return StageResult(
+                status="failed",
+                retryable=False,
+                error_code=build_result.error_code or "artifact_build_failed",
+                error_message=build_result.error_message or "artifact build failed",
+                output=output,
+                validation_payload=build_result.validation_payload,
+                coverage_payload=build_result.coverage_payload,
+            )
+        return StageResult(
+            status="succeeded",
+            retryable=False,
+            output=output,
+            validation_payload=build_result.validation_payload,
+            coverage_payload=build_result.coverage_payload,
+        )
+    except RagflowError as exc:
+        return StageResult(
+            status="failed",
+            retryable=True,
+            error_code="runtime_error",
+            error_message=str(exc),
+        )
+    finally:
+        await adapter.aclose()

@@ -143,3 +143,47 @@ async def analyze_query(
         gate_decisions=gate_decisions,
         fallback_used=fallback_used,
     )
+
+
+def resolve_release_terms(
+    manifest: dict[str, Any] | None,
+    query: str,
+    *,
+    kb_terms: dict[str, list] | None = None,
+) -> tuple[list[str], list[str]]:
+    """SemanticModelResolver: Application Model Revision > KB Model > No Expansion."""
+    diagnostics: list[str] = []
+    manifest = manifest or {}
+    expanded: list[str] = []
+    app_terms = manifest.get("terms") or manifest.get("model_terms")
+    if isinstance(app_terms, list) and app_terms:
+        app_expanded, app_reasons = expand_terminology(query, app_terms)
+        expanded.extend(app_expanded)
+        diagnostics.extend(app_reasons)
+        diagnostics.append("semantic_model:application_revision")
+        return expanded, diagnostics
+
+    kb_terms = kb_terms or {}
+    seen_canonical: dict[str, str] = {}
+    for kb_id, terms in kb_terms.items():
+        if not terms:
+            continue
+        kb_expanded, kb_reasons = expand_terminology(query, terms)
+        for item in terms:
+            if not isinstance(item, dict):
+                continue
+            canonical = str(item.get("canonical") or item.get("term") or "")
+            if not canonical:
+                continue
+            prev_owner = seen_canonical.get(canonical)
+            if prev_owner and prev_owner != kb_id:
+                diagnostics.append(f"semantic_model_conflict:{canonical}")
+                continue
+            seen_canonical[canonical] = kb_id
+        expanded.extend(kb_expanded)
+        diagnostics.extend(kb_reasons)
+        diagnostics.append(f"semantic_model:kb_revision:{kb_id}")
+
+    if not expanded:
+        diagnostics.append("semantic_model:no_expansion")
+    return list(dict.fromkeys(expanded)), diagnostics

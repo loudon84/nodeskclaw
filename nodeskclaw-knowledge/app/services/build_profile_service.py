@@ -29,7 +29,9 @@ async def ensure_system_profiles(db: AsyncSession) -> list[BuildProfile]:
             system_key=key,
             is_system=True,
             index_types=list(spec["index_types"]),
+            artifact_types=list(spec.get("artifact_types") or []),
             trigger_policy=dict(spec.get("trigger_policy") or {}),
+            artifact_trigger_policy=dict(spec.get("artifact_trigger_policy") or {}),
             runtime_hints={},
             version=1,
         )

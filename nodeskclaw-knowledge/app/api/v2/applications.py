@@ -10,13 +10,24 @@ from app.core.deps import get_db, get_member_context
 from app.core.exceptions import BadRequestError
 from app.schemas.common import ApiResponse, PageData
 from app.schemas.knowledge import (
+    ApplicationRetrievalPolicyRevisionCreate,
+    ApplicationRetrievalPolicyRevisionOut,
     KnowledgeApplicationBindSet,
     KnowledgeApplicationCreate,
     KnowledgeApplicationOut,
+    KnowledgeApplicationReleaseCreate,
+    KnowledgeApplicationReleaseOut,
     KnowledgeApplicationUpdate,
+    KnowledgeReleaseChannelOut,
+    KnowledgeReleasePromote,
 )
 from app.schemas.principal import KnowledgePrincipal
-from app.services import application_readiness_service, knowledge_application_service
+from app.services import (
+    application_readiness_service,
+    application_retrieval_policy_service,
+    knowledge_application_service,
+    release_promotion_service,
+)
 
 router = APIRouter(tags=["v2-applications"])
 
@@ -31,6 +42,15 @@ def _require_application() -> None:
         raise BadRequestError(
             message="Knowledge Application 未启用",
             message_key="errors.knowledge.application_disabled",
+        )
+
+
+def _require_release() -> None:
+    _require_application()
+    if not settings.KNOWLEDGE_V24_RELEASE_ENABLED:
+        raise BadRequestError(
+            message="Knowledge Release v2.4 未启用",
+            message_key="errors.knowledge.release_disabled",
         )
 
 
@@ -175,3 +195,241 @@ async def unbind_application_set_v2(
         db, member, application_id, knowledge_set_id
     )
     return ApiResponse(message="deleted")
+
+
+@router.get(
+    "/applications/{application_id}/releases",
+    response_model=ApiResponse[PageData[KnowledgeApplicationReleaseOut]],
+)
+async def list_application_releases_v2(
+    application_id: str,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    member: KnowledgePrincipal = Depends(get_member_context),
+    db: AsyncSession = Depends(get_db),
+):
+    _require_release()
+    items, total = await knowledge_application_service.list_releases(
+        db, member, application_id, page=page, page_size=page_size
+    )
+    out = [
+        KnowledgeApplicationReleaseOut.model_validate(knowledge_application_service.release_to_dict(item))
+        for item in items
+    ]
+    return ApiResponse(data=PageData(items=out, total=total, page=page, page_size=page_size))
+
+
+@router.post(
+    "/applications/{application_id}/releases",
+    response_model=ApiResponse[KnowledgeApplicationReleaseOut],
+)
+async def create_application_release_v2(
+    application_id: str,
+    body: KnowledgeApplicationReleaseCreate,
+    member: KnowledgePrincipal = Depends(get_member_context),
+    db: AsyncSession = Depends(get_db),
+):
+    _require_release()
+    release = await knowledge_application_service.create_release(
+        db,
+        member,
+        application_id,
+        retrieval_policy_revision_id=body.retrieval_policy_revision_id,
+    )
+    return ApiResponse(
+        data=KnowledgeApplicationReleaseOut.model_validate(
+            knowledge_application_service.release_to_dict(release)
+        )
+    )
+
+
+@router.get(
+    "/applications/{application_id}/releases/{release_id}",
+    response_model=ApiResponse[KnowledgeApplicationReleaseOut],
+)
+async def get_application_release_v2(
+    application_id: str,
+    release_id: str,
+    member: KnowledgePrincipal = Depends(get_member_context),
+    db: AsyncSession = Depends(get_db),
+):
+    _require_release()
+    release = await knowledge_application_service.get_release(db, member, application_id, release_id)
+    return ApiResponse(
+        data=KnowledgeApplicationReleaseOut.model_validate(
+            knowledge_application_service.release_to_dict(release)
+        )
+    )
+
+
+@router.post(
+    "/applications/{application_id}/releases/{release_id}/validate",
+    response_model=ApiResponse[KnowledgeApplicationReleaseOut],
+)
+async def validate_application_release_v2(
+    application_id: str,
+    release_id: str,
+    member: KnowledgePrincipal = Depends(get_member_context),
+    db: AsyncSession = Depends(get_db),
+):
+    _require_release()
+    release = await knowledge_application_service.validate_release(
+        db, member, application_id, release_id
+    )
+    return ApiResponse(
+        data=KnowledgeApplicationReleaseOut.model_validate(
+            knowledge_application_service.release_to_dict(release)
+        )
+    )
+
+
+@router.post(
+    "/applications/{application_id}/releases/{release_id}/retire",
+    response_model=ApiResponse[KnowledgeApplicationReleaseOut],
+)
+async def retire_application_release_v2(
+    application_id: str,
+    release_id: str,
+    member: KnowledgePrincipal = Depends(get_member_context),
+    db: AsyncSession = Depends(get_db),
+):
+    _require_release()
+    release = await knowledge_application_service.retire_release(
+        db, member, application_id, release_id
+    )
+    return ApiResponse(
+        data=KnowledgeApplicationReleaseOut.model_validate(
+            knowledge_application_service.release_to_dict(release)
+        )
+    )
+
+
+@router.get(
+    "/applications/{application_id}/channels",
+    response_model=ApiResponse[list[KnowledgeReleaseChannelOut]],
+)
+async def list_application_channels_v2(
+    application_id: str,
+    member: KnowledgePrincipal = Depends(get_member_context),
+    db: AsyncSession = Depends(get_db),
+):
+    _require_release()
+    channels = await knowledge_application_service.list_channels(db, member, application_id)
+    return ApiResponse(
+        data=[
+            KnowledgeReleaseChannelOut.model_validate(release_promotion_service.channel_to_dict(row))
+            for row in channels
+        ]
+    )
+
+
+@router.post(
+    "/applications/{application_id}/channels/{channel}/promote",
+    response_model=ApiResponse[KnowledgeReleaseChannelOut],
+)
+async def promote_application_channel_v2(
+    application_id: str,
+    channel: str,
+    body: KnowledgeReleasePromote,
+    member: KnowledgePrincipal = Depends(get_member_context),
+    db: AsyncSession = Depends(get_db),
+):
+    _require_release()
+    row = await release_promotion_service.promote(
+        db,
+        member,
+        application_id,
+        channel=channel,
+        release_id=body.release_id,
+    )
+    return ApiResponse(data=KnowledgeReleaseChannelOut.model_validate(release_promotion_service.channel_to_dict(row)))
+
+
+@router.post(
+    "/applications/{application_id}/channels/{channel}/rollback",
+    response_model=ApiResponse[KnowledgeReleaseChannelOut],
+)
+async def rollback_application_channel_v2(
+    application_id: str,
+    channel: str,
+    member: KnowledgePrincipal = Depends(get_member_context),
+    db: AsyncSession = Depends(get_db),
+):
+    _require_release()
+    row = await release_promotion_service.rollback(db, member, application_id, channel=channel)
+    return ApiResponse(data=KnowledgeReleaseChannelOut.model_validate(release_promotion_service.channel_to_dict(row)))
+
+
+@router.get(
+    "/applications/{application_id}/retrieval-policy-revisions",
+    response_model=ApiResponse[list[ApplicationRetrievalPolicyRevisionOut]],
+)
+async def list_application_retrieval_policy_revisions_v2(
+    application_id: str,
+    member: KnowledgePrincipal = Depends(get_member_context),
+    db: AsyncSession = Depends(get_db),
+):
+    _require_release()
+    rows = await application_retrieval_policy_service.list_revisions(db, member, application_id)
+    return ApiResponse(
+        data=[
+            ApplicationRetrievalPolicyRevisionOut.model_validate(
+                application_retrieval_policy_service.revision_to_dict(row)
+            )
+            for row in rows
+        ]
+    )
+
+
+@router.post(
+    "/applications/{application_id}/retrieval-policy-revisions",
+    response_model=ApiResponse[ApplicationRetrievalPolicyRevisionOut],
+)
+async def create_application_retrieval_policy_revision_v2(
+    application_id: str,
+    body: ApplicationRetrievalPolicyRevisionCreate,
+    member: KnowledgePrincipal = Depends(get_member_context),
+    db: AsyncSession = Depends(get_db),
+):
+    _require_release()
+    revision = await application_retrieval_policy_service.create_revision(
+        db,
+        member,
+        application_id,
+        query_intelligence_policy=body.query_intelligence_policy,
+        provider_policy=body.provider_policy,
+        provider_weights=body.provider_weights,
+        candidate_budget=body.candidate_budget,
+        fanout_budget=body.fanout_budget,
+        latency_budget=body.latency_budget,
+        fallback_policy=body.fallback_policy,
+        artifact_policy=body.artifact_policy,
+        fusion_policy=body.fusion_policy,
+        notes=body.notes,
+    )
+    return ApiResponse(
+        data=ApplicationRetrievalPolicyRevisionOut.model_validate(
+            application_retrieval_policy_service.revision_to_dict(revision)
+        )
+    )
+
+
+@router.post(
+    "/applications/{application_id}/retrieval-policy-revisions/{revision_id}/publish",
+    response_model=ApiResponse[ApplicationRetrievalPolicyRevisionOut],
+)
+async def publish_application_retrieval_policy_revision_v2(
+    application_id: str,
+    revision_id: str,
+    member: KnowledgePrincipal = Depends(get_member_context),
+    db: AsyncSession = Depends(get_db),
+):
+    _require_release()
+    revision = await application_retrieval_policy_service.publish_revision(
+        db, member, application_id, revision_id
+    )
+    return ApiResponse(
+        data=ApplicationRetrievalPolicyRevisionOut.model_validate(
+            application_retrieval_policy_service.revision_to_dict(revision)
+        )
+    )

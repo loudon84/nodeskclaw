@@ -63,9 +63,11 @@ SYSTEM_BUILD_PROFILES: dict[str, dict[str, Any]] = {
         "name": "Standard",
         "description": "Chunk-only build for basic enterprise RAG",
         "index_types": [IndexType.chunk.value],
+        "artifact_types": [],
         "trigger_policy": {
             IndexType.chunk.value: BuildTriggerPolicy.ingestion.value,
         },
+        "artifact_trigger_policy": {},
     },
     "enhanced": {
         "name": "Enhanced",
@@ -74,10 +76,12 @@ SYSTEM_BUILD_PROFILES: dict[str, dict[str, Any]] = {
             IndexType.chunk.value,
             IndexType.question.value,
         ],
+        "artifact_types": [],
         "trigger_policy": {
             IndexType.chunk.value: BuildTriggerPolicy.ingestion.value,
             IndexType.question.value: BuildTriggerPolicy.on_activate.value,
         },
+        "artifact_trigger_policy": {},
     },
     "reasoning": {
         "name": "Reasoning",
@@ -88,12 +92,14 @@ SYSTEM_BUILD_PROFILES: dict[str, dict[str, Any]] = {
             IndexType.hierarchical_summary.value,
             IndexType.graph.value,
         ],
+        "artifact_types": [],
         "trigger_policy": {
             IndexType.chunk.value: BuildTriggerPolicy.ingestion.value,
             IndexType.question.value: BuildTriggerPolicy.on_activate.value,
             IndexType.hierarchical_summary.value: BuildTriggerPolicy.debounce.value,
             IndexType.graph.value: BuildTriggerPolicy.debounce.value,
         },
+        "artifact_trigger_policy": {},
     },
     "experimental": {
         "name": "Experimental",
@@ -101,9 +107,11 @@ SYSTEM_BUILD_PROFILES: dict[str, dict[str, Any]] = {
         "index_types": [
             IndexType.chunk.value,
         ],
+        "artifact_types": [],
         "trigger_policy": {
             IndexType.chunk.value: BuildTriggerPolicy.ingestion.value,
         },
+        "artifact_trigger_policy": {},
     },
 }
 

@@ -72,6 +72,9 @@ def test_system_profiles_define_standard_enhanced_reasoning():
     }
     assert IndexType.graph.value not in index_registry.SYSTEM_BUILD_PROFILES["standard"]["index_types"]
     assert IndexType.graph.value in index_registry.SYSTEM_BUILD_PROFILES["reasoning"]["index_types"]
+    for spec in index_registry.SYSTEM_BUILD_PROFILES.values():
+        assert spec.get("artifact_types") == []
+        assert spec.get("artifact_trigger_policy") == {}
 
 
 def test_unsupported_without_capability():
@@ -129,6 +132,8 @@ async def test_ensure_system_profiles_creates_three():
     assert len(profiles) == 4
     assert {p.system_key for p in profiles} == {"standard", "enhanced", "reasoning", "experimental"}
     assert all(p.is_system for p in profiles)
+    assert all((p.artifact_types or []) == [] for p in profiles)
+    assert all((p.artifact_trigger_policy or {}) == {} for p in profiles)
 
 
 @pytest.mark.asyncio
@@ -153,6 +158,49 @@ async def test_enqueue_after_activation_marks_stale_when_build_disabled(monkeypa
     )
     assert jobs == []
     mark.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_enqueue_after_activation_enqueues_artifact_jobs(monkeypatch):
+    monkeypatch.setattr(settings, "KNOWLEDGE_V2_BUILD_ENABLED", True)
+    db = AsyncMock()
+    kb = SimpleNamespace(id="kb1", active_build_profile_id=None)
+    profile = SimpleNamespace(
+        id="bp-standard",
+        index_types=["chunk"],
+        artifact_types=["table"],
+        trigger_policy={"chunk": "ingestion"},
+        artifact_trigger_policy={"table": "on_activate"},
+    )
+    enqueued: list = []
+
+    async def _enqueue_build(*_args, **kwargs):
+        enqueued.append(kwargs)
+        return SimpleNamespace(id=f"job-{len(enqueued)}")
+
+    monkeypatch.setattr(
+        build_profile_service, "resolve_profile_for_kb", AsyncMock(return_value=profile)
+    )
+    monkeypatch.setattr(index_state_service, "ensure_kb_index_states", AsyncMock(return_value=[]))
+    monkeypatch.setattr(index_state_service, "mark_indexes_stale", AsyncMock(return_value=[]))
+    monkeypatch.setattr(
+        "app.services.build_input_manifest_service.compute_manifest",
+        AsyncMock(return_value=("manifest_hash", [], {"item_count": 0})),
+    )
+    monkeypatch.setattr(build_orchestrator, "enqueue_build", AsyncMock(side_effect=_enqueue_build))
+
+    jobs = await build_orchestrator.enqueue_after_activation(
+        db,
+        org_id="o1",
+        kb=kb,
+        source_file_id="sf1",
+        version_id="v2",
+        capabilities={},
+        member_id="m1",
+    )
+    assert len(jobs) == 1
+    assert enqueued[0]["target_kind"] == "artifact"
+    assert enqueued[0]["target_key"] == "table"
 
 
 @pytest.mark.asyncio
@@ -815,3 +863,148 @@ async def test_incremental_build_processes_only_changed_documents(monkeypatch):
     assert result.output["incremental_build"] is True
     assert result.output["processed_document_count"] == 1
     assert result.output["build_delta"]["changed"] == 1
+
+
+@pytest.mark.asyncio
+async def test_incremental_build_noop_when_corpus_unchanged(monkeypatch):
+    from app.services import active_runtime_documents, build_input_manifest_service
+    from app.services.build_input_manifest_service import ManifestItem
+
+    monkeypatch.setattr(settings, "KNOWLEDGE_V23_INCREMENTAL_BUILD_ENABLED", True)
+    db = AsyncMock()
+    kb = _make_kb()
+    job = _make_job(index_type=IndexType.question.value)
+    docs = [
+        active_runtime_documents.ActiveRuntimeDocument("sf1", "v1", "d1"),
+    ]
+    resolution = active_runtime_documents.ActiveDocumentResolution(documents=docs)
+    items = [
+        ManifestItem("sf1", "v1", 0, "d1"),
+    ]
+    state = _make_state()
+    state.input_manifest_summary = {
+        "items": [
+            {"source_file_id": "sf1", "file_version_id": "v1", "metadata_revision": 0, "ragflow_document_id": "d1"},
+        ]
+    }
+
+    trigger_parse = AsyncMock()
+    monkeypatch.setattr(build_executors, "_trigger_parse_batches", trigger_parse)
+    monkeypatch.setattr(
+        build_executors.runtime_binding_service,
+        "get_binding",
+        AsyncMock(return_value=SimpleNamespace(capabilities={"supports_auto_questions": {"build_supported": True}})),
+    )
+    monkeypatch.setattr(
+        build_executors.runtime_binding_service,
+        "require_dataset_id",
+        AsyncMock(return_value="ds1"),
+    )
+    monkeypatch.setattr(build_executors, "_validate_input_manifest", AsyncMock(return_value=None))
+    monkeypatch.setattr(index_state_service, "get_or_create_state", AsyncMock(return_value=state))
+    monkeypatch.setattr(
+        build_input_manifest_service,
+        "compute_manifest",
+        AsyncMock(return_value=("hash", items, {"item_count": 1})),
+    )
+    monkeypatch.setattr(
+        active_runtime_documents,
+        "resolve_and_validate_active_documents",
+        AsyncMock(return_value=resolution),
+    )
+    monkeypatch.setattr(build_executors, "RagflowRuntimeAdapter", lambda: SimpleNamespace(aclose=AsyncMock()))
+
+    result = await build_executors.execute_question_stage(db, job, kb)
+    assert result.status == "succeeded"
+    assert result.output["incremental_noop"] is True
+    assert result.output["processed_document_count"] == 0
+    trigger_parse.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_incremental_build_removal_only_updates_without_rebuild(monkeypatch):
+    from app.services import active_runtime_documents, build_input_manifest_service
+    from app.services.build_input_manifest_service import ManifestItem
+
+    monkeypatch.setattr(settings, "KNOWLEDGE_V23_INCREMENTAL_BUILD_ENABLED", True)
+    db = AsyncMock()
+    kb = _make_kb()
+    job = _make_job(index_type=IndexType.question.value)
+    docs = [
+        active_runtime_documents.ActiveRuntimeDocument("sf1", "v1", "d1"),
+    ]
+    resolution = active_runtime_documents.ActiveDocumentResolution(documents=docs)
+    previous_items = [
+        ManifestItem("sf1", "v1", 0, "d1"),
+        ManifestItem("sf2", "v2", 0, "d2"),
+    ]
+    current_items = [
+        ManifestItem("sf1", "v1", 0, "d1"),
+    ]
+    state = _make_state()
+    state.input_manifest_summary = {
+        "items": [
+            {"source_file_id": "sf1", "file_version_id": "v1", "metadata_revision": 0, "ragflow_document_id": "d1"},
+            {"source_file_id": "sf2", "file_version_id": "v2", "metadata_revision": 0, "ragflow_document_id": "d2"},
+        ]
+    }
+
+    trigger_parse = AsyncMock()
+    monkeypatch.setattr(build_executors, "_trigger_parse_batches", trigger_parse)
+    monkeypatch.setattr(
+        build_executors.runtime_binding_service,
+        "get_binding",
+        AsyncMock(return_value=SimpleNamespace(capabilities={"supports_auto_questions": {"build_supported": True}})),
+    )
+    monkeypatch.setattr(
+        build_executors.runtime_binding_service,
+        "require_dataset_id",
+        AsyncMock(return_value="ds1"),
+    )
+    monkeypatch.setattr(build_executors, "_validate_input_manifest", AsyncMock(return_value=None))
+    monkeypatch.setattr(index_state_service, "get_or_create_state", AsyncMock(return_value=state))
+    monkeypatch.setattr(
+        build_input_manifest_service,
+        "compute_manifest",
+        AsyncMock(return_value=("hash", current_items, {"item_count": 1})),
+    )
+    monkeypatch.setattr(
+        active_runtime_documents,
+        "resolve_and_validate_active_documents",
+        AsyncMock(return_value=resolution),
+    )
+    monkeypatch.setattr(build_executors, "RagflowRuntimeAdapter", lambda: SimpleNamespace(aclose=AsyncMock()))
+
+    result = await build_executors.execute_question_stage(db, job, kb)
+    assert result.status == "succeeded"
+    assert result.output["incremental_removal_only"] is True
+    assert result.output["processed_document_count"] == 0
+    assert result.output["build_delta"]["removed"] == 1
+    trigger_parse.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_enqueue_build_pins_knowledge_model_revision_id(monkeypatch):
+    from app.services import build_orchestrator
+
+    db = AsyncMock()
+    kb = _make_kb()
+    kb.knowledge_model_id = "model-1"
+    db.get = AsyncMock(return_value=kb)
+    db.add = MagicMock()
+    db.flush = AsyncMock()
+    db.scalar = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        build_orchestrator,
+        "_resolve_active_model_revision_id",
+        AsyncMock(return_value="rev-1"),
+    )
+
+    job = await build_orchestrator.enqueue_build(
+        db,
+        org_id="org-1",
+        knowledge_base_id=kb.id,
+        index_type=IndexType.question.value,
+        trigger_reason="manual",
+    )
+    assert job.knowledge_model_revision_id == "rev-1"

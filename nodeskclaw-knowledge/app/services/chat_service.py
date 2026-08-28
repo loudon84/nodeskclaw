@@ -79,6 +79,7 @@ async def create_session(
     answer_mode: str = "detailed",
     show_citations: bool = True,
     answer_model: str | None = None,
+    channel: str = "stable",
 ) -> ChatSession:
     resolved_set_id = knowledge_set_id
     resolved_answer_model = answer_model
@@ -93,11 +94,6 @@ async def create_session(
                 message="应用已禁用",
                 message_key="errors.knowledge.application_disabled",
             )
-        if app.status != ApplicationStatus.active.value:
-            raise ForbiddenError(
-                message="应用未发布",
-                message_key="errors.knowledge.application_not_active",
-            )
         if not await has_application_permission(
             db, member, app, ApplicationPermission.use.value
         ):
@@ -105,13 +101,37 @@ async def create_session(
                 message="无权使用该知识应用",
                 message_key="errors.knowledge.retrieval_denied",
             )
-        set_ids = await knowledge_application_service.list_bound_set_ids(db, application_id)
-        if not set_ids:
-            raise BadRequestError(
-                message="应用未绑定知识集合",
-                message_key="errors.knowledge.application_empty",
+
+        if settings.KNOWLEDGE_V24_RELEASE_ENABLED:
+            from app.services.release_runtime_service import resolve_application_release
+
+            resolved = await resolve_application_release(
+                db,
+                member,
+                application_id=application_id,
+                channel=channel,
             )
-        resolved_set_id = set_ids[0]
+            manifest = resolved.manifest
+            set_ids = list(manifest.get("knowledge_set_ids") or [])
+            if not set_ids:
+                raise BadRequestError(
+                    message="Release Manifest 缺少知识集合",
+                    message_key="errors.knowledge.application_empty",
+                )
+            resolved_set_id = set_ids[0]
+        else:
+            if app.status != ApplicationStatus.active.value:
+                raise ForbiddenError(
+                    message="应用未发布",
+                    message_key="errors.knowledge.application_not_active",
+                )
+            set_ids = await knowledge_application_service.list_bound_set_ids(db, application_id)
+            if not set_ids:
+                raise BadRequestError(
+                    message="应用未绑定知识集合",
+                    message_key="errors.knowledge.application_empty",
+                )
+            resolved_set_id = set_ids[0]
         if resolved_answer_model is None:
             resolved_answer_model = app.answer_model
     if not resolved_set_id:

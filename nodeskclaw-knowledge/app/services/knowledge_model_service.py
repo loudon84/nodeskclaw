@@ -241,6 +241,17 @@ async def publish_revision(
     revision = await get_revision(db, member, model_id, revision_id)
     if revision.status == "active":
         return row
+    active_rows = await db.scalars(
+        select(KnowledgeModelRevision).where(
+            KnowledgeModelRevision.knowledge_model_id == model_id,
+            KnowledgeModelRevision.org_id == member.org_id,
+            KnowledgeModelRevision.status == "active",
+            not_deleted(KnowledgeModelRevision),
+        )
+    )
+    for old in active_rows.all():
+        if old.id != revision_id:
+            old.status = "archived"
     revision.status = "active"
     revision.published_at = datetime.now(UTC)
     _sync_model_from_revision(row, revision)

@@ -1,16 +1,30 @@
-"""KnowledgeApplication service — CRUD, publish, set binding."""
+"""KnowledgeApplication service — CRUD, publish, set binding, release lifecycle."""
 
 from __future__ import annotations
 
-from sqlalchemy import select
+import hashlib
+import json
+from datetime import UTC, datetime
+
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.exceptions import BadRequestError, ConflictError, ForbiddenError, NotFoundError
 from app.models.base import not_deleted
-from app.models.enums import ApplicationPermission, ApplicationStatus, AuditAction
+from app.models.enums import (
+    ApplicationPermission,
+    ApplicationReleaseStatus,
+    ApplicationStatus,
+    AuditAction,
+    ReleaseChannelName,
+)
 from app.models.knowledge_application import KnowledgeApplication, KnowledgeApplicationSetItem
 from app.models.knowledge_application_acl import KnowledgeApplicationAcl
+from app.models.knowledge_application_release import KnowledgeApplicationRelease, KnowledgeReleaseChannel
+from app.models.knowledge_artifact import KnowledgeArtifact
+from app.models.knowledge_base import KnowledgeBase
+from app.models.knowledge_set_item import KnowledgeSetItem
 from app.schemas.principal import KnowledgePrincipal
 from app.services.audit_service import write_audit
 from app.services.permission_service import has_application_permission
@@ -95,6 +109,18 @@ async def publish_application(
             message="应用未就绪，无法发布",
             message_key="errors.knowledge.application_not_ready",
             details=readiness.to_dict(),
+        )
+    if settings.KNOWLEDGE_V24_RELEASE_ENABLED:
+        from app.services import release_promotion_service
+
+        release = await create_release(db, member, application_id)
+        release = await validate_release(db, member, application_id, release.id)
+        await release_promotion_service.promote(
+            db,
+            member,
+            application_id,
+            channel=ReleaseChannelName.stable.value,
+            release_id=release.id,
         )
     app.status = ApplicationStatus.active.value
     from app.services import knowledge_quality_service
@@ -256,4 +282,369 @@ async def application_to_out(db: AsyncSession, app: KnowledgeApplication) -> dic
         "acl_version": app.acl_version,
         "visibility": app.visibility,
         "knowledge_set_ids": set_ids,
+    }
+
+
+def _require_release_enabled() -> None:
+    if not settings.KNOWLEDGE_V24_RELEASE_ENABLED:
+        raise BadRequestError(
+            message="Knowledge Release v2.4 未启用",
+            message_key="errors.knowledge.release_disabled",
+        )
+
+
+async def ensure_release_channels(
+    db: AsyncSession,
+    member: KnowledgePrincipal,
+    application_id: str,
+) -> list[KnowledgeReleaseChannel]:
+    app = await get_application(db, member, application_id)
+    existing = await db.scalars(
+        select(KnowledgeReleaseChannel).where(
+            KnowledgeReleaseChannel.application_id == application_id,
+            not_deleted(KnowledgeReleaseChannel),
+        )
+    )
+    rows = list(existing.all())
+    existing_names = {row.channel for row in rows}
+    for channel_name in (ReleaseChannelName.preview.value, ReleaseChannelName.stable.value):
+        if channel_name not in existing_names:
+            row = KnowledgeReleaseChannel(
+                org_id=app.org_id,
+                application_id=application_id,
+                channel=channel_name,
+            )
+            db.add(row)
+            rows.append(row)
+    await db.flush()
+    return rows
+
+
+async def _next_release_version(db: AsyncSession, application_id: str) -> int:
+    current = await db.scalar(
+        select(func.max(KnowledgeApplicationRelease.version)).where(
+            KnowledgeApplicationRelease.application_id == application_id,
+            not_deleted(KnowledgeApplicationRelease),
+        )
+    )
+    return int(current or 0) + 1
+
+
+def _manifest_hash(manifest: dict) -> str:
+    raw = json.dumps(manifest, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
+
+
+async def build_release_manifest(
+    db: AsyncSession,
+    member: KnowledgePrincipal,
+    app: KnowledgeApplication,
+    *,
+    release_version: int,
+    retrieval_policy_revision_id: str,
+) -> dict:
+    from app.services import index_state_service, knowledge_set_service, runtime_binding_service
+
+    set_ids = await list_bound_set_ids(db, app.id)
+    knowledge_sets: list[dict] = []
+    for set_id in set_ids:
+        items = await db.scalars(
+            select(KnowledgeSetItem).where(
+                KnowledgeSetItem.knowledge_set_id == set_id,
+                not_deleted(KnowledgeSetItem),
+            )
+        )
+        set_items = list(items.all())
+        kbs = await knowledge_set_service.list_bound_knowledge_bases(db, member, set_id)
+        kb_payloads: list[dict] = []
+        for kb in kbs:
+            binding = await runtime_binding_service.get_binding(db, kb.id)
+            states = await index_state_service.list_states_for_kb(db, kb.id)
+            index_versions = {state.index_type: state.build_version for state in states}
+            input_manifest_hash = next(
+                (state.input_manifest_hash for state in states if state.input_manifest_hash),
+                None,
+            )
+            artifacts = await db.scalars(
+                select(KnowledgeArtifact).where(
+                    KnowledgeArtifact.knowledge_base_id == kb.id,
+                    KnowledgeArtifact.status == "ready",
+                    not_deleted(KnowledgeArtifact),
+                )
+            )
+            artifact_versions = {row.artifact_type: row.version for row in artifacts.all()}
+            model_revision_id = None
+            if kb.knowledge_model_id:
+                from app.models.knowledge_model import KnowledgeModel
+
+                model = await db.get(KnowledgeModel, kb.knowledge_model_id)
+                if model and model.deleted_at is None:
+                    model_revision_id = model.active_revision_id
+            kb_payloads.append(
+                {
+                    "knowledge_base_id": kb.id,
+                    "runtime_binding_id": binding.id if binding else None,
+                    "runtime_config_revision": binding.config_revision if binding else None,
+                    "input_manifest_hash": input_manifest_hash,
+                    "build_profile_id": kb.active_build_profile_id,
+                    "knowledge_model_revision_id": model_revision_id,
+                    "index_versions": index_versions,
+                    "artifact_versions": artifact_versions,
+                }
+            )
+        default_weight = float(set_items[0].weight) if set_items else 1.0
+        knowledge_sets.append(
+            {
+                "knowledge_set_id": set_id,
+                "weight": default_weight,
+                "knowledge_bases": kb_payloads,
+            }
+        )
+    return {
+        "application_id": app.id,
+        "release_version": release_version,
+        "retrieval_policy_revision_id": retrieval_policy_revision_id,
+        "answer_model": app.answer_model,
+        "knowledge_sets": knowledge_sets,
+    }
+
+
+async def create_release(
+    db: AsyncSession,
+    member: KnowledgePrincipal,
+    application_id: str,
+    *,
+    retrieval_policy_revision_id: str | None = None,
+) -> KnowledgeApplicationRelease:
+    _require_release_enabled()
+    app = await get_application(db, member, application_id)
+    if not await has_application_permission(db, member, app, ApplicationPermission.manage.value):
+        raise ForbiddenError()
+    from app.models.application_retrieval_policy_revision import ApplicationRetrievalPolicyRevision
+    from app.services import application_retrieval_policy_service
+
+    revision: ApplicationRetrievalPolicyRevision | None
+    if retrieval_policy_revision_id:
+        revision = await db.get(ApplicationRetrievalPolicyRevision, retrieval_policy_revision_id)
+    else:
+        revision = await application_retrieval_policy_service.get_active_revision(db, application_id)
+    if revision is None or revision.deleted_at is not None or revision.application_id != application_id:
+        raise BadRequestError(
+            message="缺少 Application Retrieval Policy Revision，无法创建 Release",
+            message_key="errors.knowledge.retrieval_policy_revision_required",
+        )
+    version = await _next_release_version(db, application_id)
+    manifest = await build_release_manifest(
+        db,
+        member,
+        app,
+        release_version=version,
+        retrieval_policy_revision_id=revision.id,
+    )
+    release = KnowledgeApplicationRelease(
+        org_id=member.org_id,
+        application_id=application_id,
+        version=version,
+        status=ApplicationReleaseStatus.draft.value,
+        release_manifest=manifest,
+        created_by_member_id=member.member_id,
+    )
+    db.add(release)
+    await ensure_release_channels(db, member, application_id)
+    await write_audit(
+        db,
+        org_id=member.org_id,
+        member_id=member.member_id,
+        action=AuditAction.set_create.value,
+        resource_type="knowledge_application_release",
+        resource_id=release.id,
+        details={"application_id": application_id, "version": version},
+    )
+    await db.commit()
+    await db.refresh(release)
+    return release
+
+
+async def validate_release(
+    db: AsyncSession,
+    member: KnowledgePrincipal,
+    application_id: str,
+    release_id: str,
+) -> KnowledgeApplicationRelease:
+    _require_release_enabled()
+    app = await get_application(db, member, application_id)
+    if not await has_application_permission(db, member, app, ApplicationPermission.manage.value):
+        raise ForbiddenError()
+    release = await get_release(db, member, application_id, release_id)
+    if release.status not in {
+        ApplicationReleaseStatus.draft.value,
+        ApplicationReleaseStatus.failed.value,
+    }:
+        raise ConflictError(
+            message="Release 状态不允许校验",
+            message_key="errors.knowledge.release_validate_invalid_status",
+        )
+    if not release.release_manifest.get("retrieval_policy_revision_id"):
+        raise BadRequestError(
+            message="Release Manifest 缺少 retrieval_policy_revision_id",
+            message_key="errors.knowledge.retrieval_policy_revision_required",
+        )
+    release.status = ApplicationReleaseStatus.validating.value
+    await db.flush()
+    from app.services import application_readiness_service, knowledge_quality_service
+
+    readiness = await application_readiness_service.check(db, member, application_id)
+    if not readiness.ready:
+        release.status = ApplicationReleaseStatus.failed.value
+        release.validation_error = "application_not_ready"
+        await db.commit()
+        await db.refresh(release)
+        raise ConflictError(
+            message="应用未就绪，Release 校验失败",
+            message_key="errors.knowledge.application_not_ready",
+            details=readiness.to_dict(),
+        )
+    snapshot = await knowledge_quality_service.persist_application_snapshot(
+        db,
+        member,
+        application_id,
+        release_id=release.id,
+        manifest=release.release_manifest,
+    )
+    release.quality_snapshot_id = snapshot.id
+    if snapshot.gate_result == "FAIL":
+        release.status = ApplicationReleaseStatus.failed.value
+        release.validation_error = "quality_gate_failed"
+        await db.commit()
+        await db.refresh(release)
+        raise ConflictError(
+            message="Quality Gate 未通过，Release 校验失败",
+            message_key="errors.knowledge.quality_gate_failed",
+            details={"gate_result": snapshot.gate_result},
+        )
+    release.status = ApplicationReleaseStatus.validated.value
+    release.validation_error = None
+    await write_audit(
+        db,
+        org_id=member.org_id,
+        member_id=member.member_id,
+        action=AuditAction.set_update.value,
+        resource_type="knowledge_application_release",
+        resource_id=release.id,
+        details={"application_id": application_id, "action": "validate"},
+    )
+    await db.commit()
+    await db.refresh(release)
+    return release
+
+
+async def get_release(
+    db: AsyncSession,
+    member: KnowledgePrincipal,
+    application_id: str,
+    release_id: str,
+) -> KnowledgeApplicationRelease:
+    _require_release_enabled()
+    await get_application(db, member, application_id)
+    release = await db.get(KnowledgeApplicationRelease, release_id)
+    if (
+        release is None
+        or release.deleted_at is not None
+        or release.application_id != application_id
+        or release.org_id != member.org_id
+    ):
+        raise NotFoundError(
+            message="Release 不存在",
+            message_key="errors.knowledge.release_not_found",
+        )
+    return release
+
+
+async def list_releases(
+    db: AsyncSession,
+    member: KnowledgePrincipal,
+    application_id: str,
+    *,
+    page: int = 1,
+    page_size: int = 20,
+) -> tuple[list[KnowledgeApplicationRelease], int]:
+    _require_release_enabled()
+    await get_application(db, member, application_id)
+    result = await db.execute(
+        select(KnowledgeApplicationRelease).where(
+            KnowledgeApplicationRelease.application_id == application_id,
+            not_deleted(KnowledgeApplicationRelease),
+        )
+    )
+    rows = list(result.scalars().all())
+    total = len(rows)
+    rows.sort(key=lambda row: row.version, reverse=True)
+    start = (page - 1) * page_size
+    return rows[start : start + page_size], total
+
+
+async def retire_release(
+    db: AsyncSession,
+    member: KnowledgePrincipal,
+    application_id: str,
+    release_id: str,
+) -> KnowledgeApplicationRelease:
+    _require_release_enabled()
+    app = await get_application(db, member, application_id)
+    if not await has_application_permission(db, member, app, ApplicationPermission.manage.value):
+        raise ForbiddenError()
+    release = await get_release(db, member, application_id, release_id)
+    if release.status == ApplicationReleaseStatus.retired.value:
+        return release
+    channels = await db.scalars(
+        select(KnowledgeReleaseChannel).where(
+            KnowledgeReleaseChannel.application_id == application_id,
+            KnowledgeReleaseChannel.active_release_id == release_id,
+            not_deleted(KnowledgeReleaseChannel),
+        )
+    )
+    if list(channels.all()):
+        raise ConflictError(
+            message="Release 仍被 Channel 引用，无法退役",
+            message_key="errors.knowledge.release_still_active",
+        )
+    release.status = ApplicationReleaseStatus.retired.value
+    release.retired_at = datetime.now(UTC)
+    await write_audit(
+        db,
+        org_id=member.org_id,
+        member_id=member.member_id,
+        action=AuditAction.set_update.value,
+        resource_type="knowledge_application_release",
+        resource_id=release.id,
+        details={"application_id": application_id, "action": "retire"},
+    )
+    await db.commit()
+    await db.refresh(release)
+    return release
+
+
+async def list_channels(
+    db: AsyncSession,
+    member: KnowledgePrincipal,
+    application_id: str,
+) -> list[KnowledgeReleaseChannel]:
+    _require_release_enabled()
+    await get_application(db, member, application_id)
+    return await ensure_release_channels(db, member, application_id)
+
+
+def release_to_dict(release: KnowledgeApplicationRelease) -> dict:
+    return {
+        "id": release.id,
+        "application_id": release.application_id,
+        "version": release.version,
+        "status": release.status,
+        "release_manifest": release.release_manifest,
+        "quality_snapshot_id": release.quality_snapshot_id,
+        "created_by_member_id": release.created_by_member_id,
+        "promoted_at": release.promoted_at.isoformat() if release.promoted_at else None,
+        "retired_at": release.retired_at.isoformat() if release.retired_at else None,
+        "validation_error": release.validation_error,
+        "created_at": release.created_at.isoformat() if release.created_at else None,
     }

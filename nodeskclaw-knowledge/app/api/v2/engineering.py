@@ -54,7 +54,9 @@ def _profile_out(profile) -> dict:
         "system_key": profile.system_key,
         "is_system": profile.is_system,
         "index_types": profile.index_types,
+        "artifact_types": getattr(profile, "artifact_types", None) or [],
         "trigger_policy": profile.trigger_policy,
+        "artifact_trigger_policy": getattr(profile, "artifact_trigger_policy", None) or {},
         "version": profile.version,
     }
 

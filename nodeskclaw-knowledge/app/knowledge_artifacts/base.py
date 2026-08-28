@@ -65,6 +65,11 @@ class ArtifactEvidenceCandidate:
     source_refs: list[SourceRef] = field(default_factory=list)
     citable: bool = False
     provider_payload: dict[str, Any] = field(default_factory=dict)
+    provider: str = ""
+    knowledge_base_id: str = ""
+    provider_rank: int = 0
+    provider_score: float | None = None
+    provider_weight: float = 1.0
 
 
 @dataclass

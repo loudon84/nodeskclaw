@@ -49,6 +49,34 @@ def _observe_retrieval(status: str, started: float) -> None:
     metrics_service.observe_retrieval(status=status, duration_seconds=time.perf_counter() - started)
 
 
+def _audit_federation_fields(federation_plan) -> dict:
+    if federation_plan is None:
+        return {}
+    effective_modes = sorted(
+        {cap.selected_mode for cap in federation_plan.kb_capabilities.values()}
+    )
+    return {
+        "query_type": federation_plan.query_intent,
+        "requested_indexes": effective_modes,
+        "effective_indexes": effective_modes,
+        "fallback_used": federation_plan.fallback_used,
+    }
+
+
+def _audit_plan_fields(
+    *,
+    federation_plan,
+    capability_plan,
+    fallback_used: bool | None = None,
+) -> dict:
+    if federation_plan is not None:
+        fields = _audit_federation_fields(federation_plan)
+        if fallback_used is not None:
+            fields["fallback_used"] = fallback_used
+        return fields
+    return _audit_capability_fields(capability_plan, fallback_used=fallback_used)
+
+
 def _audit_capability_fields(capability_plan, *, fallback_used: bool | None = None) -> dict:
     from app.services.capability_planner import CapabilityPlan
 
@@ -210,6 +238,8 @@ async def retrieve_for_application(
     filters: dict[str, list] | None = None,
     origin: str = RetrievalOrigin.direct_retrieval.value,
     profile_id: str | None = None,
+    channel: str = "stable",
+    release_id: str | None = None,
 ) -> dict:
     from app.services import knowledge_application_service
 
@@ -224,27 +254,62 @@ async def retrieve_for_application(
             message="应用已禁用",
             message_key="errors.knowledge.application_disabled",
         )
-    if app.status != ApplicationStatus.active.value and origin != RetrievalOrigin.evaluation.value:
-        raise ForbiddenError(
-            message="应用未发布",
-            message_key="errors.knowledge.application_not_active",
-        )
     if not await has_application_permission(db, member, app, ApplicationPermission.use.value):
         raise ForbiddenError(
             message="无权使用该知识应用",
             message_key="errors.knowledge.retrieval_denied",
         )
-    set_ids = await knowledge_application_service.list_bound_set_ids(db, application_id)
-    if not set_ids:
-        raise BadRequestError(
-            message="应用未绑定知识集合",
-            message_key="errors.knowledge.application_empty",
+
+    release_manifest: dict | None = None
+    resolved_release_id: str | None = None
+    if settings.KNOWLEDGE_V24_RELEASE_ENABLED:
+        from app.services.release_runtime_service import resolve_application_release
+
+        resolved = await resolve_application_release(
+            db,
+            member,
+            application_id=application_id,
+            channel=channel,
+            release_id=release_id,
         )
+        release_manifest = resolved.manifest
+        resolved_release_id = resolved.release_id
+    elif app.status != ApplicationStatus.active.value and origin != RetrievalOrigin.evaluation.value:
+        raise ForbiddenError(
+            message="应用未发布",
+            message_key="errors.knowledge.application_not_active",
+        )
+
+    if release_manifest is not None:
+        set_ids = list(release_manifest.get("knowledge_set_ids") or [])
+        if not set_ids:
+            raise BadRequestError(
+                message="Release Manifest 缺少知识集合",
+                message_key="errors.knowledge.application_empty",
+            )
+    else:
+        set_ids = await knowledge_application_service.list_bound_set_ids(db, application_id)
+        if not set_ids:
+            raise BadRequestError(
+                message="应用未绑定知识集合",
+                message_key="errors.knowledge.application_empty",
+            )
 
     usable_set_ids: list[str] = []
     merged_kbs: list = []
     seen_kb: set[str] = set()
     weight_by_kb: dict[str, float] = {}
+
+    manifest_kbs = release_manifest.get("knowledge_bases") if release_manifest else None
+    if manifest_kbs:
+        for item in manifest_kbs:
+            if not isinstance(item, dict):
+                continue
+            kb_id = str(item.get("knowledge_base_id") or "")
+            if not kb_id:
+                continue
+            weight_by_kb[kb_id] = float(item.get("weight") or 1.0)
+
     for set_id in set_ids:
         try:
             ks = await knowledge_set_service.get_knowledge_set(db, member, set_id)
@@ -259,11 +324,12 @@ async def retrieve_for_application(
             if kb.id not in seen_kb:
                 seen_kb.add(kb.id)
                 merged_kbs.append(kb)
-        for item in await knowledge_set_service.list_set_items(db, member, set_id):
-            prev = weight_by_kb.get(item.knowledge_base_id)
-            w = float(item.weight)
-            if prev is None or w > prev:
-                weight_by_kb[item.knowledge_base_id] = w
+        if not manifest_kbs:
+            for item in await knowledge_set_service.list_set_items(db, member, set_id):
+                prev = weight_by_kb.get(item.knowledge_base_id)
+                w = float(item.weight)
+                if prev is None or w > prev:
+                    weight_by_kb[item.knowledge_base_id] = w
 
     if not usable_set_ids:
         raise BadRequestError(
@@ -281,7 +347,15 @@ async def retrieve_for_application(
         for kb_id, weight in weight_by_kb.items()
     ]
 
-    resolved_profile_id = profile_id or app.active_profile_id
+    if release_manifest is not None:
+        resolved_profile_id = (
+            profile_id
+            or release_manifest.get("retrieval_profile_id")
+            or release_manifest.get("active_profile_id")
+        )
+    else:
+        resolved_profile_id = profile_id or app.active_profile_id
+
     result = await _retrieve_for_set(
         db,
         member,
@@ -297,11 +371,16 @@ async def retrieve_for_application(
         kbs_override=merged_kbs,
         set_items_override=merged_items,
         bump_set_ids=usable_set_ids,
+        release_manifest=release_manifest,
+        weights_by_kb=weight_by_kb,
     )
     result["application_id"] = application_id
     result["answer_model"] = app.answer_model
     result["knowledge_set_ids"] = usable_set_ids
-    if "capability_plan" not in result and settings.KNOWLEDGE_V2_CAPABILITY_PLANNER_ENABLED:
+    if resolved_release_id:
+        result["release_id"] = resolved_release_id
+        result["channel"] = channel
+    if "federation_plan" not in result and settings.KNOWLEDGE_V2_CAPABILITY_PLANNER_ENABLED:
         from app.services import capability_planner
 
         result["capability_plan"] = capability_planner.build_capability_plan(
@@ -420,6 +499,8 @@ async def _retrieve_for_set(
     kbs_override: list | None = None,
     set_items_override: list | None = None,
     bump_set_ids: list[str] | None = None,
+    release_manifest: dict | None = None,
+    weights_by_kb: dict[str, float] | None = None,
 ) -> dict:
     started = time.perf_counter()
     ks = await knowledge_set_service.get_knowledge_set(db, member, knowledge_set_id)
@@ -565,30 +646,70 @@ async def _retrieve_for_set(
             "allow_summary",
             "allow_graph",
             "allow_toc_enhance",
+            "allow_outline_artifact",
+            "allow_table_artifact",
             "fallback_policy",
             "candidate_budget",
             "rerank_candidates",
+            "artifact_budget",
         )
         if k in config
     }
-    capability_plan = capability_planner.build_capability_plan(
+
+    from app.services.query_intelligence import analyze_query, resolve_release_terms
+
+    release_terms, term_diagnostics = resolve_release_terms(release_manifest, query)
+    query_analysis = await analyze_query(
         query,
-        kb_access_scopes=kb_access_scopes,
-        kb_capabilities_input=kb_caps_input,
-        kb_index_states=kb_index_states,
-        kb_retrieval_states=kb_retrieval_states,
-        kb_binding_status=kb_binding_status,
+        terms=release_terms or None,
+        access_scope=plan_access.kind.value if hasattr(plan_access.kind, "value") else str(plan_access.kind),
         profile_policy=profile_policy,
-        force_semantic_only=not settings.KNOWLEDGE_V2_MULTI_INDEX_RETRIEVAL_ENABLED,
     )
-    for code in capability_plan.reason_codes:
-        metrics_service.observe_capability_plan(reason_code=code)
+    if term_diagnostics:
+        query_analysis.reason_codes.extend(term_diagnostics)
+
+    federation_plan = None
+    capability_plan = None
+    if settings.KNOWLEDGE_V24_FEDERATION_ENABLED:
+        from app.services import federated_retrieval_planner
+
+        federation_plan = federated_retrieval_planner.build_federation_plan(
+            query,
+            manifest=release_manifest,
+            query_analysis=query_analysis,
+            access_plan=plan_access,
+            kb_access_scopes=kb_access_scopes,
+            kb_capabilities_input=kb_caps_input,
+            kb_index_states=kb_index_states,
+            kb_retrieval_states=kb_retrieval_states,
+            kb_binding_status=kb_binding_status,
+            profile_policy=profile_policy,
+            force_semantic_only=not settings.KNOWLEDGE_V2_MULTI_INDEX_RETRIEVAL_ENABLED,
+            weights_by_kb=weights_by_kb,
+        )
+        for code in federation_plan.reason_codes:
+            metrics_service.observe_capability_plan(reason_code=code)
+        kb_capabilities = federation_plan.kb_capabilities
+    else:
+        capability_plan = capability_planner.build_capability_plan(
+            query,
+            kb_access_scopes=kb_access_scopes,
+            kb_capabilities_input=kb_caps_input,
+            kb_index_states=kb_index_states,
+            kb_retrieval_states=kb_retrieval_states,
+            kb_binding_status=kb_binding_status,
+            profile_policy=profile_policy,
+            force_semantic_only=not settings.KNOWLEDGE_V2_MULTI_INDEX_RETRIEVAL_ENABLED,
+        )
+        for code in capability_plan.reason_codes:
+            metrics_service.observe_capability_plan(reason_code=code)
+        kb_capabilities = capability_plan.kb_capabilities
 
     plan = retrieval_planner.build_retrieval_plan(
         plan_access,
         kbs,
         set_items,
-        kb_capabilities=capability_plan.kb_capabilities,
+        kb_capabilities=kb_capabilities,
         metadata_condition=metadata_condition,
         dataset_id_by_kb_id=dataset_map,
         top_k=effective_top_k,
@@ -614,7 +735,10 @@ async def _retrieve_for_set(
             execution_status="empty",
             successful_slice_count=0,
             failed_slice_count=0,
-            **_audit_capability_fields(capability_plan),
+            **_audit_plan_fields(
+                federation_plan=federation_plan,
+                capability_plan=capability_plan,
+            ),
         )
         db.add(audit)
         for sid in bump_set_ids or [knowledge_set_id]:
@@ -648,6 +772,7 @@ async def _retrieve_for_set(
         audit_org_id=member.org_id,
         audit_member_id=member.member_id,
         rerank_candidates_count=int(config.get("rerank_candidates") or 0) or None,
+        federation_plan=federation_plan,
     )
 
     merged = merge_result.merged
@@ -692,8 +817,9 @@ async def _retrieve_for_set(
             execution_status="failed",
             successful_slice_count=successful_slice_count,
             failed_slice_count=failed_slice_count,
-            **_audit_capability_fields(
-                capability_plan,
+            **_audit_plan_fields(
+                federation_plan=federation_plan,
+                capability_plan=capability_plan,
                 fallback_used=merge_result.fallback_used,
             ),
         )
@@ -731,9 +857,12 @@ async def _retrieve_for_set(
         execution_status=execution_status,
         successful_slice_count=successful_slice_count,
         failed_slice_count=failed_slice_count,
-        **_audit_capability_fields(
-            capability_plan,
-            fallback_used=merge_result.fallback_used or capability_plan.fallback_used,
+        **_audit_plan_fields(
+            federation_plan=federation_plan,
+            capability_plan=capability_plan,
+            fallback_used=merge_result.fallback_used
+            or (capability_plan.fallback_used if capability_plan else False)
+            or (federation_plan.fallback_used if federation_plan else False),
         ),
     )
     db.add(audit)
@@ -764,12 +893,30 @@ async def _retrieve_for_set(
         "diagnostics": diagnostics,
         "latency_ms": latency_ms,
     }
-    if (
+    if settings.KNOWLEDGE_V24_FEDERATION_ENABLED and federation_plan is not None:
+        payload["query_analysis"] = query_analysis.to_dict()
+        payload["federation_plan"] = federation_plan.to_dict()
+        payload["execution_plan"] = {
+            "slices": [
+                {
+                    "runtime_mode": s.mode.value,
+                    "knowledge_base_id": s.knowledge_base_id,
+                    "dataset_id": s.dataset_id,
+                    "top_k": s.top_k,
+                    "access_scope": s.access_scope,
+                    "retrieval_features": list(s.retrieval_features),
+                    "provider": s.provider,
+                }
+                for s in plan.slices
+            ]
+        }
+    elif (
         settings.KNOWLEDGE_V2_CAPABILITY_PLANNER_ENABLED
         or settings.KNOWLEDGE_V2_MULTI_INDEX_RETRIEVAL_ENABLED
         or origin == RetrievalOrigin.evaluation.value
     ):
-        payload["capability_plan"] = capability_plan.to_dict()
+        if capability_plan is not None:
+            payload["capability_plan"] = capability_plan.to_dict()
         payload["execution_plan"] = {
             "slices": [
                 {

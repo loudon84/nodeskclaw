@@ -32,6 +32,8 @@ class BuildProfile(BaseModel):
     system_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
     is_system: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     index_types: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    artifact_types: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     trigger_policy: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    artifact_trigger_policy: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     runtime_hints: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)

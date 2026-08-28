@@ -13,6 +13,7 @@ from app.core.exceptions import BadRequestError, ForbiddenError
 from app.schemas.common import ApiResponse
 from app.schemas.principal import KnowledgePrincipal
 from app.services import citation_service, retrieval_service, runtime_binding_service, source_file_service
+from app.services import artifact_security_service
 from app.services.permission_service import build_access_plan
 
 router = APIRouter(prefix="/agent/tools", tags=["agent-tools"])
@@ -23,6 +24,8 @@ class SearchBody(BaseModel):
     application_id: str | None = None
     knowledge_set_id: str | None = None
     top_k: int | None = None
+    channel: str = "stable"
+    release_id: str | None = None
 
 
 class EvidenceBody(BaseModel):
@@ -57,8 +60,20 @@ async def knowledge_search_or_retrieve(
     application_id: str | None = None,
     knowledge_set_id: str | None = None,
     top_k: int | None = None,
+    channel: str = "stable",
+    release_id: str | None = None,
 ) -> dict:
     _require_v2()
+    if not application_id and not knowledge_set_id:
+        raise BadRequestError(
+            message="需要 application_id 或 knowledge_set_id",
+            message_key="errors.knowledge.retrieval_target_required",
+        )
+    if application_id and knowledge_set_id:
+        raise BadRequestError(
+            message="application_id 与 knowledge_set_id 不能同时指定",
+            message_key="errors.knowledge.retrieval_target_conflict",
+        )
     if application_id:
         data = await retrieval_service.retrieve_for_application(
             db,
@@ -67,8 +82,10 @@ async def knowledge_search_or_retrieve(
             application_id=application_id,
             query=query,
             top_k=top_k,
+            channel=channel,
+            release_id=release_id,
         )
-    elif knowledge_set_id:
+    else:
         data = await retrieval_service.retrieve(
             db,
             member,
@@ -77,11 +94,6 @@ async def knowledge_search_or_retrieve(
             query=query,
             top_k=top_k,
             include_capability_plan=True,
-        )
-    else:
-        raise BadRequestError(
-            message="需要 application_id 或 knowledge_set_id",
-            message_key="errors.knowledge.retrieval_target_required",
         )
     strip_runtime_document_ids(data)
     return data
@@ -140,9 +152,9 @@ async def _artifact_hits(
     source_file_id: str | None = None,
 ) -> dict:
     from app.core.config import settings as app_settings
+    from app.models.enums import AccessPlanKind
     from app.knowledge_artifacts.base import ArtifactBuildContext
     from app.knowledge_artifacts.registry import ensure_default_providers, get_provider
-    from app.knowledge_artifacts.table import filter_table_candidates_by_acl
     from app.models.knowledge_base import KnowledgeBase
     from app.services import build_input_manifest_service
 
@@ -169,7 +181,9 @@ async def _artifact_hits(
             message="不支持的 Artifact 类型",
             message_key="errors.knowledge.artifact_type_unsupported",
         )
-    plan_access = await build_access_plan(db, member, [kb])
+    plan_access = await artifact_security_service.authorize_kb_artifact_access(db, member, kb)
+    if plan_access is None:
+        plan_access = await build_access_plan(db, member, [kb])
     manifest_hash, _, manifest_summary = await build_input_manifest_service.compute_manifest(db, kb)
     dataset_id = await runtime_binding_service.require_dataset_id(db, kb)
     context = ArtifactBuildContext(
@@ -183,15 +197,33 @@ async def _artifact_hits(
     )
     hits = await provider.retrieve(query or "", context)
     allowed = set(plan_access.source_file_ids)
-    if artifact_type == "table":
-        hits = filter_table_candidates_by_acl(hits, allowed)
-    else:
-        hits = [
-            hit
-            for hit in hits
-            if hit.citable
-            and all(ref.source_file_id in allowed for ref in hit.source_refs)
+    filtered_hits = []
+    for hit in hits:
+        refs = [
+            ref
+            for ref in hit.source_refs
+            if ref.source_file_id in allowed
         ]
+        if artifact_security_service.artifact_acl_enabled():
+            if plan_access.kind == AccessPlanKind.no_access:
+                continue
+            if plan_access.kind == AccessPlanKind.filtered_access and not refs:
+                continue
+        elif not (hit.citable and all(ref.source_file_id in allowed for ref in hit.source_refs)):
+            continue
+        filtered_hits.append(
+            hit
+            if refs == list(hit.source_refs)
+            else type(hit)(
+                artifact_type=hit.artifact_type,
+                title=hit.title,
+                content=hit.content,
+                source_refs=refs,
+                citable=bool(refs),
+                provider_payload=dict(hit.provider_payload),
+            )
+        )
+    hits = filtered_hits
     return {
         "artifact_type": artifact_type,
         "knowledge_base_id": knowledge_base_id,
@@ -285,6 +317,8 @@ async def tool_search(
         application_id=body.application_id,
         knowledge_set_id=body.knowledge_set_id,
         top_k=body.top_k,
+        channel=body.channel,
+        release_id=body.release_id,
     )
     return ApiResponse(data=data)
 

@@ -35,6 +35,8 @@ class EvaluationRun(BaseModel):
 
     evaluation_set_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
     retrieval_profile_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    release_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    channel: Mapped[str | None] = mapped_column(String(32), nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending", index=True)
     metrics: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     principal_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)

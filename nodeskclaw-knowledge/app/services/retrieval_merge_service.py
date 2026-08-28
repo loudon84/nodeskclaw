@@ -20,6 +20,17 @@ from app.services.retrieval_planner import RetrievalPlan, RuntimeExecutionSlice
 
 logger = logging.getLogger(__name__)
 
+MODE_TO_PROVIDER: dict[str, str] = {
+    "semantic": "semantic",
+    "graph_assisted": "ragflow_graph",
+    "compiled_assisted": "ragflow_compilation",
+    "toc_enhanced": "ragflow_toc",
+}
+
+
+def mode_to_provider(mode: str) -> str:
+    return MODE_TO_PROVIDER.get(mode, mode)
+
 
 @dataclass
 class RetrievalSliceResult:
@@ -96,17 +107,19 @@ def _rank_by_rrf(
     slice_weight_by_dataset: dict[str, float],
 ) -> tuple[list[MergedChunk], dict[str, Any]]:
     by_provider: dict[str, list[MergedChunk]] = {}
-    for chunk, slice_mode in safe_chunks:
+    for chunk, provider in safe_chunks:
         dataset_id = chunk.dataset_id or chunk.kb_id or ""
         weight = slice_weight_by_dataset.get(dataset_id, 1.0)
-        weighted_score = float(chunk.similarity) * weight
-        provider_key = slice_mode or "semantic"
+        meta = chunk.document_metadata or {}
+        provider_weight = float(meta.get("nk_provider_weight") or weight)
+        weighted_score = float(chunk.similarity) * provider_weight
+        provider_key = provider or "semantic"
         by_provider.setdefault(provider_key, []).append(
             MergedChunk(
                 chunk=chunk,
                 weighted_score=weighted_score,
-                weight=weight,
-                slice_mode=slice_mode,
+                weight=provider_weight,
+                slice_mode=provider_key,
             )
         )
 
@@ -151,11 +164,12 @@ def _dedup_key(chunk: RagflowChunk) -> tuple:
         if isinstance(pos, (list, tuple)) and len(pos) >= 1:
             page = pos[0]
             break
+    lineage = meta.get("nk_lineage_id") or chunk.id
     return (
         meta.get("nk_source_file_id"),
         meta.get("nk_file_version_id"),
         page,
-        _normalize_content(chunk.content),
+        lineage,
     )
 
 
@@ -360,6 +374,7 @@ async def execute_and_merge(
     audit_org_id: str | None = None,
     audit_member_id: str | None = None,
     rerank_candidates_count: int | None = None,
+    federation_plan=None,
 ) -> MergeExecutionResult:
     empty_timing = MergeTiming()
     empty_counts = {
@@ -410,8 +425,21 @@ async def execute_and_merge(
         if slice_result.status == "success":
             ragflow_call_count += 1
             mode = slice_result.runtime_mode
+            provider = slice_.provider or mode_to_provider(mode)
             for chunk in chunks:
-                candidate_chunks.append((chunk, mode))
+                candidate_chunks.append((chunk, provider))
+
+    if federation_plan is not None:
+        artifact_chunks = await _retrieve_artifact_provider_candidates(
+            db,
+            ragflow,
+            federation_plan,
+            query=query,
+            allowed_source_file_ids=allowed_source_file_ids,
+        )
+        candidate_chunks.extend(artifact_chunks)
+        if artifact_chunks:
+            ragflow_call_count += 1
 
     candidate_count = len(candidate_chunks)
     security_started = time.perf_counter()
@@ -457,3 +485,78 @@ async def execute_and_merge(
         deduped_count=deduped_count,
         fusion=fusion,
     )
+
+
+async def _retrieve_artifact_provider_candidates(
+    db: AsyncSession,
+    ragflow: RagflowRuntimeAdapter,
+    federation_plan,
+    *,
+    query: str,
+    allowed_source_file_ids: set[str],
+) -> list[tuple[RagflowChunk, str]]:
+    from app.knowledge_artifacts.base import ArtifactBuildContext, ArtifactEvidenceCandidate
+    from app.knowledge_artifacts.registry import ensure_default_providers, get_provider
+    from app.models.knowledge_base import KnowledgeBase
+    from app.services import build_input_manifest_service, runtime_binding_service
+
+    artifact_providers = [
+        item
+        for item in federation_plan.providers
+        if str(item.provider).startswith("artifact_")
+    ]
+    if not artifact_providers:
+        return []
+
+    ensure_default_providers()
+    out: list[tuple[RagflowChunk, str]] = []
+    seen_kb: set[str] = set()
+
+    for entry in artifact_providers:
+        if entry.knowledge_base_id in seen_kb:
+            continue
+        seen_kb.add(entry.knowledge_base_id)
+        artifact_type = entry.provider.removeprefix("artifact_")
+        provider = get_provider(artifact_type)
+        if provider is None:
+            continue
+        kb = await db.get(KnowledgeBase, entry.knowledge_base_id)
+        if kb is None or kb.deleted_at is not None:
+            continue
+        manifest_hash, _, manifest_summary = await build_input_manifest_service.compute_manifest(db, kb)
+        dataset_id = await runtime_binding_service.get_dataset_id(db, kb)
+        if not dataset_id:
+            continue
+        context = ArtifactBuildContext(
+            org_id=kb.org_id,
+            knowledge_base_id=kb.id,
+            dataset_id=dataset_id,
+            adapter=ragflow,
+            manifest_hash=manifest_hash,
+            manifest_summary=manifest_summary,
+        )
+        hits: list[ArtifactEvidenceCandidate] = await provider.retrieve(query, context)
+        for rank, hit in enumerate(hits, start=1):
+            if not hit.citable:
+                continue
+            if hit.source_refs and not all(
+                ref.source_file_id in allowed_source_file_ids for ref in hit.source_refs
+            ):
+                continue
+            provider_name = entry.provider
+            first_ref = hit.source_refs[0] if hit.source_refs else None
+            chunk = RagflowChunk(
+                id=f"artifact:{artifact_type}:{hit.provider_payload.get('node_id') or rank}",
+                content=hit.content,
+                similarity=float(hit.provider_score or 0.5),
+                document_metadata={
+                    "nk_source_file_id": first_ref.source_file_id if first_ref else None,
+                    "nk_file_version_id": first_ref.file_version_id if first_ref else None,
+                    "nk_knowledge_base_id": kb.id,
+                    "nk_evidence_type": artifact_type,
+                    "nk_provider_weight": hit.provider_weight or entry.weight,
+                    "nk_lineage_id": f"{artifact_type}:{hit.title}",
+                },
+            )
+            out.append((chunk, provider_name))
+    return out

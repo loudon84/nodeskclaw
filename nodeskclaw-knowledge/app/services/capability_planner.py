@@ -58,6 +58,7 @@ class KnowledgeBaseExecutionCapability:
     reason_codes: list[str] = field(default_factory=lambda: ["rule_default_chunk"])
     degraded: list[str] = field(default_factory=list)
     fallback_mode: str = RuntimeRetrievalMode.semantic.value
+    provider: str = "semantic"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -72,6 +73,7 @@ class KnowledgeBaseExecutionCapability:
             "reason_codes": list(self.reason_codes),
             "degraded": list(self.degraded),
             "fallback_mode": self.fallback_mode,
+            "provider": self.provider,
         }
 
 
@@ -288,6 +290,7 @@ def build_kb_execution_capability(
         reason_codes=reason_codes,
         degraded=degraded,
         fallback_mode=fallback_mode,
+        provider="semantic",
     )
 
 

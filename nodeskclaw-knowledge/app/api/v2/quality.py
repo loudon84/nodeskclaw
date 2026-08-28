@@ -50,5 +50,14 @@ async def get_kb_quality_history(
     db: AsyncSession = Depends(get_db),
 ):
     _require_quality_api()
-    current = await knowledge_quality_service.get_kb_quality(db, member, kb_id)
-    return ApiResponse(data={"history": [current] if settings.KNOWLEDGE_V23_QUALITY_ENABLED else []})
+    if settings.KNOWLEDGE_V24_RELEASE_ENABLED:
+        history = await knowledge_quality_service.get_quality_history(
+            db,
+            member,
+            scope_type="knowledge_base",
+            scope_id=kb_id,
+        )
+    else:
+        current = await knowledge_quality_service.get_kb_quality(db, member, kb_id)
+        history = [current] if settings.KNOWLEDGE_V23_QUALITY_ENABLED else []
+    return ApiResponse(data={"history": history})

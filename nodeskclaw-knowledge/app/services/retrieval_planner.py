@@ -72,6 +72,11 @@ def _build_execution_slice(
         if kb_capability
         else RuntimeRetrievalMode.semantic.value
     )
+    provider = (
+        kb_capability.provider
+        if kb_capability
+        else "semantic"
+    )
     return RuntimeExecutionSlice(
         knowledge_base_id=kb_id or "",
         dataset_id=dataset_id,
@@ -86,6 +91,7 @@ def _build_execution_slice(
         weight=weight,
         fallback_mode=fallback,
         metadata_condition=metadata_condition,
+        provider=provider,
     )
 
 

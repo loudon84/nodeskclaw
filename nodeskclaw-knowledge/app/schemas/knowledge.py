@@ -664,3 +664,74 @@ class KnowledgeApplicationOut(BaseModel):
 class KnowledgeApplicationBindSet(BaseModel):
     knowledge_set_id: str
     sort_order: int = 0
+
+
+class KnowledgeApplicationReleaseCreate(BaseModel):
+    retrieval_policy_revision_id: str | None = None
+
+
+class KnowledgeApplicationReleaseOut(BaseModel):
+    id: str
+    application_id: str
+    version: int
+    status: str
+    release_manifest: dict[str, Any]
+    quality_snapshot_id: str | None = None
+    created_by_member_id: str
+    promoted_at: Any = None
+    retired_at: Any = None
+    validation_error: str | None = None
+    created_at: Any = None
+
+    model_config = {"from_attributes": True}
+
+
+class KnowledgeReleaseChannelOut(BaseModel):
+    id: str
+    application_id: str
+    channel: str
+    active_release_id: str | None = None
+    traffic_policy: dict[str, Any] | None = None
+    updated_by_member_id: str | None = None
+    updated_at: Any = None
+
+    model_config = {"from_attributes": True}
+
+
+class KnowledgeReleasePromote(BaseModel):
+    release_id: str
+
+
+class ApplicationRetrievalPolicyRevisionCreate(BaseModel):
+    query_intelligence_policy: dict[str, Any] | None = None
+    provider_policy: dict[str, Any] | None = None
+    provider_weights: dict[str, Any] | None = None
+    candidate_budget: dict[str, Any] | None = None
+    fanout_budget: dict[str, Any] | None = None
+    latency_budget: dict[str, Any] | None = None
+    fallback_policy: dict[str, Any] | None = None
+    artifact_policy: dict[str, Any] | None = None
+    fusion_policy: dict[str, Any] | None = None
+    notes: str | None = None
+
+
+class ApplicationRetrievalPolicyRevisionOut(BaseModel):
+    id: str
+    application_id: str
+    revision_number: int
+    status: str
+    query_intelligence_policy: dict[str, Any] | None = None
+    provider_policy: dict[str, Any] | None = None
+    provider_weights: dict[str, Any] | None = None
+    candidate_budget: dict[str, Any] | None = None
+    fanout_budget: dict[str, Any] | None = None
+    latency_budget: dict[str, Any] | None = None
+    fallback_policy: dict[str, Any] | None = None
+    artifact_policy: dict[str, Any] | None = None
+    fusion_policy: dict[str, Any] | None = None
+    created_by_member_id: str
+    published_at: Any = None
+    notes: str | None = None
+    created_at: Any = None
+
+    model_config = {"from_attributes": True}

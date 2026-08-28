@@ -101,6 +101,7 @@ async def test_publish_revision_syncs_active_payload(monkeypatch):
     db.get = AsyncMock(return_value=model)
     db.commit = AsyncMock()
     db.refresh = AsyncMock()
+    db.scalars = AsyncMock(return_value=MagicMock(all=MagicMock(return_value=[])))
     monkeypatch.setattr(knowledge_model_service, "get_revision", AsyncMock(return_value=draft))
 
     published = await knowledge_model_service.publish_revision(db, MEMBER, "m1", "rev-2")
@@ -108,3 +109,57 @@ async def test_publish_revision_syncs_active_payload(monkeypatch):
     assert published.entities == [{"name": "B"}]
     assert draft.status == "active"
     assert draft.published_at is not None
+
+
+@pytest.mark.asyncio
+async def test_publish_revision_archives_previous_active(monkeypatch):
+    monkeypatch.setattr(settings, "KNOWLEDGE_V23_MODEL_REVISION_ENABLED", True)
+    model = SimpleNamespace(
+        id="m1",
+        org_id="org-1",
+        name="Model",
+        version=1,
+        active_revision_id="rev-1",
+        entities=[{"name": "A"}],
+        relations=[],
+        terms=[],
+        extraction_policy={},
+        deleted_at=None,
+    )
+    previous_active = SimpleNamespace(
+        id="rev-1",
+        org_id="org-1",
+        knowledge_model_id="m1",
+        deleted_at=None,
+        status="active",
+        revision_number=1,
+        entities=[{"name": "A"}],
+        relations=[],
+        terms=[],
+        extraction_policy={},
+        published_at="2026-01-01T00:00:00+00:00",
+    )
+    draft = SimpleNamespace(
+        id="rev-2",
+        org_id="org-1",
+        knowledge_model_id="m1",
+        deleted_at=None,
+        status="draft",
+        revision_number=2,
+        entities=[{"name": "B"}],
+        relations=[],
+        terms=[],
+        extraction_policy={},
+        published_at=None,
+    )
+    db = MagicMock()
+    db.get = AsyncMock(return_value=model)
+    db.commit = AsyncMock()
+    db.refresh = AsyncMock()
+    db.scalars = AsyncMock(return_value=MagicMock(all=MagicMock(return_value=[previous_active])))
+    monkeypatch.setattr(knowledge_model_service, "get_revision", AsyncMock(return_value=draft))
+
+    await knowledge_model_service.publish_revision(db, MEMBER, "m1", "rev-2")
+    assert previous_active.status == "archived"
+    assert draft.status == "active"
+    assert model.active_revision_id == "rev-2"

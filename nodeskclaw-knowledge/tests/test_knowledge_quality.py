@@ -28,7 +28,7 @@ async def test_runtime_snapshot_excludes_dataset_id(monkeypatch):
         acl_version=2,
     )
     kb = SimpleNamespace(id="kb-1")
-    binding = SimpleNamespace(status="active")
+    binding = SimpleNamespace(status="ready")
     state = SimpleNamespace(index_type="chunk", status="ready", input_manifest_hash="hash-1")
 
     db = MagicMock()
@@ -60,6 +60,37 @@ async def test_runtime_snapshot_excludes_dataset_id(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_kb_quality_binding_score_requires_ready(monkeypatch):
+    kb = SimpleNamespace(id="kb-1", org_id="org-1", deleted_at=None)
+    db = MagicMock()
+    db.scalars = AsyncMock(return_value=MagicMock(all=MagicMock(return_value=[])))
+
+    ready_binding = SimpleNamespace(status="ready")
+    monkeypatch.setattr(
+        knowledge_quality_service.runtime_binding_service,
+        "get_binding",
+        AsyncMock(return_value=ready_binding),
+    )
+    monkeypatch.setattr(
+        knowledge_quality_service.index_state_service,
+        "list_states_for_kb",
+        AsyncMock(return_value=[]),
+    )
+
+    ready_payload = await knowledge_quality_service._kb_quality(db, kb)
+    assert ready_payload["subscores"]["runtime_binding"] == 1.0
+
+    not_ready_binding = SimpleNamespace(status="provisioning")
+    monkeypatch.setattr(
+        knowledge_quality_service.runtime_binding_service,
+        "get_binding",
+        AsyncMock(return_value=not_ready_binding),
+    )
+    not_ready_payload = await knowledge_quality_service._kb_quality(db, kb)
+    assert not_ready_payload["subscores"]["runtime_binding"] == 0.0
+
+
+@pytest.mark.asyncio
 async def test_kb_quality_response_shape(monkeypatch):
     monkeypatch.setattr(settings, "KNOWLEDGE_V23_QUALITY_ENABLED", True)
     kb = SimpleNamespace(id="kb-1", org_id="org-1", deleted_at=None)
@@ -77,3 +108,26 @@ async def test_kb_quality_response_shape(monkeypatch):
     assert payload["score_status"] == "partial"
     assert "subscores" in payload
     assert "data_coverage" in payload
+
+
+@pytest.mark.asyncio
+async def test_evaluate_gate_pass_when_scores_complete():
+    payload = {
+        "score_status": "complete",
+        "subscores": {"runtime_binding": 1.0, "index_readiness": 1.0, "artifact_readiness": 1.0},
+        "issues": [],
+    }
+    gate_result, _ = knowledge_quality_service.evaluate_gate(payload)
+    assert gate_result == "PASS"
+
+
+@pytest.mark.asyncio
+async def test_evaluate_gate_fail_when_binding_inactive():
+    payload = {
+        "score_status": "partial",
+        "subscores": {"runtime_binding": 0.0},
+        "issues": ["runtime_binding_inactive"],
+    }
+    gate_result, details = knowledge_quality_service.evaluate_gate(payload)
+    assert gate_result == "FAIL"
+    assert details["checks"]["fail_reasons"]

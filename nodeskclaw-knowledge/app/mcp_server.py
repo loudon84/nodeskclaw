@@ -69,6 +69,8 @@ MCP_TOOLS: list[McpToolDefinition] = [
                 "application_id": {"type": "string"},
                 "knowledge_set_id": {"type": "string"},
                 "top_k": {"type": "integer"},
+                "channel": {"type": "string"},
+                "release_id": {"type": "string"},
             },
             "required": ["query"],
         },
@@ -83,6 +85,8 @@ MCP_TOOLS: list[McpToolDefinition] = [
                 "application_id": {"type": "string"},
                 "knowledge_set_id": {"type": "string"},
                 "top_k": {"type": "integer"},
+                "channel": {"type": "string"},
+                "release_id": {"type": "string"},
             },
             "required": ["query"],
         },
@@ -161,6 +165,8 @@ async def call_tool(
             application_id=arguments.get("application_id"),
             knowledge_set_id=arguments.get("knowledge_set_id"),
             top_k=arguments.get("top_k"),
+            channel=str(arguments.get("channel") or "stable"),
+            release_id=arguments.get("release_id"),
         )
 
     if name == "knowledge.get_document":

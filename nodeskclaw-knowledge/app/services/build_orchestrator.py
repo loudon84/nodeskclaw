@@ -23,6 +23,18 @@ logger = logging.getLogger(__name__)
 LEASE_SECONDS = settings.KNOWLEDGE_BUILD_LEASE_SECONDS
 
 
+async def _resolve_active_model_revision_id(db: AsyncSession, kb) -> str | None:
+    model_id = getattr(kb, "knowledge_model_id", None)
+    if not model_id:
+        return None
+    from app.services import knowledge_model_service
+
+    model = await knowledge_model_service.get_model_for_compile(db, model_id)
+    if model is None:
+        return None
+    return model.active_revision_id
+
+
 async def enqueue_build(
     db: AsyncSession,
     *,
@@ -36,6 +48,8 @@ async def enqueue_build(
     target_kind: str = "index",
     target_key: str | None = None,
     input_manifest_hash: str | None = None,
+    knowledge_model_revision_id: str | None = None,
+    release_candidate_id: str | None = None,
 ) -> KnowledgeBuildJob | None:
     if index_type == IndexType.chunk.value:
         return None
@@ -58,6 +72,12 @@ async def enqueue_build(
     next_run = None
     if delay_seconds > 0:
         next_run = datetime.now(UTC) + timedelta(seconds=delay_seconds)
+    from app.models.knowledge_base import KnowledgeBase
+
+    kb = await db.get(KnowledgeBase, knowledge_base_id)
+    pinned_revision_id = knowledge_model_revision_id
+    if pinned_revision_id is None and kb is not None:
+        pinned_revision_id = await _resolve_active_model_revision_id(db, kb)
     job = KnowledgeBuildJob(
         org_id=org_id,
         knowledge_base_id=knowledge_base_id,
@@ -66,6 +86,8 @@ async def enqueue_build(
         target_kind=target_kind,
         target_key=target_key or index_type,
         input_manifest_hash=input_manifest_hash,
+        knowledge_model_revision_id=pinned_revision_id,
+        release_candidate_id=release_candidate_id,
         trigger_reason=trigger_reason,
         status=BuildJobStatus.queued.value,
         next_run_at=next_run,
@@ -162,6 +184,45 @@ async def enqueue_after_activation(
             continue
         if job is not None:
             enqueued.append(job)
+
+    artifact_policy_map = getattr(profile, "artifact_trigger_policy", None) or {}
+    for artifact_type in getattr(profile, "artifact_types", None) or []:
+        policy = artifact_policy_map.get(artifact_type) or BuildTriggerPolicy.on_activate.value
+        if policy == BuildTriggerPolicy.manual.value:
+            continue
+        if policy == BuildTriggerPolicy.debounce.value:
+            delay = 300
+            job = await enqueue_build(
+                db,
+                org_id=org_id,
+                knowledge_base_id=kb.id,
+                index_type=artifact_type,
+                trigger_reason="artifact_activate_debounce",
+                build_profile_id=profile.id,
+                created_by_member_id=member_id,
+                delay_seconds=delay,
+                input_manifest_hash=manifest_hash,
+                target_kind="artifact",
+                target_key=artifact_type,
+            )
+        elif policy == BuildTriggerPolicy.on_activate.value:
+            job = await enqueue_build(
+                db,
+                org_id=org_id,
+                knowledge_base_id=kb.id,
+                index_type=artifact_type,
+                trigger_reason="artifact_activate",
+                build_profile_id=profile.id,
+                created_by_member_id=member_id,
+                input_manifest_hash=manifest_hash,
+                target_kind="artifact",
+                target_key=artifact_type,
+            )
+        else:
+            continue
+        if job is not None:
+            enqueued.append(job)
+
     logger.info(
         "build enqueue after activation kb=%s source=%s version=%s jobs=%s",
         kb.id,
@@ -219,6 +280,32 @@ async def process_build_job(db: AsyncSession, job: KnowledgeBuildJob) -> None:
             error_code=job.error_code,
             error_message=job.error_message,
         )
+        await db.flush()
+        return
+
+    if getattr(job, "knowledge_model_revision_id", None) is None:
+        job.knowledge_model_revision_id = await _resolve_active_model_revision_id(db, kb)
+
+    target_kind = getattr(job, "target_kind", None) or "index"
+    if target_kind == "artifact":
+        await _process_artifact_build_job(db, job, kb, started_at=started_at)
+        return
+    if target_kind == "release_validation":
+        finished_at = datetime.now(UTC)
+        job.stage_results = _stage_results_payload(
+            index_type=job.target_key or job.index_type,
+            status="failed",
+            started_at=started_at,
+            finished_at=finished_at,
+            attempt=int(job.attempt_count or 0),
+            error_code="release_validation_not_implemented",
+            error_message="release validation executor not implemented",
+        )
+        job.status = BuildJobStatus.failed.value
+        job.error_code = "release_validation_not_implemented"
+        job.error_message = "release validation executor not implemented"
+        job.progress = 100
+        job.finished_at = finished_at
         await db.flush()
         return
 
@@ -433,6 +520,99 @@ async def process_build_job(db: AsyncSession, job: KnowledgeBuildJob) -> None:
             validation_payload=result.validation_payload,
             coverage_payload=result.coverage_payload,
         )
+    await db.flush()
+
+
+async def _process_artifact_build_job(
+    db: AsyncSession,
+    job: KnowledgeBuildJob,
+    kb,
+    *,
+    started_at: datetime,
+) -> None:
+    try:
+        result = await build_executors.execute_artifact_stage(db, job, kb)
+    except Exception as exc:
+        finished_at = datetime.now(UTC)
+        if _should_retry_job(job, True):
+            _requeue_build_job(job, finished_at=finished_at)
+            job.stage_results = _stage_results_payload(
+                index_type=job.target_key or job.index_type,
+                status="failed",
+                started_at=started_at,
+                finished_at=finished_at,
+                attempt=int(job.attempt_count or 0),
+                error_code="stage_exception",
+                error_message=str(exc),
+                output={"retry_scheduled": True},
+            )
+        else:
+            job.stage_results = _stage_results_payload(
+                index_type=job.target_key or job.index_type,
+                status="failed",
+                started_at=started_at,
+                finished_at=finished_at,
+                attempt=int(job.attempt_count or 0),
+                error_code="stage_exception",
+                error_message=str(exc),
+            )
+            job.status = BuildJobStatus.failed.value
+            job.error_code = "stage_exception"
+            job.error_message = str(exc)
+            job.progress = 100
+            job.finished_at = finished_at
+        await db.flush()
+        return
+
+    finished_at = datetime.now(UTC)
+    stage_name = job.target_key or job.index_type
+    if result.status == "succeeded":
+        job.stage_results = _stage_results_payload(
+            index_type=stage_name,
+            status="succeeded",
+            started_at=started_at,
+            finished_at=finished_at,
+            attempt=int(job.attempt_count or 0),
+            output=result.output,
+        )
+        job.status = BuildJobStatus.completed.value
+        job.progress = 100
+        job.error_code = None
+        job.error_message = None
+        job.finished_at = finished_at
+        await db.flush()
+        return
+
+    if _should_retry_job(job, result.retryable):
+        _requeue_build_job(job, finished_at=finished_at)
+        job.stage_results = _stage_results_payload(
+            index_type=stage_name,
+            status="failed",
+            started_at=started_at,
+            finished_at=finished_at,
+            attempt=int(job.attempt_count or 0),
+            error_code=result.error_code,
+            error_message=result.error_message,
+            output={**result.output, "retry_scheduled": True},
+        )
+        await db.flush()
+        return
+
+    job.stage_results = _stage_results_payload(
+        index_type=stage_name,
+        status="failed",
+        started_at=started_at,
+        finished_at=finished_at,
+        attempt=int(job.attempt_count or 0),
+        error_code=result.error_code or "stage_failed",
+        error_message=result.error_message or "artifact build stage failed",
+        output=result.output,
+    )
+    job.status = BuildJobStatus.failed.value
+    job.error_code = result.error_code or "stage_failed"
+    job.error_message = result.error_message or "artifact build stage failed"
+    job.progress = 100
+    job.finished_at = finished_at
     await db.flush()
 
 

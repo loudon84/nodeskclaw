@@ -9,16 +9,16 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.deps import get_db, get_member_context, get_runtime_adapter
+from app.core.deps import get_db, get_member_context
 from app.core.exceptions import BadRequestError, NotFoundError
 from app.knowledge_artifacts.registry import ensure_default_providers, get_provider
 from app.models.base import not_deleted
 from app.models.knowledge_artifact import KnowledgeArtifact
 from app.models.knowledge_base import KnowledgeBase
-from app.runtime.ragflow import RagflowRuntimeAdapter
 from app.schemas.common import ApiResponse
 from app.schemas.principal import KnowledgePrincipal
-from app.services import artifact_store, build_input_manifest_service, runtime_binding_service
+from app.services import artifact_store, build_input_manifest_service, build_orchestrator, runtime_binding_service
+from app.services import artifact_revision_service, artifact_security_service
 
 router = APIRouter(tags=["v2-artifacts"])
 
@@ -47,6 +47,7 @@ def _artifact_out(row: KnowledgeArtifact) -> dict[str, Any]:
         "file_version_id": row.file_version_id,
         "status": row.status,
         "version": row.version,
+        "active_revision_id": row.active_revision_id,
         "input_manifest_hash": row.input_manifest_hash,
         "last_built_at": row.last_built_at.isoformat() if row.last_built_at else None,
         "last_validated_at": row.last_validated_at.isoformat() if row.last_validated_at else None,
@@ -71,7 +72,8 @@ async def list_kb_artifacts(
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[list[dict[str, Any]]]:
     _require_artifacts_api()
-    await _get_kb_or_404(db, member, kb_id)
+    kb = await _get_kb_or_404(db, member, kb_id)
+    plan = await artifact_security_service.authorize_kb_artifact_access(db, member, kb)
     rows = await db.scalars(
         select(KnowledgeArtifact).where(
             KnowledgeArtifact.knowledge_base_id == kb_id,
@@ -79,7 +81,13 @@ async def list_kb_artifacts(
             not_deleted(KnowledgeArtifact),
         )
     )
-    return ApiResponse(data=[_artifact_out(row) for row in rows.all()])
+    visible: list[dict[str, Any]] = []
+    for row in rows.all():
+        if plan is not None:
+            if not await artifact_security_service.can_read_artifact(db, member, row, kb):
+                continue
+        visible.append(_artifact_out(row))
+    return ApiResponse(data=visible)
 
 
 @router.get("/knowledge-bases/{kb_id}/artifacts/{artifact_type}")
@@ -90,7 +98,7 @@ async def get_kb_artifact_by_type(
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[dict[str, Any]]:
     _require_artifacts_api()
-    await _get_kb_or_404(db, member, kb_id)
+    kb = await _get_kb_or_404(db, member, kb_id)
     row = await db.scalar(
         select(KnowledgeArtifact).where(
             KnowledgeArtifact.knowledge_base_id == kb_id,
@@ -104,6 +112,7 @@ async def get_kb_artifact_by_type(
             message="Artifact 不存在",
             message_key="errors.knowledge.artifact_not_found",
         )
+    await artifact_security_service.authorize_artifact_read(db, member, row, kb)
     return ApiResponse(data=_artifact_out(row))
 
 
@@ -113,7 +122,6 @@ async def enqueue_artifact_build(
     body: dict[str, Any],
     member: KnowledgePrincipal = Depends(get_member_context),
     db: AsyncSession = Depends(get_db),
-    adapter: RagflowRuntimeAdapter = Depends(get_runtime_adapter),
 ) -> ApiResponse[dict[str, Any]]:
     _require_artifacts_api()
     kb = await _get_kb_or_404(db, member, kb_id)
@@ -141,56 +149,51 @@ async def enqueue_artifact_build(
             message_key="errors.knowledge.table_artifact_disabled",
         )
     manifest_hash, _items, manifest_summary = await build_input_manifest_service.compute_manifest(db, kb)
-    dataset_id = await runtime_binding_service.require_dataset_id(db, kb)
-    from app.knowledge_artifacts.base import ArtifactBuildContext
-
-    build_context = ArtifactBuildContext(
+    caps = provider.capabilities()
+    source_file_id = body.get("source_file_id")
+    file_version_id = body.get("file_version_id")
+    row = await artifact_revision_service.get_or_create_identity(
+        db,
         org_id=kb.org_id,
         knowledge_base_id=kb.id,
-        dataset_id=dataset_id,
-        adapter=adapter,
-        manifest_hash=manifest_hash,
-        manifest_summary=manifest_summary,
-        source_file_id=body.get("source_file_id"),
-        file_version_id=body.get("file_version_id"),
-        ragflow_document_id=body.get("ragflow_document_id"),
+        artifact_type=artifact_type,
+        provider=caps.provider,
+        scope=caps.scope,
+        source_file_id=source_file_id,
+        file_version_id=file_version_id,
     )
-    result = await provider.build(build_context)
-    row = await db.scalar(
-        select(KnowledgeArtifact).where(
-            KnowledgeArtifact.knowledge_base_id == kb.id,
-            KnowledgeArtifact.artifact_type == artifact_type,
-            KnowledgeArtifact.org_id == kb.org_id,
-            not_deleted(KnowledgeArtifact),
-        )
-    )
-    if row is None:
-        row = KnowledgeArtifact(
-            org_id=kb.org_id,
-            knowledge_base_id=kb.id,
-            artifact_type=artifact_type,
-            provider=provider.capabilities().provider,
-            scope=provider.capabilities().scope,
-            source_file_id=body.get("source_file_id"),
-            file_version_id=body.get("file_version_id"),
-            status="building",
-        )
-        db.add(row)
-    row.status = "ready" if result.status == "succeeded" else "failed"
+    row.status = "building"
     row.input_manifest_hash = manifest_hash
-    row.artifact_uri = result.artifact_uri
-    row.validation_payload = result.validation_payload
-    row.coverage_payload = result.coverage_payload
-    row.provider_payload = result.provider_payload
-    row.last_error = result.error_message
-    row.version = int(row.version or 0) + 1
+    job_index_type = artifact_type
+    if source_file_id:
+        job_index_type = f"{artifact_type}:file:{source_file_id}"
+    job = await build_orchestrator.enqueue_build(
+        db,
+        org_id=kb.org_id,
+        knowledge_base_id=kb.id,
+        index_type=job_index_type,
+        trigger_reason="artifact_build",
+        target_kind="artifact",
+        target_key=artifact_type,
+        input_manifest_hash=manifest_hash,
+        created_by_member_id=member.member_id,
+    )
+    if job is not None:
+        job.stage_results = {
+            "input": {
+                "artifact_id": row.id,
+                "source_file_id": source_file_id,
+                "file_version_id": file_version_id,
+                "ragflow_document_id": body.get("ragflow_document_id"),
+            }
+        }
     await db.flush()
     return ApiResponse(
         data={
             "artifact_id": row.id,
             "artifact_type": artifact_type,
             "status": row.status,
-            "build_status": result.status,
+            "build_job_id": job.id if job is not None else None,
             "input_manifest_hash": manifest_hash,
         }
     )
@@ -209,6 +212,8 @@ async def get_artifact(
             message="Artifact 不存在",
             message_key="errors.knowledge.artifact_not_found",
         )
+    kb = await _get_kb_or_404(db, member, row.knowledge_base_id)
+    await artifact_security_service.authorize_artifact_read(db, member, row, kb)
     return ApiResponse(data=_artifact_out(row))
 
 
@@ -225,6 +230,8 @@ async def get_artifact_content(
             message="Artifact 不存在",
             message_key="errors.knowledge.artifact_not_found",
         )
+    kb = await _get_kb_or_404(db, member, row.knowledge_base_id)
+    plan = await artifact_security_service.authorize_artifact_read(db, member, row, kb)
     if not row.artifact_uri:
         raise NotFoundError(
             message="Artifact 内容不存在",
@@ -237,8 +244,14 @@ async def get_artifact_content(
         content = json.loads(raw.decode("utf-8"))
     except json.JSONDecodeError:
         content = {"raw": raw.decode("utf-8", errors="replace")}
-    if isinstance(content, dict) and "nodes" in content:
-        for node in content.get("nodes") or []:
-            if isinstance(node, dict) and not node.get("source_refs"):
-                node["citable"] = False
+    if isinstance(content, dict):
+        content = artifact_security_service.filter_artifact_content(
+            content,
+            plan,
+            artifact_type=row.artifact_type,
+        )
+        if "nodes" in content:
+            for node in content.get("nodes") or []:
+                if isinstance(node, dict) and not node.get("source_refs"):
+                    node["citable"] = False
     return ApiResponse(data={"artifact_type": row.artifact_type, "content": content})

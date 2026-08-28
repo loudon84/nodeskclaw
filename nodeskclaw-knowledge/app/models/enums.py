@@ -81,6 +81,38 @@ class ApplicationStatus(str, Enum):
     disabled = "disabled"
 
 
+class ApplicationReleaseStatus(str, Enum):
+    draft = "draft"
+    validating = "validating"
+    validated = "validated"
+    promoted = "promoted"
+    superseded = "superseded"
+    retired = "retired"
+    failed = "failed"
+
+
+class ReleaseChannelName(str, Enum):
+    preview = "preview"
+    stable = "stable"
+
+
+class QualityGateResult(str, Enum):
+    pass_ = "PASS"
+    warn = "WARN"
+    fail = "FAIL"
+
+
+class QualitySnapshotScopeType(str, Enum):
+    application = "application"
+    knowledge_base = "knowledge_base"
+
+
+class ApplicationRetrievalPolicyStatus(str, Enum):
+    draft = "draft"
+    active = "active"
+    archived = "archived"
+
+
 class ProfileScopeType(str, Enum):
     set = "set"
     application = "application"

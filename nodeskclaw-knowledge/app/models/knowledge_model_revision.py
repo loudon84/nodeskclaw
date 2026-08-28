@@ -19,6 +19,12 @@ class KnowledgeModelRevision(BaseModel):
             unique=True,
             postgresql_where=text("deleted_at IS NULL"),
         ),
+        Index(
+            "uq_knowledge_model_revision_single_active",
+            "knowledge_model_id",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL AND status = 'active'"),
+        ),
     )
 
     org_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
