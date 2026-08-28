@@ -281,6 +281,15 @@ def test_health_and_metrics_endpoints(monkeypatch):
         assert h_data["status"] == "ok"
         assert h_data["database"] == "connected"
 
+        # Liveness & Readiness probes
+        live_resp = client.get("/health/live")
+        assert live_resp.status_code == 200
+        assert live_resp.json()["status"] == "ok"
+
+        ready_resp = client.get("/health/ready")
+        assert ready_resp.status_code == 200
+        assert ready_resp.json()["database"] == "connected"
+
         # Metrics
         m_resp = client.get("/metrics")
         assert m_resp.status_code == 200
