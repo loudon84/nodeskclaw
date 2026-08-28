@@ -37,6 +37,7 @@ class SkillRunAcceptedStructuredContent(BaseModel):
     artifact_url: str | None = None
     execution_mode: str | None = "async_event"
     message: str | None = None
+    request_trace_id: str | None = None
 
 
 class ToolsCallAcceptedResult(BaseModel):

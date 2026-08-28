@@ -3,10 +3,10 @@
   "contractVersion": "1.0.2",
   "provider": "nodeskclaw-backend",
   "consumer": "smc-copilot/apps/work",
-  "backendCommit": "e7bf40ac24a9aa5875a54e7659f6400ac6392552",
+  "backendCommit": "63aca6e827c20449f78f6e325482d1b120b4bf6e",
   "tagName": "work-expert-contract-v1.0.2",
   "tagTargetCommit": null,
-  "generatedAt": "2026-08-23T15:09:13.231074+00:00",
+  "generatedAt": "2026-08-28T06:41:35.662086+00:00",
   "openapiVersion": "3.1.0",
   "eventSchemaVersion": "1.0.0",
   "artifacts": {
