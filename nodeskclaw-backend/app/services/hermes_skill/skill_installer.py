@@ -56,38 +56,7 @@ class SkillInstaller:
                 "errors.skill.install_mode_not_allowed",
             )
 
-        target_path = await self._build_target_path(skill, agent_id, profile_id, mode, target_agent_type)
-
-        if target_path and str(target_path):
-            profile_root_path = await self._get_profile_root_path(agent_id)
-            if profile_root_path:
-                skills_root = Path(profile_root_path) / "skills"
-                PathGuard.validate_within_root(target_path, skills_root)
-            else:
-                hub_root = Path(settings.HERMES_SKILL_HUB_ROOT)
-                PathGuard.validate_within_root(target_path, hub_root)
-            PathGuard.reject_system_dirs(target_path)
-
-        report = await self.conflict_detector.detect(
-            skill_id=skill.skill_id,
-            agent_id=agent_id,
-            target_path=str(target_path),
-            new_version=skill.version,
-            new_source_type=skill.source_type,
-            is_read_only=skill.is_read_only,
-            skill_agent_type=skill.agent_type or "",
-            target_agent_type="",
-        )
-
-        from app.schemas.hermes_skill.common import ConflictStrategy
-        strategy = ConflictStrategy(conflict_strategy)
-        resolved = await self.conflict_detector.resolve(report, strategy)
-
-        if resolved == ConflictStrategy.ABORT:
-            raise BadRequestError("安装冲突，策略为 abort", "errors.skill.install_conflict_abort")
-        if resolved == ConflictStrategy.SKIP:
-            raise BadRequestError("安装冲突，策略为 skip", "errors.skill.install_conflict_skip")
-
+        # Desired-only installation record in DB
         installation = HermesSkillInstallation(
             id=str(uuid.uuid4()),
             org_id=org_id,
@@ -98,39 +67,21 @@ class SkillInstaller:
             install_mode=mode,
             installed_version=skill.version,
             source_path=skill.canonical_path,
-            status=InstallStatus.PENDING,
+            status=InstallStatus.INSTALLED,
             installed_by=installed_by,
         )
         self.db.add(installation)
         await self.db.flush()
 
-        try:
-            await self._execute_file_operation(installation, skill, target_path, mode)
-            installation.status = InstallStatus.INSTALLED
-            installation.installed_path = str(target_path)
-
-            profile_root_path = await self._get_profile_root_path(agent_id)
-            if profile_root_path:
-                installation.profile_root_path = profile_root_path
-
-            from app.services.hermes_skill.skill_scanner import SkillScanner
-            from app.services.hermes_skill.skill_audit_logger import SkillAuditLogger
-            scanner = SkillScanner(self.db)
-            await scanner.scan_agent_profiles(org_id, agent_ids=[agent_id])
-
-            audit_logger = SkillAuditLogger(self.db)
-            await audit_logger.log(
-                action="hermes.skill.installed",
-                target_id=skill.id,
-                org_id=org_id,
-                actor_id=installed_by or "",
-                details={"skill_id": skill.skill_id, "agent_id": agent_id, "install_mode": mode},
-            )
-        except Exception as exc:
-            installation.status = InstallStatus.FAILED
-            installation.error_message = str(exc)
-            logger.error("Skill 安装文件操作失败: %s", exc)
-
+        from app.services.hermes_skill.skill_audit_logger import SkillAuditLogger
+        audit_logger = SkillAuditLogger(self.db)
+        await audit_logger.log(
+            action="hermes.skill.installed",
+            target_id=skill.id,
+            org_id=org_id,
+            actor_id=installed_by or "",
+            details={"skill_id": skill.skill_id, "agent_id": agent_id, "install_mode": mode},
+        )
         await self.db.flush()
         return installation
 
@@ -144,11 +95,6 @@ class SkillInstaller:
             raise NotFoundError("安装记录不存在", "errors.skill.installation_not_found")
         if installation.status != InstallStatus.INSTALLED:
             raise BadRequestError("只能卸载已安装的 Skill", "errors.skill.cannot_uninstall")
-
-        try:
-            await self._execute_file_cleanup(installation)
-        except Exception as exc:
-            logger.warning("卸载文件清理失败: %s", exc)
 
         installation.status = InstallStatus.REMOVED
         await self.db.flush()
