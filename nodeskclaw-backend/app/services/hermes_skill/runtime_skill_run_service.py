@@ -509,6 +509,8 @@ class RuntimeSkillRunService:
                 content["skill_name"] = request.skill_name
             if request.invocation_id:
                 content["invocation_id"] = request.invocation_id
+            if request.request_trace_id:
+                content["request_trace_id"] = request.request_trace_id
             return content
 
         content = {
@@ -546,4 +548,6 @@ class RuntimeSkillRunService:
             content["skill_name"] = request.skill_name
         if request.invocation_id:
             content["invocation_id"] = request.invocation_id
+        if request.request_trace_id:
+            content["request_trace_id"] = request.request_trace_id
         return content
