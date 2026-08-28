@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Deterministic validator for SMC Cursor Plan Contract v3."""
+"""Deterministic validator for SMC Cursor Plan Contract v3.2."""
 
 from __future__ import annotations
 
@@ -15,6 +15,9 @@ from typing import Iterable
 REQUIRED_SECTIONS = (
     "Approved PRD",
     "Scope",
+    "Requirement Coverage Ledger",
+    "Lifecycle Closure Matrix",
+    "Verification Ledger",
     "Immediate Read",
     "Triggered Read",
     "Change Matrix",
@@ -22,6 +25,7 @@ REQUIRED_SECTIONS = (
     "Write Ownership Ledger",
     "Integration Hotspots",
     "Verification",
+    "Completion Gate",
 )
 
 MATRIX_COLUMNS = (
@@ -53,6 +57,37 @@ LEDGER_COLUMNS = (
 )
 
 HOTSPOT_COLUMNS = ("File", "Owner Todo", "Reason")
+REQUIREMENT_COLUMNS = (
+    "Requirement",
+    "Source",
+    "Obligation",
+    "Classification",
+    "Change IDs",
+    "Todo",
+    "Verification IDs",
+    "Evidence Class",
+    "Blocking",
+)
+LIFECYCLE_COLUMNS = (
+    "Journey",
+    "Requirements",
+    "Trigger",
+    "Nonterminal State",
+    "Success Writer",
+    "Failure / Cancel Writer",
+    "Evidence IDs",
+)
+VERIFICATION_COLUMNS = (
+    "Verification ID",
+    "Level",
+    "Entry Point / Command",
+    "Oracle",
+    "Negative / Regression",
+    "Evidence Output",
+    "Environment",
+    "Blocking",
+)
+COMPLETION_COLUMNS = ("Exit State", "Allowed When", "Blocking Evidence")
 NEW_FILE_COLUMNS = ("Change ID", "File", "Necessity", "Owner Impact")
 NEW_DEP_COLUMNS = (
     "Change ID",
@@ -82,13 +117,35 @@ TODO_LABELS = (
     "Stop conditions",
     "Triggered reads",
 )
-PLACEHOLDER_RE = re.compile(
-    r"<\s*(?:GROUND|DECIDE|VERIFY|TBD|TODO|TARGET|PRD CAPABILITY)\s*>|\?\?\?|\bTBD\b",
-    re.IGNORECASE,
-)
+PLACEHOLDER_RE = re.compile(r"<\s*[A-Z][A-Z _-]*\s*>|\?\?\?|\b(?:TBD|tbd)\b")
 CHANGE_ID_RE = re.compile(r"^C\d{2,}(?:\.\d+)?$")
 TODO_ID_RE = re.compile(r"^T\d+$")
+REQUIREMENT_ID_RE = re.compile(r"^(?:AC|DOD)-\d{2,}$")
+VERIFICATION_ID_RE = re.compile(r"^V\d{2,}$")
 EMPTY_VALUES = {"", "-", "none", "n/a", "na"}
+REQUIREMENT_CLASSIFICATIONS = {
+    "BEHAVIOR",
+    "NEGATIVE",
+    "LIFECYCLE",
+    "SECURITY",
+    "CONTRACT",
+    "OPERATIONS",
+    "RELEASE",
+    "EVIDENCE",
+    "SCOPE",
+}
+EVIDENCE_CLASSES = {
+    "UNIT",
+    "INTEGRATION",
+    "REAL_PROCESS",
+    "MULTI_POD",
+    "FAULT_INJECTION",
+    "POSTMAN_NEWMAN",
+    "CONTRACT_RELEASE",
+    "DIFF_SCOPE",
+    "DOCUMENT_SEMANTIC",
+}
+COMPLETION_STATES = {"IMPLEMENTED_AND_PROVEN", "IMPLEMENTED_NOT_PROVEN", "BLOCKED", "RETURN_PRD"}
 
 
 @dataclass(frozen=True)
@@ -119,6 +176,11 @@ def strip_md(value: str) -> str:
     if value.startswith("`") and value.endswith("`") and len(value) >= 2:
         value = value[1:-1]
     return value.strip()
+
+
+def normalize_requirement(value: str) -> str:
+    """Compare PRD obligations independent of inline markdown decoration."""
+    return re.sub(r"\s+", " ", re.sub(r"[`*_]", "", strip_md(value))).strip()
 
 
 def normalized_empty(value: str) -> bool:
@@ -223,6 +285,26 @@ def parse_frontmatter(text: str) -> dict[str, str]:
         key, value = line.split(":", 1)
         fields[key.strip()] = value.strip().strip('"\'')
     return fields
+
+
+def extract_prd_requirements(prd_text: str, errors: list[ValidationError]) -> dict[str, str]:
+    """Read the numbered AC and DoD obligations that a governed plan must cover."""
+    requirements: dict[str, str] = {}
+    for heading, prefix in (("Acceptance Criteria", "AC"), ("Definition of Done", "DOD")):
+        body = section(prd_text, heading)
+        if not body:
+            add(errors, "PLAN_PRD_REQUIREMENTS_UNPARSEABLE", f"missing {heading}")
+            continue
+        items = [
+            normalize_requirement(match.group(1))
+            for match in re.finditer(r"^\s*\d+[.)]\s+(.+?)\s*$", body, re.MULTILINE)
+        ]
+        if not items:
+            add(errors, "PLAN_PRD_REQUIREMENTS_UNPARSEABLE", f"{heading} has no numbered requirements")
+            continue
+        for index, obligation in enumerate(items, 1):
+            requirements[f"{prefix}-{index:02d}"] = obligation
+    return requirements
 
 
 def local_markdown_link(body: str | None) -> str | None:
@@ -379,8 +461,8 @@ def validate_plan(path: Path) -> list[ValidationError]:
 
     # V0: governed delivery metadata.
     plan_fm = parse_frontmatter(text)
-    if plan_fm.get("plan_contract") != "smc.plan.v3":
-        add(errors, "PLAN_CONTRACT_INVALID", "plan_contract must be smc.plan.v3")
+    if plan_fm.get("plan_contract") != "smc.plan.v3.2":
+        add(errors, "PLAN_CONTRACT_INVALID", "plan_contract must be smc.plan.v3.2")
     if plan_fm.get("commit_policy") != "post_review":
         add(errors, "PLAN_COMMIT_POLICY_INVALID", "commit_policy must be post_review")
     if not plan_fm.get("source_revision"):
@@ -396,7 +478,9 @@ def validate_plan(path: Path) -> list[ValidationError]:
         elif not body.strip():
             add(errors, "PLAN_REQUIRED_SECTION_EMPTY", heading)
 
-    validate_approved_prd(plan, text, errors)
+    prd = validate_approved_prd(plan, text, errors)
+    prd_text = prd.read_text(encoding="utf-8") if prd else ""
+    prd_requirements = extract_prd_requirements(prd_text, errors) if prd else {}
     validate_placeholders(text, errors)
 
     # V3: Change Matrix.
@@ -604,6 +688,173 @@ def validate_plan(path: Path) -> list[ValidationError]:
                     "PLAN_LEDGER_CHANGE_OWNER_MISMATCH",
                     f"{tid}: Todo section owns {sorted(section_changes)}, ledger owns {sorted(ledger[tid]['changes'])}",
                 )
+
+    # V10: requirement, evidence, lifecycle, and completion closure.
+    _, coverage_rows = check_table(
+        section(text, "Requirement Coverage Ledger"),
+        "Requirement Coverage Ledger",
+        REQUIREMENT_COLUMNS,
+        errors,
+    )
+    coverage: dict[str, dict[str, object]] = {}
+    for index, row in enumerate(coverage_rows, 1):
+        if not all(column in row for column in REQUIREMENT_COLUMNS):
+            continue
+        requirement = strip_md(row["Requirement"]).upper()
+        source = strip_md(row["Source"]).upper()
+        obligation = normalize_requirement(row["Obligation"])
+        classification = strip_md(row["Classification"]).upper()
+        change_ids = {value.upper() for value in split_values(row["Change IDs"])}
+        todos = {value.upper() for value in split_values(row["Todo"])}
+        verification_ids = {value.upper() for value in split_values(row["Verification IDs"])}
+        evidence_class = strip_md(row["Evidence Class"]).upper()
+        blocking = strip_md(row["Blocking"]).lower()
+
+        if not REQUIREMENT_ID_RE.fullmatch(requirement):
+            add(errors, "PLAN_REQUIREMENT_ID_INVALID", f"row {index}: {row['Requirement']}")
+            continue
+        if requirement in coverage:
+            add(errors, "PLAN_REQUIREMENT_COVERAGE_DUPLICATE", requirement)
+            continue
+        if requirement not in prd_requirements:
+            add(errors, "PLAN_REQUIREMENT_COVERAGE_UNKNOWN", requirement)
+        else:
+            expected_source = requirement.split("-", 1)[0]
+            if source != expected_source:
+                add(errors, "PLAN_REQUIREMENT_SOURCE_MISMATCH", f"{requirement}: source={source}")
+            if obligation != prd_requirements[requirement]:
+                add(errors, "PLAN_REQUIREMENT_OBLIGATION_MISMATCH", requirement)
+        if classification not in REQUIREMENT_CLASSIFICATIONS:
+            add(errors, "PLAN_REQUIREMENT_CLASSIFICATION_INVALID", f"{requirement}: {row['Classification']}")
+        if evidence_class not in EVIDENCE_CLASSES:
+            add(errors, "PLAN_EVIDENCE_CLASS_INVALID", f"{requirement}: {row['Evidence Class']}")
+        if blocking != "yes":
+            add(errors, "PLAN_REQUIREMENT_NOT_BLOCKING", requirement)
+        if not verification_ids:
+            add(errors, "PLAN_REQUIREMENT_VERIFICATION_MISSING", requirement)
+        for change_id in sorted(change_ids):
+            if change_id not in matrix_change_ids:
+                add(errors, "PLAN_REQUIREMENT_CHANGE_UNKNOWN", f"{requirement}: {change_id}")
+        for todo in sorted(todos):
+            if todo not in ledger:
+                add(errors, "PLAN_REQUIREMENT_TODO_UNKNOWN", f"{requirement}: {todo}")
+        coverage[requirement] = {
+            "verification_ids": verification_ids,
+            "classification": classification,
+        }
+
+    for requirement in sorted(set(prd_requirements) - set(coverage)):
+        add(errors, "PLAN_REQUIREMENT_COVERAGE_MISSING", requirement)
+
+    _, verification_rows = check_table(
+        section(text, "Verification Ledger"),
+        "Verification Ledger",
+        VERIFICATION_COLUMNS,
+        errors,
+    )
+    verifications: dict[str, dict[str, str]] = {}
+    for index, row in enumerate(verification_rows, 1):
+        if not all(column in row for column in VERIFICATION_COLUMNS):
+            continue
+        verification_id = strip_md(row["Verification ID"]).upper()
+        if not VERIFICATION_ID_RE.fullmatch(verification_id):
+            add(errors, "PLAN_VERIFICATION_ID_INVALID", f"row {index}: {row['Verification ID']}")
+            continue
+        if verification_id in verifications:
+            add(errors, "PLAN_VERIFICATION_DUPLICATE", verification_id)
+            continue
+        for column in VERIFICATION_COLUMNS[1:-1]:
+            if normalized_empty(row[column]):
+                add(errors, "PLAN_VERIFICATION_FIELD_MISSING", f"{verification_id}: {column}")
+        blocking = strip_md(row["Blocking"]).lower()
+        if blocking not in {"yes", "no"}:
+            add(errors, "PLAN_VERIFICATION_BLOCKING_INVALID", f"{verification_id}: {row['Blocking']}")
+        verifications[verification_id] = {"blocking": blocking}
+
+    for requirement, details in sorted(coverage.items()):
+        for verification_id in sorted(details["verification_ids"]):
+            if verification_id not in verifications:
+                add(errors, "PLAN_REQUIREMENT_VERIFICATION_UNKNOWN", f"{requirement}: {verification_id}")
+            elif verifications[verification_id]["blocking"] != "yes":
+                add(errors, "PLAN_BLOCKING_VERIFICATION_REQUIRED", f"{requirement}: {verification_id}")
+
+    lifecycle_body = section(text, "Lifecycle Closure Matrix")
+    lifecycle_required = bool(section(prd_text, "State and Concurrency Invariants")) or any(
+        details["classification"] == "LIFECYCLE" for details in coverage.values()
+    )
+    lifecycle_requirement_ids: set[str] = set()
+    if lifecycle_body and strip_md(lifecycle_body).lower() == "none":
+        if lifecycle_required:
+            add(errors, "PLAN_LIFECYCLE_CLOSURE_MISSING", "PRD requires lifecycle closure")
+    else:
+        _, lifecycle_rows = check_table(lifecycle_body, "Lifecycle Closure Matrix", LIFECYCLE_COLUMNS, errors)
+        if lifecycle_required and not lifecycle_rows:
+            add(errors, "PLAN_LIFECYCLE_CLOSURE_MISSING", "PRD requires lifecycle closure")
+        for index, row in enumerate(lifecycle_rows, 1):
+            if not all(column in row for column in LIFECYCLE_COLUMNS):
+                continue
+            for column in LIFECYCLE_COLUMNS[:-1]:
+                if normalized_empty(row[column]):
+                    add(errors, "PLAN_LIFECYCLE_FIELD_MISSING", f"row {index}: {column}")
+            for requirement in split_values(row["Requirements"]):
+                if requirement.upper() not in coverage:
+                    add(errors, "PLAN_LIFECYCLE_REQUIREMENT_UNKNOWN", f"row {index}: {requirement}")
+                else:
+                    lifecycle_requirement_ids.add(requirement.upper())
+            evidence_ids = split_values(row["Evidence IDs"])
+            if not evidence_ids:
+                add(errors, "PLAN_LIFECYCLE_FIELD_MISSING", f"row {index}: Evidence IDs")
+            for verification_id in evidence_ids:
+                normalized_verification_id = verification_id.upper()
+                if normalized_verification_id not in verifications:
+                    add(errors, "PLAN_LIFECYCLE_EVIDENCE_UNKNOWN", f"row {index}: {verification_id}")
+                elif verifications[normalized_verification_id]["blocking"] != "yes":
+                    add(errors, "PLAN_LIFECYCLE_BLOCKING_EVIDENCE_REQUIRED", f"row {index}: {verification_id}")
+
+    for requirement, details in sorted(coverage.items()):
+        if details["classification"] == "LIFECYCLE" and requirement not in lifecycle_requirement_ids:
+            add(errors, "PLAN_LIFECYCLE_REQUIREMENT_UNCLOSED", requirement)
+
+    _, completion_rows = check_table(
+        section(text, "Completion Gate"),
+        "Completion Gate",
+        COMPLETION_COLUMNS,
+        errors,
+    )
+    completion_states: set[str] = set()
+    for index, row in enumerate(completion_rows, 1):
+        if not all(column in row for column in COMPLETION_COLUMNS):
+            continue
+        state = strip_md(row["Exit State"]).upper()
+        if state not in COMPLETION_STATES:
+            add(errors, "PLAN_COMPLETION_GATE_INVALID", f"row {index}: {row['Exit State']}")
+            continue
+        if state in completion_states:
+            add(errors, "PLAN_COMPLETION_GATE_INVALID", f"duplicate {state}")
+        completion_states.add(state)
+        for column in COMPLETION_COLUMNS[1:]:
+            if normalized_empty(row[column]):
+                add(errors, "PLAN_COMPLETION_GATE_FIELD_MISSING", f"{state}: {column}")
+    for state in sorted(COMPLETION_STATES - completion_states):
+        add(errors, "PLAN_COMPLETION_GATE_STATE_MISSING", state)
+
+    implemented_and_proven = next(
+        (row for row in completion_rows if strip_md(row.get("Exit State", "")).upper() == "IMPLEMENTED_AND_PROVEN"),
+        None,
+    )
+    if implemented_and_proven:
+        declared_evidence = {
+            value.upper()
+            for value in re.findall(r"\bV\d{2,}\b", implemented_and_proven["Blocking Evidence"], re.IGNORECASE)
+        }
+        required_evidence = {
+            verification_id
+            for details in coverage.values()
+            for verification_id in details["verification_ids"]
+            if verification_id in verifications and verifications[verification_id]["blocking"] == "yes"
+        }
+        for verification_id in sorted(required_evidence - declared_evidence):
+            add(errors, "PLAN_COMPLETION_EVIDENCE_MISSING", verification_id)
 
     # Integration hotspots.
     hotspot_body = section(text, "Integration Hotspots")

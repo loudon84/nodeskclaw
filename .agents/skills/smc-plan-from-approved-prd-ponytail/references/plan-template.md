@@ -1,5 +1,5 @@
 ---
-plan_contract: smc.plan.v3
+plan_contract: smc.plan.v3.2
 commit_policy: post_review
 source_revision: <prd-work-item@version>
 grounded_commit: <prd-grounded-commit>
@@ -16,6 +16,28 @@ grounded_commit: <prd-grounded-commit>
 - In: ...
 - Out: ...
 - Production Owner inherited from PRD: ...
+
+## Requirement Coverage Ledger
+
+| Requirement | Source | Obligation | Classification | Change IDs | Todo | Verification IDs | Evidence Class | Blocking |
+|---|---|---|---|---|---|---|---|---|
+| AC-01 | AC | <exact PRD requirement> | BEHAVIOR | C01 | T1 | V01 | INTEGRATION | yes |
+| DOD-01 | DOD | <exact PRD requirement> | EVIDENCE | - | - | V02 | DOCUMENT_SEMANTIC | yes |
+
+## Lifecycle Closure Matrix
+
+<!-- Required when the PRD has State and Concurrency Invariants or LIFECYCLE requirements. -->
+
+| Journey | Requirements | Trigger | Nonterminal State | Success Writer | Failure / Cancel Writer | Evidence IDs |
+|---|---|---|---|---|---|---|
+| <journey> | AC-01 | <trigger> | <state> | <owner> | <owner> | V01 |
+
+## Verification Ledger
+
+| Verification ID | Level | Entry Point / Command | Oracle | Negative / Regression | Evidence Output | Environment | Blocking |
+|---|---|---|---|---|---|---|---|
+| V01 | INTEGRATION | `<command>` | <observable result> | <negative case> | `<artifact path>` | <environment> | yes |
+| V02 | DOCUMENT | `<command>` | <document result> | <stale reference check> | `<artifact path>` | <environment> | yes |
 
 ## Immediate Read
 
@@ -96,3 +118,12 @@ None
 - AC mapping: ...
 - Expected: ...
 - Negative/regression case: ...
+
+## Completion Gate
+
+| Exit State | Allowed When | Blocking Evidence |
+|---|---|---|
+| IMPLEMENTED_AND_PROVEN | all blocking Verification Ledger rows pass | V01,V02 evidence output retained |
+| IMPLEMENTED_NOT_PROVEN | implementation exists but evidence is incomplete | pending verification named |
+| BLOCKED | environment or dependency prevents proof | blocker recorded |
+| RETURN_PRD | owner or boundary conflicts with APPROVED PRD | revision request recorded |

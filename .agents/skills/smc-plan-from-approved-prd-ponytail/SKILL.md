@@ -1,7 +1,7 @@
 ---
 name: smc-plan-from-approved-prd-ponytail
-description: 从 APPROVED SMC PRD 生成 ownership-aware、Ponytail-minimal 的 Cursor implementation plan；先完成实现级 grounding 与最小实现决策，再建立 Change/Todo 单写者所有权、依赖和验证边界，最后交给 smc-plan-validator 做确定性校验。
-version: 3.1.0
+description: 从 APPROVED SMC PRD 生成 ownership-aware、Ponytail-minimal 且可证明闭环的 Cursor implementation plan；先完成实现级 grounding，再建立需求覆盖、单写者所有权、生命周期和验证证据边界，最后交给 smc-plan-validator 做确定性校验。
+version: 3.2.0
 disable-model-invocation: true
 ---
 
@@ -40,6 +40,7 @@ Plan 决定：
 - Reads / Writes / Depends On；
 - 当前实施 slice；
 - exact test / verification 落点。
+- 每条 AC / Definition of Done 的可追踪覆盖与阻断证据。
 
 Plan **不得**静默改变 APPROVED PRD 的 Capability、Owner、Boundary 或产品行为。
 
@@ -101,6 +102,19 @@ python .agents/skills/smc-plan-from-approved-prd-ponytail/scripts/create_plan_se
 ```
 
 种子只是结构起点；出现 `<GROUND>` / `<DECIDE>` / `<VERIFY>` 等占位符时，Plan 仍未完成，不能进入执行。
+
+## Gate 0.5 — Requirement Closure Extraction
+
+从 APPROVED PRD 的 `## Acceptance Criteria` 和 `## Definition of Done` 提取稳定编号：
+
+```text
+AC-01 ... AC-nn
+DOD-01 ... DOD-nn
+```
+
+每一条必须进入 `## Requirement Coverage Ledger`，并明确：分类、关联 Change/Todo、至少一个阻断 Verification ID 与 Evidence Class。多个需求可以复用同一 Change 或验证；该 Ledger 是追踪事实源，**不得**为凑覆盖而复制 Todo 或实现。
+
+若 PRD 含 `## State and Concurrency Invariants`，还必须建立 `## Lifecycle Closure Matrix`，写明 trigger、非终态、成功 writer、失败/取消 writer 与证据。无法证明 owner 或状态闭环时，停止生成并返回 PRD revision。
 
 ## Gate 1 — Implementation Grounding
 
@@ -438,9 +452,9 @@ Plan 必须包含：
 
 Plan 创建阶段可以按 Change 逐个做必要 grounding，但最终执行 Plan 不得把所有候选源码都塞进 Immediate Read。
 
-## Gate 12 — Verification
+## Gate 12 — Verification And Completion Evidence
 
-从 APPROVED PRD AC 推导最小、可运行的验证。
+从 APPROVED PRD AC 与 Definition of Done 推导最小、可运行且可留存的验证，并写入 `## Verification Ledger`。每个 Verification ID 必须声明 command/entry point、oracle、negative/regression、evidence output、environment 与 `Blocking`。
 
 优先：
 
@@ -450,6 +464,15 @@ Plan 创建阶段可以按 Change 逐个做必要 grounding，但最终执行 Pl
 4. 只有现有测试承载不了时才新增 test file。
 
 不要为了“测试完整”自动创建平行 test harness。
+
+`## Completion Gate` 必须完整列出：
+
+- `IMPLEMENTED_AND_PROVEN`；
+- `IMPLEMENTED_NOT_PROVEN`；
+- `BLOCKED`；
+- `RETURN_PRD`。
+
+只有所有 Requirement Coverage Ledger 的阻断 Verification 已产生对应 evidence output，才可使用 `IMPLEMENTED_AND_PROVEN`。实现完成但证据未闭环必须如实停在 `IMPLEMENTED_NOT_PROVEN`，不得以 Todo stop condition 替代验收证据。
 
 ## 输出结构
 
@@ -478,6 +501,8 @@ Validator PASS 才能进入 Execute。
 - `PLAN_WRITE_CONFLICT` → 回到 Gate 4，合并 / hoist / hotspot single-owner；
 - `PLAN_DEPENDENCY_CYCLE` → 重新切 slice；
 - `PLAN_READ_AFTER_WRITE_WITHOUT_DEPENDENCY` → 明确执行顺序或重新分配 owner；
+- `PLAN_REQUIREMENT_COVERAGE_*` / `PLAN_BLOCKING_VERIFICATION_REQUIRED` → 补 Requirement Coverage Ledger 与阻断验证，不复制实现；
+- `PLAN_LIFECYCLE_CLOSURE_*` → 回到 Production Owner 与状态机，补唯一 writer / failure-cancel 闭环；
 - `PRD_STALE_OR_CONFLICTING` → 返回 PRD revision，不在 Plan 绕过。
 
 ## 禁止
@@ -508,5 +533,8 @@ Validator PASS 才能进入 Execute。
 6. dependency DAG 无环；
 7. Todo 在 ownership 之后切片；
 8. Plan 无 unresolved placeholder；
-9. `smc-plan-validator` PASS；
-10. frontmatter 含 `commit_policy: post_review` —— 缺该字段则 Plan 未完成，不得 Execute。
+9. 每条 AC / DoD 均有唯一 Ledger 行、阻断 Verification 和 Evidence Class；
+10. 有状态 PRD 已具备 lifecycle success / failure / cancel closure；
+11. Completion Gate 完整，且 `IMPLEMENTED_AND_PROVEN` 的证据条件可验证；
+12. `smc-plan-validator` PASS；
+13. frontmatter 含 `commit_policy: post_review` —— 缺该字段则 Plan 未完成，不得 Execute。

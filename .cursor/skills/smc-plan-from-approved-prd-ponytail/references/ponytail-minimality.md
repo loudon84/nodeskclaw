@@ -84,6 +84,12 @@ Plan 可以少写代码，但不能少理解：
 - 不得为了少文件把职责塞进错误 owner；
 - 不得为了少代码降低 correctness。
 
+## Minimum Correct Includes Proof
+
+Ponytail 最小化只约束实现实体与写入面，不允许削弱验收闭环。Requirement Coverage Ledger、Lifecycle Closure Matrix 与 Verification Ledger 是追踪和证据合同，不是新增 production abstraction，也不要求每个 requirement 新建 Todo。
+
+正确的最小 Plan 可以让多个 AC/DoD 共享一个 root-cause Change、一个 Todo 或一个验证；但每条 requirement 仍必须保留独立映射和阻断证据。`IMPLEMENTED_NOT_PROVEN` 是诚实状态，不是可以被“最小化”省略的工作。
+
 ## 新文件规则
 
 默认：`New File? = no`。

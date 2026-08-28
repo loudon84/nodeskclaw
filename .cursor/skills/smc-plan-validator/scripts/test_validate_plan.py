@@ -41,7 +41,13 @@ y
 | C01 | Normalize | MODIFY |
 
 ## Acceptance Criteria
-- works
+1. Normalized state is observable through the public API.
+
+## State and Concurrency Invariants
+1. A terminal run state is written by one owner.
+
+## Definition of Done
+1. The integration suite passes.
 """
 
 
@@ -51,7 +57,7 @@ def plan_text(*, conflict: bool = False, cycle: bool = False, parallel_second: b
     t2_dep = "T1"
     parallel = "yes" if parallel_second else "no"
     return f"""---
-plan_contract: smc.plan.v3
+plan_contract: smc.plan.v3.2
 commit_policy: post_review
 source_revision: WI-TEST@1.0.0
 grounded_commit: abcdef1234567
@@ -67,6 +73,26 @@ grounded_commit: abcdef1234567
 
 - In: normalize and consume
 - Out: unrelated behavior
+
+## Requirement Coverage Ledger
+
+| Requirement | Source | Obligation | Classification | Change IDs | Todo | Verification IDs | Evidence Class | Blocking |
+|---|---|---|---|---|---|---|---|---|
+| AC-01 | AC | Normalized state is observable through the public API. | LIFECYCLE | C01<br>C02 | T1<br>T2 | V01 | INTEGRATION | yes |
+| DOD-01 | DOD | The integration suite passes. | EVIDENCE | - | - | V02 | INTEGRATION | yes |
+
+## Lifecycle Closure Matrix
+
+| Journey | Requirements | Trigger | Nonterminal State | Success Writer | Failure / Cancel Writer | Evidence IDs |
+|---|---|---|---|---|---|---|
+| Run | AC-01 | submit | RUNNING | RunStateMachine | RunStateMachine | V01 |
+
+## Verification Ledger
+
+| Verification ID | Level | Entry Point / Command | Oracle | Negative / Regression | Evidence Output | Environment | Blocking |
+|---|---|---|---|---|---|---|---|
+| V01 | INTEGRATION | python -m unittest tests.test_task | public state is normalized | invalid state rejected | reports/task.txt | LOCAL | yes |
+| V02 | INTEGRATION | python -m unittest tests.test_task | suite passes | failure returns nonzero | reports/task.txt | LOCAL | yes |
 
 ## Immediate Read
 
@@ -152,6 +178,15 @@ python -m unittest tests.test_task
 - AC mapping: normalized state is produced once and consumed downstream.
 - Expected: focused test passes.
 - Negative/regression case: invalid state follows existing error path.
+
+## Completion Gate
+
+| Exit State | Allowed When | Blocking Evidence |
+|---|---|---|
+| IMPLEMENTED_AND_PROVEN | all Coverage Ledger verification ids pass | V01,V02 reports exist |
+| IMPLEMENTED_NOT_PROVEN | any blocking evidence is pending | pending output is recorded |
+| BLOCKED | environment or dependency prevents proof | blocker is recorded |
+| RETURN_PRD | owner or boundary conflicts with PRD | revision is requested |
 """
 
 
@@ -206,6 +241,63 @@ class ValidatorTests(unittest.TestCase):
             plan = self.write_case(td, text)
             codes = self.codes(validator.validate_plan(plan))
             self.assertIn("PLAN_UNRESOLVED_PLACEHOLDER", codes)
+
+    def test_rejects_missing_requirement_coverage(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            text = plan_text().replace(
+                "| DOD-01 | DOD | The integration suite passes. | EVIDENCE | - | - | V02 | INTEGRATION | yes |\n",
+                "",
+            )
+            plan = self.write_case(td, text)
+            codes = self.codes(validator.validate_plan(plan))
+            self.assertIn("PLAN_REQUIREMENT_COVERAGE_MISSING", codes)
+
+    def test_rejects_missing_lifecycle_closure_for_stateful_prd(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            text = plan_text().replace(
+                "## Lifecycle Closure Matrix\n\n| Journey | Requirements | Trigger | Nonterminal State | Success Writer | Failure / Cancel Writer | Evidence IDs |\n|---|---|---|---|---|---|---|\n| Run | AC-01 | submit | RUNNING | RunStateMachine | RunStateMachine | V01 |\n\n## Verification Ledger",
+                "## Lifecycle Closure Matrix\n\nNone\n\n## Verification Ledger",
+            )
+            plan = self.write_case(td, text)
+            codes = self.codes(validator.validate_plan(plan))
+            self.assertIn("PLAN_LIFECYCLE_CLOSURE_MISSING", codes)
+
+    def test_rejects_non_blocking_verification_for_requirement(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            text = plan_text().replace(
+                "| V02 | INTEGRATION | python -m unittest tests.test_task | suite passes | failure returns nonzero | reports/task.txt | LOCAL | yes |",
+                "| V02 | INTEGRATION | python -m unittest tests.test_task | suite passes | failure returns nonzero | reports/task.txt | LOCAL | no |",
+            )
+            plan = self.write_case(td, text)
+            codes = self.codes(validator.validate_plan(plan))
+            self.assertIn("PLAN_BLOCKING_VERIFICATION_REQUIRED", codes)
+
+    def test_allows_inline_markdown_in_prd_obligation(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            prd = PRD.replace(
+                "Normalized state is observable through the public API.",
+                "**Normalized** state is observable through the `public` API.",
+            )
+            root = Path(td)
+            (root / "approved-prd.md").write_text(prd, encoding="utf-8")
+            plan = root / "feature.plan.md"
+            plan.write_text(plan_text(), encoding="utf-8")
+            errors = validator.validate_plan(plan)
+            self.assertEqual(errors, [], "\n".join(e.line() for e in errors))
+
+    def test_rejects_lifecycle_requirement_without_closure_row(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            text = plan_text().replace("| Run | AC-01 |", "| Run | DOD-01 |")
+            plan = self.write_case(td, text)
+            codes = self.codes(validator.validate_plan(plan))
+            self.assertIn("PLAN_LIFECYCLE_REQUIREMENT_UNCLOSED", codes)
+
+    def test_rejects_completion_gate_missing_required_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            text = plan_text().replace("V01,V02 reports exist", "V01 reports exist")
+            plan = self.write_case(td, text)
+            codes = self.codes(validator.validate_plan(plan))
+            self.assertIn("PLAN_COMPLETION_EVIDENCE_MISSING", codes)
 
 
 if __name__ == "__main__":

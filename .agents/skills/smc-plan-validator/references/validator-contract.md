@@ -29,7 +29,9 @@ Validator 再扫描源码会：
 - 让同一个 Plan 在不同运行中产生不同 verdict；
 - 混淆 Plan 与 Review 的职责。
 
-因此 Validator 只证明“Plan 自身是否自洽、可执行、无确定性冲突”。
+因此 Validator 只证明“Plan 自身是否自洽、可执行、无确定性冲突”，以及 PRD 的编号 AC/DoD 是否完整映射到阻断验证。
+
+它不执行验证命令，也不把声明的 evidence output 伪装成真实证据；这仍是 Execute/Verification 的职责。
 
 ## Canonical Validator
 
@@ -105,6 +107,6 @@ python validate_prd.py <prd> --require-approved
 
 ## Fail Closed
 
-任何结构不确定、映射矛盾或 unresolved placeholder 都 FAIL。
+任何结构不确定、需求/验证映射矛盾、生命周期缺闭环或 unresolved placeholder 都 FAIL。
 
 Validator 不“猜测”作者意图。

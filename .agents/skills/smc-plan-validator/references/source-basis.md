@@ -29,5 +29,8 @@ It did not parse or validate:
 - parallel safety;
 - implementation minimality evidence;
 - unresolved planning placeholders.
+- PRD Acceptance Criteria / Definition of Done coverage;
+- lifecycle success, failure and cancel closure;
+- requirement-to-blocking-verification evidence mapping.
 
-`smc-plan-validator v1.0.0` adds those deterministic gates and is intended to become the only Plan v3 validation implementation.
+`smc-plan-validator v1.2.0` is the only Plan v3.2 validation implementation. It keeps source inspection out of the deterministic gate, while requiring every numbered PRD obligation to map to a blocking verification contract.

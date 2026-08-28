@@ -20,6 +20,12 @@ NoDeskClaw 的交付工作流以 `.agents/skills` 为规范源，并以唯一 Ow
 
 因此 `writing-plans` 与 `smc-plan-from-approved-prd` 及其 Cursor 投影被退役，防止旧链路绕过 Ponytail 最小化、Plan 校验与风险审查。
 
+## Plan Closure Contract
+
+SMC Plan v3.2 使用 Requirement Coverage、Lifecycle Closure 与 Verification Ledger，把每条 AC/DoD 映射到阻断验证和留存证据，同时不改变 Ponytail 的最小实现与单写者原则。
+
+只有所有阻断验证实际产生约定 evidence output 时，执行结果才可为 `IMPLEMENTED_AND_PROVEN`；实现存在但验证未闭环必须保持 `IMPLEMENTED_NOT_PROVEN`，owner/boundary 冲突则返回 PRD。
+
 ## Commit Policy
 
 alwaysApply 默认单元提交可被治理例外覆盖：Plan Todo 与未 APPROVED 的 PRD/Architecture/Roadmap 禁止立刻 commit；implementation commit 须在 Review + Verification PASS 之后。

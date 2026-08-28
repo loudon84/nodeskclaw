@@ -1,7 +1,7 @@
 ---
 name: smc-plan-validator
-description: 对 SMC Plan v3 做低成本、确定性、可阻断的静态校验；验证 APPROVED PRD 关联、Change/Decision/Todo 映射、单写者所有权、读写依赖、DAG、并行安全、Ponytail 最小实现证据以及新增文件/依赖例外。PASS 后 Plan 才能进入 Execute。
-version: 1.1.0
+description: 对 SMC Plan v3.2 做低成本、确定性、可阻断的静态校验；验证 APPROVED PRD 的 AC/DoD 覆盖、生命周期闭环、阻断验证证据，以及 Change/Decision/Todo 所有权、依赖、DAG 和 Ponytail 最小实现。PASS 后 Plan 才能进入 Execute。
+version: 1.2.0
 disable-model-invocation: true
 ---
 
@@ -16,7 +16,7 @@ APPROVED PRD
   ↓
 smc-plan-from-approved-prd-ponytail
   ↓
-SMC Plan v3
+SMC Plan v3.2
   ↓
 smc-plan-validator
   ↓
@@ -34,6 +34,9 @@ FAIL -> Fix Plan / return upstream
 - `MINIMAL_NEW` / 新文件 / 新依赖没有 Ponytail 证据；
 - Todo 写入目标不在 Change Matrix；
 - Plan seed 占位符未完成就进入 Execute。
+- AC / Definition of Done 在 PRD → Plan 转换中丢失；
+- 有状态行为没有 success、failure / cancel 的唯一 writer 闭环；
+- 需求只映射到本地 stop condition，没有阻断的可留存验证证据。
 
 ## 职责边界
 
@@ -115,7 +118,11 @@ Validator 会额外调用它执行项目级 PRD 结构校验。
 - Implementation Decisions
 - Write Ownership Ledger
 - Integration Hotspots
+- Requirement Coverage Ledger
+- Lifecycle Closure Matrix
+- Verification Ledger
 - Verification
+- Completion Gate
 
 最终 Plan 关键表格与 Todo 不允许保留：
 
@@ -224,6 +231,19 @@ PLAN_READ_AFTER_WRITE_WITHOUT_DEPENDENCY
 
 该字段是保守优化提示，不是必须标 yes。
 
+### V10 — Requirement, Lifecycle And Evidence Closure
+
+解析链接的 APPROVED PRD 的编号 AC / DoD，并检查：
+
+- 每个 requirement 恰好一行 Requirement Coverage Ledger，且 obligation 与 PRD 原文一致；
+- requirement 映射的 Change/Todo 存在；
+- requirement 至少引用一个 `Blocking=yes` 的 Verification ID；
+- Verification Ledger 有可运行入口、oracle、negative/regression、evidence output 与 environment；
+- PRD 含 State and Concurrency Invariants 或 requirement 分类为 `LIFECYCLE` 时，Lifecycle Closure Matrix 不得为空；每条 `LIFECYCLE` requirement 都须有 success / failure-cancel writer 和阻断证据；
+- Completion Gate 恰好声明四个标准 exit state，且 `IMPLEMENTED_AND_PROVEN` 明确列出全部 requirement 的阻断 Verification ID。
+
+该 Gate 验证合同和映射，不扫描源码或伪造运行证据；执行阶段仍须实际运行 Verification 并保留 evidence output。
+
 ## FAIL 后如何路由
 
 ### 只修 Plan
@@ -270,7 +290,7 @@ Validator 不替 Plan 静默改架构。
 scripts/validate_plan.py
 ```
 
-应成为 Plan v3 的 canonical validator。
+应成为 Plan v3.2 的 canonical validator。
 
 如果旧 CI / command 仍固定调用：
 

@@ -109,3 +109,34 @@ PLAN_MINIMALITY_EVIDENCE_MISSING
 ```
 
 Plan Skill 应先找到现有 owner/helper，再决定是否真的需要 MINIMAL_NEW。
+
+## 7. AC 缺少阻断验证
+
+APPROVED PRD 有：
+
+```markdown
+## Acceptance Criteria
+1. Cancelled run cannot return to RUNNING.
+```
+
+但 Requirement Coverage Ledger 没有 `AC-01`，结果：
+
+```text
+PLAN_REQUIREMENT_COVERAGE_MISSING
+```
+
+正确做法是映射到已有 root-cause Change/Todo 与阻断 Verification，不是新增一套取消实现。
+
+```markdown
+| AC-01 | AC | Cancelled run cannot return to RUNNING. | LIFECYCLE | C01 | T1 | V01 | INTEGRATION | yes |
+```
+
+## 8. 有状态 PRD 未关闭失败路径
+
+PRD 有 `State and Concurrency Invariants`，但 `Lifecycle Closure Matrix` 写 `None`，结果：
+
+```text
+PLAN_LIFECYCLE_CLOSURE_MISSING
+```
+
+正确条目必须同时说明 nonterminal state、success writer、failure / cancel writer 和 Verification ID。

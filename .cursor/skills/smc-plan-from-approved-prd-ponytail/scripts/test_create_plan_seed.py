@@ -48,6 +48,41 @@ approved_at:
             with self.assertRaisesRegex(ValueError, "PRD_NOT_APPROVED"):
                 module.validate_prd_state(p, p.read_text(encoding="utf-8"))
 
+    def test_extracts_numbered_acceptance_criteria_and_definition_of_done(self) -> None:
+        text = """## Acceptance Criteria
+
+1. Create one run for a stable idempotency key.
+2. Reject a conflicting request.
+
+## Definition of Done
+
+1. The integration suite passes.
+2. Release evidence is recorded.
+"""
+        self.assertEqual(
+            module.extract_requirements(text),
+            [
+                ("AC-01", "AC", "Create one run for a stable idempotency key."),
+                ("AC-02", "AC", "Reject a conflicting request."),
+                ("DOD-01", "DOD", "The integration suite passes."),
+                ("DOD-02", "DOD", "Release evidence is recorded."),
+            ],
+        )
+
+    def test_normalizes_inline_markdown_and_whitespace_in_requirements(self) -> None:
+        text = """## Acceptance Criteria
+
+1. **Create**  one `run`.
+
+## Definition of Done
+
+1. The suite passes.
+"""
+        self.assertEqual(
+            module.extract_requirements(text)[0],
+            ("AC-01", "AC", "Create one run."),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

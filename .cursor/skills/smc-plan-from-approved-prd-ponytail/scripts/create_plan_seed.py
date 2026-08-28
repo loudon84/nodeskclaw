@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create an SMC Plan v3 seed from an APPROVED PRD.
+"""Create an SMC Plan v3.2 seed from an APPROVED PRD.
 
 This script is intentionally conservative: it creates stable Change IDs and the
 required plan structure, but leaves implementation-grounding placeholders for
@@ -15,6 +15,7 @@ from pathlib import Path
 
 ACTIONS = {"KEEP", "MODIFY", "ADD", "REPLACE", "REMOVE"}
 PLACEHOLDER = "<GROUND>"
+REQUIREMENT_SECTIONS = (("Acceptance Criteria", "AC"), ("Definition of Done", "DOD"))
 
 
 def parse_frontmatter(text: str) -> dict[str, str]:
@@ -138,6 +139,26 @@ def extract_changes(prd_text: str) -> list[tuple[str, str, str]]:
     return changes
 
 
+def extract_requirements(prd_text: str) -> list[tuple[str, str, str]]:
+    """Return stable requirement ids from the approved PRD's numbered AC and DoD lists."""
+    requirements: list[tuple[str, str, str]] = []
+    for heading, source in REQUIREMENT_SECTIONS:
+        body = section(prd_text, heading)
+        if not body:
+            raise ValueError(f"PRD missing {heading}")
+        items = [
+            re.sub(r"\s+", " ", clean_md(match.group(1))).strip()
+            for match in re.finditer(r"^\s*\d+[.)]\s+(.+?)\s*$", body, flags=re.MULTILINE)
+        ]
+        if not items:
+            raise ValueError(f"PRD {heading} must contain numbered requirements")
+        requirements.extend(
+            (f"{source}-{idx:02d}", source, item)
+            for idx, item in enumerate(items, 1)
+        )
+    return requirements
+
+
 def validate_prd_state(prd: Path, text: str) -> dict[str, str]:
     fm = parse_frontmatter(text)
     if fm.get("status") != "APPROVED":
@@ -159,7 +180,13 @@ def relative_link(from_path: Path, to_path: Path) -> str:
         return os.path.relpath(to_path.resolve(), from_path.parent.resolve()).replace("\\", "/")
 
 
-def render(prd: Path, out: Path, fm: dict[str, str], changes: list[tuple[str, str, str]]) -> str:
+def render(
+    prd: Path,
+    out: Path,
+    fm: dict[str, str],
+    changes: list[tuple[str, str, str]],
+    requirements: list[tuple[str, str, str]],
+) -> str:
     title = fm.get("work_item_id") or prd.stem
     prd_link = relative_link(out, prd)
 
@@ -167,6 +194,7 @@ def render(prd: Path, out: Path, fm: dict[str, str], changes: list[tuple[str, st
     decision_rows: list[str] = []
     ledger_rows: list[str] = []
     todo_blocks: list[str] = []
+    requirement_rows: list[str] = []
 
     for idx, (cid, action, capability) in enumerate(changes, 1):
         tid = f"T{idx}"
@@ -189,11 +217,16 @@ def render(prd: Path, out: Path, fm: dict[str, str], changes: list[tuple[str, st
             "**Triggered reads**\n- None unless a listed trigger becomes true\n"
         )
 
+    for requirement_id, source, obligation in requirements:
+        requirement_rows.append(
+            f"| {requirement_id} | {source} | {obligation} | <CLASSIFY> | - | - | <VERIFY> | <EVIDENCE_CLASS> | yes |"
+        )
+
     source_revision = fm.get("source_revision") or f"{fm.get('work_item_id', prd.stem)}@{fm.get('version', 'unknown')}"
     grounded_commit = fm.get("grounded_commit") or "<GROUND>"
     return (
         "---\n"
-        "plan_contract: smc.plan.v3\n"
+        "plan_contract: smc.plan.v3.2\n"
         "commit_policy: post_review\n"
         f"source_revision: {source_revision}\n"
         f"grounded_commit: {grounded_commit}\n"
@@ -201,6 +234,19 @@ def render(prd: Path, out: Path, fm: dict[str, str], changes: list[tuple[str, st
         f"# {title} Implementation Plan\n\n"
         f"## Approved PRD\n\n[Approved PRD]({prd_link})\n\n"
         "## Scope\n\n- In: <DECIDE>\n- Out: <DECIDE>\n- Production Owner inherited from PRD: <GROUND>\n\n"
+        "## Requirement Coverage Ledger\n\n"
+        "| Requirement | Source | Obligation | Classification | Change IDs | Todo | Verification IDs | Evidence Class | Blocking |\n"
+        "|---|---|---|---|---|---|---|---|---|\n"
+        + "\n".join(requirement_rows)
+        + "\n\n## Lifecycle Closure Matrix\n\n"
+        "Use `None` only when the PRD has no state/concurrency lifecycle requirements.\n\n"
+        "| Journey | Requirements | Trigger | Nonterminal State | Success Writer | Failure / Cancel Writer | Evidence IDs |\n"
+        "|---|---|---|---|---|---|---|\n"
+        "| <DECIDE> | <DECIDE> | <DECIDE> | <DECIDE> | <DECIDE> | <DECIDE> | <VERIFY> |\n\n"
+        "## Verification Ledger\n\n"
+        "| Verification ID | Level | Entry Point / Command | Oracle | Negative / Regression | Evidence Output | Environment | Blocking |\n"
+        "|---|---|---|---|---|---|---|---|\n"
+        "| V01 | <VERIFY_LEVEL> | <VERIFY> | <VERIFY> | <VERIFY> | <VERIFY> | <ENVIRONMENT> | yes |\n\n"
         "## Immediate Read\n\n- `<GROUND>`\n\n"
         "## Triggered Read\n\n- If <trigger>: `<GROUND>`\n- Otherwise: do not read\n\n"
         "## Change Matrix\n\n"
@@ -217,7 +263,14 @@ def render(prd: Path, out: Path, fm: dict[str, str], changes: list[tuple[str, st
         + "\n".join(ledger_rows)
         + "\n\n## Integration Hotspots\n\nNone\n\n"
         + "\n\n".join(todo_blocks)
-        + "\n\n## Verification\n\n```bash\n<VERIFY>\n```\n\n- AC mapping: <VERIFY>\n- Expected: <VERIFY>\n- Negative/regression case: <VERIFY>\n"
+        + "\n\n## Verification\n\nUse the Verification Ledger as the only evidence SOT; this section orders the final commands.\n\n```bash\n<VERIFY>\n```\n\n"
+        "## Completion Gate\n\n"
+        "| Exit State | Allowed When | Blocking Evidence |\n"
+        "|---|---|---|\n"
+        "| IMPLEMENTED_AND_PROVEN | <VERIFY> | <VERIFY> |\n"
+        "| IMPLEMENTED_NOT_PROVEN | <VERIFY> | <VERIFY> |\n"
+        "| BLOCKED | <VERIFY> | <VERIFY> |\n"
+        "| RETURN_PRD | <VERIFY> | <VERIFY> |\n"
     )
 
 def main() -> int:
@@ -240,14 +293,16 @@ def main() -> int:
     try:
         fm = validate_prd_state(prd, text)
         changes = extract_changes(text)
+        requirements = extract_requirements(text)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 1
 
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(render(prd, out, fm, changes), encoding="utf-8")
+    out.write_text(render(prd, out, fm, changes, requirements), encoding="utf-8")
     print(f"Plan seed created: {out}")
     print(f"Non-KEEP changes: {len(changes)}")
+    print(f"Requirements: {len(requirements)}")
     print("Seed contains grounding placeholders and MUST pass smc-plan-validator before execution.")
     return 0
 
