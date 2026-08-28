@@ -19,7 +19,11 @@ from app.models.index_state import IndexState
 from app.models.ingestion_job import IngestionJob
 from app.models.knowledge_application import KnowledgeApplication, KnowledgeApplicationSetItem
 from app.models.knowledge_application_acl import KnowledgeApplicationAcl
-from app.models.knowledge_application_release import KnowledgeApplicationRelease, KnowledgeReleaseChannel
+from app.models.knowledge_application_release import (
+    KnowledgeApplicationRelease,
+    KnowledgeReleaseChannel,
+    KnowledgeReleaseChannelEvent,
+)
 from app.models.knowledge_artifact import KnowledgeArtifact, KnowledgeArtifactRevision
 from app.models.knowledge_base import KnowledgeBase
 from app.models.knowledge_base_acl import KnowledgeBaseAcl
@@ -83,6 +87,7 @@ __all__ = [
     "KnowledgeApplicationAcl",
     "KnowledgeApplicationRelease",
     "KnowledgeReleaseChannel",
+    "KnowledgeReleaseChannelEvent",
     "KnowledgeArtifact",
     "KnowledgeArtifactRevision",
     "KnowledgeModel",

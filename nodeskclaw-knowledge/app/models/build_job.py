@@ -19,13 +19,24 @@ class KnowledgeBuildJob(BaseModel):
             "index_type",
             unique=True,
             postgresql_where=text(
-                "deleted_at IS NULL AND status IN ('queued', 'running')"
+                "deleted_at IS NULL AND knowledge_base_id IS NOT NULL "
+                "AND status IN ('queued', 'running')"
+            ),
+        ),
+        Index(
+            "uq_build_job_active_release_validation",
+            "release_candidate_id",
+            unique=True,
+            postgresql_where=text(
+                "deleted_at IS NULL AND target_kind = 'release_validation' "
+                "AND release_candidate_id IS NOT NULL "
+                "AND status IN ('queued', 'running')"
             ),
         ),
     )
 
     org_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
-    knowledge_base_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    knowledge_base_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     build_profile_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     index_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     target_kind: Mapped[str | None] = mapped_column(String(32), nullable=True)
