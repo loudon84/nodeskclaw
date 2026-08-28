@@ -13,6 +13,8 @@ alwaysApply: true
 
 **此章节放在技术改动步骤之前**（让用户先建立直觉再看技术细节）。
 
+**Plan frontmatter 必须含 `commit_policy: post_review`**（新建或改写 `.plan.md` 时写入；缺字段执行时一律按 `post_review` 推断，禁止 Todo 完成即 commit）。
+
 ## 描述结构
 
 每条前端变化必须包含以下三层描述：

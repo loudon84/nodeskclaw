@@ -65,3 +65,9 @@ exact file/symbol、root-cause call chain、Ponytail implementation strategy、T
 ## Exit
 
 Grounding 完成 -> `status: REVIEW_REQUIRED` -> `smc-prd-review`。
+
+## Artifact Commit Gate
+
+`DRAFT` / `REVIEW_REQUIRED` 阶段只写 PRD 文件，**禁止 git commit**。
+
+`grounded_commit` 是源码基线 SHA（Grounding 所用的仓库 commit），不是「把这份 PRD 提交进 git」。

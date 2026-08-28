@@ -508,4 +508,5 @@ Validator PASS 才能进入 Execute。
 6. dependency DAG 无环；
 7. Todo 在 ownership 之后切片；
 8. Plan 无 unresolved placeholder；
-9. `smc-plan-validator` PASS。
+9. `smc-plan-validator` PASS；
+10. frontmatter 含 `commit_policy: post_review` —— 缺该字段则 Plan 未完成，不得 Execute。

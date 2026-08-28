@@ -65,4 +65,6 @@ PLAN_WRITE_OWNERSHIP_CONFLICT
 
 ## Generic Mode
 
-非 governed 工作可保留原项目的 commit cadence；本 Skill 的 post_review hard gate 只对 governed Plan 强制。
+非 Plan 的临时任务可保留项目默认 commit cadence。
+
+执行任何 `.plan.md` Todo **不得** per-todo commit；缺 `commit_policy` 一律推断为 `post_review`，由控制者在 Review + Verification PASS 后创建 implementation commit。

@@ -11,6 +11,21 @@ Plan v3 是 APPROVED PRD 与 Execute 之间的实施合同，重点增加：
 - Dependency / parallel safety；
 - Validator 可静态验证的 schema。
 
+## Required Frontmatter
+
+最终 Plan（以及种子骨架）必须以 YAML frontmatter 开头，且至少包含：
+
+```yaml
+---
+plan_contract: smc.plan.v3
+commit_policy: post_review
+source_revision: <prd-work-item@version>
+grounded_commit: <prd-grounded-commit>
+---
+```
+
+`commit_policy: post_review` 是硬字段。缺该字段则 Plan 未完成，不得进入 Execute。执行期若遇到历史 Plan 缺字段，一律推断为 `post_review`，禁止 Todo 完成即 commit。
+
 ## Required Sections
 
 按以下顺序输出：

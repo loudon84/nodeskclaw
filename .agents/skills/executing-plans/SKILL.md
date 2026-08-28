@@ -8,20 +8,22 @@ version: 4.0.0
 
 ## Mode Detection
 
-如果 Plan 含以下任一特征，则是 `governed`：
+如果当前工作是执行任何 `.plan.md` Todo，则按 `post_review` 处理：
 
-- `## Write Ownership Ledger`；
-- `## Integration Hotspots`；
-- Approved PRD 为 SMC APPROVED artifact；
-- 明确 `commit_policy: post_review`。
+- frontmatter 明确 `commit_policy: post_review`；或
+- frontmatter **缺** `commit_policy` —— **一律推断为 `post_review`**，不得掉进立刻提交；或
+- 含 `## Write Ownership Ledger` / `## Integration Hotspots`；或
+- Approved PRD 为 SMC APPROVED artifact。
 
-否则为 `generic`。
+以上任一成立即为 `governed`（Plan 执行）。
+
+否则为 `generic`（非 Plan 的临时任务）。
 
 ## Governed Execution Contract
 
 ### Step 1 — Preconditions
 
-1. Plan 已通过 `smc-plan-validator`。
+1. 若 Plan 声称 SMC v3 / 引用 APPROVED PRD：Plan 已通过 `smc-plan-validator`。
 2. 如果 `smc-plan-review` 风险判定为 REQUIRED，必须已有 PASS。
 3. 当前不在 main/master，除非用户明确授权。
 4. 工作树基线清楚；记录已有用户改动，禁止吞掉。
@@ -30,8 +32,8 @@ version: 4.0.0
 
 对每个 Todo：
 
-1. 只读取其 Immediate anchors + Ledger Reads；
-2. 只写 Ledger 中属于当前 Todo 的 Writes；
+1. 只读取其 Immediate anchors + Ledger Reads（若有 Ledger）；
+2. 只写 Ledger 中属于当前 Todo 的 Writes（若有 Ledger）；
 3. 严格遵守 Depends On；
 4. 运行当前 Todo focused check；
 5. Stop conditions 成立即停止；
@@ -65,7 +67,9 @@ Review PASS + Verification PASS 后创建 implementation commit。
 
 ## Generic Mode
 
-非 governed Plan 可以遵循项目自己的 commit cadence；不要把 governed post_review 规则强行扩展到所有临时任务。
+**仅**非 Plan 的临时任务可以遵循项目自己的默认 commit cadence。
+
+执行任何 `.plan.md` Todo **不是** Generic Mode，即使缺 `commit_policy`、即使没有 Write Ownership Ledger。
 
 ## Forbidden in Governed Mode
 
@@ -73,6 +77,6 @@ Review PASS + Verification PASS 后创建 implementation commit。
 - review 前 commit；
 - verification 前 commit；
 - 修改其它 Todo WRITE_OWNER；
-- validator FAIL 仍执行；
+- validator FAIL 仍执行（对声称 SMC v3 的 Plan）；
 - 把 Plan 之外的重构混进 implementation commit；
 - implementation commit 与 Roadmap status commit 合并。

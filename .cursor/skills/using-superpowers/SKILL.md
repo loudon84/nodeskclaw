@@ -71,11 +71,13 @@ Governed flow must never call:
 
 ## Execution Commit Policy
 
-If the Plan contains SMC v3 sections (`Write Ownership Ledger`, `Integration Hotspots`) or references an APPROVED SMC PRD, infer:
+凡执行任何 `.plan.md` Todo，一律：
 
 ```text
 commit_policy = post_review
 ```
+
+不限于有 `Write Ownership Ledger` 的 SMC v3 Plan。frontmatter 缺 `commit_policy` 时同样推断为 `post_review`。
 
 The order is:
 
@@ -83,11 +85,11 @@ The order is:
 Execute -> Review -> Verification -> Commit Implementation
 ```
 
-No Todo implementation commit is allowed before review in governed flow.
+No Todo implementation commit is allowed before review when executing a Plan.
 
 ## Non-Governed Work
 
-For non-governed work, use the applicable process skill first (debugging, brainstorming, TDD, review), then implementation skill. Do not invent a generic planning stage merely because `writing-plans` used to exist.
+For non-governed work（非 Plan Todo、非未 APPROVED 治理 artifact）, use the applicable process skill first (debugging, brainstorming, TDD, review), then implementation skill. Do not invent a generic planning stage merely because `writing-plans` used to exist.
 
 ## Skill Consistency
 

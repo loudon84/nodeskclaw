@@ -57,3 +57,9 @@ python tools/agent-skills/evidence_freshness.py <prd>
 ```
 
 If state is `REUSE`, full discovery is forbidden. If `VERIFY_ONLY`, only verify the changed assumptions. Full/targeted re-grounding requires `REGROUND_REQUIRED` or genuinely missing evidence.
+
+## Artifact Commit Gate
+
+- `DRAFT` / `REVIEW_REQUIRED`: write the PRD file only; **do not git commit**.
+- `grounded_commit` is the source baseline SHA used for grounding, not a requirement to commit the PRD itself.
+- `APPROVED` (after Review PASS + converge + `validate_prd.py --require-approved --require-evidence`): one independent docs commit is allowed; never mix with code or Plan implementation.

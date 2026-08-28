@@ -38,3 +38,7 @@ Architecture/Plan 分层：exact private file/symbol、hook、fetch option、moc
 ## Output
 
 Review 不修改 PRD。PASS -> `smc-prd-converge`; REVISE -> `smc-prd-grounding revision`。
+
+## Artifact Commit Gate
+
+Review 产出 finding 文档或备注时，PRD 仍处于 `REVIEW_REQUIRED`：**禁止 git commit**。待 `smc-prd-converge` 将 status 置为 `APPROVED` 后再按 converge 闸门提交。

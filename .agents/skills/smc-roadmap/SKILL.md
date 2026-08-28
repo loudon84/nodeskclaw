@@ -68,6 +68,12 @@ python .agents/skills/smc-roadmap/scripts/roadmap_update.py <roadmap> RM-01 \
 
 更新 Roadmap 后再创建**独立 Roadmap status commit**。
 
+## Artifact Commit Gate
+
+- `create` / `check` / `next`：只写/读 Roadmap 文件，**禁止立刻 commit**。
+- 首次将 Roadmap 入库：仅当 Architecture 已 `APPROVED` 且 roadmap validate 通过后，允许一次**独立 docs commit**。
+- item 到 `DONE` 后：再创建**独立 Roadmap status commit**；不得与 implementation commit 合并。
+
 ## Status
 
 `BACKLOG | READY | IN_PRD | PLANNED | IMPLEMENTING | REVIEW | BLOCKED | DONE | SUPERSEDED`

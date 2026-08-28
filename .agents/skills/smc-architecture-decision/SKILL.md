@@ -104,3 +104,8 @@ python .agents/skills/smc-architecture-decision/scripts/validate_architecture.py
 
 - draft/revision -> `REVIEW_REQUIRED` -> `smc-architecture-review`
 - Review PASS -> converge -> `APPROVED` -> `smc-roadmap create`
+
+## Artifact Commit Gate
+
+- `draft` / `revision`（含 `REVIEW_REQUIRED`）：只写 Architecture Decision 文件，**禁止 git commit**。
+- converge 到 `APPROVED` 且 `validate_architecture.py --require-approved` 通过后：允许一次**独立 docs commit**，不得混入代码。

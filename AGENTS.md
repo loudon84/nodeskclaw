@@ -184,9 +184,11 @@ fix(portal): 修复实例列表分页后状态丢失问题
 
 ### 自动提交
 
-- 每完成一个单元性改动后，必须立即提交 commit，不要攒多个独立改动一起提交
+- 非治理改动：每完成一个单元性改动后，应立即提交 commit，不要攒多个独立改动一起提交
 - 单元性改动指：一个可独立描述、可独立验证、可独立回滚的最小完整改动（如一个 bug 修复、一次样式微调、一次规则更新）
 - 只有多个修改明确属于同一个改动单元时，才允许合并为一个 commit
+- 治理例外（优先于默认提交）：执行任何 Plan Todo、创建/修订未 APPROVED 的 PRD/Architecture/Roadmap 时禁止立刻 commit；implementation commit 必须等 Review PASS + Verification PASS；禁止把 artifact 与代码、implementation 与 Roadmap status 打进同一 commit
+- 任何新建/改写的 `.plan.md` frontmatter 必须含 `commit_policy: post_review`；缺字段一律按 `post_review` 推断
 
 ### Commit Message 格式
 

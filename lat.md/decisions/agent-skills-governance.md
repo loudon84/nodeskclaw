@@ -19,3 +19,9 @@ NoDeskClaw 的交付工作流以 `.agents/skills` 为规范源，并以唯一 Ow
 一个 Capability 只能有一个 Production Owner；一个生产 `path#symbol` 只能有一个 Plan Todo WRITE_OWNER；一个 Roadmap Item 只能对应一个 Stage PRD。`smc-plan-from-approved-prd-ponytail` 是唯一 PRD 到 Plan Owner，`smc-plan-validator` 是唯一 Plan 结构门禁。
 
 因此 `writing-plans` 与 `smc-plan-from-approved-prd` 及其 Cursor 投影被退役，防止旧链路绕过 Ponytail 最小化、Plan 校验与风险审查。
+
+## Commit Policy
+
+alwaysApply 默认单元提交可被治理例外覆盖：Plan Todo 与未 APPROVED 的 PRD/Architecture/Roadmap 禁止立刻 commit；implementation commit 须在 Review + Verification PASS 之后。
+
+新建或改写的 `.plan.md` 必须含 `commit_policy: post_review`；缺字段执行时一律推断为 `post_review`。APPROVED 后的 PRD/Architecture 允许独立 docs commit；Roadmap DONE 后单独做 status commit。`writing-plans` 与 legacy `smc-plan-from-approved-prd` 目录已删除。

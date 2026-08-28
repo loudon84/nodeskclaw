@@ -48,3 +48,13 @@ python tools/agent-skills/validate_prd.py <final-prd> --require-approved --requi
 ## Exit
 
 `APPROVED -> smc-plan-from-approved-prd-ponytail`.
+
+## Artifact Commit Gate
+
+仅当全部成立才允许一次**独立 docs commit**（不得混入代码或 Plan 实现）：
+
+1. `status: APPROVED`；
+2. `review_verdict: PASS`；
+3. `python tools/agent-skills/validate_prd.py <final-prd> --require-approved --require-evidence` 通过。
+
+`DRAFT` / `REVIEW_REQUIRED` 禁止 commit。
