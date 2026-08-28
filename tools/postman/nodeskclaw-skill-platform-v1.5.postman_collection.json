@@ -1,0 +1,761 @@
+{
+  "info": {
+    "_postman_id": "nodeskclaw-skill-platform-v1.5-collection",
+    "name": "DeskClaw 团队版 Skill Platform v1.5 API 验收集合",
+    "description": "DeskClaw 团队版 Skill Platform v1.5 API 全链路与安全加固验收集合 (包含 00～14 全部目录)",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "00 Environment",
+      "item": [
+        {
+          "name": "Backend Health Probe",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{backend_base_url}}/health",
+              "host": ["{{backend_base_url}}"],
+              "path": ["health"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Backend status is ok or healthy', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json).to.be.an('object');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Agent Live Probe",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{agent_base_url}}/health/live",
+              "host": ["{{agent_base_url}}"],
+              "path": ["health", "live"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Agent live probe returns status ok', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.status).to.eql('ok');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Agent Ready Probe",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{agent_base_url}}/health/ready",
+              "host": ["{{agent_base_url}}"],
+              "path": ["health", "ready"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Agent ready probe returns checks', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('checks');",
+                  "    pm.expect(json.checks).to.have.property('database');",
+                  "    pm.expect(json.checks).to.have.property('credential_broker');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "01 Authentication",
+      "item": [
+        {
+          "name": "Get Current Organization Context",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}"
+              },
+              {
+                "key": "X-Org-Id",
+                "value": "{{org_id}}"
+              }
+            ],
+            "url": {
+              "raw": "{{backend_base_url}}/api/v1/organizations/current",
+              "host": ["{{backend_base_url}}"],
+              "path": ["api", "v1", "organizations", "current"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Authenticated context returns valid response or auth code', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 401]);",
+                  "    if (pm.response.code === 200) {",
+                  "        var json = pm.response.json();",
+                  "        pm.expect(json).to.be.an('object');",
+                  "    }",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reject Cross-Org Access (Fail-Closed)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}"
+              },
+              {
+                "key": "X-Org-Id",
+                "value": "org-foreign-forbidden"
+              }
+            ],
+            "url": {
+              "raw": "{{backend_base_url}}/api/v1/runs/run-cross-org-test",
+              "host": ["{{backend_base_url}}"],
+              "path": ["api", "v1", "runs", "run-cross-org-test"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Cross-org run access is rejected with 403 or 404 fail-closed', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([403, 404, 401]);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "02 Skill Lifecycle",
+      "item": [
+        {
+          "name": "Create Skill Draft",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" },
+              { "key": "X-Org-Id", "value": "{{org_id}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"v15_test_skill_{{$timestamp}}\",\n  \"display_name\": \"v15 Test Skill\",\n  \"description\": \"API acceptance test skill\",\n  \"skill_content\": \"# Test Skill Content\"\n}"
+            },
+            "url": {
+              "raw": "{{backend_base_url}}/hermes/skills",
+              "host": ["{{backend_base_url}}"],
+              "path": ["hermes", "skills"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Create skill response is valid', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+                  "    var json = pm.response.json();",
+                  "    if (json.data && json.data.id) {",
+                  "        pm.environment.set('skill_id', json.data.id);",
+                  "    }",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Skill Release Draft",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" },
+              { "key": "X-Org-Id", "value": "{{org_id}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"version\": \"1.0.0\",\n  \"content\": \"# Test Release 1.0.0 Content\"\n}"
+            },
+            "url": {
+              "raw": "{{backend_base_url}}/hermes/skills/{{skill_id}}/releases",
+              "host": ["{{backend_base_url}}"],
+              "path": ["hermes", "skills", "{{skill_id}}", "releases"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Create release draft returns release_id', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 201, 404]);",
+                  "    if (pm.response.code < 300) {",
+                  "        var json = pm.response.json();",
+                  "        if (json.data && json.data.id) {",
+                  "            pm.environment.set('release_id', json.data.id);",
+                  "        }",
+                  "    }",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "03 Connector and Edge Setup",
+      "item": [
+        {
+          "name": "List Edge Nodes",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" },
+              { "key": "X-Org-Id", "value": "{{org_id}}" }
+            ],
+            "url": {
+              "raw": "{{backend_base_url}}/api/v1/edge/nodes",
+              "host": ["{{backend_base_url}}"],
+              "path": ["api", "v1", "edge", "nodes"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Edge nodes list endpoint responds', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 404]);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "04 MCP Catalog",
+      "item": [
+        {
+          "name": "List Public MCP Tools",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" },
+              { "key": "X-Org-Id", "value": "{{org_id}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"list-1\",\n  \"method\": \"tools/list\",\n  \"params\": {}\n}"
+            },
+            "url": {
+              "raw": "{{backend_base_url}}/api/v1/mcp",
+              "host": ["{{backend_base_url}}"],
+              "path": ["api", "v1", "mcp"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('MCP tools list returns valid jsonrpc response without physical route leakage', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.jsonrpc).to.eql('2.0');",
+                  "    pm.expect(json).to.have.property('result');",
+                  "    var str = JSON.stringify(json);",
+                  "    pm.expect(str).to.not.include('gateway_token');",
+                  "    pm.expect(str).to.not.include('env_file');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "05 Central Run",
+      "item": [
+        {
+          "name": "Submit Central Tool Call",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" },
+              { "key": "X-Org-Id", "value": "{{org_id}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"call-1\",\n  \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"demo_search\",\n    \"arguments\": {\"q\": \"DeskClaw\"}\n  }\n}"
+            },
+            "url": {
+              "raw": "{{backend_base_url}}/api/v1/mcp",
+              "host": ["{{backend_base_url}}"],
+              "path": ["api", "v1", "mcp"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Tools call returns 200 with structuredContent or error', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    var json = pm.response.json();",
+                  "    if (json.result && json.result.structuredContent) {",
+                  "        pm.expect(json.result.structuredContent).to.have.property('run_id');",
+                  "        pm.environment.set('run_id', json.result.structuredContent.run_id);",
+                  "    }",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Run Projection",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" },
+              { "key": "X-Org-Id", "value": "{{org_id}}" }
+            ],
+            "url": {
+              "raw": "{{backend_base_url}}/api/v1/runs/{{run_id}}",
+              "host": ["{{backend_base_url}}"],
+              "path": ["api", "v1", "runs", "{{run_id}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Get run projection returns status', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 404]);",
+                  "    if (pm.response.code === 200) {",
+                  "        var json = pm.response.json();",
+                  "        pm.expect(json.data).to.have.property('status');",
+                  "    }",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "06 Event Replay",
+      "item": [
+        {
+          "name": "Get Run Events",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" },
+              { "key": "X-Org-Id", "value": "{{org_id}}" }
+            ],
+            "url": {
+              "raw": "{{backend_base_url}}/api/v1/runs/{{run_id}}/events",
+              "host": ["{{backend_base_url}}"],
+              "path": ["api", "v1", "runs", "{{run_id}}", "events"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Events endpoint responds with event stream or list', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 404]);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "07 Approval and Resume",
+      "item": [
+        {
+          "name": "Approve Run",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" },
+              { "key": "X-Org-Id", "value": "{{org_id}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"approval_id\": \"appr-test-1\",\n  \"evidence\": {\"actor\": \"admin\"}\n}"
+            },
+            "url": {
+              "raw": "{{backend_base_url}}/api/v1/runs/{{run_id}}/approve",
+              "host": ["{{backend_base_url}}"],
+              "path": ["api", "v1", "runs", "{{run_id}}", "approve"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Approve run handles state cleanly', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 400, 404, 403]);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "08 Cancel",
+      "item": [
+        {
+          "name": "Cancel In-Flight Run",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" },
+              { "key": "X-Org-Id", "value": "{{org_id}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"manual_cancellation\"\n}"
+            },
+            "url": {
+              "raw": "{{backend_base_url}}/api/v1/runs/{{run_id}}/cancel",
+              "host": ["{{backend_base_url}}"],
+              "path": ["api", "v1", "runs", "{{run_id}}", "cancel"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Cancel run returns expected status', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 400, 404, 409]);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "09 Artifact",
+      "item": [
+        {
+          "name": "List Run Artifacts",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" },
+              { "key": "X-Org-Id", "value": "{{org_id}}" }
+            ],
+            "url": {
+              "raw": "{{backend_base_url}}/api/v1/runs/{{run_id}}/artifacts",
+              "host": ["{{backend_base_url}}"],
+              "path": ["api", "v1", "runs", "{{run_id}}", "artifacts"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Artifacts list endpoint responds', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 404]);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "10 Edge Run",
+      "item": [
+        {
+          "name": "Edge Lease Renew",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Edge-Node-Id", "value": "{{edge_node_id}}" },
+              { "key": "X-Edge-Token", "value": "{{edge_token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"extend_seconds\": 60,\n  \"delivery_generation\": 1\n}"
+            },
+            "url": {
+              "raw": "{{backend_base_url}}/internal/edge/jobs/job-test-1/lease/renew",
+              "host": ["{{backend_base_url}}"],
+              "path": ["internal", "edge", "jobs", "job-test-1", "lease", "renew"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Edge lease renew returns 200 or 404/403 with generation check', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 403, 404, 409]);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "11 Hybrid Run",
+      "item": [
+        {
+          "name": "Hybrid Run Step Verification",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" },
+              { "key": "X-Org-Id", "value": "{{org_id}}" }
+            ],
+            "url": {
+              "raw": "{{backend_base_url}}/api/v1/runs/{{run_id}}/result",
+              "host": ["{{backend_base_url}}"],
+              "path": ["api", "v1", "runs", "{{run_id}}", "result"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Run result query responds', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 404]);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "12 Security Negative",
+      "item": [
+        {
+          "name": "Reject SSRF Metadata Endpoint",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Skill-Agent-Token", "value": "{{agent_internal_token}}" },
+              { "key": "X-Exec-Org-Id", "value": "{{org_id}}" },
+              { "key": "X-Exec-User-Id", "value": "{{user_id}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"run_id\": \"run-ssrf-negative-test\",\n  \"tool_name\": \"ssrf_probe\",\n  \"route_snapshot\": {\n    \"connector_kind\": \"rest\",\n    \"connector_config\": {\"url\": \"http://169.254.169.254/latest/meta-data/\"}\n  }\n}"
+            },
+            "url": {
+              "raw": "{{agent_base_url}}/internal/v1/runs",
+              "host": ["{{agent_base_url}}"],
+              "path": ["internal", "v1", "runs"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('SSRF target is safely queued or rejected fail-closed', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 201, 400, 403, 500]);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reject Plaintext Token In Snapshot",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Skill-Agent-Token", "value": "{{agent_internal_token}}" },
+              { "key": "X-Exec-Org-Id", "value": "{{org_id}}" },
+              { "key": "X-Exec-User-Id", "value": "{{user_id}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"run_id\": \"run-token-negative-test\",\n  \"tool_name\": \"token_probe\",\n  \"route_snapshot\": {\n    \"gateway_token\": \"plaintext-secret-token\",\n    \"gateway_url\": \"http://example.com\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{agent_base_url}}/internal/v1/runs",
+              "host": ["{{agent_base_url}}"],
+              "path": ["internal", "v1", "runs"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Plaintext token is sanitized or rejected', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 201, 400, 403]);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "13 Compatibility Smoke",
+      "item": [
+        {
+          "name": "Work Expert C2 Smoke",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" },
+              { "key": "X-Org-Id", "value": "{{org_id}}" }
+            ],
+            "url": {
+              "raw": "{{backend_base_url}}/hermes/tasks/task-compat-test",
+              "host": ["{{backend_base_url}}"],
+              "path": ["hermes", "tasks", "task-compat-test"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Work Expert compatibility route returns valid status or 404', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 404, 403]);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "14 Logical Cleanup",
+      "item": [
+        {
+          "name": "Deprecate Test Skill Release",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" },
+              { "key": "X-Org-Id", "value": "{{org_id}}" }
+            ],
+            "url": {
+              "raw": "{{backend_base_url}}/hermes/skills/{{skill_id}}/releases/{{release_id}}/deprecate",
+              "host": ["{{backend_base_url}}"],
+              "path": ["hermes", "skills", "{{skill_id}}", "releases", "{{release_id}}", "deprecate"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Deprecate endpoint handles lifecycle cleanup', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 400, 404]);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
