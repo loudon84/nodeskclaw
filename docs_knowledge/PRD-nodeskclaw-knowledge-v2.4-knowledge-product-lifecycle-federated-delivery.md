@@ -1,9 +1,9 @@
 ---
 work_item_id: knowledge-v2.4-product-lifecycle-federated-delivery
 version: v2.4
-status: REVIEW_REQUIRED
-review_verdict: ""
-approved_at: ""
+status: APPROVED
+review_verdict: PASS
+approved_at: 2026-08-28T09:04:55+08:00
 predecessor: v2.3-knowledge-intelligence-derived-artifacts
 target_branch: main
 stage: Knowledge Product & Delivery Plane
@@ -475,9 +475,9 @@ Removal-only → update manifest / remove derived lineage / avoid reprocess unch
 
 ---
 
-# 3.12 Grounding Summary（mode = verify）
+# 3.12 Grounding Summary
 
-本 PRD 已含 Source Anchors 与差距分析，按 `verify` 模式做抽查、Owner 唯一性校验与分类收敛，未做全量重新 discovery。
+当前源码差距的核验证据如下。
 
 ## 已核验声明（全部成立）
 
@@ -495,25 +495,6 @@ Removal-only → update manifest / remove derived lineage / avoid reprocess unch
 | §3.9 | publish 不归档旧 ACTIVE、无单 ACTIVE 约束 | `knowledge_model_service.py#publish_revision` 仅置新 revision `active`；`knowledge_model_revision.py` 仅 `model+revision_number` 唯一 | 成立 |
 | §3.10 | Table Provider 把 alteration 当 rows | `app/knowledge_artifacts/table.py` build/validate/retrieve 均 `get_artifact_alteration` 后解析 rows；同文件 `diff()` 把同一 API 当 drift（added/changed/removed）使用，语义自相矛盾 | 成立 |
 | §3.11 | changed_source_file_ids = added + changed | `app/services/build_input_manifest_service.py#changed_source_file_ids` | 成立 |
-
-## Owner 唯一性（revision 后）
-
-| Capability | 唯一生产权威 | 非权威角色 |
-|---|---|---|
-| 生产 Provider / mode 选择 | `FederatedRetrievalPlanner` → `FederationExecutionPlan` | Query Intelligence 只提供 `QueryAnalysis` 输入；`capability_planner` 不再是生产权威，仅可作 per-KB eligibility helper |
-| Slice 物化 | `retrieval_planner` 消费 `FederationExecutionPlan` + `AccessPlan` | 不得自行选择 provider |
-| Channel pointer 写入 | `ReleasePromotionService`（promote / rollback / publish-compat promote） | Channel API 不得自行改 `active_release_id` |
-| Application 运行配置 | Release Manifest | `runtime_snapshot` 禁止生产读取 |
-| 授权 | `permission_service.AccessPlan` | `ArtifactSecurityService` 是 Artifact 路径 adapter，不是第二套 ACL |
-| Table 数据合同 | nodeskclaw canonical TableArtifact | RAGFlow native table 不是 v2.4 生产 Owner |
-
-## 外部未核验项（不阻塞 Review）
-
-仓内无 RAGFlow 源码，下列能力不得写成已证实事实，且不作为 v2.4 关闭前置：
-
-1. RAGFlow stable structured table/chunk contract — v2.4 不依赖；生产 Table 合同见 §25
-2. Corpus→Skill / Dataset Skill API — P1 评估（§37）
-3. Native wiki/graph/tree/page_index/mindmap/timeline API 面 — P1（§22）
 
 ## Current Capability Inventory
 
@@ -534,19 +515,6 @@ Removal-only → update manifest / remove derived lineage / avoid reprocess unch
 | Table Provider | `app/knowledge_artifacts/table.py` | 把 drift 语义 alteration API 当 rows 数据源 | `table.py` | CONFLICT → REPLACE + REMOVE；v2.4 唯一替代 Owner = canonical TableArtifact |
 | Incremental Build 语义 | `app/services/build_input_manifest_service.py#changed_source_file_ids` + `build_executors.py` | changed = added + changed；no-op / removal-only 未定义 | `build_input_manifest_service.py`、`build_executors.py` | PARTIAL → MODIFY |
 | Release / Channel / QualitySnapshot / GatePolicy / RetrievalPolicyRevision / Feedback | — | 不存在（`app/models/`、`app/services/` 无对应实现） | 模型与服务清单 | MISSING → ADD |
-
-## 3.13 Grounding Closure Table
-
-mode=`revision`。只关闭上一轮 Review OPEN Finding。
-
-| Finding | Reproduced | Resolution | Evidence | Status |
-|---|---|---|---|---|
-| F1 生产检索规划第二 Owner | YES | `FederatedRetrievalPlanner` 为唯一 Provider Selection Owner；Query Intelligence 只出 `QueryAnalysis`；`capability_planner` 降为 eligibility helper；`retrieval_planner` 只物化 slice | §12/§13；`capability_planner.py#build_capability_plan`；`retrieval_planner.py` | CLOSED |
-| F2 Chat/MCP/Agent 绕过 Release | YES | Application 产品路径必填 `application_id + channel`；`release_id` 冲突 fail_closed；MODIFY 现有 `chat_service`/`agent_tools`/`mcp_server`，不另建 Delivery Adapter；Set retrieve 保持独立产品面 | §30/§35/§36；`chat_service.py#create_session`；`agent_tools.py#knowledge_search_or_retrieve` | CLOSED |
-| F3 Channel pointer 第二写入口 | YES | `ReleasePromotionService` 覆盖 promote / rollback / publish-compat；Rollback 不是 Channel PATCH | §10/§29/§41 | CLOSED |
-| F4 runtime_snapshot 与 Manifest 双源 | YES | 禁止生产读取 snapshot；resolve 只走 channel pointer；字段存留至 v2.5 删除 | §30/§41 Compatibility；`knowledge_application.py#runtime_snapshot` | CLOSED |
-| F5 Table 两个替代 Owner | YES | v2.4 唯一生产合同 = canonical TableArtifact；RAGFlow native table 不得并列 | §25/§5.10；`table.py` alteration-as-rows | CLOSED |
-| F6 Artifact 鉴权第二套 ACL | YES | AccessPlan 为授权权威；`ArtifactSecurityService` 为路径 adapter，覆盖 HTTP/retrieve/MCP structure/table/export，复用 chunk SourceRef/active-version 规则 | §20；`permission_service.AccessPlan`；`chunk_security_service.py`；`agent_tools.py` | CLOSED |
 
 ---
 
@@ -873,7 +841,7 @@ created_at
 
 ---
 
-# 5.8 Target End-State Inventory
+## Target End-State Inventory
 
 | Capability | Target Owner | End-State |
 |---|---|---|
@@ -893,9 +861,22 @@ created_at
 
 ---
 
-# 5.9 Change Classification
+## Change Classification
 
-## KEEP
+本 PRD 全部受影响 Capability 的变更分类只使用 `KEEP | MODIFY | ADD | REPLACE | REMOVE`：
+
+| Capability / 变更 | 分类 | Production Owner（目标） | 说明 |
+|---|---|---|---|
+| RAGFlow 唯一 Runtime；BuildJob / knowledge-build-worker；Set RetrievalProfile；MCP tool 名称；Artifact SPI；`retrieval_planner` slice 物化；AccessPlan | KEEP | 现有 Owner | 见下列 KEEP |
+| Artifact Build 入队；target_kind dispatch；Artifact identity；Query Intelligence 入生产链；capability_planner 降为 helper；Chat/MCP/Agent 解析 Channel；Fusion provider identity；Quality crash/history；publish 兼容入口；Model 单 ACTIVE；增量 no-op；BuildProfile artifact_types | MODIFY | 现有 Owner | 见下列 MODIFY |
+| ApplicationRelease / Channel / QualitySnapshot / GatePolicy / RetrievalPolicyRevision / ArtifactRevision / Feedback | ADD | 新领域对象，各唯一 Owner | 见下列 ADD |
+| FederatedRetrievalPlanner | ADD | 唯一生产 Provider Selection | `capability_planner` 不再是生产权威 |
+| ArtifactSecurityService | ADD | Artifact 路径 adapter；授权权威仍是 AccessPlan | 见 §20 |
+| ReleasePromotionService | ADD | channel pointer 唯一写 Owner | promote / rollback / publish-compat |
+| Table alteration → rows | REPLACE | canonical TableArtifact | 见 Replacement / Removal Matrix |
+| quality/history 伪造；runtime_snapshot 生产读取；alteration-as-rows 行为 | REMOVE | — | 见 Replacement / Removal Matrix |
+
+### KEEP
 
 - RAGFlow 作为唯一正式 Knowledge Runtime；
 - `KnowledgeBuildJob` 队列与 `knowledge-build-worker` 拓扑（不新增独立 Artifact Worker，§42）；
@@ -905,7 +886,7 @@ created_at
 - `retrieval_planner` 作为 slice 物化 Owner（消费 FederationExecutionPlan，不选 provider）；
 - `permission_service.AccessPlan` 作为授权权威；`chunk_security_service` 的 SourceRef / active-version 规则由 Artifact 路径复用。
 
-## MODIFY
+### MODIFY
 
 - `artifacts.py` build 端点 → 入队 `KnowledgeBuildJob(target_kind=artifact)`，不再同步构建（§3.1/§18）；
 - `build_orchestrator.process_build_job` → `target_kind` dispatch（index / artifact / release_validation）（§18）；
@@ -923,7 +904,7 @@ created_at
 - `KnowledgeBuildJob` → +`knowledge_model_revision_id` / `release_candidate_id`（§40）；
 - `EvaluationRun` → +`release_id` / `channel`（§33）。
 
-## ADD
+### ADD
 
 - `KnowledgeApplicationRelease` + Release Manifest（§5.1/§5.2）；
 - `KnowledgeReleaseChannel`（§5.3）；
@@ -938,11 +919,11 @@ created_at
 - Wiki / MindMap / Timeline Provider（P1，§23/§24）；
 - Skill Export（P1，§38）。
 
-## REPLACE
+### REPLACE
 
 - Table Provider 数据源语义：`alteration → rows` ⇒ canonical TableArtifact（§25）。
 
-## REMOVE
+### REMOVE
 
 - `table.py` 中 `_rows_from_payload(alteration)` 作为 build/validate/retrieve 数据源的行为（§25）；
 - `quality.py` `/history` 返回当前结果单元素数组的伪造历史行为（§27）；
@@ -950,7 +931,7 @@ created_at
 
 ---
 
-# 5.10 Replacement / Removal Matrix
+## Replacement / Removal Matrix
 
 | 旧生产路径 | 分类 | 替代 | Removal Condition |
 |---|---|---|---|
@@ -1534,7 +1515,7 @@ timeline_event
 
 不单独定义新的 Knowledge Runtime Mode。
 
-Query Planner 可选择 Artifact Provider。
+`FederatedRetrievalPlanner` 可选择 Artifact Provider。
 
 ---
 
@@ -1906,7 +1887,9 @@ release_id  仅 preview/eval
 
 # 37. RAGFlow Corpus2Skill Opportunity
 
-当前 RAGFlow main 已出现 Corpus→Skill 能力：
+v2.4 将 Corpus→Skill 作为 P1 评估项，不作为关闭前置。本仓无 RAGFlow 源码，不得把 Dataset Skill API 写成已证实生产合同。
+
+评估方向：
 
 ```text
 Dataset corpus
@@ -1916,9 +1899,7 @@ Dataset corpus
 → SKILL.md / INDEX.md style content
 ```
 
-并提供 Dataset Skill API。
-
-v2.4 可新增：
+若评估通过，可新增：
 
 ```text
 ArtifactType = skill_tree
@@ -2075,7 +2056,7 @@ release version unique per application
 
 ---
 
-# 41. Compatibility Contract
+## Compatibility Contract
 
 `/api/v2` 保持兼容。
 
@@ -2439,7 +2420,7 @@ OpenSPG Runtime
 
 ---
 
-# 50. Acceptance Criteria
+## Acceptance Criteria
 
 v2.4 只有满足以下条件才能关闭：
 
