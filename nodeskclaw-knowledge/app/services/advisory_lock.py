@@ -12,3 +12,10 @@ async def kb_advisory_xact_lock(db: AsyncSession, knowledge_base_id: str) -> Non
         text("SELECT pg_advisory_xact_lock(hashtext(:kb_id))"),
         {"kb_id": knowledge_base_id},
     )
+
+
+async def application_advisory_xact_lock(db: AsyncSession, application_id: str) -> None:
+    await db.execute(
+        text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
+        {"key": f"app:{application_id}"},
+    )

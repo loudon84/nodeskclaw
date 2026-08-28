@@ -196,6 +196,8 @@ async def create_run(
         member,
         evaluation_set_id=body.evaluation_set_id,
         retrieval_profile_id=body.retrieval_profile_id,
+        release_id=body.release_id,
+        channel=body.channel,
     )
     return ApiResponse(data=EvaluationRunOut.model_validate(row))
 

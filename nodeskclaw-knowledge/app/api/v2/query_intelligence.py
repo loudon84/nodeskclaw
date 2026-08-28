@@ -46,7 +46,23 @@ async def analyze_query_intelligence(
         model = await knowledge_model_service.get_model(db, member, body.knowledge_model_id)
         active = await knowledge_model_service.get_active_revision(db, model)
         terms = (active.terms if active else model.terms) or []
-    release_terms, term_diagnostics = resolve_release_terms(body.manifest, body.query, kb_terms={})
+    model_revision_ids: list[str] = []
+    if body.manifest:
+        for ks in body.manifest.get("knowledge_sets") or []:
+            if not isinstance(ks, dict):
+                continue
+            for kb_pin in ks.get("knowledge_bases") or []:
+                if not isinstance(kb_pin, dict):
+                    continue
+                revision_id = kb_pin.get("knowledge_model_revision_id")
+                if revision_id and str(revision_id) not in model_revision_ids:
+                    model_revision_ids.append(str(revision_id))
+    release_terms, term_diagnostics = await resolve_release_terms(
+        db,
+        knowledge_model_revision_ids=model_revision_ids,
+        query=body.query,
+        kb_terms={},
+    )
     merged_terms = list(dict.fromkeys((terms or []) + release_terms)) if (terms or release_terms) else None
     analysis = await analyze_query(
         body.query,

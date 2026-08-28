@@ -262,23 +262,114 @@ async def retrieve_for_application(
 
     release_manifest: dict | None = None
     resolved_release_id: str | None = None
+    execution_context = None
     if settings.KNOWLEDGE_V24_RELEASE_ENABLED:
         from app.services.release_runtime_service import resolve_application_release
 
-        resolved = await resolve_application_release(
+        execution_context = await resolve_application_release(
             db,
             member,
             application_id=application_id,
             channel=channel,
             release_id=release_id,
         )
-        release_manifest = resolved.manifest
-        resolved_release_id = resolved.release_id
+        release_manifest = execution_context.manifest
+        resolved_release_id = execution_context.release_id
     elif app.status != ApplicationStatus.active.value and origin != RetrievalOrigin.evaluation.value:
         raise ForbiddenError(
             message="应用未发布",
             message_key="errors.knowledge.application_not_active",
         )
+
+    if execution_context is not None:
+        set_ids = list(execution_context.knowledge_set_ids)
+        if not set_ids:
+            raise BadRequestError(
+                message="Release Manifest 缺少知识集合",
+                message_key="errors.knowledge.application_empty",
+            )
+        weight_by_kb: dict[str, float] = {}
+        kb_ids_ordered: list[str] = []
+        for pin in execution_context.knowledge_bases:
+            if not isinstance(pin, dict):
+                continue
+            kb_id = str(pin.get("knowledge_base_id") or "")
+            if not kb_id or kb_id in weight_by_kb:
+                continue
+            kb_ids_ordered.append(kb_id)
+            weight_by_kb[kb_id] = float(pin.get("weight") or 1.0)
+
+        from app.services import knowledge_base_service
+
+        merged_kbs: list = []
+        for kb_id in kb_ids_ordered:
+            try:
+                merged_kbs.append(await knowledge_base_service.get_knowledge_base(db, member, kb_id))
+            except (NotFoundError, ForbiddenError):
+                continue
+
+        usable_set_ids: list[str] = []
+        for set_id in set_ids:
+            try:
+                ks = await knowledge_set_service.get_knowledge_set(db, member, set_id)
+            except (NotFoundError, ForbiddenError):
+                continue
+            if ks.status == KnowledgeSetStatus.disabled.value:
+                continue
+            if not await has_set_permission(db, member, ks, SetPermission.use.value):
+                continue
+            usable_set_ids.append(set_id)
+
+        if not usable_set_ids:
+            raise BadRequestError(
+                message="应用没有可用的知识集合",
+                message_key="errors.knowledge.application_empty",
+            )
+        if not merged_kbs:
+            raise BadRequestError(
+                message="应用未绑定知识库",
+                message_key="errors.knowledge.application_empty",
+            )
+
+        merged_items = [
+            SimpleNamespace(knowledge_base_id=kb_id, weight=weight_by_kb[kb_id])
+            for kb_id in kb_ids_ordered
+            if kb_id in weight_by_kb
+        ]
+
+        result = await _retrieve_for_set(
+            db,
+            member,
+            ragflow,
+            knowledge_set_id=usable_set_ids[0],
+            query=query,
+            options=options,
+            top_k=top_k,
+            similarity_threshold=similarity_threshold,
+            filters=filters,
+            origin=origin,
+            profile_id=None,
+            kbs_override=merged_kbs,
+            set_items_override=merged_items,
+            bump_set_ids=usable_set_ids,
+            release_manifest=release_manifest,
+            weights_by_kb=weight_by_kb,
+            compiled_policy=execution_context.compiled_policy,
+            execution_context=execution_context,
+        )
+        result["application_id"] = application_id
+        result["answer_model"] = execution_context.answer_model
+        result["knowledge_set_ids"] = usable_set_ids
+        result["release_id"] = resolved_release_id
+        result["channel"] = channel
+        result["manifest_hash"] = execution_context.manifest_hash
+        if "federation_plan" not in result and settings.KNOWLEDGE_V2_CAPABILITY_PLANNER_ENABLED:
+            from app.services import capability_planner
+
+            result["capability_plan"] = capability_planner.build_capability_plan(
+                query, kb_access_scopes={}
+            ).to_dict()
+        return result
 
     if release_manifest is not None:
         set_ids = list(release_manifest.get("knowledge_set_ids") or [])
@@ -501,6 +592,8 @@ async def _retrieve_for_set(
     bump_set_ids: list[str] | None = None,
     release_manifest: dict | None = None,
     weights_by_kb: dict[str, float] | None = None,
+    compiled_policy: dict | None = None,
+    execution_context=None,
 ) -> dict:
     started = time.perf_counter()
     ks = await knowledge_set_service.get_knowledge_set(db, member, knowledge_set_id)
@@ -524,35 +617,65 @@ async def _retrieve_for_set(
         [getattr(kb, "metadata_schema", None) for kb in kbs],
     )
 
-    if profile_id:
-        from app.models.retrieval_profile import RetrievalProfile
+    from app.models.enums import DEFAULT_RETRIEVAL_CONFIG
 
-        profile = await db.get(RetrievalProfile, profile_id)
-        if profile is None or profile.deleted_at is not None:
-            raise NotFoundError(message="检索配置不存在", message_key="errors.knowledge.profile_not_found")
-        allowed_sets = {knowledge_set_id, *(bump_set_ids or [])}
-        if profile.knowledge_set_id not in allowed_sets and kbs_override is None:
-            raise BadRequestError(
-                message="检索配置不属于该知识集合",
-                message_key="errors.knowledge.profile_not_found",
-            )
-        if profile.status not in (
-            ProfileStatus.draft.value,
-            ProfileStatus.active.value,
-            ProfileStatus.archived.value,
-        ):
-            raise BadRequestError(
-                message="检索配置状态不可用",
-                message_key="errors.knowledge.profile_not_active",
-            )
+    use_compiled_policy = compiled_policy is not None or execution_context is not None
+    effective_compiled_policy = compiled_policy
+    if effective_compiled_policy is None and execution_context is not None:
+        effective_compiled_policy = getattr(execution_context, "compiled_policy", None)
+
+    if use_compiled_policy:
+        config = dict(DEFAULT_RETRIEVAL_CONFIG)
+        candidate_budget = (effective_compiled_policy or {}).get("candidate_budget")
+        if isinstance(candidate_budget, int):
+            config["top_k"] = candidate_budget
+        profile_policy = effective_compiled_policy or {}
     else:
-        profile = await retrieval_profile_service.get_active_profile(db, knowledge_set_id)
-        if profile is None:
-            raise BadRequestError(
-                message="知识集合缺少生效的检索配置",
-                message_key="errors.knowledge.profile_not_active",
+        if profile_id:
+            from app.models.retrieval_profile import RetrievalProfile
+
+            profile = await db.get(RetrievalProfile, profile_id)
+            if profile is None or profile.deleted_at is not None:
+                raise NotFoundError(message="检索配置不存在", message_key="errors.knowledge.profile_not_found")
+            allowed_sets = {knowledge_set_id, *(bump_set_ids or [])}
+            if profile.knowledge_set_id not in allowed_sets and kbs_override is None:
+                raise BadRequestError(
+                    message="检索配置不属于该知识集合",
+                    message_key="errors.knowledge.profile_not_found",
+                )
+            if profile.status not in (
+                ProfileStatus.draft.value,
+                ProfileStatus.active.value,
+                ProfileStatus.archived.value,
+            ):
+                raise BadRequestError(
+                    message="检索配置状态不可用",
+                    message_key="errors.knowledge.profile_not_active",
+                )
+        else:
+            profile = await retrieval_profile_service.get_active_profile(db, knowledge_set_id)
+            if profile is None:
+                raise BadRequestError(
+                    message="知识集合缺少生效的检索配置",
+                    message_key="errors.knowledge.profile_not_active",
+                )
+        config = merge_profile_config(profile.config)
+        profile_policy = {
+            k: config.get(k)
+            for k in (
+                "allow_question_enrichment",
+                "allow_summary",
+                "allow_graph",
+                "allow_toc_enhance",
+                "allow_outline_artifact",
+                "allow_table_artifact",
+                "fallback_policy",
+                "candidate_budget",
+                "rerank_candidates",
+                "artifact_budget",
             )
-    config = merge_profile_config(profile.config)
+            if k in config
+        }
     effective_top_k = top_k if top_k is not None else int(config.get("top_k", 1024))
     effective_top_n = int(config.get("top_n", 8))
     effective_threshold = similarity_threshold
@@ -639,26 +762,22 @@ async def _retrieve_for_set(
         kb_retrieval_states[kb.id] = retrieval_map
 
     kb_access_scopes = _kb_access_scopes(plan_access, dataset_map)
-    profile_policy = {
-        k: config.get(k)
-        for k in (
-            "allow_question_enrichment",
-            "allow_summary",
-            "allow_graph",
-            "allow_toc_enhance",
-            "allow_outline_artifact",
-            "allow_table_artifact",
-            "fallback_policy",
-            "candidate_budget",
-            "rerank_candidates",
-            "artifact_budget",
-        )
-        if k in config
-    }
 
     from app.services.query_intelligence import analyze_query, resolve_release_terms
 
-    release_terms, term_diagnostics = resolve_release_terms(release_manifest, query)
+    model_revision_ids: list[str] = []
+    if execution_context is not None:
+        for pin in getattr(execution_context, "knowledge_bases", None) or []:
+            if not isinstance(pin, dict):
+                continue
+            revision_id = pin.get("knowledge_model_revision_id")
+            if revision_id and str(revision_id) not in model_revision_ids:
+                model_revision_ids.append(str(revision_id))
+    release_terms, term_diagnostics = await resolve_release_terms(
+        db,
+        knowledge_model_revision_ids=model_revision_ids,
+        query=query,
+    )
     query_analysis = await analyze_query(
         query,
         terms=release_terms or None,
@@ -683,7 +802,8 @@ async def _retrieve_for_set(
             kb_index_states=kb_index_states,
             kb_retrieval_states=kb_retrieval_states,
             kb_binding_status=kb_binding_status,
-            profile_policy=profile_policy,
+            profile_policy=profile_policy if execution_context is None else None,
+            execution_context=execution_context,
             force_semantic_only=not settings.KNOWLEDGE_V2_MULTI_INDEX_RETRIEVAL_ENABLED,
             weights_by_kb=weights_by_kb,
         )

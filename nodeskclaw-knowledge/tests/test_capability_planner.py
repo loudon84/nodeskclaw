@@ -1,9 +1,12 @@
 """Capability planner and evidence cleaner tests."""
 
+from types import SimpleNamespace
+
 from app.integrations.ragflow.models import RagflowChunk
 from app.models.enums import RuntimeRetrievalMode
 from app.services import capability_planner
 from app.services.chunk_security_service import EvidenceItem, evidence_from_chunk
+from app.services.federated_retrieval_planner import build_federation_plan
 
 
 def test_capability_plan_default_semantic():
@@ -94,3 +97,19 @@ def test_evidence_from_chunk_summary_marker():
 def test_graph_without_refs_is_evidence_item():
     item = EvidenceItem(evidence_id="g1", evidence_type="graph_path", content="path")
     assert item.source_refs == []
+
+
+# @lat: [[architecture/knowledge#Retrieval Planner]]
+def test_build_federation_plan_execution_context_excludes_out_of_pin_kbs():
+    plan = build_federation_plan(
+        "hello",
+        kb_access_scopes={"kb_pinned": "full", "kb_extra": "full"},
+        execution_context=SimpleNamespace(
+            compiled_policy={"candidate_budget": 512},
+            pinned_kb_ids={"kb_pinned"},
+        ),
+    )
+    provider_kb_ids = {p.knowledge_base_id for p in plan.providers}
+    assert provider_kb_ids == {"kb_pinned"}
+    assert "kb_extra" not in plan.kb_capabilities
+    assert plan.providers[0].budget == 512

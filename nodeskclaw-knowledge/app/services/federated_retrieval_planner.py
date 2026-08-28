@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 from app.core.config import settings
 from app.models.enums import RuntimeRetrievalMode
@@ -27,6 +27,31 @@ INTENT_ARTIFACT_PROVIDER: dict[str, str] = {
     "outline": "artifact_outline",
     "table": "artifact_table",
 }
+
+
+@runtime_checkable
+class FederationExecutionContext(Protocol):
+    """Duck-type for ReleaseExecutionContext (compiled policy + KB pins)."""
+
+    compiled_policy: dict[str, Any]
+
+
+def _pinned_kb_ids_from_execution_context(execution_context: Any) -> set[str]:
+    pinned = getattr(execution_context, "pinned_kb_ids", None)
+    if pinned is not None:
+        return {str(kb_id) for kb_id in pinned}
+    knowledge_bases = getattr(execution_context, "knowledge_bases", None)
+    if not knowledge_bases:
+        return set()
+    result: set[str] = set()
+    for kb in knowledge_bases:
+        if isinstance(kb, dict):
+            kb_id = kb.get("knowledge_base_id")
+        else:
+            kb_id = getattr(kb, "knowledge_base_id", None)
+        if kb_id:
+            result.add(str(kb_id))
+    return result
 
 
 @dataclass
@@ -131,17 +156,34 @@ def build_federation_plan(
     kb_retrieval_states: dict[str, dict[str, str]] | None = None,
     kb_binding_status: dict[str, str] | None = None,
     profile_policy: dict[str, Any] | None = None,
+    execution_context: FederationExecutionContext | Any | None = None,
     force_semantic_only: bool = False,
     weights_by_kb: dict[str, float] | None = None,
 ) -> FederationExecutionPlan:
+    effective_profile_policy = profile_policy
+    scoped_kb_access_scopes = kb_access_scopes
+    pinned_kb_ids: set[str] = set()
+
+    if execution_context is not None:
+        effective_profile_policy = getattr(execution_context, "compiled_policy", None) or {}
+        pinned_kb_ids = _pinned_kb_ids_from_execution_context(execution_context)
+        if pinned_kb_ids:
+            scoped_kb_access_scopes = {
+                kb_id: scope
+                for kb_id, scope in kb_access_scopes.items()
+                if kb_id in pinned_kb_ids
+            }
+        else:
+            scoped_kb_access_scopes = {}
+
     capability_plan: CapabilityPlan = build_capability_plan(
         query,
-        kb_access_scopes=kb_access_scopes,
+        kb_access_scopes=scoped_kb_access_scopes,
         kb_capabilities_input=kb_capabilities_input,
         kb_index_states=kb_index_states,
         kb_retrieval_states=kb_retrieval_states,
         kb_binding_status=kb_binding_status,
-        profile_policy=profile_policy,
+        profile_policy=effective_profile_policy,
         force_semantic_only=force_semantic_only,
     )
 
@@ -153,6 +195,8 @@ def build_federation_plan(
     weight_map = weights_by_kb or {}
 
     for kb_id, cap in capability_plan.kb_capabilities.items():
+        if execution_context is not None and pinned_kb_ids and kb_id not in pinned_kb_ids:
+            continue
         adjusted = _apply_query_analysis_to_capability(cap, query_analysis)
         provider = MODE_TO_PROVIDER.get(adjusted.selected_mode, "semantic")
         adjusted = KnowledgeBaseExecutionCapability(
@@ -173,7 +217,7 @@ def build_federation_plan(
             provider=provider,
         )
         kb_capabilities[kb_id] = adjusted
-        budget = int((profile_policy or {}).get("candidate_budget") or 1024)
+        budget = int((effective_profile_policy or {}).get("candidate_budget") or 1024)
         providers.append(
             FederationProviderPlan(
                 knowledge_base_id=kb_id,
@@ -186,7 +230,7 @@ def build_federation_plan(
             )
         )
 
-        if query_analysis and _artifact_provider_allowed(query_analysis.intent, profile_policy):
+        if query_analysis and _artifact_provider_allowed(query_analysis.intent, effective_profile_policy):
             artifact_provider = INTENT_ARTIFACT_PROVIDER.get(query_analysis.intent)
             if artifact_provider:
                 providers.append(
@@ -194,7 +238,7 @@ def build_federation_plan(
                         knowledge_base_id=kb_id,
                         provider=artifact_provider,
                         access_scope=adjusted.access_scope,
-                        budget=min(64, int((profile_policy or {}).get("artifact_budget") or 64)),
+                        budget=min(64, int((effective_profile_policy or {}).get("artifact_budget") or 64)),
                         selected_mode=adjusted.selected_mode,
                         retrieval_features=[],
                         weight=float(weight_map.get(kb_id, 1.0)),

@@ -70,13 +70,13 @@ super admin（`KnowledgePrincipal.is_super_admin`）可访问 Runtime 健康与 
 
 Knowledge Application 发布前必须 readiness 检查；未就绪返回 409 + blocking/warnings diagnostics。
 
-`ApplicationReadinessService.check` 聚合 bound Set、KB Binding、Chunk IndexState、Retrieval Profile 与 mode 兼容性。`POST /api/v2/applications/{id}/publish` 调用 readiness gate；v2.4 启用 `KNOWLEDGE_V24_RELEASE_ENABLED` 时走 create→validate→`ReleasePromotionService.promote(stable)`，否则仍写入 `runtime_snapshot`（审计投影）。`POST .../disable` 将 ACTIVE 降为 disabled；`GET /api/v2/applications/{id}/readiness` 供预检。实现：[[nodeskclaw-knowledge/app/services/application_readiness_service.py#check]]、[[nodeskclaw-knowledge/app/services/knowledge_application_service.py#publish_application]]。
+`ApplicationReadinessService.check` 聚合 bound Set、KB Binding、Chunk IndexState、Retrieval Profile 与 mode 兼容性。`POST /api/v2/applications/{id}/publish`：未启用 Release 时 readiness → `active` + `runtime_snapshot`（审计投影）；启用 `KNOWLEDGE_V24_RELEASE_ENABLED` 时 create Release + enqueue `release_validation` 并返回 **202** + `validation_job_id`（可选 `promote_on_validated` 仅写入 job `target_key`，HTTP 永不写 `active_release_id`）。`POST .../disable` 将 ACTIVE 降为 disabled；`GET /api/v2/applications/{id}/readiness` 供预检。实现：[[nodeskclaw-knowledge/app/services/application_readiness_service.py#check]]、[[nodeskclaw-knowledge/app/services/knowledge_application_service.py#publish_application]]。
 
 ## Knowledge Product Lifecycle V24
 
-v2.4 引入不可变 ApplicationRelease + Channel 指针、QualitySnapshot/Gate 与 ApplicationRetrievalPolicyRevision；由 `KNOWLEDGE_V24_RELEASE_ENABLED` 门控。
+v2.4 引入不可变 ApplicationRelease + Channel 指针、QualitySnapshot/Gate 与 ApplicationRetrievalPolicyRevision；v2.4.1 补齐 Manifest/Integrity/async validation/ChannelEvent；由 `KNOWLEDGE_V24_RELEASE_ENABLED` 门控。
 
-Release create 拼装 pin 住的 manifest（含 `retrieval_policy_revision_id`）；validate 跑 readiness + quality gate；`ReleasePromotionService` 为 `active_release_id` 唯一写 Owner（promote/rollback/publish-compat）。Quality history 查 `knowledge_quality_snapshots` 表；stable promote 要求 gate PASS。ORM：[[nodeskclaw-knowledge/app/models/knowledge_application_release.py]]、[[nodeskclaw-knowledge/app/models/knowledge_quality_snapshot.py]]、[[nodeskclaw-knowledge/app/models/application_retrieval_policy_revision.py]]。服务：[[nodeskclaw-knowledge/app/services/release_promotion_service.py]]、[[nodeskclaw-knowledge/app/services/application_retrieval_policy_service.py]]。API：[[nodeskclaw-knowledge/app/api/v2/applications.py]]。迁移：`07548d9f3803`（chained after `14bcac212b54`）。
+Release create 经 [[nodeskclaw-knowledge/app/services/release_manifest_service.py#build]] 写出 V1 Manifest（`schema_version`、`knowledge_sets[]`、per-KB pin、`artifact_revision_id`、`manifest_hash`）。`POST .../validate` 只入队 `target_kind=release_validation`（HTTP 202）；worker [[nodeskclaw-knowledge/app/services/build_executors.py#execute_release_validation_stage]] 跑 readiness + Integrity + Quality snapshot。`ReleasePromotionService` 为 `active_release_id` 唯一写 Owner（Application lock + channel FOR UPDATE + [[nodeskclaw-knowledge/app/models/knowledge_application_release.py#KnowledgeReleaseChannelEvent]]）；rollback 只走 ChannelEvent 历史。Integrity：[[nodeskclaw-knowledge/app/services/release_integrity_service.py#evaluate]]。投放资格仅 `validated`（不再用 promoted/superseded 表达 Channel 占用）。ORM：[[nodeskclaw-knowledge/app/models/knowledge_application_release.py]]、[[nodeskclaw-knowledge/app/models/knowledge_quality_snapshot.py]]、[[nodeskclaw-knowledge/app/models/application_retrieval_policy_revision.py]]。服务：[[nodeskclaw-knowledge/app/services/release_promotion_service.py]]、[[nodeskclaw-knowledge/app/services/application_retrieval_policy_service.py]]、[[nodeskclaw-knowledge/app/services/release_runtime_service.py#resolve_application_release]]。API：[[nodeskclaw-knowledge/app/api/v2/applications.py]]。迁移：`07548d9f3803` → `d0e41dc0d166`（ChannelEvent、manifest_hash、BuildJob 可空）。
 
 ## Ragflow Contract Tests
 
@@ -102,13 +102,43 @@ Knowledge MCP 仅 transport 适配，六工具语义与 HTTP agent tools 一致�
 
 v2.3 在 v2.2 之上增加 Derived Artifacts、CorpusManifest 增量 Build、Model Revision、Query Intelligence、RRF 融合、Quality 与 Application runtime_snapshot；由 `KNOWLEDGE_V23_*` flag 门控。
 
-Artifact Provider SPI：[[nodeskclaw-knowledge/app/knowledge_artifacts/base.py]]、registry [[nodeskclaw-knowledge/app/knowledge_artifacts/registry.py]]；identity + revision ORM [[nodeskclaw-knowledge/app/models/knowledge_artifact.py#KnowledgeArtifact]]、[[nodeskclaw-knowledge/app/models/knowledge_artifact.py#KnowledgeArtifactRevision]]；HTTP [[nodeskclaw-knowledge/app/api/v2/artifacts.py]]。v2.4 Artifact ACL adapter（消费 AccessPlan，默认关闭）：[[nodeskclaw-knowledge/app/services/artifact_security_service.py]]；Table canonical schema 从 `read_document_chunks` table blocks 物化（禁止 alteration-as-rows）：[[nodeskclaw-knowledge/app/knowledge_artifacts/table.py]]。BuildProfile 扩展 `artifact_types` / `artifact_trigger_policy`：[[nodeskclaw-knowledge/app/models/build_profile.py#BuildProfile]]。CorpusManifest / BuildDelta：[[nodeskclaw-knowledge/app/services/build_input_manifest_service.py]]（`input_manifest_hash` 替代单版本 watermark）。Query Intelligence：[[nodeskclaw-knowledge/app/services/query_intelligence/__init__.py#analyze_query]]、[[nodeskclaw-knowledge/app/api/v2/query_intelligence.py]]；Policy Gate 在 LLM Planner 提案之上 deterministic 授权。RRF 融合 [[nodeskclaw-knowledge/app/services/retrieval_merge_service.py#_rank_by_rrf]]（`KNOWLEDGE_V23_RRF_FUSION_ENABLED`）。Quality：[[nodeskclaw-knowledge/app/services/knowledge_quality_service.py]]、[[nodeskclaw-knowledge/app/api/v2/quality.py]]（v2.4 history 查 Snapshot 表）。Model Revision API：[[nodeskclaw-knowledge/app/api/v2/knowledge_models.py]]。v2.3 迁移链：`a1c9e4f72b08`（desired_config_hash）→ `b3e7f1a92c04`（index manifest）→ `c4d8e2f03a15`（build job target）→ `d5e9f3a14b26`（artifact catalog）→ `e6f7a8b91c02`（model revision + runtime_snapshot）→ `f7a3c2d81e04` / `a8b4d1e92f05`（v2.4 model pin + single active）→ `b2c8d4e91a06`（artifact identity revision）→ `14bcac212b54`（build profile artifact types）→ `07548d9f3803`（release/channel/quality/policy）。
+Artifact Provider SPI：[[nodeskclaw-knowledge/app/knowledge_artifacts/base.py]]、registry [[nodeskclaw-knowledge/app/knowledge_artifacts/registry.py]]；identity + revision ORM [[nodeskclaw-knowledge/app/models/knowledge_artifact.py#KnowledgeArtifact]]、[[nodeskclaw-knowledge/app/models/knowledge_artifact.py#KnowledgeArtifactRevision]]；HTTP [[nodeskclaw-knowledge/app/api/v2/artifacts.py]]。v2.4 Artifact ACL adapter（消费 AccessPlan，默认关闭）：[[nodeskclaw-knowledge/app/services/artifact_security_service.py]]；Table canonical schema 从 `read_document_chunks` table blocks 物化（禁止 alteration-as-rows）：[[nodeskclaw-knowledge/app/knowledge_artifacts/table.py]]。BuildProfile 扩展 `artifact_types` / `artifact_trigger_policy`：[[nodeskclaw-knowledge/app/models/build_profile.py#BuildProfile]]。CorpusManifest / BuildDelta：[[nodeskclaw-knowledge/app/services/build_input_manifest_service.py]]（`input_manifest_hash` 替代单版本 watermark）。Query Intelligence：[[nodeskclaw-knowledge/app/services/query_intelligence/__init__.py#analyze_query]]、[[nodeskclaw-knowledge/app/api/v2/query_intelligence.py]]；Policy Gate 在 LLM Planner 提案之上 deterministic 授权。RRF 融合 [[nodeskclaw-knowledge/app/services/retrieval_merge_service.py#_rank_by_rrf]]（`KNOWLEDGE_V23_RRF_FUSION_ENABLED`）。Quality：[[nodeskclaw-knowledge/app/services/knowledge_quality_service.py]]、[[nodeskclaw-knowledge/app/api/v2/quality.py]]（v2.4 history 查 Snapshot 表）。Model Revision API：[[nodeskclaw-knowledge/app/api/v2/knowledge_models.py]]。v2.3 迁移链：`a1c9e4f72b08`（desired_config_hash）→ `b3e7f1a92c04`（index manifest）→ `c4d8e2f03a15`（build job target）→ `d5e9f3a14b26`（artifact catalog）→ `e6f7a8b91c02`（model revision + runtime_snapshot）→ `f7a3c2d81e04` / `a8b4d1e92f05`（v2.4 model pin + single active）→ `b2c8d4e91a06`（artifact identity revision）→ `14bcac212b54`（build profile artifact types）→ `07548d9f3803`（release/channel/quality/policy）→ `d0e41dc0d166`（ChannelEvent、manifest_hash、BuildJob 可空 unique）。
 
 ## Product Delivery V24
 
 v2.4 将 Application 产品路径从 `runtime_snapshot` / `ApplicationStatus.active` 演进到 `application_id + channel → Release Manifest`；生产 Provider Selection 唯一 Owner 为 FederatedRetrievalPlanner。
 
-Release ORM：[[nodeskclaw-knowledge/app/models/knowledge_application_release.py#KnowledgeApplicationRelease]]、[[nodeskclaw-knowledge/app/models/knowledge_application_release.py#KnowledgeReleaseChannel]]。Channel resolve：[[nodeskclaw-knowledge/app/services/release_runtime_service.py#resolve_application_release]]（显式 `release_id` 与 channel pointer 冲突 fail_closed；禁止读 `runtime_snapshot`）。Federation Planner：[[nodeskclaw-knowledge/app/services/federated_retrieval_planner.py#build_federation_plan]] 内部调用 capability_planner 作 per-KB helper；输出 `FederationExecutionPlan` 驱动 slice 物化。Query Intelligence 生产链：`analyze_query` → `resolve_release_terms` → Federation Planner；Playground [[nodeskclaw-knowledge/app/api/v2/query_intelligence.py]] 与生产返回相同 `query_analysis` + `federation_plan`。RRF provider identity 取 `provider` 非 `slice_mode`；Artifact 候选经 [[nodeskclaw-knowledge/app/knowledge_artifacts/base.py#ArtifactEvidenceCandidate]] 扩展字段进入 fusion。Agent/MCP §36 五条规则：[[nodeskclaw-knowledge/app/api/agent_tools.py#knowledge_search_or_retrieve]]、[[nodeskclaw-knowledge/app/mcp_server.py#call_tool]]；Chat application 路径带 channel：[[nodeskclaw-knowledge/app/services/chat_service.py#create_session]]。
+Release ORM：[[nodeskclaw-knowledge/app/models/knowledge_application_release.py#KnowledgeApplicationRelease]]、[[nodeskclaw-knowledge/app/models/knowledge_application_release.py#KnowledgeReleaseChannel]]、[[nodeskclaw-knowledge/app/models/knowledge_application_release.py#KnowledgeReleaseChannelEvent]]。Channel resolve：[[nodeskclaw-knowledge/app/services/release_runtime_service.py#resolve_application_release]] → [[nodeskclaw-knowledge/app/services/release_runtime_service.py#ReleaseExecutionContext]]（仅 `validated`；manifest hash + Integrity healthy fail_closed；compiled policy；禁止读 `runtime_snapshot`）。Federation Planner：[[nodeskclaw-knowledge/app/services/federated_retrieval_planner.py#build_federation_plan]] 内部调用 capability_planner 作 per-KB helper；输出 `FederationExecutionPlan` 驱动 slice 物化。Query Intelligence 生产链：`analyze_query` → `resolve_release_terms` → Federation Planner；Playground [[nodeskclaw-knowledge/app/api/v2/query_intelligence.py]] 与生产返回相同 `query_analysis` + `federation_plan`。RRF provider identity 取 `provider` 非 `slice_mode`；Artifact 候选经 [[nodeskclaw-knowledge/app/knowledge_artifacts/base.py#ArtifactEvidenceCandidate]] 扩展字段进入 fusion。Agent/MCP §36 五条规则：[[nodeskclaw-knowledge/app/api/agent_tools.py#knowledge_search_or_retrieve]]、[[nodeskclaw-knowledge/app/mcp_server.py#call_tool]]；Chat application 路径带 channel：[[nodeskclaw-knowledge/app/services/chat_service.py#create_session]]。
+
+### Release Runtime Resolution
+
+v2.4.1 `resolve_application_release` gates and `ReleaseExecutionContext` fields exercised by [[nodeskclaw-knowledge/tests/test_release_runtime.py]].
+
+#### Same channel stable identity
+
+Implicit resolve and explicit matching `release_id` yield identical `release_id` and `manifest_hash`.
+
+#### Promoted release rejected
+
+Release status `promoted` is rejected with `release_not_validated`.
+
+#### Manifest hash mismatch
+
+Stored `manifest_hash` not matching parsed manifest content fails closed.
+
+#### Integrity stale
+
+Non-healthy Integrity evaluation fails closed before returning context.
+
+#### Success includes compiled policy
+
+Validated healthy release returns `compiled_policy` from pinned retrieval policy revision.
+
+#### Application product path consumes context
+
+With Release enabled, Application retrieve/chat/QI consume only `ReleaseExecutionContext` pins—not Profile or live Authority discovery.
+
+`retrieve_for_application` and `create_session` read sets/KBs/weights/`answer_model`/compiled policy only from Context; `resolve_release_terms` loads pinned `KnowledgeModelRevision.terms` and does not read manifest `terms`/`model_terms`. Covered by [[nodeskclaw-knowledge/tests/test_retrieve_wiring.py]] and [[nodeskclaw-knowledge/tests/test_query_intelligence.py]].
 
 ## Runtime Schema V11
 
@@ -128,7 +158,7 @@ v1.3 增加独立 `knowledge-connector-worker`：调度 interval/manual SyncRun�
 
 v1.2 离线评测：Evaluation Set/Case + 异步 Run，用确定性 Retrieval Metrics（Hit@K / Recall@K / MRR）比较 Profile，禁止未授权 Source 进入结果。
 
-表：[[nodeskclaw-knowledge/app/models/evaluation.py#EvaluationSet]] 等。CRUD/Run/Compare：[[nodeskclaw-knowledge/app/services/evaluation_service.py]]、API [[nodeskclaw-knowledge/app/api/evaluation.py]]。执行：[[nodeskclaw-knowledge/app/services/evaluation_runner.py]]（`origin=evaluation` 走 Secure Retrieval）。创建 Run 时必须写入 `principal_snapshot`（member/org/role/department/is_super_admin），Worker 从快照还原 Principal，禁止再构造空 department 的假身份。Run 自带 lease 字段作 Job 表；`No Unauthorized Source` 非 100% 则整 Run FAIL（`errors.knowledge.evaluation_failed`）。v2.1 Run `metrics` 含 `effective_indexes` / `query_type`（来自 capability_plan）。Compare：Hit@8 / MRR / 平均延迟 / Empty rate / Degraded rate。
+表：[[nodeskclaw-knowledge/app/models/evaluation.py#EvaluationSet]] 等。CRUD/Run/Compare：[[nodeskclaw-knowledge/app/services/evaluation_service.py]]、API [[nodeskclaw-knowledge/app/api/evaluation.py]]。执行：[[nodeskclaw-knowledge/app/services/evaluation_runner.py]]（`origin=evaluation` 走 Secure Retrieval）。创建 Run 时必须写入 `principal_snapshot`（member/org/role/department/is_super_admin），Worker 从快照还原 Principal，禁止再构造空 department 的假身份。Run 自带 lease 字段作 Job 表；`No Unauthorized Source` 非 100% 则整 Run FAIL（`errors.knowledge.evaluation_failed`）。v2.1 Run `metrics` 含 `effective_indexes` / `query_type`（来自 capability_plan）。v2.4.1：Run 可选 `release_id`/`channel`；有值时走 `retrieve_for_application`，`metrics` 绑定 `manifest_hash` 与 Release Quality `gate_result`，`overall_pass` 要求 gate PASS 且无 unauthorized。无 release/channel 时仍走 Set Profile 路径。Compare：Hit@8 / MRR / 平均延迟 / Empty rate / Degraded rate。
 
 ## Active Version Security
 
@@ -141,6 +171,8 @@ drop 必须写审计：`METADATA_MISMATCH` 或 `CHUNK_SECURITY_DROP`。实现：
 ## Retrieval Planner
 
 多 KB 不能合并为一个错误的 `dataset_ids+document_ids` 请求；v2.2 由 `build_retrieval_plan` 按 KB 发射语义互异的 `RuntimeExecutionSlice`（mode + access_scope），并行执行后再加权合并。v2.4 输入为 `FederationExecutionPlan`（由 [[nodeskclaw-knowledge/app/services/federated_retrieval_planner.py#build_federation_plan]] 产出），不再由生产路径直接 `build_capability_plan` 驱动 slice 选择。
+
+v2.4.1 Application 路径传入 `execution_context` 时，provider 的 KB 集合仅来自 Context pins，`compiled_policy` 覆盖 `profile_policy`；live capability facts 只在 pin 集合内决定 mode/skip。
 
 `build_retrieval_plan` 消费 AccessPlan + per-KB `KnowledgeBaseExecutionCapability` 或 Federation plan，输出 `RuntimeExecutionSlice[]`（必填 `access_scope` full/filtered；Question enrichment 为 semantic slice 的 `retrieval_features`，不复制 retrieve）。禁止 `expand_plan_for_indexes` 按 index_type 复制相同 slice。Dataset 映射仍用 `dataset_id_by_kb_id`：[[nodeskclaw-knowledge/app/services/retrieval_planner.py#build_retrieval_plan]]。Partial KB 的 `document_ids` 按 `RETRIEVAL_DOCUMENT_BATCH_SIZE` 拆多 slice；Merge 用 `RETRIEVAL_MAX_PARALLEL_SLICES` Semaphore 限流。入口：[[nodeskclaw-knowledge/app/services/retrieval_service.py#retrieve]]。Merge：[[nodeskclaw-knowledge/app/services/retrieval_merge_service.py#execute_and_merge]]。默认 `score = similarity × weight`；v2.3/v2.4 RRF 按 `provider` 身份分组（[[nodeskclaw-knowledge/app/services/retrieval_merge_service.py#_rank_by_rrf]]），再取 top_n。
 

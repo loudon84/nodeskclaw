@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Body, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -15,6 +15,7 @@ from app.schemas.knowledge import (
     KnowledgeApplicationBindSet,
     KnowledgeApplicationCreate,
     KnowledgeApplicationOut,
+    KnowledgeApplicationPublish,
     KnowledgeApplicationReleaseCreate,
     KnowledgeApplicationReleaseOut,
     KnowledgeApplicationUpdate,
@@ -136,14 +137,24 @@ async def application_readiness_v2(
     return ApiResponse(data=result.to_dict())
 
 
-@router.post("/applications/{application_id}/publish", response_model=ApiResponse[KnowledgeApplicationOut])
+@router.post(
+    "/applications/{application_id}/publish",
+    response_model=ApiResponse[KnowledgeApplicationOut],
+    status_code=status.HTTP_202_ACCEPTED,
+)
 async def publish_application_v2(
     application_id: str,
+    body: KnowledgeApplicationPublish = Body(default_factory=KnowledgeApplicationPublish),
     member: KnowledgePrincipal = Depends(get_member_context),
     db: AsyncSession = Depends(get_db),
 ):
     _require_application()
-    app = await knowledge_application_service.publish_application(db, member, application_id)
+    app = await knowledge_application_service.publish_application(
+        db,
+        member,
+        application_id,
+        promote_on_validated=body.promote_on_validated,
+    )
     data = await knowledge_application_service.application_to_out(db, app)
     return ApiResponse(data=KnowledgeApplicationOut.model_validate(data))
 
@@ -265,6 +276,7 @@ async def get_application_release_v2(
 @router.post(
     "/applications/{application_id}/releases/{release_id}/validate",
     response_model=ApiResponse[KnowledgeApplicationReleaseOut],
+    status_code=status.HTTP_202_ACCEPTED,
 )
 async def validate_application_release_v2(
     application_id: str,

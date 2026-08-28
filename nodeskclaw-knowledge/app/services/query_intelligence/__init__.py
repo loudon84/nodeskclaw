@@ -5,7 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.core.config import settings
+from app.core.exceptions import BadRequestError
 
 
 @dataclass
@@ -145,44 +148,59 @@ async def analyze_query(
     )
 
 
-def resolve_release_terms(
-    manifest: dict[str, Any] | None,
-    query: str,
+async def resolve_release_terms(
+    db: AsyncSession,
     *,
+    knowledge_model_revision_ids: list[str],
+    query: str,
     kb_terms: dict[str, list] | None = None,
 ) -> tuple[list[str], list[str]]:
-    """SemanticModelResolver: Application Model Revision > KB Model > No Expansion."""
-    diagnostics: list[str] = []
-    manifest = manifest or {}
-    expanded: list[str] = []
-    app_terms = manifest.get("terms") or manifest.get("model_terms")
-    if isinstance(app_terms, list) and app_terms:
-        app_expanded, app_reasons = expand_terminology(query, app_terms)
-        expanded.extend(app_expanded)
-        diagnostics.extend(app_reasons)
-        diagnostics.append("semantic_model:application_revision")
-        return expanded, diagnostics
+    """SemanticModelResolver: pinned KnowledgeModelRevision > KB Model > No Expansion."""
+    from app.models.knowledge_model_revision import KnowledgeModelRevision
 
-    kb_terms = kb_terms or {}
-    seen_canonical: dict[str, str] = {}
-    for kb_id, terms in kb_terms.items():
+    diagnostics: list[str] = []
+    expanded: list[str] = []
+    seen_revision_ids: set[str] = set()
+
+    for revision_id in knowledge_model_revision_ids:
+        if not revision_id or revision_id in seen_revision_ids:
+            continue
+        seen_revision_ids.add(revision_id)
+        revision = await db.get(KnowledgeModelRevision, revision_id)
+        if revision is None or revision.deleted_at is not None:
+            raise BadRequestError(
+                message="Knowledge Model Revision 不存在",
+                message_key="errors.knowledge.model_revision_not_found",
+            )
+        terms = revision.terms or []
         if not terms:
             continue
-        kb_expanded, kb_reasons = expand_terminology(query, terms)
-        for item in terms:
-            if not isinstance(item, dict):
+        rev_expanded, rev_reasons = expand_terminology(query, terms)
+        expanded.extend(rev_expanded)
+        diagnostics.extend(rev_reasons)
+        diagnostics.append(f"semantic_model:model_revision:{revision_id}")
+
+    if not expanded:
+        kb_terms = kb_terms or {}
+        seen_canonical: dict[str, str] = {}
+        for kb_id, terms in kb_terms.items():
+            if not terms:
                 continue
-            canonical = str(item.get("canonical") or item.get("term") or "")
-            if not canonical:
-                continue
-            prev_owner = seen_canonical.get(canonical)
-            if prev_owner and prev_owner != kb_id:
-                diagnostics.append(f"semantic_model_conflict:{canonical}")
-                continue
-            seen_canonical[canonical] = kb_id
-        expanded.extend(kb_expanded)
-        diagnostics.extend(kb_reasons)
-        diagnostics.append(f"semantic_model:kb_revision:{kb_id}")
+            kb_expanded, kb_reasons = expand_terminology(query, terms)
+            for item in terms:
+                if not isinstance(item, dict):
+                    continue
+                canonical = str(item.get("canonical") or item.get("term") or "")
+                if not canonical:
+                    continue
+                prev_owner = seen_canonical.get(canonical)
+                if prev_owner and prev_owner != kb_id:
+                    diagnostics.append(f"semantic_model_conflict:{canonical}")
+                    continue
+                seen_canonical[canonical] = kb_id
+            expanded.extend(kb_expanded)
+            diagnostics.extend(kb_reasons)
+            diagnostics.append(f"semantic_model:kb_revision:{kb_id}")
 
     if not expanded:
         diagnostics.append("semantic_model:no_expansion")

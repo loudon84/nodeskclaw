@@ -514,6 +514,8 @@ class EvaluationCaseOut(BaseModel):
 class EvaluationRunCreate(BaseModel):
     evaluation_set_id: str
     retrieval_profile_id: str
+    release_id: str | None = None
+    channel: str | None = None
 
 
 class EvaluationRunOut(BaseModel):
@@ -657,8 +659,13 @@ class KnowledgeApplicationOut(BaseModel):
     acl_version: int = 1
     visibility: str = "private"
     knowledge_set_ids: list[str] = Field(default_factory=list)
+    validation_job_id: str | None = None
 
     model_config = {"from_attributes": True}
+
+
+class KnowledgeApplicationPublish(BaseModel):
+    promote_on_validated: bool = False
 
 
 class KnowledgeApplicationBindSet(BaseModel):
@@ -676,7 +683,9 @@ class KnowledgeApplicationReleaseOut(BaseModel):
     version: int
     status: str
     release_manifest: dict[str, Any]
+    manifest_hash: str | None = None
     quality_snapshot_id: str | None = None
+    validation_job_id: str | None = None
     created_by_member_id: str
     promoted_at: Any = None
     retired_at: Any = None

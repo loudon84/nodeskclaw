@@ -1,0 +1,2141 @@
+{
+  "info": {
+    "_postman_id": "4de8a4c1-8466-4cd0-a892-9c829b2e34ce",
+    "name": "nodeskclaw-knowledge v2.4 — E2E & RAGFlow Verification",
+    "description": "Current main-branch E2E collection. Full flow combines /api/v2 product/runtime APIs with /api/v1 compatibility APIs for SourceFile/Ingestion/RetrievalProfile. Use Backend login token as Bearer. For full v2.4 testing enable Build, Application, v2.3 Artifacts/Quality and v2.4 Release/Federation/Artifact ACL flags in the Knowledge container.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{access_token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "pm.request.headers.upsert({key:'X-Request-Id', value:'postman-' + Date.now() + '-' + Math.random().toString(16).slice(2)});"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "knowledge_base_url",
+      "value": "http://127.0.0.1:4530",
+      "type": "string"
+    },
+    {
+      "key": "backend_base_url",
+      "value": "http://127.0.0.1:4510",
+      "type": "string"
+    },
+    {
+      "key": "email",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "password",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "access_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "refresh_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "org_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "member_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "kb_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "source_file_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "file_version_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "ingestion_job_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "set_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "retrieval_profile_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "knowledge_model_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "knowledge_model_revision_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "build_job_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "artifact_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "artifact_build_job_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "application_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "app_policy_revision_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "release_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "evidence_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "query",
+      "value": "报销流程是什么？",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "00 Health & Authentication",
+      "item": [
+        {
+          "name": "Knowledge Health Live",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{knowledge_base_url}}/health/live",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200]));",
+                  "const ct = pm.response.headers.get('Content-Type') || '';",
+                  "if (ct.includes('application/json') && pm.response.code < 400) {",
+                  "  const j = pm.response.json();",
+                  "  if (Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Knowledge Health Ready",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{knowledge_base_url}}/health/ready",
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "200 才进入完整 E2E；503 先检查 database/ragflow/backend。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 503]));",
+                  "const ct = pm.response.headers.get('Content-Type') || '';",
+                  "if (ct.includes('application/json') && pm.response.code < 400) {",
+                  "  const j = pm.response.json();",
+                  "  if (Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Backend Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{backend_base_url}}/api/v1/auth/login",
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.expect(pm.response.code).to.eql(200));",
+                  "const j = pm.response.json();",
+                  "pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "const a = j.data && j.data.access_token, r = j.data && j.data.refresh_token;",
+                  "if (a) { pm.collectionVariables.set('access_token', a); try { pm.environment.set('access_token', a); } catch(e) {} }",
+                  "if (r) { pm.collectionVariables.set('refresh_token', r); try { pm.environment.set('refresh_token', r); } catch(e) {} }",
+                  "pm.test('access_token captured', () => pm.expect(a).to.exist);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Backend Knowledge Context",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{backend_base_url}}/api/v1/auth/knowledge-context"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.expect(pm.response.code).to.eql(200));",
+                  "const j = pm.response.json();",
+                  "pm.test('Principal resolved', () => { pm.expect(j.data.member_id).to.exist; pm.expect(j.data.org_id).to.exist; });",
+                  "pm.collectionVariables.set('member_id', j.data.member_id); pm.collectionVariables.set('org_id', j.data.org_id);",
+                  "try { pm.environment.set('member_id', j.data.member_id); pm.environment.set('org_id', j.data.org_id); } catch(e) {}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "01 Knowledge Assets — API v2",
+      "item": [
+        {
+          "name": "List Knowledge Bases",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{knowledge_base_url}}/api/v2/knowledge-bases?page=1&page_size=20"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 201, 202]));",
+                  "const ct = pm.response.headers.get('Content-Type') || '';",
+                  "if (ct.includes('application/json') && pm.response.code < 400) {",
+                  "  const j = pm.response.json();",
+                  "  if (Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Knowledge Base",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{knowledge_base_url}}/api/v2/knowledge-bases",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Postman验证知识库\",\n  \"description\": \"nodeskclaw-knowledge v2.4 E2E\",\n  \"embedding_model\": \"bge-m3\",\n  \"chunk_method\": \"naive\",\n  \"parser_config\": {},\n  \"visibility\": \"private\",\n  \"tags\": [\n    \"postman\",\n    \"v2.4\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 201, 202]));",
+                  "const j = pm.response.json();",
+                  "if (pm.response.code < 400 && Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "const value = j.data && j.data.id;",
+                  "if (value) { pm.collectionVariables.set('kb_id', value); try { pm.environment.set('kb_id', value); } catch(e) {} }",
+                  "pm.test('kb_id captured', () => pm.expect(value).to.exist);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Knowledge Base",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{knowledge_base_url}}/api/v2/knowledge-bases/{{kb_id}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 201, 202]));",
+                  "const ct = pm.response.headers.get('Content-Type') || '';",
+                  "if (ct.includes('application/json') && pm.response.code < 400) {",
+                  "  const j = pm.response.json();",
+                  "  if (Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Knowledge Set",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{knowledge_base_url}}/api/v2/knowledge-sets",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Postman验证知识集\",\n  \"description\": \"E2E retrieval scope\",\n  \"visibility\": \"private\",\n  \"retrieval_config\": {\n    \"top_k\": 64,\n    \"top_n\": 8,\n    \"similarity_threshold\": 0.2,\n    \"vector_similarity_weight\": 0.7,\n    \"keyword\": false,\n    \"rerank_id\": null,\n    \"highlight\": true,\n    \"cross_languages\": [],\n    \"answer_model\": \"\",\n    \"failure_policy\": \"fail_closed\",\n    \"context_max_chunks\": 8,\n    \"context_max_chars\": 24000\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 201, 202]));",
+                  "const j = pm.response.json();",
+                  "if (pm.response.code < 400 && Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "const value = j.data && j.data.id;",
+                  "if (value) { pm.collectionVariables.set('set_id', value); try { pm.environment.set('set_id', value); } catch(e) {} }",
+                  "pm.test('set_id captured', () => pm.expect(value).to.exist);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Bind KB to Set",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{knowledge_base_url}}/api/v2/knowledge-sets/{{set_id}}/knowledge-bases",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"knowledge_base_id\": \"{{kb_id}}\",\n  \"weight\": 1.0,\n  \"sort_order\": 0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 201, 202]));",
+                  "const ct = pm.response.headers.get('Content-Type') || '';",
+                  "if (ct.includes('application/json') && pm.response.code < 400) {",
+                  "  const j = pm.response.json();",
+                  "  if (Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Knowledge Set",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{knowledge_base_url}}/api/v2/knowledge-sets/{{set_id}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 201, 202]));",
+                  "const ct = pm.response.headers.get('Content-Type') || '';",
+                  "if (ct.includes('application/json') && pm.response.code < 400) {",
+                  "  const j = pm.response.json();",
+                  "  if (Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "02 Source File & Ingestion — API v1 compatibility",
+      "item": [
+        {
+          "name": "Upload Source File",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{knowledge_base_url}}/api/v1/knowledge-bases/{{kb_id}}/files",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "",
+                  "description": "导入后手工选择本地 PDF/DOCX/MD/TXT"
+                },
+                {
+                  "key": "metadata",
+                  "type": "text",
+                  "value": "{\"source\":\"postman\",\"department\":\"IT\"}"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Upload accepted', () => pm.expect(pm.response.code).to.be.oneOf([200,201,202]));",
+                  "const j = pm.response.json();",
+                  "pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "const sf = j.data && j.data.source_file, fv = j.data && j.data.file_version_id, job = j.data && j.data.job;",
+                  "if (sf && sf.id) { pm.collectionVariables.set('source_file_id', sf.id); try { pm.environment.set('source_file_id', sf.id); } catch(e) {} }",
+                  "if (fv) { pm.collectionVariables.set('file_version_id', fv); try { pm.environment.set('file_version_id', fv); } catch(e) {} }",
+                  "if (job && job.id) { pm.collectionVariables.set('ingestion_job_id', job.id); try { pm.environment.set('ingestion_job_id', job.id); } catch(e) {} }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Ingestion Job",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{knowledge_base_url}}/api/v1/ingestion-jobs/{{ingestion_job_id}}",
+            "description": "重复执行直到 data.status=active。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 201, 202]));",
+                  "const ct = pm.response.headers.get('Content-Type') || '';",
+                  "if (ct.includes('application/json') && pm.response.code < 400) {",
+                  "  const j = pm.response.json();",
+                  "  if (Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Files in KB",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{knowledge_base_url}}/api/v1/knowledge-bases/{{kb_id}}/files?page=1&page_size=20"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 201, 202]));",
+                  "const ct = pm.response.headers.get('Content-Type') || '';",
+                  "if (ct.includes('application/json') && pm.response.code < 400) {",
+                  "  const j = pm.response.json();",
+                  "  if (Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Source File",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{knowledge_base_url}}/api/v1/source-files/{{source_file_id}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 201, 202]));",
+                  "const ct = pm.response.headers.get('Content-Type') || '';",
+                  "if (ct.includes('application/json') && pm.response.code < 400) {",
+                  "  const j = pm.response.json();",
+                  "  if (Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Source Versions",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{knowledge_base_url}}/api/v1/source-files/{{source_file_id}}/versions"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 201, 202]));",
+                  "const ct = pm.response.headers.get('Content-Type') || '';",
+                  "if (ct.includes('application/json') && pm.response.code < 400) {",
+                  "  const j = pm.response.json();",
+                  "  if (Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Patch Source Metadata",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{knowledge_base_url}}/api/v1/source-files/{{source_file_id}}/metadata",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"metadata\": {\n    \"source\": \"postman\",\n    \"department\": \"IT\",\n    \"verified\": true\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 201, 202]));",
+                  "const ct = pm.response.headers.get('Content-Type') || '';",
+                  "if (ct.includes('application/json') && pm.response.code < 400) {",
+                  "  const j = pm.response.json();",
+                  "  if (Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "03 Retrieval Profile — API v1 compatibility",
+      "item": [
+        {
+          "name": "Create Retrieval Profile Draft",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{knowledge_base_url}}/api/v1/knowledge-sets/{{set_id}}/retrieval-profiles",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"config\": {\n    \"top_k\": 64,\n    \"top_n\": 8,\n    \"similarity_threshold\": 0.2,\n    \"vector_similarity_weight\": 0.7,\n    \"keyword\": false,\n    \"rerank_id\": null,\n    \"highlight\": true,\n    \"cross_languages\": [],\n    \"answer_model\": \"\",\n    \"failure_policy\": \"fail_closed\",\n    \"context_max_chunks\": 8,\n    \"context_max_chars\": 24000\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 201, 202]));",
+                  "const j = pm.response.json();",
+                  "if (pm.response.code < 400 && Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "const value = j.data && j.data.id;",
+                  "if (value) { pm.collectionVariables.set('retrieval_profile_id', value); try { pm.environment.set('retrieval_profile_id', value); } catch(e) {} }",
+                  "pm.test('retrieval_profile_id captured', () => pm.expect(value).to.exist);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Publish Retrieval Profile",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{knowledge_base_url}}/api/v1/retrieval-profiles/{{retrieval_profile_id}}/publish"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 201, 202]));",
+                  "const ct = pm.response.headers.get('Content-Type') || '';",
+                  "if (ct.includes('application/json') && pm.response.code < 400) {",
+                  "  const j = pm.response.json();",
+                  "  if (Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Retrieval Profiles",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{knowledge_base_url}}/api/v1/knowledge-sets/{{set_id}}/retrieval-profiles"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 201, 202]));",
+                  "const ct = pm.response.headers.get('Content-Type') || '';",
+                  "if (ct.includes('application/json') && pm.response.code < 400) {",
+                  "  const j = pm.response.json();",
+                  "  if (Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "04 Runtime & Build Engineering — API v2",
+      "item": [
+        {
+          "name": "KB Index States",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{knowledge_base_url}}/api/v2/knowledge-bases/{{kb_id}}/indexes"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 201, 202]));",
+                  "const ct = pm.response.headers.get('Content-Type') || '';",
+                  "if (ct.includes('application/json') && pm.response.code < 400) {",
+                  "  const j = pm.response.json();",
+                  "  if (Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "KB Build Profile",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{knowledge_base_url}}/api/v2/knowledge-bases/{{kb_id}}/build-profile"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 201, 202]));",
+                  "const ct = pm.response.headers.get('Content-Type') || '';",
+                  "if (ct.includes('application/json') && pm.response.code < 400) {",
+                  "  const j = pm.response.json();",
+                  "  if (Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Trigger Question Build",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{knowledge_base_url}}/api/v2/knowledge-bases/{{kb_id}}/builds",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"index_types\": [\n    \"question\"\n  ],\n  \"force\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Expected', () => pm.expect(pm.response.code).to.be.oneOf([200,400,409]));",
+                  "if (pm.response.code===200) { const j=pm.response.json(); const jobs=(j.data&&j.data.jobs)||[]; if(jobs[0]) { pm.collectionVariables.set('build_job_id', jobs[0].id); try{pm.environment.set('build_job_id',jobs[0].id)}catch(e){} } }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Build Jobs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{knowledge_base_url}}/api/v2/builds?knowledge_base_id={{kb_id}}&page=1&page_size=20"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 400]));",
+                  "const ct = pm.response.headers.get('Content-Type') || '';",
+                  "if (ct.includes('application/json') && pm.response.code < 400) {",
+                  "  const j = pm.response.json();",
+                  "  if (Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Build Job",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{knowledge_base_url}}/api/v2/builds/{{build_job_id}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 400, 404]));",
+                  "const ct = pm.response.headers.get('Content-Type') || '';",
+                  "if (ct.includes('application/json') && pm.response.code < 400) {",
+                  "  const j = pm.response.json();",
+                  "  if (Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Runtime Health — super admin",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{knowledge_base_url}}/api/v2/runtime/health"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 403]));",
+                  "const ct = pm.response.headers.get('Content-Type') || '';",
+                  "if (ct.includes('application/json') && pm.response.code < 400) {",
+                  "  const j = pm.response.json();",
+                  "  if (Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Runtime Capabilities — super admin",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{knowledge_base_url}}/api/v2/runtime/capabilities"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 403]));",
+                  "const ct = pm.response.headers.get('Content-Type') || '';",
+                  "if (ct.includes('application/json') && pm.response.code < 400) {",
+                  "  const j = pm.response.json();",
+                  "  if (Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Probe Runtime Capabilities — super admin",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{knowledge_base_url}}/api/v2/runtime/capabilities/probe",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 403]));",
+                  "const ct = pm.response.headers.get('Content-Type') || '';",
+                  "if (ct.includes('application/json') && pm.response.code < 400) {",
+                  "  const j = pm.response.json();",
+                  "  if (Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "KB Runtime Diagnostics — super admin",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{knowledge_base_url}}/api/v2/knowledge-bases/{{kb_id}}/runtime"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 403]));",
+                  "const ct = pm.response.headers.get('Content-Type') || '';",
+                  "if (ct.includes('application/json') && pm.response.code < 400) {",
+                  "  const j = pm.response.json();",
+                  "  if (Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "KB Runtime Reconcile — super admin",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{knowledge_base_url}}/api/v2/knowledge-bases/{{kb_id}}/runtime/reconcile",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 403]));",
+                  "const ct = pm.response.headers.get('Content-Type') || '';",
+                  "if (ct.includes('application/json') && pm.response.code < 400) {",
+                  "  const j = pm.response.json();",
+                  "  if (Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Worker Heartbeats — super admin",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{knowledge_base_url}}/api/v2/runtime/workers"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 403]));",
+                  "const ct = pm.response.headers.get('Content-Type') || '';",
+                  "if (ct.includes('application/json') && pm.response.code < 400) {",
+                  "  const j = pm.response.json();",
+                  "  if (Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "05 Knowledge Intelligence & Artifacts — v2.3",
+      "item": [
+        {
+          "name": "Create Knowledge Model",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{knowledge_base_url}}/api/v2/knowledge-models",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Postman领域模型\",\n  \"description\": \"用于 Query Intelligence\",\n  \"entities\": [\n    {\n      \"name\": \"Employee\"\n    },\n    {\n      \"name\": \"ExpensePolicy\"\n    }\n  ],\n  \"relations\": [\n    {\n      \"from\": \"Employee\",\n      \"to\": \"ExpensePolicy\",\n      \"type\": \"subject_to\"\n    }\n  ],\n  \"terms\": [\n    {\n      \"canonical\": \"报销\",\n      \"aliases\": [\n        \"费用报销\",\n        \"expense reimbursement\"\n      ]\n    },\n    {\n      \"canonical\": \"差旅\",\n      \"aliases\": [\n        \"出差\",\n        \"business travel\"\n      ]\n    }\n  ],\n  \"extraction_policy\": {\n    \"language\": \"zh-CN\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP success', () => pm.expect(pm.response.code).to.be.oneOf([200,201]));",
+                  "const j=pm.response.json();",
+                  "if(j.data&&j.data.id){pm.collectionVariables.set('knowledge_model_id',j.data.id);try{pm.environment.set('knowledge_model_id',j.data.id)}catch(e){}}",
+                  "if(j.data&&j.data.active_revision_id){pm.collectionVariables.set('knowledge_model_revision_id',j.data.active_revision_id);try{pm.environment.set('knowledge_model_revision_id',j.data.active_revision_id)}catch(e){}}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Knowledge Model Revisions",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{knowledge_base_url}}/api/v2/knowledge-models/{{knowledge_model_id}}/revisions"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 201, 202]));",
+                  "const ct = pm.response.headers.get('Content-Type') || '';",
+                  "if (ct.includes('application/json') && pm.response.code < 400) {",
+                  "  const j = pm.response.json();",
+                  "  if (Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Query Intelligence Analyze",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{knowledge_base_url}}/api/v2/query-intelligence/analyze",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"{{query}}\",\n  \"knowledge_model_id\": \"{{knowledge_model_id}}\",\n  \"access_scope\": \"full\",\n  \"profile_policy\": {\n    \"allow_graph\": true,\n    \"allow_summary\": true,\n    \"allow_outline_artifact\": true,\n    \"allow_table_artifact\": true\n  },\n  \"kb_access_scopes\": {\n    \"{{kb_id}}\": \"full\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 201, 202]));",
+                  "const ct = pm.response.headers.get('Content-Type') || '';",
+                  "if (ct.includes('application/json') && pm.response.code < 400) {",
+                  "  const j = pm.response.json();",
+                  "  if (Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Enqueue Outline Artifact Build",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{knowledge_base_url}}/api/v2/knowledge-bases/{{kb_id}}/artifacts/builds",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"artifact_type\": \"outline\",\n  \"source_file_id\": \"{{source_file_id}}\",\n  \"file_version_id\": \"{{file_version_id}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Expected', () => pm.expect(pm.response.code).to.be.oneOf([200,400,409]));",
+                  "if(pm.response.code===200){const j=pm.response.json(); if(j.data&&j.data.artifact_id){pm.collectionVariables.set('artifact_id',j.data.artifact_id);try{pm.environment.set('artifact_id',j.data.artifact_id)}catch(e){}} if(j.data&&j.data.build_job_id){pm.collectionVariables.set('artifact_build_job_id',j.data.build_job_id);try{pm.environment.set('artifact_build_job_id',j.data.build_job_id)}catch(e){}}}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Artifact Build Job",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{knowledge_base_url}}/api/v2/builds/{{artifact_build_job_id}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 400, 404]));",
+                  "const ct = pm.response.headers.get('Content-Type') || '';",
+                  "if (ct.includes('application/json') && pm.response.code < 400) {",
+                  "  const j = pm.response.json();",
+                  "  if (Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Artifact",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{knowledge_base_url}}/api/v2/artifacts/{{artifact_id}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 400, 403, 404]));",
+                  "const ct = pm.response.headers.get('Content-Type') || '';",
+                  "if (ct.includes('application/json') && pm.response.code < 400) {",
+                  "  const j = pm.response.json();",
+                  "  if (Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Artifact Content",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{knowledge_base_url}}/api/v2/artifacts/{{artifact_id}}/content"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 400, 403, 404]));",
+                  "const ct = pm.response.headers.get('Content-Type') || '';",
+                  "if (ct.includes('application/json') && pm.response.code < 400) {",
+                  "  const j = pm.response.json();",
+                  "  if (Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "KB Quality",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{knowledge_base_url}}/api/v2/knowledge-bases/{{kb_id}}/quality"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 201, 202]));",
+                  "const ct = pm.response.headers.get('Content-Type') || '';",
+                  "if (ct.includes('application/json') && pm.response.code < 400) {",
+                  "  const j = pm.response.json();",
+                  "  if (Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "KB Quality History",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{knowledge_base_url}}/api/v2/knowledge-bases/{{kb_id}}/quality/history"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 201, 202]));",
+                  "const ct = pm.response.headers.get('Content-Type') || '';",
+                  "if (ct.includes('application/json') && pm.response.code < 400) {",
+                  "  const j = pm.response.json();",
+                  "  if (Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "06 Knowledge Application & Product Release — v2.4",
+      "item": [
+        {
+          "name": "Create Knowledge Application",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{knowledge_base_url}}/api/v2/applications",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Postman知识应用\",\n  \"description\": \"v2.4 product release validation\",\n  \"answer_model\": null,\n  \"knowledge_set_ids\": [\n    \"{{set_id}}\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 201, 202]));",
+                  "const j = pm.response.json();",
+                  "if (pm.response.code < 400 && Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "const value = j.data && j.data.id;",
+                  "if (value) { pm.collectionVariables.set('application_id', value); try { pm.environment.set('application_id', value); } catch(e) {} }",
+                  "pm.test('application_id captured', () => pm.expect(value).to.exist);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Application Readiness",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{knowledge_base_url}}/api/v2/applications/{{application_id}}/readiness"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 201, 202]));",
+                  "const ct = pm.response.headers.get('Content-Type') || '';",
+                  "if (ct.includes('application/json') && pm.response.code < 400) {",
+                  "  const j = pm.response.json();",
+                  "  if (Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Application Retrieval Policy Revision",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{knowledge_base_url}}/api/v2/applications/{{application_id}}/retrieval-policy-revisions",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query_intelligence_policy\": {\n    \"enabled\": true\n  },\n  \"provider_policy\": {\n    \"semantic\": true,\n    \"graph\": true,\n    \"artifact\": true\n  },\n  \"provider_weights\": {\n    \"semantic\": 1.0,\n    \"graph\": 0.9,\n    \"outline\": 0.8,\n    \"table\": 0.9\n  },\n  \"candidate_budget\": {\n    \"total\": 64\n  },\n  \"fanout_budget\": {\n    \"max_kbs\": 8,\n    \"max_providers_per_kb\": 4\n  },\n  \"latency_budget\": {\n    \"total_ms\": 5000\n  },\n  \"fallback_policy\": {\n    \"mode\": \"semantic\"\n  },\n  \"artifact_policy\": {\n    \"outline\": true,\n    \"table\": true\n  },\n  \"fusion_policy\": {\n    \"strategy\": \"weighted_rrf\",\n    \"k\": 60\n  },\n  \"notes\": \"Postman v2.4 validation\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 201, 202]));",
+                  "const j = pm.response.json();",
+                  "if (pm.response.code < 400 && Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "const value = j.data && j.data.id;",
+                  "if (value) { pm.collectionVariables.set('app_policy_revision_id', value); try { pm.environment.set('app_policy_revision_id', value); } catch(e) {} }",
+                  "pm.test('app_policy_revision_id captured', () => pm.expect(value).to.exist);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Publish Application Retrieval Policy Revision",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{knowledge_base_url}}/api/v2/applications/{{application_id}}/retrieval-policy-revisions/{{app_policy_revision_id}}/publish"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 201, 202]));",
+                  "const ct = pm.response.headers.get('Content-Type') || '';",
+                  "if (ct.includes('application/json') && pm.response.code < 400) {",
+                  "  const j = pm.response.json();",
+                  "  if (Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Publish Application",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{knowledge_base_url}}/api/v2/applications/{{application_id}}/publish",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "v2.4 Release 开启时会 create release → validate quality gate → promote stable。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 409]));",
+                  "const ct = pm.response.headers.get('Content-Type') || '';",
+                  "if (ct.includes('application/json') && pm.response.code < 400) {",
+                  "  const j = pm.response.json();",
+                  "  if (Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Releases",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{knowledge_base_url}}/api/v2/applications/{{application_id}}/releases?page=1&page_size=20"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Expected', () => pm.expect(pm.response.code).to.be.oneOf([200,400]));",
+                  "if(pm.response.code===200){const j=pm.response.json();const xs=(j.data&&j.data.items)||[];if(xs[0]){pm.collectionVariables.set('release_id',xs[0].id);try{pm.environment.set('release_id',xs[0].id)}catch(e){}}}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Explicit Release",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{knowledge_base_url}}/api/v2/applications/{{application_id}}/releases",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"retrieval_policy_revision_id\": \"{{app_policy_revision_id}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));",
+                  "const j = pm.response.json();",
+                  "if (pm.response.code < 400 && Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "const value = j.data && j.data.id;",
+                  "if (value) { pm.collectionVariables.set('release_id', value); try { pm.environment.set('release_id', value); } catch(e) {} }",
+                  "pm.test('release_id captured', () => pm.expect(value).to.exist);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Validate Explicit Release",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{knowledge_base_url}}/api/v2/applications/{{application_id}}/releases/{{release_id}}/validate",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 409]));",
+                  "const ct = pm.response.headers.get('Content-Type') || '';",
+                  "if (ct.includes('application/json') && pm.response.code < 400) {",
+                  "  const j = pm.response.json();",
+                  "  if (Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Release Channels",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{knowledge_base_url}}/api/v2/applications/{{application_id}}/channels"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 400]));",
+                  "const ct = pm.response.headers.get('Content-Type') || '';",
+                  "if (ct.includes('application/json') && pm.response.code < 400) {",
+                  "  const j = pm.response.json();",
+                  "  if (Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Promote Release to Preview",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{knowledge_base_url}}/api/v2/applications/{{application_id}}/channels/preview/promote",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"release_id\": \"{{release_id}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 409]));",
+                  "const ct = pm.response.headers.get('Content-Type') || '';",
+                  "if (ct.includes('application/json') && pm.response.code < 400) {",
+                  "  const j = pm.response.json();",
+                  "  if (Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Promote Release to Stable",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{knowledge_base_url}}/api/v2/applications/{{application_id}}/channels/stable/promote",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"release_id\": \"{{release_id}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 409]));",
+                  "const ct = pm.response.headers.get('Content-Type') || '';",
+                  "if (ct.includes('application/json') && pm.response.code < 400) {",
+                  "  const j = pm.response.json();",
+                  "  if (Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Rollback Stable Channel",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{knowledge_base_url}}/api/v2/applications/{{application_id}}/channels/stable/rollback",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 409]));",
+                  "const ct = pm.response.headers.get('Content-Type') || '';",
+                  "if (ct.includes('application/json') && pm.response.code < 400) {",
+                  "  const j = pm.response.json();",
+                  "  if (Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Application Quality",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{knowledge_base_url}}/api/v2/applications/{{application_id}}/quality"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 201, 202]));",
+                  "const ct = pm.response.headers.get('Content-Type') || '';",
+                  "if (ct.includes('application/json') && pm.response.code < 400) {",
+                  "  const j = pm.response.json();",
+                  "  if (Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "07 Retrieval, Evidence & Federation",
+      "item": [
+        {
+          "name": "Application Retrieval",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{knowledge_base_url}}/api/v2/applications/{{application_id}}/retrieval",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"{{query}}\",\n  \"top_k\": 64,\n  \"similarity_threshold\": 0.2\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Expected', () => pm.expect(pm.response.code).to.be.oneOf([200,403,409,503]));",
+                  "if(pm.response.code===200){const j=pm.response.json();const ev=(j.data&&j.data.evidence)||[];if(ev[0]&&ev[0].evidence_id){pm.collectionVariables.set('evidence_id',ev[0].evidence_id);try{pm.environment.set('evidence_id',ev[0].evidence_id)}catch(e){}}}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Retrieval Playground by Set",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{knowledge_base_url}}/api/v2/retrieval/playground",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"{{query}}\",\n  \"knowledge_set_id\": \"{{set_id}}\",\n  \"include_trace\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 403, 503]));",
+                  "const ct = pm.response.headers.get('Content-Type') || '';",
+                  "if (ct.includes('application/json') && pm.response.code < 400) {",
+                  "  const j = pm.response.json();",
+                  "  if (Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Resolve Evidence",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{knowledge_base_url}}/api/v2/evidence/{{evidence_id}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 403, 404]));",
+                  "const ct = pm.response.headers.get('Content-Type') || '';",
+                  "if (ct.includes('application/json') && pm.response.code < 400) {",
+                  "  const j = pm.response.json();",
+                  "  if (Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "08 Agent Tools & MCP Delivery",
+      "item": [
+        {
+          "name": "Agent knowledge.search — stable",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{knowledge_base_url}}/api/v2/agent/tools/knowledge.search",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"{{query}}\",\n  \"application_id\": \"{{application_id}}\",\n  \"top_k\": 64,\n  \"channel\": \"stable\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 403, 409, 503]));",
+                  "const ct = pm.response.headers.get('Content-Type') || '';",
+                  "if (ct.includes('application/json') && pm.response.code < 400) {",
+                  "  const j = pm.response.json();",
+                  "  if (Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Agent knowledge.get_document",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{knowledge_base_url}}/api/v2/agent/tools/knowledge.get_document",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source_file_id\": \"{{source_file_id}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 403, 404]));",
+                  "const ct = pm.response.headers.get('Content-Type') || '';",
+                  "if (ct.includes('application/json') && pm.response.code < 400) {",
+                  "  const j = pm.response.json();",
+                  "  if (Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Agent knowledge.get_evidence",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{knowledge_base_url}}/api/v2/agent/tools/knowledge.get_evidence",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"evidence_id\": \"{{evidence_id}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 403, 404]));",
+                  "const ct = pm.response.headers.get('Content-Type') || '';",
+                  "if (ct.includes('application/json') && pm.response.code < 400) {",
+                  "  const j = pm.response.json();",
+                  "  if (Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Agent knowledge.get_structure",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{knowledge_base_url}}/api/v2/agent/tools/knowledge.get_structure",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"knowledge_base_id\": \"{{kb_id}}\",\n  \"query\": \"{{query}}\",\n  \"source_file_id\": \"{{source_file_id}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 400, 403, 404]));",
+                  "const ct = pm.response.headers.get('Content-Type') || '';",
+                  "if (ct.includes('application/json') && pm.response.code < 400) {",
+                  "  const j = pm.response.json();",
+                  "  if (Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Agent knowledge.get_table",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{knowledge_base_url}}/api/v2/agent/tools/knowledge.get_table",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"knowledge_base_id\": \"{{kb_id}}\",\n  \"query\": \"{{query}}\",\n  \"source_file_id\": \"{{source_file_id}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 400, 403, 404]));",
+                  "const ct = pm.response.headers.get('Content-Type') || '';",
+                  "if (ct.includes('application/json') && pm.response.code < 400) {",
+                  "  const j = pm.response.json();",
+                  "  if (Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "MCP tools/list",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{knowledge_base_url}}/api/v2/mcp/tools/list",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 201, 202]));",
+                  "const ct = pm.response.headers.get('Content-Type') || '';",
+                  "if (ct.includes('application/json') && pm.response.code < 400) {",
+                  "  const j = pm.response.json();",
+                  "  if (Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "MCP knowledge.search",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{knowledge_base_url}}/api/v2/mcp/tools/call",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"knowledge.search\",\n  \"arguments\": {\n    \"query\": \"{{query}}\",\n    \"application_id\": \"{{application_id}}\",\n    \"channel\": \"stable\",\n    \"top_k\": 64\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 403, 409, 503]));",
+                  "const ct = pm.response.headers.get('Content-Type') || '';",
+                  "if (ct.includes('application/json') && pm.response.code < 400) {",
+                  "  const j = pm.response.json();",
+                  "  if (Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "MCP knowledge.get_evidence",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{knowledge_base_url}}/api/v2/mcp/tools/call",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"knowledge.get_evidence\",\n  \"arguments\": {\n    \"evidence_id\": \"{{evidence_id}}\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 403, 404]));",
+                  "const ct = pm.response.headers.get('Content-Type') || '';",
+                  "if (ct.includes('application/json') && pm.response.code < 400) {",
+                  "  const j = pm.response.json();",
+                  "  if (Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

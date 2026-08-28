@@ -50,7 +50,7 @@ v1.2 强制闸：`status=disabled` 时用户 Retrieval、Chat 发消息与新建
 
 KnowledgeApplication 是面向用户的检索/Chat 产品面，绑定多个 KnowledgeSet；Answer Model Authority 在 Application 层。
 
-v2.2 publish 前必须 readiness gate；v2.3 publish 写入 `runtime_snapshot`（审计投影）；v2.4 启用 `KNOWLEDGE_V24_RELEASE_ENABLED` 时产品路径为 `application_id + channel → Release Manifest`，禁止生产读 `runtime_snapshot`。
+v2.2 publish 前必须 readiness gate；v2.3 publish 写入 `runtime_snapshot`（审计投影）；v2.4+ 启用 `KNOWLEDGE_V24_RELEASE_ENABLED` 时 publish/validate 返回 202 + `validation_job_id`，产品路径为 `application_id + channel → Release Manifest`，禁止生产读 `runtime_snapshot`。
 
 表与 ACL：[[nodeskclaw-knowledge/app/models/knowledge_application.py]]、[[nodeskclaw-knowledge/app/models/knowledge_application_acl.py]]。Release/Channel：[[knowledge-objects#Application Release]]。Readiness：[[nodeskclaw-knowledge/app/services/application_readiness_service.py#check]]；未就绪 publish 返回 409。Publish/disable：[[nodeskclaw-knowledge/app/services/knowledge_application_service.py#publish_application]]、[[nodeskclaw-knowledge/app/services/knowledge_application_service.py#disable_application]]；v2 HTTP：[[nodeskclaw-knowledge/app/api/v2/applications.py]]。USE 判定：[[nodeskclaw-knowledge/app/services/permission_service.py#has_application_permission]]。检索：[[nodeskclaw-knowledge/app/services/retrieval_service.py#retrieve_for_application]]。
 
@@ -74,7 +74,7 @@ Index State 跟踪每 KB×index_type 的 build/retrieval 生命周期与 validat
 
 ## Build Job
 
-KnowledgeBuildJob 与 IngestionJob 分表；Build 不修改 `source_file.active_version_id`。v2.4 起 `process_build_job` 先按 `target_kind` 分发 index / artifact / release_validation。
+KnowledgeBuildJob 与 IngestionJob 分表；Build 不修改 `source_file.active_version_id`。v2.4 起 `process_build_job` 先按 `target_kind` 分发 index / artifact / release_validation；v2.4.1 `release_validation` 允许 `knowledge_base_id` 可空。
 
 v2.2 每次 Build 走 Compile→Reconcile→Execute→Validate；v2.3 增加 `target_kind` / `target_key` / `input_manifest_hash` 与增量 BuildDelta（`KNOWLEDGE_V23_INCREMENTAL_BUILD_ENABLED`）；v2.4 增加 `knowledge_model_revision_id` / `release_candidate_id` pin 与 incremental no-op / removal-only 语义。
 
@@ -94,9 +94,9 @@ KnowledgeArtifact 是稳定 identity（org+kb+artifact_type+scope+source_file_id
 
 ## Application Release
 
-ApplicationRelease 是不可变产品快照；Channel（preview/stable）持有 `active_release_id` 读指针，写入唯一经 ReleasePromotionService。
+ApplicationRelease 是不可变产品快照；Channel（preview/stable）持有 `active_release_id` 读指针，写入唯一经 ReleasePromotionService；ChannelEvent 记录 promote/rollback 历史。
 
-Release 状态：draft → validating → validated → promoted/superseded/retired/failed。create 拼装 pin 住的 manifest（sets/kbs/binding/index/artifact/model/policy revision）；validate 后 manifest 不可变。模型：[[nodeskclaw-knowledge/app/models/knowledge_application_release.py#KnowledgeApplicationRelease]]、[[nodeskclaw-knowledge/app/models/knowledge_application_release.py#KnowledgeReleaseChannel]]。Promotion：[[nodeskclaw-knowledge/app/services/release_promotion_service.py]]。Channel resolve：[[nodeskclaw-knowledge/app/services/release_runtime_service.py#resolve_application_release]]。API：[[nodeskclaw-knowledge/app/api/v2/applications.py]]。
+Release 生命周期：draft → validating → validated → failed/retired。Channel 占用只由 `active_release_id` 表达；`promoted`/`superseded` 枚举仅兼容历史行，resolve/promote 门禁只认 `validated`。create 经 [[nodeskclaw-knowledge/app/services/release_manifest_service.py#build]]；validate HTTP 入队 worker；resolve 输出 [[nodeskclaw-knowledge/app/services/release_runtime_service.py#ReleaseExecutionContext]]。模型：[[nodeskclaw-knowledge/app/models/knowledge_application_release.py#KnowledgeApplicationRelease]]、[[nodeskclaw-knowledge/app/models/knowledge_application_release.py#KnowledgeReleaseChannel]]、[[nodeskclaw-knowledge/app/models/knowledge_application_release.py#KnowledgeReleaseChannelEvent]]。Promotion：[[nodeskclaw-knowledge/app/services/release_promotion_service.py]]。API：[[nodeskclaw-knowledge/app/api/v2/applications.py]]。
 
 ## Application Retrieval Policy
 
@@ -132,7 +132,7 @@ v2.1 扩展 `org_id` / `issued_member_id` / `evidence_type` / `content` / `sourc
 
 评测集绑定 KnowledgeSet：Case 声明 query 与 expected_source_file_ids；Run 异步执行并对齐某 Retrieval Profile。
 
-四表：`knowledge_evaluation_sets` / `cases` / `runs` / `results`：[[nodeskclaw-knowledge/app/models/evaluation.py]]。Run 状态 pending/running/completed/failed，并带 attempt/lease 字段与 `principal_snapshot`（异步执行时还原创建者 ACL 身份）供 Worker 租赁。v2.1 Case/Run `details` 与 Run `metrics` 记录 `effective_indexes` / `query_type` / `fallback_used`。指标与执行见 [[knowledge#Retrieval Evaluation]]；Worker：[[nodeskclaw-knowledge/app/workers/maintenance_worker.py]]。
+四表：`knowledge_evaluation_sets` / `cases` / `runs` / `results`：[[nodeskclaw-knowledge/app/models/evaluation.py]]。Run 状态 pending/running/completed/failed，并带 attempt/lease 字段与 `principal_snapshot`（异步执行时还原创建者 ACL 身份）供 Worker 租赁；可选 `release_id`/`channel` 列供 Release 路径评测。v2.1 Case/Run `details` 与 Run `metrics` 记录 `effective_indexes` / `query_type` / `fallback_used`；v2.4.1 Release 路径另写 `manifest_hash`/`gate_result`/`overall_pass`。指标与执行见 [[knowledge#Retrieval Evaluation]]；Worker：[[nodeskclaw-knowledge/app/workers/maintenance_worker.py]]。
 
 ## Knowledge Principal
 

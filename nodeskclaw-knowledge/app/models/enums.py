@@ -82,6 +82,12 @@ class ApplicationStatus(str, Enum):
 
 
 class ApplicationReleaseStatus(str, Enum):
+    """Release record lifecycle. Channel resolve/promote gates require validated only.
+
+    promoted and superseded are retained for DB history compatibility; promotion
+    code must not set them — channel occupancy is tracked via active_release_id.
+    """
+
     draft = "draft"
     validating = "validating"
     validated = "validated"

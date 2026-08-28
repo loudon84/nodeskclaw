@@ -177,6 +177,66 @@ async def publish_revision(
     return revision
 
 
+def compile_execution_policy(revision: ApplicationRetrievalPolicyRevision | None) -> dict:
+    if revision is None:
+        raise BadRequestError(
+            message="缺少 Application Retrieval Policy Revision",
+            message_key="errors.knowledge.retrieval_policy_revision_required",
+        )
+    defaults = DEFAULT_POLICY_PAYLOAD
+    query_intelligence_policy = revision.query_intelligence_policy or defaults["query_intelligence_policy"]
+    provider_policy = revision.provider_policy or defaults["provider_policy"]
+    provider_weights = revision.provider_weights or defaults["provider_weights"]
+    candidate_budget_cfg = revision.candidate_budget or defaults["candidate_budget"]
+    fanout_budget = revision.fanout_budget or defaults["fanout_budget"]
+    latency_budget = revision.latency_budget or defaults["latency_budget"]
+    fallback_policy = revision.fallback_policy or defaults["fallback_policy"]
+    artifact_policy = revision.artifact_policy or defaults["artifact_policy"]
+    fusion_policy = revision.fusion_policy or defaults["fusion_policy"]
+
+    candidate_budget = (
+        int(candidate_budget_cfg.get("max_candidates", 1024))
+        if isinstance(candidate_budget_cfg, dict)
+        else 1024
+    )
+    artifact_budget = (
+        int(artifact_policy.get("max_artifacts", 64))
+        if isinstance(artifact_policy, dict)
+        else 64
+    )
+    allow_outline_artifact = (
+        bool(artifact_policy.get("allow_outline", True))
+        if isinstance(artifact_policy, dict)
+        else True
+    )
+    allow_table_artifact = (
+        bool(artifact_policy.get("allow_table", True))
+        if isinstance(artifact_policy, dict)
+        else True
+    )
+    allow_question_enrichment = (
+        bool(provider_policy.get("allow_question", True))
+        if isinstance(provider_policy, dict)
+        else True
+    )
+
+    return {
+        "query_intelligence_policy": query_intelligence_policy,
+        "provider_policy": provider_policy,
+        "provider_weights": provider_weights,
+        "fanout_budget": fanout_budget,
+        "latency_budget": latency_budget,
+        "fallback_policy": fallback_policy,
+        "artifact_policy": artifact_policy,
+        "fusion_policy": fusion_policy,
+        "candidate_budget": candidate_budget,
+        "artifact_budget": artifact_budget,
+        "allow_outline_artifact": allow_outline_artifact,
+        "allow_table_artifact": allow_table_artifact,
+        "allow_question_enrichment": allow_question_enrichment,
+    }
+
+
 def revision_to_dict(revision: ApplicationRetrievalPolicyRevision) -> dict:
     return {
         "id": revision.id,
