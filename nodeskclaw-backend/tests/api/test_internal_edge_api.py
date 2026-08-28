@@ -63,3 +63,180 @@ async def test_post_edge_job_events_rejects_stale_generation():
     with patch("app.api.internal_edge._authenticate_edge", AsyncMock(return_value=node)):
         with pytest.raises(ForbiddenError, match="stale_delivery_generation"):
             await post_edge_job_events("job-1", body, db, x_edge_token="tok", x_delivery_generation="2")
+
+
+@pytest.mark.asyncio
+async def test_renew_edge_job_lease_success_and_fencing():
+    from app.api.internal_edge import EdgeLeaseRenewBody, renew_edge_job_lease
+
+    db = AsyncMock()
+    node = EdgeNode()
+    node.id = "node-1"
+    node.org_id = "org-1"
+    node.status = EdgeNodeStatus.ONLINE.value
+
+    job = EdgeJob()
+    job.id = "job-1"
+    job.edge_node_id = "node-1"
+    job.org_id = "org-1"
+    job.delivery_generation = 2
+    job.status = EdgeJobStatus.CLAIMED.value
+
+    mock_res = MagicMock()
+    mock_res.scalar_one_or_none.return_value = job
+    db.execute = AsyncMock(return_value=mock_res)
+
+    # 1. Matching generation succeeds
+    with patch("app.api.internal_edge._authenticate_edge", AsyncMock(return_value=node)):
+        res = await renew_edge_job_lease("job-1", EdgeLeaseRenewBody(delivery_generation=2), db, x_edge_token="tok")
+    assert res["code"] == 0
+    assert res["data"]["delivery_generation"] == 2
+    assert res["data"]["lease_until"] is not None
+
+    # 2. Stale generation rejected
+    with patch("app.api.internal_edge._authenticate_edge", AsyncMock(return_value=node)):
+        with pytest.raises(ForbiddenError, match="stale_delivery_generation"):
+            await renew_edge_job_lease("job-1", EdgeLeaseRenewBody(delivery_generation=1), db, x_edge_token="tok")
+
+
+@pytest.mark.asyncio
+async def test_edge_job_cancel_check_and_request():
+    from app.api.internal_edge import check_edge_job_cancel, request_edge_job_cancel
+
+    db = AsyncMock()
+    node = EdgeNode()
+    node.id = "node-1"
+    node.org_id = "org-1"
+    node.status = EdgeNodeStatus.ONLINE.value
+
+    job = EdgeJob()
+    job.id = "job-1"
+    job.edge_node_id = "node-1"
+    job.org_id = "org-1"
+    job.status = EdgeJobStatus.RUNNING.value
+    job.cancel_requested_at = None
+
+    mock_res = MagicMock()
+    mock_res.scalar_one_or_none.return_value = job
+    db.execute = AsyncMock(return_value=mock_res)
+
+    with patch("app.api.internal_edge._authenticate_edge", AsyncMock(return_value=node)):
+        # Initially not cancelled
+        res1 = await check_edge_job_cancel("job-1", db, x_edge_token="tok")
+        assert res1["data"]["cancel_requested"] is False
+
+        # Request cancel
+        res2 = await request_edge_job_cancel("job-1", db, x_edge_token="tok")
+        assert res2["data"]["cancel_requested"] is True
+        assert job.cancel_requested_at is not None
+
+        # Check again
+        res3 = await check_edge_job_cancel("job-1", db, x_edge_token="tok")
+        assert res3["data"]["cancel_requested"] is True
+
+
+@pytest.mark.asyncio
+async def test_upload_edge_job_artifact():
+    import base64
+    import hashlib
+    from app.api.internal_edge import EdgeArtifactUploadBody, upload_edge_job_artifact
+    from app.core.exceptions import BadRequestError
+
+    db = AsyncMock()
+    node = EdgeNode()
+    node.id = "node-1"
+    node.org_id = "org-1"
+    node.status = EdgeNodeStatus.ONLINE.value
+
+    job = EdgeJob()
+    job.id = "job-1"
+    job.run_id = "run-1"
+    job.edge_node_id = "node-1"
+    job.org_id = "org-1"
+    job.delivery_generation = 2
+    job.status = EdgeJobStatus.RUNNING.value
+
+    mock_res = MagicMock()
+    mock_res.scalar_one_or_none.return_value = job
+    db.execute = AsyncMock(return_value=mock_res)
+
+    content = b'{"output": 42}'
+    content_b64 = base64.b64encode(content).decode()
+    sha = hashlib.sha256(content).hexdigest()
+
+    # 1. Valid upload
+    body = EdgeArtifactUploadBody(
+        artifact_id="art-1",
+        name="result.json",
+        content_type="application/json",
+        content_base64=content_b64,
+        checksum_sha256=sha,
+        delivery_generation=2,
+    )
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.raise_for_status = MagicMock()
+    mock_client = AsyncMock()
+    mock_client.__aenter__.return_value = mock_client
+    mock_client.__aexit__.return_value = None
+    mock_client.post = AsyncMock(return_value=mock_resp)
+
+    with (
+        patch("app.api.internal_edge._authenticate_edge", AsyncMock(return_value=node)),
+        patch("app.api.internal_edge.httpx.AsyncClient", return_value=mock_client),
+    ):
+        res = await upload_edge_job_artifact("job-1", body, db, x_edge_token="tok")
+    assert res["code"] == 0
+    assert res["data"]["artifact_id"] == "art-1"
+    assert res["data"]["checksum_sha256"] == sha
+
+    # 2. Checksum mismatch fails
+    bad_body = EdgeArtifactUploadBody(
+        artifact_id="art-1",
+        name="result.json",
+        content_type="application/json",
+        content_base64=content_b64,
+        checksum_sha256="wrong-sha256",
+        delivery_generation=2,
+    )
+    with patch("app.api.internal_edge._authenticate_edge", AsyncMock(return_value=node)):
+        with pytest.raises(BadRequestError, match="checksum_mismatch"):
+            await upload_edge_job_artifact("job-1", bad_body, db, x_edge_token="tok")
+
+
+@pytest.mark.asyncio
+async def test_get_desired_installations():
+    from app.api.internal_edge import get_desired_installations
+    from app.models.hermes_skill.skill_installation import HermesSkillInstallation
+
+    db = AsyncMock()
+    node = EdgeNode()
+    node.id = "node-1"
+    node.org_id = "org-1"
+    node.status = EdgeNodeStatus.ONLINE.value
+
+    inst = HermesSkillInstallation()
+    inst.id = "inst-1"
+    inst.org_id = "org-1"
+    inst.skill_id = "calculator"
+    inst.target_kind = "edge"
+    inst.edge_node_id = "node-1"
+    inst.status = "installed"
+    inst.desired_generation = 2
+    inst.actual_generation = 1
+    inst.install_metadata = {"pkg": "calc"}
+    inst.routing_metadata = {}
+
+    mock_res = MagicMock()
+    mock_res.scalars.return_value.all.return_value = [inst]
+    db.execute = AsyncMock(return_value=mock_res)
+
+    with patch("app.api.internal_edge._authenticate_edge", AsyncMock(return_value=node)):
+        res = await get_desired_installations(db, x_edge_token="tok")
+    assert res["code"] == 0
+    assert len(res["data"]["items"]) == 1
+    item = res["data"]["items"][0]
+    assert item["id"] == "inst-1"
+    assert item["skill_id"] == "calculator"
+    assert item["desired_generation"] == 2
+    assert item["actual_generation"] == 1

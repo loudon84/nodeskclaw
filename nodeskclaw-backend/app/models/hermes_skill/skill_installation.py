@@ -38,6 +38,8 @@ class HermesSkillInstallation(BaseModel):
     edge_node_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("edge_nodes.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    desired_generation: Mapped[int] = mapped_column(nullable=False, default=1)
+    actual_generation: Mapped[int] = mapped_column(nullable=False, default=0)
     actual_status: Mapped[str | None] = mapped_column(String(64), nullable=True)
     actual_reported_at: Mapped[datetime | None] = mapped_column(nullable=True)
 

@@ -29,18 +29,36 @@ class EdgeNodeService:
         arguments: dict | None = None,
         snapshot: dict | None = None,
         idempotency_key: str | None = None,
+        attempt_id: str | None = None,
+        step_id: str | None = None,
+        run_generation: int = 1,
+        request_trace_id: str | None = None,
     ) -> EdgeJob:
         from app.models.connector.edge_job import EdgeJob, EdgeJobStatus
-        # Idempotency check: if job for same run_id + edge_node_id + tool_name already exists, return existing
-        existing = await self.db.execute(
-            select(EdgeJob).where(
-                not_deleted(EdgeJob),
-                EdgeJob.org_id == org_id,
-                EdgeJob.edge_node_id == edge_node_id,
-                EdgeJob.run_id == run_id,
-                EdgeJob.tool_name == tool_name,
-            ).limit(1)
+        # Idempotency check by idempotency_key or (org_id + run_id + edge_node_id + step_id/tool_name)
+        if idempotency_key:
+            existing = await self.db.execute(
+                select(EdgeJob).where(
+                    not_deleted(EdgeJob),
+                    EdgeJob.org_id == org_id,
+                    EdgeJob.idempotency_key == idempotency_key,
+                ).limit(1)
+            )
+            found = existing.scalar_one_or_none()
+            if found:
+                return found
+
+        query = select(EdgeJob).where(
+            not_deleted(EdgeJob),
+            EdgeJob.org_id == org_id,
+            EdgeJob.edge_node_id == edge_node_id,
+            EdgeJob.run_id == run_id,
         )
+        if step_id:
+            query = query.where(EdgeJob.step_id == step_id)
+        else:
+            query = query.where(EdgeJob.tool_name == tool_name)
+        existing = await self.db.execute(query.limit(1))
         found = existing.scalar_one_or_none()
         if found:
             return found
@@ -51,6 +69,11 @@ class EdgeNodeService:
             org_id=org_id,
             edge_node_id=node.id,
             run_id=run_id,
+            attempt_id=attempt_id,
+            step_id=step_id,
+            run_generation=run_generation,
+            request_trace_id=request_trace_id,
+            idempotency_key=idempotency_key,
             tool_name=tool_name,
             arguments=arguments or {},
             snapshot=snapshot or {},
