@@ -23,17 +23,25 @@ def _validate_ssrf(url_str: str) -> None:
         raise RuntimeError("Invalid URL: missing host")
     low_host = host.lower()
     if (
-        low_host in ("169.254.169.254", "metadata.google.internal", "instance-data")
+        low_host in ("169.254.169.254", "metadata.google.internal", "instance-data", "localhost", "127.0.0.1")
         or low_host.endswith(".internal")
         or low_host.endswith(".local")
     ):
         raise RuntimeError("SSRF blocked: request to cloud metadata/internal host is forbidden")
     try:
         ip = ipaddress.ip_address(host)
-        if ip.is_link_local or ip.is_multicast or ip.is_unspecified or ip.is_reserved:
+        if ip.is_link_local or ip.is_multicast or ip.is_unspecified or ip.is_reserved or ip.is_loopback or ip.is_private:
             raise RuntimeError("SSRF blocked: forbidden IP range")
     except ValueError:
         pass
+
+
+class SSRFSafeTransport(httpx.AsyncHTTPTransport):
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        _validate_ssrf(str(request.url))
+        response = await super().handle_async_request(request)
+        return response
+
 
 
 def _looks_like_token(value: str) -> bool:
@@ -85,8 +93,14 @@ async def execute_connector_run(
         payload = arguments.get("body")
         params = arguments.get("params")
         headers = dict(connector_config.get("headers") or {})
-        async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0)) as client:
+        async with httpx.AsyncClient(
+            transport=SSRFSafeTransport(),
+            timeout=httpx.Timeout(60.0, connect=10.0),
+            follow_redirects=True,
+        ) as client:
             response = await client.request(method, url, json=payload, params=params, headers=headers)
+            # Re-validate final destination URL after redirects
+            _validate_ssrf(str(response.url))
             response.raise_for_status()
             data = _safe_json(response)
         yield {"event_type": "run.completed", "payload": {"summary": "REST connector completed", "content": json.dumps(data, ensure_ascii=False)}}
@@ -107,8 +121,13 @@ async def execute_connector_run(
                 "arguments": arguments.get("remote_arguments") or arguments.get("arguments") or {},
             },
         }
-        async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0)) as client:
+        async with httpx.AsyncClient(
+            transport=SSRFSafeTransport(),
+            timeout=httpx.Timeout(60.0, connect=10.0),
+            follow_redirects=True,
+        ) as client:
             response = await client.post(endpoint, json=req_body, headers=connector_config.get("headers") or {})
+            _validate_ssrf(str(response.url))
             response.raise_for_status()
             data = response.json()
         yield {"event_type": "run.completed", "payload": {"summary": "MCP connector completed", "content": json.dumps(data, ensure_ascii=False)}}
@@ -122,11 +141,20 @@ async def execute_connector_run(
             raise RuntimeError("connector DB url missing in binding config")
         if not sql or not READ_ONLY_SQL_RE.match(sql):
             raise RuntimeError("connector DB only allows read-only SELECT/WITH SQL")
-        engine = create_async_engine(db_url)
+        # Enforce read-only session & limits on engine connection
+        engine = create_async_engine(
+            db_url,
+            execution_options={"isolation_level": "AUTOCOMMIT", "readonly": True},
+        )
         try:
             async with engine.connect() as conn:
+                try:
+                    await conn.execute(text("SET TRANSACTION READ ONLY;"))
+                except Exception:
+                    pass
                 result = await conn.execute(text(sql), arguments.get("params") or {})
-                rows = [dict(row) for row in result.mappings().all()]
+                # Fetch up to 1000 rows max to protect agent memory
+                rows = [dict(row) for row in result.mappings().fetchmany(1000)]
         finally:
             await engine.dispose()
         yield {"event_type": "run.completed", "payload": {"summary": f"DB connector returned {len(rows)} rows", "content": json.dumps(rows, ensure_ascii=False)}}
