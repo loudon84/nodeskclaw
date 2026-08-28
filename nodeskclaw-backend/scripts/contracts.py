@@ -195,6 +195,9 @@ def _artifact_files(root: Path) -> list[Path]:
         "RELEASE.md",
         "events/*.schema.json",
         "mcp/*.schema.json",
+        "runs/*.schema.json",
+        "edge/*.schema.json",
+        "installations/*.schema.json",
         "fixtures/*",
         "evidence/*",
     ]
@@ -718,9 +721,15 @@ def _validate_skill_run_fixtures(root: Path) -> None:
             "result",
         ),
         "fixtures/tools-call-accepted.json": ("mcp/tools-call.response.schema.json", "result"),
+        "fixtures/edge-lease-renew.json": ("edge/lease-renew.schema.json", None),
+        "fixtures/edge-artifact-upload.json": ("edge/artifact-upload.schema.json", None),
+        "fixtures/desired-installation.json": ("installations/installation.schema.json", None),
     }
     for fixture_rel, schema_info in schema_map.items():
-        fixture = json.loads((root / fixture_rel).read_text(encoding="utf-8"))
+        fixture_path = root / fixture_rel
+        if not fixture_path.exists():
+            continue
+        fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
         schema_rel, key = schema_info
         schema = json.loads((root / schema_rel).read_text(encoding="utf-8"))
         payload = fixture if key is None else fixture[key]
@@ -769,10 +778,30 @@ def check_contracts(release: bool = False) -> None:
     if skill_run_root.exists():
         _validate_checksums(skill_run_root)
         _validate_skill_run_fixtures(skill_run_root)
+        manifest = _read_manifest(skill_run_root)
+        if release:
+            if manifest.get("backendCommit") != _git_head():
+                raise SystemExit("skill-run manifest.backendCommit does not match current HEAD in release mode")
+            tag_name = manifest.get("tagName")
+            if tag_name:
+                tag_check = subprocess.run(
+                    ["git", "tag", "-l", tag_name],
+                    cwd=BACKEND_ROOT.parent,
+                    capture_output=True,
+                    text=True,
+                )
+                if not tag_check.stdout.strip():
+                    raise SystemExit(f"skill-run contract tag '{tag_name}' not found in release mode")
         print("SKILL-RUN-CONTRACT check passed")
 
 
 def generate_skill_run_contracts() -> None:
+    from app.api.internal_edge import (
+        EdgeActualReportBody,
+        EdgeArtifactUploadBody,
+        EdgeLeaseRenewBody,
+    )
+    from app.schemas.hermes_skill.skill_installation import InstallationRead
     from app.schemas.skill_run.constants import (
         SKILL_RUN_CAPABILITIES,
         SKILL_RUN_CONTRACT_NAME,
@@ -795,6 +824,8 @@ def generate_skill_run_contracts() -> None:
     (root / "mcp").mkdir(exist_ok=True)
     (root / "events").mkdir(exist_ok=True)
     (root / "runs").mkdir(exist_ok=True)
+    (root / "edge").mkdir(exist_ok=True)
+    (root / "installations").mkdir(exist_ok=True)
     (root / "fixtures").mkdir(exist_ok=True)
 
     mcp_models = {
@@ -812,6 +843,50 @@ def generate_skill_run_contracts() -> None:
     _write_json(root / "runs" / "run.schema.json", _model_schema(RunRecord))
     _write_json(root / "runs" / "execution-snapshot.schema.json", _model_schema(ExecutionSnapshot))
     _write_json(root / "runs" / "artifact-descriptor.schema.json", _model_schema(ArtifactDescriptor))
+
+    _write_json(root / "edge" / "lease-renew.schema.json", _model_schema(EdgeLeaseRenewBody))
+    _write_json(root / "edge" / "artifact-upload.schema.json", _model_schema(EdgeArtifactUploadBody))
+    _write_json(root / "installations" / "actual-report.schema.json", _model_schema(EdgeActualReportBody))
+    _write_json(root / "installations" / "installation.schema.json", _model_schema(InstallationRead))
+
+    _write_json(
+        root / "fixtures" / "edge-lease-renew.json",
+        {
+            "extend_seconds": 60,
+            "delivery_generation": 1,
+        },
+    )
+    _write_json(
+        root / "fixtures" / "edge-artifact-upload.json",
+        {
+            "artifact_id": "art-1",
+            "name": "result.json",
+            "content_base64": "eyJyZXN1bHQiOiA0Mn0=",
+            "checksum_sha256": "35a9e381b1a27567549b5f8a6f783c167ebf809630c3991446f41f72a3e01c5c",
+            "size_bytes": 16,
+            "content_type": "application/json",
+            "run_generation": 1,
+        },
+    )
+    _write_json(
+        root / "fixtures" / "desired-installation.json",
+        {
+            "id": "inst-1",
+            "org_id": "org-1",
+            "agent_id": "agent-1",
+            "skill_id": "skill-1",
+            "target_kind": "edge",
+            "edge_node_id": "edge-node-1",
+            "installed_version": "1.0.0",
+            "status": "installed",
+            "actual_status": "synced",
+            "desired_generation": 1,
+            "actual_generation": 1,
+            "reconciled_status": "synced",
+            "created_at": "2026-08-28T00:00:00Z",
+            "updated_at": "2026-08-28T00:00:00Z",
+        },
+    )
 
     _write_json(
         root / "fixtures" / "tools-call-accepted.json",
