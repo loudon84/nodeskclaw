@@ -10,9 +10,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.base import not_deleted
-from app.models.enums import EvaluationRunStatus, RetrievalOrigin
+from app.models.enums import EvaluationRunStatus, QualityGateResult, RetrievalOrigin
 from app.models.evaluation import EvaluationCase, EvaluationResult, EvaluationRun, EvaluationSet
+from app.models.knowledge_application import KnowledgeApplication, KnowledgeApplicationSetItem
+from app.models.knowledge_application_release import KnowledgeApplicationRelease
+from app.models.knowledge_quality_snapshot import KnowledgeQualitySnapshot
 from app.models.retrieval_profile import RetrievalProfile
+from app.runtime.ragflow import RagflowRuntimeAdapter
 from app.schemas.principal import KnowledgePrincipal
 from app.services import knowledge_set_service, retrieval_service
 from app.services.permission_service import build_access_plan
@@ -116,6 +120,91 @@ def _aggregate_metrics(results: list[EvaluationResult], *, k: int) -> dict[str, 
     }
 
 
+def _uses_release_path(run: EvaluationRun) -> bool:
+    return bool(getattr(run, "release_id", None) or getattr(run, "channel", None))
+
+
+def _compute_overall_pass(
+    *,
+    unauthorized_any: bool,
+    gate_result: str | None,
+    manifest_hash: str | None,
+) -> bool:
+    if unauthorized_any:
+        return False
+    if not manifest_hash:
+        return False
+    if gate_result != QualityGateResult.pass_.value:
+        return False
+    return True
+
+
+async def _load_gate_result_for_release(db: AsyncSession, release_id: str) -> str | None:
+    release = await db.get(KnowledgeApplicationRelease, release_id)
+    if release is None or release.deleted_at is not None or not release.quality_snapshot_id:
+        return None
+    snapshot = await db.get(KnowledgeQualitySnapshot, release.quality_snapshot_id)
+    if snapshot is None or snapshot.deleted_at is not None:
+        return None
+    return snapshot.gate_result
+
+
+async def _resolve_application_id_for_release_run(
+    db: AsyncSession,
+    run: EvaluationRun,
+    eval_set: EvaluationSet,
+) -> str | None:
+    release_id = getattr(run, "release_id", None)
+    if release_id:
+        release = await db.get(KnowledgeApplicationRelease, release_id)
+        if release is None or release.deleted_at is not None:
+            return None
+        return release.application_id
+
+    result = await db.execute(
+        select(KnowledgeApplicationSetItem.application_id)
+        .join(
+            KnowledgeApplication,
+            KnowledgeApplication.id == KnowledgeApplicationSetItem.application_id,
+        )
+        .where(
+            KnowledgeApplicationSetItem.knowledge_set_id == eval_set.knowledge_set_id,
+            KnowledgeApplication.org_id == eval_set.org_id,
+            not_deleted(KnowledgeApplicationSetItem),
+            not_deleted(KnowledgeApplication),
+        )
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+def _apply_release_run_metrics(
+    run: EvaluationRun,
+    results: list[EvaluationResult],
+    *,
+    k: int,
+    manifest_hash: str | None,
+    gate_result: str | None,
+    unauthorized_any: bool,
+) -> None:
+    metrics = _aggregate_metrics(results, k=k)
+    if results:
+        sample_details = results[0].details or {}
+        metrics = {
+            **metrics,
+            "effective_indexes": sample_details.get("effective_indexes"),
+            "query_type": sample_details.get("query_type"),
+        }
+    metrics["manifest_hash"] = manifest_hash
+    metrics["gate_result"] = gate_result
+    metrics["overall_pass"] = _compute_overall_pass(
+        unauthorized_any=unauthorized_any,
+        gate_result=gate_result,
+        manifest_hash=manifest_hash,
+    )
+    run.metrics = metrics
+
+
 async def process_evaluation_run(
     db: AsyncSession,
     ragflow: RagflowRuntimeAdapter,
@@ -174,24 +263,52 @@ async def process_evaluation_run(
         run.finished_at = utc_now()
         return
 
+    use_release_path = _uses_release_path(run)
+    application_id: str | None = None
+    resolved_release_id: str | None = getattr(run, "release_id", None)
+    gate_result: str | None = None
+    manifest_hash: str | None = None
+    release_channel = getattr(run, "channel", None) or "stable"
+
+    if use_release_path:
+        application_id = await _resolve_application_id_for_release_run(db, run, eval_set)
+
     kbs = await knowledge_set_service.list_bound_knowledge_bases(db, member, eval_set.knowledge_set_id)
     access_plan = await build_access_plan(db, member, kbs)
     allowed_ids = set(access_plan.source_file_ids)
 
     results: list[EvaluationResult] = []
+    unauthorized_any = False
     for case in cases:
         expected_ids = [str(item) for item in (case.expected_source_file_ids or [])]
         try:
             case_started = utc_now()
-            payload = await retrieval_service.retrieve(
-                db,
-                member,
-                ragflow,
-                knowledge_set_id=eval_set.knowledge_set_id,
-                query=case.query,
-                origin=RetrievalOrigin.evaluation.value,
-                profile_id=run.retrieval_profile_id,
-            )
+            if use_release_path:
+                payload = await retrieval_service.retrieve_for_application(
+                    db,
+                    member,
+                    ragflow,
+                    application_id=application_id,
+                    query=case.query,
+                    origin=RetrievalOrigin.evaluation.value,
+                    profile_id=run.retrieval_profile_id,
+                    channel=release_channel,
+                    release_id=getattr(run, "release_id", None),
+                )
+                manifest_hash = payload.get("manifest_hash") or manifest_hash
+                resolved_release_id = payload.get("release_id") or resolved_release_id
+                if gate_result is None and resolved_release_id:
+                    gate_result = await _load_gate_result_for_release(db, resolved_release_id)
+            else:
+                payload = await retrieval_service.retrieve(
+                    db,
+                    member,
+                    ragflow,
+                    knowledge_set_id=eval_set.knowledge_set_id,
+                    query=case.query,
+                    origin=RetrievalOrigin.evaluation.value,
+                    profile_id=run.retrieval_profile_id,
+                )
             chunks = payload.get("chunks") or []
             returned_ids = _unique_source_ids(chunks)
             execution_status = str(payload.get("status") or "success")
@@ -211,6 +328,8 @@ async def process_evaluation_run(
             return
 
         unauthorized = has_unauthorized_source(returned_ids, allowed_ids)
+        if unauthorized:
+            unauthorized_any = True
         result = EvaluationResult(
             run_id=run.id,
             case_id=case.id,
@@ -232,20 +351,40 @@ async def process_evaluation_run(
         db.add(result)
         results.append(result)
         if unauthorized:
-            run.metrics = _aggregate_metrics(results, k=k)
+            if use_release_path:
+                _apply_release_run_metrics(
+                    run,
+                    results,
+                    k=k,
+                    manifest_hash=manifest_hash,
+                    gate_result=gate_result,
+                    unauthorized_any=True,
+                )
+            else:
+                run.metrics = _aggregate_metrics(results, k=k)
             run.status = EvaluationRunStatus.failed.value
             run.last_error = "errors.knowledge.evaluation_failed"
             run.finished_at = utc_now()
             return
 
-    run.metrics = _aggregate_metrics(results, k=k)
-    if results:
-        sample_details = results[0].details or {}
-        run.metrics = {
-            **(run.metrics or {}),
-            "effective_indexes": sample_details.get("effective_indexes"),
-            "query_type": sample_details.get("query_type"),
-        }
+    if use_release_path:
+        _apply_release_run_metrics(
+            run,
+            results,
+            k=k,
+            manifest_hash=manifest_hash,
+            gate_result=gate_result,
+            unauthorized_any=unauthorized_any,
+        )
+    else:
+        run.metrics = _aggregate_metrics(results, k=k)
+        if results:
+            sample_details = results[0].details or {}
+            run.metrics = {
+                **(run.metrics or {}),
+                "effective_indexes": sample_details.get("effective_indexes"),
+                "query_type": sample_details.get("query_type"),
+            }
     run.status = EvaluationRunStatus.completed.value
     run.last_error = None
     run.finished_at = utc_now()

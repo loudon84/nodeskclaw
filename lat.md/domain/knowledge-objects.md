@@ -132,7 +132,7 @@ v2.1 扩展 `org_id` / `issued_member_id` / `evidence_type` / `content` / `sourc
 
 评测集绑定 KnowledgeSet：Case 声明 query 与 expected_source_file_ids；Run 异步执行并对齐某 Retrieval Profile。
 
-四表：`knowledge_evaluation_sets` / `cases` / `runs` / `results`：[[nodeskclaw-knowledge/app/models/evaluation.py]]。Run 状态 pending/running/completed/failed，并带 attempt/lease 字段与 `principal_snapshot`（异步执行时还原创建者 ACL 身份）供 Worker 租赁。v2.1 Case/Run `details` 与 Run `metrics` 记录 `effective_indexes` / `query_type` / `fallback_used`。指标与执行见 [[knowledge#Retrieval Evaluation]]；Worker：[[nodeskclaw-knowledge/app/workers/maintenance_worker.py]]。
+四表：`knowledge_evaluation_sets` / `cases` / `runs` / `results`：[[nodeskclaw-knowledge/app/models/evaluation.py]]。Run 状态 pending/running/completed/failed，并带 attempt/lease 字段与 `principal_snapshot`（异步执行时还原创建者 ACL 身份）供 Worker 租赁；可选 `release_id`/`channel` 列供 Release 路径评测。v2.1 Case/Run `details` 与 Run `metrics` 记录 `effective_indexes` / `query_type` / `fallback_used`；v2.4.1 Release 路径另写 `manifest_hash`/`gate_result`/`overall_pass`。指标与执行见 [[knowledge#Retrieval Evaluation]]；Worker：[[nodeskclaw-knowledge/app/workers/maintenance_worker.py]]。
 
 ## Knowledge Principal
 

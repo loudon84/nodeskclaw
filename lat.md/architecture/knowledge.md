@@ -156,7 +156,7 @@ v1.3 增加独立 `knowledge-connector-worker`：调度 interval/manual SyncRun�
 
 v1.2 离线评测：Evaluation Set/Case + 异步 Run，用确定性 Retrieval Metrics（Hit@K / Recall@K / MRR）比较 Profile，禁止未授权 Source 进入结果。
 
-表：[[nodeskclaw-knowledge/app/models/evaluation.py#EvaluationSet]] 等。CRUD/Run/Compare：[[nodeskclaw-knowledge/app/services/evaluation_service.py]]、API [[nodeskclaw-knowledge/app/api/evaluation.py]]。执行：[[nodeskclaw-knowledge/app/services/evaluation_runner.py]]（`origin=evaluation` 走 Secure Retrieval）。创建 Run 时必须写入 `principal_snapshot`（member/org/role/department/is_super_admin），Worker 从快照还原 Principal，禁止再构造空 department 的假身份。Run 自带 lease 字段作 Job 表；`No Unauthorized Source` 非 100% 则整 Run FAIL（`errors.knowledge.evaluation_failed`）。v2.1 Run `metrics` 含 `effective_indexes` / `query_type`（来自 capability_plan）。Compare：Hit@8 / MRR / 平均延迟 / Empty rate / Degraded rate。
+表：[[nodeskclaw-knowledge/app/models/evaluation.py#EvaluationSet]] 等。CRUD/Run/Compare：[[nodeskclaw-knowledge/app/services/evaluation_service.py]]、API [[nodeskclaw-knowledge/app/api/evaluation.py]]。执行：[[nodeskclaw-knowledge/app/services/evaluation_runner.py]]（`origin=evaluation` 走 Secure Retrieval）。创建 Run 时必须写入 `principal_snapshot`（member/org/role/department/is_super_admin），Worker 从快照还原 Principal，禁止再构造空 department 的假身份。Run 自带 lease 字段作 Job 表；`No Unauthorized Source` 非 100% 则整 Run FAIL（`errors.knowledge.evaluation_failed`）。v2.1 Run `metrics` 含 `effective_indexes` / `query_type`（来自 capability_plan）。v2.4.1：Run 可选 `release_id`/`channel`；有值时走 `retrieve_for_application`，`metrics` 绑定 `manifest_hash` 与 Release Quality `gate_result`，`overall_pass` 要求 gate PASS 且无 unauthorized。无 release/channel 时仍走 Set Profile 路径。Compare：Hit@8 / MRR / 平均延迟 / Empty rate / Degraded rate。
 
 ## Active Version Security
 

@@ -276,6 +276,8 @@ async def create_run(
     *,
     evaluation_set_id: str,
     retrieval_profile_id: str,
+    release_id: str | None = None,
+    channel: str | None = None,
 ) -> EvaluationRun:
     eval_set = await _require_eval_set_manage(db, member, evaluation_set_id)
     profile = await db.get(RetrievalProfile, retrieval_profile_id)
@@ -301,9 +303,25 @@ async def create_run(
             message="评测集没有用例",
             message_key="errors.common.validation_error",
         )
+    if release_id:
+        from app.models.knowledge_application_release import KnowledgeApplicationRelease
+
+        release = await db.get(KnowledgeApplicationRelease, release_id)
+        if release is None or release.deleted_at is not None:
+            raise NotFoundError(
+                message="Release 不存在",
+                message_key="errors.knowledge.release_not_found",
+            )
+        if release.org_id != member.org_id and not member.is_super_admin:
+            raise NotFoundError(
+                message="Release 不存在",
+                message_key="errors.knowledge.release_not_found",
+            )
     row = EvaluationRun(
         evaluation_set_id=evaluation_set_id,
         retrieval_profile_id=retrieval_profile_id,
+        release_id=release_id,
+        channel=channel,
         status=EvaluationRunStatus.pending.value,
         metrics=None,
         principal_snapshot=build_principal_snapshot(member),
