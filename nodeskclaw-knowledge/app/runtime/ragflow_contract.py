@@ -24,7 +24,7 @@ class RagflowProbeClient(Protocol):
 
     async def probe_document_chunks(self, dataset_id: str, document_id: str) -> dict[str, Any]: ...
 
-    async def probe_retrieval_features(self, dataset_id: str) -> dict[str, bool]: ...
+    async def probe_retrieval_features(self, dataset_id: str) -> dict[str, dict[str, bool] | bool]: ...
 
 
 @dataclass
@@ -130,6 +130,13 @@ async def probe_l2_endpoints(
     return result, probe_dataset_id, probe_document_id, errors
 
 
+def _l3_feature_operational(raw: dict[str, Any], key: str) -> bool:
+    value = raw.get(key)
+    if isinstance(value, dict):
+        return bool(value.get("supported") and value.get("operational"))
+    return bool(value)
+
+
 async def probe_l3_features(
     client: RagflowProbeClient,
     *,
@@ -150,7 +157,7 @@ async def probe_l3_features(
     try:
         raw = await client.probe_retrieval_features(dataset_id)
         features = raw if isinstance(raw, dict) else {}
-        merged = {**defaults, **{k: bool(v) for k, v in features.items() if k in defaults}}
+        merged = {key: _l3_feature_operational(features, key) for key in defaults}
         return merged, errors
     except Exception as exc:
         errors.append(f"l3_features:{exc}")
@@ -188,5 +195,4 @@ async def probe_compatibility_profile(
         else:
             setattr(profile, key, value)
 
-    profile.metadata_filter = True
     return profile

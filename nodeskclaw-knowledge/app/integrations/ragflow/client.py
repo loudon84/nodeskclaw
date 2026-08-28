@@ -489,6 +489,63 @@ class RagflowClient:
         data = await self._request("GET", f"/api/v1/datasets/{dataset_id}/graph")
         return data if isinstance(data, dict) else {"data": data}
 
+    async def list_dataset_artifacts(self, dataset_id: str) -> list[dict[str, Any]]:
+        data = await self._request("GET", f"/api/v1/datasets/{dataset_id}/artifacts")
+        if isinstance(data, list):
+            return [item for item in data if isinstance(item, dict)]
+        if isinstance(data, dict):
+            items = data.get("artifacts") or data.get("data") or []
+            return [item for item in items if isinstance(item, dict)] if isinstance(items, list) else []
+        return []
+
+    async def get_dataset_artifact_topics(
+        self,
+        dataset_id: str,
+        **params: Any,
+    ) -> dict[str, Any]:
+        data = await self._request(
+            "GET",
+            f"/api/v1/datasets/{dataset_id}/artifacts/topics",
+            params=params or None,
+        )
+        return data if isinstance(data, dict) else {"data": data}
+
+    async def get_dataset_artifact_graph(
+        self,
+        dataset_id: str,
+        **params: Any,
+    ) -> dict[str, Any]:
+        data = await self._request(
+            "GET",
+            f"/api/v1/datasets/{dataset_id}/artifacts/graph",
+            params=params or None,
+        )
+        return data if isinstance(data, dict) else {"data": data}
+
+    async def get_dataset_artifact_structure(
+        self,
+        dataset_id: str,
+        **params: Any,
+    ) -> dict[str, Any]:
+        data = await self._request(
+            "GET",
+            f"/api/v1/datasets/{dataset_id}/artifacts/structure",
+            params=params or None,
+        )
+        return data if isinstance(data, dict) else {"data": data}
+
+    async def get_dataset_artifact_alteration(
+        self,
+        dataset_id: str,
+        **params: Any,
+    ) -> dict[str, Any]:
+        data = await self._request(
+            "GET",
+            f"/api/v1/datasets/{dataset_id}/artifacts/alteration",
+            params=params or None,
+        )
+        return data if isinstance(data, dict) else {"data": data}
+
     async def list_document_chunks(
         self,
         dataset_id: str,
@@ -570,23 +627,46 @@ class RagflowClient:
                 result["raptor_source_lineage"] = True
         return result
 
-    async def probe_retrieval_features(self, dataset_id: str) -> dict[str, bool]:
-        features = {
-            "kg_retrieval": False,
-            "toc_enhance": False,
-            "metadata_filter": False,
-            "knn_top_k": False,
-            "knn_num_candidates": False,
-            "rerank_candidates_count": False,
-            "knowledge_compilation": False,
+    @staticmethod
+    def _feature_probe_state(
+        *,
+        transport: bool = False,
+        supported: bool = False,
+        operational: bool = False,
+        artifact_present: bool = False,
+    ) -> dict[str, bool]:
+        return {
+            "transport": transport,
+            "supported": supported,
+            "operational": operational,
+            "artifact_present": artifact_present,
+        }
+
+    @staticmethod
+    def _unsupported_param_error(message: str) -> bool:
+        lowered = message.lower()
+        return any(token in lowered for token in ("unsupported", "unknown parameter", "invalid parameter", "invalid field"))
+
+    async def probe_retrieval_features(self, dataset_id: str) -> dict[str, dict[str, bool]]:
+        feature_names = (
+            "kg_retrieval",
+            "toc_enhance",
+            "metadata_filter",
+            "knn_top_k",
+            "knn_num_candidates",
+            "rerank_candidates_count",
+            "knowledge_compilation",
+        )
+        features: dict[str, dict[str, bool]] = {
+            name: self._feature_probe_state() for name in feature_names
         }
         probes = [
-            ("kg_retrieval", {"use_kg": True}),
-            ("toc_enhance", {"toc_enhance": True}),
-            ("knowledge_compilation", {"include_knowledge_compilation": True}),
-            ("knn_top_k", {"knn_top_k": 1}),
-            ("knn_num_candidates", {"knn_num_candidates": 1}),
-            ("rerank_candidates_count", {"rerank_candidates_count": 1}),
+            ("kg_retrieval", {"use_kg": True}, False),
+            ("toc_enhance", {"toc_enhance": True}, False),
+            ("knowledge_compilation", {"include_knowledge_compilation": True}, True),
+            ("knn_top_k", {"knn_top_k": 1}, False),
+            ("knn_num_candidates", {"knn_num_candidates": 1}, False),
+            ("rerank_candidates_count", {"rerank_candidates_count": 1}, False),
             (
                 "metadata_filter",
                 {
@@ -595,9 +675,10 @@ class RagflowClient:
                         "conditions": [{"name": "nk_probe", "comparison_operator": "is", "value": "probe"}],
                     }
                 },
+                False,
             ),
         ]
-        for name, extra in probes:
+        for name, extra, marks_artifact in probes:
             try:
                 await self.retrieve(
                     question="probe",
@@ -607,13 +688,22 @@ class RagflowClient:
                     page_size=1,
                     **extra,
                 )
-                features[name] = True
+                features[name] = self._feature_probe_state(
+                    transport=True,
+                    supported=True,
+                    operational=True,
+                    artifact_present=marks_artifact,
+                )
             except RagflowError as exc:
-                message = str(exc).lower()
-                if "unsupported" in message or "unknown" in message or "invalid" in message:
-                    features[name] = False
+                message = str(exc)
+                if self._unsupported_param_error(message):
+                    features[name] = self._feature_probe_state(transport=True, supported=False, operational=False)
                 else:
-                    features[name] = True
+                    features[name] = self._feature_probe_state(
+                        transport=True,
+                        supported=False,
+                        operational=False,
+                    )
             except Exception:
-                features[name] = False
+                features[name] = self._feature_probe_state()
         return features

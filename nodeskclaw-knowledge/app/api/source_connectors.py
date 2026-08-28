@@ -3,8 +3,8 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_db, get_member_context, get_ragflow_client
-from app.integrations.ragflow.client import RagflowClient
+from app.core.deps import get_db, get_member_context, get_runtime_adapter
+from app.runtime.ragflow import RagflowRuntimeAdapter
 from app.schemas.common import ApiResponse, PageData
 from app.schemas.connector import (
     ConnectorCreate,
@@ -106,7 +106,7 @@ async def delete_connector(
     policy: str = Query("archive_sources"),
     member: KnowledgePrincipal = Depends(get_member_context),
     db: AsyncSession = Depends(get_db),
-    ragflow: RagflowClient = Depends(get_ragflow_client),
+    ragflow: RagflowRuntimeAdapter = Depends(get_runtime_adapter),
 ):
     await connector_service.delete_connector(db, member, ragflow, connector_id, policy=policy)
     return ApiResponse(message="deleted")

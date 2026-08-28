@@ -9,9 +9,19 @@ from app.services.index_registry import (
 )
 
 
+def test_index_registry_excludes_outline_and_table_placeholders():
+    assert IndexType.outline.value not in INDEX_DESCRIPTORS
+    assert IndexType.table.value not in INDEX_DESCRIPTORS
+
+
 def test_enhanced_profile_converged_to_chunk_question():
     enhanced = SYSTEM_BUILD_PROFILES["enhanced"]
     assert enhanced["index_types"] == [IndexType.chunk.value, IndexType.question.value]
+
+
+def test_experimental_profile_is_chunk_only():
+    experimental = SYSTEM_BUILD_PROFILES["experimental"]
+    assert experimental["index_types"] == [IndexType.chunk.value]
 
 
 def test_reasoning_profile_includes_summary_and_graph():

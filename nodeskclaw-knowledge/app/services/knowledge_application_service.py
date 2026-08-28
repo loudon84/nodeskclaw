@@ -97,6 +97,26 @@ async def publish_application(
             details=readiness.to_dict(),
         )
     app.status = ApplicationStatus.active.value
+    from app.services import knowledge_quality_service
+
+    app.runtime_snapshot = await knowledge_quality_service.build_runtime_snapshot(db, member, app)
+    await db.commit()
+    await db.refresh(app)
+    return app
+
+
+async def disable_application(
+    db: AsyncSession, member: KnowledgePrincipal, application_id: str
+) -> KnowledgeApplication:
+    app = await get_application(db, member, application_id)
+    if not await has_application_permission(db, member, app, ApplicationPermission.manage.value):
+        raise ForbiddenError()
+    if app.status != ApplicationStatus.active.value:
+        raise BadRequestError(
+            message="仅运行中的应用可停用",
+            message_key="errors.knowledge.application_not_active",
+        )
+    app.status = ApplicationStatus.disabled.value
     await db.commit()
     await db.refresh(app)
     return app
@@ -185,7 +205,6 @@ async def update_application(
     name: str | None = None,
     description: str | None = None,
     answer_model: str | None = None,
-    status: str | None = None,
 ) -> KnowledgeApplication:
     app = await get_application(db, member, application_id)
     if not await has_application_permission(db, member, app, ApplicationPermission.manage.value):
@@ -196,8 +215,6 @@ async def update_application(
         app.description = description
     if answer_model is not None:
         app.answer_model = answer_model
-    if status is not None:
-        app.status = status
     await db.commit()
     await db.refresh(app)
     return app

@@ -6,12 +6,13 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.runtime.ragflow import RagflowRuntimeAdapter
 from app.core.exceptions import AppException
-from app.integrations.ragflow.client import RagflowClient
 from app.integrations.ragflow.models import RagflowChunk
 from app.models.enums import RuntimeRetrievalMode
 from app.services import chunk_security_service
@@ -63,6 +64,80 @@ class MergeExecutionResult:
     dropped_chunks: list[tuple] | None = None
     fallback_used: bool = False
     deduped_count: int = 0
+    fusion: dict[str, Any] | None = None
+
+
+RRF_K = 60
+
+
+def _rank_by_weighted_similarity(
+    safe_chunks: list[tuple[RagflowChunk, str]],
+    slice_weight_by_dataset: dict[str, float],
+) -> list[MergedChunk]:
+    deduped: dict[tuple, MergedChunk] = {}
+    for chunk, slice_mode in safe_chunks:
+        dataset_id = chunk.dataset_id or chunk.kb_id or ""
+        weight = slice_weight_by_dataset.get(dataset_id, 1.0)
+        weighted_score = float(chunk.similarity) * weight
+        key = _dedup_key(chunk)
+        existing = deduped.get(key)
+        if existing is None or weighted_score > existing.weighted_score:
+            deduped[key] = MergedChunk(
+                chunk=chunk,
+                weighted_score=weighted_score,
+                weight=weight,
+                slice_mode=slice_mode,
+            )
+    return sorted(deduped.values(), key=lambda item: item.weighted_score, reverse=True)
+
+
+def _rank_by_rrf(
+    safe_chunks: list[tuple[RagflowChunk, str]],
+    slice_weight_by_dataset: dict[str, float],
+) -> tuple[list[MergedChunk], dict[str, Any]]:
+    by_provider: dict[str, list[MergedChunk]] = {}
+    for chunk, slice_mode in safe_chunks:
+        dataset_id = chunk.dataset_id or chunk.kb_id or ""
+        weight = slice_weight_by_dataset.get(dataset_id, 1.0)
+        weighted_score = float(chunk.similarity) * weight
+        provider_key = slice_mode or "semantic"
+        by_provider.setdefault(provider_key, []).append(
+            MergedChunk(
+                chunk=chunk,
+                weighted_score=weighted_score,
+                weight=weight,
+                slice_mode=slice_mode,
+            )
+        )
+
+    scores: dict[tuple, float] = {}
+    chunk_map: dict[tuple, MergedChunk] = {}
+    for provider, items in by_provider.items():
+        provider_weight = max(item.weight for item in items) if items else 1.0
+        ranked = sorted(items, key=lambda item: item.weighted_score, reverse=True)
+        for rank, item in enumerate(ranked, start=1):
+            key = _dedup_key(item.chunk)
+            scores[key] = scores.get(key, 0.0) + provider_weight / (RRF_K + rank)
+            chunk_map[key] = item
+
+    merged = sorted(
+        (
+            MergedChunk(
+                chunk=chunk_map[key].chunk,
+                weighted_score=score,
+                weight=chunk_map[key].weight,
+                slice_mode=chunk_map[key].slice_mode,
+            )
+            for key, score in scores.items()
+        ),
+        key=lambda item: item.weighted_score,
+        reverse=True,
+    )
+    return merged, {
+        "strategy": "weighted_rrf",
+        "k": RRF_K,
+        "provider_count": len(by_provider),
+    }
 
 
 def _normalize_content(text: str | None) -> str:
@@ -129,7 +204,7 @@ def _slice_error_code(exc: BaseException) -> str:
 
 
 async def _retrieve_slice(
-    ragflow: RagflowClient,
+    ragflow: RagflowRuntimeAdapter,
     slice_: RuntimeExecutionSlice,
     *,
     query: str,
@@ -269,7 +344,7 @@ def _safe_count_for_slice(slice_: RuntimeExecutionSlice, safe_chunks: list[Ragfl
 
 async def execute_and_merge(
     db: AsyncSession,
-    ragflow: RagflowClient,
+    ragflow: RagflowRuntimeAdapter,
     plan: RetrievalPlan,
     *,
     allowed_source_file_ids: set[str],
@@ -356,26 +431,17 @@ async def execute_and_merge(
         if slice_results[index].status == "success":
             slice_results[index].safe_count = _safe_count_for_slice(slice_, safe_chunks)
 
-    merge_started = time.perf_counter()
-    deduped: dict[tuple, MergedChunk] = {}
     slice_weight_by_dataset: dict[str, float] = {s.dataset_id: s.weight for s in plan.slices}
+    merge_started = time.perf_counter()
     dedup_before = len(safe_chunks)
-    for chunk, slice_mode in clean_result.chunk_modes:
-        dataset_id = chunk.dataset_id or chunk.kb_id or ""
-        weight = slice_weight_by_dataset.get(dataset_id, 1.0)
-        weighted_score = float(chunk.similarity) * weight
-        key = _dedup_key(chunk)
-        existing = deduped.get(key)
-        if existing is None or weighted_score > existing.weighted_score:
-            deduped[key] = MergedChunk(
-                chunk=chunk,
-                weighted_score=weighted_score,
-                weight=weight,
-                slice_mode=slice_mode,
-            )
-
-    ranked = sorted(deduped.values(), key=lambda item: item.weighted_score, reverse=True)[:top_n]
-    deduped_count = max(0, dedup_before - len(deduped))
+    if settings.KNOWLEDGE_V23_RRF_FUSION_ENABLED:
+        ranked_all, fusion = _rank_by_rrf(clean_result.chunk_modes, slice_weight_by_dataset)
+        ranked = ranked_all[:top_n]
+    else:
+        fusion = {"strategy": "weighted_similarity"}
+        ranked_all = _rank_by_weighted_similarity(clean_result.chunk_modes, slice_weight_by_dataset)
+        ranked = ranked_all[:top_n]
+    deduped_count = max(0, dedup_before - len(ranked_all))
     merge_ms = int((time.perf_counter() - merge_started) * 1000)
     any_fallback = any(r.fallback_used for r in slice_results)
     return MergeExecutionResult(
@@ -389,4 +455,5 @@ async def execute_and_merge(
         dropped_chunks=list(clean_result.dropped),
         fallback_used=any_fallback,
         deduped_count=deduped_count,
+        fusion=fusion,
     )

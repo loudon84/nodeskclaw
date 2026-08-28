@@ -11,7 +11,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ForbiddenError, ValidationError
-from app.integrations.ragflow.client import RagflowClient
 from app.integrations.ragflow.exceptions import RagflowError
 from app.models.base import not_deleted
 from app.models.enums import AccessPlanKind, AuditAction, FilePermission, KbPermission
@@ -366,7 +365,7 @@ async def get_source_file_metadata(
 async def patch_source_file_metadata(
     db: AsyncSession,
     member: KnowledgePrincipal,
-    ragflow: RagflowClient,
+    ragflow: RagflowRuntimeAdapter,
     source_file_id: str,
     metadata_patch: dict[str, Any],
 ) -> dict[str, Any]:

@@ -6,8 +6,8 @@ from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_db, get_member_context, get_ragflow_client
-from app.integrations.ragflow.client import RagflowClient
+from app.core.deps import get_db, get_member_context, get_runtime_adapter
+from app.runtime.ragflow import RagflowRuntimeAdapter
 from app.schemas.common import ApiResponse, PageData
 from app.schemas.knowledge import (
     AclOut,
@@ -106,7 +106,7 @@ async def upload_file(
     metadata: str = Form("{}"),
     member: KnowledgePrincipal = Depends(get_member_context),
     db: AsyncSession = Depends(get_db),
-    ragflow: RagflowClient = Depends(get_ragflow_client),
+    ragflow: RagflowRuntimeAdapter = Depends(get_runtime_adapter),
 ):
     parsed_metadata = metadata_service.parse_metadata_form(metadata)
     spool, size, digest = await ingestion_service.read_upload_spooled(file)
@@ -151,7 +151,7 @@ async def patch_metadata(
     body: SourceFileMetadataPatch,
     member: KnowledgePrincipal = Depends(get_member_context),
     db: AsyncSession = Depends(get_db),
-    ragflow: RagflowClient = Depends(get_ragflow_client),
+    ragflow: RagflowRuntimeAdapter = Depends(get_runtime_adapter),
 ):
     data = await metadata_service.patch_source_file_metadata(
         db,
@@ -179,7 +179,7 @@ async def activate_version(
     version_id: str,
     member: KnowledgePrincipal = Depends(get_member_context),
     db: AsyncSession = Depends(get_db),
-    ragflow: RagflowClient = Depends(get_ragflow_client),
+    ragflow: RagflowRuntimeAdapter = Depends(get_runtime_adapter),
 ):
     sf = await source_lifecycle_service.activate_source_file_version(
         db, member, ragflow, source_file_id, version_id
@@ -192,7 +192,7 @@ async def archive_file(
     source_file_id: str,
     member: KnowledgePrincipal = Depends(get_member_context),
     db: AsyncSession = Depends(get_db),
-    ragflow: RagflowClient = Depends(get_ragflow_client),
+    ragflow: RagflowRuntimeAdapter = Depends(get_runtime_adapter),
 ):
     sf = await source_lifecycle_service.archive_source_file(db, member, ragflow, source_file_id)
     return ApiResponse(data=SourceFileOut.model_validate(sf))
@@ -203,7 +203,7 @@ async def unarchive_file(
     source_file_id: str,
     member: KnowledgePrincipal = Depends(get_member_context),
     db: AsyncSession = Depends(get_db),
-    ragflow: RagflowClient = Depends(get_ragflow_client),
+    ragflow: RagflowRuntimeAdapter = Depends(get_runtime_adapter),
 ):
     sf = await source_lifecycle_service.unarchive_source_file(db, member, ragflow, source_file_id)
     return ApiResponse(data=SourceFileOut.model_validate(sf))
@@ -236,7 +236,7 @@ async def delete_file(
     source_file_id: str,
     member: KnowledgePrincipal = Depends(get_member_context),
     db: AsyncSession = Depends(get_db),
-    ragflow: RagflowClient = Depends(get_ragflow_client),
+    ragflow: RagflowRuntimeAdapter = Depends(get_runtime_adapter),
 ):
     await source_file_service.delete_source_file(db, member, ragflow, source_file_id)
     return ApiResponse(message="deleted")
@@ -249,7 +249,7 @@ async def upload_version(
     metadata: str | None = Form(None),
     member: KnowledgePrincipal = Depends(get_member_context),
     db: AsyncSession = Depends(get_db),
-    ragflow: RagflowClient = Depends(get_ragflow_client),
+    ragflow: RagflowRuntimeAdapter = Depends(get_runtime_adapter),
 ):
     sf = await source_file_service.get_source_file(db, member, source_file_id)
     parsed_metadata = metadata_service.parse_metadata_form(metadata) if metadata is not None else None
@@ -295,7 +295,7 @@ async def reparse(
     source_file_id: str,
     member: KnowledgePrincipal = Depends(get_member_context),
     db: AsyncSession = Depends(get_db),
-    ragflow: RagflowClient = Depends(get_ragflow_client),
+    ragflow: RagflowRuntimeAdapter = Depends(get_runtime_adapter),
 ):
     job = await ingestion_service.reparse_source_file(db, member, ragflow, source_file_id)
     return ApiResponse(data=IngestionJobOut.model_validate(job))
@@ -306,7 +306,7 @@ async def download(
     source_file_id: str,
     member: KnowledgePrincipal = Depends(get_member_context),
     db: AsyncSession = Depends(get_db),
-    ragflow: RagflowClient = Depends(get_ragflow_client),
+    ragflow: RagflowRuntimeAdapter = Depends(get_runtime_adapter),
 ):
     sf, _version, content = await source_file_service.download_source_file(db, member, ragflow, source_file_id)
     return Response(

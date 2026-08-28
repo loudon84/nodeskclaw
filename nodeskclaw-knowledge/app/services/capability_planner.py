@@ -129,9 +129,13 @@ def _mode_index_requirement(mode: str) -> str | None:
     mapping = {
         RuntimeRetrievalMode.graph_assisted.value: IndexType.graph.value,
         RuntimeRetrievalMode.compiled_assisted.value: IndexType.hierarchical_summary.value,
-        RuntimeRetrievalMode.toc_enhanced.value: IndexType.outline.value,
     }
     return mapping.get(mode)
+
+
+def _runtime_toc_available(capabilities: dict[str, Any] | None) -> bool:
+    caps = capabilities or {}
+    return bool(caps.get("supports_toc_enhance"))
 
 
 def _profile_allows_mode(mode: str, profile_policy: dict[str, Any]) -> bool:
@@ -146,11 +150,11 @@ def _profile_allows_mode(mode: str, profile_policy: dict[str, Any]) -> bool:
 
 def _flag_allows_mode(mode: str) -> bool:
     if mode == RuntimeRetrievalMode.graph_assisted.value:
-        return settings.KNOWLEDGE_V2_GRAPH_INDEX_ENABLED
+        return settings.KNOWLEDGE_V2_GRAPH_RUNTIME_ENABLED
     if mode == RuntimeRetrievalMode.compiled_assisted.value:
-        return settings.KNOWLEDGE_V2_SUMMARY_INDEX_ENABLED
+        return settings.KNOWLEDGE_V2_SUMMARY_RUNTIME_ENABLED
     if mode == RuntimeRetrievalMode.toc_enhanced.value:
-        return settings.KNOWLEDGE_V2_MULTI_INDEX_RETRIEVAL_ENABLED
+        return settings.KNOWLEDGE_V2_TOC_ENHANCE_ENABLED
     return True
 
 
@@ -218,6 +222,13 @@ def build_kb_execution_capability(
         if not _flag_allows_mode(mode):
             denied_modes.append(mode)
             continue
+        if mode == RuntimeRetrievalMode.toc_enhanced.value:
+            if _runtime_toc_available(capabilities):
+                allowed_modes.append(mode)
+            else:
+                degraded.append(f"{mode}:toc_unavailable")
+                denied_modes.append(mode)
+            continue
         req_index = _mode_index_requirement(mode)
         if req_index:
             ok, reason = _index_usable(
@@ -237,7 +248,9 @@ def build_kb_execution_capability(
     if preferred_mode not in allowed_modes and preferred_mode != RuntimeRetrievalMode.semantic.value:
         req_index = _mode_index_requirement(preferred_mode)
         reason = "unsupported"
-        if req_index:
+        if preferred_mode == RuntimeRetrievalMode.toc_enhanced.value:
+            reason = "toc_unavailable" if not _runtime_toc_available(capabilities) else "unsupported"
+        elif req_index:
             _, idx_reason = _index_usable(
                 req_index,
                 build_states=build_states,

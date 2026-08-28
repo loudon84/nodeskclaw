@@ -14,7 +14,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.connectors.base import KnowledgeSourceConnector
 from app.connectors.models import SourceDescriptor
 from app.core.exceptions import BadRequestError
-from app.integrations.ragflow.client import RagflowClient
 from app.models.base import not_deleted
 from app.models.connector import (
     ConnectorSourceObject,
@@ -93,7 +92,7 @@ async def _add_sync_item(
 
 async def archive_for_source_deleted(
     db: AsyncSession,
-    ragflow: RagflowClient,
+    ragflow: RagflowRuntimeAdapter,
     *,
     sf: SourceFile,
     kb: KnowledgeBase,
@@ -114,7 +113,7 @@ async def archive_for_source_deleted(
 
 async def restore_source_deleted(
     db: AsyncSession,
-    ragflow: RagflowClient,
+    ragflow: RagflowRuntimeAdapter,
     *,
     sf: SourceFile,
     kb: KnowledgeBase,
@@ -155,7 +154,7 @@ async def apply_rename_or_path(
 
 async def run_sync(
     db: AsyncSession,
-    ragflow: RagflowClient,
+    ragflow: RagflowRuntimeAdapter,
     adapter: KnowledgeSourceConnector,
     *,
     connector: ConnectorRow,
@@ -310,7 +309,7 @@ async def run_sync(
 
 async def _process_descriptor(
     db: AsyncSession,
-    ragflow: RagflowClient,
+    ragflow: RagflowRuntimeAdapter,
     adapter: KnowledgeSourceConnector,
     *,
     connector: ConnectorRow,
@@ -557,7 +556,7 @@ async def _process_descriptor(
 
 async def _handle_deleted_descriptor(
     db: AsyncSession,
-    ragflow: RagflowClient,
+    ragflow: RagflowRuntimeAdapter,
     *,
     connector: ConnectorRow,
     kb: KnowledgeBase,
@@ -596,7 +595,7 @@ async def _handle_deleted_descriptor(
 
 async def _mark_missing_as_deleted(
     db: AsyncSession,
-    ragflow: RagflowClient,
+    ragflow: RagflowRuntimeAdapter,
     *,
     connector: ConnectorRow,
     kb: KnowledgeBase,

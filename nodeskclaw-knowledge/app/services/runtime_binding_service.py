@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -41,11 +43,25 @@ async def probe_and_persist_binding_capabilities(
     probe_error: str | None = None
     capabilities: dict[str, Any]
     runtime_version: str | None
+    dataset_id: str | None = None
+    document_id: str | None = None
+    binding = await get_binding(db, knowledge_base_id)
+    if binding is not None and getattr(binding, "resource_id", None):
+        dataset_id = binding.resource_id
+        from app.services import active_runtime_documents
+
+        resolution = await active_runtime_documents.resolve_active_documents(db, knowledge_base_id)
+        if resolution.documents:
+            document_id = resolution.documents[0].ragflow_document_id
     try:
         reachable, runtime_version, capabilities = await runtime_capabilities.probe_runtime(
             adapter.client,
-            dataset_id=None,
+            dataset_id=dataset_id,
+            document_id=document_id,
         )
+        if dataset_id and document_id is None:
+            capabilities = dict(capabilities)
+            capabilities["document_context"] = "missing"
         if not reachable:
             probe_error = "ragflow_unreachable"
     except Exception as exc:
@@ -59,7 +75,6 @@ async def probe_and_persist_binding_capabilities(
             capabilities = (binding.capabilities if binding else None) or {}
             runtime_version = binding.runtime_version if binding else None
 
-    binding = await get_binding(db, knowledge_base_id)
     if binding is not None:
         if probe_error is None:
             binding.capabilities = capabilities
@@ -102,6 +117,11 @@ async def _find_dataset_id_by_prefix(adapter: RagflowRuntimeAdapter, kb_id: str)
     return None
 
 
+def desired_config_content_hash(desired: dict[str, Any]) -> str:
+    payload = json.dumps(desired, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(payload.encode()).hexdigest()
+
+
 async def compile_and_persist_desired_config(
     db: AsyncSession,
     kb: KnowledgeBase,
@@ -112,16 +132,18 @@ async def compile_and_persist_desired_config(
     profile = await build_profile_service.resolve_profile_for_kb(db, kb)
     knowledge_model = None
     if getattr(kb, "knowledge_model_id", None):
-        from app.models.knowledge_model import KnowledgeModel
+        from app.services import knowledge_model_service
 
-        knowledge_model = await db.get(KnowledgeModel, kb.knowledge_model_id)
-        if knowledge_model is not None and knowledge_model.deleted_at is not None:
-            knowledge_model = None
+        knowledge_model = await knowledge_model_service.get_model_for_compile(db, kb.knowledge_model_id)
     caps = compat_profile or binding.capabilities
     desired = runtime_config_compiler.compile_desired_config(kb, profile, knowledge_model, caps)
     desired["name"] = runtime_dataset_name(kb, org_id=kb.org_id)
+    content_hash = desired_config_content_hash(desired)
+    previous_hash = getattr(binding, "desired_config_hash", None)
     binding.desired_config = desired
-    binding.config_revision = int(binding.config_revision or 0) + 1
+    if previous_hash != content_hash:
+        binding.desired_config_hash = content_hash
+        binding.config_revision = int(binding.config_revision or 0) + 1
     await db.flush()
     return desired
 
@@ -356,9 +378,8 @@ async def backfill_from_knowledge_bases(db: AsyncSession) -> dict[str, int]:
             )
             created += 1
         elif existing.resource_id != kb.ragflow_dataset_id:
-            existing.resource_id = kb.ragflow_dataset_id
             existing.last_synced_at = datetime.now(UTC)
-            updated += 1
+            skipped += 1
         else:
             skipped += 1
     await db.flush()

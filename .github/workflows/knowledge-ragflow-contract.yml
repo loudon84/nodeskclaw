@@ -1,41 +1,52 @@
-name: Knowledge RAGFlow Contract (manual / nightly stub)
+name: Knowledge RAGFlow Contract
 
-# Optional integration checks against a real RAGFlow instance.
-# Unit CI (knowledge-ci.yml) does NOT require RAGFlow.
-#
-# Manual checklist before enabling live calls:
-# 1. Confirm Dataset / Document upload / list-by-name / metadata_condition API contracts
-# 2. Verify upload timeout recovery via deterministic upload token filename
-# 3. Verify retrieve with metadata_condition falls back cleanly when unsupported
-# 4. Never commit real API keys; use repository secrets only
+# Live integration checks against a real RAGFlow instance.
+# Unit CI (knowledge-ci.yml) does NOT require RAGFlow secrets.
 
 on:
   workflow_dispatch:
     inputs:
       ragflow_base_url:
-        description: "RAGFlow base URL (Chinese: RAGFlow 服务地址)"
+        description: "RAGFlow base URL (RAGFlow 服务地址)"
         required: false
         default: ""
   schedule:
     - cron: "0 3 * * *"
 
 jobs:
-  contract-stub:
-    name: Document RAGFlow contract gate
+  ragflow-contract:
+    name: Live RAGFlow contract tests
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Skip live RAGFlow (stub)
+      - name: Skip when RAGFLOW_API_KEY missing
+        if: ${{ secrets.RAGFLOW_API_KEY == '' }}
         run: |
-          echo "This workflow is a stub for manual/nightly RAGFlow contract checks."
-          echo "Live calls are intentionally disabled until RAGFlow Wiki contracts are confirmed."
-          echo "Primary automated coverage lives in nodeskclaw-knowledge unit tests:"
-          echo "  - tests/test_ragflow_recovery.py"
-          echo "  - tests/test_connector_e2e_v13.py"
-          if [ -z "${{ secrets.RAGFLOW_API_KEY }}" ]; then
-            echo "RAGFLOW_API_KEY secret not configured; exiting successfully as stub."
-          else
-            echo "RAGFLOW_API_KEY is present but live contract runner is not enabled yet."
-          fi
+          echo "skipped_no_secret: RAGFLOW_API_KEY not configured; live contract tests skipped."
+
+      - name: Setup Python
+        if: ${{ secrets.RAGFLOW_API_KEY != '' }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        if: ${{ secrets.RAGFLOW_API_KEY != '' }}
+        uses: astral-sh/setup-uv@v4
+
+      - name: Sync dependencies
+        if: ${{ secrets.RAGFLOW_API_KEY != '' }}
+        working-directory: nodeskclaw-knowledge
+        run: uv sync
+
+      - name: Run live contract tests
+        if: ${{ secrets.RAGFLOW_API_KEY != '' }}
+        working-directory: nodeskclaw-knowledge
+        env:
+          RAGFLOW_CONTRACT_TEST: "1"
+          RAGFLOW_API_KEY: ${{ secrets.RAGFLOW_API_KEY }}
+          RAGFLOW_BASE_URL: ${{ inputs.ragflow_base_url != '' && inputs.ragflow_base_url || secrets.RAGFLOW_BASE_URL }}
+          RAGFLOW_CONTRACT_DATASET_ID: ${{ secrets.RAGFLOW_CONTRACT_DATASET_ID }}
+        run: uv run pytest tests/ragflow_contract -m ragflow_contract -q

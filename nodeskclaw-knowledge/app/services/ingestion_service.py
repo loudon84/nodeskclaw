@@ -13,8 +13,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.runtime.ragflow import RagflowRuntimeAdapter
 from app.core.exceptions import BadRequestError, ForbiddenError, NotFoundError
-from app.integrations.ragflow.client import RagflowClient
 from app.integrations.ragflow.exceptions import RagflowError
 from app.models.base import not_deleted
 from app.models.enums import IngestionJobStatus, KbPermission, SourceFileStatus
@@ -114,7 +114,7 @@ def _metadata_consistent(meta: dict, *, sf: SourceFile, version: SourceFileVersi
 async def ingest_upload(
     db: AsyncSession,
     member: KnowledgePrincipal,
-    ragflow: RagflowClient,
+    ragflow: RagflowRuntimeAdapter,
     *,
     knowledge_base_id: str,
     file_name: str,
@@ -146,7 +146,7 @@ async def ingest_upload(
 async def reparse_source_file(
     db: AsyncSession,
     member: KnowledgePrincipal,
-    ragflow: RagflowClient,
+    ragflow: RagflowRuntimeAdapter,
     source_file_id: str,
 ) -> IngestionJob:
     sf = await source_file_service.get_source_file(db, member, source_file_id)
@@ -261,7 +261,7 @@ async def get_job(db: AsyncSession, member: KnowledgePrincipal, job_id: str) -> 
 async def retry_job(
     db: AsyncSession,
     member: KnowledgePrincipal,
-    ragflow: RagflowClient,
+    ragflow: RagflowRuntimeAdapter,
     job_id: str,
 ) -> IngestionJob:
     job = await get_job(db, member, job_id)
@@ -311,7 +311,7 @@ async def retry_job(
 async def cancel_job(
     db: AsyncSession,
     member: KnowledgePrincipal,
-    ragflow: RagflowClient,
+    ragflow: RagflowRuntimeAdapter,
     job_id: str,
 ) -> IngestionJob:
     job = await get_job(db, member, job_id)
@@ -377,7 +377,7 @@ async def claim_next_job(db: AsyncSession, *, lease_owner: str) -> tuple[Ingesti
 # @lat: [[knowledge#Ingestion Worker]]
 async def process_leased_job(
     db: AsyncSession,
-    ragflow: RagflowClient,
+    ragflow: RagflowRuntimeAdapter,
     job: IngestionJob,
     *,
     lease_owner: str | None = None,

@@ -9,7 +9,6 @@ from collections.abc import Sequence
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.integrations.ragflow.client import RagflowClient
 from app.models.base import not_deleted
 from app.models.enums import EvaluationRunStatus, RetrievalOrigin
 from app.models.evaluation import EvaluationCase, EvaluationResult, EvaluationRun, EvaluationSet
@@ -119,7 +118,7 @@ def _aggregate_metrics(results: list[EvaluationResult], *, k: int) -> dict[str, 
 
 async def process_evaluation_run(
     db: AsyncSession,
-    ragflow: RagflowClient,
+    ragflow: RagflowRuntimeAdapter,
     run: EvaluationRun,
 ) -> None:
     eval_set = await db.get(EvaluationSet, run.evaluation_set_id)

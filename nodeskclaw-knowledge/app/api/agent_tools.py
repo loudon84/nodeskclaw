@@ -7,12 +7,13 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.deps import get_db, get_member_context, get_ragflow_client
+from app.runtime.ragflow import RagflowRuntimeAdapter
+from app.core.deps import get_db, get_member_context, get_runtime_adapter
 from app.core.exceptions import BadRequestError, ForbiddenError
-from app.integrations.ragflow.client import RagflowClient
 from app.schemas.common import ApiResponse
 from app.schemas.principal import KnowledgePrincipal
-from app.services import citation_service, retrieval_service, source_file_service
+from app.services import citation_service, retrieval_service, runtime_binding_service, source_file_service
+from app.services.permission_service import build_access_plan
 
 router = APIRouter(prefix="/agent/tools", tags=["agent-tools"])
 
@@ -50,7 +51,7 @@ def strip_runtime_document_ids(data: dict) -> None:
 async def knowledge_search_or_retrieve(
     db: AsyncSession,
     member: KnowledgePrincipal,
-    ragflow: RagflowClient,
+    ragflow: RagflowRuntimeAdapter,
     *,
     query: str,
     application_id: str | None = None,
@@ -128,13 +129,152 @@ async def knowledge_get_evidence(
     return data
 
 
+async def _artifact_hits(
+    db: AsyncSession,
+    member: KnowledgePrincipal,
+    ragflow: RagflowRuntimeAdapter,
+    *,
+    artifact_type: str,
+    knowledge_base_id: str,
+    query: str,
+    source_file_id: str | None = None,
+) -> dict:
+    from app.core.config import settings as app_settings
+    from app.knowledge_artifacts.base import ArtifactBuildContext
+    from app.knowledge_artifacts.registry import ensure_default_providers, get_provider
+    from app.knowledge_artifacts.table import filter_table_candidates_by_acl
+    from app.models.knowledge_base import KnowledgeBase
+    from app.services import build_input_manifest_service
+
+    if artifact_type == "outline" and not app_settings.KNOWLEDGE_V23_OUTLINE_ENABLED:
+        raise BadRequestError(
+            message="Outline Artifact 未启用",
+            message_key="errors.knowledge.outline_artifact_disabled",
+        )
+    if artifact_type == "table" and not app_settings.KNOWLEDGE_V23_TABLE_ENABLED:
+        raise BadRequestError(
+            message="Table Artifact 未启用",
+            message_key="errors.knowledge.table_artifact_disabled",
+        )
+    kb = await db.get(KnowledgeBase, knowledge_base_id)
+    if kb is None or kb.deleted_at is not None or kb.org_id != member.org_id:
+        raise BadRequestError(
+            message="知识库不存在",
+            message_key="errors.knowledge.kb_not_found",
+        )
+    ensure_default_providers()
+    provider = get_provider(artifact_type)
+    if provider is None:
+        raise BadRequestError(
+            message="不支持的 Artifact 类型",
+            message_key="errors.knowledge.artifact_type_unsupported",
+        )
+    plan_access = await build_access_plan(db, member, [kb])
+    manifest_hash, _, manifest_summary = await build_input_manifest_service.compute_manifest(db, kb)
+    dataset_id = await runtime_binding_service.require_dataset_id(db, kb)
+    context = ArtifactBuildContext(
+        org_id=kb.org_id,
+        knowledge_base_id=kb.id,
+        dataset_id=dataset_id,
+        adapter=ragflow,
+        manifest_hash=manifest_hash,
+        manifest_summary=manifest_summary,
+        source_file_id=source_file_id,
+    )
+    hits = await provider.retrieve(query or "", context)
+    allowed = set(plan_access.source_file_ids)
+    if artifact_type == "table":
+        hits = filter_table_candidates_by_acl(hits, allowed)
+    else:
+        hits = [
+            hit
+            for hit in hits
+            if hit.citable
+            and all(ref.source_file_id in allowed for ref in hit.source_refs)
+        ]
+    return {
+        "artifact_type": artifact_type,
+        "knowledge_base_id": knowledge_base_id,
+        "items": [
+            {
+                "title": hit.title,
+                "content": hit.content,
+                "citable": hit.citable,
+                "source_refs": [
+                    {
+                        "source_file_id": ref.source_file_id,
+                        "file_version_id": ref.file_version_id,
+                        "page_start": ref.page_start,
+                        "page_end": ref.page_end,
+                    }
+                    for ref in hit.source_refs
+                ],
+                "provider_payload": hit.provider_payload,
+            }
+            for hit in hits
+        ],
+    }
+
+
+async def knowledge_get_structure(
+    db: AsyncSession,
+    member: KnowledgePrincipal,
+    ragflow: RagflowRuntimeAdapter,
+    *,
+    knowledge_base_id: str,
+    query: str | None = None,
+    source_file_id: str | None = None,
+) -> dict:
+    _require_v2()
+    if not knowledge_base_id:
+        raise BadRequestError(
+            message="缺少 knowledge_base_id",
+            message_key="errors.knowledge.kb_not_found",
+        )
+    return await _artifact_hits(
+        db,
+        member,
+        ragflow,
+        artifact_type="outline",
+        knowledge_base_id=knowledge_base_id,
+        query=query or "",
+        source_file_id=source_file_id,
+    )
+
+
+async def knowledge_get_table(
+    db: AsyncSession,
+    member: KnowledgePrincipal,
+    ragflow: RagflowRuntimeAdapter,
+    *,
+    knowledge_base_id: str,
+    query: str | None = None,
+    source_file_id: str | None = None,
+) -> dict:
+    _require_v2()
+    if not knowledge_base_id:
+        raise BadRequestError(
+            message="缺少 knowledge_base_id",
+            message_key="errors.knowledge.kb_not_found",
+        )
+    return await _artifact_hits(
+        db,
+        member,
+        ragflow,
+        artifact_type="table",
+        knowledge_base_id=knowledge_base_id,
+        query=query or "",
+        source_file_id=source_file_id,
+    )
+
+
 @router.post("/knowledge.search")
 @router.post("/knowledge.retrieve")
 async def tool_search(
     body: SearchBody,
     member: KnowledgePrincipal = Depends(get_member_context),
     db: AsyncSession = Depends(get_db),
-    ragflow: RagflowClient = Depends(get_ragflow_client),
+    ragflow: RagflowRuntimeAdapter = Depends(get_runtime_adapter),
 ):
     """Member Principal required — KNOWLEDGE_SERVICE_TOKEN must not authorize this route."""
     data = await knowledge_search_or_retrieve(
@@ -170,4 +310,40 @@ async def tool_get_evidence(
     db: AsyncSession = Depends(get_db),
 ):
     data = await knowledge_get_evidence(db, member, evidence_id=body.evidence_id)
+    return ApiResponse(data=data)
+
+
+@router.post("/knowledge.get_structure")
+async def tool_get_structure(
+    body: dict,
+    member: KnowledgePrincipal = Depends(get_member_context),
+    db: AsyncSession = Depends(get_db),
+    ragflow: RagflowRuntimeAdapter = Depends(get_runtime_adapter),
+):
+    data = await knowledge_get_structure(
+        db,
+        member,
+        ragflow,
+        knowledge_base_id=str(body.get("knowledge_base_id") or ""),
+        query=body.get("query"),
+        source_file_id=body.get("source_file_id"),
+    )
+    return ApiResponse(data=data)
+
+
+@router.post("/knowledge.get_table")
+async def tool_get_table(
+    body: dict,
+    member: KnowledgePrincipal = Depends(get_member_context),
+    db: AsyncSession = Depends(get_db),
+    ragflow: RagflowRuntimeAdapter = Depends(get_runtime_adapter),
+):
+    data = await knowledge_get_table(
+        db,
+        member,
+        ragflow,
+        knowledge_base_id=str(body.get("knowledge_base_id") or ""),
+        query=body.get("query"),
+        source_file_id=body.get("source_file_id"),
+    )
     return ApiResponse(data=data)

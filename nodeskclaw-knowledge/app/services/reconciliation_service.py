@@ -8,11 +8,11 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.integrations.ragflow.client import RagflowClient
 from app.integrations.ragflow.exceptions import RagflowError
+from app.runtime.ragflow import RagflowRuntimeAdapter
 from app.models.base import not_deleted
 from app.models.enums import AuditAction, BindingDriftStatus, KnowledgeBaseStatus, SourceFileStatus
 from app.models.knowledge_base import KnowledgeBase
@@ -60,7 +60,7 @@ async def reconcile_binding_config(
 ) -> dict[str, Any]:
     from app.runtime.ragflow import RagflowRuntimeAdapter
 
-    if isinstance(adapter, RagflowClient):
+    if isinstance(adapter, RagflowRuntimeAdapter):
         adapter = RagflowRuntimeAdapter(client=adapter)
     elif not hasattr(adapter, "get_dataset_runtime_config"):
         adapter = RagflowRuntimeAdapter()
@@ -140,7 +140,7 @@ async def reconcile_binding_config(
     }
 
 
-async def _disable_superseded_enabled_documents(db: AsyncSession, ragflow: RagflowClient) -> tuple[int, int]:
+async def _disable_superseded_enabled_documents(db: AsyncSession, ragflow: RagflowRuntimeAdapter) -> tuple[int, int]:
     result = await db.execute(
         select(SourceFileVersion, SourceFile, KnowledgeBase)
         .join(SourceFile, SourceFile.id == SourceFileVersion.source_file_id)
@@ -177,7 +177,7 @@ async def _disable_superseded_enabled_documents(db: AsyncSession, ragflow: Ragfl
     return disabled, failed
 
 
-async def _retry_deleting_source_files(db: AsyncSession, ragflow: RagflowClient) -> tuple[int, int]:
+async def _retry_deleting_source_files(db: AsyncSession, ragflow: RagflowRuntimeAdapter) -> tuple[int, int]:
     result = await db.execute(
         select(SourceFile).where(
             SourceFile.status == SourceFileStatus.deleting.value,
@@ -213,7 +213,7 @@ async def _retry_deleting_source_files(db: AsyncSession, ragflow: RagflowClient)
     return completed, failed
 
 
-async def _retry_deleting_knowledge_bases(db: AsyncSession, ragflow: RagflowClient) -> tuple[int, int]:
+async def _retry_deleting_knowledge_bases(db: AsyncSession, ragflow: RagflowRuntimeAdapter) -> tuple[int, int]:
     result = await db.execute(
         select(KnowledgeBase).where(
             KnowledgeBase.status == KnowledgeBaseStatus.deleting.value,
@@ -240,92 +240,134 @@ async def _retry_deleting_knowledge_bases(db: AsyncSession, ragflow: RagflowClie
     return completed, failed
 
 
-async def _repair_metadata_drift(db: AsyncSession, ragflow: RagflowClient) -> tuple[int, int, int, int]:
-    result = await db.execute(
-        select(SourceFileVersion, SourceFile, KnowledgeBase)
-        .join(SourceFile, SourceFile.id == SourceFileVersion.source_file_id)
-        .join(KnowledgeBase, KnowledgeBase.id == SourceFile.knowledge_base_id)
-        .where(
-            SourceFileVersion.ragflow_document_id.is_not(None),
-            SourceFileVersion.parse_status.in_(["active", "parsing", "pending"]),
-            not_deleted(SourceFileVersion),
-            not_deleted(SourceFile),
-            not_deleted(KnowledgeBase),
-        )
-        .limit(200)
-    )
+async def _repair_metadata_drift(db: AsyncSession, ragflow: RagflowRuntimeAdapter) -> tuple[int, int, int, int]:
+    batch_size = 200
+    cursor_updated_at: datetime | None = None
+    cursor_id: str | None = None
     checked_count = 0
     drift_count = 0
     repaired_count = 0
     failed_count = 0
-    for version, sf, kb in result.all():
-        dataset_id = await runtime_binding_service.get_dataset_id(db, kb)
-        if not dataset_id or not version.ragflow_document_id:
-            continue
-        checked_count += 1
-        try:
-            docs = await ragflow.list_documents(dataset_id, id=version.ragflow_document_id, page_size=1)
-        except RagflowError:
-            failed_count += 1
-            continue
-        if not docs:
-            continue
-        expected = build_meta_fields(
-            source_file_id=sf.id,
-            file_version_id=version.id,
-            knowledge_base_id=kb.id,
-            org_id=sf.org_id,
-            metadata=sf.metadata_,
-            metadata_revision=sf.metadata_revision,
-        )
-        actual = docs[0].meta_fields or {}
-        mismatch = any(str(actual.get(k, "")) != v for k, v in expected.items())
-        remote_revision = str(actual.get("nk_metadata_revision", ""))
-        local_revision = str(int(sf.metadata_revision or 0))
-        if remote_revision != local_revision:
-            mismatch = True
-        if not mismatch:
-            continue
-        drift_count += 1
-        logger.warning(
-            "metadata drift detected source_file=%s version=%s document=%s local_rev=%s remote_rev=%s",
-            sf.id,
-            version.id,
-            version.ragflow_document_id,
-            local_revision,
-            remote_revision,
-        )
-        try:
-            await ragflow.update_document_metadata(dataset_id, version.ragflow_document_id, expected)
-            verify_docs = await ragflow.list_documents(
-                dataset_id,
-                id=version.ragflow_document_id,
-                page_size=1,
+    while True:
+        stmt = (
+            select(SourceFileVersion, SourceFile, KnowledgeBase)
+            .join(SourceFile, SourceFile.id == SourceFileVersion.source_file_id)
+            .join(KnowledgeBase, KnowledgeBase.id == SourceFile.knowledge_base_id)
+            .where(
+                SourceFileVersion.ragflow_document_id.is_not(None),
+                SourceFileVersion.parse_status.in_(["active", "parsing", "pending"]),
+                not_deleted(SourceFileVersion),
+                not_deleted(SourceFile),
+                not_deleted(KnowledgeBase),
             )
-            verified = False
-            if verify_docs:
-                repaired_meta = verify_docs[0].meta_fields or {}
-                verified = all(str(repaired_meta.get(k, "")) == v for k, v in expected.items())
-            if verified:
-                repaired_count += 1
-                await write_audit(
-                    db,
-                    org_id=sf.org_id,
-                    member_id=None,
-                    action=AuditAction.metadata_repaired.value,
-                    resource_type="source_file_version",
-                    resource_id=version.id,
-                    details={
-                        "source_file_id": sf.id,
-                        "ragflow_document_id": version.ragflow_document_id,
-                        "strategy": "LOCAL_WINS",
-                        "expected": expected,
-                        "actual": {k: actual.get(k) for k in expected},
-                        "status": "REPAIRED",
-                    },
+            .order_by(SourceFileVersion.updated_at.asc(), SourceFileVersion.id.asc())
+        )
+        if cursor_updated_at is not None and cursor_id is not None:
+            stmt = stmt.where(
+                or_(
+                    SourceFileVersion.updated_at > cursor_updated_at,
+                    and_(
+                        SourceFileVersion.updated_at == cursor_updated_at,
+                        SourceFileVersion.id > cursor_id,
+                    ),
                 )
-            else:
+            )
+        stmt = stmt.limit(batch_size)
+        rows = (await db.execute(stmt)).all()
+        if not rows:
+            break
+        for version, sf, kb in rows:
+            dataset_id = await runtime_binding_service.get_dataset_id(db, kb)
+            if not dataset_id or not version.ragflow_document_id:
+                continue
+            checked_count += 1
+            try:
+                docs = await ragflow.list_documents(dataset_id, id=version.ragflow_document_id, page_size=1)
+            except RagflowError:
                 failed_count += 1
+                continue
+            if not docs:
+                continue
+            expected = build_meta_fields(
+                source_file_id=sf.id,
+                file_version_id=version.id,
+                knowledge_base_id=kb.id,
+                org_id=sf.org_id,
+                metadata=sf.metadata_,
+                metadata_revision=sf.metadata_revision,
+            )
+            actual = docs[0].meta_fields or {}
+            mismatch = any(str(actual.get(k, "")) != v for k, v in expected.items())
+            remote_revision = str(actual.get("nk_metadata_revision", ""))
+            local_revision = str(int(sf.metadata_revision or 0))
+            if remote_revision != local_revision:
+                mismatch = True
+            if not mismatch:
+                continue
+            drift_count += 1
+            logger.warning(
+                "metadata drift detected source_file=%s version=%s document=%s local_rev=%s remote_rev=%s",
+                sf.id,
+                version.id,
+                version.ragflow_document_id,
+                local_revision,
+                remote_revision,
+            )
+            try:
+                await ragflow.update_document_metadata(dataset_id, version.ragflow_document_id, expected)
+                verify_docs = await ragflow.list_documents(
+                    dataset_id,
+                    id=version.ragflow_document_id,
+                    page_size=1,
+                )
+                verified = False
+                if verify_docs:
+                    repaired_meta = verify_docs[0].meta_fields or {}
+                    verified = all(str(repaired_meta.get(k, "")) == v for k, v in expected.items())
+                if verified:
+                    repaired_count += 1
+                    await write_audit(
+                        db,
+                        org_id=sf.org_id,
+                        member_id=None,
+                        action=AuditAction.metadata_repaired.value,
+                        resource_type="source_file_version",
+                        resource_id=version.id,
+                        details={
+                            "source_file_id": sf.id,
+                            "ragflow_document_id": version.ragflow_document_id,
+                            "strategy": "LOCAL_WINS",
+                            "expected": expected,
+                            "actual": {k: actual.get(k) for k in expected},
+                            "status": "REPAIRED",
+                        },
+                    )
+                else:
+                    failed_count += 1
+                    await write_audit(
+                        db,
+                        org_id=sf.org_id,
+                        member_id=None,
+                        action=AuditAction.metadata_mismatch.value,
+                        resource_type="source_file_version",
+                        resource_id=version.id,
+                        details={
+                            "source_file_id": sf.id,
+                            "ragflow_document_id": version.ragflow_document_id,
+                            "strategy": "LOCAL_WINS",
+                            "expected": expected,
+                            "actual": {k: actual.get(k) for k in expected},
+                            "status": "REPAIR_FAILED",
+                        },
+                    )
+            except RagflowError as exc:
+                failed_count += 1
+                logger.warning(
+                    "metadata repair failed source_file=%s version=%s err=%s",
+                    sf.id,
+                    version.id,
+                    exc.message_key,
+                )
                 await write_audit(
                     db,
                     org_id=sf.org_id,
@@ -340,37 +382,18 @@ async def _repair_metadata_drift(db: AsyncSession, ragflow: RagflowClient) -> tu
                         "expected": expected,
                         "actual": {k: actual.get(k) for k in expected},
                         "status": "REPAIR_FAILED",
+                        "error": exc.message_key,
                     },
                 )
-        except RagflowError as exc:
-            failed_count += 1
-            logger.warning(
-                "metadata repair failed source_file=%s version=%s err=%s",
-                sf.id,
-                version.id,
-                exc.message_key,
-            )
-            await write_audit(
-                db,
-                org_id=sf.org_id,
-                member_id=None,
-                action=AuditAction.metadata_mismatch.value,
-                resource_type="source_file_version",
-                resource_id=version.id,
-                details={
-                    "source_file_id": sf.id,
-                    "ragflow_document_id": version.ragflow_document_id,
-                    "strategy": "LOCAL_WINS",
-                    "expected": expected,
-                    "actual": {k: actual.get(k) for k in expected},
-                    "status": "REPAIR_FAILED",
-                    "error": exc.message_key,
-                },
-            )
+        last_version = rows[-1][0]
+        cursor_updated_at = last_version.updated_at
+        cursor_id = last_version.id
+        if len(rows) < batch_size:
+            break
     return checked_count, drift_count, repaired_count, failed_count
 
 
-async def _check_binding_drift(db: AsyncSession, ragflow: RagflowClient) -> tuple[int, int]:
+async def _check_binding_drift(db: AsyncSession, ragflow: RagflowRuntimeAdapter) -> tuple[int, int]:
     """Local Binding READY but Dataset missing → binding.error; do not auto-create Dataset."""
     from app.models.enums import RuntimeBindingStatus
     from app.models.runtime_binding import KnowledgeRuntimeBinding
@@ -386,8 +409,17 @@ async def _check_binding_drift(db: AsyncSession, ragflow: RagflowClient) -> tupl
     drift = 0
     known_ids: set[str] | None = None
     try:
-        datasets = await ragflow.list_datasets(page=1, page_size=100)
-        known_ids = {d.id for d in datasets if getattr(d, "id", None)}
+        known_ids = set()
+        page = 1
+        page_size = 100
+        while True:
+            datasets = await ragflow.list_datasets(page=page, page_size=page_size)
+            if not datasets:
+                break
+            known_ids.update(d.id for d in datasets if getattr(d, "id", None))
+            if len(datasets) < page_size:
+                break
+            page += 1
     except Exception:
         known_ids = None
     for binding in rows.all():
@@ -402,9 +434,8 @@ async def _check_binding_drift(db: AsyncSession, ragflow: RagflowClient) -> tupl
     return checked, drift
 
 
-async def _reconcile_all_binding_configs(db: AsyncSession, ragflow: RagflowClient) -> int:
+async def _reconcile_all_binding_configs(db: AsyncSession, adapter: RagflowRuntimeAdapter) -> int:
     from app.models.runtime_binding import KnowledgeRuntimeBinding
-    from app.runtime.ragflow import RagflowRuntimeAdapter
 
     rows = await db.scalars(
         select(KnowledgeRuntimeBinding).where(
@@ -412,10 +443,8 @@ async def _reconcile_all_binding_configs(db: AsyncSession, ragflow: RagflowClien
             not_deleted(KnowledgeRuntimeBinding),
         )
     )
-    adapter = RagflowRuntimeAdapter(client=ragflow)
     reconciled = 0
-    try:
-        for binding in rows.all():
+    for binding in rows.all():
             if binding.drift_status in {
                 BindingDriftStatus.drifted.value,
                 BindingDriftStatus.unknown.value,
@@ -424,8 +453,6 @@ async def _reconcile_all_binding_configs(db: AsyncSession, ragflow: RagflowClien
                 result = await reconcile_binding_config(db, binding.knowledge_base_id, adapter)
                 if result.get("status") == "success":
                     reconciled += 1
-    finally:
-        await adapter.aclose()
     return reconciled
 
 
@@ -474,7 +501,7 @@ async def _check_translation_drift(db: AsyncSession) -> tuple[int, int]:
 
 
 # @lat: [[knowledge#Reconciliation Runs]]
-async def run_reconciliation(db: AsyncSession, ragflow: RagflowClient) -> dict[str, int | str]:
+async def run_reconciliation(db: AsyncSession, ragflow: RagflowRuntimeAdapter) -> dict[str, int | str]:
     started_at = datetime.now(UTC)
     run = ReconciliationRun(
         id=str(uuid.uuid4()),
@@ -577,12 +604,11 @@ def build_runtime_diagnostics(binding) -> dict[str, Any]:
 
 async def reconcile_knowledge_base_runtime(
     db: AsyncSession,
-    ragflow: RagflowClient,
+    adapter: RagflowRuntimeAdapter,
     knowledge_base_id: str,
     *,
     repair_mode: str | None = None,
 ) -> dict[str, Any]:
-    from app.runtime.ragflow import RagflowRuntimeAdapter
     from app.services import metrics_service
 
     kb = await db.get(KnowledgeBase, knowledge_base_id)
@@ -591,41 +617,37 @@ async def reconcile_knowledge_base_runtime(
         return {"status": "error", "reason": "kb_missing"}
 
     binding = await runtime_binding_service.get_binding(db, knowledge_base_id)
-    adapter = RagflowRuntimeAdapter(client=ragflow)
-    try:
-        if binding is None:
-            if repair_mode != "reprovision":
-                metrics_service.observe_runtime_reconcile(status="skipped")
-                return {"status": "skipped", "reason": "binding_missing", "repaired": False}
-            result = await adapter.provision_binding(
-                db,
-                kb=kb,
-                embedding_model=kb.embedding_model,
-                chunk_method=kb.chunk_method,
-                parser_config=kb.parser_config,
-                description=kb.description,
-                name=kb.name,
-                org_id=kb.org_id,
-            )
-            binding = await runtime_binding_service.get_binding(db, knowledge_base_id)
-            kb.ragflow_dataset_id = result.resource_id
-            await db.flush()
-
-        await runtime_binding_service.probe_and_persist_binding_capabilities(
+    if binding is None:
+        if repair_mode != "reprovision":
+            metrics_service.observe_runtime_reconcile(status="skipped")
+            return {"status": "skipped", "reason": "binding_missing", "repaired": False}
+        result = await adapter.provision_binding(
             db,
-            knowledge_base_id=knowledge_base_id,
-            adapter=adapter,
+            kb=kb,
+            embedding_model=kb.embedding_model,
+            chunk_method=kb.chunk_method,
+            parser_config=kb.parser_config,
+            description=kb.description,
+            name=kb.name,
+            org_id=kb.org_id,
         )
-        reconcile_result = await reconcile_binding_config(db, knowledge_base_id, adapter)
-        if binding is not None:
-            binding.last_reconciled_at = datetime.now(UTC)
-            await db.flush()
-        status = str(reconcile_result.get("status") or "unknown")
-        metrics_service.observe_runtime_reconcile(status=status)
-        return {
-            **reconcile_result,
-            "repaired": bool(reconcile_result.get("applied")),
-            "repair_mode": repair_mode,
-        }
-    finally:
-        await adapter.aclose()
+        binding = await runtime_binding_service.get_binding(db, knowledge_base_id)
+        kb.ragflow_dataset_id = result.resource_id
+        await db.flush()
+
+    await runtime_binding_service.probe_and_persist_binding_capabilities(
+        db,
+        knowledge_base_id=knowledge_base_id,
+        adapter=adapter,
+    )
+    reconcile_result = await reconcile_binding_config(db, knowledge_base_id, adapter)
+    if binding is not None:
+        binding.last_reconciled_at = datetime.now(UTC)
+        await db.flush()
+    status = str(reconcile_result.get("status") or "unknown")
+    metrics_service.observe_runtime_reconcile(status=status)
+    return {
+        **reconcile_result,
+        "repaired": bool(reconcile_result.get("applied")),
+        "repair_mode": repair_mode,
+    }

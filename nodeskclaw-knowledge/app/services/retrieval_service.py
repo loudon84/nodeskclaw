@@ -11,8 +11,8 @@ from types import SimpleNamespace
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.runtime.ragflow import RagflowRuntimeAdapter
 from app.core.exceptions import BadRequestError, ForbiddenError, NotFoundError, ServiceUnavailableError
-from app.integrations.ragflow.client import RagflowClient
 from app.models.enums import (
     AccessPlanKind,
     ApplicationPermission,
@@ -149,7 +149,7 @@ def _diagnostics_from_slices(slice_results: list) -> dict:
 async def retrieve(
     db: AsyncSession,
     member: KnowledgePrincipal,
-    ragflow: RagflowClient,
+    ragflow: RagflowRuntimeAdapter,
     *,
     knowledge_set_id: str,
     query: str,
@@ -200,7 +200,7 @@ async def retrieve(
 async def retrieve_for_application(
     db: AsyncSession,
     member: KnowledgePrincipal,
-    ragflow: RagflowClient,
+    ragflow: RagflowRuntimeAdapter,
     *,
     application_id: str,
     query: str,
@@ -407,7 +407,7 @@ async def _persist_retrieval_evidence(
 async def _retrieve_for_set(
     db: AsyncSession,
     member: KnowledgePrincipal,
-    ragflow: RagflowClient,
+    ragflow: RagflowRuntimeAdapter,
     *,
     knowledge_set_id: str,
     query: str,
@@ -783,6 +783,8 @@ async def _retrieve_for_set(
                 for s in plan.slices
             ]
         }
+    if merge_result.fusion:
+        payload["fusion"] = merge_result.fusion
     return payload
 
 
@@ -847,7 +849,7 @@ async def _resolve_playground_profile(
 async def playground_retrieve(
     db: AsyncSession,
     member: KnowledgePrincipal,
-    ragflow: RagflowClient,
+    ragflow: RagflowRuntimeAdapter,
     *,
     knowledge_set_id: str,
     query: str,
@@ -986,6 +988,14 @@ async def playground_retrieve(
     )
     results = _chunks_to_results(merge_result.merged)
 
+    from app.services.query_intelligence import analyze_query
+
+    query_analysis = await analyze_query(
+        query,
+        access_scope=plan_access.kind.value if hasattr(plan_access.kind, "value") else str(plan_access.kind),
+        profile_policy=config,
+    )
+
     if include_trace:
         await retrieval_trace_service.persist_trace(
             db,
@@ -1015,6 +1025,8 @@ async def playground_retrieve(
         "results": results,
         "filter_summary": filter_summary,
         "execution_slices": execution_slices,
+        "query_analysis": query_analysis.to_dict(),
+        "fusion": merge_result.fusion or {"strategy": "weighted_similarity"},
         "diagnostics": {
             "execution_slices": execution_slices,
             "fallback_used": any_fallback,

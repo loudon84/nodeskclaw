@@ -7,9 +7,9 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.deps import get_db, get_member_context, get_ragflow_client
+from app.runtime.ragflow import RagflowRuntimeAdapter
+from app.core.deps import get_db, get_member_context, get_runtime_adapter
 from app.core.exceptions import BadRequestError
-from app.integrations.ragflow.client import RagflowClient
 from app.schemas.common import ApiResponse
 from app.schemas.principal import KnowledgePrincipal
 from app.services import knowledge_model_service, retrieval_service
@@ -48,7 +48,7 @@ async def application_retrieval(
     body: ApplicationRetrievalRequest,
     member: KnowledgePrincipal = Depends(get_member_context),
     db: AsyncSession = Depends(get_db),
-    ragflow: RagflowClient = Depends(get_ragflow_client),
+    ragflow: RagflowRuntimeAdapter = Depends(get_runtime_adapter),
 ):
     _require_api_v2()
     data = await retrieval_service.retrieve_for_application(
@@ -70,7 +70,7 @@ async def retrieval_playground_v2(
     body: PlaygroundV2Request,
     member: KnowledgePrincipal = Depends(get_member_context),
     db: AsyncSession = Depends(get_db),
-    ragflow: RagflowClient = Depends(get_ragflow_client),
+    ragflow: RagflowRuntimeAdapter = Depends(get_runtime_adapter),
 ):
     _require_api_v2()
     if body.application_id:
@@ -119,17 +119,8 @@ async def create_knowledge_model(
         terms=body.get("terms"),
         extraction_policy=body.get("extraction_policy"),
     )
-    return ApiResponse(
-        data={
-            "id": row.id,
-            "name": row.name,
-            "version": row.version,
-            "entities": row.entities,
-            "relations": row.relations,
-            "terms": row.terms,
-            "extraction_policy": row.extraction_policy,
-        }
-    )
+    active = await knowledge_model_service.get_active_revision(db, row)
+    return ApiResponse(data=knowledge_model_service.model_to_dict(row, revision=active))
 
 
 @router.get("/knowledge-models/{model_id}")
@@ -140,14 +131,5 @@ async def get_knowledge_model(
 ):
     _require_api_v2()
     row = await knowledge_model_service.get_model(db, member, model_id)
-    return ApiResponse(
-        data={
-            "id": row.id,
-            "name": row.name,
-            "version": row.version,
-            "entities": row.entities,
-            "relations": row.relations,
-            "terms": row.terms,
-            "extraction_policy": row.extraction_policy,
-        }
-    )
+    active = await knowledge_model_service.get_active_revision(db, row)
+    return ApiResponse(data=knowledge_model_service.model_to_dict(row, revision=active))

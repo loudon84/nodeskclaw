@@ -1,9 +1,11 @@
 # knowledge-desktop（copilot-knowledge）对接 nodeskclaw-knowledge 接口文档
 
 **前端工程：`copilot-knowledge`（Electron + React 19 + TanStack Query/Router + oRPC IPC + shadcn）**
-**服务方：`nodeskclaw-knowledge`（FastAPI，v1.3）**
-**Base URL：`http(s)://<knowledge-host>:4530` · API 前缀 `/api/v1`**
+**服务方：`nodeskclaw-knowledge`（FastAPI，v2.3 Intelligence API）**
+**Base URL：`http(s)://<knowledge-host>:4530` · API 前缀 `/api/v2`（需 `KNOWLEDGE_API_V2_ENABLED=true`）**
 **配套调试：见 `docs_knowledge/knowledge-postman-collection.md`**
+
+> **历史附录**：v1.3 `/api/v1` 契约见本文档末尾 [附录 A — v1.3 `/api/v1` 历史基线](#appendix-v1-api)。
 
 ---
 
@@ -55,7 +57,7 @@ export interface KnowledgeEndpointConfig {
   authBackendUrl: string;         // 现有：认证
   authPrefix: string;             // 现有
   knowledgeApiUrl: string;        // 新增：http://127.0.0.1:4530
-  knowledgeApiPrefix: string;     // 新增：/api/v1
+  knowledgeApiPrefix: string;     // 新增：/api/v2
 }
 ```
 
@@ -427,7 +429,20 @@ v2.2 在 v1.3 基线上新增 headless 运维/发布契约，Desktop 后续可�
 ## 10. 边界与注意事项
 
 - Desktop **只连** nodeskclaw-knowledge，**不直连 RAGFlow**（所有 RAGFlow 调用在服务端 Adapter 内）。
-- v1.3 冻结 Connector/Credential/SyncRun/SourceObject API 契约，字段只增不减。
+- v2.3 基线为 `/api/v2`；v1.3 `/api/v1` 仅作历史兼容（见附录 A）。
 - Connector 静态注册，不支持 API 上传自定义 Connector 代码。
 - Knowledge 不产生 token；认证链路仍是 backend，Knowledge 仅校验。
 - 联调前置：服务端起 `nodeskclaw-knowledge`（4530）+ `nodeskclaw-backend`（4510）+ 可用 PostgreSQL/RAGFlow。
+
+---
+
+## 附录 A — v1.3 `/api/v1` 历史基线
+
+v1.3 时代 Desktop 对接前缀为 `/api/v1`。v2.3 起新功能（Applications、Runtime、Artifacts、Quality、KnowledgeModel Revision 等）均在 `/api/v2` 发布；`/api/v1` 保留只读/兼容，不再作为新集成基线。
+
+| 项 | v1.3 历史值 | v2.3 当前基线 |
+|---|---|---|
+| API 前缀 | `/api/v1` | `/api/v2` |
+| 启用开关 | 默认开启 | `KNOWLEDGE_API_V2_ENABLED=true` |
+| Application 发布 | 无正式 readiness gate | `POST .../publish` + readiness |
+| Artifact / Quality | 无 | `/api/v2/artifacts`、`/api/v2/quality` |

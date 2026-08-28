@@ -32,28 +32,6 @@ INDEX_DESCRIPTORS: dict[str, dict[str, Any]] = {
         "core": False,
         "experimental": False,
     },
-    IndexType.outline.value: {
-        "index_type": IndexType.outline.value,
-        "provider": "derived",
-        "cost_class": "medium",
-        "trigger_policy": BuildTriggerPolicy.on_activate.value,
-        "runtime_requirements": {"requires_public_api": True, "capability_key": "supports_outline"},
-        "requires": {"build_capability": "outline", "retrieval_capability": "outline"},
-        "fallback": ["chunk"],
-        "core": False,
-        "experimental": True,
-    },
-    IndexType.table.value: {
-        "index_type": IndexType.table.value,
-        "provider": "derived",
-        "cost_class": "medium",
-        "trigger_policy": BuildTriggerPolicy.on_activate.value,
-        "runtime_requirements": {"requires_public_api": True, "capability_key": "supports_table"},
-        "requires": {"build_capability": "table", "retrieval_capability": "table"},
-        "fallback": ["chunk"],
-        "core": False,
-        "experimental": True,
-    },
     IndexType.hierarchical_summary.value: {
         "index_type": IndexType.hierarchical_summary.value,
         "provider": "ragflow",
@@ -119,16 +97,12 @@ SYSTEM_BUILD_PROFILES: dict[str, dict[str, Any]] = {
     },
     "experimental": {
         "name": "Experimental",
-        "description": "Outline and table indexes not included in standard profiles",
+        "description": "Chunk-only experimental profile; outline/table moved to Artifact runtime",
         "index_types": [
             IndexType.chunk.value,
-            IndexType.outline.value,
-            IndexType.table.value,
         ],
         "trigger_policy": {
             IndexType.chunk.value: BuildTriggerPolicy.ingestion.value,
-            IndexType.outline.value: BuildTriggerPolicy.on_activate.value,
-            IndexType.table.value: BuildTriggerPolicy.on_activate.value,
         },
     },
 }

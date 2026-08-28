@@ -10,7 +10,7 @@ import socket
 import uuid
 
 from app.core.deps import async_session_factory
-from app.integrations.ragflow.client import RagflowClient
+from app.runtime.ragflow import RagflowRuntimeAdapter
 from app.services import ingestion_service, metrics_service
 
 logger = logging.getLogger(__name__)
@@ -42,7 +42,7 @@ def _observe_job_metrics(job) -> None:
 # @lat: [[knowledge#Ingestion Worker]]
 async def _run_loop() -> None:
     lease_owner = _lease_owner()
-    ragflow = RagflowClient()
+    ragflow = RagflowRuntimeAdapter()
     logger.info("ingestion worker started lease_owner=%s", lease_owner)
     try:
         while True:

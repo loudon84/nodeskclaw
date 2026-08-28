@@ -21,9 +21,10 @@ MEMBER = KnowledgePrincipal(
 )
 
 
-def test_mcp_lists_four_knowledge_tools():
+def test_mcp_lists_six_knowledge_tools():
     names = {tool.name for tool in list_tools()}
     assert names == set(MCP_TOOL_NAMES)
+    assert len(names) == 6
 
 
 def test_v2_router_mounts_mcp_routes():

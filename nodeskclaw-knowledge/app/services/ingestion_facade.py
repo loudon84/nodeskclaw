@@ -13,7 +13,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import BadRequestError, ConflictError, ForbiddenError, NotFoundError
-from app.integrations.ragflow.client import RagflowClient
 from app.integrations.ragflow.exceptions import RagflowError, RagflowUploadUnknownError
 from app.integrations.ragflow.upload_token import build_upload_token, deterministic_upload_filename
 from app.models.base import not_deleted
@@ -99,7 +98,7 @@ def _ensure_not_connector_managed_for_manual_upload(sf: SourceFile) -> None:
 async def ingest_from_member(
     db: AsyncSession,
     member: KnowledgePrincipal,
-    ragflow: RagflowClient,
+    ragflow: RagflowRuntimeAdapter,
     *,
     knowledge_base_id: str,
     file_name: str,
@@ -137,7 +136,7 @@ async def ingest_from_member(
 
 async def ingest_from_connector(
     db: AsyncSession,
-    ragflow: RagflowClient,
+    ragflow: RagflowRuntimeAdapter,
     *,
     actor: KnowledgeActor,
     kb: KnowledgeBase,
@@ -193,7 +192,7 @@ async def ingest_from_connector(
 
 async def ingest_core(
     db: AsyncSession,
-    ragflow: RagflowClient,
+    ragflow: RagflowRuntimeAdapter,
     *,
     actor: KnowledgeActor,
     kb: KnowledgeBase,

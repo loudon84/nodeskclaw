@@ -3,8 +3,8 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_db, get_member_context, get_ragflow_client
-from app.integrations.ragflow.client import RagflowClient
+from app.core.deps import get_db, get_member_context, get_runtime_adapter
+from app.runtime.ragflow import RagflowRuntimeAdapter
 from app.schemas.common import ApiResponse, PageData
 from app.schemas.knowledge import (
     AclOut,
@@ -56,7 +56,7 @@ async def create_kb(
     body: KnowledgeBaseCreate,
     member: KnowledgePrincipal = Depends(get_member_context),
     db: AsyncSession = Depends(get_db),
-    ragflow: RagflowClient = Depends(get_ragflow_client),
+    ragflow: RagflowRuntimeAdapter = Depends(get_runtime_adapter),
 ):
     kb = await knowledge_base_service.create_knowledge_base(
         db,
@@ -89,7 +89,7 @@ async def patch_kb(
     body: KnowledgeBaseUpdate,
     member: KnowledgePrincipal = Depends(get_member_context),
     db: AsyncSession = Depends(get_db),
-    ragflow: RagflowClient = Depends(get_ragflow_client),
+    ragflow: RagflowRuntimeAdapter = Depends(get_runtime_adapter),
 ):
     kb = await knowledge_base_service.update_knowledge_base(
         db,
@@ -107,7 +107,7 @@ async def delete_kb(
     kb_id: str,
     member: KnowledgePrincipal = Depends(get_member_context),
     db: AsyncSession = Depends(get_db),
-    ragflow: RagflowClient = Depends(get_ragflow_client),
+    ragflow: RagflowRuntimeAdapter = Depends(get_runtime_adapter),
 ):
     await knowledge_base_service.delete_knowledge_base(db, member, ragflow, kb_id)
     return ApiResponse(message="deleted")

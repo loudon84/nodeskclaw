@@ -8,7 +8,6 @@ from datetime import UTC, datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import BadRequestError, ForbiddenError, NotFoundError
-from app.integrations.ragflow.client import RagflowClient
 from app.models.enums import AuditAction, FilePermission, KbPermission, ParseStatus
 from app.models.source_file import SourceFile
 from app.models.source_file_version import SourceFileVersion
@@ -49,7 +48,7 @@ def _ensure_not_archived(sf: SourceFile) -> None:
 async def archive_source_file(
     db: AsyncSession,
     member: KnowledgePrincipal,
-    ragflow: RagflowClient,
+    ragflow: RagflowRuntimeAdapter,
     source_file_id: str,
 ) -> SourceFile:
     sf = await source_file_service.get_source_file(db, member, source_file_id)
@@ -88,7 +87,7 @@ async def archive_source_file(
 async def unarchive_source_file(
     db: AsyncSession,
     member: KnowledgePrincipal,
-    ragflow: RagflowClient,
+    ragflow: RagflowRuntimeAdapter,
     source_file_id: str,
 ) -> SourceFile:
     sf = await source_file_service.get_source_file(db, member, source_file_id)
@@ -131,7 +130,7 @@ async def unarchive_source_file(
 async def activate_source_file_version(
     db: AsyncSession,
     member: KnowledgePrincipal,
-    ragflow: RagflowClient,
+    ragflow: RagflowRuntimeAdapter,
     source_file_id: str,
     version_id: str,
 ) -> SourceFile:

@@ -60,6 +60,26 @@ async def test_backfill_idempotent_when_binding_matches(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_backfill_does_not_overwrite_existing_resource_id(monkeypatch):
+    kb = SimpleNamespace(id="kb1", org_id="o1", ragflow_dataset_id="legacy-ds", deleted_at=None)
+    scalars = MagicMock()
+    scalars.all.return_value = [kb]
+    result = MagicMock()
+    result.scalars.return_value = scalars
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=result)
+    db.flush = AsyncMock()
+
+    existing = SimpleNamespace(resource_id="binding-authoritative", last_synced_at=None)
+    monkeypatch.setattr(runtime_binding_service, "get_binding", AsyncMock(return_value=existing))
+
+    stats = await runtime_binding_service.backfill_from_knowledge_bases(db)
+    assert existing.resource_id == "binding-authoritative"
+    assert stats["skipped"] == 1
+    assert stats["updated"] == 0
+
+
+@pytest.mark.asyncio
 async def test_get_dataset_id_prefers_binding_when_flag_enabled(monkeypatch):
     monkeypatch.setattr(settings, "KNOWLEDGE_V2_RUNTIME_BINDING_ENABLED", True)
     kb = SimpleNamespace(id="kb1", ragflow_dataset_id="legacy", deleted_at=None)
@@ -191,6 +211,38 @@ async def test_compile_and_persist_desired_config(monkeypatch):
     assert desired["embedding_model"] == "bge-m3"
     assert desired["parser_config"].get("auto_questions") == 5
     assert binding.config_revision == 1
+
+
+@pytest.mark.asyncio
+async def test_compile_and_persist_skips_revision_when_hash_unchanged(monkeypatch):
+    kb = SimpleNamespace(
+        id="kb1",
+        org_id="o1",
+        name="demo",
+        embedding_model="bge-m3",
+        chunk_method="naive",
+        parser_config={},
+        description="desc",
+        knowledge_model_id=None,
+    )
+    binding = SimpleNamespace(
+        desired_config=None,
+        desired_config_hash=None,
+        config_revision=0,
+        capabilities={"supports_auto_questions": {"build_supported": True}},
+    )
+    profile = SimpleNamespace(index_types=["chunk", "question"])
+    monkeypatch.setattr(
+        "app.services.build_profile_service.resolve_profile_for_kb",
+        AsyncMock(return_value=profile),
+    )
+    db = AsyncMock()
+    db.flush = AsyncMock()
+    await runtime_binding_service.compile_and_persist_desired_config(db, kb, binding)
+    first_revision = binding.config_revision
+    await runtime_binding_service.compile_and_persist_desired_config(db, kb, binding)
+    assert binding.config_revision == first_revision
+    assert first_revision == 1
 
 
 @pytest.mark.asyncio

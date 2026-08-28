@@ -16,6 +16,8 @@ from app.services import build_executors, build_profile_service, index_state_ser
 from app.services.index_registry import get_descriptor, is_runtime_supported
 from app.workers.job_leasing import claim_next, clear_lease_if_owner
 
+from app.services.build_input_manifest_service import BuildDelta, compute_build_delta
+
 logger = logging.getLogger(__name__)
 
 LEASE_SECONDS = settings.KNOWLEDGE_BUILD_LEASE_SECONDS
@@ -31,6 +33,9 @@ async def enqueue_build(
     build_profile_id: str | None = None,
     created_by_member_id: str | None = None,
     delay_seconds: int = 0,
+    target_kind: str = "index",
+    target_key: str | None = None,
+    input_manifest_hash: str | None = None,
 ) -> KnowledgeBuildJob | None:
     if index_type == IndexType.chunk.value:
         return None
@@ -58,6 +63,9 @@ async def enqueue_build(
         knowledge_base_id=knowledge_base_id,
         build_profile_id=build_profile_id,
         index_type=index_type,
+        target_kind=target_kind,
+        target_key=target_key or index_type,
+        input_manifest_hash=input_manifest_hash,
         trigger_reason=trigger_reason,
         status=BuildJobStatus.queued.value,
         next_run_at=next_run,
@@ -78,12 +86,16 @@ async def enqueue_after_activation(
     capabilities: dict | None = None,
     member_id: str | None = None,
 ) -> list[KnowledgeBuildJob]:
+    from app.services import build_input_manifest_service
+
+    manifest_hash, _items, manifest_summary = await build_input_manifest_service.compute_manifest(db, kb)
     if not settings.KNOWLEDGE_V2_BUILD_ENABLED:
         await index_state_service.mark_indexes_stale(
             db,
             org_id=org_id,
             kb=kb,
-            source_watermark=version_id,
+            input_manifest_hash=manifest_hash,
+            input_manifest_summary=manifest_summary,
             capabilities=capabilities,
         )
         return []
@@ -97,7 +109,8 @@ async def enqueue_after_activation(
         org_id=org_id,
         kb=kb,
         index_types=list(profile.index_types or []),
-        source_watermark=version_id,
+        input_manifest_hash=manifest_hash,
+        input_manifest_summary=manifest_summary,
         capabilities=capabilities,
     )
 
@@ -132,6 +145,7 @@ async def enqueue_after_activation(
                 build_profile_id=profile.id,
                 created_by_member_id=member_id,
                 delay_seconds=delay,
+                input_manifest_hash=manifest_hash,
             )
         elif policy == BuildTriggerPolicy.on_activate.value:
             job = await enqueue_build(
@@ -142,6 +156,7 @@ async def enqueue_after_activation(
                 trigger_reason="activate",
                 build_profile_id=profile.id,
                 created_by_member_id=member_id,
+                input_manifest_hash=manifest_hash,
             )
         else:
             continue
@@ -332,12 +347,20 @@ async def process_build_job(db: AsyncSession, job: KnowledgeBuildJob) -> None:
 
     finished_at = datetime.now(UTC)
     if result.status == "succeeded":
+        from app.services import build_input_manifest_service
+
+        manifest_hash, _items, manifest_summary = await build_input_manifest_service.compute_manifest(
+            db, kb
+        )
+        job.input_manifest_hash = manifest_hash
         await index_state_service.set_state_status(
             db,
             state,
             IndexStateStatus.ready.value,
             build_job_id=job.id,
             capabilities=capabilities,
+            input_manifest_hash=manifest_hash,
+            input_manifest_summary=manifest_summary,
         )
         if result.validation_payload is not None or result.coverage_payload is not None:
             await index_state_service.persist_validation(

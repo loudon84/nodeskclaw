@@ -4,9 +4,11 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from pydantic import ValidationError
 
-from app.core.exceptions import ConflictError
+from app.core.exceptions import BadRequestError, ConflictError
 from app.models.enums import ApplicationStatus
+from app.schemas.knowledge import KnowledgeApplicationUpdate
 from app.schemas.principal import KnowledgePrincipal
 from app.services import application_readiness_service, knowledge_application_service
 
@@ -30,6 +32,9 @@ async def test_publish_application_returns_409_when_not_ready(monkeypatch):
         id="app1",
         org_id="o1",
         status=ApplicationStatus.draft.value,
+        active_profile_id=None,
+        acl_version=1,
+        runtime_snapshot=None,
     )
     db = AsyncMock()
     with (
@@ -57,6 +62,138 @@ async def test_publish_application_returns_409_when_not_ready(monkeypatch):
     assert exc.value.message_key == "errors.knowledge.application_not_ready"
     assert exc.value.details["ready"] is False
     assert exc.value.details["blocking"][0]["code"] == "runtime_chunk_unavailable"
+
+
+def test_patch_schema_rejects_status_field():
+    with pytest.raises(ValidationError):
+        KnowledgeApplicationUpdate.model_validate({"status": "active"})
+
+
+@pytest.mark.asyncio
+async def test_publish_application_sets_active_when_ready(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.knowledge_application_service.has_application_permission",
+        AsyncMock(return_value=True),
+    )
+    app = SimpleNamespace(
+        id="app1",
+        org_id="o1",
+        status=ApplicationStatus.draft.value,
+        active_profile_id=None,
+        acl_version=1,
+        runtime_snapshot=None,
+    )
+    db = AsyncMock()
+    db.commit = AsyncMock()
+    db.refresh = AsyncMock()
+
+    with (
+        patch(
+            "app.services.knowledge_application_service.get_application",
+            new=AsyncMock(return_value=app),
+        ),
+        patch(
+            "app.services.application_readiness_service.check",
+            new=AsyncMock(
+                return_value=application_readiness_service.ReadinessResult(ready=True)
+            ),
+        ),
+        patch(
+            "app.services.knowledge_quality_service.build_runtime_snapshot",
+            new=AsyncMock(return_value={"bound_set_ids": [], "knowledge_bases": []}),
+        ),
+    ):
+        result = await knowledge_application_service.publish_application(db, _member(), "app1")
+
+    assert result.status == ApplicationStatus.active.value
+    assert result.runtime_snapshot == {"bound_set_ids": [], "knowledge_bases": []}
+    db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_disable_application_active_to_disabled(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.knowledge_application_service.has_application_permission",
+        AsyncMock(return_value=True),
+    )
+    app = SimpleNamespace(
+        id="app1",
+        org_id="o1",
+        status=ApplicationStatus.active.value,
+    )
+    db = AsyncMock()
+    db.commit = AsyncMock()
+    db.refresh = AsyncMock()
+
+    with patch(
+        "app.services.knowledge_application_service.get_application",
+        new=AsyncMock(return_value=app),
+    ):
+        result = await knowledge_application_service.disable_application(db, _member(), "app1")
+
+    assert result.status == ApplicationStatus.disabled.value
+    db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_disable_application_rejects_non_active(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.knowledge_application_service.has_application_permission",
+        AsyncMock(return_value=True),
+    )
+    app = SimpleNamespace(
+        id="app1",
+        org_id="o1",
+        status=ApplicationStatus.draft.value,
+        active_profile_id=None,
+        acl_version=1,
+        runtime_snapshot=None,
+    )
+    db = AsyncMock()
+    with patch(
+        "app.services.knowledge_application_service.get_application",
+        new=AsyncMock(return_value=app),
+    ):
+        with pytest.raises(BadRequestError) as exc:
+            await knowledge_application_service.disable_application(db, _member(), "app1")
+    assert exc.value.message_key == "errors.knowledge.application_not_active"
+
+
+@pytest.mark.asyncio
+async def test_disabled_application_can_publish_again(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.knowledge_application_service.has_application_permission",
+        AsyncMock(return_value=True),
+    )
+    app = SimpleNamespace(
+        id="app1",
+        org_id="o1",
+        status=ApplicationStatus.disabled.value,
+    )
+    db = AsyncMock()
+    db.commit = AsyncMock()
+    db.refresh = AsyncMock()
+
+    with (
+        patch(
+            "app.services.knowledge_application_service.get_application",
+            new=AsyncMock(return_value=app),
+        ),
+        patch(
+            "app.services.application_readiness_service.check",
+            new=AsyncMock(
+                return_value=application_readiness_service.ReadinessResult(ready=True)
+            ),
+        ),
+        patch(
+            "app.services.knowledge_quality_service.build_runtime_snapshot",
+            new=AsyncMock(return_value={"bound_set_ids": [], "knowledge_bases": []}),
+        ),
+    ):
+        result = await knowledge_application_service.publish_application(db, _member(), "app1")
+
+    assert result.status == ApplicationStatus.active.value
+    assert result.runtime_snapshot == {"bound_set_ids": [], "knowledge_bases": []}
 
 
 def test_build_execution_slices_shape():

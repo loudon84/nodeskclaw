@@ -24,7 +24,17 @@ def _mock_probe_client(
     client.probe_dataset_search = AsyncMock(return_value=dataset_api)
     client.probe_dataset_graph = AsyncMock(return_value=False)
     client.probe_document_chunks = AsyncMock(return_value={"chunk_retrieval": chunk_retrieval, "question_fields_visible": True})
-    client.probe_retrieval_features = AsyncMock(return_value={"kg_retrieval": False, "knowledge_compilation": False, "toc_enhance": False, "metadata_filter": True, "knn_top_k": True, "knn_num_candidates": False, "rerank_candidates_count": False})
+    client.probe_retrieval_features = AsyncMock(
+        return_value={
+            "kg_retrieval": {"transport": True, "supported": False, "operational": False, "artifact_present": False},
+            "knowledge_compilation": {"transport": True, "supported": False, "operational": False, "artifact_present": False},
+            "toc_enhance": {"transport": True, "supported": False, "operational": False, "artifact_present": False},
+            "metadata_filter": {"transport": True, "supported": True, "operational": True, "artifact_present": False},
+            "knn_top_k": {"transport": True, "supported": True, "operational": True, "artifact_present": False},
+            "knn_num_candidates": {"transport": True, "supported": False, "operational": False, "artifact_present": False},
+            "rerank_candidates_count": {"transport": True, "supported": False, "operational": False, "artifact_present": False},
+        }
+    )
     return client
 
 

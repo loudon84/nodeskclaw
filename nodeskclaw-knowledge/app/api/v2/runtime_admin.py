@@ -7,9 +7,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.deps import get_db, get_member_context, get_ragflow_client
+from app.core.deps import get_db, get_member_context, get_runtime_adapter
 from app.core.exceptions import BadRequestError, ForbiddenError
-from app.integrations.ragflow.client import RagflowClient
 from app.runtime.ragflow import RagflowRuntimeAdapter
 from app.schemas.common import ApiResponse
 from app.schemas.principal import KnowledgePrincipal
@@ -138,7 +137,7 @@ async def kb_runtime_reconcile(
     body: RuntimeReconcileRequest | None = None,
     member: KnowledgePrincipal = Depends(get_member_context),
     db: AsyncSession = Depends(get_db),
-    ragflow: RagflowClient = Depends(get_ragflow_client),
+    ragflow: RagflowRuntimeAdapter = Depends(get_runtime_adapter),
 ):
     _require_super_admin(member)
     await knowledge_base_service.get_knowledge_base(db, member, kb_id)

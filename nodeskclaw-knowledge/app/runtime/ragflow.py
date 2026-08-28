@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -175,6 +176,21 @@ class RagflowRuntimeAdapter:
     async def get_dataset_graph(self, dataset_id: str) -> dict[str, Any]:
         return await self.client.get_dataset_graph(dataset_id)
 
+    async def list_artifacts(self, dataset_id: str) -> list[dict[str, Any]]:
+        return await self.client.list_dataset_artifacts(dataset_id)
+
+    async def get_artifact_topics(self, dataset_id: str, **params: Any) -> dict[str, Any]:
+        return await self.client.get_dataset_artifact_topics(dataset_id, **params)
+
+    async def get_artifact_graph(self, dataset_id: str, **params: Any) -> dict[str, Any]:
+        return await self.client.get_dataset_artifact_graph(dataset_id, **params)
+
+    async def get_artifact_structure(self, dataset_id: str, **params: Any) -> dict[str, Any]:
+        return await self.client.get_dataset_artifact_structure(dataset_id, **params)
+
+    async def get_artifact_alteration(self, dataset_id: str, **params: Any) -> dict[str, Any]:
+        return await self.client.get_dataset_artifact_alteration(dataset_id, **params)
+
     async def read_document_chunks(
         self,
         dataset_id: str,
@@ -189,6 +205,84 @@ class RagflowRuntimeAdapter:
             page=page,
             page_size=page_size,
         )
+
+    async def iter_document_chunks(
+        self,
+        dataset_id: str,
+        document_id: str,
+        *,
+        page_size: int = 100,
+        max_chunks: int | None = None,
+    ) -> AsyncIterator[dict[str, Any]]:
+        page = 1
+        yielded = 0
+        while True:
+            batch = await self.read_document_chunks(
+                dataset_id,
+                document_id,
+                page=page,
+                page_size=page_size,
+            )
+            if not batch:
+                break
+            for chunk in batch:
+                yield chunk
+                yielded += 1
+                if max_chunks is not None and yielded >= max_chunks:
+                    return
+            if len(batch) < page_size:
+                break
+            page += 1
+
+    async def list_documents(self, dataset_id: str, **kwargs: Any) -> list[Any]:
+        return await self.client.list_documents(dataset_id, **kwargs)
+
+    async def list_datasets(self, **kwargs: Any) -> list[Any]:
+        return await self.client.list_datasets(**kwargs)
+
+    async def get_dataset(self, dataset_id: str) -> dict[str, Any] | None:
+        return await self.client.get_dataset(dataset_id)
+
+    async def create_dataset(self, **kwargs: Any) -> str:
+        return await self.client.create_dataset(**kwargs)
+
+    async def update_dataset(self, dataset_id: str, **kwargs: Any) -> dict[str, Any] | None:
+        return await self.client.update_dataset(dataset_id, **kwargs)
+
+    async def delete_dataset(self, dataset_id: str) -> None:
+        await self.client.delete_dataset(dataset_id)
+
+    async def delete_documents(self, dataset_id: str, document_ids: list[str]) -> None:
+        await self.client.delete_documents(dataset_id, document_ids)
+
+    async def upload_document(self, *args: Any, **kwargs: Any) -> str:
+        return await self.client.upload_document(*args, **kwargs)
+
+    async def recover_uploaded_document(self, *args: Any, **kwargs: Any) -> str | None:
+        return await self.client.recover_uploaded_document(*args, **kwargs)
+
+    async def update_document_metadata(
+        self,
+        dataset_id: str,
+        document_id: str,
+        meta_fields: dict[str, Any],
+    ) -> None:
+        await self.client.update_document_metadata(dataset_id, document_id, meta_fields)
+
+    async def parse_documents(self, dataset_id: str, document_ids: list[str]) -> None:
+        await self.client.parse_documents(dataset_id, document_ids)
+
+    async def stop_parsing(self, dataset_id: str, document_ids: list[str]) -> None:
+        await self.client.stop_parsing(dataset_id, document_ids)
+
+    async def set_document_enabled(self, dataset_id: str, document_id: str, enabled: bool) -> None:
+        await self.client.set_document_enabled(dataset_id, document_id, enabled)
+
+    async def download_document(self, dataset_id: str, document_id: str) -> bytes:
+        return await self.client.download_document(dataset_id, document_id)
+
+    async def retrieve(self, **kwargs: Any) -> RagflowRetrievalResult:
+        return await self.client.retrieve(**kwargs)
 
     async def retrieve_index(
         self,

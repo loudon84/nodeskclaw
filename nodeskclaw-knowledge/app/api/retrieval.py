@@ -3,8 +3,8 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_db, get_member_context, get_ragflow_client
-from app.integrations.ragflow.client import RagflowClient
+from app.core.deps import get_db, get_member_context, get_runtime_adapter
+from app.runtime.ragflow import RagflowRuntimeAdapter
 from app.schemas.common import ApiResponse
 from app.schemas.knowledge import (
     PlaygroundRequest,
@@ -23,7 +23,7 @@ async def retrieve(
     body: RetrievalRequest,
     member: KnowledgePrincipal = Depends(get_member_context),
     db: AsyncSession = Depends(get_db),
-    ragflow: RagflowClient = Depends(get_ragflow_client),
+    ragflow: RagflowRuntimeAdapter = Depends(get_runtime_adapter),
 ):
     data = await retrieval_service.retrieve(
         db,
@@ -44,7 +44,7 @@ async def retrieval_playground(
     body: PlaygroundRequest,
     member: KnowledgePrincipal = Depends(get_member_context),
     db: AsyncSession = Depends(get_db),
-    ragflow: RagflowClient = Depends(get_ragflow_client),
+    ragflow: RagflowRuntimeAdapter = Depends(get_runtime_adapter),
 ):
     data = await retrieval_service.playground_retrieve(
         db,
