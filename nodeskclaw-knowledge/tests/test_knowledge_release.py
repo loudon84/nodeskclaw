@@ -13,6 +13,7 @@ from app.core.exceptions import BadRequestError, ConflictError
 from app.models.enums import ApplicationReleaseStatus, QualityGateResult
 from app.schemas.principal import KnowledgePrincipal
 from app.services import (
+    application_retrieval_policy_service,
     knowledge_application_service,
     knowledge_quality_service,
     release_promotion_service,
@@ -396,3 +397,30 @@ async def test_quality_history_reads_snapshots(monkeypatch):
     assert len(history) == 1
     assert history[0]["id"] == "snap-1"
     assert history[0]["gate_result"] == QualityGateResult.pass_.value
+
+
+def test_compile_execution_policy_raises_when_revision_missing():
+    with pytest.raises(BadRequestError) as exc:
+        application_retrieval_policy_service.compile_execution_policy(None)
+    assert exc.value.message_key == "errors.knowledge.retrieval_policy_revision_required"
+
+
+def test_compile_execution_policy_flattens_revision_fields():
+    revision = SimpleNamespace(
+        query_intelligence_policy={"term_expansion": True},
+        provider_policy={"allow_chunk": True, "allow_question": False},
+        provider_weights={"chunk": 2.0, "question": 0.25},
+        candidate_budget={"max_candidates": 512},
+        fanout_budget={"max_kb_fanout": 4},
+        latency_budget={"max_ms": 15000},
+        fallback_policy={"mode": "semantic_only"},
+        artifact_policy={"allow_outline": False, "allow_table": True, "max_artifacts": 32},
+        fusion_policy={"mode": "rrf", "k": 40},
+    )
+    policy = application_retrieval_policy_service.compile_execution_policy(revision)
+    assert policy["query_intelligence_policy"] == {"term_expansion": True}
+    assert policy["candidate_budget"] == 512
+    assert policy["artifact_budget"] == 32
+    assert policy["allow_outline_artifact"] is False
+    assert policy["allow_table_artifact"] is True
+    assert policy["allow_question_enrichment"] is False
