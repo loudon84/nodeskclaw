@@ -46,9 +46,10 @@ def _apply_secret_to_config(route: dict[str, Any], connector_config: dict[str, A
     secret_ref_id = route.get("connector_secret_ref_id")
     if not secret_ref_id:
         return connector_config
-    secret = SecretStore().resolve(str(secret_ref_id))
-    if secret is None:
-        raise RuntimeError(f"secret ref unresolved: {secret_ref_id}")
+    # Fail-closed secret resolution before use
+    secret = SecretStore().resolve(str(secret_ref_id), fail_closed=True)
+    if not secret:
+        raise RuntimeError(f"secret ref unresolved: {secret_ref_id} (fail-closed)")
     config = dict(connector_config)
     secret_header = str(config.get("secret_header") or "").strip()
     headers = dict(config.get("headers") or {})
@@ -76,10 +77,10 @@ async def execute_connector_run(
 
     if connector_kind == "rest":
         method = str(connector_config.get("method") or "POST").upper()
-        # Prefer fixed url from connector config, fallback to arguments only if config url missing
-        url = str(connector_config.get("url") or arguments.get("url") or "").strip()
+        # Strictly prefer fixed url from connector config; reject unconfigured dynamic override
+        url = str(connector_config.get("url") or "").strip()
         if not url:
-            raise RuntimeError("connector REST url missing")
+            raise RuntimeError("connector REST url missing in binding config")
         _validate_ssrf(url)
         payload = arguments.get("body")
         params = arguments.get("params")
@@ -92,10 +93,10 @@ async def execute_connector_run(
         return
 
     if connector_kind == "mcp":
-        endpoint = str(connector_config.get("url") or arguments.get("url") or "").strip()
-        remote_tool = str(connector_config.get("remote_tool_name") or arguments.get("remote_tool_name") or tool_name).strip()
+        endpoint = str(connector_config.get("url") or "").strip()
+        remote_tool = str(connector_config.get("remote_tool_name") or tool_name).strip()
         if not endpoint:
-            raise RuntimeError("connector MCP url missing")
+            raise RuntimeError("connector MCP url missing in binding config")
         _validate_ssrf(endpoint)
         req_body = {
             "jsonrpc": "2.0",
@@ -114,11 +115,11 @@ async def execute_connector_run(
         return
 
     if connector_kind == "db":
-        # Strictly use db_url from connector_config, ignore arbitrary arguments.db_url
-        db_url = str(connector_config.get("db_url") or arguments.get("db_url") or "").strip()
+        # Strictly use db_url from connector_config, completely ignore arguments.db_url
+        db_url = str(connector_config.get("db_url") or "").strip()
         sql = str(arguments.get("sql") or "").strip()
         if not db_url:
-            raise RuntimeError("connector DB url missing")
+            raise RuntimeError("connector DB url missing in binding config")
         if not sql or not READ_ONLY_SQL_RE.match(sql):
             raise RuntimeError("connector DB only allows read-only SELECT/WITH SQL")
         engine = create_async_engine(db_url)

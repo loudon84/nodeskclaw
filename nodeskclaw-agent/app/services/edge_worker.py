@@ -142,15 +142,15 @@ class EdgeWorker:
             await self._spool_events(job_id, [event])
 
     def _prepare_snapshot(self, snapshot: dict[str, Any]) -> dict[str, Any]:
-        """Ensure connector config can use SecretStore; never put plaintext into returned events."""
+        """Ensure connector config can use SecretStore; fail-closed and never put plaintext into returned events."""
         prepared = dict(snapshot)
         policy = dict(prepared.get("runtime_policy") or {})
         config = dict(policy.get("connector_config") or {})
         secret_ref_id = policy.get("connector_secret_ref_id") or config.get("secret_ref_id")
         if secret_ref_id:
-            secret = self._secrets.resolve(str(secret_ref_id))
-            if secret is None:
-                raise RuntimeError(f"secret ref unresolved: {secret_ref_id}")
+            secret = self._secrets.resolve(str(secret_ref_id), fail_closed=True)
+            if not secret:
+                raise RuntimeError(f"secret ref unresolved: {secret_ref_id} (fail-closed)")
             secret_header = str(config.get("secret_header") or "").strip()
             headers = dict(config.get("headers") or {})
             if secret_header:

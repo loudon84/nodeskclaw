@@ -22,3 +22,11 @@ def test_resolve_from_txt_suffix_and_env_fallback(tmp_path: Path, monkeypatch):
 
     monkeypatch.setenv("SKILL_AGENT_SECRET_ENV_ONLY_REF", "env-secret")
     assert SecretStore(root=tmp_path).resolve("env-only-ref") == "env-secret"
+
+
+def test_resolve_fail_closed_raises(tmp_path: Path):
+    store = SecretStore(root=tmp_path)
+    import pytest
+    with pytest.raises(RuntimeError, match="fail-closed"):
+        store.resolve("non-existent-secret-ref", fail_closed=True)
+    assert store.resolve("non-existent-secret-ref", fail_closed=False) is None
