@@ -108,7 +108,31 @@ Artifact Provider SPI：[[nodeskclaw-knowledge/app/knowledge_artifacts/base.py]]
 
 v2.4 将 Application 产品路径从 `runtime_snapshot` / `ApplicationStatus.active` 演进到 `application_id + channel → Release Manifest`；生产 Provider Selection 唯一 Owner 为 FederatedRetrievalPlanner。
 
-Release ORM：[[nodeskclaw-knowledge/app/models/knowledge_application_release.py#KnowledgeApplicationRelease]]、[[nodeskclaw-knowledge/app/models/knowledge_application_release.py#KnowledgeReleaseChannel]]。Channel resolve：[[nodeskclaw-knowledge/app/services/release_runtime_service.py#resolve_application_release]]（显式 `release_id` 与 channel pointer 冲突 fail_closed；禁止读 `runtime_snapshot`）。Federation Planner：[[nodeskclaw-knowledge/app/services/federated_retrieval_planner.py#build_federation_plan]] 内部调用 capability_planner 作 per-KB helper；输出 `FederationExecutionPlan` 驱动 slice 物化。Query Intelligence 生产链：`analyze_query` → `resolve_release_terms` → Federation Planner；Playground [[nodeskclaw-knowledge/app/api/v2/query_intelligence.py]] 与生产返回相同 `query_analysis` + `federation_plan`。RRF provider identity 取 `provider` 非 `slice_mode`；Artifact 候选经 [[nodeskclaw-knowledge/app/knowledge_artifacts/base.py#ArtifactEvidenceCandidate]] 扩展字段进入 fusion。Agent/MCP §36 五条规则：[[nodeskclaw-knowledge/app/api/agent_tools.py#knowledge_search_or_retrieve]]、[[nodeskclaw-knowledge/app/mcp_server.py#call_tool]]；Chat application 路径带 channel：[[nodeskclaw-knowledge/app/services/chat_service.py#create_session]]。
+Release ORM：[[nodeskclaw-knowledge/app/models/knowledge_application_release.py#KnowledgeApplicationRelease]]、[[nodeskclaw-knowledge/app/models/knowledge_application_release.py#KnowledgeReleaseChannel]]。Channel resolve：[[nodeskclaw-knowledge/app/services/release_runtime_service.py#resolve_application_release]] → [[nodeskclaw-knowledge/app/services/release_runtime_service.py#ReleaseExecutionContext]]（仅 `validated`；manifest hash + Integrity healthy fail_closed；compiled policy；禁止读 `runtime_snapshot`）。Federation Planner：[[nodeskclaw-knowledge/app/services/federated_retrieval_planner.py#build_federation_plan]] 内部调用 capability_planner 作 per-KB helper；输出 `FederationExecutionPlan` 驱动 slice 物化。Query Intelligence 生产链：`analyze_query` → `resolve_release_terms` → Federation Planner；Playground [[nodeskclaw-knowledge/app/api/v2/query_intelligence.py]] 与生产返回相同 `query_analysis` + `federation_plan`。RRF provider identity 取 `provider` 非 `slice_mode`；Artifact 候选经 [[nodeskclaw-knowledge/app/knowledge_artifacts/base.py#ArtifactEvidenceCandidate]] 扩展字段进入 fusion。Agent/MCP §36 五条规则：[[nodeskclaw-knowledge/app/api/agent_tools.py#knowledge_search_or_retrieve]]、[[nodeskclaw-knowledge/app/mcp_server.py#call_tool]]；Chat application 路径带 channel：[[nodeskclaw-knowledge/app/services/chat_service.py#create_session]]。
+
+### Release Runtime Resolution
+
+v2.4.1 `resolve_application_release` gates and `ReleaseExecutionContext` fields exercised by [[nodeskclaw-knowledge/tests/test_release_runtime.py]].
+
+#### Same channel stable identity
+
+Implicit resolve and explicit matching `release_id` yield identical `release_id` and `manifest_hash`.
+
+#### Promoted release rejected
+
+Release status `promoted` is rejected with `release_not_validated`.
+
+#### Manifest hash mismatch
+
+Stored `manifest_hash` not matching parsed manifest content fails closed.
+
+#### Integrity stale
+
+Non-healthy Integrity evaluation fails closed before returning context.
+
+#### Success includes compiled policy
+
+Validated healthy release returns `compiled_policy` from pinned retrieval policy revision.
 
 ## Runtime Schema V11
 
