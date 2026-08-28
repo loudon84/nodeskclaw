@@ -251,26 +251,68 @@ async def cancel_run(
 
 
 @router.post("/{run_id}/resume")
-@router.post("/{run_id}/approvals/{approval_id}")
-async def resume_or_approve_run(
+async def resume_run(
     run_id: str,
+    body: dict | None = None,
     user_org=Depends(require_org_member),
     db: AsyncSession = Depends(get_db),
-    approval_id: str | None = None,
 ):
     user, org = user_org
     await PermissionChecker.require_permission(db, user.id, org.id, "skill:invoke")
     task = await _authorize_run(db, user.id, org.id, run_id)
     outbox = await _get_outbox_entry(db, run_id, org.id)
     if _is_outbox_undelivered(outbox):
-        raise ForbiddenError("未派发的 Run 无法执行审批或恢复", "errors.run.undelivered")
+        if outbox and outbox.status == RunDispatchStatus.DEAD_LETTER.value:
+            # Replay authorized dead letter dispatch
+            outbox.status = RunDispatchStatus.PENDING.value
+            outbox.retry_count = 0
+            outbox.next_retry_at = None
+            outbox.last_error = None
+            await db.commit()
+            return {
+                "code": 0,
+                "data": {
+                    "run_id": run_id,
+                    "status": "REPLAY_QUEUED",
+                    "org_id": org.id,
+                },
+            }
+        raise ForbiddenError("未派发的 Run 无法执行恢复", "errors.run.undelivered")
 
-    path = (
-        f"/internal/v1/runs/{run_id}/approvals/{approval_id}"
-        if approval_id
-        else f"/internal/v1/runs/{run_id}/resume"
+    payload = body or {}
+    data = await _agent_post(
+        f"/internal/v1/runs/{run_id}/resume",
+        body=payload,
+        org_id=org.id,
+        user_id=user.id,
     )
-    data = await _agent_post(path, org_id=org.id, user_id=user.id)
+    if str(data.get("org_id") or "") != org.id or str(data.get("run_id") or "") != run_id:
+        raise ForbiddenError("无权访问该 Run", "errors.run.forbidden")
+    return {"code": 0, "data": data}
+
+
+@router.post("/{run_id}/approvals/{approval_id}")
+async def approve_run(
+    run_id: str,
+    approval_id: str,
+    body: dict | None = None,
+    user_org=Depends(require_org_member),
+    db: AsyncSession = Depends(get_db),
+):
+    user, org = user_org
+    await PermissionChecker.require_permission(db, user.id, org.id, "skill:invoke")
+    task = await _authorize_run(db, user.id, org.id, run_id)
+    outbox = await _get_outbox_entry(db, run_id, org.id)
+    if _is_outbox_undelivered(outbox):
+        raise ForbiddenError("未派发的 Run 无法执行审批", "errors.run.undelivered")
+
+    payload = body or {}
+    data = await _agent_post(
+        f"/internal/v1/runs/{run_id}/approvals/{approval_id}",
+        body=payload,
+        org_id=org.id,
+        user_id=user.id,
+    )
     if str(data.get("org_id") or "") != org.id or str(data.get("run_id") or "") != run_id:
         raise ForbiddenError("无权访问该 Run", "errors.run.forbidden")
     return {"code": 0, "data": data}

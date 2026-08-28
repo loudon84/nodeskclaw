@@ -15,14 +15,16 @@ def _env_key_for_ref(ref_id: str) -> str:
 class SecretStore:
     """Resolve SecretRef plaintext from local files or test env fallback.
 
-    Plaintext must never be logged.
+    Plaintext must never be logged or persisted in snapshots/events.
     """
 
     def __init__(self, root: str | Path | None = None) -> None:
         self.root = Path(root if root is not None else settings.SKILL_AGENT_SECRET_STORE)
 
-    def resolve(self, ref_id: str) -> str | None:
+    def resolve(self, ref_id: str, *, fail_closed: bool = True) -> str | None:
         if not ref_id:
+            if fail_closed:
+                raise RuntimeError("empty secret ref_id (fail-closed)")
             return None
         for candidate in (self.root / ref_id, self.root / f"{ref_id}.txt"):
             if candidate.is_file():
@@ -30,4 +32,6 @@ class SecretStore:
         env_value = os.environ.get(_env_key_for_ref(ref_id))
         if env_value is not None and env_value.strip():
             return env_value.strip()
+        if fail_closed:
+            raise RuntimeError(f"secret ref unresolved: {ref_id} (fail-closed)")
         return None

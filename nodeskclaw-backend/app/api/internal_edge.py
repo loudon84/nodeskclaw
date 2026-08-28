@@ -152,7 +152,10 @@ async def post_edge_job_events(
     if req_gen is None and body.delivery_generation is not None:
         req_gen = body.delivery_generation
 
-    if job.delivery_generation is not None and req_gen is not None and req_gen != job.delivery_generation:
+    if req_gen is None:
+        raise ForbiddenError("必须提供有效的 delivery generation", "errors.connector.missing_delivery_generation")
+
+    if job.delivery_generation is not None and req_gen != job.delivery_generation:
         raise ForbiddenError("过期的 delivery generation 请求已拒绝", "errors.connector.stale_delivery_generation")
 
     now = datetime.now(timezone.utc)

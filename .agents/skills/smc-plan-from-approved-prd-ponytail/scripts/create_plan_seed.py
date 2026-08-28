@@ -1,0 +1,248 @@
+#!/usr/bin/env python3
+"""Create an SMC Plan v3 seed from an APPROVED PRD.
+
+This script is intentionally conservative: it creates stable Change IDs and the
+required plan structure, but leaves implementation-grounding placeholders for
+the agent to resolve. A seed is NOT executable until smc-plan-validator passes.
+"""
+
+from __future__ import annotations
+
+import argparse
+import re
+import sys
+from pathlib import Path
+
+ACTIONS = {"KEEP", "MODIFY", "ADD", "REPLACE", "REMOVE"}
+PLACEHOLDER = "<GROUND>"
+
+
+def parse_frontmatter(text: str) -> dict[str, str]:
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
+        raise ValueError("PRD frontmatter missing")
+    try:
+        end = next(i for i, line in enumerate(lines[1:], 1) if line.strip() == "---")
+    except StopIteration as exc:
+        raise ValueError("PRD frontmatter is not closed") from exc
+    out: dict[str, str] = {}
+    for line in lines[1:end]:
+        if ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        out[key.strip()] = value.strip().strip('"\'')
+    return out
+
+
+def section(text: str, heading: str) -> str | None:
+    match = re.search(
+        rf"^##\s+{re.escape(heading)}\s*$\n?(.*?)(?=^##\s+|\Z)",
+        text,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    return match.group(1).strip() if match else None
+
+
+def cells(line: str) -> list[str]:
+    return [c.strip() for c in line.strip().strip("|").split("|")]
+
+
+def parse_first_table(body: str) -> tuple[list[str], list[dict[str, str]]]:
+    lines = [line.strip() for line in body.splitlines() if line.strip().startswith("|")]
+    for idx in range(len(lines) - 1):
+        header = cells(lines[idx])
+        sep = cells(lines[idx + 1])
+        if len(header) != len(sep):
+            continue
+        if not all(re.fullmatch(r":?-{3,}:?", c.replace(" ", "")) for c in sep):
+            continue
+        rows: list[dict[str, str]] = []
+        for raw in lines[idx + 2 :]:
+            vals = cells(raw)
+            if len(vals) != len(header):
+                break
+            rows.append(dict(zip(header, vals)))
+        return header, rows
+    return [], []
+
+
+def clean_md(value: str) -> str:
+    return re.sub(r"[`*_]", "", value).strip()
+
+
+def find_action(row: dict[str, str]) -> str | None:
+    for key, value in row.items():
+        cleaned = clean_md(value).upper()
+        if cleaned in ACTIONS:
+            return cleaned
+        if "action" in key.lower() or "classification" in key.lower():
+            for action in ACTIONS:
+                if re.search(rf"\b{action}\b", cleaned):
+                    return action
+    for value in row.values():
+        cleaned = clean_md(value).upper()
+        for action in ACTIONS:
+            if re.search(rf"\b{action}\b", cleaned):
+                return action
+    return None
+
+
+def find_existing_id(row: dict[str, str]) -> str | None:
+    for key, value in row.items():
+        if key.strip().lower() in {"change id", "id", "change_id"}:
+            candidate = clean_md(value).upper()
+            if re.fullmatch(r"C\d{2,}(?:\.\d+)?", candidate):
+                return candidate
+    return None
+
+
+def find_capability(row: dict[str, str], action: str) -> str:
+    preferred = ("capability", "feature", "item", "scope", "change", "target")
+    for token in preferred:
+        for key, value in row.items():
+            if token in key.lower() and clean_md(value).upper() != action:
+                if clean_md(value):
+                    return clean_md(value)
+    for value in row.values():
+        cleaned = clean_md(value)
+        if cleaned and cleaned.upper() != action and not re.fullmatch(r"C\d+", cleaned.upper()):
+            return cleaned
+    return "<PRD CAPABILITY>"
+
+
+def extract_changes(prd_text: str) -> list[tuple[str, str, str]]:
+    body = section(prd_text, "Change Classification")
+    if not body:
+        raise ValueError("PRD missing Change Classification section")
+    _, rows = parse_first_table(body)
+    if not rows:
+        raise ValueError("PRD Change Classification must contain a markdown table")
+
+    changes: list[tuple[str, str, str]] = []
+    next_id = 1
+    used: set[str] = set()
+    for row in rows:
+        action = find_action(row)
+        if not action or action == "KEEP":
+            continue
+        cid = find_existing_id(row)
+        if cid is None or cid in used:
+            while f"C{next_id:02d}" in used:
+                next_id += 1
+            cid = f"C{next_id:02d}"
+            next_id += 1
+        used.add(cid)
+        changes.append((cid, action, find_capability(row, action)))
+    if not changes:
+        raise ValueError("PRD has no non-KEEP changes to plan")
+    return changes
+
+
+def validate_prd_state(prd: Path, text: str) -> dict[str, str]:
+    fm = parse_frontmatter(text)
+    if fm.get("status") != "APPROVED":
+        raise ValueError("PRD_NOT_APPROVED")
+    if fm.get("review_verdict") != "PASS":
+        raise ValueError("PRD_REVIEW_NOT_PASS")
+    if not fm.get("approved_at"):
+        raise ValueError("PRD_APPROVED_AT_MISSING")
+    if prd.name.endswith("-DRAFT.md"):
+        raise ValueError("PRD_APPROVED_FILENAME_HAS_DRAFT")
+    return fm
+
+
+def relative_link(from_path: Path, to_path: Path) -> str:
+    try:
+        return str(to_path.resolve().relative_to(from_path.parent.resolve())).replace("\\", "/")
+    except ValueError:
+        import os
+        return os.path.relpath(to_path.resolve(), from_path.parent.resolve()).replace("\\", "/")
+
+
+def render(prd: Path, out: Path, fm: dict[str, str], changes: list[tuple[str, str, str]]) -> str:
+    title = fm.get("work_item_id") or prd.stem
+    prd_link = relative_link(out, prd)
+
+    matrix_rows: list[str] = []
+    decision_rows: list[str] = []
+    ledger_rows: list[str] = []
+    todo_blocks: list[str] = []
+
+    for idx, (cid, action, capability) in enumerate(changes, 1):
+        tid = f"T{idx}"
+        matrix_rows.append(
+            f"| {cid} | `{PLACEHOLDER}` | PROD | {action} | {PLACEHOLDER} | {tid} | <TARGET> | {capability} | no |"
+        )
+        decision_rows.append(
+            f"| {cid} | <DECIDE> | {PLACEHOLDER} | <DECIDE> |"
+        )
+        ledger_rows.append(
+            f"| {tid} | {cid} | `{PLACEHOLDER}` | - | - | no |"
+        )
+        todo_blocks.append(
+            f"## Todo {tid} — {capability}\n\n"
+            f"**Owns Changes**\n- {cid}\n\n"
+            "**Goal**\n\n<DECIDE>\n\n"
+            f"**Immediate anchors**\n- `{PLACEHOLDER}`\n\n"
+            "**Changes**\n- <DECIDE>\n\n"
+            "**Stop conditions**\n- [ ] <VERIFY>\n\n"
+            "**Triggered reads**\n- None unless a listed trigger becomes true\n"
+        )
+
+    return (
+        f"# {title} Implementation Plan\n\n"
+        f"## Approved PRD\n\n[Approved PRD]({prd_link})\n\n"
+        "## Scope\n\n- In: <DECIDE>\n- Out: <DECIDE>\n- Production Owner inherited from PRD: <GROUND>\n\n"
+        "## Immediate Read\n\n- `<GROUND>`\n\n"
+        "## Triggered Read\n\n- If <trigger>: `<GROUND>`\n- Otherwise: do not read\n\n"
+        "## Change Matrix\n\n"
+        "| Change ID | File / Symbol | Kind | Action | Existing Owner | Todo Owner | Target State | PRD Capability | New File? |\n"
+        "|---|---|---|---|---|---|---|---|---|\n"
+        + "\n".join(matrix_rows)
+        + "\n\n## Implementation Decisions\n\n"
+        + "| Change ID | Strategy | Root-Cause / Reuse Evidence | Why This Is Minimum |\n"
+        + "|---|---|---|---|\n"
+        + "\n".join(decision_rows)
+        + "\n\n## Write Ownership Ledger\n\n"
+        + "| Todo | Owns Changes | Writes | Reads | Depends On | Parallel Safe |\n"
+        + "|---|---|---|---|---|---|\n"
+        + "\n".join(ledger_rows)
+        + "\n\n## Integration Hotspots\n\nNone\n\n"
+        + "\n\n".join(todo_blocks)
+        + "\n\n## Verification\n\n```bash\n<VERIFY>\n```\n\n- AC mapping: <VERIFY>\n- Expected: <VERIFY>\n- Negative/regression case: <VERIFY>\n"
+    )
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("prd", type=Path)
+    parser.add_argument("output", type=Path)
+    parser.add_argument("--force", action="store_true", help="overwrite output if it exists")
+    args = parser.parse_args()
+
+    prd = args.prd.resolve()
+    out = args.output.resolve()
+    if not prd.is_file():
+        print(f"PRD_NOT_FOUND: {prd}", file=sys.stderr)
+        return 2
+    if out.exists() and not args.force:
+        print(f"PLAN_ALREADY_EXISTS: {out}; use --force to overwrite", file=sys.stderr)
+        return 2
+
+    text = prd.read_text(encoding="utf-8")
+    try:
+        fm = validate_prd_state(prd, text)
+        changes = extract_changes(text)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(render(prd, out, fm, changes), encoding="utf-8")
+    print(f"Plan seed created: {out}")
+    print(f"Non-KEEP changes: {len(changes)}")
+    print("Seed contains grounding placeholders and MUST pass smc-plan-validator before execution.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

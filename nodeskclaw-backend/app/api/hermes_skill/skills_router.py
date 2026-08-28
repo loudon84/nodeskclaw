@@ -14,6 +14,13 @@ from app.models.hermes_skill.skill_installation import HermesSkillInstallation
 from app.models.hermes_skill.skill_release import HermesSkillRelease, SkillReleaseStatus
 from app.schemas.hermes_skill.skill import (
     SkillRead,
+    SkillCreate,
+    SkillUpdate,
+    SkillForkBody,
+    SkillPublishBody,
+    SkillExportRequest,
+    SkillImportRequest,
+    SkillValidateRequest,
     SkillFilterParams,
     SkillListResult,
     ScanTriggerResult,
@@ -201,6 +208,398 @@ async def disable_skill(
     await db.commit()
     await db.refresh(skill)
     return _ok(SkillRead.model_validate(skill).model_dump())
+
+
+@router.post("/skills")
+async def create_skill(
+    body: SkillCreate,
+    user_org=Depends(require_org_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    user, org = user_org
+    if user:
+        await PermissionChecker.require_permission(db, user.id, org.id, "skill:create")
+
+    # Check for existing skill with same skill_id in org
+    existing = await db.execute(
+        select(HermesSkill).where(
+            not_deleted(HermesSkill),
+            HermesSkill.org_id == org.id,
+            HermesSkill.skill_id == body.skill_id,
+        )
+    )
+    if existing.scalar_one_or_none():
+        raise ConflictError(f"Skill ID 已存在: {body.skill_id}", "errors.skill.already_exists")
+
+    skill = HermesSkill(
+        id=str(uuid.uuid4()),
+        org_id=org.id,
+        skill_id=body.skill_id,
+        name=body.name,
+        tool_name=body.tool_name or body.skill_id,
+        title=body.title,
+        description=body.description,
+        version=body.version,
+        agent_type=body.agent_type,
+        category=body.category,
+        runtime=body.runtime,
+        source_type="central",
+        is_active=True,
+        is_mcp_exposed=body.is_mcp_exposed,
+        input_schema=body.input_schema or {},
+        output_schema=body.output_schema or {},
+        output_policy=body.output_policy or {},
+        tags=body.tags or [],
+        extra_metadata=body.extra_metadata or {},
+        created_by=user.id if user else None,
+    )
+    db.add(skill)
+    await db.flush()
+
+    # Create draft release
+    release_svc = SkillReleaseService(db)
+    await release_svc.create_draft_from_skill(
+        org_id=org.id,
+        skill_id=skill.skill_id,
+        operator_user_id=user.id if user else "system",
+        notes="Initial draft",
+        version=skill.version,
+    )
+    await db.commit()
+    await db.refresh(skill)
+    return _ok(await _enrich_skill_read(db, skill))
+
+
+@router.patch("/skills/{skill_db_id}")
+async def update_skill(
+    skill_db_id: str,
+    body: SkillUpdate,
+    user_org=Depends(require_org_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    user, org = user_org
+    if user:
+        await PermissionChecker.require_permission(db, user.id, org.id, "skill:update")
+
+    skill = await db.get(HermesSkill, skill_db_id)
+    if not skill or skill.deleted_at is not None or skill.org_id != org.id:
+        raise NotFoundError("Skill 不存在", "errors.skill.not_found")
+
+    payload = body.model_dump(exclude_unset=True)
+    for field, val in payload.items():
+        setattr(skill, field, val)
+
+    await db.commit()
+    await db.refresh(skill)
+    return _ok(await _enrich_skill_read(db, skill))
+
+
+@router.post("/skills/{skill_db_id}/publish")
+async def publish_skill(
+    skill_db_id: str,
+    body: SkillPublishBody | None = None,
+    user_org=Depends(require_org_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    user, org = user_org
+    if user:
+        await PermissionChecker.require_permission(db, user.id, org.id, "skill:publish")
+
+    skill = await db.get(HermesSkill, skill_db_id)
+    if not skill or skill.deleted_at is not None or skill.org_id != org.id:
+        raise NotFoundError("Skill 不存在", "errors.skill.not_found")
+
+    release_svc = SkillReleaseService(db)
+    # Find draft release or create one
+    draft_res = await db.execute(
+        select(HermesSkillRelease).where(
+            not_deleted(HermesSkillRelease),
+            HermesSkillRelease.skill_db_id == skill.id,
+            HermesSkillRelease.status == SkillReleaseStatus.DRAFT.value,
+        ).order_by(HermesSkillRelease.created_at.desc()).limit(1)
+    )
+    draft = draft_res.scalar_one_or_none()
+    if not draft:
+        draft = await release_svc.create_draft_from_skill(
+            org_id=org.id,
+            skill_id=skill.skill_id,
+            operator_user_id=user.id if user else "system",
+            notes=(body.notes if body else None) or "Auto draft for publish",
+            version=(body.version if body else None) or skill.version,
+        )
+
+    published = await release_svc.publish(
+        org_id=org.id,
+        skill_id=skill.skill_id,
+        release_id=draft.id,
+        operator_user_id=user.id if user else "system",
+    )
+    skill.is_active = True
+    await db.commit()
+    await db.refresh(skill)
+    data = await _enrich_skill_read(db, skill)
+    data["published_release"] = {
+        "id": published.id,
+        "version": published.version,
+        "digest": published.digest,
+        "status": published.status,
+    }
+    return _ok(data)
+
+
+@router.post("/skills/{skill_db_id}/archive")
+async def archive_skill(
+    skill_db_id: str,
+    user_org=Depends(require_org_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    user, org = user_org
+    if user:
+        await PermissionChecker.require_permission(db, user.id, org.id, "skill:archive")
+
+    skill = await db.get(HermesSkill, skill_db_id)
+    if not skill or skill.deleted_at is not None or skill.org_id != org.id:
+        raise NotFoundError("Skill 不存在", "errors.skill.not_found")
+
+    skill.is_active = False
+    skill.is_mcp_exposed = False
+    # Deprecate published releases
+    release_svc = SkillReleaseService(db)
+    published = await release_svc.get_published_by_skill_db_id(skill.id)
+    if published:
+        await release_svc.deprecate(org_id=org.id, skill_id=skill.skill_id, release_id=published.id)
+
+    await db.commit()
+    await db.refresh(skill)
+    return _ok(await _enrich_skill_read(db, skill))
+
+
+@router.post("/skills/{skill_db_id}/fork")
+async def fork_skill(
+    skill_db_id: str,
+    body: SkillForkBody,
+    user_org=Depends(require_org_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    user, org = user_org
+    if user:
+        await PermissionChecker.require_permission(db, user.id, org.id, "skill:create")
+
+    skill = await db.get(HermesSkill, skill_db_id)
+    if not skill or skill.deleted_at is not None or skill.org_id != org.id:
+        raise NotFoundError("Skill 不存在", "errors.skill.not_found")
+
+    existing = await db.execute(
+        select(HermesSkill).where(
+            not_deleted(HermesSkill),
+            HermesSkill.org_id == org.id,
+            HermesSkill.skill_id == body.target_skill_id,
+        )
+    )
+    if existing.scalar_one_or_none():
+        raise ConflictError(f"目标 Skill ID 已存在: {body.target_skill_id}", "errors.skill.already_exists")
+
+    forked = HermesSkill(
+        id=str(uuid.uuid4()),
+        org_id=org.id,
+        skill_id=body.target_skill_id,
+        name=body.target_name or f"{skill.name} (Fork)",
+        tool_name=body.target_skill_id,
+        title=skill.title,
+        description=skill.description,
+        version="1.0.0",
+        agent_type=skill.agent_type,
+        category=skill.category,
+        runtime=skill.runtime,
+        source_type="central",
+        is_active=True,
+        is_mcp_exposed=False,
+        input_schema=dict(skill.input_schema or {}),
+        output_schema=dict(skill.output_schema or {}),
+        output_policy=dict(skill.output_policy or {}),
+        tags=list(skill.tags or []),
+        extra_metadata=dict(skill.extra_metadata or {}),
+        created_by=user.id if user else None,
+    )
+    db.add(forked)
+    await db.flush()
+
+    release_svc = SkillReleaseService(db)
+    await release_svc.create_draft_from_skill(
+        org_id=org.id,
+        skill_id=forked.skill_id,
+        operator_user_id=user.id if user else "system",
+        notes=f"Forked from {skill.skill_id}",
+        version=forked.version,
+    )
+    await db.commit()
+    await db.refresh(forked)
+    return _ok(await _enrich_skill_read(db, forked))
+
+
+@router.post("/skills/export")
+async def export_skills(
+    body: SkillExportRequest,
+    user_org=Depends(require_org_member),
+    db: AsyncSession = Depends(get_db),
+):
+    _, org = user_org
+    query = select(HermesSkill).where(
+        not_deleted(HermesSkill),
+        HermesSkill.org_id == org.id,
+    )
+    if body.skill_db_ids:
+        query = query.where(HermesSkill.id.in_(body.skill_db_ids))
+    elif body.skill_ids:
+        query = query.where(HermesSkill.skill_id.in_(body.skill_ids))
+
+    result = await db.execute(query)
+    skills = result.scalars().all()
+    exported = []
+    for s in skills:
+        exported.append({
+            "skill_id": s.skill_id,
+            "name": s.name,
+            "tool_name": s.tool_name,
+            "title": s.title,
+            "description": s.description,
+            "version": s.version,
+            "agent_type": s.agent_type,
+            "category": s.category,
+            "runtime": s.runtime,
+            "input_schema": s.input_schema,
+            "output_schema": s.output_schema,
+            "output_policy": s.output_policy,
+            "tags": s.tags,
+            "extra_metadata": s.extra_metadata,
+        })
+    return _ok({"skills": exported, "total": len(exported)})
+
+
+@router.post("/skills/import")
+async def import_skills(
+    body: SkillImportRequest,
+    user_org=Depends(require_org_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    user, org = user_org
+    if user:
+        await PermissionChecker.require_permission(db, user.id, org.id, "skill:create")
+
+    imported_ids = []
+    for item in body.skills:
+        skill_id = item.get("skill_id")
+        if not skill_id:
+            continue
+        existing_res = await db.execute(
+            select(HermesSkill).where(
+                not_deleted(HermesSkill),
+                HermesSkill.org_id == org.id,
+                HermesSkill.skill_id == skill_id,
+            )
+        )
+        existing = existing_res.scalar_one_or_none()
+        if existing and not body.override:
+            continue
+        if existing and body.override:
+            existing.name = item.get("name", existing.name)
+            existing.tool_name = item.get("tool_name", existing.tool_name)
+            existing.title = item.get("title", existing.title)
+            existing.description = item.get("description", existing.description)
+            existing.version = item.get("version", existing.version)
+            existing.category = item.get("category", existing.category)
+            existing.agent_type = item.get("agent_type", existing.agent_type)
+            existing.runtime = item.get("runtime", existing.runtime)
+            existing.input_schema = item.get("input_schema", existing.input_schema)
+            existing.output_schema = item.get("output_schema", existing.output_schema)
+            existing.output_policy = item.get("output_policy", existing.output_policy)
+            existing.tags = item.get("tags", existing.tags)
+            existing.extra_metadata = item.get("extra_metadata", existing.extra_metadata)
+            imported_ids.append(existing.skill_id)
+        else:
+            skill = HermesSkill(
+                id=str(uuid.uuid4()),
+                org_id=org.id,
+                skill_id=skill_id,
+                name=item.get("name", skill_id),
+                tool_name=item.get("tool_name", skill_id),
+                title=item.get("title"),
+                description=item.get("description"),
+                version=item.get("version", "1.0.0"),
+                agent_type=item.get("agent_type"),
+                category=item.get("category"),
+                runtime=item.get("runtime"),
+                source_type="central",
+                is_active=True,
+                is_mcp_exposed=item.get("is_mcp_exposed", False),
+                input_schema=item.get("input_schema") or {},
+                output_schema=item.get("output_schema") or {},
+                output_policy=item.get("output_policy") or {},
+                tags=item.get("tags") or [],
+                extra_metadata=item.get("extra_metadata") or {},
+                created_by=user.id if user else None,
+            )
+            db.add(skill)
+            await db.flush()
+            release_svc = SkillReleaseService(db)
+            await release_svc.create_draft_from_skill(
+                org_id=org.id,
+                skill_id=skill.skill_id,
+                operator_user_id=user.id if user else "system",
+                notes="Imported skill",
+                version=skill.version,
+            )
+            imported_ids.append(skill.skill_id)
+
+    await db.commit()
+    return _ok({"imported": imported_ids, "count": len(imported_ids)})
+
+
+@router.get("/skills/{skill_db_id}/versions")
+async def list_skill_versions(
+    skill_db_id: str,
+    user_org=Depends(require_org_member),
+    db: AsyncSession = Depends(get_db),
+):
+    _, org = user_org
+    skill = await db.get(HermesSkill, skill_db_id)
+    if not skill or skill.deleted_at is not None or skill.org_id != org.id:
+        raise NotFoundError("Skill 不存在", "errors.skill.not_found")
+
+    release_svc = SkillReleaseService(db)
+    releases = await release_svc.list_releases(org.id, skill.skill_id)
+    items = []
+    for r in releases:
+        items.append({
+            "id": r.id,
+            "version": r.version,
+            "status": r.status,
+            "digest": r.digest,
+            "notes": r.notes,
+            "published_at": r.published_at,
+            "deprecated_at": r.deprecated_at,
+            "created_at": r.created_at,
+        })
+    return _ok({"items": items, "total": len(items)})
+
+
+@router.post("/skills/validate")
+async def validate_skill(
+    body: SkillValidateRequest,
+    user_org=Depends(require_org_member),
+):
+    errors = []
+    if not body.skill_id or not body.skill_id.strip():
+        errors.append("skill_id 不能为空")
+    if body.input_schema and not isinstance(body.input_schema, dict):
+        errors.append("input_schema 必须为字典结构")
+    if body.output_schema and not isinstance(body.output_schema, dict):
+        errors.append("output_schema 必须为字典结构")
+
+    return _ok({
+        "valid": len(errors) == 0,
+        "errors": errors,
+    })
 
 
 @router.delete("/skills/{skill_db_id}")

@@ -153,14 +153,35 @@ async def ingest_internal_events(
         source = str(event.get("source") or "edge")
         source_event_id = event.get("source_event_id") or event.get("event_id")
         if event_type == "run.completed":
-            await run_service.set_status(db, run_id, "COMPLETED", result=payload)
+            await run_service.set_status(
+                db,
+                run_id,
+                "COMPLETED",
+                org_id=x_exec_org_id,
+                attempt_id=run.attempt_id,
+                generation=run.generation,
+                expected_status=["RUNNING", "PREPARING", "RESUMING", "WAITING_EDGE"],
+                result=payload,
+            )
         elif event_type == "run.failed":
-            await run_service.set_status(db, run_id, "FAILED", result=payload)
+            await run_service.set_status(
+                db,
+                run_id,
+                "FAILED",
+                org_id=x_exec_org_id,
+                attempt_id=run.attempt_id,
+                generation=run.generation,
+                expected_status=["RUNNING", "PREPARING", "RESUMING", "WAITING_EDGE"],
+                result=payload,
+            )
         await run_service.append_event(
             db,
             run_id,
             event_type,
             payload,
+            org_id=x_exec_org_id,
+            attempt_id=run.attempt_id,
+            generation=run.generation,
             source=source,
             source_event_id=source_event_id,
         )
@@ -198,8 +219,13 @@ async def resume_internal_run(
     run = await run_service.get_run(db, run_id, org_id=x_exec_org_id)
     if not run:
         raise HTTPException(status_code=404, detail="run not found")
+    if run.status == "WAITING_APPROVAL":
+        raise HTTPException(status_code=400, detail="run in WAITING_APPROVAL state requires approval, not resume")
     evidence = body.get("evidence") if body else None
-    res = await run_service.resume_run(db, run_id, evidence=evidence, org_id=x_exec_org_id)
+    try:
+        res = await run_service.resume_run(db, run_id, evidence=evidence, org_id=x_exec_org_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     if not res:
         raise HTTPException(status_code=404, detail="run not found")
     return MutationResponse(

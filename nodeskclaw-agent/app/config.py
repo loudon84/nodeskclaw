@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     SKILL_AGENT_CENTRAL_BASE_URL: str = "http://localhost:4510"
     SKILL_AGENT_SECRET_STORE: str = "./.skill-agent-secrets"
     SKILL_AGENT_EDGE_POLL_SECONDS: float = 2.0
+    SKILL_AGENT_INSECURE_MODE: bool = False
 
 
 settings = Settings()

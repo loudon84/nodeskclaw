@@ -203,7 +203,7 @@ class McpToolMapper:
                     "authorized": True,
                     "grantStatus": "active",
                     "kind": "connector",
-                    "sourceType": f"connector:{placement}",
+                    "sourceType": "connector",
                     "serverManagedRoute": True,
                     "executionModes": [ASYNC_EVENT_MODE],
                     "defaultExecutionMode": ASYNC_EVENT_MODE,
@@ -411,7 +411,7 @@ class McpToolMapper:
             "routeOverrideAllowed": False,
             "requiresRouteOverride": False,
             "forbiddenArgumentKeys": list(RUNTIME_SKILL_FORBIDDEN_ARGUMENT_KEYS),
-            "routeHealth": route_health,
+            "routeHealth": {"ok": bool(route_health.get("ok"))},
         }
 
     async def _resolve_runtime_route_health(

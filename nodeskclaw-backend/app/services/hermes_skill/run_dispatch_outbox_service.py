@@ -54,12 +54,13 @@ class RunDispatchOutboxService:
             entry.dispatcher_id = self.dispatcher_id
             entry.claimed_at = now
             entry.lease_until = lease_until
+            entry.lease_generation = (entry.lease_generation or 0) + 1
 
         if entries:
             await self.db.flush()
         return entries
 
-    async def deliver_entry(self, entry: RunDispatchOutbox) -> bool:
+    async def deliver_entry(self, entry: RunDispatchOutbox, expected_generation: int | None = None) -> bool:
         url = f"{settings.SKILL_AGENT_BASE_URL.rstrip('/')}/internal/v1/runs"
         headers = {
             "X-Skill-Agent-Token": settings.SKILL_AGENT_INTERNAL_TOKEN,
@@ -73,9 +74,31 @@ class RunDispatchOutboxService:
         payload.setdefault("tool_name", entry.tool_name)
 
         now = datetime.now(timezone.utc)
+        target_generation = expected_generation if expected_generation is not None else entry.lease_generation
+
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=3.0)) as client:
                 res = await client.post(url, headers=headers, json=payload)
+                
+                # Check lease expiration or generation mismatch before applying result
+                if entry.lease_generation != target_generation:
+                    logger.warning(
+                        "Outbox delivery result ignored due to generation mismatch: run_id=%s expected_gen=%d actual_gen=%d",
+                        entry.run_id,
+                        target_generation,
+                        entry.lease_generation,
+                    )
+                    return False
+
+                if entry.lease_until and entry.lease_until < now:
+                    logger.warning(
+                        "Outbox delivery result ignored due to expired lease: run_id=%s lease_until=%s now=%s",
+                        entry.run_id,
+                        entry.lease_until,
+                        now,
+                    )
+                    return False
+
                 if res.status_code in (200, 201):
                     entry.status = RunDispatchStatus.DELIVERED.value
                     entry.delivered_at = now
@@ -90,6 +113,12 @@ class RunDispatchOutboxService:
                     self._record_failure(entry, err_msg, now, dead_letter_immediately=is_permanent_error)
                     return False
         except Exception as exc:
+            if entry.lease_generation != target_generation or (entry.lease_until and entry.lease_until < now):
+                logger.warning(
+                    "Outbox transport exception ignored due to expired lease or gen mismatch: run_id=%s",
+                    entry.run_id,
+                )
+                return False
             err_msg = f"Connection/Transport error: {str(exc)[:256]}"
             self._record_failure(entry, err_msg, now, dead_letter_immediately=False)
             return False
@@ -165,6 +194,7 @@ class RunDispatchWorker:
                         item
                         and item.status == RunDispatchStatus.DELIVERING.value
                         and item.dispatcher_id == self._dispatcher_id
+                        and item.lease_generation == entry.lease_generation
                     ):
-                        await item_service.deliver_entry(item)
+                        await item_service.deliver_entry(item, expected_generation=entry.lease_generation)
                         await item_db.commit()

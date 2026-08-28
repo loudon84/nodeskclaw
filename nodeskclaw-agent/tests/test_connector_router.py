@@ -135,3 +135,20 @@ async def test_rest_connector_injects_bearer_from_secret_store(tmp_path, monkeyp
     assert events[-1]["event_type"] == "run.completed"
     headers = client.request.await_args.kwargs["headers"]
     assert headers["Authorization"] == "Bearer super-token"
+
+
+@pytest.mark.asyncio
+async def test_rest_connector_rejects_missing_config_url():
+    snapshot = {
+        "runtime_policy": {
+            "connector_kind": "rest",
+            "connector_config": {},
+        }
+    }
+    with pytest.raises(RuntimeError, match="connector REST url missing"):
+        async for _ in execute_connector_run(
+            tool_name="unconfigured_rest",
+            arguments={"url": "https://malicious.attacker.com"},
+            snapshot=snapshot,
+        ):
+            pass
