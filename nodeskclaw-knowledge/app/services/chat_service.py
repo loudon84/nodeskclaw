@@ -105,20 +105,20 @@ async def create_session(
         if settings.KNOWLEDGE_V24_RELEASE_ENABLED:
             from app.services.release_runtime_service import resolve_application_release
 
-            resolved = await resolve_application_release(
+            ctx = await resolve_application_release(
                 db,
                 member,
                 application_id=application_id,
                 channel=channel,
             )
-            manifest = resolved.manifest
-            set_ids = list(manifest.get("knowledge_set_ids") or [])
-            if not set_ids:
+            if not ctx.knowledge_set_ids:
                 raise BadRequestError(
                     message="Release Manifest 缺少知识集合",
                     message_key="errors.knowledge.application_empty",
                 )
-            resolved_set_id = set_ids[0]
+            resolved_set_id = ctx.knowledge_set_ids[0]
+            if resolved_answer_model is None:
+                resolved_answer_model = ctx.answer_model
         else:
             if app.status != ApplicationStatus.active.value:
                 raise ForbiddenError(
@@ -132,7 +132,7 @@ async def create_session(
                     message_key="errors.knowledge.application_empty",
                 )
             resolved_set_id = set_ids[0]
-        if resolved_answer_model is None:
+        if resolved_answer_model is None and not settings.KNOWLEDGE_V24_RELEASE_ENABLED:
             resolved_answer_model = app.answer_model
     if not resolved_set_id:
         raise BadRequestError(

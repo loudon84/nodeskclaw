@@ -134,6 +134,10 @@ Non-healthy Integrity evaluation fails closed before returning context.
 
 Validated healthy release returns `compiled_policy` from pinned retrieval policy revision.
 
+#### Application product path consumes context
+
+When `KNOWLEDGE_V24_RELEASE_ENABLED`, `retrieve_for_application` and `create_session` read sets/KBs/weights/`answer_model`/compiled policy only from `ReleaseExecutionContext`; `resolve_release_terms` loads pinned `KnowledgeModelRevision.terms` and does not read manifest `terms`/`model_terms`. Covered by [[nodeskclaw-knowledge/tests/test_retrieve_wiring.py]] and [[nodeskclaw-knowledge/tests/test_query_intelligence.py]].
+
 ## Runtime Schema V11
 
 v1.1 在 v1.0 八域表之上增加 Set ACL、Chat、Audit 与入库/检索运行时字段，支撑 Worker 与安全边界。

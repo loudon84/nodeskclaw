@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 
 from app.core.config import settings
@@ -48,3 +51,44 @@ def test_rrf_fusion_produces_ranked_candidates():
     rrf, fusion = _rank_by_rrf(modes, weights)
     assert fusion["strategy"] == "weighted_rrf"
     assert len(rrf) == len(weighted)
+
+
+@pytest.mark.asyncio
+async def test_resolve_release_terms_loads_model_revision_terms(monkeypatch):
+    monkeypatch.setattr(settings, "KNOWLEDGE_V23_TERM_EXPANSION_ENABLED", True)
+    from app.services.query_intelligence import resolve_release_terms
+
+    revision = SimpleNamespace(
+        id="rev-1",
+        deleted_at=None,
+        terms=[{"canonical": "DeskClaw", "aliases": ["deskclaw", "openclaw"]}],
+    )
+    db = MagicMock()
+    db.get = AsyncMock(return_value=revision)
+
+    expanded, diagnostics = await resolve_release_terms(
+        db,
+        knowledge_model_revision_ids=["rev-1"],
+        query="how to use deskclaw",
+    )
+
+    assert "DeskClaw" in expanded
+    assert any(item.startswith("semantic_model:model_revision:") for item in diagnostics)
+
+
+@pytest.mark.asyncio
+async def test_resolve_release_terms_missing_revision_fails_closed():
+    from app.core.exceptions import BadRequestError
+    from app.services.query_intelligence import resolve_release_terms
+
+    db = MagicMock()
+    db.get = AsyncMock(return_value=None)
+
+    with pytest.raises(BadRequestError) as exc:
+        await resolve_release_terms(
+            db,
+            knowledge_model_revision_ids=["rev-missing"],
+            query="hello",
+        )
+
+    assert exc.value.message_key == "errors.knowledge.model_revision_not_found"
