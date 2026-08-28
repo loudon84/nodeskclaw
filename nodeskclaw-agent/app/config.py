@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     SKILL_AGENT_WORKER_INTERVAL_SECONDS: float = 1.0
     SKILL_AGENT_LEASE_SECONDS: int = 60
     SKILL_AGENT_SCHEMA: str = "agent"
-    SKILL_AGENT_ARTIFACT_DIR: str = "/tmp/nodeskclaw-agent-artifacts"
+    SKILL_AGENT_ARTIFACT_DIR: str = "./data/skill-agent-artifacts"
     SKILL_AGENT_ROLE: str = "central"
     SKILL_AGENT_EDGE_TOKEN: str = ""
     SKILL_AGENT_EDGE_NODE_ID: str = ""

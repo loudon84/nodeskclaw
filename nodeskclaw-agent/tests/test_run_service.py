@@ -562,6 +562,10 @@ async def test_store_artifact_bytes_and_read_across_restarts(monkeypatch, tmp_pa
     monkeypatch.setattr(settings, "SKILL_AGENT_ARTIFACT_DIR", target_dir)
 
     db = AsyncMock()
+    mock_seq = MagicMock()
+    mock_seq.mappings.return_value.first.return_value = {"next_event_seq": 1}
+    db.execute = AsyncMock(return_value=mock_seq)
+
     desc = await run_service.store_artifact_bytes(
         db,
         "run-1",
@@ -589,6 +593,92 @@ async def test_store_artifact_bytes_and_read_across_restarts(monkeypatch, tmp_pa
     meta, content = await run_service.get_artifact_bytes(db, "run-1", desc.artifact_id)
     assert content == b'{"result": 42}'
     assert meta["id"] == desc.artifact_id
+
+
+@pytest.mark.asyncio
+async def test_store_artifact_bytes_idempotency_and_conflict(monkeypatch, tmp_path):
+    from app.config import settings
+
+    target_dir = str(tmp_path / "persistent_artifacts")
+    monkeypatch.setattr(settings, "SKILL_AGENT_INSECURE_MODE", True)
+    monkeypatch.setattr(settings, "SKILL_AGENT_ARTIFACT_DIR", target_dir)
+
+    db = AsyncMock()
+
+    # 1. Existing artifact with same checksum -> idempotent return
+    existing_row = {
+        "id": "art-100",
+        "name": "data.txt",
+        "content_type": "text/plain",
+        "size_bytes": 5,
+        "storage_ref": "/some/path",
+        "checksum_sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",  # sha256 of b"hello"
+    }
+    mock_res = MagicMock()
+    mock_res.mappings.return_value.first.return_value = existing_row
+    db.execute = AsyncMock(return_value=mock_res)
+
+    desc1 = await run_service.store_artifact_bytes(
+        db,
+        "run-1",
+        name="data.txt",
+        content=b"hello",
+    )
+    assert desc1.artifact_id == "art-100"
+    assert desc1.storage_state == "persisted"
+
+    # 2. Existing artifact with DIFFERENT checksum -> conflict error
+    with pytest.raises(RuntimeError, match="Artifact conflict"):
+        await run_service.store_artifact_bytes(
+            db,
+            "run-1",
+            name="data.txt",
+            content=b"different content",
+        )
+
+
+@pytest.mark.asyncio
+async def test_append_event_and_list_events_include_request_trace_id():
+    db = AsyncMock()
+
+    mock_snap = MagicMock()
+    mock_snap.mappings.return_value.first.return_value = {"snapshot": {"request_trace_id": "trace-abc-123"}}
+
+    mock_seq = MagicMock()
+    mock_seq.mappings.return_value.first.return_value = {"next_event_seq": 1}
+
+    db.execute = AsyncMock(side_effect=[mock_snap, mock_seq, None])
+
+    evt = await run_service.append_event(
+        db,
+        "run-1",
+        "custom.step",
+        {"val": 1},
+    )
+    assert evt.request_trace_id == "trace-abc-123"
+
+    # Test list_events
+    rows = [{
+        "id": "evt-1",
+        "run_id": "run-1",
+        "attempt_id": None,
+        "event_type": "custom.step",
+        "event_seq": 1,
+        "source": "agent",
+        "source_event_id": None,
+        "payload": {"val": 1},
+        "created_at": None,
+    }]
+    mock_list_snap = MagicMock()
+    mock_list_snap.mappings.return_value.first.return_value = {"snapshot": {"request_trace_id": "trace-abc-123"}}
+
+    mock_list_events = MagicMock()
+    mock_list_events.mappings.return_value.all.return_value = rows
+
+    db.execute = AsyncMock(side_effect=[mock_list_snap, mock_list_events])
+    listed = await run_service.list_events(db, "run-1")
+    assert len(listed) == 1
+    assert listed[0].request_trace_id == "trace-abc-123"
 
 
 

@@ -57,6 +57,7 @@ class ArtifactDescriptor(BaseModel):
     size_bytes: int | None = None
     download_url: str | None = None
     checksum_sha256: str | None = None
+    storage_state: str = "persisted"
 
 
 class RunEventView(BaseModel):
@@ -66,6 +67,7 @@ class RunEventView(BaseModel):
     event_seq: int
     source: str = "agent"
     source_event_id: str | None = None
+    request_trace_id: str | None = None
     timestamp: str
     payload: dict[str, Any] = Field(default_factory=dict)
 

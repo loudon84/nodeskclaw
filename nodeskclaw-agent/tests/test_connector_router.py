@@ -10,6 +10,7 @@ from app.services.connector_router import execute_connector_run
 @pytest.mark.asyncio
 async def test_execute_rest_connector_happy_path():
     response = MagicMock()
+    response.url = "https://example.com/api"
     response.raise_for_status = MagicMock()
     response.json.return_value = {"ok": True}
     client = AsyncMock()
@@ -33,6 +34,7 @@ async def test_execute_rest_connector_happy_path():
 @pytest.mark.asyncio
 async def test_execute_mcp_connector_happy_path():
     response = MagicMock()
+    response.url = "https://example.com/mcp"
     response.raise_for_status = MagicMock()
     response.json.return_value = {"jsonrpc": "2.0", "id": "connector-call", "result": {"ok": True}}
     client = AsyncMock()
@@ -112,6 +114,7 @@ async def test_rest_connector_injects_bearer_from_secret_store(tmp_path, monkeyp
     (tmp_path / "tok-1").write_text("super-token", encoding="utf-8")
 
     response = MagicMock()
+    response.url = "https://example.com/api"
     response.raise_for_status = MagicMock()
     response.json.return_value = {"ok": True}
     client = AsyncMock()

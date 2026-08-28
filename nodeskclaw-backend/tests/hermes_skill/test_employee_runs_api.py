@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi import HTTPException
-from app.api.runs import get_run, get_run_result, get_run_artifacts, download_run_artifact, cancel_run, resume_or_approve_run
+from app.api.runs import get_run, get_run_result, get_run_artifacts, download_run_artifact, cancel_run, resume_run, approve_run
 from app.core.exceptions import ForbiddenError, NotFoundError
 from app.models.hermes_skill.hermes_task import HermesTask, TaskStatus
 from app.models.hermes_skill.run_dispatch_outbox import RunDispatchOutbox, RunDispatchStatus
@@ -159,4 +159,4 @@ async def test_resume_undelivered_outbox_rejected():
          patch("app.api.runs._get_outbox_entry", new=AsyncMock(return_value=outbox)):
 
         with pytest.raises(ForbiddenError):
-            await resume_or_approve_run(run_id="run-1", user_org=user_org, db=db)
+            await resume_run(run_id="run-1", user_org=user_org, db=db)

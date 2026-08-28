@@ -282,9 +282,26 @@ async def append_event(
     generation: int | None = None,
     source: str = "agent",
     source_event_id: str | None = None,
+    request_trace_id: str | None = None,
 ) -> RunEventView:
     payload = payload or {}
     now = _utcnow()
+
+    # If request_trace_id not explicitly provided, try to fetch from run's snapshot
+    if not request_trace_id:
+        try:
+            snap_row = (
+                await db.execute(
+                    text(f'SELECT snapshot FROM "{SCHEMA}".runs WHERE id = :run_id LIMIT 1'),
+                    {"run_id": run_id},
+                )
+            ).mappings().first()
+            if snap_row and snap_row.get("snapshot"):
+                snap = snap_row["snapshot"]
+                if isinstance(snap, dict):
+                    request_trace_id = snap.get("request_trace_id")
+        except Exception:
+            pass
 
     # Idempotency check if source_event_id provided
     if source_event_id:
@@ -314,6 +331,7 @@ async def append_event(
                 event_seq=existing_event["event_seq"],
                 source=existing_event["source"],
                 source_event_id=existing_event["source_event_id"],
+                request_trace_id=request_trace_id,
                 timestamp=_iso(existing_event["created_at"]),
                 payload=exist_payload,
             )
@@ -386,6 +404,7 @@ async def append_event(
         event_seq=event_seq,
         source=source,
         source_event_id=source_event_id,
+        request_trace_id=request_trace_id,
         timestamp=_iso(now),
         payload=payload,
     )
@@ -397,6 +416,22 @@ async def list_events(
     *,
     after_seq: int = 0,
 ) -> list[RunEventView]:
+    # Fetch run snapshot to populate request_trace_id
+    request_trace_id = None
+    try:
+        snap_row = (
+            await db.execute(
+                text(f'SELECT snapshot FROM "{SCHEMA}".runs WHERE id = :run_id LIMIT 1'),
+                {"run_id": run_id},
+            )
+        ).mappings().first()
+        if snap_row and snap_row.get("snapshot"):
+            snap = snap_row["snapshot"]
+            if isinstance(snap, dict):
+                request_trace_id = snap.get("request_trace_id")
+    except Exception:
+        pass
+
     rows = (
         await db.execute(
             text(
@@ -418,6 +453,7 @@ async def list_events(
             event_seq=row["event_seq"],
             source=row.get("source") or "agent",
             source_event_id=row.get("source_event_id"),
+            request_trace_id=request_trace_id,
             timestamp=_iso(row["created_at"]),
             payload=row["payload"] or {},
         )
@@ -445,6 +481,7 @@ async def list_artifacts(db: AsyncSession, run_id: str) -> list[ArtifactDescript
             size_bytes=row["size_bytes"],
             download_url=f"/api/v1/runs/{run_id}/artifacts/{row['id']}/download",
             checksum_sha256=row["checksum_sha256"],
+            storage_state="persisted",
         )
         for row in rows
     ]
@@ -678,6 +715,7 @@ async def add_artifact(
         size_bytes=size_bytes,
         download_url=f"/api/v1/runs/{run_id}/artifacts/{artifact_id}/download",
         checksum_sha256=checksum_sha256,
+        storage_state="persisted",
     )
 
 
@@ -699,12 +737,52 @@ async def store_artifact_bytes(
         if art_dir == "/tmp" or art_dir.startswith("/tmp/"):
             raise RuntimeError("Artifact directory must not be in ephemeral storage in production")
 
+    checksum = hashlib.sha256(content).hexdigest()
+
+    # Idempotency check: if artifact with same name and run_id exists
+    existing_row = None
+    try:
+        check_res = await db.execute(
+            text(
+                f"""
+                SELECT id, name, content_type, size_bytes, storage_ref, checksum_sha256
+                FROM "{SCHEMA}".run_artifacts
+                WHERE run_id = :run_id AND name = :name
+                LIMIT 1
+                """
+            ),
+            {"run_id": run_id, "name": name},
+        )
+        if hasattr(check_res, "mappings"):
+            mappings = check_res.mappings()
+            if hasattr(mappings, "first"):
+                existing_row = mappings.first()
+            elif hasattr(mappings, "__await__"):
+                awaited_m = await mappings
+                if hasattr(awaited_m, "first"):
+                    existing_row = awaited_m.first()
+    except Exception:
+        pass
+
+    if existing_row and isinstance(existing_row, dict) and "checksum_sha256" in existing_row:
+        if existing_row["checksum_sha256"] != checksum:
+            raise RuntimeError(f"Artifact conflict: '{name}' already exists with different checksum")
+        return ArtifactDescriptor(
+            artifact_id=existing_row["id"],
+            name=existing_row["name"],
+            content_type=existing_row["content_type"],
+            size_bytes=existing_row["size_bytes"],
+            download_url=f"/api/v1/runs/{run_id}/artifacts/{existing_row['id']}/download",
+            checksum_sha256=existing_row["checksum_sha256"],
+            storage_state="persisted",
+        )
+
     root = Path(art_dir) / run_id
     root.mkdir(parents=True, exist_ok=True)
     artifact_id = str(uuid.uuid4())
     path = root / f"{artifact_id}_{name}"
     path.write_bytes(content)
-    checksum = hashlib.sha256(content).hexdigest()
+
     await db.execute(
         text(
             f"""
@@ -742,6 +820,7 @@ async def store_artifact_bytes(
         size_bytes=len(content),
         download_url=f"/api/v1/runs/{run_id}/artifacts/{artifact_id}/download",
         checksum_sha256=checksum,
+        storage_state="persisted",
     )
 
 
