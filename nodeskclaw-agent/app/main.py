@@ -17,7 +17,8 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await init_schema()
+    # DDL operations are strictly handled by Alembic migrations.
+    # App startup maintains zero-DDL policy in production.
     worker_task = None
     worker = None
     if settings.SKILL_AGENT_WORKER_ENABLED:
@@ -40,8 +41,18 @@ app = FastAPI(title="nodeskclaw-agent", version="0.1.0", lifespan=lifespan)
 app.include_router(internal_runs_router)
 
 
+@app.get("/health/live")
+async def health_live():
+    return {
+        "status": "ok",
+        "service": "nodeskclaw-agent",
+        "role": settings.SKILL_AGENT_ROLE,
+    }
+
+
+@app.get("/health/ready")
 @app.get("/health")
-async def health(db: AsyncSession = Depends(get_db)):
+async def health_ready(db: AsyncSession = Depends(get_db)):
     db_ok = True
     try:
         await db.execute(text("SELECT 1"))
