@@ -1,20 +1,25 @@
-schema: smc.agent-skills.lock.v1
+schema: smc.agent-skills.lock.v2
 
 source:
   repository: addyosmani/agent-skills
   version: 0.6.7
   commit: df1edb2e05487d0aa6d93c747141e0aed1187f25
 
+# Upstream skills that remain canonical owners in this repository.
 skills:
-  - using-agent-skills
-  - context-engineering
-  - spec-driven-development
-  - planning-and-task-breakdown
-  - source-driven-development
-  - doubt-driven-development
-  - incremental-implementation
   - test-driven-development
   - code-review-and-quality
-  - code-simplification
-  - deprecation-and-migration
-  - ci-cd-and-automation
+
+# Formerly pinned upstream roles now owned by local governed skills.
+# validate_agent_skills.py requires every target to exist and every replaced source to be absent.
+replacements:
+  using-agent-skills: using-superpowers
+  context-engineering: using-superpowers
+  spec-driven-development: smc-prd-grounding
+  planning-and-task-breakdown: smc-plan-from-approved-prd-ponytail
+  source-driven-development: smc-prd-grounding
+  doubt-driven-development: smc-architecture-review
+  incremental-implementation: executing-plans
+  code-simplification: smc-plan-from-approved-prd-ponytail
+  deprecation-and-migration: smc-prd-grounding
+  ci-cd-and-automation: release-deploy

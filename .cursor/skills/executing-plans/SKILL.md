@@ -1,175 +1,78 @@
 ---
 name: executing-plans
-description: 当你有一份书面实现计划需要在单独的会话中执行，并设有审查检查点时使用
+description: 执行书面计划。SMC governed Plan 强制 post_review commit：Todo 实施期间不提交，全部计划内实现完成后先 Review、再 Verification、最后 Commit Implementation。
+version: 4.0.0
 ---
 
-# 执行计划
+# Executing Plans
 
-## 概述
+## Mode Detection
 
-加载计划，批判性审查，执行所有任务，完成后报告。
+如果 Plan 含以下任一特征，则是 `governed`：
 
-**开始时宣布：** "我正在使用 executing-plans 技能来实现此计划。"
+- `## Write Ownership Ledger`；
+- `## Integration Hotspots`；
+- Approved PRD 为 SMC APPROVED artifact；
+- 明确 `commit_policy: post_review`。
 
-**注意：** 告诉你的人类伙伴，Superpowers 在有子代理支持时效果好得多。如果在支持子代理的平台上运行（如 Claude Code 或 Codex），其工作质量会显著提高。如果子代理可用，请使用 superpowers:subagent-driven-development 而非此技能。
+否则为 `generic`。
 
-## 流程
+## Governed Execution Contract
 
-### 步骤 1：加载并审查计划
+### Step 1 — Preconditions
 
-1. 读取计划文件
-2. 批判性审查——识别计划中的任何问题或疑虑
-3. 如果有疑虑：在开始之前向你的人类伙伴提出
-4. 如果没有疑虑：创建 TodoWrite 并继续
+1. Plan 已通过 `smc-plan-validator`。
+2. 如果 `smc-plan-review` 风险判定为 REQUIRED，必须已有 PASS。
+3. 当前不在 main/master，除非用户明确授权。
+4. 工作树基线清楚；记录已有用户改动，禁止吞掉。
 
-**审查时重点检查：**
-- 步骤之间是否有依赖遗漏？（A 依赖 B，但 B 排在 A 之后）
-- 验证条件是否明确？（"确认可用"不算，"运行 `npm test` 全部通过"才算）
-- 是否有隐含的环境假设？（Node 版本、数据库连接、API Key）
+### Step 2 — Execute Todo by Ownership
 
-**审查示例：**
-```
-计划文件：docs/plan.md
-任务清单：5 个任务
+对每个 Todo：
 
-审查发现：
-- 任务 3（添加数据库迁移）应在任务 2（编写数据模型）之后，顺序正确 ✓
-- 任务 4 的验证条件写的是"确认功能正常"→ 需澄清：具体跑什么测试？
-- 计划未提及 Python 版本要求 → 需确认
+1. 只读取其 Immediate anchors + Ledger Reads；
+2. 只写 Ledger 中属于当前 Todo 的 Writes；
+3. 严格遵守 Depends On；
+4. 运行当前 Todo focused check；
+5. Stop conditions 成立即停止；
+6. **不 commit**；
+7. 不提前实施后续 Todo。
 
-向伙伴提出：
-"计划整体可执行。有两个问题：(1) 任务 4 的验证条件不够具体，建议改为
-'运行 pytest tests/test_api.py 全部通过'；(2) 需要确认 Python 版本要求。"
-```
+发现需要写另一个 Todo 的 symbol：停止，返回 Plan 修订；禁止“顺手改一下”。
 
-### 步骤 2：执行任务
+### Step 3 — Review Before Commit
 
-对于每个任务：
+所有 Todo 形成完整 working diff 后：
 
-1. **标记为进行中** — 更新 TodoWrite
-2. **理解目标** — 重读任务描述，明确完成标准
-3. **执行实现** — 严格按照计划步骤执行（计划已有小步骤）
-4. **运行验证** — 按要求运行测试或检查
-5. **提交变更** — 每完成一个任务提交一次，commit message 引用任务编号
-6. **标记为已完成** — 更新 TodoWrite
+1. Spec/Plan compliance review；
+2. code quality review；
+3. 修复后重新 review；
+4. Review PASS 才进入 Verification。
 
-**每个任务的节奏：**
-```
---- 任务 2/5：添加用户验证 ---
-[标记进行中]
+### Step 4 — Verification
 
-目标：为 /api/users 添加输入验证
-完成标准：所有验证测试通过，无效输入返回 400
+使用 `verification-before-completion` 或项目等价门禁执行 Plan 的最终 Verification。
 
-[实现]
-- 添加 validateUser() 中间件
-- 编写 3 个验证规则（email 格式、密码强度、用户名长度）
+只有可重复证据 PASS 才允许 commit。
 
-[验证]
-$ npm test -- --grep "validation"
-  ✓ 拒绝无效 email (12ms)
-  ✓ 拒绝弱密码 (8ms)
-  ✓ 拒绝过长用户名 (5ms)
-  3 passing
+### Step 5 — Commit Implementation
 
-[提交]
-$ git add src/middleware/validate.js tests/validation.test.js
-$ git commit -m "feat: 添加用户输入验证（任务 2/5）"
+Review PASS + Verification PASS 后创建 implementation commit。
 
-[标记完成]
---- 任务 2/5 完成 ---
-```
+该 commit SHA 是 Roadmap DONE evidence 的 implementation commit。
 
-**批量审查检查点：**
-- 每完成 3 个任务后，暂停回顾：整体方向还对吗？有没有偏离计划？
-- 如果发现前面的实现有问题，先修复再继续，不要带着问题往下走
+不要在同一 commit 内同时修改 Roadmap 状态；Roadmap update 是下一步独立 commit。
 
-### 步骤 3：处理常见异常
+## Generic Mode
 
-**测试失败：**
-1. 读错误信息，定位失败原因
-2. 区分：是实现 bug？还是测试本身有问题？还是计划描述有误？
-3. 实现 bug → 修复并重跑
-4. 测试有问题 → 修复测试，向伙伴说明
-5. 计划有误 → 停下来，向伙伴报告并建议修正
+非 governed Plan 可以遵循项目自己的 commit cadence；不要把 governed post_review 规则强行扩展到所有临时任务。
 
-**依赖缺失：**
-```
-任务 3 需要 Redis 连接，但计划中没有提及 Redis 配置。
-→ 停止执行
-→ 向伙伴报告："任务 3 需要 Redis，计划中未包含配置步骤。
-   建议：在任务 3 前插入 '配置 Redis 连接' 步骤。"
-```
+## Forbidden in Governed Mode
 
-**指令不清：**
-- 不要猜测意图，不要"合理推断"
-- 列出你的理解和困惑，让伙伴澄清
-- 等待回复后再继续
-
-### 步骤 4：完成开发
-
-所有任务完成并验证后：
-- 宣布："我正在使用 finishing-a-development-branch 技能来完成此工作。"
-- **必需子技能：** 使用 superpowers:finishing-a-development-branch
-- 按照该技能的指引验证测试、展示选项、执行选择
-
-**完成报告模板：**
-```
-## 执行报告
-
-**计划：** docs/plan.md
-**分支：** feature/user-validation
-**任务：** 5/5 已完成
-
-### 完成的任务
-1. ✅ 初始化项目结构
-2. ✅ 添加用户验证
-3. ✅ 添加数据库迁移
-4. ✅ 实现 API 端点
-5. ✅ 添加集成测试
-
-### 验证结果
-- 单元测试：23/23 通过
-- 集成测试：8/8 通过
-- lint 检查：0 个警告
-
-### 偏离计划的地方
-- 任务 3：Redis 配置从 env 改为 config.yaml（经伙伴同意）
-
-### 下一步
-按 finishing-a-development-branch 技能处理合并/PR
-```
-
-## 何时停下来求助
-
-**在以下情况立即停止执行：**
-- 遇到阻塞（缺少依赖、测试失败、指令不清）
-- 计划有严重缺陷导致无法开始
-- 你不理解某条指令
-- 验证反复失败（同一测试失败 2 次以上）
-
-**不确定时就问，不要猜测。**
-
-## 何时回到之前的步骤
-
-**回到审查（步骤 1）当：**
-- 伙伴根据你的反馈更新了计划
-- 根本性的方案需要重新考虑
-
-**不要硬闯阻塞** — 停下来问。
-
-## 注意事项
-- 先批判性审查计划
-- 严格按照计划步骤执行
-- 不要跳过验证
-- 每个任务单独提交，commit message 引用任务编号
-- 计划要求时引用相应技能
-- 遇到阻塞时停下来，不要猜测
-- 未经用户明确同意，绝不在 main/master 分支上开始实现
-
-## 集成
-
-**必需的工作流技能：**
-- **superpowers:using-git-worktrees** - 必需：开始前建立隔离的工作空间
-- **superpowers:writing-plans** - 创建此技能要执行的计划
-- **superpowers:finishing-a-development-branch** - 所有任务完成后收尾开发
+- Todo 完成即 commit；
+- review 前 commit；
+- verification 前 commit；
+- 修改其它 Todo WRITE_OWNER；
+- validator FAIL 仍执行；
+- 把 Plan 之外的重构混进 implementation commit；
+- implementation commit 与 Roadmap status commit 合并。

@@ -2,25 +2,25 @@
 
 分派代码质量审查子智能体时使用此模板。
 
-**目的：** 验证实现是否构建良好（整洁、有测试、可维护）
+**目的：** 验证实现是否构建良好（整洁、有测试、可维护）。在 governed flow 中，此审查发生在 implementation commit 之前。
 
 **仅在规格合规性审查通过后才分派。**
 
-```
-Task tool (superpowers:code-reviewer):
-  使用模板 requesting-code-review/code-reviewer.md
-
-  WHAT_WAS_IMPLEMENTED: [来自实现者的报告]
-  PLAN_OR_REQUIREMENTS: [plan-file] 中的任务 N
-  BASE_SHA: [任务开始前的提交]
-  HEAD_SHA: [当前提交]
-  DESCRIPTION: [任务摘要]
+```text
+WHAT_WAS_IMPLEMENTED: [来自实现者的报告]
+PLAN_OR_REQUIREMENTS: [plan-file] 中的 Todo Tn
+BASE_SHA: [本阶段开始前的提交]
+WORKTREE_DIFF: [当前未提交 diff]
+DESCRIPTION: [任务摘要]
 ```
 
-**除标准代码质量关注点外，审查者还应检查：**
-- 每个文件是否有单一明确的职责和定义清晰的接口？
-- 各单元是否拆分得足以独立理解和测试？
-- 实现是否遵循了计划中的文件结构？
-- 本次实现是否创建了已经很大的新文件，或显著增大了现有文件？（不要标记已有的文件大小问题——聚焦于本次变更带来的影响。）
+审查者必须检查：
 
-**代码审查者返回：** 优点、问题（关键/重要/次要）、评估结论
+- 实际 diff 是否只修改当前 Todo 的 Write Ownership Ledger targets；
+- 是否出现第二 Production Owner、重复 helper/adapter/service；
+- 是否遵循 Plan 的 Ponytail minimality decision；
+- 是否有未计划 scope expansion；
+- 测试/验证是否足以证明当前 Stop Conditions；
+- 是否保留安全、错误处理、信任边界和明确要求行为。
+
+返回：`PASS | REVISE`，并列出 Critical / Important / Minor findings。

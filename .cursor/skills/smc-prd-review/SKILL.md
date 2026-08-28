@@ -1,15 +1,40 @@
 ---
 name: smc-prd-review
-description: 独立审查 NoDeskClaw PRD 的架构正确性与收敛性。支持 initial 与 closure；closure 只验证上一轮 Finding，防止多轮无界 Review 和 Token 浪费。
+description: Stage PRD Architecture Gate。initial 一次性审 Scope/Existing Capability/Production Ownership/Classification/Boundary/Behaviour->AC；closure 只关闭旧 Finding。复用 source_revision + grounded_commit，禁止以独立审查为名重复 discovery。
+version: 4.0.0
 disable-model-invocation: true
 ---
 
 # SMC PRD Review
 
-本文件是接入壳（wrapper），canonical 定义维护在 `.agents/skills/` 下，避免双份正文漂移。
+## Modes
 
-执行本 skill 时，必须先读取并严格遵循：
+- `initial`: 一次性跑六 Gate。
+- `closure`: 只检查上一轮 OPEN BLOCKER/MAJOR + revision regression。
 
-[`../../../.agents/skills/smc-prd-review/SKILL.md`](../../../.agents/skills/smc-prd-review/SKILL.md)
+## Evidence Reuse
 
-所有模式、六个 Architecture Gates、Severity/Verdict 规则与禁止项以该文件为准。
+先看 PRD `source_revision`, `grounded_commit`, `Evidence Baseline`, Source Anchors。
+
+如果源码/Source Revision 未变化，不重新 full Grounding。独立 = 独立判断，不是重复扫描。
+
+## Six Gates
+
+G1 Scope
+G2 Existing Capability / duplicate owner
+G3 Production Ownership
+G4 KEEP/MODIFY/ADD/REPLACE/REMOVE
+G5 API/IPC/Auth/Contract/Security Boundary
+G6 Behaviour -> Acceptance Criteria
+
+Architecture/Plan 分层：exact private file/symbol、hook、fetch option、mock/test file、Todo ownership 不得作为 PRD MAJOR，除非它本身改变 contract/security/唯一 Owner/observable Behaviour。
+
+## Severity / Verdict
+
+- BLOCKER -> BLOCKED
+- MAJOR -> REVISE
+- only MINOR/NOTE -> PASS
+
+## Output
+
+Review 不修改 PRD。PASS -> `smc-prd-converge`; REVISE -> `smc-prd-grounding revision`。

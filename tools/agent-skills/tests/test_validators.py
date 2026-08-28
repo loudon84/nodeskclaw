@@ -19,6 +19,8 @@ status: APPROVED
 target_branch: work/prd-3.0
 review_verdict: PASS
 approved_at: 2026-08-24T14:00:00+08:00
+source_revision: TEST-0@1.0.0
+grounded_commit: abcdef1234567
 ---
 # Test
 
@@ -42,9 +44,17 @@ approved_at: 2026-08-24T14:00:00+08:00
 """
 
 
-def valid_plan(prd_link: str = "PRD-test.md", row: str | None = None) -> str:
-    change_row = row or "| a.ts#symbol | MODIFY | owner | final | config | no |"
-    return f"""# Plan
+def valid_plan(
+    prd_link: str = "PRD-test.md", row: str | None = None, target: str = "a.ts#symbol"
+) -> str:
+    change_row = row or "| C01 | `a.ts#symbol` | PROD | MODIFY | owner | T1 | final | config | no |"
+    return f"""---
+plan_contract: smc.plan.v3
+commit_policy: post_review
+source_revision: TEST-1@1.0.0
+grounded_commit: abcdef1234567
+---
+# Plan
 
 ## Approved PRD
 [PRD]({prd_link})
@@ -59,12 +69,43 @@ Implement config.
 - None.
 
 ## Change Matrix
-| File / Symbol | Action | Existing Owner | Target State | PRD Capability | New File? |
-|---|---|---|---|---|---|
+| Change ID | File / Symbol | Kind | Action | Existing Owner | Todo Owner | Target State | PRD Capability | New File? |
+|---|---|---|---|---|---|---|---|---|
 {change_row}
 
 ## Implementation Decisions
-- Reuse current owner.
+| Change ID | Strategy | Root-Cause / Reuse Evidence | Why This Is Minimum |
+|---|---|---|---|
+| C01 | MODIFY_EXISTING | `{target}` is the established owner | keep the existing owner and change only its behavior |
+
+## Write Ownership Ledger
+| Todo | Owns Changes | Writes | Reads | Depends On | Parallel Safe |
+|---|---|---|---|---|---|
+| T1 | C01 | `{target}` | - | - | no |
+
+## Integration Hotspots
+None
+
+## Todo T1 — update owner
+
+**Owns Changes**
+- C01
+
+**Goal**
+
+Update the existing owner.
+
+**Immediate anchors**
+- `{target}`
+
+**Changes**
+- Apply the scoped plan change.
+
+**Stop conditions**
+- [ ] focused test passes
+
+**Triggered reads**
+- None
 
 ## Verification
 - focused tests
@@ -135,7 +176,8 @@ class ValidatorsTest(unittest.TestCase):
             prd.write_text(VALID_PRD, encoding="utf-8")
             plan.write_text(
                 valid_plan(
-                    row="| a.ts#newMethod | ADD | owner | new method in owner | config | no |"
+                    row="| C01 | `a.ts#newMethod` | PROD | ADD | owner | T1 | new method in owner | config | no |",
+                    target="a.ts#newMethod",
                 ),
                 encoding="utf-8",
             )
@@ -150,7 +192,8 @@ class ValidatorsTest(unittest.TestCase):
             prd.write_text(VALID_PRD, encoding="utf-8")
             plan.write_text(
                 valid_plan(
-                    row="| new.ts | ADD | none | new owner support | config | yes |"
+                    row="| C01 | `new.ts` | PROD | ADD | none | T1 | new owner support | config | yes |",
+                    target="new.ts",
                 ),
                 encoding="utf-8",
             )
@@ -166,8 +209,14 @@ class ValidatorsTest(unittest.TestCase):
             plan = base / "test.plan.md"
             prd.write_text(VALID_PRD, encoding="utf-8")
             text = valid_plan(
-                row="| support.ts | MODIFY | owner | split support under same owner | config | yes |"
-            ) + "\n## New File Justification\n- `support.ts`: existing owner remains authoritative; file split is required by implementation boundary.\n"
+                row="| C01 | `support.ts` | PROD | MODIFY | owner | T1 | split support under same owner | config | yes |",
+                target="support.ts",
+            ) + """
+## New File Justification
+| Change ID | File | Necessity | Owner Impact |
+|---|---|---|---|
+| C01 | `support.ts` | file split is required by the implementation boundary | existing owner remains authoritative |
+"""
             plan.write_text(text, encoding="utf-8")
             result = self.run_script(PLAN_VALIDATOR, plan)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -180,7 +229,8 @@ class ValidatorsTest(unittest.TestCase):
             prd.write_text(VALID_PRD, encoding="utf-8")
             plan.write_text(
                 valid_plan(
-                    row="| a.ts#old | REPLACE | owner | replaced | config | no |"
+                    row="| C01 | `a.ts#old` | PROD | REPLACE | owner | T1 | replaced | config | no |",
+                    target="a.ts#old",
                 ),
                 encoding="utf-8",
             )

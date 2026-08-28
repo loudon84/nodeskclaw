@@ -10,5 +10,6 @@
 - [[knowledge-ragflow-split]] — Knowledge 权限治理与 RAGFlow 语义检索职责分离
 - [[work-expert-contract]] — Expert MCP 对 apps/work 的 WORK-EXPERT-CONTRACT 绑定（当前 v1.0.2，v1.0.0 / v1.0.1 冻结）
 - [[skill-platform-execution]] — 员工 Skill Catalog（published SkillRelease）与 nodeskclaw-agent 执行平面 Owner 分离
+- [[agent-skills-governance]] — Agent Skills 治理状态机、规范源镜像与唯一 Owner 约束
 
 临时笔记与逐步代码 walkthrough 不属于此处。
