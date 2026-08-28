@@ -39,7 +39,7 @@ async def enqueue_build(
     db: AsyncSession,
     *,
     org_id: str,
-    knowledge_base_id: str,
+    knowledge_base_id: str | None = None,
     index_type: str,
     trigger_reason: str,
     build_profile_id: str | None = None,
@@ -53,16 +53,29 @@ async def enqueue_build(
 ) -> KnowledgeBuildJob | None:
     if index_type == IndexType.chunk.value:
         return None
-    existing = await db.scalar(
-        select(KnowledgeBuildJob).where(
-            KnowledgeBuildJob.knowledge_base_id == knowledge_base_id,
-            KnowledgeBuildJob.index_type == index_type,
-            KnowledgeBuildJob.status.in_(
-                [BuildJobStatus.queued.value, BuildJobStatus.running.value]
-            ),
-            not_deleted(KnowledgeBuildJob),
+    is_release_validation = target_kind == "release_validation"
+    if is_release_validation:
+        existing = await db.scalar(
+            select(KnowledgeBuildJob).where(
+                KnowledgeBuildJob.release_candidate_id == release_candidate_id,
+                KnowledgeBuildJob.target_kind == "release_validation",
+                KnowledgeBuildJob.status.in_(
+                    [BuildJobStatus.queued.value, BuildJobStatus.running.value]
+                ),
+                not_deleted(KnowledgeBuildJob),
+            )
         )
-    )
+    else:
+        existing = await db.scalar(
+            select(KnowledgeBuildJob).where(
+                KnowledgeBuildJob.knowledge_base_id == knowledge_base_id,
+                KnowledgeBuildJob.index_type == index_type,
+                KnowledgeBuildJob.status.in_(
+                    [BuildJobStatus.queued.value, BuildJobStatus.running.value]
+                ),
+                not_deleted(KnowledgeBuildJob),
+            )
+        )
     if existing is not None:
         if delay_seconds > 0 and existing.status == BuildJobStatus.queued.value:
             desired = datetime.now(UTC) + timedelta(seconds=delay_seconds)
@@ -72,15 +85,16 @@ async def enqueue_build(
     next_run = None
     if delay_seconds > 0:
         next_run = datetime.now(UTC) + timedelta(seconds=delay_seconds)
-    from app.models.knowledge_base import KnowledgeBase
-
-    kb = await db.get(KnowledgeBase, knowledge_base_id)
     pinned_revision_id = knowledge_model_revision_id
-    if pinned_revision_id is None and kb is not None:
-        pinned_revision_id = await _resolve_active_model_revision_id(db, kb)
+    if not is_release_validation:
+        from app.models.knowledge_base import KnowledgeBase
+
+        kb = await db.get(KnowledgeBase, knowledge_base_id)
+        if pinned_revision_id is None and kb is not None:
+            pinned_revision_id = await _resolve_active_model_revision_id(db, kb)
     job = KnowledgeBuildJob(
         org_id=org_id,
-        knowledge_base_id=knowledge_base_id,
+        knowledge_base_id=None if is_release_validation else knowledge_base_id,
         build_profile_id=build_profile_id,
         index_type=index_type,
         target_kind=target_kind,
@@ -265,6 +279,11 @@ async def process_build_job(db: AsyncSession, job: KnowledgeBuildJob) -> None:
     from app.models.knowledge_base import KnowledgeBase
 
     started_at = datetime.now(UTC)
+    target_kind = getattr(job, "target_kind", None) or "index"
+    if target_kind == "release_validation":
+        await _process_release_validation_build_job(db, job, started_at=started_at)
+        return
+
     kb = await db.get(KnowledgeBase, job.knowledge_base_id)
     if kb is None or kb.deleted_at is not None:
         job.status = BuildJobStatus.failed.value
@@ -286,27 +305,8 @@ async def process_build_job(db: AsyncSession, job: KnowledgeBuildJob) -> None:
     if getattr(job, "knowledge_model_revision_id", None) is None:
         job.knowledge_model_revision_id = await _resolve_active_model_revision_id(db, kb)
 
-    target_kind = getattr(job, "target_kind", None) or "index"
     if target_kind == "artifact":
         await _process_artifact_build_job(db, job, kb, started_at=started_at)
-        return
-    if target_kind == "release_validation":
-        finished_at = datetime.now(UTC)
-        job.stage_results = _stage_results_payload(
-            index_type=job.target_key or job.index_type,
-            status="failed",
-            started_at=started_at,
-            finished_at=finished_at,
-            attempt=int(job.attempt_count or 0),
-            error_code="release_validation_not_implemented",
-            error_message="release validation executor not implemented",
-        )
-        job.status = BuildJobStatus.failed.value
-        job.error_code = "release_validation_not_implemented"
-        job.error_message = "release validation executor not implemented"
-        job.progress = 100
-        job.finished_at = finished_at
-        await db.flush()
         return
 
     state = await index_state_service.get_or_create_state(
@@ -520,6 +520,98 @@ async def process_build_job(db: AsyncSession, job: KnowledgeBuildJob) -> None:
             validation_payload=result.validation_payload,
             coverage_payload=result.coverage_payload,
         )
+    await db.flush()
+
+
+async def _process_release_validation_build_job(
+    db: AsyncSession,
+    job: KnowledgeBuildJob,
+    *,
+    started_at: datetime,
+) -> None:
+    stage_name = job.target_key or job.index_type
+    try:
+        result = await build_executors.execute_release_validation_stage(db, job)
+    except Exception as exc:
+        finished_at = datetime.now(UTC)
+        if _should_retry_job(job, True):
+            _requeue_build_job(job, finished_at=finished_at)
+            job.stage_results = _stage_results_payload(
+                index_type=stage_name,
+                status="failed",
+                started_at=started_at,
+                finished_at=finished_at,
+                attempt=int(job.attempt_count or 0),
+                error_code="stage_exception",
+                error_message=str(exc),
+                output={"retry_scheduled": True},
+            )
+        else:
+            job.stage_results = _stage_results_payload(
+                index_type=stage_name,
+                status="failed",
+                started_at=started_at,
+                finished_at=finished_at,
+                attempt=int(job.attempt_count or 0),
+                error_code="stage_exception",
+                error_message=str(exc),
+            )
+            job.status = BuildJobStatus.failed.value
+            job.error_code = "stage_exception"
+            job.error_message = str(exc)
+            job.progress = 100
+            job.finished_at = finished_at
+        await db.flush()
+        return
+
+    finished_at = datetime.now(UTC)
+    if result.status == "succeeded":
+        job.stage_results = _stage_results_payload(
+            index_type=stage_name,
+            status="succeeded",
+            started_at=started_at,
+            finished_at=finished_at,
+            attempt=int(job.attempt_count or 0),
+            output=result.output,
+        )
+        job.status = BuildJobStatus.completed.value
+        job.progress = 100
+        job.error_code = None
+        job.error_message = None
+        job.finished_at = finished_at
+        await db.flush()
+        return
+
+    if _should_retry_job(job, result.retryable):
+        _requeue_build_job(job, finished_at=finished_at)
+        job.stage_results = _stage_results_payload(
+            index_type=stage_name,
+            status="failed",
+            started_at=started_at,
+            finished_at=finished_at,
+            attempt=int(job.attempt_count or 0),
+            error_code=result.error_code,
+            error_message=result.error_message,
+            output={**result.output, "retry_scheduled": True},
+        )
+        await db.flush()
+        return
+
+    job.stage_results = _stage_results_payload(
+        index_type=stage_name,
+        status="failed",
+        started_at=started_at,
+        finished_at=finished_at,
+        attempt=int(job.attempt_count or 0),
+        error_code=result.error_code or "stage_failed",
+        error_message=result.error_message or "release validation stage failed",
+        output=result.output,
+    )
+    job.status = BuildJobStatus.failed.value
+    job.error_code = result.error_code or "stage_failed"
+    job.error_message = result.error_message or "release validation stage failed"
+    job.progress = 100
+    job.finished_at = finished_at
     await db.flush()
 
 

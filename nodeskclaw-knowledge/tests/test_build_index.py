@@ -26,6 +26,10 @@ def _make_job(**overrides):
         "attempt_count": 1,
         "max_attempts": 5,
         "next_run_at": None,
+        "target_kind": "index",
+        "target_key": None,
+        "release_candidate_id": None,
+        "created_by_member_id": None,
     }
     defaults.update(overrides)
     return SimpleNamespace(**defaults)
@@ -1008,3 +1012,211 @@ async def test_enqueue_build_pins_knowledge_model_revision_id(monkeypatch):
         trigger_reason="manual",
     )
     assert job.knowledge_model_revision_id == "rev-1"
+
+
+def _make_release(**overrides):
+    defaults = {
+        "id": "rel-1",
+        "org_id": "o1",
+        "application_id": "app-1",
+        "status": "draft",
+        "release_manifest": {
+            "application_id": "app-1",
+            "retrieval_policy_revision_id": "policy-1",
+            "knowledge_sets": [],
+        },
+        "manifest_hash": "hash-1",
+        "quality_snapshot_id": None,
+        "validation_error": None,
+        "deleted_at": None,
+    }
+    defaults.update(overrides)
+    return SimpleNamespace(**defaults)
+
+
+@pytest.mark.asyncio
+async def test_release_validation_enqueue_without_kb():
+    db = AsyncMock()
+    db.scalar = AsyncMock(return_value=None)
+    db.add = MagicMock()
+    db.flush = AsyncMock()
+    db.get = AsyncMock()
+
+    job = await build_orchestrator.enqueue_build(
+        db,
+        org_id="o1",
+        knowledge_base_id=None,
+        index_type="release_validation",
+        trigger_reason="validate",
+        target_kind="release_validation",
+        target_key="validate_only",
+        release_candidate_id="rel-1",
+        created_by_member_id="m1",
+    )
+
+    assert job is not None
+    assert job.knowledge_base_id is None
+    assert job.release_candidate_id == "rel-1"
+    assert job.target_kind == "release_validation"
+    assert job.target_key == "validate_only"
+    db.get.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_release_validation_enqueue_dedupes_by_release_candidate_id():
+    existing = SimpleNamespace(
+        id="bj-existing",
+        status=BuildJobStatus.queued.value,
+        next_run_at=None,
+    )
+    db = AsyncMock()
+    db.scalar = AsyncMock(return_value=existing)
+    db.add = MagicMock()
+
+    job = await build_orchestrator.enqueue_build(
+        db,
+        org_id="o1",
+        knowledge_base_id=None,
+        index_type="release_validation",
+        trigger_reason="validate",
+        target_kind="release_validation",
+        release_candidate_id="rel-1",
+    )
+
+    assert job is existing
+    db.add.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_release_validation_process_sets_validated_on_pass(monkeypatch):
+    from app.models.enums import ApplicationReleaseStatus, QualityGateResult
+
+    release = _make_release()
+    db = AsyncMock()
+    db.get = AsyncMock(return_value=release)
+    db.flush = AsyncMock()
+
+    readiness = SimpleNamespace(ready=True, to_dict=lambda: {"ready": True})
+    integrity = SimpleNamespace(status="healthy", reasons=[])
+    snapshot = SimpleNamespace(id="snap-1", gate_result=QualityGateResult.pass_.value)
+
+    monkeypatch.setattr(
+        "app.services.application_readiness_service.check",
+        AsyncMock(return_value=readiness),
+    )
+    monkeypatch.setattr(
+        "app.services.release_integrity_service.evaluate",
+        AsyncMock(return_value=integrity),
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge_quality_service.persist_application_snapshot",
+        AsyncMock(return_value=snapshot),
+    )
+
+    job = _make_job(
+        knowledge_base_id=None,
+        index_type="release_validation",
+        target_kind="release_validation",
+        target_key="validate_only",
+        release_candidate_id="rel-1",
+        created_by_member_id="m1",
+    )
+    await build_orchestrator.process_build_job(db, job)
+
+    assert release.status == ApplicationReleaseStatus.validated.value
+    assert release.quality_snapshot_id == "snap-1"
+    assert release.validation_error is None
+    assert job.status == BuildJobStatus.completed.value
+    assert job.stage_results["status"] == "succeeded"
+
+
+@pytest.mark.asyncio
+async def test_release_validation_process_sets_failed_on_gate_fail(monkeypatch):
+    from app.models.enums import ApplicationReleaseStatus, QualityGateResult
+
+    release = _make_release()
+    db = AsyncMock()
+    db.get = AsyncMock(return_value=release)
+    db.flush = AsyncMock()
+
+    readiness = SimpleNamespace(ready=True, to_dict=lambda: {"ready": True})
+    integrity = SimpleNamespace(status="healthy", reasons=[])
+    snapshot = SimpleNamespace(id="snap-1", gate_result=QualityGateResult.fail.value)
+
+    monkeypatch.setattr(
+        "app.services.application_readiness_service.check",
+        AsyncMock(return_value=readiness),
+    )
+    monkeypatch.setattr(
+        "app.services.release_integrity_service.evaluate",
+        AsyncMock(return_value=integrity),
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge_quality_service.persist_application_snapshot",
+        AsyncMock(return_value=snapshot),
+    )
+
+    job = _make_job(
+        knowledge_base_id=None,
+        index_type="release_validation",
+        target_kind="release_validation",
+        target_key="validate_only",
+        release_candidate_id="rel-1",
+    )
+    await build_orchestrator.process_build_job(db, job)
+
+    assert release.status == ApplicationReleaseStatus.failed.value
+    assert release.validation_error == "quality_gate_failed"
+    assert job.status == BuildJobStatus.failed.value
+    assert job.error_code == "quality_gate_failed"
+
+
+@pytest.mark.asyncio
+async def test_release_validation_promote_stable_calls_promote(monkeypatch):
+    from app.models.enums import ApplicationReleaseStatus, QualityGateResult
+
+    release = _make_release(status=ApplicationReleaseStatus.draft.value)
+    db = AsyncMock()
+    db.get = AsyncMock(return_value=release)
+    db.flush = AsyncMock()
+
+    readiness = SimpleNamespace(ready=True, to_dict=lambda: {"ready": True})
+    integrity = SimpleNamespace(status="healthy", reasons=[])
+    snapshot = SimpleNamespace(id="snap-1", gate_result=QualityGateResult.pass_.value)
+    promote_mock = AsyncMock(
+        return_value=SimpleNamespace(channel="stable", active_release_id="rel-1")
+    )
+
+    monkeypatch.setattr(
+        "app.services.application_readiness_service.check",
+        AsyncMock(return_value=readiness),
+    )
+    monkeypatch.setattr(
+        "app.services.release_integrity_service.evaluate",
+        AsyncMock(return_value=integrity),
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge_quality_service.persist_application_snapshot",
+        AsyncMock(return_value=snapshot),
+    )
+    monkeypatch.setattr(
+        "app.services.release_promotion_service.promote",
+        promote_mock,
+    )
+
+    job = _make_job(
+        knowledge_base_id=None,
+        index_type="release_validation",
+        target_kind="release_validation",
+        target_key="promote_stable",
+        release_candidate_id="rel-1",
+        created_by_member_id="m1",
+    )
+    await build_orchestrator.process_build_job(db, job)
+
+    promote_mock.assert_awaited_once()
+    call_kwargs = promote_mock.await_args.kwargs
+    assert call_kwargs["channel"] == "stable"
+    assert call_kwargs["release_id"] == "rel-1"
+    assert job.status == BuildJobStatus.completed.value
+    assert job.stage_results["output"]["promoted_channel"] == "stable"

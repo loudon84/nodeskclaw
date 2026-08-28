@@ -788,3 +788,139 @@ async def execute_artifact_stage(
         )
     finally:
         await adapter.aclose()
+
+
+def _principal_for_release_job(job: KnowledgeBuildJob, release) -> "KnowledgePrincipal":
+    from app.schemas.principal import KnowledgePrincipal
+
+    member_id = getattr(job, "created_by_member_id", None) or "system"
+    return KnowledgePrincipal(
+        user_id=member_id,
+        member_id=member_id,
+        org_id=release.org_id,
+        name="build-worker",
+    )
+
+
+async def execute_release_validation_stage(
+    db: AsyncSession,
+    job: KnowledgeBuildJob,
+) -> StageResult:
+    from app.models.enums import ApplicationReleaseStatus, QualityGateResult
+    from app.models.knowledge_application_release import KnowledgeApplicationRelease
+    from app.services import (
+        application_readiness_service,
+        knowledge_quality_service,
+        release_integrity_service,
+        release_promotion_service,
+    )
+
+    if not job.release_candidate_id:
+        return StageResult(
+            status="failed",
+            retryable=False,
+            error_code="release_candidate_missing",
+            error_message="release_candidate_id missing on build job",
+        )
+
+    release = await db.get(KnowledgeApplicationRelease, job.release_candidate_id)
+    if release is None or release.deleted_at is not None:
+        return StageResult(
+            status="failed",
+            retryable=False,
+            error_code="release_missing",
+            error_message="release candidate not found",
+        )
+    if release.org_id != job.org_id:
+        return StageResult(
+            status="failed",
+            retryable=False,
+            error_code="release_org_mismatch",
+            error_message="release org does not match build job",
+        )
+
+    principal = _principal_for_release_job(job, release)
+    output: dict[str, Any] = {
+        "release_id": release.id,
+        "application_id": release.application_id,
+    }
+
+    if release.status in {
+        ApplicationReleaseStatus.draft.value,
+        ApplicationReleaseStatus.failed.value,
+    }:
+        release.status = ApplicationReleaseStatus.validating.value
+        await db.flush()
+
+    readiness = await application_readiness_service.check(db, principal, release.application_id)
+    output["readiness"] = readiness.to_dict()
+    if not readiness.ready:
+        release.status = ApplicationReleaseStatus.failed.value
+        release.validation_error = "application_not_ready"
+        await db.flush()
+        return StageResult(
+            status="failed",
+            retryable=False,
+            error_code="application_not_ready",
+            error_message="application not ready",
+            output=output,
+        )
+
+    integrity = await release_integrity_service.evaluate(
+        db,
+        release.release_manifest,
+        release.manifest_hash,
+    )
+    output["integrity"] = {"status": integrity.status, "reasons": integrity.reasons}
+    if integrity.status in {"unavailable", "stale"}:
+        release.status = ApplicationReleaseStatus.failed.value
+        release.validation_error = "release_integrity_unhealthy"
+        await db.flush()
+        return StageResult(
+            status="failed",
+            retryable=False,
+            error_code="release_integrity_unhealthy",
+            error_message=f"release integrity {integrity.status}",
+            output=output,
+        )
+
+    snapshot = await knowledge_quality_service.persist_application_snapshot(
+        db,
+        principal,
+        release.application_id,
+        release_id=release.id,
+        manifest=release.release_manifest,
+    )
+    release.quality_snapshot_id = snapshot.id
+    output["quality_snapshot_id"] = snapshot.id
+    output["gate_result"] = snapshot.gate_result
+
+    if snapshot.gate_result == QualityGateResult.fail.value:
+        release.status = ApplicationReleaseStatus.failed.value
+        release.validation_error = "quality_gate_failed"
+        await db.flush()
+        return StageResult(
+            status="failed",
+            retryable=False,
+            error_code="quality_gate_failed",
+            error_message="quality gate failed",
+            output=output,
+        )
+
+    release.status = ApplicationReleaseStatus.validated.value
+    release.validation_error = None
+    await db.flush()
+
+    target_key = job.target_key or "validate_only"
+    if target_key == "promote_stable":
+        channel = await release_promotion_service.promote(
+            db,
+            principal,
+            release.application_id,
+            channel="stable",
+            release_id=release.id,
+        )
+        output["promoted_channel"] = channel.channel
+        output["active_release_id"] = channel.active_release_id
+
+    return StageResult(status="succeeded", retryable=False, output=output)
