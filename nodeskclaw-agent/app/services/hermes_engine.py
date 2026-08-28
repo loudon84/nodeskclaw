@@ -1,11 +1,12 @@
-from __future__ import annotations
-
+import asyncio
 import json
 import logging
 from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
+
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -90,15 +91,8 @@ async def execute_hermes_run(
     ).rstrip("/")
     if not gateway_url:
         yield {
-            "event_type": "run.progress",
-            "payload": {"stage": "processing", "message": "no hermes gateway; stub complete"},
-        }
-        yield {
-            "event_type": "run.completed",
-            "payload": {
-                "summary": f"stub completed for {tool_name}",
-                "content": arguments,
-            },
+            "event_type": "run.failed",
+            "payload": {"error": f"No Hermes gateway configured for {tool_name}"},
         }
         return
 
@@ -118,12 +112,9 @@ async def execute_hermes_run(
         context=context,
     )
     headers: dict[str, str] = {"Content-Type": "application/json"}
-    cred_lease = route_snapshot.get("credential_lease")
     token = (
         (minted_lease.get("token") if minted_lease else None)
-        or (cred_lease.get("token") if isinstance(cred_lease, dict) else None)
         or route_snapshot.get("gateway_token")
-        or route_snapshot.get("api_token")
     )
     if token:
         headers["Authorization"] = f"Bearer {token}"

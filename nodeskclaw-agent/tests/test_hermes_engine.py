@@ -20,7 +20,7 @@ def test_build_chat_completions_payload_includes_skill():
 
 
 @pytest.mark.asyncio
-async def test_execute_hermes_stub_without_gateway():
+async def test_execute_hermes_fails_without_gateway():
     events = [
         event
         async for event in execute_hermes_run(
@@ -30,17 +30,17 @@ async def test_execute_hermes_stub_without_gateway():
         )
     ]
     assert events[0]["event_type"] == "run.progress"
-    assert events[-1]["event_type"] == "run.completed"
-    assert "stub" in events[-1]["payload"]["summary"]
+    assert events[-1]["event_type"] == "run.failed"
+    assert "No Hermes gateway configured" in events[-1]["payload"]["error"]
 
 
 @pytest.mark.asyncio
-async def test_execute_hermes_uses_credential_lease():
+async def test_execute_hermes_uses_minted_credential_lease():
     from unittest.mock import AsyncMock, MagicMock, patch
 
     mock_resp = MagicMock()
     mock_resp.headers = {"content-type": "application/json"}
-    mock_resp.json.return_value = {"choices": [{"message": {"content": "ok from lease"}}]}
+    mock_resp.json.return_value = {"choices": [{"message": {"content": "ok from minted lease"}}]}
     mock_resp.raise_for_status = MagicMock()
 
     client = AsyncMock()
@@ -50,19 +50,24 @@ async def test_execute_hermes_uses_credential_lease():
     client.stream.return_value.__aenter__.return_value = mock_resp
     client.stream.return_value.__aexit__.return_value = None
 
-    with patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client):
-        events = [
-            event
-            async for event in execute_hermes_run(
-                tool_name="foo",
-                arguments={"prompt": "hi"},
-                route_snapshot={
-                    "gateway_url": "http://hermes:8642",
-                    "credential_lease": {"token": "lease-jwt-token", "expires_in": 900},
-                },
-            )
-        ]
+    with patch(
+        "app.services.hermes_engine.fetch_credential_lease",
+        AsyncMock(return_value={"token": "minted-token-abc", "gateway_url": "http://hermes:8642", "model": "hermes-3"}),
+    ):
+        with patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client):
+            events = [
+                event
+                async for event in execute_hermes_run(
+                    tool_name="foo",
+                    arguments={"prompt": "hi"},
+                    org_id="org-1",
+                    route_snapshot={
+                        "credential_lease_ref": {"instance_id": "inst-1"},
+                    },
+                )
+            ]
 
     call_kwargs = client.stream.call_args[1]
-    assert call_kwargs["headers"]["Authorization"] == "Bearer lease-jwt-token"
-    assert events[-1]["payload"]["content"] == "ok from lease"
+    assert call_kwargs["headers"]["Authorization"] == "Bearer minted-token-abc"
+    assert events[-1]["payload"]["content"] == "ok from minted lease"
+
