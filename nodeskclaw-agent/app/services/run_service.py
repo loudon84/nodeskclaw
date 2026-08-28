@@ -17,6 +17,20 @@ SCHEMA = settings.SKILL_AGENT_SCHEMA
 TERMINAL = {"COMPLETED", "FAILED", "CANCELLED", "TIMED_OUT"}
 
 
+def _sanitize_sensitive_keys(data: Any) -> Any:
+    if isinstance(data, dict):
+        sanitized = {}
+        for k, v in data.items():
+            if any(s in k.lower() for s in ("token", "secret", "password", "api_key", "authorization", "auth_token")):
+                sanitized[k] = "[REDACTED]"
+            else:
+                sanitized[k] = _sanitize_sensitive_keys(v)
+        return sanitized
+    elif isinstance(data, list):
+        return [_sanitize_sensitive_keys(x) for x in data]
+    return data
+
+
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -41,13 +55,14 @@ def build_snapshot(request: CreateRunRequest, *, org_id: str, user_id: str) -> d
         "connector_binding_refs": list(request.connector_binding_refs or []),
         "knowledge_refs": list(request.knowledge_refs or []),
         "model_policy": {},
-        "runtime_policy": dict(request.route_snapshot or {}),
+        "runtime_policy": _sanitize_sensitive_keys(dict(request.route_snapshot or {})),
         "placement": dict(request.placement or {"role": "central"}),
         "org_id": org_id,
         "user_id": user_id,
         "output_policy": dict(request.output_policy or {}),
-        "client_context": dict(request.client_context or {}),
+        "client_context": _sanitize_sensitive_keys(dict(request.client_context or {})),
         "request_trace_id": request.request_trace_id,
+        "run_session_id": request.run_session_id,
     }
     snapshot_hash = request.snapshot_hash or hashlib.sha256(
         json.dumps(body, sort_keys=True, default=str).encode()
@@ -66,6 +81,32 @@ async def create_run(
     if not request.run_id:
         raise ValueError("run_id is required")
 
+    # Session cross-org validation and creation
+    if request.run_session_id:
+        try:
+            sess_row = (
+                await db.execute(
+                    text(f'SELECT id, org_id FROM "{SCHEMA}".run_sessions WHERE id = :id LIMIT 1'),
+                    {"id": request.run_session_id},
+                )
+            ).mappings().first()
+            if sess_row:
+                if sess_row["org_id"] != org_id:
+                    raise ValueError("cross-org run session access rejected")
+            else:
+                await db.execute(
+                    text(
+                        f"""
+                        INSERT INTO "{SCHEMA}".run_sessions (id, org_id, user_id, metadata, created_at, updated_at)
+                        VALUES (:id, :org_id, :user_id, '{{}}'::jsonb, :now, :now)
+                        """
+                    ),
+                    {"id": request.run_session_id, "org_id": org_id, "user_id": user_id, "now": _utcnow()},
+                )
+        except Exception as exc:
+            if "cross-org" in str(exc):
+                raise
+
     snapshot = build_snapshot(request, org_id=org_id, user_id=user_id)
     cmd_body = {
         "tool_name": request.tool_name,
@@ -75,6 +116,7 @@ async def create_run(
         "snapshot_hash": snapshot.get("snapshot_hash"),
         "arguments": request.arguments or {},
         "placement": request.placement or {},
+        "run_session_id": request.run_session_id,
     }
     command_digest = hashlib.sha256(json.dumps(cmd_body, sort_keys=True, default=str).encode()).hexdigest()
 
@@ -95,7 +137,7 @@ async def create_run(
         await db.execute(
             text(
                 f"""
-                SELECT id, status, snapshot, command_digest
+                SELECT id, org_id, status, snapshot, command_digest, run_session_id
                 FROM "{SCHEMA}".runs
                 WHERE {where_clause}
                 LIMIT 1
@@ -115,6 +157,7 @@ async def create_run(
             status=existing["status"],
             snapshot_hash=ex_snapshot.get("snapshot_hash") or snapshot["snapshot_hash"],
             org_id=existing.get("org_id") or org_id,
+            run_session_id=existing.get("run_session_id") or request.run_session_id,
         )
 
     status = "WAITING_APPROVAL" if request.requires_approval else "QUEUED"
@@ -124,10 +167,11 @@ async def create_run(
                 f"""
                 INSERT INTO "{SCHEMA}".runs (
                     id, org_id, user_id, tool_name, skill_id, status, arguments, snapshot, requires_approval,
-                    dispatch_id, idempotency_key, command_digest
+                    dispatch_id, idempotency_key, command_digest, run_session_id
                 ) VALUES (
                     :id, :org_id, :user_id, :tool_name, :skill_id, :status, CAST(:arguments AS jsonb),
-                    CAST(:snapshot AS jsonb), :requires_approval, :dispatch_id, :idempotency_key, :command_digest
+                    CAST(:snapshot AS jsonb), :requires_approval, :dispatch_id, :idempotency_key, :command_digest,
+                    :run_session_id
                 )
                 """
             ),
@@ -144,6 +188,7 @@ async def create_run(
                 "dispatch_id": request.dispatch_id,
                 "idempotency_key": request.idempotency_key,
                 "command_digest": command_digest,
+                "run_session_id": request.run_session_id,
             },
         )
     except Exception as exc:
@@ -153,7 +198,7 @@ async def create_run(
             await db.execute(
                 text(
                     f"""
-                    SELECT id, org_id, status, snapshot, command_digest
+                    SELECT id, org_id, status, snapshot, command_digest, run_session_id
                     FROM "{SCHEMA}".runs
                     WHERE {where_clause}
                     LIMIT 1
@@ -172,6 +217,7 @@ async def create_run(
                 status=conflict_row["status"],
                 snapshot_hash=conf_snapshot.get("snapshot_hash") or snapshot["snapshot_hash"],
                 org_id=conflict_row.get("org_id") or org_id,
+                run_session_id=conflict_row.get("run_session_id") or request.run_session_id,
             )
         raise
 
@@ -188,6 +234,7 @@ async def create_run(
         status=status,
         snapshot_hash=snapshot["snapshot_hash"],
         org_id=org_id,
+        run_session_id=request.run_session_id,
     )
 
 
@@ -199,7 +246,7 @@ async def get_run(db: AsyncSession, run_id: str, *, org_id: str) -> RunView | No
         await db.execute(
             text(
                 f"""
-                SELECT id, org_id, user_id, tool_name, status, snapshot, result, attempt_id, generation, created_at, updated_at
+                SELECT id, org_id, user_id, tool_name, status, snapshot, result, attempt_id, run_session_id, generation, created_at, updated_at
                 FROM "{SCHEMA}".runs WHERE {where_sql}
                 """
             ),
@@ -217,6 +264,7 @@ async def get_run(db: AsyncSession, run_id: str, *, org_id: str) -> RunView | No
         snapshot=row["snapshot"] or {},
         result=row["result"],
         attempt_id=row["attempt_id"],
+        run_session_id=row.get("run_session_id"),
         generation=int(row.get("generation") or 0),
         created_at=_iso(row["created_at"]),
         updated_at=_iso(row["updated_at"]),
@@ -274,6 +322,8 @@ async def append_event(
 
     # Single-statement atomic sequence allocation and attempt/generation verification
     conditions = ['id = :run_id']
+    terminal_list = ", ".join([f"'{s}'" for s in TERMINAL])
+    conditions.append(f"status NOT IN ({terminal_list})")
     params: dict[str, Any] = {"run_id": run_id, "now": now}
     if org_id is not None:
         conditions.append('org_id = :org_id')
@@ -302,7 +352,7 @@ async def append_event(
     ).mappings().first()
 
     if not seq_row:
-        raise RuntimeError("stale attempt or invalid generation cannot write events")
+        raise RuntimeError("stale attempt, invalid generation, or terminal run cannot write events")
 
     event_seq = seq_row["next_event_seq"]
 
@@ -503,8 +553,9 @@ async def approve_run(
     if not run:
         return None
 
-    # Idempotent approval record checking
-    eff_approval_id = approval_id or f"appr-{run_id}"
+    if not approval_id:
+        raise ValueError("approval_id is required to approve run")
+
     evidence_dict = evidence or {}
 
     try:
@@ -513,23 +564,23 @@ async def approve_run(
                 f"""
                 INSERT INTO "{SCHEMA}".run_approvals (id, run_id, approval_id, decision, evidence, created_at)
                 VALUES (:id, :run_id, :approval_id, 'APPROVED', CAST(:evidence AS jsonb), NOW())
-                ON CONFLICT (run_id, approval_id) DO NOTHING
+                ON CONFLICT (run_id, approval_id) DO UPDATE SET evidence = CAST(:evidence AS jsonb)
                 """
             ),
             {
                 "id": str(uuid.uuid4()),
                 "run_id": run_id,
-                "approval_id": eff_approval_id,
+                "approval_id": approval_id,
                 "evidence": json.dumps(evidence_dict),
             },
         )
     except Exception:
-        logger.debug("run_approvals table insert skipped", exc_info=True)
+        pass
 
     if run.status != "WAITING_APPROVAL":
         return run
 
-    evidence_payload = {"status": "RESUMING", "approval_id": eff_approval_id, "evidence": evidence_dict}
+    evidence_payload = {"status": "RESUMING", "approval_id": approval_id, "evidence": evidence_dict}
     await set_status(db, run_id, "RESUMING", org_id=org_id, expected_status=["WAITING_APPROVAL"])
     await append_event(db, run_id, "run.resuming", evidence_payload, org_id=org_id)
     await set_status(db, run_id, "QUEUED", org_id=org_id, expected_status=["RESUMING"])
@@ -643,7 +694,12 @@ async def store_artifact_bytes(
 ) -> ArtifactDescriptor:
     from pathlib import Path
 
-    root = Path(settings.SKILL_AGENT_ARTIFACT_DIR) / run_id
+    art_dir = settings.SKILL_AGENT_ARTIFACT_DIR.strip()
+    if not settings.SKILL_AGENT_INSECURE_MODE:
+        if art_dir == "/tmp" or art_dir.startswith("/tmp/"):
+            raise RuntimeError("Artifact directory must not be in ephemeral storage in production")
+
+    root = Path(art_dir) / run_id
     root.mkdir(parents=True, exist_ok=True)
     artifact_id = str(uuid.uuid4())
     path = root / f"{artifact_id}_{name}"
