@@ -1,14 +1,16 @@
-from contextlib import asynccontextmanager
 import asyncio
+from contextlib import asynccontextmanager
 import logging
+import os
+from typing import Any
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Response, status
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.internal_runs import router as internal_runs_router
 from app.config import settings
-from app.db import get_db, init_schema
+from app.db import get_db
 from app.services.edge_worker import EdgeWorker
 from app.services.worker import RunWorker
 
@@ -52,19 +54,80 @@ async def health_live():
 
 @app.get("/health/ready")
 @app.get("/health")
-async def health_ready(db: AsyncSession = Depends(get_db)):
+async def health_ready(response: Response, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+    reasons: list[str] = []
+    checks: dict[str, bool] = {
+        "database": True,
+        "migration": True,
+        "config_security": True,
+        "artifact_storage": True,
+    }
+
+    # 1. DB connectivity
     db_ok = True
     try:
         await db.execute(text("SELECT 1"))
     except Exception:
         db_ok = False
+        checks["database"] = False
+        reasons.append("database connectivity check failed")
         logger.exception("database health check failed")
-    status_str = "ok" if db_ok else "degraded"
+
+    # 2. Migration status (alembic_version)
+    if db_ok:
+        try:
+            res = await db.execute(text("SELECT version_num FROM alembic_version LIMIT 1"))
+            version_row = res.first()
+            if not version_row or not version_row[0]:
+                checks["migration"] = False
+                reasons.append("alembic migration head missing")
+        except Exception:
+            # Table might not exist yet if not migrated
+            checks["migration"] = False
+            reasons.append("alembic_version check failed")
+
+    # 3. Safe production config check
+    if not settings.SKILL_AGENT_INSECURE_MODE:
+        if settings.SKILL_AGENT_INTERNAL_TOKEN in ("change-me-skill-agent-token", "", "default"):
+            checks["config_security"] = False
+            reasons.append("insecure default internal token in production")
+
+        if settings.SKILL_AGENT_ARTIFACT_DIR.startswith("/tmp") or settings.SKILL_AGENT_ARTIFACT_DIR.startswith("\\tmp"):
+            checks["config_security"] = False
+            reasons.append("ephemeral artifact directory configured in production")
+
+        if settings.SKILL_AGENT_ROLE == "edge":
+            if not settings.SKILL_AGENT_EDGE_TOKEN:
+                checks["config_security"] = False
+                reasons.append("missing edge token")
+            if not settings.SKILL_AGENT_EDGE_NODE_ID:
+                checks["config_security"] = False
+                reasons.append("missing edge node id")
+            if not settings.SKILL_AGENT_CENTRAL_BASE_URL.startswith("https://"):
+                checks["config_security"] = False
+                reasons.append("insecure edge central base url (must be https://)")
+
+    # 4. Artifact directory check
+    try:
+        os.makedirs(settings.SKILL_AGENT_ARTIFACT_DIR, exist_ok=True)
+    except Exception:
+        checks["artifact_storage"] = False
+        reasons.append("cannot create or access artifact storage directory")
+
+    all_ok = all(checks.values())
+    if not all_ok:
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        status_str = "degraded" if not db_ok else "not_ready"
+    else:
+        status_str = "ok"
+
     return {
         "status": status_str,
         "database": "connected" if db_ok else "disconnected",
         "service": "nodeskclaw-agent",
         "role": settings.SKILL_AGENT_ROLE,
+        "checks": checks,
+        "reasons": reasons,
     }
 
 

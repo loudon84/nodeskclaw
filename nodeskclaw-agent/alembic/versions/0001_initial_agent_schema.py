@@ -15,11 +15,28 @@ down_revision = None
 branch_labels = None
 depends_on = None
 
-SCHEMA = "skill_agent"
+SCHEMA = "agent"
 
 
 def upgrade() -> None:
     op.execute(f'CREATE SCHEMA IF NOT EXISTS "{SCHEMA}"')
+    
+    # If legacy skill_agent schema exists and has runs table while agent does not, migrate tables
+    op.execute(f"""
+    DO $$
+    BEGIN
+        IF EXISTS (SELECT 1 FROM information_schema.schemata WHERE schema_name = 'skill_agent')
+           AND NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = '{SCHEMA}' AND table_name = 'runs') THEN
+            IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'skill_agent' AND table_name = 'runs') THEN
+                ALTER TABLE "skill_agent".runs SET SCHEMA "{SCHEMA}";
+                ALTER TABLE "skill_agent".run_attempts SET SCHEMA "{SCHEMA}";
+                ALTER TABLE "skill_agent".run_events SET SCHEMA "{SCHEMA}";
+                ALTER TABLE "skill_agent".run_artifacts SET SCHEMA "{SCHEMA}";
+                ALTER TABLE "skill_agent".run_approvals SET SCHEMA "{SCHEMA}";
+            END IF;
+        END IF;
+    END $$;
+    """)
     
     op.create_table(
         "runs",

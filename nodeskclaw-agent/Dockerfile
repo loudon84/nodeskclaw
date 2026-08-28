@@ -13,8 +13,11 @@ RUN pip install --no-cache-dir \
     "sqlalchemy[asyncio]>=2.0.36" \
     "asyncpg>=0.30.0" \
     "httpx>=0.28.0" \
-    "pydantic-settings>=2.7.0"
+    "pydantic-settings>=2.7.0" \
+    "alembic>=1.13.0"
 
+COPY nodeskclaw-agent/alembic.ini ./alembic.ini
+COPY nodeskclaw-agent/alembic ./alembic
 COPY nodeskclaw-agent/app ./app
 
 EXPOSE 4520

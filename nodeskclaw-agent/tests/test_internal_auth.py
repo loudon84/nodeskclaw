@@ -10,24 +10,25 @@ from app.schemas import RunView
 
 def _client(monkeypatch, mock_db=None):
     monkeypatch.setattr(settings, "SKILL_AGENT_WORKER_ENABLED", False)
+    monkeypatch.setattr(settings, "SKILL_AGENT_INSECURE_MODE", True)
     import app.main as main_module
 
     if mock_db is None:
         mock_db = AsyncMock()
         mock_res = MagicMock()
         mock_res.mappings.return_value.first.return_value = None
+        mock_res.first.return_value = ("0001_initial_agent_schema",)
         mock_db.execute.return_value = mock_res
 
     async def _override_db():
         yield mock_db
 
-    with patch.object(main_module, "init_schema", new=AsyncMock()):
-        main_module.app.dependency_overrides[get_db] = _override_db
-        client = TestClient(main_module.app)
-        try:
-            yield client
-        finally:
-            main_module.app.dependency_overrides.clear()
+    main_module.app.dependency_overrides[get_db] = _override_db
+    client = TestClient(main_module.app)
+    try:
+        yield client
+    finally:
+        main_module.app.dependency_overrides.clear()
 
 
 def test_internal_run_requires_token(monkeypatch):
