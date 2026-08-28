@@ -2,18 +2,20 @@
 
 Skill Platform 把员工 MCP Catalog 与 Skill Run 执行拆开：Gateway 在 Backend，执行内核在独立 `nodeskclaw-agent`。
 
-Approved PRD：`docs_agent/prd-v1.3-skill-run-release-readiness.md`。前序文档包括 `docs_agent/prd-skill-platform-v1.0.md`、`docs_agent/prd-skill-run-architecture-closure-v1.1.md` 与 `docs_agent/prd-skill-run-production-hardening-v1.0.md`。work-expert v1.0.2 目录与 checksum 冻结；新员工语义走 `contracts/skill-run/v1.0.0/`。生成入口：`scripts/contracts.py generate --family skill-run`。
+Approved PRD：`docs_agent/prd-v1.5-nodeskclaw-api-acceptance-hardening.md`。前序文档包括 `docs_agent/prd-v1.3-skill-run-release-readiness.md`、`docs_agent/prd-skill-platform-v1.0.md`、`docs_agent/prd-skill-run-architecture-closure-v1.1.md` 与 `docs_agent/prd-skill-run-production-hardening-v1.0.md`。work-expert v1.0.2 目录与 checksum 冻结；新员工语义走 `contracts/skill-run/v1.0.0/`。生成入口：`scripts/contracts.py generate --family skill-run`。
 
-## Architecture Closure Invariants (v1.3)
+## Architecture Closure Invariants (v1.5)
 
-Architecture Closure (v1.3) 确立了 Run 生产执行架构的发布就绪约束，确保高并发原子性、多租户隔离与分布式边界闭环。
+Architecture Closure 与 Acceptance Hardening (v1.5) 确立了 Run 生产执行架构的发布就绪与验收加固约束，确保高并发原子性、多租户隔离与分布式边界闭环。
 
 - **Transactional Outbox & Lease Generation**：Backend 通过 [[nodeskclaw-backend/app/models/hermes_skill/run_dispatch_outbox.py#RunDispatchOutbox]] 保证创建原子性，认领时递增 `lease_generation`；[[nodeskclaw-backend/app/services/hermes_skill/run_dispatch_outbox_service.py#RunDispatchOutboxService]] 定时轮询租约投递并在交付前后双重校验代际；4xx 永久错误进 `DEAD_LETTER` 并由 `/resume` 端点授权重放。
-- **Atomic Execution Mutation Gate**：Agent 对 `runs`、`run_attempts`、`run_events`、`run_artifacts` 写路径统一采用单条 SQL 原子 CAS 语句，强校验 `(run_id, org_id, attempt_id, generation)`；原子分配 `next_event_seq` 并在发生冲突或过期世代时立即熔断。
-- **Secret-free Credential Flow & Fail-Closed**：Snapshot 不内嵌明文 token，仅记录 `credential_lease_ref`；[[nodeskclaw-agent/app/services/secret_store.py#SecretStore]] 默认 fail-closed 解析，未命中即刻报错阻断；严禁明文凭证持久化入快照或事件。
+- **Atomic Execution Mutation Gate & Single Final Status Writer**：Agent 对 `runs`、`run_attempts`、`run_events`、`run_artifacts` 写路径统一采用单条 SQL 原子 CAS 语句，强校验 `(run_id, org_id, attempt_id, generation)`；原子分配 `next_event_seq` 并在发生冲突或过期世代时立即熔断。Agent Run 状态机是终态的唯一写入者，事件摄入接口及 Backend 均不得提前独立将 Run 标为 `COMPLETED`。
+- **AgentEnginePort 统一执行边界**：Agent 执行编排器统一经 [[nodeskclaw-agent/app/services/engine_port.py#execute_engine]] 分发引擎调用，Hermes 与 Connector 作为适配器，消除 Worker 对底层引擎函数的直接依赖。
+- **Secret-free Credential Flow & Fail-Closed**：Snapshot 严禁内嵌 `gateway_token`、`env_file` 等明文凭证，仅记录 `credential_lease_ref` 与 `secret_ref_id`；Backend 依据 `(org_id, run_id, attempt_id, target, scope)` 签发短效 Lease；[[nodeskclaw-agent/app/services/secret_store.py#SecretStore]] 仅在执行时解析 SecretRef，未命中即刻 fail-closed 报错阻断。
 - **Cancel/Resume/Approval State Machine**：取消请求支持 `CANCELLING` 中间态与 `cancel_event` 异步中断；`resume_run` 仅处理 `PAUSED`/`SUSPENDED` 并显式拒绝 `WAITING_APPROVAL`；[[nodeskclaw-agent/app/services/run_service.py#approve_run]] 专门处理审批与幂等记录。
-- **Hybrid Step Plan & Edge Delivery Envelope**：[[nodeskclaw-agent/app/services/worker.py#build_hybrid_step_plan]] 确定性规划执行步骤并通过 `run.plan` 事件下发；[[nodeskclaw-agent/app/services/edge_worker.py#EdgeWorker]] 与 `/internal/edge/jobs/{job_id}/events` 强制携带并校验 `delivery_generation` 与 `source_event_id`。
-- **Installation Desired/Actual Reconcile**：Backend 维护 Desired 状态，Edge 节点通过 `/internal/edge/installations/actual` 上报 `actual_status`，严格校验 `edge_node_id` 归属与防篡改。
+- **Hybrid Real Dispatch & Edge Delivery Envelope**：[[nodeskclaw-agent/app/services/worker.py#build_hybrid_step_plan]] 确定性规划执行步骤；Central 步骤完成后真实派发 EdgeJob 并流转至 `WAITING_EDGE` 等待边缘完成；[[nodeskclaw-agent/app/services/edge_worker.py#EdgeWorker]] 与 `/internal/edge/jobs/{job_id}/events` 强制携带并校验 `delivery_generation`、`attempt_id` 与 `source_event_id`。
+- **Installation Desired/Actual Reconcile**：Backend 维护 Desired 状态与单调代次 `desired_generation`，Edge 节点通过 `/internal/edge/installations/actual` 上报 `actual_status` 与 `actual_generation`，严格校验 `edge_node_id` 归属并拒绝过期代次上报，Backend 不执行生产安装文件副作用。
+- **Persistent StoragePort & Trace Invariants**：工件存储收敛至 StoragePort，生产环境禁用 `/tmp` 临时路径，按 SHA256 幂等防冲突持久化；`request_trace_id` 贯穿 Snapshot、Event、EdgeJob 与 Artifact。
 - **Security & SSRF Gates**：Connector 固定配置优先于动态参数，REST/MCP 严格拦截 169.254.169.254 及 link-local / internal 目标，DB 严格限制 SELECT/WITH 只读查询。
 - **Zero-DDL Startup & Alembic Migrations**：Agent 移除服务启动直接 DDL，全量 DDL 纳入 Alembic 迁移链管理；生产环境独立运行 `/health/live`（存活）与 `/health/ready`（就绪）探针。
 - **Identity Rotation**：Agent 内部鉴权支持 `SKILL_AGENT_INTERNAL_TOKEN_PREVIOUS` 双密钥平滑轮换，暴露 `/health` 与 `/metrics` 探针。
