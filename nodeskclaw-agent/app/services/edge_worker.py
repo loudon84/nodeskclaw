@@ -37,6 +37,10 @@ class EdgeWorker:
 
     async def start(self) -> None:
         self._running = True
+        if not settings.SKILL_AGENT_INSECURE_MODE:
+            if not self._base_url.startswith("https://"):
+                raise RuntimeError("SkillAgent central URL must use HTTPS in production")
+
         logger.info(
             "SkillAgent EdgeWorker started node_id=%s central=%s",
             self._node_id or "(unset)",

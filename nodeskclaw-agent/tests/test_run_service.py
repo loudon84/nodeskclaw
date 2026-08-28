@@ -452,7 +452,7 @@ async def test_mutation_gate_generation_fencing():
     mock_seq.mappings.return_value.first.return_value = None
     db.execute = AsyncMock(return_value=mock_seq)
 
-    with pytest.raises(RuntimeError, match="stale attempt or invalid generation"):
+    with pytest.raises(RuntimeError, match="stale attempt, invalid generation, or terminal run"):
         await run_service.append_event(
             db,
             "run-1",
@@ -479,6 +479,117 @@ async def test_terminal_status_cannot_be_overwritten():
         org_id="org-1",
     )
     assert success is False
+
+
+@pytest.mark.asyncio
+async def test_create_run_session_cross_org_rejected():
+    db = AsyncMock()
+    mock_res = MagicMock()
+    # Existing session belonging to another org
+    mock_res.mappings.return_value.first.return_value = {"id": "sess-1", "org_id": "org-other"}
+    db.execute = AsyncMock(return_value=mock_res)
+
+    req = CreateRunRequest(
+        run_id="run-1",
+        tool_name="test_tool",
+        run_session_id="sess-1",
+    )
+    with pytest.raises(ValueError, match="cross-org run session access rejected"):
+        await run_service.create_run(db, req, org_id="org-1", user_id="user-1")
+
+
+def test_build_snapshot_sanitizes_sensitive_tokens():
+    req = CreateRunRequest(
+        run_id="run-1",
+        tool_name="test_tool",
+        client_context={"auth_token": "secret-token-123", "user_email": "a@b.com"},
+        route_snapshot={"api_key": "secret-key-456", "gateway_url": "https://api.example.com"},
+    )
+    snap = run_service.build_snapshot(req, org_id="org-1", user_id="user-1")
+    assert snap["client_context"]["auth_token"] == "[REDACTED]"
+    assert snap["client_context"]["user_email"] == "a@b.com"
+    assert snap["runtime_policy"]["api_key"] == "[REDACTED]"
+    assert snap["runtime_policy"]["gateway_url"] == "https://api.example.com"
+
+
+@pytest.mark.asyncio
+async def test_approve_run_requires_approval_id():
+    db = AsyncMock()
+    mock_run = MagicMock(status="WAITING_APPROVAL")
+    mock_res = MagicMock()
+    mock_res.mappings.return_value.first.return_value = {
+        "id": "run-1",
+        "org_id": "org-1",
+        "user_id": "user-1",
+        "tool_name": "tool",
+        "status": "WAITING_APPROVAL",
+        "snapshot": {},
+        "result": None,
+        "attempt_id": None,
+        "generation": 0,
+        "created_at": None,
+        "updated_at": None,
+    }
+    db.execute = AsyncMock(return_value=mock_res)
+
+    with pytest.raises(ValueError, match="approval_id is required"):
+        await run_service.approve_run(db, "run-1", org_id="org-1", approval_id=None)
+
+
+@pytest.mark.asyncio
+async def test_store_artifact_bytes_rejects_tmp_in_prod(monkeypatch, tmp_path):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "SKILL_AGENT_INSECURE_MODE", False)
+    monkeypatch.setattr(settings, "SKILL_AGENT_ARTIFACT_DIR", "/tmp/artifacts")
+
+    db = AsyncMock()
+    with pytest.raises(RuntimeError, match="Artifact directory must not be in ephemeral storage in production"):
+        await run_service.store_artifact_bytes(
+            db,
+            "run-1",
+            name="out.txt",
+            content=b"hello",
+        )
+
+
+@pytest.mark.asyncio
+async def test_store_artifact_bytes_and_read_across_restarts(monkeypatch, tmp_path):
+    from app.config import settings
+
+    target_dir = str(tmp_path / "persistent_artifacts")
+    monkeypatch.setattr(settings, "SKILL_AGENT_INSECURE_MODE", True)
+    monkeypatch.setattr(settings, "SKILL_AGENT_ARTIFACT_DIR", target_dir)
+
+    db = AsyncMock()
+    desc = await run_service.store_artifact_bytes(
+        db,
+        "run-1",
+        name="test_artifact.json",
+        content=b'{"result": 42}',
+        content_type="application/json",
+    )
+    assert desc.size_bytes == len(b'{"result": 42}')
+    assert desc.checksum_sha256 is not None
+
+    # Simulate get_artifact_bytes by mocking the DB query returning storage_ref
+    stored_path = str(tmp_path / "persistent_artifacts" / "run-1" / f"{desc.artifact_id}_test_artifact.json")
+    mock_row = {
+        "id": desc.artifact_id,
+        "name": "test_artifact.json",
+        "content_type": "application/json",
+        "size_bytes": desc.size_bytes,
+        "storage_ref": stored_path,
+        "checksum_sha256": desc.checksum_sha256,
+    }
+    mock_res = MagicMock()
+    mock_res.mappings.return_value.first.return_value = mock_row
+    db.execute = AsyncMock(return_value=mock_res)
+
+    meta, content = await run_service.get_artifact_bytes(db, "run-1", desc.artifact_id)
+    assert content == b'{"result": 42}'
+    assert meta["id"] == desc.artifact_id
+
 
 
 

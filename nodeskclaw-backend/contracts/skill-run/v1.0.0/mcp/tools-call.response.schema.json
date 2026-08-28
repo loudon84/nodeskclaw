@@ -70,6 +70,18 @@
           ],
           "default": null,
           "title": "Message"
+        },
+        "request_trace_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Request Trace Id"
         }
       },
       "required": [

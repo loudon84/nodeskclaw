@@ -33,6 +33,7 @@ from app.api.hermes_skill.task_result_router import router as task_result_router
 from app.api.hermes_skill.kb_ingestion_router import router as kb_ingestion_router
 from app.api.hermes_skill.connectors_router import router as connectors_router
 from app.api.hermes_skill.edge_nodes_router import router as edge_nodes_router
+from app.api.hermes_skill.dispatch_router import router as dispatch_router
 
 router = APIRouter()
 
@@ -65,6 +66,7 @@ router.include_router(task_result_router)
 router.include_router(kb_ingestion_router)
 router.include_router(connectors_router)
 router.include_router(edge_nodes_router)
+router.include_router(dispatch_router)
 
 router.include_router(artifacts_router)
 router.include_router(compat_router)

@@ -202,6 +202,7 @@ async def post_edge_job_events(
 class EdgeActualReportBody(BaseModel):
     installation_id: str
     actual_status: str
+    generation: int | None = None
     meta: dict | None = None
 
 
@@ -224,12 +225,63 @@ async def report_installation_actual(
         raise NotFoundError("Installation 不存在", "errors.skill.installation_not_found")
     if installation.edge_node_id and installation.edge_node_id != node.id:
         raise ForbiddenError("伪造 org/node 被拒绝", "errors.connector.edge_org_mismatch")
+
+    # If generation provided, check if actual generation is stale compared to desired
+    if body.generation is not None and hasattr(installation, "actual_generation"):
+        installation.actual_generation = body.generation
+
     installation.actual_status = body.actual_status
     installation.actual_reported_at = datetime.now(timezone.utc)
     if body.meta:
         installation.routing_metadata = {**(installation.routing_metadata or {}), "actual_meta": body.meta}
     await db.commit()
     return {"code": 0, "data": {"installation_id": installation.id, "actual_status": installation.actual_status}}
+
+
+class EnqueueEdgeJobRequest(BaseModel):
+    edge_node_id: str
+    run_id: str
+    tool_name: str
+    arguments: dict | None = None
+    snapshot: dict | None = None
+    idempotency_key: str | None = None
+
+
+@router.post("/jobs/enqueue")
+async def enqueue_edge_job_endpoint(
+    body: EnqueueEdgeJobRequest,
+    db: AsyncSession = Depends(get_db),
+    x_skill_agent_token: str | None = Header(default=None, alias="X-Skill-Agent-Token"),
+    x_exec_org_id: str | None = Header(default=None, alias="X-Exec-Org-Id"),
+):
+    import hmac
+    expected_curr = settings.SKILL_AGENT_INTERNAL_TOKEN
+    expected_prev = settings.SKILL_AGENT_INTERNAL_TOKEN_PREVIOUS
+    if not x_skill_agent_token:
+        raise ForbiddenError("Internal skill agent token 无效", "errors.auth.invalid_token")
+    curr_match = expected_curr and hmac.compare_digest(x_skill_agent_token, expected_curr)
+    prev_match = expected_prev and hmac.compare_digest(x_skill_agent_token, expected_prev)
+    if not curr_match and not prev_match:
+        raise ForbiddenError("Internal skill agent token 无效", "errors.auth.invalid_token")
+
+    if not x_exec_org_id:
+        raise ForbiddenError("缺少 X-Exec-Org-Id header", "errors.auth.missing_org_header")
+
+    from app.services.connector.edge_node_service import EdgeNodeService
+
+    service = EdgeNodeService(db)
+    job = await service.enqueue_edge_job(
+        org_id=x_exec_org_id,
+        edge_node_id=body.edge_node_id,
+        run_id=body.run_id,
+        tool_name=body.tool_name,
+        arguments=body.arguments,
+        snapshot=body.snapshot,
+        idempotency_key=body.idempotency_key,
+    )
+    await db.commit()
+    return {"code": 0, "data": {"job_id": job.id, "status": job.status, "run_id": job.run_id}}
+
 
 
 def is_edge_node_online(node: EdgeNode, *, now: datetime | None = None) -> bool:

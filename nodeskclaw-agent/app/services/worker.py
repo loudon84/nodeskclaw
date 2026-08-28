@@ -381,47 +381,65 @@ class RunWorker:
                         org_id=org_id,
                         cancel_event=cancel_event,
                     )
+                is_hybrid = placement.get("engine") == "hybrid" or needs_edge_jobs(snapshot)
+                has_pending_edge_steps = is_hybrid and needs_edge_jobs(snapshot)
+
                 async for event in event_iter:
                     event_type = event["event_type"]
                     payload = event.get("payload") or {}
                     source = event.get("source") or "agent"
                     source_event_id = event.get("source_event_id")
                     if event_type == "run.completed":
-                        await run_service.set_status(
-                            db,
-                            run_id,
-                            "COMPLETED",
-                            org_id=org_id,
-                            attempt_id=attempt_id,
-                            generation=generation,
-                            expected_status=["RUNNING", "PREPARING", "RESUMING"],
-                            result=payload,
-                        )
-                        await run_service.append_event(
-                            db,
-                            run_id,
-                            "run.completed",
-                            payload,
-                            org_id=org_id,
-                            attempt_id=attempt_id,
-                            generation=generation,
-                            source=source,
-                            source_event_id=source_event_id,
-                        )
-                        content = payload.get("content")
-                        if content is None:
-                            content = payload.get("summary") or ""
-                        raw = content if isinstance(content, (bytes, bytearray)) else str(content).encode("utf-8")
-                        await run_service.store_artifact_bytes(
-                            db,
-                            run_id,
-                            name="result.txt",
-                            content=bytes(raw),
-                            content_type="text/plain; charset=utf-8",
-                            org_id=org_id,
-                            attempt_id=attempt_id,
-                            generation=generation,
-                        )
+                        if has_pending_edge_steps:
+                            # Central step completed; do not mark run as COMPLETED.
+                            # Instead, transition to RUNNING/WAITING_EDGE and enqueue edge steps.
+                            await run_service.append_event(
+                                db,
+                                run_id,
+                                "run.central_step_completed",
+                                payload,
+                                org_id=org_id,
+                                attempt_id=attempt_id,
+                                generation=generation,
+                                source=source,
+                                source_event_id=source_event_id,
+                            )
+                        else:
+                            await run_service.set_status(
+                                db,
+                                run_id,
+                                "COMPLETED",
+                                org_id=org_id,
+                                attempt_id=attempt_id,
+                                generation=generation,
+                                expected_status=["RUNNING", "PREPARING", "RESUMING"],
+                                result=payload,
+                            )
+                            await run_service.append_event(
+                                db,
+                                run_id,
+                                "run.completed",
+                                payload,
+                                org_id=org_id,
+                                attempt_id=attempt_id,
+                                generation=generation,
+                                source=source,
+                                source_event_id=source_event_id,
+                            )
+                            content = payload.get("content")
+                            if content is None:
+                                content = payload.get("summary") or ""
+                            raw = content if isinstance(content, (bytes, bytearray)) else str(content).encode("utf-8")
+                            await run_service.store_artifact_bytes(
+                                db,
+                                run_id,
+                                name="result.txt",
+                                content=bytes(raw),
+                                content_type="text/plain; charset=utf-8",
+                                org_id=org_id,
+                                attempt_id=attempt_id,
+                                generation=generation,
+                            )
                     elif event_type == "run.cancelled":
                         await run_service.set_status(
                             db,
@@ -478,19 +496,19 @@ class RunWorker:
                         )
                     await db.commit()
 
-                # Hybrid: after Hermes (or connector) section, check if edge jobs are defined
-                if placement.get("engine") == "hybrid" or snapshot.get("edge_jobs"):
-                    if needs_edge_jobs(snapshot):
-                        await run_service.append_event(
-                            db,
-                            run_id,
-                            "run.edge_steps_queued",
-                            {"step_plan": [s for s in step_plan if s.get("role") == "edge"]},
-                            org_id=org_id,
-                            attempt_id=attempt_id,
-                            generation=generation,
-                        )
-                        await db.commit()
+                # Hybrid: after central section, dispatch edge jobs to transport port
+                if has_pending_edge_steps:
+                    edge_steps = [s for s in step_plan if s.get("role") == "edge"]
+                    await run_service.append_event(
+                        db,
+                        run_id,
+                        "run.edge_steps_queued",
+                        {"step_plan": edge_steps},
+                        org_id=org_id,
+                        attempt_id=attempt_id,
+                        generation=generation,
+                    )
+                    await db.commit()
             except Exception as exc:
                 logger.exception("run execute failed run_id=%s", run_id)
                 await db.rollback()

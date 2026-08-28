@@ -1,28 +1,28 @@
 ---
 work_item_id: NODESKCLAW-PLATFORM-API-ACCEPTANCE-CLOSURE
 version: 1.4.0
-status: REVIEW_REQUIRED
+status: APPROVED
 target_branch: main
-review_verdict:
-approved_at:
+review_verdict: PASS
+approved_at: 2026-08-28T04:21:21Z
 ---
 
 # NoDeskClaw Platform API Acceptance Closure PRD v1.4
 
 本文定义 DeskClaw 团队版 NoDeskClaw 平台下一阶段的功能闭环与 API（应用程序接口）验收方案。v1.4 只完善 `nodeskclaw-backend`、`nodeskclaw-agent` 及仓库内发布与测试资产，不修改 `smc-copilot/apps/work`。
 
-## Grounding Mode
+## Source Baseline
 
-本 PRD 使用 `smc-prd-grounding mode=discover`（源码校准发现模式），以 `main@718ff9fb2578b7800b066f7139b92ef62188b2e6` 的源码事实为基线。
+本 PRD 以 `main@718ff9fb2578b7800b066f7139b92ef62188b2e6` 的源码事实为基线。
 
 ## Baselines
 
 本阶段继承现有 Skill Run（技能运行）架构，但不以既有文档的“已完成”描述替代源码和可重复验收证据。
 
-- Product Baseline（产品基线）：原始 NoDeskClaw SKILL Platform PRD v1.0 的 AC-01～AC-15 与 Definition of Done（完成定义）。
+- Product Baseline（产品基线）：`docs_agent/prd-skill-platform-v1.0.md` 的 AC-01～AC-15 与 Definition of Done（完成定义）。
 - Predecessor PRD（前序需求文档）：`docs_agent/prd-v1.3-skill-run-release-readiness.md`。
 - Architecture Baseline（架构基线）：`lat.md/architecture/architecture.md`、`lat.md/architecture/skill-agent.md`、`lat.md/decisions/skill-platform-execution.md`、`lat.md/decisions/work-expert-contract.md`。
-- Verification Baseline（验证基线）：2026-08-28 v1.0 目标符合性复盘；30 项中 8 项符合、16 项部分符合、6 项不符合。
+- Verification Baseline（验证基线）：相对 Source Baseline 的 v1.0 目标符合性复盘（2026-08-28）；30 项中 8 项符合、16 项部分符合、6 项不符合。
 - Consumer Boundary（消费者边界）：`WORK-EXPERT-CONTRACT v1.0.2` 及现有 Expert/Hermes C2（兼容级别 2）路径保持冻结。
 
 ## Executive Summary
@@ -102,7 +102,7 @@ v1.4 的目标不是迁移 Work（工作端），而是使 NoDeskClaw 自身成�
 | Control/Execution Boundary（控制面/执行面边界） | Backend + Agent | Backend 负责鉴权、投影、路由与 Outbox；Agent 负责 Run/Event/Attempt/Artifact | `runtime_skill_run_service.py`、`run_service.py` | PARTIAL |
 | Agent Packaging（代理打包） | Agent | 独立项目、版本与 Dockerfile 已存在 | `nodeskclaw-agent/pyproject.toml`、`Dockerfile` | PARTIAL |
 | Agent Database Migration（代理数据库迁移） | Agent | 启动已不执行 DDL，但配置与初始迁移 Schema 不一致，镜像缺迁移资产 | `config.py`、`alembic/versions/0001_initial_agent_schema.py`、`Dockerfile` | CONFLICT |
-| Skill Lifecycle（技能生命周期） | Backend Desired + Agent Actual | Skill/Release/Installation 模型存在；Actual 可上报，完整 Reconcile Loop（调谐循环）缺失 | `releases_router.py`、`installations_router.py`、`internal_edge.py` | PARTIAL |
+| Skill Lifecycle（技能生命周期） | Backend Desired + Agent Actual | Skill/Release/Installation 模型存在；Actual 可上报，完整 Reconcile Loop（调谐循环）缺失 | `app/api/hermes_skill/releases_router.py`、`app/api/hermes_skill/installations_router.py`、`app/api/internal_edge.py` | PARTIAL |
 | Employee MCP Gateway（员工模型上下文协议网关） | Backend | `tools/list` 与 `tools/call` 已存在并创建 Run，但响应仍泄漏物理身份 | `handler.py`、`mcp_tool_mapper.py` | PARTIAL |
 | Run State and Event Stream（运行状态与事件流） | Agent | PostgreSQL 持久化、Last-Event-ID（最后事件标识）与租约恢复已存在 | `run_service.py`、`worker.py`、`runs.py` | PARTIAL |
 | Run Session and Execution Context（运行会话与执行上下文） | Agent | Agent 只保存请求追踪与零散引用，没有正式 Run Session、使用前授权解析和 Attempt 级缓存边界 | `schemas.py`、`run_service.py` | MISSING |
@@ -227,7 +227,7 @@ Event Stream（事件流）以 PostgreSQL 或等价持久化事实源提供严�
 
 ### Session, Context, Engine Port and Trace
 
-Run Session 是正式执行域对象，用于关联同一会话内的 Run，但不接管 Work Chat（工作端聊天）内容。Backend 继续拥有 Session、Workspace、Attachment、Knowledge 和 Policy（会话、工作区、附件、知识和策略）的来源授权；Agent 只保存稳定引用、版本与哈希，并在每个 Attempt 首次使用前通过 Backend Authorization Resolver（后端授权解析器）复核组织、可见性和撤权状态。
+Run Session（运行会话）是 Agent 执行面的正式执行域对象，用于关联同一会话内的 Run，但不接管 Work Chat（工作端聊天）内容，也不替代 Backend 的 Session（会话）授权域。Backend 继续拥有 Session、Workspace、Attachment、Knowledge 和 Policy（会话、工作区、附件、知识和策略）的来源授权；Agent 只保存稳定引用、版本与哈希，并在每个 Attempt 首次使用前通过 Backend Authorization Resolver（后端授权解析器）复核组织、可见性和撤权状态。
 
 Context 解析结果只在当前 Attempt 和有界 TTL（生存时间）内有效。Attempt 变化、TTL 到期或引用版本变化时必须重新解析；临时 URL、Token、解密内容和完整敏感上下文不得持久化到 Snapshot、Event 或审计。
 
@@ -538,10 +538,9 @@ v1.4 完成必须同时满足：
 12. `smc-copilot/apps/work` 无代码变更，旧 Expert/Hermes C2 合同无破坏性回归。
 13. `lat.md` 与最终源码、合同、测试证据一致，`lat check` 全部通过。
 
-## Grounding Summary
+## Architecture Summary
 
-- Mode（模式）：`discover`。
 - Reuse Strategy（复用策略）：保留 Backend Control Plane、Agent Execution Plane、现有 Run/Event/Connector/EdgeJob 模型和 Expert C2；所有 PARTIAL 优先在原 Owner 上 MODIFY。
-- New Capability（新增能力）：只新增仓库级 Postman/Newman Acceptance Pack，不新增生产事实源。
+- New Capability（新增能力）：正式 Run Session、AgentEnginePort，以及仓库级 Postman/Newman Acceptance Pack；不新增第二生产事实源。
 - Replacements（替代项）：只替代已经确认冲突的迁移、Hybrid no-op、临时 Artifact 和 Backend Installation 副作用路径，并为每项定义移除条件。
-- Review State（审查状态）：Grounding 已完成，文档状态为 `REVIEW_REQUIRED`；不得进入实现计划，直到独立 PRD Review（需求文档审查）通过并经 Converge（收敛）转为 APPROVED。
+- Status（状态）：`APPROVED`；可进入 Implementation Plan（实施计划）。

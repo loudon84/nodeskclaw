@@ -109,3 +109,75 @@ async def mint_credential_lease(
         gateway_url=gateway_url,
         model=model_name,
     )
+
+
+class ReviewAttemptAuthorizationRequest(BaseModel):
+    attempt_id: str
+    run_id: str
+    user_id: str
+    tool_name: str
+    skill_id: str | None = None
+    skill_db_id: str | None = None
+    agent_id: str | None = None
+
+
+class ReviewAttemptAuthorizationResponse(BaseModel):
+    allowed: bool
+    attempt_id: str
+    expires_in: int
+    reason: str | None = None
+
+
+@router.post(
+    "/authorizations/review",
+    response_model=ReviewAttemptAuthorizationResponse,
+    dependencies=[Depends(_verify_internal_token)],
+)
+async def review_attempt_authorization(
+    body: ReviewAttemptAuthorizationRequest,
+    db: AsyncSession = Depends(get_db),
+    x_exec_org_id: str | None = Header(default=None, alias="X-Exec-Org-Id"),
+) -> ReviewAttemptAuthorizationResponse:
+    if not x_exec_org_id:
+        raise HTTPException(status_code=400, detail="missing X-Exec-Org-Id header")
+
+    from app.services.hermes_skill.hermes_skill_authorization_service import (
+        HermesSkillAuthorizationService,
+    )
+
+    auth_svc = HermesSkillAuthorizationService(db)
+    skill_id = body.skill_id or body.tool_name
+    skill_db_id = body.skill_db_id or skill_id
+
+    try:
+        allowed = await auth_svc.can_invoke(
+            org_id=x_exec_org_id,
+            user_id=body.user_id,
+            skill_db_id=skill_db_id,
+            skill_id=skill_id,
+            agent_id=body.agent_id,
+        )
+    except Exception as exc:
+        return ReviewAttemptAuthorizationResponse(
+            allowed=False,
+            attempt_id=body.attempt_id,
+            expires_in=0,
+            reason=f"authorization check failed: {exc}",
+        )
+
+    if not allowed:
+        return ReviewAttemptAuthorizationResponse(
+            allowed=False,
+            attempt_id=body.attempt_id,
+            expires_in=0,
+            reason="authorization revoked or insufficient invoke permissions",
+        )
+
+    ttl = settings.SKILL_AGENT_CREDENTIAL_LEASE_TTL_SECONDS
+    return ReviewAttemptAuthorizationResponse(
+        allowed=True,
+        attempt_id=body.attempt_id,
+        expires_in=ttl,
+        reason=None,
+    )
+

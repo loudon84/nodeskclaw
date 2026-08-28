@@ -431,10 +431,11 @@
                   "const json = pm.response.json();",
                   "pm.test(\"tools/call accepted or error returned\", function () { pm.expect(json.result || json.error).to.exist; });",
                   "const sc = json?.result?.structuredContent || json?.data?.structuredContent || {};",
-                  "if (sc.task_id) {",
-                  "  pm.collectionVariables.set(\"task_id\", sc.task_id);",
+                  "const actualRunId = sc.run_id || sc.task_id;",
+                  "if (actualRunId) {",
+                  "  pm.collectionVariables.set(\"task_id\", actualRunId);",
                   "  pm.collectionVariables.set(\"task_no\", sc.task_no || \"\");",
-                  "  pm.collectionVariables.set(\"event_url\", sc.event_url || \"\");",
+                  "  pm.collectionVariables.set(\"event_url\", sc.event_url || sc.event_stream || \"\");",
                   "  pm.collectionVariables.set(\"artifact_url\", sc.artifact_url || \"\");",
                   "  pm.collectionVariables.set(\"installation_id\", sc.installation_id || \"\");",
                   "}",
@@ -993,6 +994,68 @@
                 }
               }
             }
+          }
+        },
+        {
+          "name": "Dispatch Outbox - Stats",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/hermes/dispatch/outbox/stats",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "hermes",
+                "dispatch",
+                "outbox",
+                "stats"
+              ]
+            },
+            "description": "查看 Dispatch Outbox 队列统计数据（待派发、已派发、死信等状态计数）"
+          }
+        },
+        {
+          "name": "Dispatch Outbox - Dead Letters",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/hermes/dispatch/outbox/dead-letters?page=1&page_size=20",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "hermes",
+                "dispatch",
+                "outbox",
+                "dead-letters"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "page_size",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "分页查询死信队列中的 Dispatch 记录"
           }
         }
       ]

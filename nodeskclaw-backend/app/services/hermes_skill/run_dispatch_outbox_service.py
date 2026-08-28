@@ -157,6 +157,74 @@ class RunDispatchOutboxService:
                 error_message,
             )
 
+    async def replay_dead_letter(self, org_id: str, dispatch_id: str) -> RunDispatchOutbox:
+        stmt = select(RunDispatchOutbox).where(
+            not_deleted(RunDispatchOutbox),
+            RunDispatchOutbox.org_id == org_id,
+            RunDispatchOutbox.dispatch_id == dispatch_id,
+        )
+        res = await self.db.execute(stmt)
+        entry = res.scalar_one_or_none()
+        if not entry:
+            from app.core.exceptions import NotFoundError
+            raise NotFoundError("Outbox 记录不存在", "errors.outbox.not_found")
+
+        entry.status = RunDispatchStatus.PENDING.value
+        entry.retry_count = 0
+        entry.next_retry_at = datetime.now(timezone.utc)
+        entry.lease_until = None
+        entry.last_error = None
+        entry.lease_generation = (entry.lease_generation or 0) + 1
+        await self.db.flush()
+        logger.info("Outbox dead letter replayed: org_id=%s dispatch_id=%s", org_id, dispatch_id)
+        return entry
+
+    async def list_dead_letters(
+        self,
+        org_id: str,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> tuple[list[RunDispatchOutbox], int]:
+        from sqlalchemy import func
+        count_stmt = select(func.count()).select_from(RunDispatchOutbox).where(
+            not_deleted(RunDispatchOutbox),
+            RunDispatchOutbox.org_id == org_id,
+            RunDispatchOutbox.status == RunDispatchStatus.DEAD_LETTER.value,
+        )
+        total = (await self.db.execute(count_stmt)).scalar() or 0
+
+        offset = (page - 1) * page_size
+        stmt = (
+            select(RunDispatchOutbox)
+            .where(
+                not_deleted(RunDispatchOutbox),
+                RunDispatchOutbox.org_id == org_id,
+                RunDispatchOutbox.status == RunDispatchStatus.DEAD_LETTER.value,
+            )
+            .order_by(RunDispatchOutbox.created_at.desc())
+            .offset(offset)
+            .limit(page_size)
+        )
+        res = await self.db.execute(stmt)
+        return list(res.scalars().all()), total
+
+    async def get_outbox_stats(self, org_id: str) -> dict[str, int]:
+        from sqlalchemy import func
+        stmt = (
+            select(RunDispatchOutbox.status, func.count())
+            .where(
+                not_deleted(RunDispatchOutbox),
+                RunDispatchOutbox.org_id == org_id,
+            )
+            .group_by(RunDispatchOutbox.status)
+        )
+        res = await self.db.execute(stmt)
+        stats = {status.value: 0 for status in RunDispatchStatus}
+        for status_val, count in res.all():
+            stats[status_val] = count
+        return stats
+
+
 
 class RunDispatchWorker:
     def __init__(self):

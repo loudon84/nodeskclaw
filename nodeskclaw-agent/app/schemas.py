@@ -24,6 +24,7 @@ class CreateRunRequest(BaseModel):
     client_context: dict[str, Any] = Field(default_factory=dict)
     request_trace_id: str | None = None
     idempotency_key: str | None = None
+    run_session_id: str | None = None
 
 
 class CreateRunResponse(BaseModel):
@@ -31,6 +32,7 @@ class CreateRunResponse(BaseModel):
     status: str
     snapshot_hash: str
     org_id: str | None = None
+    run_session_id: str | None = None
 
 
 class RunView(BaseModel):
@@ -42,6 +44,7 @@ class RunView(BaseModel):
     snapshot: dict[str, Any]
     result: dict[str, Any] | None = None
     attempt_id: str | None = None
+    run_session_id: str | None = None
     generation: int = 0
     created_at: str
     updated_at: str

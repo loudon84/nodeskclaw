@@ -121,3 +121,43 @@ async def test_deliver_entry_permanent_4xx_dead_letters_immediately():
     assert entry.status == RunDispatchStatus.DEAD_LETTER.value
     assert entry.retry_count == 1
     assert "HTTP 400" in (entry.last_error or "")
+
+
+@pytest.mark.asyncio
+async def test_replay_dead_letter():
+    db = AsyncMock()
+    entry = _make_entry(
+        status=RunDispatchStatus.DEAD_LETTER.value,
+        retry_count=5,
+        last_error="Max retries exceeded",
+        lease_generation=2,
+    )
+    mock_res = MagicMock()
+    mock_res.scalar_one_or_none.return_value = entry
+    db.execute = AsyncMock(return_value=mock_res)
+
+    service = RunDispatchOutboxService(db)
+    replayed = await service.replay_dead_letter("org-1", "disp-1")
+
+    assert replayed.status == RunDispatchStatus.PENDING.value
+    assert replayed.retry_count == 0
+    assert replayed.last_error is None
+    assert replayed.lease_generation == 3
+    assert db.flush.called
+
+
+@pytest.mark.asyncio
+async def test_get_outbox_stats():
+    db = AsyncMock()
+    mock_res = MagicMock()
+    mock_res.all.return_value = [("pending", 3), ("delivering", 1), ("dead_letter", 2)]
+    db.execute = AsyncMock(return_value=mock_res)
+
+    service = RunDispatchOutboxService(db)
+    stats = await service.get_outbox_stats("org-1")
+
+    assert stats["pending"] == 3
+    assert stats["delivering"] == 1
+    assert stats["dead_letter"] == 2
+    assert stats["delivered"] == 0
+
