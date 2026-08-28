@@ -13,13 +13,13 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+import httpx
 from sqlalchemy import text
 
 from app.config import settings
 from app.db import SessionLocal
 from app.services import run_service
-from app.services.connector_router import execute_connector_run
-from app.services.hermes_engine import execute_hermes_run
+from app.services.engine_port import execute_engine
 
 logger = logging.getLogger(__name__)
 
@@ -30,33 +30,60 @@ def build_hybrid_step_plan(snapshot: dict[str, Any] | None) -> list[dict[str, An
     """Build a deterministic list of steps (central vs edge) for hybrid execution.
     Returns:
       [
-        {"step": "central_hermes", "role": "central", "engine": "hermes"},
-        {"step": "edge_connector", "role": "edge", "engine": "connector", "binding_id": ...}
+        {"step_id": "central_hermes", "step": "central_hermes", "role": "central", "engine": "hermes", "required": True, "dependencies": []},
+        {"step_id": "edge_connector_xxx", "step": "edge_connector_xxx", "role": "edge", "engine": "connector", "required": True, "dependencies": ["central_hermes"], ...}
       ]
     """
     if not snapshot:
-        return [{"step": "central", "role": "central", "engine": "hermes"}]
-    
+        return [{"step_id": "central", "step": "central", "role": "central", "engine": "hermes", "required": True, "dependencies": []}]
+
     steps: list[dict[str, Any]] = []
     placement = snapshot.get("placement") or {}
     if placement.get("role") == "hybrid" or placement.get("engine") == "hybrid":
-        steps.append({"step": "central_hermes", "role": "central", "engine": "hermes"})
+        central_step_id = "central_hermes"
+        steps.append({
+            "step_id": central_step_id,
+            "step": central_step_id,
+            "role": "central",
+            "engine": "hermes",
+            "required": True,
+            "dependencies": [],
+        })
         policy = snapshot.get("runtime_policy") or {}
         bindings = policy.get("connector_bindings") or []
         if isinstance(bindings, dict):
             bindings = [bindings]
         for b in bindings:
             if isinstance(b, dict) and b.get("placement") == "edge":
+                binding_id = str(b.get("id") or b.get("binding_id") or "job")
+                step_id = f"edge_connector_{binding_id}"
                 steps.append({
-                    "step": f"edge_connector_{b.get('id') or b.get('binding_id') or 'job'}",
+                    "step_id": step_id,
+                    "step": step_id,
                     "role": "edge",
                     "engine": "connector",
+                    "required": True,
+                    "dependencies": [central_step_id],
                     "binding": b,
                 })
     elif placement.get("role") == "edge" or placement.get("engine") == "connector":
-        steps.append({"step": "edge_connector", "role": "edge", "engine": "connector"})
+        steps.append({
+            "step_id": "edge_connector",
+            "step": "edge_connector",
+            "role": "edge",
+            "engine": "connector",
+            "required": True,
+            "dependencies": [],
+        })
     else:
-        steps.append({"step": "central", "role": "central", "engine": placement.get("engine", "hermes")})
+        steps.append({
+            "step_id": "central",
+            "step": "central",
+            "role": "central",
+            "engine": placement.get("engine", "hermes"),
+            "required": True,
+            "dependencies": [],
+        })
     return steps
 
 
@@ -367,20 +394,20 @@ class RunWorker:
                 )
                 await db.commit()
 
-                if placement.get("engine") == "connector":
-                    event_iter = execute_connector_run(
-                        tool_name=claimed["tool_name"],
-                        arguments=claimed["arguments"] or {},
-                        snapshot=snapshot,
-                    )
-                else:
-                    event_iter = execute_hermes_run(
-                        tool_name=claimed["tool_name"],
-                        arguments=claimed["arguments"] or {},
-                        route_snapshot=route_snapshot,
-                        org_id=org_id,
-                        cancel_event=cancel_event,
-                    )
+                engine_name = str(placement.get("engine") or "hermes")
+                if engine_name == "hybrid":
+                    engine_name = "hermes"
+
+                event_iter = execute_engine(
+                    engine=engine_name,
+                    tool_name=claimed["tool_name"],
+                    arguments=claimed["arguments"] or {},
+                    route_snapshot=route_snapshot if engine_name == "hermes" else snapshot,
+                    org_id=org_id,
+                    run_id=run_id,
+                    attempt_id=attempt_id,
+                    cancel_event=cancel_event,
+                )
                 is_hybrid = placement.get("engine") == "hybrid" or needs_edge_jobs(snapshot)
                 has_pending_edge_steps = is_hybrid and needs_edge_jobs(snapshot)
 
@@ -392,7 +419,16 @@ class RunWorker:
                     if event_type == "run.completed":
                         if has_pending_edge_steps:
                             # Central step completed; do not mark run as COMPLETED.
-                            # Instead, transition to RUNNING/WAITING_EDGE and enqueue edge steps.
+                            # Instead, transition to WAITING_EDGE and enqueue edge steps via Backend internal API.
+                            await run_service.set_status(
+                                db,
+                                run_id,
+                                "WAITING_EDGE",
+                                org_id=org_id,
+                                attempt_id=attempt_id,
+                                generation=generation,
+                                expected_status=["RUNNING", "PREPARING", "RESUMING"],
+                            )
                             await run_service.append_event(
                                 db,
                                 run_id,
@@ -403,6 +439,15 @@ class RunWorker:
                                 generation=generation,
                                 source=source,
                                 source_event_id=source_event_id,
+                            )
+                            await run_service.append_event(
+                                db,
+                                run_id,
+                                "run.waiting_edge",
+                                {"status": "WAITING_EDGE", "attempt_id": attempt_id},
+                                org_id=org_id,
+                                attempt_id=attempt_id,
+                                generation=generation,
                             )
                         else:
                             await run_service.set_status(
@@ -499,11 +544,47 @@ class RunWorker:
                 # Hybrid: after central section, dispatch edge jobs to transport port
                 if has_pending_edge_steps:
                     edge_steps = [s for s in step_plan if s.get("role") == "edge"]
+                    dispatched_jobs = []
+                    central_url = (settings.SKILL_AGENT_CENTRAL_BASE_URL or "http://localhost:4510").rstrip("/")
+                    enqueue_url = f"{central_url}/api/v1/internal/edge/jobs/enqueue"
+                    req_headers = {
+                        "X-Skill-Agent-Token": settings.SKILL_AGENT_INTERNAL_TOKEN,
+                        "X-Exec-Org-Id": org_id or "",
+                    }
+
+                    async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=5.0)) as http_client:
+                        for edge_step in edge_steps:
+                            step_id = edge_step.get("step_id") or edge_step.get("step")
+                            binding = edge_step.get("binding") or {}
+                            edge_node_id = binding.get("edge_node_id") or binding.get("node_id") or snapshot.get("edge_node_id") or "default-edge-node"
+                            idempotency_key = f"{run_id}:{attempt_id}:{generation}:{step_id}"
+
+                            enqueue_payload = {
+                                "edge_node_id": edge_node_id,
+                                "run_id": run_id,
+                                "attempt_id": attempt_id,
+                                "step_id": step_id,
+                                "run_generation": generation or 1,
+                                "request_trace_id": snapshot.get("request_trace_id"),
+                                "tool_name": claimed["tool_name"],
+                                "arguments": claimed["arguments"] or {},
+                                "snapshot": snapshot,
+                                "idempotency_key": idempotency_key,
+                            }
+                            try:
+                                resp = await http_client.post(enqueue_url, headers=req_headers, json=enqueue_payload)
+                                resp.raise_for_status()
+                                job_data = resp.json().get("data") or {}
+                                dispatched_jobs.append({"step_id": step_id, "job_id": job_data.get("job_id"), "status": job_data.get("status")})
+                            except Exception as exc:
+                                logger.error("failed to enqueue edge step %s for run_id=%s: %s", step_id, run_id, exc)
+                                raise RuntimeError(f"Edge job enqueue failed for step {step_id}: {exc}") from exc
+
                     await run_service.append_event(
                         db,
                         run_id,
                         "run.edge_steps_queued",
-                        {"step_plan": edge_steps},
+                        {"step_plan": edge_steps, "dispatched_jobs": dispatched_jobs},
                         org_id=org_id,
                         attempt_id=attempt_id,
                         generation=generation,
