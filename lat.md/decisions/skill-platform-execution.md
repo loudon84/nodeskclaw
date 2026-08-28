@@ -2,20 +2,20 @@
 
 Skill Platform 把员工 MCP Catalog 与 Skill Run 执行拆开：Gateway 在 Backend，执行内核在独立 `nodeskclaw-agent`。
 
-Approved PRD：`docs_agent/prd-skill-platform-v1.0.md` 与 `docs_agent/prd-skill-run-architecture-closure-v1.1.md`。Run 生产闭环目标见 `docs_agent/prd-skill-run-production-hardening-v1.0.md`。work-expert v1.0.2 目录与 checksum 冻结；新员工语义走 `contracts/skill-run/v1.0.0/`。生成入口：`scripts/contracts.py generate --family skill-run`。
+Approved PRD：`docs_agent/prd-v1.3-skill-run-release-readiness.md`。前序文档包括 `docs_agent/prd-skill-platform-v1.0.md`、`docs_agent/prd-skill-run-architecture-closure-v1.1.md` 与 `docs_agent/prd-skill-run-production-hardening-v1.0.md`。work-expert v1.0.2 目录与 checksum 冻结；新员工语义走 `contracts/skill-run/v1.0.0/`。生成入口：`scripts/contracts.py generate --family skill-run`。
 
-## Architecture Closure Invariants (v1.1)
+## Architecture Closure Invariants (v1.3)
 
-Architecture Closure (v1.1) 确立了 Run 生产执行架构的十大约束，确保高并发、多租户隔离与分布式边界闭环。
+Architecture Closure (v1.3) 确立了 Run 生产执行架构的发布就绪约束，确保高并发原子性、多租户隔离与分布式边界闭环。
 
-- **Transactional Outbox Dispatcher**：Backend 通过 [[nodeskclaw-backend/app/models/hermes_skill/run_dispatch_outbox.py#RunDispatchOutbox]] 保证创建原子性，[[nodeskclaw-backend/app/services/hermes_skill/run_dispatch_outbox_service.py#RunDispatchOutboxService]] 定时轮询租约投递至 Agent，Agent 在 `runs` 表按 `id` 幂等处理。
-- **Secret-free Credential Flow**：Snapshot 不内嵌明文 token，仅记录 `credential_lease_ref`；Agent 认领后在 Attempt 期间调用 Backend [[nodeskclaw-backend/app/api/internal_skill_agent.py#mint_credential_lease]] 实时铸造短生命周期 JWT（broker 模式）。
-- **Fencing & Generation Control**：Agent 对 `runs` 与 `run_attempts` 表采用 `generation` 字段控制 CAS 写路径并发，`run_events` 采用 `next_event_seq` 原子上递自增且基于 `(run_id, source, source_event_id)` 唯一索引去重。
-- **Cancel Three-Phase State Machine**：取消请求进入 `CANCELLING` 中间态，`hermes_engine` 与 `worker` 通过 `cancel_event` 异步探测中断并流式产出 `run.cancelled`。
-- **Approval Decision Idempotency**：独立 `run_approvals` 表记录审批决策与证据，区分 `resume_run` 与 `approve_run` 语义，防止重复恢复与竞态。
-- **Projection Monotonic Updater**：Backend [[nodeskclaw-backend/app/services/hermes_skill/run_projection_updater_service.py#RunProjectionUpdaterService]] 基于单调递增 `projection_cursor` 游标（`after_seq`）同步状态机与事件至 `HermesTask`。
-- **Edge Transport & Spooling**：Edge 节点以递增 `delivery_generation` 认领 `EdgeJob`，防重放双端校验，离线时增量事件安全持久化至本地磁盘并在恢复后 flush。
+- **Transactional Outbox & Lease Generation**：Backend 通过 [[nodeskclaw-backend/app/models/hermes_skill/run_dispatch_outbox.py#RunDispatchOutbox]] 保证创建原子性，认领时递增 `lease_generation`；[[nodeskclaw-backend/app/services/hermes_skill/run_dispatch_outbox_service.py#RunDispatchOutboxService]] 定时轮询租约投递并在交付前后双重校验代际；4xx 永久错误进 `DEAD_LETTER` 并由 `/resume` 端点授权重放。
+- **Atomic Execution Mutation Gate**：Agent 对 `runs`、`run_attempts`、`run_events`、`run_artifacts` 写路径统一采用单条 SQL 原子 CAS 语句，强校验 `(run_id, org_id, attempt_id, generation)`；原子分配 `next_event_seq` 并在发生冲突或过期世代时立即熔断。
+- **Secret-free Credential Flow & Fail-Closed**：Snapshot 不内嵌明文 token，仅记录 `credential_lease_ref`；[[nodeskclaw-agent/app/services/secret_store.py#SecretStore]] 默认 fail-closed 解析，未命中即刻报错阻断；严禁明文凭证持久化入快照或事件。
+- **Cancel/Resume/Approval State Machine**：取消请求支持 `CANCELLING` 中间态与 `cancel_event` 异步中断；`resume_run` 仅处理 `PAUSED`/`SUSPENDED` 并显式拒绝 `WAITING_APPROVAL`；[[nodeskclaw-agent/app/services/run_service.py#approve_run]] 专门处理审批与幂等记录。
+- **Hybrid Step Plan & Edge Delivery Envelope**：[[nodeskclaw-agent/app/services/worker.py#build_hybrid_step_plan]] 确定性规划执行步骤并通过 `run.plan` 事件下发；[[nodeskclaw-agent/app/services/edge_worker.py#EdgeWorker]] 与 `/internal/edge/jobs/{job_id}/events` 强制携带并校验 `delivery_generation` 与 `source_event_id`。
+- **Installation Desired/Actual Reconcile**：Backend 维护 Desired 状态，Edge 节点通过 `/internal/edge/installations/actual` 上报 `actual_status`，严格校验 `edge_node_id` 归属与防篡改。
 - **Security & SSRF Gates**：Connector 固定配置优先于动态参数，REST/MCP 严格拦截 169.254.169.254 及 link-local / internal 目标，DB 严格限制 SELECT/WITH 只读查询。
+- **Zero-DDL Startup & Alembic Migrations**：Agent 移除服务启动直接 DDL，全量 DDL 纳入 Alembic 迁移链管理；生产环境独立运行 `/health/live`（存活）与 `/health/ready`（就绪）探针。
 - **Identity Rotation**：Agent 内部鉴权支持 `SKILL_AGENT_INTERNAL_TOKEN_PREVIOUS` 双密钥平滑轮换，暴露 `/health` 与 `/metrics` 探针。
 
 ## Owners
