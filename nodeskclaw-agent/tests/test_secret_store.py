@@ -30,3 +30,14 @@ def test_resolve_fail_closed_raises(tmp_path: Path):
     with pytest.raises(RuntimeError, match="fail-closed"):
         store.resolve("non-existent-secret-ref", fail_closed=True)
     assert store.resolve("non-existent-secret-ref", fail_closed=False) is None
+
+
+def test_secret_store_does_not_mint_leases_and_strictly_resolves_refs(tmp_path: Path):
+    store = SecretStore(root=tmp_path)
+    # SecretStore only has resolve method, does not own lease minting or backend token generation
+    assert hasattr(store, "resolve")
+    assert not hasattr(store, "mint_lease")
+    assert not hasattr(store, "create_lease")
+    import pytest
+    with pytest.raises(RuntimeError, match="empty secret ref_id"):
+        store.resolve("", fail_closed=True)

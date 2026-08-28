@@ -30,20 +30,29 @@ def _ok(data: Any = None, message: str = "success") -> dict:
 
 
 def compute_reconciled_status(installation: HermesSkillInstallation) -> str:
-    """Compute the reconciled status comparing desired (status) and actual (actual_status).
+    """Compute the reconciled status comparing desired (status, generation) and actual (actual_status, actual_generation).
     - If target_kind != 'edge', returns desired status.
     - If target_kind == 'edge':
-      - If actual_status == desired status (e.g. 'installed' == 'installed') -> 'reconciled'
-      - If actual_status is None -> 'pending_sync'
-      - Otherwise -> 'drifted'
+      - If desired_generation != actual_generation:
+        - If actual_generation == 0 and not actual_status: return 'pending_sync'
+        - Otherwise: return 'drifted'
+      - If actual_status and desired status match (e.g. 'installed' == 'installed' or 'healthy'): return 'reconciled'
+      - If not actual_status: return 'pending_sync'
+      - Otherwise: return 'drifted'
     """
     if getattr(installation, "target_kind", "remote") != "edge":
         return str(installation.status or "pending")
     desired = str(installation.status or "").lower()
     actual = str(installation.actual_status or "").lower()
+    desired_gen = getattr(installation, "desired_generation", 1) or 1
+    actual_gen = getattr(installation, "actual_generation", 0) or 0
+    if desired_gen != actual_gen:
+        if actual_gen == 0 and not actual:
+            return "pending_sync"
+        return "drifted"
     if not actual:
         return "pending_sync"
-    if actual == desired:
+    if actual == desired or (actual in ("healthy", "ready") and desired == "installed"):
         return "reconciled"
     return "drifted"
 
@@ -109,20 +118,40 @@ async def create_installation(
     user, org = user_org
     if user:
         await PermissionChecker.require_permission(db, user.id, org.id, "skill:install")
-    installer = SkillInstaller(db)
-    installation = await installer.install(
-        skill_id=body.skill_id,
-        agent_id=body.agent_id,
-        org_id=org.id,
-        profile_id=body.profile_id,
-        workspace_id=body.workspace_id,
-        install_mode=body.install_mode,
-        conflict_strategy=body.conflict_strategy,
-        installed_by=user.id if user else None,
-    )
-    installation.target_kind = body.target_kind or "remote"
-    installation.edge_node_id = body.edge_node_id
-    await db.flush()
+    if body.target_kind == "edge":
+        # Edge installation: record desired configuration on control plane without local filesystem side effects
+        installation = HermesSkillInstallation(
+            org_id=org.id,
+            skill_id=body.skill_id,
+            agent_id=body.agent_id or f"edge-{body.edge_node_id or 'node'}",
+            profile_id=body.profile_id,
+            workspace_id=body.workspace_id,
+            install_mode=body.install_mode or "copy",
+            conflict_strategy=body.conflict_strategy,
+            target_kind="edge",
+            edge_node_id=body.edge_node_id,
+            status="installed",
+            desired_generation=1,
+            actual_generation=0,
+            installed_by=user.id if user else None,
+        )
+        db.add(installation)
+        await db.flush()
+    else:
+        installer = SkillInstaller(db)
+        installation = await installer.install(
+            skill_id=body.skill_id,
+            agent_id=body.agent_id,
+            org_id=org.id,
+            profile_id=body.profile_id,
+            workspace_id=body.workspace_id,
+            install_mode=body.install_mode,
+            conflict_strategy=body.conflict_strategy,
+            installed_by=user.id if user else None,
+        )
+        installation.target_kind = body.target_kind or "remote"
+        installation.edge_node_id = body.edge_node_id
+        await db.flush()
     await db.commit()
     return _ok(InstallationRead.model_validate(installation).model_dump())
 

@@ -39,9 +39,12 @@ def _verify_internal_token(x_skill_agent_token: str | None = Header(default=None
 
 
 class MintCredentialRequest(BaseModel):
+    run_id: str
+    attempt_id: str
     instance_id: str | None = None
     agent_profile: str | None = None
     scope: str = "hermes:invoke"
+    target: str | None = None
 
 
 class MintCredentialResponse(BaseModel):
@@ -63,6 +66,9 @@ async def mint_credential_lease(
 ) -> MintCredentialResponse:
     if not x_exec_org_id:
         raise HTTPException(status_code=400, detail="missing X-Exec-Org-Id header")
+
+    if not body.run_id or not body.run_id.strip() or not body.attempt_id or not body.attempt_id.strip():
+        raise HTTPException(status_code=400, detail="missing run_id or attempt_id for credential lease binding")
 
     record: HermesAgentInstance | None = None
     if body.instance_id:
@@ -97,7 +103,10 @@ async def mint_credential_lease(
         subject=f"hermes-lease:{record.id}",
         extra_claims={
             "org_id": x_exec_org_id,
+            "run_id": body.run_id.strip(),
+            "attempt_id": body.attempt_id.strip(),
             "instance_id": record.id,
+            "target": (body.target or record.id).strip(),
             "scope": body.scope,
         },
         expires_delta=timedelta(seconds=ttl_secs),

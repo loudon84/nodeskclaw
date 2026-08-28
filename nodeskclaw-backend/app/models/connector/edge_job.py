@@ -32,6 +32,12 @@ class EdgeJob(BaseModel):
             "run_id",
             postgresql_where=text("deleted_at IS NULL"),
         ),
+        Index(
+            "ix_edge_jobs_idempotency",
+            "org_id",
+            "idempotency_key",
+            postgresql_where=text("deleted_at IS NULL AND idempotency_key IS NOT NULL"),
+        ),
     )
 
     org_id: Mapped[str] = mapped_column(
@@ -41,6 +47,11 @@ class EdgeJob(BaseModel):
         String(36), ForeignKey("edge_nodes.id", ondelete="CASCADE"), nullable=False, index=True
     )
     run_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    attempt_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    step_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    run_generation: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    request_trace_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    idempotency_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
     tool_name: Mapped[str] = mapped_column(String(255), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default=EdgeJobStatus.QUEUED.value)
     arguments: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
@@ -49,4 +60,5 @@ class EdgeJob(BaseModel):
     claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     delivery_generation: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cancel_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

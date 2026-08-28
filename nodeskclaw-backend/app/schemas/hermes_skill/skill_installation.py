@@ -38,6 +38,8 @@ class InstallationRead(BaseModel):
     edge_node_id: str | None = None
     actual_status: str | None = None
     actual_reported_at: datetime | None = None
+    desired_generation: int = 1
+    actual_generation: int = 0
     reconciled_status: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None

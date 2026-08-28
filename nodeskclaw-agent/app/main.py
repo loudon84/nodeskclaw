@@ -4,6 +4,7 @@ import logging
 import os
 from typing import Any
 
+import httpx
 from fastapi import Depends, FastAPI, Response, status
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -61,6 +62,7 @@ async def health_ready(response: Response, db: AsyncSession = Depends(get_db)) -
         "migration": True,
         "config_security": True,
         "artifact_storage": True,
+        "credential_broker": True,
     }
 
     # 1. DB connectivity
@@ -113,6 +115,23 @@ async def health_ready(response: Response, db: AsyncSession = Depends(get_db)) -
     except Exception:
         checks["artifact_storage"] = False
         reasons.append("cannot create or access artifact storage directory")
+
+    # 5. Credential Broker check (production readiness)
+    if not settings.SKILL_AGENT_INSECURE_MODE:
+        if not settings.SKILL_AGENT_CENTRAL_BASE_URL:
+            checks["credential_broker"] = False
+            reasons.append("missing central base url for credential broker")
+        else:
+            try:
+                async with httpx.AsyncClient(timeout=httpx.Timeout(2.0, connect=1.0)) as client:
+                    broker_health = f"{settings.SKILL_AGENT_CENTRAL_BASE_URL.rstrip('/')}/api/health"
+                    res = await client.get(broker_health)
+                    if res.status_code >= 500:
+                        checks["credential_broker"] = False
+                        reasons.append("credential broker returned server error")
+            except Exception:
+                checks["credential_broker"] = False
+                reasons.append("credential broker connectivity check failed")
 
     all_ok = all(checks.values())
     if not all_ok:
