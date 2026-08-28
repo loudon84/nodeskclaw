@@ -131,3 +131,36 @@ async def test_evaluate_gate_fail_when_binding_inactive():
     gate_result, details = knowledge_quality_service.evaluate_gate(payload)
     assert gate_result == "FAIL"
     assert details["checks"]["fail_reasons"]
+
+
+@pytest.mark.asyncio
+async def test_get_application_quality_does_not_persist_snapshot(monkeypatch):
+    monkeypatch.setattr(settings, "KNOWLEDGE_V23_QUALITY_ENABLED", True)
+    monkeypatch.setattr(settings, "KNOWLEDGE_V24_RELEASE_ENABLED", True)
+    app = SimpleNamespace(id="app-1", runtime_snapshot=None)
+    db = MagicMock()
+    monkeypatch.setattr(
+        knowledge_quality_service.knowledge_application_service,
+        "get_application",
+        AsyncMock(return_value=app),
+    )
+    monkeypatch.setattr(
+        knowledge_quality_service,
+        "_compute_application_quality",
+        AsyncMock(return_value={
+            "application_id": "app-1",
+            "score_status": "complete",
+            "subscores": {"runtime_binding": 1.0},
+            "data_coverage": {},
+            "issues": [],
+            "calculated_at": "2026-01-01T00:00:00+00:00",
+        }),
+    )
+    persist_mock = AsyncMock()
+    monkeypatch.setattr(knowledge_quality_service, "persist_application_snapshot", persist_mock)
+
+    payload = await knowledge_quality_service.get_application_quality(db, MEMBER, "app-1")
+
+    assert payload["application_id"] == "app-1"
+    persist_mock.assert_not_called()
+    db.commit.assert_not_called()

@@ -118,17 +118,7 @@ async def get_application_quality(
             "calculated_at": datetime.now(UTC).isoformat(),
         }
     app = await knowledge_application_service.get_application(db, member, application_id)
-    payload = await _compute_application_quality(db, member, application_id, app)
-    if settings.KNOWLEDGE_V24_RELEASE_ENABLED:
-        await persist_application_snapshot(
-            db,
-            member,
-            application_id,
-            manifest=None,
-            quality_payload=payload,
-        )
-        await db.commit()
-    return payload
+    return await _compute_application_quality(db, member, application_id, app)
 
 
 async def _compute_application_quality(
