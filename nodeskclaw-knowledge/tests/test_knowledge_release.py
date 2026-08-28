@@ -16,6 +16,7 @@ from app.services import (
     application_retrieval_policy_service,
     knowledge_application_service,
     knowledge_quality_service,
+    release_integrity_service,
     release_promotion_service,
 )
 
@@ -41,7 +42,7 @@ def _app():
     )
 
 
-def _release(*, status="draft", version=1, manifest=None, snapshot_id=None):
+def _release(*, status="draft", version=1, manifest=None, snapshot_id=None, validation_job_id=None, manifest_hash=None):
     return SimpleNamespace(
         id="rel-1",
         org_id="org-1",
@@ -56,11 +57,13 @@ def _release(*, status="draft", version=1, manifest=None, snapshot_id=None):
             "answer_model": "gpt-4",
             "knowledge_sets": [],
         },
+        manifest_hash=manifest_hash,
         quality_snapshot_id=snapshot_id,
+        validation_job_id=validation_job_id,
+        validation_error=None,
         created_by_member_id="member-1",
         promoted_at=None,
         retired_at=None,
-        validation_error=None,
         deleted_at=None,
         created_at=datetime.now(UTC),
     )
@@ -76,11 +79,12 @@ def _policy_revision():
     )
 
 
-def _snapshot(*, gate_result=QualityGateResult.pass_.value):
+def _snapshot(*, gate_result=QualityGateResult.pass_.value, manifest_hash="hash-1"):
     return SimpleNamespace(
         id="snap-1",
         deleted_at=None,
         gate_result=gate_result,
+        manifest_hash=manifest_hash,
     )
 
 
@@ -133,9 +137,13 @@ async def test_create_release_returns_draft(monkeypatch):
         "app.services.knowledge_application_service._next_release_version",
         new=AsyncMock(return_value=3),
     ), patch(
-        "app.services.knowledge_application_service.build_release_manifest",
+        "app.services.advisory_lock.application_advisory_xact_lock",
+        new=AsyncMock(),
+    ), patch(
+        "app.services.release_manifest_service.build",
         new=AsyncMock(
             return_value={
+                "schema_version": 1,
                 "application_id": "app-1",
                 "release_version": 3,
                 "retrieval_policy_revision_id": "policy-1",
@@ -143,6 +151,9 @@ async def test_create_release_returns_draft(monkeypatch):
                 "knowledge_sets": [],
             }
         ),
+    ), patch(
+        "app.services.release_manifest_service.manifest_hash",
+        return_value="manifest-hash-3",
     ), patch(
         "app.services.knowledge_application_service.ensure_release_channels",
         new=AsyncMock(return_value=[]),
@@ -155,19 +166,18 @@ async def test_create_release_returns_draft(monkeypatch):
     assert release.status == ApplicationReleaseStatus.draft.value
     assert release.version == 3
     assert release.release_manifest["retrieval_policy_revision_id"] == "policy-1"
+    assert release.manifest_hash == "manifest-hash-3"
 
 
 @pytest.mark.asyncio
-async def test_validate_release_sets_validated_on_pass(monkeypatch):
+async def test_validate_release_enqueues_job_and_sets_validating(monkeypatch):
     monkeypatch.setattr(settings, "KNOWLEDGE_V24_RELEASE_ENABLED", True)
     release = _release(status=ApplicationReleaseStatus.draft.value)
     db = MagicMock()
     db.flush = AsyncMock()
     db.commit = AsyncMock()
     db.refresh = AsyncMock()
-
-    readiness = SimpleNamespace(ready=True, to_dict=lambda: {"ready": True})
-    snapshot = _snapshot(gate_result=QualityGateResult.pass_.value)
+    job = SimpleNamespace(id="job-1", target_key="validate_only")
 
     with patch(
         "app.services.knowledge_application_service.get_application",
@@ -179,32 +189,36 @@ async def test_validate_release_sets_validated_on_pass(monkeypatch):
         "app.services.knowledge_application_service.get_release",
         new=AsyncMock(return_value=release),
     ), patch(
-        "app.services.application_readiness_service.check",
-        new=AsyncMock(return_value=readiness),
-    ), patch(
+        "app.services.build_orchestrator.enqueue_build",
+        new=AsyncMock(return_value=job),
+    ) as enqueue_build, patch(
         "app.services.knowledge_quality_service.persist_application_snapshot",
-        new=AsyncMock(return_value=snapshot),
-    ), patch(
+        new=AsyncMock(),
+    ) as persist_snapshot, patch(
         "app.services.knowledge_application_service.write_audit",
         new=AsyncMock(),
     ):
         validated = await knowledge_application_service.validate_release(db, MEMBER, "app-1", "rel-1")
 
-    assert validated.status == ApplicationReleaseStatus.validated.value
-    assert validated.quality_snapshot_id == "snap-1"
+    assert validated.status == ApplicationReleaseStatus.validating.value
+    assert validated.validation_job_id == "job-1"
+    enqueue_build.assert_awaited_once()
+    persist_snapshot.assert_not_called()
+    kwargs = enqueue_build.await_args.kwargs
+    assert kwargs["target_kind"] == "release_validation"
+    assert kwargs["target_key"] == "validate_only"
+    assert kwargs["release_candidate_id"] == "rel-1"
 
 
 @pytest.mark.asyncio
-async def test_validate_release_fails_on_quality_gate(monkeypatch):
+async def test_validate_release_promote_on_validated_uses_promote_stable_target(monkeypatch):
     monkeypatch.setattr(settings, "KNOWLEDGE_V24_RELEASE_ENABLED", True)
     release = _release(status=ApplicationReleaseStatus.draft.value)
     db = MagicMock()
     db.flush = AsyncMock()
     db.commit = AsyncMock()
     db.refresh = AsyncMock()
-
-    readiness = SimpleNamespace(ready=True, to_dict=lambda: {"ready": True})
-    snapshot = _snapshot(gate_result=QualityGateResult.fail.value)
+    job = SimpleNamespace(id="job-2", target_key="validate_only")
 
     with patch(
         "app.services.knowledge_application_service.get_application",
@@ -216,22 +230,33 @@ async def test_validate_release_fails_on_quality_gate(monkeypatch):
         "app.services.knowledge_application_service.get_release",
         new=AsyncMock(return_value=release),
     ), patch(
-        "app.services.application_readiness_service.check",
-        new=AsyncMock(return_value=readiness),
-    ), patch(
-        "app.services.knowledge_quality_service.persist_application_snapshot",
-        new=AsyncMock(return_value=snapshot),
+        "app.services.build_orchestrator.enqueue_build",
+        new=AsyncMock(return_value=job),
+    ) as enqueue_build, patch(
+        "app.services.knowledge_application_service.write_audit",
+        new=AsyncMock(),
     ):
-        with pytest.raises(ConflictError) as exc:
-            await knowledge_application_service.validate_release(db, MEMBER, "app-1", "rel-1")
-    assert exc.value.message_key == "errors.knowledge.quality_gate_failed"
-    assert release.status == ApplicationReleaseStatus.failed.value
+        validated = await knowledge_application_service.validate_release(
+            db,
+            MEMBER,
+            "app-1",
+            "rel-1",
+            promote_on_validated=True,
+        )
+
+    assert validated.status == ApplicationReleaseStatus.validating.value
+    assert job.target_key == "promote_stable"
+    assert enqueue_build.await_args.kwargs["target_key"] == "promote_stable"
 
 
 @pytest.mark.asyncio
 async def test_promote_stable_requires_pass_gate(monkeypatch):
     monkeypatch.setattr(settings, "KNOWLEDGE_V24_RELEASE_ENABLED", True)
-    release = _release(status=ApplicationReleaseStatus.validated.value, snapshot_id="snap-1")
+    release = _release(
+        status=ApplicationReleaseStatus.validated.value,
+        snapshot_id="snap-1",
+        manifest_hash="hash-1",
+    )
     channel = SimpleNamespace(
         id="ch-1",
         application_id="app-1",
@@ -256,8 +281,16 @@ async def test_promote_stable_requires_pass_gate(monkeypatch):
         "app.services.release_promotion_service.get_release",
         new=AsyncMock(return_value=release),
     ), patch(
+        "app.services.release_promotion_service.application_advisory_xact_lock",
+        new=AsyncMock(),
+    ), patch(
         "app.services.release_promotion_service._get_channel",
         new=AsyncMock(return_value=channel),
+    ), patch(
+        "app.services.release_integrity_service.evaluate",
+        new=AsyncMock(
+            return_value=release_integrity_service.ReleaseIntegrityResult(status="healthy", reasons=[])
+        ),
     ):
         with pytest.raises(ConflictError) as exc:
             await release_promotion_service.promote(
@@ -269,7 +302,11 @@ async def test_promote_stable_requires_pass_gate(monkeypatch):
 @pytest.mark.asyncio
 async def test_promote_stable_updates_channel_pointer(monkeypatch):
     monkeypatch.setattr(settings, "KNOWLEDGE_V24_RELEASE_ENABLED", True)
-    release = _release(status=ApplicationReleaseStatus.validated.value, snapshot_id="snap-1")
+    release = _release(
+        status=ApplicationReleaseStatus.validated.value,
+        snapshot_id="snap-1",
+        manifest_hash="hash-1",
+    )
     channel = SimpleNamespace(
         id="ch-1",
         application_id="app-1",
@@ -294,8 +331,16 @@ async def test_promote_stable_updates_channel_pointer(monkeypatch):
         "app.services.release_promotion_service.get_release",
         new=AsyncMock(return_value=release),
     ), patch(
+        "app.services.release_promotion_service.application_advisory_xact_lock",
+        new=AsyncMock(),
+    ), patch(
         "app.services.release_promotion_service._get_channel",
         new=AsyncMock(return_value=channel),
+    ), patch(
+        "app.services.release_integrity_service.evaluate",
+        new=AsyncMock(
+            return_value=release_integrity_service.ReleaseIntegrityResult(status="healthy", reasons=[])
+        ),
     ), patch(
         "app.services.release_promotion_service.write_audit",
         new=AsyncMock(),
@@ -305,19 +350,17 @@ async def test_promote_stable_updates_channel_pointer(monkeypatch):
         )
 
     assert updated.active_release_id == "rel-1"
-    assert release.status == ApplicationReleaseStatus.promoted.value
+    assert release.status == ApplicationReleaseStatus.validated.value
 
 
 @pytest.mark.asyncio
 async def test_publish_application_uses_release_flow_when_v24(monkeypatch):
     monkeypatch.setattr(settings, "KNOWLEDGE_V24_RELEASE_ENABLED", True)
     app = _app()
-    release = _release(status=ApplicationReleaseStatus.validated.value)
+    release = _release(status=ApplicationReleaseStatus.validating.value, validation_job_id="job-1")
     db = MagicMock()
     db.commit = AsyncMock()
     db.refresh = AsyncMock()
-
-    readiness = SimpleNamespace(ready=True, to_dict=lambda: {"ready": True})
 
     with patch(
         "app.services.knowledge_application_service.get_application",
@@ -325,9 +368,6 @@ async def test_publish_application_uses_release_flow_when_v24(monkeypatch):
     ), patch(
         "app.services.knowledge_application_service.has_application_permission",
         new=AsyncMock(return_value=True),
-    ), patch(
-        "app.services.application_readiness_service.check",
-        new=AsyncMock(return_value=readiness),
     ), patch(
         "app.services.knowledge_application_service.create_release",
         new=AsyncMock(return_value=release),
@@ -344,9 +384,57 @@ async def test_publish_application_uses_release_flow_when_v24(monkeypatch):
         published = await knowledge_application_service.publish_application(db, MEMBER, "app-1")
 
     create_release.assert_awaited_once()
-    validate_release.assert_awaited_once()
-    promote.assert_awaited_once()
+    validate_release.assert_awaited_once_with(
+        db,
+        MEMBER,
+        "app-1",
+        "rel-1",
+        promote_on_validated=False,
+    )
+    promote.assert_not_called()
     assert published.status == "active"
+    assert published.validation_job_id == "job-1"
+
+
+@pytest.mark.asyncio
+async def test_publish_application_promote_on_validated_passes_flag(monkeypatch):
+    monkeypatch.setattr(settings, "KNOWLEDGE_V24_RELEASE_ENABLED", True)
+    app = _app()
+    release = _release(status=ApplicationReleaseStatus.validating.value, validation_job_id="job-2")
+    db = MagicMock()
+    db.commit = AsyncMock()
+    db.refresh = AsyncMock()
+
+    with patch(
+        "app.services.knowledge_application_service.get_application",
+        new=AsyncMock(return_value=app),
+    ), patch(
+        "app.services.knowledge_application_service.has_application_permission",
+        new=AsyncMock(return_value=True),
+    ), patch(
+        "app.services.knowledge_application_service.create_release",
+        new=AsyncMock(return_value=release),
+    ), patch(
+        "app.services.knowledge_application_service.validate_release",
+        new=AsyncMock(return_value=release),
+    ) as validate_release, patch(
+        "app.services.knowledge_quality_service.build_runtime_snapshot",
+        new=AsyncMock(return_value={"published_at": "now"}),
+    ):
+        await knowledge_application_service.publish_application(
+            db,
+            MEMBER,
+            "app-1",
+            promote_on_validated=True,
+        )
+
+    validate_release.assert_awaited_once_with(
+        db,
+        MEMBER,
+        "app-1",
+        "rel-1",
+        promote_on_validated=True,
+    )
 
 
 @pytest.mark.asyncio
