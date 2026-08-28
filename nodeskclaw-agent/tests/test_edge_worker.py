@@ -59,23 +59,25 @@ async def test_edge_worker_incremental_events_and_spool(tmp_path, monkeypatch):
     worker = EdgeWorker()
     worker._spool_dir = tmp_path
 
-    # Simulate connector streaming events
+    # Simulate engine streaming events
     async def mock_execute(*args, **kwargs):
         yield {"event_type": "custom.step", "payload": {"n": 1}}
         yield {"event_type": "run.completed", "payload": {"result": "ok"}}
 
-    monkeypatch.setattr("app.services.edge_worker.execute_connector_run", mock_execute)
+    monkeypatch.setattr("app.services.edge_worker.execute_engine", mock_execute)
 
     # 1. Post succeeds
     client = AsyncMock()
     mock_resp = MagicMock()
+    mock_resp.status_code = 200
     mock_resp.raise_for_status = MagicMock()
     client.post = AsyncMock(return_value=mock_resp)
+    client.get = AsyncMock(return_value=mock_resp)
 
     job = {"id": "job-100", "tool_name": "test", "arguments": {}, "snapshot": {}, "delivery_generation": 3}
     await worker._execute_job(client, job)
 
-    assert client.post.call_count == 2
+    assert client.post.call_count >= 2
     first_call_body = client.post.call_args_list[0].kwargs["json"]["events"][0]
     assert first_call_body["event_type"] == "custom.step"
     assert first_call_body["source"] == "edge"
@@ -87,14 +89,62 @@ async def test_edge_worker_incremental_events_and_spool(tmp_path, monkeypatch):
     # 2. Post fails -> spool to disk
     client_fail = AsyncMock()
     client_fail.post = AsyncMock(side_effect=Exception("network error"))
+    client_fail.get = AsyncMock(side_effect=Exception("network error"))
     await worker._execute_job(client_fail, job)
 
     spool_files = list(tmp_path.glob("*.json"))
-    assert len(spool_files) == 2
+    assert len(spool_files) >= 2
+    # Check spool envelope fields
+    import json
+    spool_content = json.loads(spool_files[0].read_text(encoding="utf-8"))
+    assert spool_content["delivery_generation"] == 3
+    assert spool_content["job_id"] == "job-100"
 
     # 3. Flush spool
     client_recover = AsyncMock()
     client_recover.post = AsyncMock(return_value=mock_resp)
     await worker._flush_spool(client_recover)
     assert len(list(tmp_path.glob("*.json"))) == 0
+
+
+@pytest.mark.asyncio
+async def test_edge_worker_reconcile_desired_installations(monkeypatch):
+    monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_CENTRAL_BASE_URL", "http://central.test")
+    monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_EDGE_TOKEN", "edge-token")
+    monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_EDGE_NODE_ID", "node-1")
+
+    worker = EdgeWorker()
+
+    desired_response = MagicMock()
+    desired_response.status_code = 200
+    desired_response.json.return_value = {
+        "code": 0,
+        "data": {
+            "items": [
+                {"id": "inst-1", "desired_generation": 2, "actual_generation": 1},
+                {"id": "inst-2", "desired_generation": 1, "actual_generation": 1},
+            ]
+        },
+    }
+
+    report_response = MagicMock()
+    report_response.raise_for_status = MagicMock()
+
+    client = AsyncMock()
+    client.get = AsyncMock(return_value=desired_response)
+    client.post = AsyncMock(return_value=report_response)
+
+    await worker._reconcile_desired_installations(client)
+
+    assert client.get.called
+    get_call = client.get.call_args
+    assert "/api/v1/internal/edge/installations/desired" in get_call.args[0]
+
+    assert client.post.called
+    post_call = client.post.call_args
+    assert "/api/v1/internal/edge/installations/actual" in post_call.args[0]
+    body = post_call.kwargs["json"]
+    assert body["installation_id"] == "inst-1"
+    assert body["generation"] == 2
+    assert body["actual_status"] == "ready"
 

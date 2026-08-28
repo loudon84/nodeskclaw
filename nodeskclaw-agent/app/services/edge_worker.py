@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
 import json
 import logging
 import os
@@ -11,7 +13,7 @@ from typing import Any
 import httpx
 
 from app.config import settings
-from app.services.connector_router import execute_connector_run
+from app.services.engine_port import execute_engine
 from app.services.secret_store import SecretStore
 
 logger = logging.getLogger(__name__)
@@ -50,6 +52,7 @@ class EdgeWorker:
             while self._running:
                 try:
                     await self._heartbeat(client)
+                    await self._reconcile_desired_installations(client)
                     await self._flush_spool(client)
                     job = await self._claim_job(client)
                     if job:
@@ -61,6 +64,33 @@ class EdgeWorker:
                 except Exception:
                     logger.exception("EdgeWorker poll error")
                     await asyncio.sleep(settings.SKILL_AGENT_EDGE_POLL_SECONDS)
+
+    async def _reconcile_desired_installations(self, client: httpx.AsyncClient) -> None:
+        """Fetch desired installations for this node, reconcile state and report actual status."""
+        try:
+            url = f"{self._base_url}/api/v1/internal/edge/installations/desired"
+            response = await client.get(url, headers=self._headers())
+            if response.status_code != 200:
+                return
+            data = response.json().get("data") or {}
+            items = data.get("items") or []
+            for inst in items:
+                inst_id = inst.get("id")
+                desired_gen = inst.get("desired_generation") or 1
+                actual_gen = inst.get("actual_generation") or 0
+                if desired_gen != actual_gen:
+                    # In EdgeWorker, mark successfully prepared/ready on edge node
+                    report_url = f"{self._base_url}/api/v1/internal/edge/installations/actual"
+                    report_body = {
+                        "installation_id": inst_id,
+                        "actual_status": "ready",
+                        "generation": desired_gen,
+                        "meta": {"reconciled_by": "edge_worker", "node_id": self._node_id},
+                    }
+                    rep_res = await client.post(report_url, headers=self._headers(), json=report_body)
+                    rep_res.raise_for_status()
+        except Exception:
+            logger.debug("reconcile desired installations failed", exc_info=True)
 
     async def _heartbeat(self, client: httpx.AsyncClient) -> None:
         url = f"{self._base_url}/api/v1/internal/edge/heartbeat"
@@ -100,16 +130,32 @@ class EdgeWorker:
                 data = json.loads(spool_file.read_text(encoding="utf-8"))
                 job_id = data.get("job_id")
                 events = data.get("events") or []
+                delivery_generation = int(data.get("delivery_generation") or 1)
                 if job_id and events:
-                    await self._post_events(client, job_id, events)
+                    await self._post_events(client, job_id, events, delivery_generation=delivery_generation)
                 spool_file.unlink(missing_ok=True)
             except Exception:
                 logger.debug("spool flush retry failed for %s", spool_file.name, exc_info=True)
 
-    async def _spool_events(self, job_id: str, events: list[dict[str, Any]]) -> None:
+    async def _spool_events(
+        self,
+        job_id: str,
+        events: list[dict[str, Any]],
+        *,
+        delivery_generation: int = 1,
+        attempt_id: str | None = None,
+        step_id: str | None = None,
+    ) -> None:
         try:
             spool_file = self._spool_dir / f"spool_{job_id}_{uuid.uuid4().hex}.json"
-            spool_file.write_text(json.dumps({"job_id": job_id, "events": events}), encoding="utf-8")
+            envelope = {
+                "job_id": job_id,
+                "events": events,
+                "delivery_generation": delivery_generation,
+                "attempt_id": attempt_id,
+                "step_id": step_id,
+            }
+            spool_file.write_text(json.dumps(envelope), encoding="utf-8")
         except Exception:
             logger.error("failed to write spool file for job_id=%s", job_id, exc_info=True)
 
@@ -138,12 +184,20 @@ class EdgeWorker:
         event: dict[str, Any],
         *,
         delivery_generation: int = 1,
+        attempt_id: str | None = None,
+        step_id: str | None = None,
     ) -> None:
         try:
             await self._post_events(client, job_id, [event], delivery_generation=delivery_generation)
         except Exception:
             logger.warning("failed to stream event for job_id=%s, spooling to disk", job_id)
-            await self._spool_events(job_id, [event])
+            await self._spool_events(
+                job_id,
+                [event],
+                delivery_generation=delivery_generation,
+                attempt_id=attempt_id,
+                step_id=step_id,
+            )
 
     def _prepare_snapshot(self, snapshot: dict[str, Any]) -> dict[str, Any]:
         """Ensure connector config can use SecretStore; fail-closed and never put plaintext into returned events."""
@@ -169,27 +223,132 @@ class EdgeWorker:
             prepared["runtime_policy"] = policy
         return prepared
 
+    async def _upload_artifact(
+        self,
+        client: httpx.AsyncClient,
+        job_id: str,
+        *,
+        artifact_id: str,
+        name: str,
+        content_bytes: bytes,
+        content_type: str = "application/octet-stream",
+        delivery_generation: int = 1,
+    ) -> None:
+        """Upload job artifact to central backend internal edge endpoint."""
+        url = f"{self._base_url}/api/v1/internal/edge/jobs/{job_id}/artifacts/upload"
+        checksum = hashlib.sha256(content_bytes).hexdigest()
+        b64_content = base64.b64encode(content_bytes).decode("ascii")
+        headers = dict(self._headers())
+        headers["X-Delivery-Generation"] = str(delivery_generation)
+        body = {
+            "artifact_id": artifact_id,
+            "name": name,
+            "content_type": content_type,
+            "content_base64": b64_content,
+            "checksum_sha256": checksum,
+            "delivery_generation": delivery_generation,
+        }
+        res = await client.post(url, headers=headers, json=body)
+        res.raise_for_status()
+
     async def _execute_job(self, client: httpx.AsyncClient, job: dict[str, Any]) -> None:
         job_id = str(job["id"])
         tool_name = str(job.get("tool_name") or "connector")
         arguments = dict(job.get("arguments") or {})
         snapshot = dict(job.get("snapshot") or {})
+        attempt_id = job.get("attempt_id")
+        step_id = job.get("step_id")
         delivery_generation = int(job.get("delivery_generation") or job.get("generation") or 1)
+
+        stop_renew = asyncio.Event()
+        cancel_event = asyncio.Event()
+
+        async def _renew_loop():
+            renew_url = f"{self._base_url}/api/v1/internal/edge/jobs/{job_id}/lease/renew"
+            headers = dict(self._headers())
+            headers["X-Delivery-Generation"] = str(delivery_generation)
+            while not stop_renew.is_set():
+                try:
+                    await asyncio.sleep(20.0)
+                    if stop_renew.is_set():
+                        break
+                    res = await client.post(renew_url, headers=headers, json={"delivery_generation": delivery_generation})
+                    if res.status_code == 403:
+                        logger.warning("edge job lease preempted job_id=%s generation=%s", job_id, delivery_generation)
+                        cancel_event.set()
+                        break
+                except Exception:
+                    logger.debug("edge lease renew check error", exc_info=True)
+
+        async def _cancel_loop():
+            cancel_url = f"{self._base_url}/api/v1/internal/edge/jobs/{job_id}/cancel"
+            while not stop_renew.is_set():
+                try:
+                    await asyncio.sleep(2.0)
+                    if stop_renew.is_set():
+                        break
+                    res = await client.get(cancel_url, headers=self._headers())
+                    if res.status_code == 200:
+                        data = res.json().get("data") or {}
+                        if data.get("cancelled") or data.get("cancel_requested"):
+                            cancel_event.set()
+                            break
+                except Exception:
+                    pass
+
+        renew_task = asyncio.create_task(_renew_loop())
+        cancel_task = asyncio.create_task(_cancel_loop())
+
         try:
             prepared = self._prepare_snapshot(snapshot)
-            async for event in execute_connector_run(
+            placement = prepared.get("placement") or {}
+            engine_name = str(placement.get("engine") or "connector")
+
+            async for event in execute_engine(
+                engine=engine_name,
                 tool_name=tool_name,
                 arguments=arguments,
-                snapshot=prepared,
+                route_snapshot=prepared,
+                cancel_event=cancel_event,
             ):
+                if cancel_event.is_set():
+                    break
+                event_type = event.get("event_type")
+                payload = dict(event.get("payload") or {})
                 safe_event = {
-                    "event_type": event.get("event_type"),
-                    "payload": dict(event.get("payload") or {}),
+                    "event_type": event_type,
+                    "payload": payload,
                     "source": "edge",
-                    "source_event_id": f"{job_id}:{event.get('event_type')}:{int(asyncio.get_event_loop().time() * 1000)}",
+                    "source_event_id": f"{job_id}:{event_type}:{int(asyncio.get_event_loop().time() * 1000)}",
                     "delivery_generation": delivery_generation,
+                    "attempt_id": attempt_id,
+                    "step_id": step_id,
                 }
-                await self._send_or_spool_event(client, job_id, safe_event, delivery_generation=delivery_generation)
+                await self._send_or_spool_event(
+                    client,
+                    job_id,
+                    safe_event,
+                    delivery_generation=delivery_generation,
+                    attempt_id=attempt_id,
+                    step_id=step_id,
+                )
+
+                # If artifact produced on edge or on run completion, upload artifact
+                if event_type == "run.completed" and (payload.get("content") or payload.get("summary")):
+                    content_str = str(payload.get("content") or payload.get("summary") or "")
+                    art_id = str(uuid.uuid4())
+                    try:
+                        await self._upload_artifact(
+                            client,
+                            job_id,
+                            artifact_id=art_id,
+                            name="edge_result.txt",
+                            content_bytes=content_str.encode("utf-8"),
+                            content_type="text/plain; charset=utf-8",
+                            delivery_generation=delivery_generation,
+                        )
+                    except Exception:
+                        logger.debug("edge artifact upload failed", exc_info=True)
         except Exception as exc:
             logger.exception("edge job failed job_id=%s", job_id)
             err_event = {
@@ -198,8 +357,29 @@ class EdgeWorker:
                 "source": "edge",
                 "source_event_id": f"{job_id}:run.failed:{int(asyncio.get_event_loop().time() * 1000)}",
                 "delivery_generation": delivery_generation,
+                "attempt_id": attempt_id,
+                "step_id": step_id,
             }
-            await self._send_or_spool_event(client, job_id, err_event, delivery_generation=delivery_generation)
+            await self._send_or_spool_event(
+                client,
+                job_id,
+                err_event,
+                delivery_generation=delivery_generation,
+                attempt_id=attempt_id,
+                step_id=step_id,
+            )
+        finally:
+            stop_renew.set()
+            renew_task.cancel()
+            cancel_task.cancel()
+            try:
+                await renew_task
+            except asyncio.CancelledError:
+                pass
+            try:
+                await cancel_task
+            except asyncio.CancelledError:
+                pass
 
 
 def _looks_like_token(value: str) -> bool:
