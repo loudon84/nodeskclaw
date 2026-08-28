@@ -38,6 +38,7 @@ def upgrade() -> None:
         sa.Column("lease_until", sa.DateTime(timezone=True), nullable=True),
         sa.Column("claimed_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("dispatcher_id", sa.String(length=64), nullable=True),
+        sa.Column("lease_generation", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("id", sa.String(length=36), nullable=False),
         sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
