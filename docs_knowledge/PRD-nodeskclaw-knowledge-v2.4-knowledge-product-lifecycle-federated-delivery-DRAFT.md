@@ -1,7 +1,7 @@
 ---
 work_item_id: knowledge-v2.4-product-lifecycle-federated-delivery
 version: v2.4
-status: DRAFT
+status: REVIEW_REQUIRED
 review_verdict: ""
 approved_at: ""
 predecessor: v2.3-knowledge-intelligence-derived-artifacts
@@ -496,17 +496,24 @@ Removal-only → update manifest / remove derived lineage / avoid reprocess unch
 | §3.10 | Table Provider 把 alteration 当 rows | `app/knowledge_artifacts/table.py` build/validate/retrieve 均 `get_artifact_alteration` 后解析 rows；同文件 `diff()` 把同一 API 当 drift（added/changed/removed）使用，语义自相矛盾 | 成立 |
 | §3.11 | changed_source_file_ids = added + changed | `app/services/build_input_manifest_service.py#changed_source_file_ids` | 成立 |
 
-## Owner 唯一性
+## Owner 唯一性（revision 后）
 
-未发现重复 Production Owner：`ReleasePromotionService`（§29）、`ArtifactSecurityService`（§20）、`FederatedRetrievalPlanner`（§12）、`SemanticModelResolver`（§14）均为唯一新 Owner；`ArtifactBuildExecutor` 归入现有 `knowledge-build-worker` dispatch（§18/§42），不构成第二 Build Owner。
+| Capability | 唯一生产权威 | 非权威角色 |
+|---|---|---|
+| 生产 Provider / mode 选择 | `FederatedRetrievalPlanner` → `FederationExecutionPlan` | Query Intelligence 只提供 `QueryAnalysis` 输入；`capability_planner` 不再是生产权威，仅可作 per-KB eligibility helper |
+| Slice 物化 | `retrieval_planner` 消费 `FederationExecutionPlan` + `AccessPlan` | 不得自行选择 provider |
+| Channel pointer 写入 | `ReleasePromotionService`（promote / rollback / publish-compat promote） | Channel API 不得自行改 `active_release_id` |
+| Application 运行配置 | Release Manifest | `runtime_snapshot` 禁止生产读取 |
+| 授权 | `permission_service.AccessPlan` | `ArtifactSecurityService` 是 Artifact 路径 adapter，不是第二套 ACL |
+| Table 数据合同 | nodeskclaw canonical TableArtifact | RAGFlow native table 不是 v2.4 生产 Owner |
 
-## 外部未核验项（阻塞 REVIEW_REQUIRED）
+## 外部未核验项（不阻塞 Review）
 
-以下 RAGFlow 侧能力声明无法从本仓核验（仓内无 RAGFlow 源码副本），需对照 RAGFlow 源码/官方文档核验后方可进入 Review：
+仓内无 RAGFlow 源码，下列能力不得写成已证实事实，且不作为 v2.4 关闭前置：
 
-1. §25 P0 依赖：RAGFlow 是否存在稳定的 structured table/chunk contract；
-2. §37：RAGFlow main 的 Corpus→Skill 能力与 Dataset Skill API；
-3. §22：RAGFlow native artifact API 面（wiki/graph/tree/page_index/mindmap/timeline 的 list/get 接口）。
+1. RAGFlow stable structured table/chunk contract — v2.4 不依赖；生产 Table 合同见 §25
+2. Corpus→Skill / Dataset Skill API — P1 评估（§37）
+3. Native wiki/graph/tree/page_index/mindmap/timeline API 面 — P1（§22）
 
 ## Current Capability Inventory
 
@@ -515,16 +522,31 @@ Removal-only → update manifest / remove derived lineage / avoid reprocess unch
 | Artifact Build API | `app/api/v2/artifacts.py#enqueue_artifact_build` | HTTP 请求内同步 `provider.build`，原地更新单行 artifact（version+1） | `artifacts.py` | PARTIAL → MODIFY |
 | Build Job 执行分发 | `app/services/build_orchestrator.py#process_build_job` | `EXECUTORS.get(job.index_type)`；`target_kind/target_key` 已入队但不参与 dispatch | `build_orchestrator.py`、`build_executors.py` | PARTIAL → MODIFY |
 | Artifact 身份模型 | `app/models/knowledge_artifact.py#KnowledgeArtifact` | 部分唯一索引 `org+kb+type+status`；`scope/source_file_id/file_version_id` 为普通字段，无法表示同 KB 多 file-scoped artifact，无可回滚 revision | `knowledge_artifact.py` | PARTIAL → MODIFY |
-| Artifact 访问控制 | `app/api/v2/artifacts.py` 各端点 | 仅 `org_id` match；无 KB READ/MANAGE、SourceFile READ、SourceRef 级过滤 | `artifacts.py` | MISSING → ADD（ArtifactSecurityService）+ MODIFY 端点 |
-| Production Retrieval 规划 | `app/services/retrieval_service.py#_retrieve_for_set` | 主链 `capability_planner.build_capability_plan`；Query Intelligence 仅 merge 后输出 | `retrieval_service.py` | PARTIAL → MODIFY |
+| Artifact 访问控制 | `app/api/v2/artifacts.py` 各端点；授权权威已是 `permission_service.AccessPlan` + `chunk_security_service` | Artifact HTTP 仅 `org_id` match；MCP `get_structure`/`get_table` 为另一入口 | `artifacts.py`、`agent_tools.py` | PARTIAL → MODIFY 端点/MCP + ADD Artifact 路径 adapter（消费 AccessPlan） |
+| Production Retrieval 规划 | `capability_planner.build_capability_plan`（生产主链）；`retrieval_planner`（slice）；`analyze_query`（merge 后输出） | 三层均可影响 provider/mode | `retrieval_service.py`、`capability_planner.py`、`retrieval_planner.py` | PARTIAL → ADD `FederatedRetrievalPlanner` 为唯一规划权威；MODIFY/吸收 `capability_planner`；MODIFY `retrieval_planner` 为 slice 物化 |
+| Application 产品投放入口 | `chat_service.create_session`；`agent_tools.knowledge_search_or_retrieve`；`mcp_server` | Chat 要求 `ApplicationStatus.active` 并用 `set_ids[0]`；MCP/Agent 为 `application_id` 或 `knowledge_set_id`，无 channel | `chat_service.py`、`agent_tools.py` | PARTIAL → MODIFY 现有入口；禁止另建平行 Delivery Adapter |
+| runtime_snapshot | `knowledge_application_service.publish_application` | 发布时写入可变 snapshot，检索可当运行配置 | `knowledge_application.py` | PARTIAL → REMOVE 生产读取 |
 | Fusion | `app/services/retrieval_merge_service.py#_rank_by_rrf` | provider key = `slice_mode`；候选仅 `RagflowChunk` | `retrieval_merge_service.py` | PARTIAL → MODIFY |
 | Quality | `app/services/knowledge_quality_service.py` + `app/api/v2/quality.py` | 计算型 API；`/history` 返回单元素数组；引用不存在的 `RuntimeBindingStatus.active`（AttributeError） | `knowledge_quality_service.py`、`quality.py`、`enums.py` | PARTIAL → MODIFY + ADD Snapshot/Gate |
 | Application 发布 | `app/services/knowledge_application_service.py#publish_application` | readiness → `status=active` → `runtime_snapshot`；无 Release/Channel/Rollback | `knowledge_application_service.py` | PARTIAL → ADD Release 体系 + MODIFY publish 为兼容入口 |
 | Application Retrieval Profile | `app/services/retrieval_service.py`（application 路径） | `profile_id or app.active_profile_id`；set 上下文取首个可用 Set | `retrieval_service.py`、`knowledge_application.py#active_profile_id` | PARTIAL → MODIFY |
 | KnowledgeModel Revision | `app/services/knowledge_model_service.py#publish_revision` | publish 不归档旧 ACTIVE；DB 无单 ACTIVE 约束 | `knowledge_model_service.py`、`knowledge_model_revision.py` | PARTIAL → MODIFY |
-| Table Provider | `app/knowledge_artifacts/table.py` | 把 drift 语义 alteration API 当 rows 数据源 | `table.py` | CONFLICT → REPLACE + REMOVE |
+| Table Provider | `app/knowledge_artifacts/table.py` | 把 drift 语义 alteration API 当 rows 数据源 | `table.py` | CONFLICT → REPLACE + REMOVE；v2.4 唯一替代 Owner = canonical TableArtifact |
 | Incremental Build 语义 | `app/services/build_input_manifest_service.py#changed_source_file_ids` + `build_executors.py` | changed = added + changed；no-op / removal-only 未定义 | `build_input_manifest_service.py`、`build_executors.py` | PARTIAL → MODIFY |
 | Release / Channel / QualitySnapshot / GatePolicy / RetrievalPolicyRevision / Feedback | — | 不存在（`app/models/`、`app/services/` 无对应实现） | 模型与服务清单 | MISSING → ADD |
+
+## 3.13 Grounding Closure Table
+
+mode=`revision`。只关闭上一轮 Review OPEN Finding。
+
+| Finding | Reproduced | Resolution | Evidence | Status |
+|---|---|---|---|---|
+| F1 生产检索规划第二 Owner | YES | `FederatedRetrievalPlanner` 为唯一 Provider Selection Owner；Query Intelligence 只出 `QueryAnalysis`；`capability_planner` 降为 eligibility helper；`retrieval_planner` 只物化 slice | §12/§13；`capability_planner.py#build_capability_plan`；`retrieval_planner.py` | CLOSED |
+| F2 Chat/MCP/Agent 绕过 Release | YES | Application 产品路径必填 `application_id + channel`；`release_id` 冲突 fail_closed；MODIFY 现有 `chat_service`/`agent_tools`/`mcp_server`，不另建 Delivery Adapter；Set retrieve 保持独立产品面 | §30/§35/§36；`chat_service.py#create_session`；`agent_tools.py#knowledge_search_or_retrieve` | CLOSED |
+| F3 Channel pointer 第二写入口 | YES | `ReleasePromotionService` 覆盖 promote / rollback / publish-compat；Rollback 不是 Channel PATCH | §10/§29/§41 | CLOSED |
+| F4 runtime_snapshot 与 Manifest 双源 | YES | 禁止生产读取 snapshot；resolve 只走 channel pointer；字段存留至 v2.5 删除 | §30/§41 Compatibility；`knowledge_application.py#runtime_snapshot` | CLOSED |
+| F5 Table 两个替代 Owner | YES | v2.4 唯一生产合同 = canonical TableArtifact；RAGFlow native table 不得并列 | §25/§5.10；`table.py` alteration-as-rows | CLOSED |
+| F6 Artifact 鉴权第二套 ACL | YES | AccessPlan 为授权权威；`ArtifactSecurityService` 为路径 adapter，覆盖 HTTP/retrieve/MCP structure/table/export，复用 chunk SourceRef/active-version 规则 | §20；`permission_service.AccessPlan`；`chunk_security_service.py`；`agent_tools.py` | CLOSED |
 
 ---
 
@@ -793,14 +815,18 @@ fusion policy
 KnowledgeSet RetrievalProfile 继续保留：
 
 ```text
-Set-level default / compatibility profile
+Set-level default for Set-scoped retrieve
 ```
 
-但 Application Release Runtime Authority 为：
+它不是 Application Release 的 fallback，也不是 compatibility 路径。
+
+Application Release Runtime Authority 为：
 
 ```text
 ApplicationRetrievalPolicyRevision
 ```
+
+Release Manifest 必须 pin `retrieval_policy_revision_id`。解析失败 fail_closed，禁止回退到 Set Profile。
 
 ---
 
@@ -853,15 +879,17 @@ created_at
 |---|---|---|
 | Artifact Build | `knowledge-build-worker` + `ArtifactBuildExecutor`（`process_build_job` 按 `target_kind` dispatch） | Build API 只入队；worker 统一 leasing / retry / heartbeat / validation / metrics |
 | Artifact 身份与版本 | `KnowledgeArtifact`（stable identity）+ `KnowledgeArtifactRevision`（immutable materialization） | 同 KB 多 file-scoped artifact 可表示；单 ACTIVE revision；旧 Release 可 pin 旧 revision |
-| Artifact 安全 | `ArtifactSecurityService` | list/get/content/retrieve/export 全部重新鉴权；existence != authorization |
-| Release 生命周期 | `KnowledgeApplicationRelease` + `ReleasePromotionService`（promotion 唯一 Owner） | 不可变 manifest；`validated` 后冻结；atomic channel pointer switch |
-| Channel | `KnowledgeReleaseChannel` | `Application + Channel → Release → Immutable Manifest` |
+| Artifact 安全 | `permission_service.AccessPlan`（授权权威）+ `ArtifactSecurityService`（Artifact 路径 enforcement adapter） | 所有 Artifact 消费入口复用同一 AccessPlan / SourceRef / active-version 规则；existence != authorization |
+| Release 生命周期 | `KnowledgeApplicationRelease` + `ReleasePromotionService`（channel pointer 唯一写 Owner：promote / rollback / publish-compat） | 不可变 manifest；`validated` 后冻结；atomic channel pointer switch |
+| Channel | `KnowledgeReleaseChannel`（读权威 = `active_release_id`） | `Application + Channel → Release → Immutable Manifest` |
 | Quality | `KnowledgeQualitySnapshot` + `KnowledgeQualityGatePolicy` | 持久化时间序列；PASS/WARN/FAIL；FAIL 不可 promote stable |
-| Retrieval 权威 | `ApplicationRetrievalPolicyRevision` | Release Runtime 唯一策略权威；Set RetrievalProfile 降级为 set-level default |
-| Federation | `FederatedRetrievalPlanner` + `EvidenceCandidate` + true weighted RRF | 跨 KB/provider 计划、执行与融合；每 KB 独立 AccessPlan |
+| Retrieval 权威 | `ApplicationRetrievalPolicyRevision` | Release Runtime 唯一策略权威；Set RetrievalProfile 保留为 Set 级默认，不是 Application 回退 |
+| Federation 规划 | `FederatedRetrievalPlanner`（唯一生产规划 Owner） | 输出 `FederationExecutionPlan`；Query Intelligence 只提供 `QueryAnalysis` |
+| Slice 物化 | `retrieval_planner` | 只消费 FederationExecutionPlan + AccessPlan，不自行选 provider |
+| Fusion 候选合同 | 统一 `EvidenceCandidate`（MODIFY 现有 `ArtifactEvidenceCandidate` / chunk 候选，不并列第二类型） | 跨 provider Fusion 只消费该合同 |
 | Semantic Model 解析 | `SemanticModelResolver` | Application > KB > No Expansion；冲突进 diagnostics，不静默覆盖 |
-| Table | 真实 Table Contract Provider（P0 RAGFlow stable contract / P1 canonical TableArtifact） | alteration 不再作为 rows 来源 |
-| Delivery | Release-aware MCP / Chat / Agent Delivery Adapter | 所有入口消费同一 Release Manifest |
+| Table | canonical TableArtifact（v2.4 唯一生产数据合同） | alteration 不再作为 rows 来源；RAGFlow native table 非本版本 Owner |
+| Application 产品投放 | 现有 Chat / MCP / Agent tool（MODIFY） | 产品路径必须 `application_id + channel` → 同一 Release Manifest |
 
 ---
 
@@ -871,20 +899,24 @@ created_at
 
 - RAGFlow 作为唯一正式 Knowledge Runtime；
 - `KnowledgeBuildJob` 队列与 `knowledge-build-worker` 拓扑（不新增独立 Artifact Worker，§42）；
-- `KnowledgeSet` RetrievalProfile（降级为 set-level default / compatibility profile，§5.6）；
-- MCP 现有 tool 集（`knowledge.search` 等，仅增加可选 release 参数，§36）；
-- Artifact Provider SPI 基类（`app/knowledge_artifacts/base.py`）。
+- `KnowledgeSet` RetrievalProfile（Set-scoped retrieve 的 set-level default，§5.6；不是 Application Product fallback）；
+- MCP 现有 tool 名称集（`knowledge.search` 等）；Application 产品路径的解析合同按 §36 MODIFY，不另建 tool；
+- Artifact Provider SPI 基类（`app/knowledge_artifacts/base.py`）；
+- `retrieval_planner` 作为 slice 物化 Owner（消费 FederationExecutionPlan，不选 provider）；
+- `permission_service.AccessPlan` 作为授权权威；`chunk_security_service` 的 SourceRef / active-version 规则由 Artifact 路径复用。
 
 ## MODIFY
 
 - `artifacts.py` build 端点 → 入队 `KnowledgeBuildJob(target_kind=artifact)`，不再同步构建（§3.1/§18）；
 - `build_orchestrator.process_build_job` → `target_kind` dispatch（index / artifact / release_validation）（§18）；
 - `KnowledgeArtifact` 模型 → stable identity（§5.7）；
-- Artifact 各端点 → 接入 `ArtifactSecurityService`（§20）；
-- `retrieval_service._retrieve_for_set` → Query Intelligence 进入生产规划链（§13）；
-- `retrieval_merge_service._rank_by_rrf` → provider identity = provider，候选统一 `EvidenceCandidate`（§15/§16）；
+- Artifact HTTP 与 MCP `get_structure` / `get_table` → 接入 `ArtifactSecurityService`（消费 AccessPlan）（§20）；
+- `retrieval_service._retrieve_for_set` / Application retrieve → 先 QueryAnalysis，再 `FederatedRetrievalPlanner`，再 `retrieval_planner` 物化 slice（§12/§13）；
+- `capability_planner` → 不再作为生产规划权威；仅可被 Federation Planner 用作 per-KB eligibility helper，不得单独输出生产 Provider Selection（§12）；
+- `chat_service` / `agent_tools` / `mcp_server` → Application 产品路径解析 `application_id + channel` → Release Manifest（§30/§35/§36）；
+- `retrieval_merge_service._rank_by_rrf` → provider identity = provider；候选统一为现有 candidate 合同的 EvidenceCandidate 形状（MODIFY `ArtifactEvidenceCandidate`，不并列第二类型）（§15/§16）；
 - `knowledge_quality_service` → 修 `RuntimeBindingStatus.active` crash bug；快照持久化；history 查表（§3.6/§27）；
-- `knowledge_application_service.publish_application` → 兼容入口（create → validate → promote stable）（§41）；
+- `knowledge_application_service.publish_application` → 兼容入口（create → validate → promote stable），promote 段必须走 `ReleasePromotionService`（§41）；
 - `knowledge_model_service.publish_revision` → 归档旧 ACTIVE + 单 ACTIVE 约束（§3.9）；
 - `build_executors` 增量语义 → no-op / removal-only（§3.11）；
 - `BuildProfile` → +`artifact_types` / `artifact_trigger_policy`（§19）；
@@ -899,21 +931,22 @@ created_at
 - `ApplicationRetrievalPolicyRevision`（§5.6）；
 - `KnowledgeArtifactRevision`（§5.7）；
 - `knowledge_retrieval_feedback`（§34）；
-- `ArtifactSecurityService`（§20）；
-- `ReleasePromotionService`（§29）；
-- `FederatedRetrievalPlanner` / `SemanticModelResolver` / `EvidenceCandidate`（§12/§14/§15）；
+- `ArtifactSecurityService`（Artifact 路径 adapter，权威仍是 AccessPlan）（§20）；
+- `ReleasePromotionService`（channel pointer 唯一写 Owner）（§29）；
+- `FederatedRetrievalPlanner` / `SemanticModelResolver`（§12/§14）；
 - `ArtifactBuildExecutor`（§18）；
 - Wiki / MindMap / Timeline Provider（P1，§23/§24）；
 - Skill Export（P1，§38）。
 
 ## REPLACE
 
-- Table Provider 数据源语义：`alteration → rows` ⇒ 真实 Table Contract（§25；REMOVE 见 Replacement / Removal Matrix）。
+- Table Provider 数据源语义：`alteration → rows` ⇒ canonical TableArtifact（§25）。
 
 ## REMOVE
 
 - `table.py` 中 `_rows_from_payload(alteration)` 作为 build/validate/retrieve 数据源的行为（§25）；
-- `quality.py` `/history` 返回当前结果单元素数组的伪造历史行为（§27）。
+- `quality.py` `/history` 返回当前结果单元素数组的伪造历史行为（§27）；
+- `KnowledgeApplication.runtime_snapshot` 的生产读取（发布后检索/Chat/MCP 不得再把它当运行配置）（§30）。
 
 ---
 
@@ -921,9 +954,10 @@ created_at
 
 | 旧生产路径 | 分类 | 替代 | Removal Condition |
 |---|---|---|---|
-| `app/knowledge_artifacts/table.py` 以 `get_artifact_alteration` 解析 rows 作为 build/validate/retrieve 数据源 | REPLACE + REMOVE | 真实 Table Contract（P0：RAGFlow stable structured table/chunk contract；P1：canonical TableArtifact） | 新 Table Provider 上线且 Table E2E 通过；旧行为代码删除，仅保留 tests / golden evidence |
+| `app/knowledge_artifacts/table.py` 以 `get_artifact_alteration` 解析 rows 作为 build/validate/retrieve 数据源 | REPLACE + REMOVE | canonical TableArtifact（从 parsed table blocks 物化；schema 见 §25） | 新 Table Provider 上线且 Table E2E 通过；旧行为代码删除，仅保留 tests / golden evidence。RAGFlow native table 若后续证实，须另开版本做 REPLACE，不得与 canonical 并列 |
 | `app/api/v2/quality.py` `/history` 返回 `[current]` | REMOVE | `KnowledgeQualitySnapshot` 持久化查询 | Snapshot 表上线且 history API 切换为查表后同版本移除 |
-| `publish_application` 直接 `status=active` + `runtime_snapshot` 的发布语义 | REPLACE（行为） | Release create → validate → promote | 端点存续期由 Compatibility Contract 覆盖；行为本身在 v2.4 即被 Release 流程替代 |
+| `publish_application` 直接 `status=active` + `runtime_snapshot` 的发布语义 | REPLACE（行为） | Release create → validate → `ReleasePromotionService` promote | 端点存续期由 Compatibility Contract 覆盖；行为本身在 v2.4 即被 Release 流程替代 |
+| `runtime_snapshot` 生产读取 | REMOVE | `channel → release_id → release_manifest` | v2.4 关闭前生产路径不得读取 snapshot；字段可留作审计投影至 v2.5 删除 |
 
 ---
 
@@ -1049,16 +1083,19 @@ atomic channel pointer switch
 POST /applications/{id}/channels/{channel}/rollback
 ```
 
+Rollback 不是 Channel 资源的原地 PATCH。它必须由 `ReleasePromotionService` 执行，与 promote / publish-compat 共用同一 pointer 写 Owner。
+
 行为：
 
 ```text
-active_release_id
-→ previous validated release
+ReleasePromotionService
+→ active_release_id = previous validated release
+→ audit RELEASE_ROLLBACK
 ```
 
 无需重新 Build RAGFlow Dataset。
 
-前提：Release 引用的 Runtime/Artifact 仍存在且可访问。
+前提：Release 引用的 Runtime/Artifact 仍存在且可访问。缺失则 fail_closed，不得改写为当前 latest Artifact。
 
 ---
 
@@ -1094,11 +1131,25 @@ Security / Evidence
 
 # 12. Federation Planner
 
-新增：
+生产 Provider Selection 的唯一 Owner：
 
 ```text
 FederatedRetrievalPlanner
 ```
+
+唯一权威输出：
+
+```text
+FederationExecutionPlan
+```
+
+Query Intelligence 只提供 `QueryAnalysis` 输入，不得单独成为生产 Provider Selection。
+
+`capability_planner.build_capability_plan` 不再是生产规划权威。它可以被 Federation Planner 内部用作 per-KB eligibility helper（runtime capability / index readiness），但其输出不得绕过 `FederationExecutionPlan` 直接驱动 slice。
+
+`retrieval_planner` KEEP 为 slice 物化 Owner：只把 `FederationExecutionPlan` + `AccessPlan` 变成 `RuntimeExecutionSlice`，不得自行选择 provider 或 mode。
+
+LLM Planner proposal 不得增加 AccessPlan 未授权的 provider；Policy Gate 之后仍以 Federation Planner 的确定性输出为准。
 
 输入：
 
@@ -1145,7 +1196,7 @@ FederationExecutionPlan
 
 # 13. Query Intelligence Productionization
 
-Production Retrieval 必须真正执行：
+Production Retrieval 必须真正执行 Query Intelligence，但它是规划输入，不是规划 Owner：
 
 ```text
 Query
@@ -1158,12 +1209,16 @@ Optional LLM Planner Proposal
  ↓
 Policy Gate
  ↓
-Provider Selection
+QueryAnalysis
+ ↓
+FederatedRetrievalPlanner  （唯一 Provider Selection）
+ ↓
+FederationExecutionPlan
 ```
 
 不能只在 Playground 计算。
 
-Playground 仅展示与生产链完全相同的 Planning Result。
+Playground 仅展示与生产链完全相同的 `QueryAnalysis` + `FederationExecutionPlan`。
 
 ---
 
@@ -1197,7 +1252,9 @@ Application mapping authority wins
 
 # 15. Provider Candidate Contract
 
-统一 Candidate：
+Fusion 输入是统一 `EvidenceCandidate` 形状。这是对现有 `ArtifactEvidenceCandidate` 与 chunk 候选的 MODIFY，禁止并列第二套 candidate 类型。
+
+统一字段：
 
 ```python
 class EvidenceCandidate:
@@ -1352,13 +1409,24 @@ artifact_trigger_policy JSONB
 
 # 20. Artifact ACL
 
-新增统一：
+授权权威仍是：
 
 ```text
-ArtifactSecurityService
+permission_service.AccessPlan
 ```
 
-规则：
+SourceRef / active-version 规则复用现有 `chunk_security_service` 合同，不另写第二套 ACL 解释器。
+
+`ArtifactSecurityService` 只是 Artifact 路径的 enforcement adapter，覆盖全部 Artifact 消费入口：
+
+```text
+HTTP list / get / content / build
+Retrieval Artifact candidates
+MCP knowledge.get_structure / knowledge.get_table
+Skill export
+```
+
+规则（必须由 AccessPlan 求值，adapter 不得自行发明政策）：
 
 ## KB-scoped Artifact
 
@@ -1375,13 +1443,7 @@ SourceFile READ
 AND target FileVersion valid
 ```
 
-## Content API
-
-```text
-GET /artifacts/{id}/content
-```
-
-也必须经过 ArtifactSecurityService。
+Artifact existence != Artifact authorization。未经过 adapter 的入口视为绕过，必须 fail_closed。
 
 ---
 
@@ -1486,14 +1548,19 @@ alteration → rows
 
 假定。
 
-Table Provider 数据来源必须来自真实 Table Contract。
-
-优先级：
+Table Provider 数据来源必须来自 nodeskclaw canonical TableArtifact。这是 v2.4 关闭的唯一生产 Table 数据合同 Owner。
 
 ```text
-P0: RAGFlow stable structured table/chunk contract
-P1: nodeskclaw canonical TableArtifact derived from parsed table blocks
+parsed table blocks → canonical TableArtifact → retrieve / analytics
 ```
+
+禁止：
+
+```text
+get_artifact_alteration → rows
+```
+
+RAGFlow 若后续提供 stable structured table/chunk contract，不得在 v2.4 与 canonical 并列；须在后续版本单独 REPLACE。
 
 Canonical Schema：
 
@@ -1605,13 +1672,15 @@ issues
 
 # 29. Promotion Gate
 
-Promotion Service 为唯一 Owner：
+`ReleasePromotionService` 是 channel pointer 的唯一写 Owner，覆盖：
 
 ```text
-ReleasePromotionService
+promote
+rollback
+publish-compat 的 promote 段
 ```
 
-禁止 Channel API 自行修改 active_release_id。
+禁止 Channel API、Chat/MCP 或其它服务自行修改 `active_release_id`。
 
 流程：
 
@@ -1631,22 +1700,32 @@ Release validated
 
 # 30. Release Runtime
 
-生产 Retrieval 新入口：
+Application 产品路径的生产 Retrieval 入口：
 
 ```text
-Application + channel
+application_id + channel
 ```
+
+默认 `channel=stable`。缺少 `application_id` 时 Application 产品路径 fail_closed，禁止回退到「当前 KB」或 Set Profile。
 
 解析：
 
 ```text
-channel
-→ release_id
+channel.active_release_id
 → release_manifest
 → runtime execution
 ```
 
-禁止 active Application 在每次请求重新拼“当前最新配置”。
+显式 `release_id` 仅允许用于 preview / evaluation。若 `release_id` 与该 channel 当前 `active_release_id` 不一致：fail_closed，不得暗中改写 channel pointer。
+
+禁止：
+
+```text
+读取 Application.runtime_snapshot
+按当前 latest Application / Profile / Artifact 现场拼装
+```
+
+`runtime_snapshot` 若仍存字段，只可作为审计投影，生产 resolve 必须忽略。
 
 ---
 
@@ -1759,30 +1838,35 @@ Quality / Evaluation candidate generation
 
 # 35. Agent Delivery
 
-v2.4 增加 Knowledge Product Delivery Adapter：
+不新增平行 Chat / MCP / Agent Owner。MODIFY 现有入口，使 Application 产品路径都消费同一 Release Manifest：
 
 ```text
-Chat
-MCP
-Agent Tool
-Skill Artifact
+chat_service
+agent_tools / mcp_server
 ```
 
-所有 Delivery Channel 都消费同一个 Release Manifest。
+Application 产品路径合同：
+
+```text
+application_id + channel → Release Manifest
+```
 
 禁止：
 
 ```text
 Chat 使用 Release A
-MCP 使用当前 KB
+MCP 使用当前 KB 或 knowledge_set_id 冒充同一 Application 产品
 Agent 使用另一个 Profile
+Chat 仅凭 ApplicationStatus.active 而不解析 Channel
 ```
+
+Set-scoped retrieve（`knowledge_set_id` 且无 `application_id`）仍是独立产品面，KEEP；它不是 Application Product 路径，不得与 Application Release 混用同一会话权威。
 
 ---
 
 # 36. MCP Release-aware
 
-现有：
+现有 tool 名称 KEEP：
 
 ```text
 knowledge.search
@@ -1793,19 +1877,30 @@ knowledge.get_structure
 knowledge.get_table
 ```
 
-v2.4 增加可选：
+Application 产品路径必填：
 
 ```text
 application_id
-channel
-release_id
 ```
 
-默认：
+可选：
 
 ```text
-channel=stable
+channel     默认 stable
+release_id  仅 preview/eval
 ```
+
+解析规则：
+
+```text
+1. 无 application_id 且无 knowledge_set_id → fail_closed
+2. 有 application_id → 走 Application 产品路径（§30），忽略「当前 KB」
+3. 仅 knowledge_set_id → Set-scoped retrieve，不得声称 Application Release
+4. application_id 与 knowledge_set_id 同时出现 → fail_closed
+5. release_id 与 channel.active_release_id 冲突 → fail_closed
+```
+
+`knowledge.get_structure` / `knowledge.get_table` 必须经过 `ArtifactSecurityService`（§20）。
 
 ---
 
@@ -1989,9 +2084,20 @@ release version unique per application
 | 兼容路径 | `POST /api/v2/applications/{id}/publish` |
 | Current Consumer | `/api/v2` 公共 API 面的外部客户端。仓内 `nodeskclaw-portal` 无调用方（搜索模式 `v2/applications`、`applications.*publish`，范围 `nodeskclaw-portal/src`，无结果） |
 | Reason | Release/Channel API 上线时避免外部客户端断裂；publish 作为快捷入口 |
-| 兼容行为 | create release candidate → validate → promote to stable（§7–§9 同一链路，不另建 Owner） |
+| 兼容行为 | create release candidate → validate → `ReleasePromotionService` promote to stable（§7–§10 同一写 Owner） |
 | Removal Condition | Release/Channel API 稳定上线且对外公告弃用该快捷入口 |
 | Removal Version | v2.5（或 API v3 引入时，取先到者） |
+
+第二条兼容残留：
+
+| 项 | 内容 |
+|---|---|
+| 兼容路径 | `KnowledgeApplication.runtime_snapshot` 字段存留 |
+| Current Consumer | 无生产读取方（v2.4 起禁止）；历史行可能仍有值 |
+| Reason | 避免立刻 DROP COLUMN |
+| 兼容行为 | 字段可写审计投影，生产 resolve 必须忽略 |
+| Removal Condition | 无生产读取且无外部依赖该字段 |
+| Removal Version | v2.5 |
 
 新客户端应改用 Release/Channel API。
 
@@ -2115,9 +2221,14 @@ release_id
 Provider Failure：
 
 ```text
-fail_closed
-or
-degraded
+无 policy 时 fail_closed
+有 ApplicationRetrievalPolicyRevision.fallback_policy 时按其执行
+```
+
+Application 产品路径缺少 `application_id`、或 `release_id` 与 channel pointer 冲突：
+
+```text
+always fail_closed
 ```
 
 Release Manifest Resolution Failure：
@@ -2157,7 +2268,7 @@ BuildProfile artifact_types
 KnowledgeModel single ACTIVE revision
 Build pin model_revision_id
 Incremental no-op/removal-only
-Table runtime contract correction
+Table runtime contract correction → canonical TableArtifact
 Production Query Intelligence wiring
 True Provider Candidate contract
 ```
@@ -2241,7 +2352,6 @@ Wiki
 MindMap
 Timeline
 PageIndex/Tree lifecycle
-Table provider correction
 Advanced Table Analytics P1
 ```
 
@@ -2304,6 +2414,7 @@ Application Retrieval Policy Revision
 Production Query Intelligence
 Federation Planner
 Cross-provider Candidate/Fusion
+Canonical TableArtifact（替换 alteration-as-rows）
 ```
 
 ## P1
@@ -2339,13 +2450,15 @@ v2.4 只有满足以下条件才能关闭：
 [ ] Artifact Identity 可同时表示同 KB 多个 file-scoped Artifact
 [ ] Artifact Revision 不覆盖历史版本
 [ ] Artifact list/get/content/build 全部执行 ACL
-[ ] Table Provider 不再把 alteration API 当作 row API
+[ ] Table Provider 使用 canonical TableArtifact，不再把 alteration API 当作 row API
 [ ] Incremental no-op 不重建 unchanged docs
 [ ] Removal-only Build 不全量重建 unchanged docs
 [ ] KnowledgeModel 同时最多一条 ACTIVE Revision
 [ ] Build Job 显式 pin KnowledgeModel Revision
-[ ] Query Intelligence 成为 Production Retrieval 输入
-[ ] Playground 与 Production 使用同一 Query Planning Result
+[ ] Query Intelligence 产出 QueryAnalysis 作为生产输入，不单独做 Provider Selection
+[ ] FederatedRetrievalPlanner 是生产 Provider Selection 的唯一 Owner
+[ ] Playground 与 Production 使用同一 QueryAnalysis + FederationExecutionPlan
+[ ] capability_planner 不得绕过 FederationExecutionPlan 驱动 slice
 [ ] Artifact Candidate 进入 Production Retrieval
 [ ] RRF Provider Identity 不再仅为 slice_mode
 [ ] Application 拥有明确 Retrieval Policy Revision Authority
@@ -2354,9 +2467,12 @@ v2.4 只有满足以下条件才能关闭：
 [ ] Stable Channel 只指向 validated Release
 [ ] Quality FAIL 无法 Promote stable
 [ ] Quality History 为真实持久化历史
-[ ] Release 可一键 rollback 到 previous validated version
-[ ] Application Retrieval 使用 Release Manifest，不动态读取 latest config
+[ ] Release 可一键 rollback 到 previous validated version，且 rollback 走 ReleasePromotionService
+[ ] Application Retrieval 使用 Release Manifest，不读取 runtime_snapshot，不动态读取 latest config
+[ ] Application 产品路径必填 application_id + channel；release_id 冲突 fail_closed
+[ ] Chat / MCP / Agent 的 Application 产品路径不得用 knowledge_set_id 或 ApplicationStatus.active 绕过 Channel
 [ ] Cross-KB Retrieval 每 KB 独立 ACL AccessPlan
+[ ] Artifact HTTP / retrieve / MCP structure/table / export 均经 ArtifactSecurityService 消费 AccessPlan
 [ ] Historical Release 不因当前 latest Artifact 改变而漂移
 [ ] Chat / MCP / Agent 对相同 Release 的 Knowledge Runtime 一致
 [ ] Golden RAGFlow + Security + Release + Federation E2E 全部通过
@@ -2455,11 +2571,16 @@ nodeskclaw-knowledge/app/services/build_orchestrator.py
 nodeskclaw-knowledge/app/services/build_executors.py
 nodeskclaw-knowledge/app/services/build_input_manifest_service.py
 nodeskclaw-knowledge/app/services/retrieval_service.py
+nodeskclaw-knowledge/app/services/retrieval_planner.py
+nodeskclaw-knowledge/app/services/capability_planner.py
 nodeskclaw-knowledge/app/services/retrieval_merge_service.py
 nodeskclaw-knowledge/app/services/query_intelligence/
 nodeskclaw-knowledge/app/services/knowledge_quality_service.py
 nodeskclaw-knowledge/app/services/knowledge_application_service.py
 nodeskclaw-knowledge/app/services/knowledge_model_service.py
+nodeskclaw-knowledge/app/services/chat_service.py
+nodeskclaw-knowledge/app/services/chunk_security_service.py
+nodeskclaw-knowledge/app/api/agent_tools.py
 
 nodeskclaw-knowledge/app/knowledge_artifacts/base.py
 nodeskclaw-knowledge/app/knowledge_artifacts/outline.py
@@ -2467,13 +2588,11 @@ nodeskclaw-knowledge/app/knowledge_artifacts/table.py
 nodeskclaw-knowledge/app/knowledge_artifacts/ragflow_compilation.py
 ```
 
-RAGFlow 当前能力核验：
+RAGFlow 能力说明（本仓未核验源码，不得当作已证实生产合同）：
 
 ```text
-Dataset Artifact APIs
-Wiki / Graph / Tree / PageIndex / MindMap / Timeline
-Artifact Alteration = drift, not table rows
-Corpus2Skill generator + dataset skill APIs
+Artifact Alteration = drift, not table rows（由 table.py 的 diff() 与 build() 语义冲突支持）
+Native wiki/graph/tree 与 Corpus2Skill = P1 评估，非 v2.4 关闭前置
 ```
 
 ---
