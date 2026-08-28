@@ -1,12 +1,11 @@
 ---
 work_item_id: knowledge-v2.4.1-release-production-closure
 version: v2.4.1
-status: REVIEW_REQUIRED
-target_branch: main
-review_verdict:
-approved_at:
+status: APPROVED
+review_verdict: PASS
+approved_at: 2026-08-28T16:30:42+08:00
 predecessor: v2.4-product-lifecycle-federated-delivery
-grounding_mode: verify
+target_branch: main
 stage: Knowledge Product Delivery Plane — Release Production Closure
 runtime: RAGFlow
 ---
@@ -15,7 +14,6 @@ runtime: RAGFlow
 ## Release Production Closure, Immutable Execution Authority & Promotion Safety
 
 **日期**：2026-08-28  
-**Grounding mode**：`verify`  
 **前置版本**：v2.4 — Knowledge Product Lifecycle, Federated Retrieval & Agent Delivery（`status=APPROVED`）  
 **实施项目**：`nodeskclaw-knowledge`  
 **架构基线**：`lat.md/architecture/knowledge.md`、`lat.md/domain/knowledge-objects.md`  
@@ -26,7 +24,7 @@ runtime: RAGFlow
 
 # 1. 版本定位
 
-v2.4 已落地领域对象与 API：Release / Channel / Promotion / QualitySnapshot / ApplicationRetrievalPolicyRevision / FederatedRetrievalPlanner。抽查当前 `main` 工作区实现后，这些对象存在，但 Application 产品路径尚未形成不可变执行闭环。
+v2.4 已落地领域对象与 API：Release / Channel / Promotion / QualitySnapshot / ApplicationRetrievalPolicyRevision / FederatedRetrievalPlanner。这些对象存在，但 Application 产品路径尚未形成不可变执行闭环。
 
 v2.4.1 目标：
 
@@ -36,11 +34,9 @@ v2.4.1 目标：
 
 ---
 
-# 2. Grounding Summary
+# 2. 生产缺口与架构约束
 
-输入 PRD 已有源码陈述与 §30 Anchors。本轮 **verify**：抽查声明的 Owner / Behaviour，不重新全仓 discovery。
-
-已复现的生产缺口（证据见 §Source Anchors）：
+当前生产缺口（证据见 §Source Anchors）：
 
 1. Manifest **写入** `knowledge_sets[]`，**读取** `knowledge_set_ids` / 顶层 `knowledge_bases` → Application retrieve/chat 在 Release 开启后可直接 `application_empty`。
 2. `_retrieve_for_set` 仍从 Set `RetrievalProfile.config` 编译生产策略；Manifest 的 `retrieval_policy_revision_id` 未成为运行权威。
@@ -58,9 +54,9 @@ v2.4.1 目标：
 14. `EvaluationRun.release_id` / `channel` 列已存在，evaluation API/runner 未消费。
 15. Compose `x-knowledge-environment` 透传 v2 flags，**未**透传 `KNOWLEDGE_V23_*` / `KNOWLEDGE_V24_*`。
 
-未复现 / 纠正的输入主张：
+架构约束（禁止第二 Owner）：
 
-- **不要 ADD** 平行 Owner：`ReleaseExecutionContext` 服务、`ApplicationRetrievalPolicyCompiler` 新文件、`ReleaseSemanticModelResolver` 新文件、独立 `ReleaseValidationExecutor` 服务/新 Worker。这些 Capability 已有 Owner。
+- 不 ADD 平行 Owner：`ReleaseExecutionContext` 服务、`ApplicationRetrievalPolicyCompiler` 新文件、`ReleaseSemanticModelResolver` 新文件、独立 `ReleaseValidationExecutor` 服务/新 Worker。这些 Capability 已有 Owner。
 - `EvaluationRun.release_id`/`channel`、`KnowledgeQualitySnapshot.release_id`/`manifest_hash`、`KnowledgeBuildJob.release_candidate_id` **已存在** → 分类为 MODIFY 语义，不是再 ADD 列掩盖实现缺口。
 - `kb_advisory_xact_lock` 已存在 → Application lock 是 **MODIFY** `advisory_lock`，不是新锁子系统。
 
@@ -301,7 +297,7 @@ Postman collection / 指标名 / 精确 error_key 清单 / 迁移列 DDL 下放 
 
 # 6. Source Anchors
 
-最小 Owner/Boundary 证据（verify 抽查，2026-08-28 工作区）：
+最小 Owner/Boundary 证据：
 
 - `nodeskclaw-knowledge/app/services/knowledge_application_service.py#build_release_manifest`
 - `nodeskclaw-knowledge/app/services/knowledge_application_service.py#validate_release`
@@ -322,11 +318,3 @@ Postman collection / 指标名 / 精确 error_key 清单 / 迁移列 DDL 下放 
 - `docker-compose.yml` `x-knowledge-environment`
 
 v2.4 已批准合同：`docs_knowledge/prd-v2.4-product-lifecycle-federated-delivery.md` §5 / §29–§36。v2.4.1 是其生产闭环，不重开 RAGFlow 单 Runtime 或 Federation Planner 唯一 Owner。
-
----
-
-# 7. Grounding Closure Table
-
-| Finding | Reproduced | Resolution | Evidence | Status |
-|---|---|---|---|---|
-| F1（MAJOR）：publish Compatibility Contract 与 `publish_application` 同步实现矛盾；REPLACE 的合同（202、worker promote、未启用 flag 时路径）未冻结 | YES | 1) Change Classification：publish 由 `MODIFY` 改为 `REPLACE`，显式注明 promotion 仍唯一经 `ReleasePromotionService`；2) Contract Semantics：冻结 `202`+`validation_job_id`、`promote_on_validated` 仅授权 worker 调 PromotionService、HTTP publish 永不写 pointer；3) Compatibility Contract：Current Consumer 锚定 v2.4 §41（portal 无调用方），Removal Condition/Version 明确；未启用 flag 时 publish 行为保持 v2.4 不变且 `runtime_snapshot` 仅审计投影、生产禁读；4) Replacement Matrix 增加 publish 行；5) AC 增加 10a；6) Source Anchors 补 publish 两处 | `knowledge_application_service.py#publish_application`、`api/v2/applications.py#publish_application_v2`、`release_promotion_service.py#promote`、v2.4 PRD §41 | CLOSED |
