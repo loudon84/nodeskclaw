@@ -142,6 +142,8 @@ drop 必须写审计：`METADATA_MISMATCH` 或 `CHUNK_SECURITY_DROP`。实现：
 
 多 KB 不能合并为一个错误的 `dataset_ids+document_ids` 请求；v2.2 由 `build_retrieval_plan` 按 KB 发射语义互异的 `RuntimeExecutionSlice`（mode + access_scope），并行执行后再加权合并。v2.4 输入为 `FederationExecutionPlan`（由 [[nodeskclaw-knowledge/app/services/federated_retrieval_planner.py#build_federation_plan]] 产出），不再由生产路径直接 `build_capability_plan` 驱动 slice 选择。
 
+v2.4.1 Application 路径传入 `execution_context` 时，provider 的 KB 集合仅来自 Context pins，`compiled_policy` 覆盖 `profile_policy`；live capability facts 只在 pin 集合内决定 mode/skip。
+
 `build_retrieval_plan` 消费 AccessPlan + per-KB `KnowledgeBaseExecutionCapability` 或 Federation plan，输出 `RuntimeExecutionSlice[]`（必填 `access_scope` full/filtered；Question enrichment 为 semantic slice 的 `retrieval_features`，不复制 retrieve）。禁止 `expand_plan_for_indexes` 按 index_type 复制相同 slice。Dataset 映射仍用 `dataset_id_by_kb_id`：[[nodeskclaw-knowledge/app/services/retrieval_planner.py#build_retrieval_plan]]。Partial KB 的 `document_ids` 按 `RETRIEVAL_DOCUMENT_BATCH_SIZE` 拆多 slice；Merge 用 `RETRIEVAL_MAX_PARALLEL_SLICES` Semaphore 限流。入口：[[nodeskclaw-knowledge/app/services/retrieval_service.py#retrieve]]。Merge：[[nodeskclaw-knowledge/app/services/retrieval_merge_service.py#execute_and_merge]]。默认 `score = similarity × weight`；v2.3/v2.4 RRF 按 `provider` 身份分组（[[nodeskclaw-knowledge/app/services/retrieval_merge_service.py#_rank_by_rrf]]），再取 top_n。
 
 ## Secure Chat
