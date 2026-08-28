@@ -40,6 +40,8 @@ def build_chat_completions_payload(
 async def fetch_credential_lease(
     *,
     org_id: str,
+    run_id: str,
+    attempt_id: str,
     lease_ref: dict[str, Any],
 ) -> dict[str, Any] | None:
     central_url = f"{settings.SKILL_AGENT_CENTRAL_BASE_URL.rstrip('/')}/api/v1/internal/v1/skill-agent/credentials/mint"
@@ -49,9 +51,12 @@ async def fetch_credential_lease(
         "Content-Type": "application/json",
     }
     body = {
+        "run_id": run_id,
+        "attempt_id": attempt_id,
         "instance_id": lease_ref.get("instance_id"),
         "agent_profile": lease_ref.get("agent_profile"),
         "scope": lease_ref.get("scope") or "hermes:invoke",
+        "target": lease_ref.get("target"),
     }
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=3.0)) as client:
@@ -70,18 +75,45 @@ async def execute_hermes_run(
     arguments: dict[str, Any],
     route_snapshot: dict[str, Any],
     org_id: str | None = None,
+    run_id: str | None = None,
+    attempt_id: str | None = None,
     cancel_event: asyncio.Event | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     yield {"event_type": "run.progress", "payload": {"stage": "preparing", "message": "preparing hermes"}}
     if cancel_event and cancel_event.is_set():
         yield {"event_type": "run.cancelled", "payload": {"message": "cancelled before hermes call"}}
         return
-    
-    # Check if we need to resolve credential lease at attempt time
+
+    # Plaintext token/env_file fallback is strictly removed; presence of raw gateway_token is rejected
+    if "gateway_token" in route_snapshot or "env_file" in route_snapshot:
+        yield {
+            "event_type": "run.failed",
+            "payload": {"error": f"Plaintext credential/env_file in snapshot rejected for {tool_name} (fail-closed)"},
+        }
+        return
+
+    # Resolve credential lease at attempt time via Credential Broker
     lease_ref = route_snapshot.get("credential_lease_ref")
     minted_lease = None
-    if lease_ref and org_id:
-        minted_lease = await fetch_credential_lease(org_id=org_id, lease_ref=lease_ref)
+    if lease_ref:
+        if not org_id or not run_id or not attempt_id:
+            yield {
+                "event_type": "run.failed",
+                "payload": {"error": f"Missing execution context (org_id/run_id/attempt_id) for credential lease on {tool_name}"},
+            }
+            return
+        minted_lease = await fetch_credential_lease(
+            org_id=org_id,
+            run_id=run_id,
+            attempt_id=attempt_id,
+            lease_ref=lease_ref,
+        )
+        if not minted_lease or not minted_lease.get("token"):
+            yield {
+                "event_type": "run.failed",
+                "payload": {"error": f"Credential lease acquisition failed for {tool_name} (fail-closed)"},
+            }
+            return
 
     gateway_url = (
         (minted_lease.get("gateway_url") if minted_lease else None)
@@ -112,12 +144,8 @@ async def execute_hermes_run(
         context=context,
     )
     headers: dict[str, str] = {"Content-Type": "application/json"}
-    token = (
-        (minted_lease.get("token") if minted_lease else None)
-        or route_snapshot.get("gateway_token")
-    )
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
+    if minted_lease and minted_lease.get("token"):
+        headers["Authorization"] = f"Bearer {minted_lease['token']}"
     url = f"{gateway_url}/v1/chat/completions"
     yield {"event_type": "run.progress", "payload": {"stage": "tool_calling", "message": "calling hermes"}}
 
@@ -174,7 +202,10 @@ async def execute_hermes_run(
         }
     except Exception as exc:
         logger.exception("hermes execute failed tool=%s", tool_name)
+        err_msg = str(exc)[:500]
+        if minted_lease and minted_lease.get("token"):
+            err_msg = err_msg.replace(minted_lease["token"], "[REDACTED]")
         yield {
             "event_type": "run.failed",
-            "payload": {"error": str(exc)[:500]},
+            "payload": {"error": err_msg},
         }

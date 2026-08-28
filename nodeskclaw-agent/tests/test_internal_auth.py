@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -290,6 +290,7 @@ def test_health_and_metrics_endpoints(monkeypatch):
         ready_resp = client.get("/health/ready")
         assert ready_resp.status_code == 200
         assert ready_resp.json()["database"] == "connected"
+        assert ready_resp.json()["checks"]["credential_broker"] is True
 
         # Metrics
         m_resp = client.get("/metrics")
@@ -297,4 +298,52 @@ def test_health_and_metrics_endpoints(monkeypatch):
         m_data = m_resp.json()
         assert "runs_by_status" in m_data
         assert m_data["runs_by_status"].get("COMPLETED") == 5
+
+
+def test_ingest_run_completed_does_not_mark_run_completed(monkeypatch):
+    monkeypatch.setattr(settings, "SKILL_AGENT_INTERNAL_TOKEN", "secret")
+    from app.services import run_service
+
+    dummy_run = RunView(
+        run_id="r1",
+        org_id="org-1",
+        user_id="user-1",
+        tool_name="demo",
+        status="RUNNING",
+        attempt_id="att-1",
+        generation=1,
+        snapshot={},
+        result=None,
+        created_at="2026-08-27T00:00:00Z",
+        updated_at="2026-08-27T00:00:00Z",
+    )
+    mock_set_status = AsyncMock()
+    mock_append_event = AsyncMock()
+    monkeypatch.setattr(run_service, "get_run", AsyncMock(return_value=dummy_run))
+    monkeypatch.setattr(run_service, "set_status", mock_set_status)
+    monkeypatch.setattr(run_service, "append_event", mock_append_event)
+
+    for client in _client(monkeypatch):
+        resp = client.post(
+            "/internal/v1/runs/r1/events/ingest",
+            json={
+                "org_id": "org-1",
+                "events": [
+                    {
+                        "event_type": "run.completed",
+                        "payload": {"result": "edge output"},
+                        "source": "edge",
+                        "source_event_id": "ev-1",
+                    }
+                ],
+            },
+            headers={
+                "X-Skill-Agent-Token": "secret",
+                "X-Exec-Org-Id": "org-1",
+            },
+        )
+        assert resp.status_code == 200
+        # Ingest only appends event evidence, does NOT write COMPLETED to status machine
+        mock_append_event.assert_called_once()
+        mock_set_status.assert_not_called()
 

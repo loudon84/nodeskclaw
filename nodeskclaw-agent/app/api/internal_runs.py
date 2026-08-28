@@ -152,18 +152,10 @@ async def ingest_internal_events(
         payload = event.get("payload") or {}
         source = str(event.get("source") or "edge")
         source_event_id = event.get("source_event_id") or event.get("event_id")
-        if event_type == "run.completed":
-            await run_service.set_status(
-                db,
-                run_id,
-                "COMPLETED",
-                org_id=x_exec_org_id,
-                attempt_id=run.attempt_id,
-                generation=run.generation,
-                expected_status=["RUNNING", "PREPARING", "RESUMING", "WAITING_EDGE"],
-                result=payload,
-            )
-        elif event_type == "run.failed":
+        # Ingest endpoint is an event/evidence ingestion point only.
+        # It must NOT transition runs to COMPLETED terminal state; success terminal
+        # state is exclusively owned by the Run state machine / orchestrator.
+        if event_type == "run.failed":
             await run_service.set_status(
                 db,
                 run_id,
