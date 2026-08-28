@@ -354,6 +354,19 @@ class RunWorker:
                 route_snapshot = snapshot.get("runtime_policy") or {}
                 placement = snapshot.get("placement") or {}
                 org_id = snapshot.get("org_id")
+
+                step_plan = build_hybrid_step_plan(snapshot)
+                await run_service.append_event(
+                    db,
+                    run_id,
+                    "run.plan",
+                    {"step_plan": step_plan, "total_steps": len(step_plan)},
+                    org_id=org_id,
+                    attempt_id=attempt_id,
+                    generation=generation,
+                )
+                await db.commit()
+
                 if placement.get("engine") == "connector":
                     event_iter = execute_connector_run(
                         tool_name=claimed["tool_name"],
@@ -465,10 +478,19 @@ class RunWorker:
                         )
                     await db.commit()
 
-                # Hybrid: after Hermes (or connector) section, edge jobs are a no-op for now.
+                # Hybrid: after Hermes (or connector) section, check if edge jobs are defined
                 if placement.get("engine") == "hybrid" or snapshot.get("edge_jobs"):
                     if needs_edge_jobs(snapshot):
-                        pass
+                        await run_service.append_event(
+                            db,
+                            run_id,
+                            "run.edge_steps_queued",
+                            {"step_plan": [s for s in step_plan if s.get("role") == "edge"]},
+                            org_id=org_id,
+                            attempt_id=attempt_id,
+                            generation=generation,
+                        )
+                        await db.commit()
             except Exception as exc:
                 logger.exception("run execute failed run_id=%s", run_id)
                 await db.rollback()
