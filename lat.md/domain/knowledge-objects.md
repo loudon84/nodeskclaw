@@ -50,7 +50,7 @@ v1.2 强制闸：`status=disabled` 时用户 Retrieval、Chat 发消息与新建
 
 KnowledgeApplication 是面向用户的检索/Chat 产品面，绑定多个 KnowledgeSet；Answer Model Authority 在 Application 层。
 
-v2.2 publish 前必须 readiness gate；v2.3 publish 写入 `runtime_snapshot`（审计投影）；v2.4+ 启用 `KNOWLEDGE_V24_RELEASE_ENABLED` 时 publish/validate 返回 202 + `validation_job_id`，产品路径为 `application_id + channel → Release Manifest`，禁止生产读 `runtime_snapshot`。
+v2.2 publish 前必须 readiness gate；v2.3 publish 写入 `runtime_snapshot`（审计投影）；v2.4+ 启用 `KNOWLEDGE_V24_RELEASE_ENABLED` 时 publish/validate 返回 202 + `validation_job_id`，Application **保持 draft**，产品路径为 `application_id + channel → Release Manifest`，禁止生产读 `runtime_snapshot`。仅 stable `release_promotion_service.promote` 成功事务写 `Application.status=active`；preview 不写；stable rollback 后仍 active。
 
 表与 ACL：[[nodeskclaw-knowledge/app/models/knowledge_application.py]]、[[nodeskclaw-knowledge/app/models/knowledge_application_acl.py]]。Release/Channel：[[knowledge-objects#Application Release]]。Readiness：[[nodeskclaw-knowledge/app/services/application_readiness_service.py#check]]；未就绪 publish 返回 409。Publish/disable：[[nodeskclaw-knowledge/app/services/knowledge_application_service.py#publish_application]]、[[nodeskclaw-knowledge/app/services/knowledge_application_service.py#disable_application]]；v2 HTTP：[[nodeskclaw-knowledge/app/api/v2/applications.py]]。USE 判定：[[nodeskclaw-knowledge/app/services/permission_service.py#has_application_permission]]。检索：[[nodeskclaw-knowledge/app/services/retrieval_service.py#retrieve_for_application]]。
 
@@ -94,9 +94,9 @@ KnowledgeArtifact 是稳定 identity（org+kb+artifact_type+scope+source_file_id
 
 ## Application Release
 
-ApplicationRelease 是不可变产品快照；Channel（preview/stable）持有 `active_release_id` 读指针，写入唯一经 ReleasePromotionService；ChannelEvent 记录 promote/rollback 历史。
+ApplicationRelease 是不可变产品快照；Channel（preview/stable）持有 `active_release_id` 读指针，写入唯一经 ReleasePromotionService；ChannelEvent 记录 promote/rollback 历史。rollback 按访问栈 history-back，不是 latest-event toggle。
 
-Release 生命周期：draft → validating → validated → failed/retired。Channel 占用只由 `active_release_id` 表达；`promoted`/`superseded` 枚举仅兼容历史行，resolve/promote 门禁只认 `validated`。create 经 [[nodeskclaw-knowledge/app/services/release_manifest_service.py#build]]；validate HTTP 入队 worker；resolve 输出 [[nodeskclaw-knowledge/app/services/release_runtime_service.py#ReleaseExecutionContext]]。模型：[[nodeskclaw-knowledge/app/models/knowledge_application_release.py#KnowledgeApplicationRelease]]、[[nodeskclaw-knowledge/app/models/knowledge_application_release.py#KnowledgeReleaseChannel]]、[[nodeskclaw-knowledge/app/models/knowledge_application_release.py#KnowledgeReleaseChannelEvent]]。Promotion：[[nodeskclaw-knowledge/app/services/release_promotion_service.py]]。API：[[nodeskclaw-knowledge/app/api/v2/applications.py]]。
+Release 生命周期：draft → validating → validated → failed/retired。Channel 占用只由 `active_release_id` 表达；`promoted`/`superseded` 枚举仅兼容历史行，resolve/promote 门禁只认 `validated`。仅 stable [[nodeskclaw-knowledge/app/services/release_promotion_service.py#promote]] 成功事务写 `Application.status=active`。[[nodeskclaw-knowledge/app/services/release_promotion_service.py#rollback]] 回退到 previous visitation；stale previous 阻塞且不跳更旧版本。create 经 [[nodeskclaw-knowledge/app/services/release_manifest_service.py#build]]；validate HTTP 入队 worker；resolve 输出 [[nodeskclaw-knowledge/app/services/release_runtime_service.py#ReleaseExecutionContext]]。模型：[[nodeskclaw-knowledge/app/models/knowledge_application_release.py#KnowledgeApplicationRelease]]、[[nodeskclaw-knowledge/app/models/knowledge_application_release.py#KnowledgeReleaseChannel]]、[[nodeskclaw-knowledge/app/models/knowledge_application_release.py#KnowledgeReleaseChannelEvent]]。Promotion：[[nodeskclaw-knowledge/app/services/release_promotion_service.py]]。API：[[nodeskclaw-knowledge/app/api/v2/applications.py]]。
 
 ## Application Retrieval Policy
 
@@ -106,9 +106,9 @@ publish 归档旧 ACTIVE；Release create 必须 pin `retrieval_policy_revision_
 
 ## Quality Snapshot
 
-KnowledgeQualitySnapshot 持久化 KB/Application 质量子分与 gate 结果；history API 查表而非返回伪造 `[current]`。stable promote 要求最新 snapshot gate PASS。
+KnowledgeQualitySnapshot 持久化 KB/Application 质量子分与 gate 结果；history API 查表而非返回伪造 `[current]`。stable promote 要求 snapshot gate PASS 且 `calculated_at` 仍在 freshness 窗口内。
 
-模型：[[nodeskclaw-knowledge/app/models/knowledge_quality_snapshot.py#KnowledgeQualitySnapshot]]、[[nodeskclaw-knowledge/app/models/knowledge_quality_snapshot.py#KnowledgeQualityGatePolicy]]。计算与 gate：[[nodeskclaw-knowledge/app/services/knowledge_quality_service.py]]。API：[[nodeskclaw-knowledge/app/api/v2/quality.py]]。Quality 使用 `RuntimeBindingStatus.ready` 判定 binding 就绪（非 `active`）。
+模型：[[nodeskclaw-knowledge/app/models/knowledge_quality_snapshot.py#KnowledgeQualitySnapshot]]、[[nodeskclaw-knowledge/app/models/knowledge_quality_snapshot.py#KnowledgeQualityGatePolicy]]。计算与 gate：[[nodeskclaw-knowledge/app/services/knowledge_quality_service.py]]。stable 时间窗口由 [[nodeskclaw-knowledge/app/services/release_promotion_service.py#_assert_release_promotable]] 读取 `KNOWLEDGE_RELEASE_QUALITY_MAX_AGE_SECONDS`（默认 900，preview 不强制）。API：[[nodeskclaw-knowledge/app/api/v2/quality.py]]。Quality 使用 `RuntimeBindingStatus.ready` 判定 binding 就绪（非 `active`）。
 
 ## Translation Objects
 

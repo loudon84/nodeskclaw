@@ -39,6 +39,7 @@ def _app():
         active_profile_id=None,
         acl_version=1,
         runtime_snapshot=None,
+        status="draft",
     )
 
 
@@ -85,6 +86,7 @@ def _snapshot(*, gate_result=QualityGateResult.pass_.value, manifest_hash="hash-
         deleted_at=None,
         gate_result=gate_result,
         manifest_hash=manifest_hash,
+        calculated_at=datetime.now(UTC),
     )
 
 
@@ -353,6 +355,7 @@ async def test_promote_stable_updates_channel_pointer(monkeypatch):
     assert release.status == ApplicationReleaseStatus.validated.value
 
 
+# @lat: [[knowledge#Knowledge Product Lifecycle V24#Release Promotion Gates#Publish keeps application draft]]
 @pytest.mark.asyncio
 async def test_publish_application_uses_release_flow_when_v24(monkeypatch):
     monkeypatch.setattr(settings, "KNOWLEDGE_V24_RELEASE_ENABLED", True)
@@ -392,7 +395,7 @@ async def test_publish_application_uses_release_flow_when_v24(monkeypatch):
         promote_on_validated=False,
     )
     promote.assert_not_called()
-    assert published.status == "active"
+    assert published.status == "draft"
     assert published.validation_job_id == "job-1"
 
 
@@ -421,13 +424,14 @@ async def test_publish_application_promote_on_validated_passes_flag(monkeypatch)
         "app.services.knowledge_quality_service.build_runtime_snapshot",
         new=AsyncMock(return_value={"published_at": "now"}),
     ):
-        await knowledge_application_service.publish_application(
+        published = await knowledge_application_service.publish_application(
             db,
             MEMBER,
             "app-1",
             promote_on_validated=True,
         )
 
+    assert published.status == "draft"
     validate_release.assert_awaited_once_with(
         db,
         MEMBER,

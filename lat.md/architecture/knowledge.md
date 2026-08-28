@@ -58,7 +58,7 @@ v2.0–v2.2 将 Knowledge 控制面从 Dataset 身份演进到 Runtime Binding�
 
 v2.1 执行链通过环境变量独立开关；v2.2 增加 runtime mode 灰度与 Build 批大小；多 index 与翻译默认关闭，Capability Probe 默认开启。
 
-定义于 [[nodeskclaw-knowledge/app/core/config.py#Settings]]。`KNOWLEDGE_API_V2_ENABLED` 总闸 `/api/v2`；`KNOWLEDGE_V2_RUNTIME_BINDING_ENABLED` / `BUILD` / `APPLICATION` 分域启停。Capability：`KNOWLEDGE_V2_CAPABILITY_PLANNER_ENABLED` 仅 diagnostics；`KNOWLEDGE_V2_MULTI_INDEX_RETRIEVAL_ENABLED` 控制 ExecutionSlice 执行路径（关闭则 semantic-only）。按 mode 灰度：`KNOWLEDGE_V2_QUESTION_INDEX_ENABLED` / `SUMMARY_INDEX_ENABLED` / `GRAPH_INDEX_ENABLED`；v2.2 runtime feature：`KNOWLEDGE_V2_SUMMARY_RUNTIME_ENABLED` / `GRAPH_RUNTIME_ENABLED` / `TOC_ENHANCE_ENABLED`（默认 false）。v2.3：`KNOWLEDGE_V23_ARTIFACTS_ENABLED` / `OUTLINE_ENABLED` / `TABLE_ENABLED` / `INCREMENTAL_BUILD_ENABLED` / `TERM_EXPANSION_ENABLED` / `LLM_PLANNER_ENABLED` / `RRF_FUSION_ENABLED`（默认 false）；`KNOWLEDGE_V23_MODEL_REVISION_ENABLED` / `QUALITY_ENABLED`（默认 true）。v2.4：`KNOWLEDGE_V24_RELEASE_ENABLED` / `KNOWLEDGE_V24_FEDERATION_ENABLED`（默认 false）门控 Release Channel resolve 与 FederatedRetrievalPlanner；`KNOWLEDGE_V24_ARTIFACT_ACL_ENABLED`（默认 false）门控 Artifact HTTP/MCP 路径 ACL adapter。Build 批大小：`RAGFLOW_BUILD_BATCH_SIZE`（默认 50）。Probe：`KNOWLEDGE_RUNTIME_CAPABILITY_PROBE_ENABLED`（默认 true）与 `KNOWLEDGE_RUNTIME_CAPABILITY_CACHE_SECONDS`（默认 300）。翻译：`KNOWLEDGE_TRANSLATION_ENABLED`、`KNOWLEDGE_TRANSLATION_ENGINE`。
+定义于 [[nodeskclaw-knowledge/app/core/config.py#Settings]]。`KNOWLEDGE_API_V2_ENABLED` 总闸 `/api/v2`；`KNOWLEDGE_V2_RUNTIME_BINDING_ENABLED` / `BUILD` / `APPLICATION` 分域启停。Capability：`KNOWLEDGE_V2_CAPABILITY_PLANNER_ENABLED` 仅 diagnostics；`KNOWLEDGE_V2_MULTI_INDEX_RETRIEVAL_ENABLED` 控制 ExecutionSlice 执行路径（关闭则 semantic-only）。按 mode 灰度：`KNOWLEDGE_V2_QUESTION_INDEX_ENABLED` / `SUMMARY_INDEX_ENABLED` / `GRAPH_INDEX_ENABLED`；v2.2 runtime feature：`KNOWLEDGE_V2_SUMMARY_RUNTIME_ENABLED` / `GRAPH_RUNTIME_ENABLED` / `TOC_ENHANCE_ENABLED`（默认 false）。v2.3：`KNOWLEDGE_V23_ARTIFACTS_ENABLED` / `OUTLINE_ENABLED` / `TABLE_ENABLED` / `INCREMENTAL_BUILD_ENABLED` / `TERM_EXPANSION_ENABLED` / `LLM_PLANNER_ENABLED` / `RRF_FUSION_ENABLED`（默认 false）；`KNOWLEDGE_V23_MODEL_REVISION_ENABLED` / `QUALITY_ENABLED`（默认 true）。v2.4：`KNOWLEDGE_V24_RELEASE_ENABLED` / `KNOWLEDGE_V24_FEDERATION_ENABLED`（默认 false）门控 Release Channel resolve 与 FederatedRetrievalPlanner；`KNOWLEDGE_V24_ARTIFACT_ACL_ENABLED`（默认 false）门控 Artifact HTTP/MCP 路径 ACL adapter。stable Promotion Gate 额外读取 `KNOWLEDGE_RELEASE_QUALITY_MAX_AGE_SECONDS`（默认 900），Compose `x-knowledge-environment` 透传到 API 与 Worker。Build 批大小：`RAGFLOW_BUILD_BATCH_SIZE`（默认 50）。Probe：`KNOWLEDGE_RUNTIME_CAPABILITY_PROBE_ENABLED`（默认 true）与 `KNOWLEDGE_RUNTIME_CAPABILITY_CACHE_SECONDS`（默认 300）。翻译：`KNOWLEDGE_TRANSLATION_ENABLED`、`KNOWLEDGE_TRANSLATION_ENGINE`。
 
 ## Runtime Admin API
 
@@ -70,13 +70,41 @@ super admin（`KnowledgePrincipal.is_super_admin`）可访问 Runtime 健康与 
 
 Knowledge Application 发布前必须 readiness 检查；未就绪返回 409 + blocking/warnings diagnostics。
 
-`ApplicationReadinessService.check` 聚合 bound Set、KB Binding、Chunk IndexState、Retrieval Profile 与 mode 兼容性。`POST /api/v2/applications/{id}/publish`：未启用 Release 时 readiness → `active` + `runtime_snapshot`（审计投影）；启用 `KNOWLEDGE_V24_RELEASE_ENABLED` 时 create Release + enqueue `release_validation` 并返回 **202** + `validation_job_id`（可选 `promote_on_validated` 仅写入 job `target_key`，HTTP 永不写 `active_release_id`）。`POST .../disable` 将 ACTIVE 降为 disabled；`GET /api/v2/applications/{id}/readiness` 供预检。实现：[[nodeskclaw-knowledge/app/services/application_readiness_service.py#check]]、[[nodeskclaw-knowledge/app/services/knowledge_application_service.py#publish_application]]。
+`ApplicationReadinessService.check` 聚合 bound Set、KB Binding、Chunk IndexState、Retrieval Profile 与 mode 兼容性。`POST /api/v2/applications/{id}/publish`：未启用 Release 时 readiness → `active` + `runtime_snapshot`（审计投影）；启用 `KNOWLEDGE_V24_RELEASE_ENABLED` 时 create Release + enqueue `release_validation`，HTTP **202**，Application **保持 draft**（`promote_on_validated` 只写入 job `target_key`，publish 永不写 `Application.status=active` 也不写 `active_release_id`）。仅 stable `release_promotion_service.promote` 成功事务写 `active`。`POST .../disable` 将 ACTIVE 降为 disabled；`GET /api/v2/applications/{id}/readiness` 供预检。实现：[[nodeskclaw-knowledge/app/services/application_readiness_service.py#check]]、[[nodeskclaw-knowledge/app/services/knowledge_application_service.py#publish_application]]。
 
 ## Knowledge Product Lifecycle V24
 
-v2.4 引入不可变 ApplicationRelease + Channel 指针、QualitySnapshot/Gate 与 ApplicationRetrievalPolicyRevision；v2.4.1 补齐 Manifest/Integrity/async validation/ChannelEvent；由 `KNOWLEDGE_V24_RELEASE_ENABLED` 门控。
+v2.4 引入不可变 ApplicationRelease、Channel 指针、QualitySnapshot 与 RetrievalPolicyRevision；v2.4.1 补齐 Manifest/Integrity/async validation/ChannelEvent；v2.4.2 收口 freshness、history-back 与 draft-until-stable-active。由 `KNOWLEDGE_V24_RELEASE_ENABLED` 门控。
 
-Release create 经 [[nodeskclaw-knowledge/app/services/release_manifest_service.py#build]] 写出 V1 Manifest（`schema_version`、`knowledge_sets[]`、per-KB pin、`artifact_revision_id`、`manifest_hash`）。`POST .../validate` 只入队 `target_kind=release_validation`（HTTP 202）；worker [[nodeskclaw-knowledge/app/services/build_executors.py#execute_release_validation_stage]] 跑 readiness + Integrity + Quality snapshot。`ReleasePromotionService` 为 `active_release_id` 唯一写 Owner（Application lock + channel FOR UPDATE + [[nodeskclaw-knowledge/app/models/knowledge_application_release.py#KnowledgeReleaseChannelEvent]]）；rollback 只走 ChannelEvent 历史。Integrity：[[nodeskclaw-knowledge/app/services/release_integrity_service.py#evaluate]]。投放资格仅 `validated`（不再用 promoted/superseded 表达 Channel 占用）。ORM：[[nodeskclaw-knowledge/app/models/knowledge_application_release.py]]、[[nodeskclaw-knowledge/app/models/knowledge_quality_snapshot.py]]、[[nodeskclaw-knowledge/app/models/application_retrieval_policy_revision.py]]。服务：[[nodeskclaw-knowledge/app/services/release_promotion_service.py]]、[[nodeskclaw-knowledge/app/services/application_retrieval_policy_service.py]]、[[nodeskclaw-knowledge/app/services/release_runtime_service.py#resolve_application_release]]。API：[[nodeskclaw-knowledge/app/api/v2/applications.py]]。迁移：`07548d9f3803` → `d0e41dc0d166`（ChannelEvent、manifest_hash、BuildJob 可空）。
+Release create 经 [[nodeskclaw-knowledge/app/services/release_manifest_service.py#build]] 写出 V1 Manifest（`schema_version`、`knowledge_sets[]`、per-KB pin、`artifact_revision_id`、`manifest_hash`）。`POST .../validate` 只入队 `target_kind=release_validation`（HTTP 202）；worker [[nodeskclaw-knowledge/app/services/build_executors.py#execute_release_validation_stage]] 跑 readiness + Integrity + Quality snapshot。`ReleasePromotionService` 为 `active_release_id` 唯一写 Owner，且 **仅** `channel=stable` 的 `promote` 成功事务写 `Application.status=active`（preview 不写；publish 保持 draft）。stable gate 在 Integrity/Quality PASS 之外检查 snapshot `calculated_at` 不超过 `KNOWLEDGE_RELEASE_QUALITY_MAX_AGE_SECONDS`。rollback 按 ChannelEvent 访问栈 history-back 到 previous release，不是 latest event toggle；stale previous 阻塞且不跳更旧版本。Integrity：[[nodeskclaw-knowledge/app/services/release_integrity_service.py#evaluate]]。投放资格仅 `validated`（不再用 promoted/superseded 表达 Channel 占用）。ORM：[[nodeskclaw-knowledge/app/models/knowledge_application_release.py]]、[[nodeskclaw-knowledge/app/models/knowledge_quality_snapshot.py]]、[[nodeskclaw-knowledge/app/models/application_retrieval_policy_revision.py]]。服务：[[nodeskclaw-knowledge/app/services/release_promotion_service.py]]、[[nodeskclaw-knowledge/app/services/application_retrieval_policy_service.py]]、[[nodeskclaw-knowledge/app/services/release_runtime_service.py#resolve_application_release]]。API：[[nodeskclaw-knowledge/app/api/v2/applications.py]]。迁移：`07548d9f3803` → `d0e41dc0d166`（ChannelEvent、manifest_hash、BuildJob 可空）。
+
+### Release Promotion Gates
+
+v2.4.2 Channel pointer writes, Application.active writer, snapshot freshness, and history-back rollback exercised by [[nodeskclaw-knowledge/tests/test_release_promotion.py]] and [[nodeskclaw-knowledge/tests/test_knowledge_release.py]].
+
+#### Publish keeps application draft
+
+When V24 is enabled, `publish_application` returns 202 and keeps `Application.status=draft`; it never calls `promote`.
+
+#### Stable promote writes application active
+
+Only `channel=stable` `promote` sets `Application.status=active`; preview leaves draft and does not require Quality PASS.
+
+#### Stable refuse stale quality snapshot
+
+Stable promote with snapshot `calculated_at` older than `KNOWLEDGE_RELEASE_QUALITY_MAX_AGE_SECONDS` raises `release_quality_snapshot_stale`.
+
+#### Preview skips freshness gate
+
+Preview promote does not apply the snapshot max-age window, even when the snapshot is stale.
+
+#### Rollback is history-back not toggle
+
+Rollback replays ChannelEvent promote/rollback as a visitation stack and returns the previous pointer, not `latest.from_release_id`.
+
+#### Stale previous blocks without skipping
+
+Rollback to a previous release whose snapshot is stale fails closed and does not skip older versions.
 
 ## Ragflow Contract Tests
 

@@ -14,6 +14,7 @@ from app.models.base import not_deleted
 from app.models.enums import (
     ApplicationPermission,
     ApplicationReleaseStatus,
+    ApplicationStatus,
     AuditAction,
     QualityGateResult,
     ReleaseChannelName,
@@ -52,23 +53,6 @@ async def _get_channel(
             message_key="errors.knowledge.release_channel_not_found",
         )
     return row
-
-
-async def _get_latest_channel_event(
-    db: AsyncSession,
-    application_id: str,
-    channel: str,
-) -> KnowledgeReleaseChannelEvent | None:
-    return await db.scalar(
-        select(KnowledgeReleaseChannelEvent)
-        .where(
-            KnowledgeReleaseChannelEvent.application_id == application_id,
-            KnowledgeReleaseChannelEvent.channel == channel,
-            not_deleted(KnowledgeReleaseChannelEvent),
-        )
-        .order_by(KnowledgeReleaseChannelEvent.created_at.desc())
-        .limit(1)
-    )
 
 
 async def _assert_release_promotable(
@@ -121,6 +105,19 @@ async def _assert_release_promotable(
             raise ConflictError(
                 message="Quality Snapshot 与 Release manifest_hash 不一致",
                 message_key="errors.knowledge.snapshot_manifest_hash_mismatch",
+            )
+        calculated_at = snapshot.calculated_at
+        if calculated_at.tzinfo is None:
+            calculated_at = calculated_at.replace(tzinfo=UTC)
+        age_seconds = (datetime.now(UTC) - calculated_at).total_seconds()
+        if age_seconds > settings.KNOWLEDGE_RELEASE_QUALITY_MAX_AGE_SECONDS:
+            raise ConflictError(
+                message="Quality Snapshot 已过期，无法推广到 stable",
+                message_key="errors.knowledge.release_quality_snapshot_stale",
+                details={
+                    "calculated_at": calculated_at.isoformat(),
+                    "max_age_seconds": settings.KNOWLEDGE_RELEASE_QUALITY_MAX_AGE_SECONDS,
+                },
             )
     elif integrity.status == "unavailable":
         raise ConflictError(
@@ -178,6 +175,8 @@ async def promote(
     release.promoted_at = datetime.now(UTC)
     channel_row.active_release_id = release_id
     channel_row.updated_by_member_id = member.member_id
+    if channel == ReleaseChannelName.stable.value:
+        app.status = ApplicationStatus.active.value
     _record_channel_event(
         db,
         org_id=member.org_id,
@@ -231,13 +230,30 @@ async def rollback(
             message="通道无活跃 Release，无法回滚",
             message_key="errors.knowledge.release_channel_empty",
         )
-    latest_event = await _get_latest_channel_event(db, application_id, channel)
-    if latest_event is None or latest_event.from_release_id is None:
+    event_rows = await db.scalars(
+        select(KnowledgeReleaseChannelEvent)
+        .where(
+            KnowledgeReleaseChannelEvent.application_id == application_id,
+            KnowledgeReleaseChannelEvent.channel == channel,
+            not_deleted(KnowledgeReleaseChannelEvent),
+        )
+        .order_by(
+            KnowledgeReleaseChannelEvent.created_at.asc(),
+            KnowledgeReleaseChannelEvent.id.asc(),
+        )
+    )
+    pointer_stack: list[str] = []
+    for event in event_rows.all():
+        if event.action == "promote":
+            pointer_stack.append(event.to_release_id)
+        elif event.action == "rollback" and pointer_stack:
+            pointer_stack.pop()
+    if len(pointer_stack) < 2:
         raise ConflictError(
             message="没有可回滚的历史 Release",
             message_key="errors.knowledge.release_rollback_unavailable",
         )
-    target_id = latest_event.from_release_id
+    target_id = pointer_stack[-2]
     target = await db.get(KnowledgeApplicationRelease, target_id)
     if target is None or target.deleted_at is not None or target.application_id != application_id:
         raise ConflictError(

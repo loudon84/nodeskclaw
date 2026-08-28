@@ -1,8 +1,8 @@
 {
   "info": {
     "_postman_id": "4de8a4c1-8466-4cd0-a892-9c829b2e34ce",
-    "name": "nodeskclaw-knowledge v2.4 — E2E & RAGFlow Verification",
-    "description": "Current main-branch E2E collection. Full flow combines /api/v2 product/runtime APIs with /api/v1 compatibility APIs for SourceFile/Ingestion/RetrievalProfile. Use Backend login token as Bearer. For full v2.4 testing enable Build, Application, v2.3 Artifacts/Quality and v2.4 Release/Federation/Artifact ACL flags in the Knowledge container.",
+    "name": "nodeskclaw-knowledge v2.4.1 runtime contract",
+    "description": "v2.4.1 runtime contract. Happy Path is Explicit Release Create → Validate HTTP 202 → Poll BuildJob to completed → Promote stable. Publish is Release-mode compatibility (HTTP 202, Application stays draft). Do not treat sync validate+promote or HTTP 200 on validate/publish as Happy Path.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -146,11 +146,46 @@
       "key": "query",
       "value": "报销流程是什么？",
       "type": "string"
+    },
+    {
+      "key": "validation_job_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "release_manifest_hash",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "stable_release_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "preview_release_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "release_status",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "channel",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "evaluation_set_id",
+      "value": "",
+      "type": "string"
     }
   ],
   "item": [
     {
-      "name": "00 Health & Authentication",
+      "name": "00 Environment, Health & Authentication",
       "item": [
         {
           "name": "Knowledge Health Live",
@@ -188,7 +223,7 @@
             "auth": {
               "type": "noauth"
             },
-            "description": "200 才进入完整 E2E；503 先检查 database/ragflow/backend。"
+            "description": "HTTP 200 with checks.database/ragflow/backend all true is PASS. HTTP 503 is not PASS."
           },
           "event": [
             {
@@ -196,12 +231,11 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 503]));",
-                  "const ct = pm.response.headers.get('Content-Type') || '';",
-                  "if (ct.includes('application/json') && pm.response.code < 400) {",
-                  "  const j = pm.response.json();",
-                  "  if (Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
-                  "}"
+                  "pm.test('Health Ready HTTP 200', () => pm.expect(pm.response.code).to.eql(200));",
+                  "const j = pm.response.json();",
+                  "pm.test('database=true', () => pm.expect(j.checks.database).to.eql(true));",
+                  "pm.test('ragflow=true', () => pm.expect(j.checks.ragflow).to.eql(true));",
+                  "pm.test('backend=true', () => pm.expect(j.checks.backend).to.eql(true));"
                 ]
               }
             }
@@ -275,7 +309,7 @@
       ]
     },
     {
-      "name": "01 Knowledge Assets — API v2",
+      "name": "01 Knowledge Assets",
       "item": [
         {
           "name": "List Knowledge Bases",
@@ -466,7 +500,7 @@
       ]
     },
     {
-      "name": "02 Source File & Ingestion — API v1 compatibility",
+      "name": "02 Source File & Ingestion",
       "item": [
         {
           "name": "Upload Source File",
@@ -647,7 +681,7 @@
       ]
     },
     {
-      "name": "03 Retrieval Profile — API v1 compatibility",
+      "name": "03 Set Retrieval Profile Compatibility",
       "item": [
         {
           "name": "Create Retrieval Profile Draft",
@@ -738,7 +772,7 @@
       ]
     },
     {
-      "name": "04 Runtime & Build Engineering — API v2",
+      "name": "04 Runtime & Build",
       "item": [
         {
           "name": "KB Index States",
@@ -1045,7 +1079,7 @@
       ]
     },
     {
-      "name": "05 Knowledge Intelligence & Artifacts — v2.3",
+      "name": "05 Knowledge Intelligence & Artifacts",
       "item": [
         {
           "name": "Create Knowledge Model",
@@ -1302,7 +1336,7 @@
       ]
     },
     {
-      "name": "06 Knowledge Application & Product Release — v2.4",
+      "name": "06 Application Policy & Readiness",
       "item": [
         {
           "name": "Create Knowledge Application",
@@ -1379,7 +1413,7 @@
             "url": "{{knowledge_base_url}}/api/v2/applications/{{application_id}}/retrieval-policy-revisions",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"query_intelligence_policy\": {\n    \"enabled\": true\n  },\n  \"provider_policy\": {\n    \"semantic\": true,\n    \"graph\": true,\n    \"artifact\": true\n  },\n  \"provider_weights\": {\n    \"semantic\": 1.0,\n    \"graph\": 0.9,\n    \"outline\": 0.8,\n    \"table\": 0.9\n  },\n  \"candidate_budget\": {\n    \"total\": 64\n  },\n  \"fanout_budget\": {\n    \"max_kbs\": 8,\n    \"max_providers_per_kb\": 4\n  },\n  \"latency_budget\": {\n    \"total_ms\": 5000\n  },\n  \"fallback_policy\": {\n    \"mode\": \"semantic\"\n  },\n  \"artifact_policy\": {\n    \"outline\": true,\n    \"table\": true\n  },\n  \"fusion_policy\": {\n    \"strategy\": \"weighted_rrf\",\n    \"k\": 60\n  },\n  \"notes\": \"Postman v2.4 validation\"\n}",
+              "raw": "{\n  \"query_intelligence_policy\": {\n    \"term_expansion\": false\n  },\n  \"provider_policy\": {\n    \"allow_chunk\": true,\n    \"allow_question\": true\n  },\n  \"provider_weights\": {\n    \"chunk\": 1.0,\n    \"question\": 0.5\n  },\n  \"candidate_budget\": {\n    \"max_candidates\": 1024\n  },\n  \"fanout_budget\": {\n    \"max_kb_fanout\": 8\n  },\n  \"latency_budget\": {\n    \"max_ms\": 30000\n  },\n  \"fallback_policy\": {\n    \"mode\": \"chunk_only\"\n  },\n  \"artifact_policy\": {\n    \"allow_outline\": true,\n    \"allow_table\": true\n  },\n  \"fusion_policy\": {\n    \"mode\": \"rrf\",\n    \"k\": 60\n  }\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -1427,46 +1461,12 @@
               }
             }
           ]
-        },
-        {
-          "name": "Publish Application",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "url": "{{knowledge_base_url}}/api/v2/applications/{{application_id}}/publish",
-            "body": {
-              "mode": "raw",
-              "raw": "{}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
-            "description": "v2.4 Release 开启时会 create release → validate quality gate → promote stable。"
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 409]));",
-                  "const ct = pm.response.headers.get('Content-Type') || '';",
-                  "if (ct.includes('application/json') && pm.response.code < 400) {",
-                  "  const j = pm.response.json();",
-                  "  if (Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
-                  "}"
-                ]
-              }
-            }
-          ]
-        },
+        }
+      ]
+    },
+    {
+      "name": "07 Release Validation & Promotion",
+      "item": [
         {
           "name": "List Releases",
           "request": {
@@ -1514,12 +1514,20 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));",
+                  "pm.test('Create Release HTTP', () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));",
                   "const j = pm.response.json();",
-                  "if (pm.response.code < 400 && Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
-                  "const value = j.data && j.data.id;",
-                  "if (value) { pm.collectionVariables.set('release_id', value); try { pm.environment.set('release_id', value); } catch(e) {} }",
-                  "pm.test('release_id captured', () => pm.expect(value).to.exist);"
+                  "pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "const d = j.data;",
+                  "pm.test('release_id captured', () => pm.expect(d && d.id).to.exist);",
+                  "pm.test('manifest_hash captured', () => pm.expect(d && d.manifest_hash).to.exist);",
+                  "pm.test('schema_version=1', () => pm.expect(d.release_manifest.schema_version).to.eql(1));",
+                  "pm.test('no knowledge_set_ids', () => pm.expect(d.release_manifest).to.not.have.property('knowledge_set_ids'));",
+                  "pm.test('knowledge_sets present', () => pm.expect(d.release_manifest.knowledge_sets).to.be.an('array'));",
+                  "pm.test('policy revision id', () => pm.expect(d.release_manifest.retrieval_policy_revision_id).to.exist);",
+                  "pm.collectionVariables.set('release_id', d.id);",
+                  "pm.environment.set('release_id', d.id);",
+                  "pm.environment.set('release_manifest_hash', d.manifest_hash);",
+                  "pm.environment.set('release_status', d.status);"
                 ]
               }
             }
@@ -1544,7 +1552,8 @@
                   "language": "json"
                 }
               }
-            }
+            },
+            "description": "Happy Path is HTTP 202 with status=validating and validation_job_id. Poll BuildJob until completed before Promote. Not a sync validate+promote."
           },
           "event": [
             {
@@ -1552,12 +1561,63 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 409]));",
-                  "const ct = pm.response.headers.get('Content-Type') || '';",
-                  "if (ct.includes('application/json') && pm.response.code < 400) {",
-                  "  const j = pm.response.json();",
-                  "  if (Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
-                  "}"
+                  "pm.test('Validate Happy Path HTTP 202', () => pm.expect(pm.response.code).to.eql(202));",
+                  "const j = pm.response.json();",
+                  "pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "const d = j.data;",
+                  "pm.test('status=validating', () => pm.expect(d.status).to.eql('validating'));",
+                  "pm.test('validation_job_id', () => pm.expect(d.validation_job_id).to.exist);",
+                  "pm.environment.set('validation_job_id', d.validation_job_id);",
+                  "pm.collectionVariables.set('validation_job_id', d.validation_job_id);",
+                  "pm.environment.set('release_status', d.status);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Poll Release Validation BuildJob",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{knowledge_base_url}}/api/v2/builds/{{validation_job_id}}",
+            "description": "Poll until data.status is completed before Promote. Repeat this request while queued/running. If failed, inspect stage results. Do not Promote while validating."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Poll BuildJob HTTP 200', () => pm.expect(pm.response.code).to.eql(200));",
+                  "const j = pm.response.json();",
+                  "pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "const d = j.data;",
+                  "pm.test('validation job completed — retry this request before Promote if still queued/running', () => pm.expect(d.status).to.eql('completed'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Explicit Release after validation",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{knowledge_base_url}}/api/v2/applications/{{application_id}}/releases/{{release_id}}",
+            "description": "Release must be validated before Promote. Failed jobs are located via validation_error / job stages."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Get Release HTTP 200', () => pm.expect(pm.response.code).to.eql(200));",
+                  "const d = pm.response.json().data;",
+                  "pm.test('Release validated', () => pm.expect(d.status).to.eql('validated'));",
+                  "pm.environment.set('release_status', d.status);",
+                  "pm.environment.set('release_manifest_hash', d.manifest_hash);"
                 ]
               }
             }
@@ -1614,12 +1674,10 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 409]));",
-                  "const ct = pm.response.headers.get('Content-Type') || '';",
-                  "if (ct.includes('application/json') && pm.response.code < 400) {",
-                  "  const j = pm.response.json();",
-                  "  if (Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
-                  "}"
+                  "pm.test('Promote preview HTTP 200', () => pm.expect(pm.response.code).to.eql(200));",
+                  "const d = pm.response.json().data;",
+                  "pm.environment.set('channel', 'preview');",
+                  "pm.environment.set('preview_release_id', d.active_release_id);"
                 ]
               }
             }
@@ -1644,7 +1702,8 @@
                   "language": "json"
                 }
               }
-            }
+            },
+            "description": "Run only after Poll Release Validation BuildJob is completed and Release status is validated."
           },
           "event": [
             {
@@ -1652,50 +1711,11 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 409]));",
-                  "const ct = pm.response.headers.get('Content-Type') || '';",
-                  "if (ct.includes('application/json') && pm.response.code < 400) {",
-                  "  const j = pm.response.json();",
-                  "  if (Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
-                  "}"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Rollback Stable Channel",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "url": "{{knowledge_base_url}}/api/v2/applications/{{application_id}}/channels/stable/rollback",
-            "body": {
-              "mode": "raw",
-              "raw": "{}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 409]));",
-                  "const ct = pm.response.headers.get('Content-Type') || '';",
-                  "if (ct.includes('application/json') && pm.response.code < 400) {",
-                  "  const j = pm.response.json();",
-                  "  if (Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
-                  "}"
+                  "pm.test('Promote stable HTTP 200', () => pm.expect(pm.response.code).to.eql(200));",
+                  "const d = pm.response.json().data;",
+                  "pm.test('stable pointer', () => pm.expect(d.active_release_id).to.eql(pm.environment.get('release_id')));",
+                  "pm.environment.set('channel', 'stable');",
+                  "pm.environment.set('stable_release_id', d.active_release_id);"
                 ]
               }
             }
@@ -1728,7 +1748,7 @@
       ]
     },
     {
-      "name": "07 Retrieval, Evidence & Federation",
+      "name": "08 Release Runtime Retrieval",
       "item": [
         {
           "name": "Application Retrieval",
@@ -1757,8 +1777,13 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('Expected', () => pm.expect(pm.response.code).to.be.oneOf([200,403,409,503]));",
-                  "if(pm.response.code===200){const j=pm.response.json();const ev=(j.data&&j.data.evidence)||[];if(ev[0]&&ev[0].evidence_id){pm.collectionVariables.set('evidence_id',ev[0].evidence_id);try{pm.environment.set('evidence_id',ev[0].evidence_id)}catch(e){}}}"
+                  "pm.test('Application Retrieval HTTP 200', () => pm.expect(pm.response.code).to.eql(200));",
+                  "const d = pm.response.json().data;",
+                  "pm.test('release_id', () => pm.expect(d.release_id).to.eql(pm.environment.get('stable_release_id') || pm.environment.get('release_id')));",
+                  "pm.test('channel=stable', () => pm.expect(d.channel).to.eql('stable'));",
+                  "pm.test('manifest_hash', () => pm.expect(d.manifest_hash).to.eql(pm.environment.get('release_manifest_hash')));",
+                  "const ev = d.evidence || [];",
+                  "if (ev[0] && ev[0].evidence_id) { pm.environment.set('evidence_id', ev[0].evidence_id); }"
                 ]
               }
             }
@@ -1829,7 +1854,7 @@
       ]
     },
     {
-      "name": "08 Agent Tools & MCP Delivery",
+      "name": "09 Agent & MCP Delivery",
       "item": [
         {
           "name": "Agent knowledge.search — stable",
@@ -1858,12 +1883,10 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 403, 409, 503]));",
-                  "const ct = pm.response.headers.get('Content-Type') || '';",
-                  "if (ct.includes('application/json') && pm.response.code < 400) {",
-                  "  const j = pm.response.json();",
-                  "  if (Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
-                  "}"
+                  "pm.test('Agent search HTTP 200', () => pm.expect(pm.response.code).to.eql(200));",
+                  "const d = pm.response.json().data;",
+                  "pm.test('same release_id as HTTP retrieval', () => pm.expect(d.release_id).to.eql(pm.environment.get('stable_release_id') || pm.environment.get('release_id')));",
+                  "pm.test('channel=stable', () => pm.expect(d.channel).to.eql('stable'));"
                 ]
               }
             }
@@ -2086,12 +2109,11 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 403, 409, 503]));",
-                  "const ct = pm.response.headers.get('Content-Type') || '';",
-                  "if (ct.includes('application/json') && pm.response.code < 400) {",
-                  "  const j = pm.response.json();",
-                  "  if (Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
-                  "}"
+                  "pm.test('MCP search HTTP 200', () => pm.expect(pm.response.code).to.eql(200));",
+                  "const body = pm.response.json();",
+                  "const d = body.data || body;",
+                  "const payload = d.result || d.data || d;",
+                  "pm.test('same release_id as HTTP retrieval', () => pm.expect(payload.release_id || (payload.data && payload.data.release_id)).to.eql(pm.environment.get('stable_release_id') || pm.environment.get('release_id')));"
                 ]
               }
             }
@@ -2130,6 +2152,185 @@
                   "  const j = pm.response.json();",
                   "  if (Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
                   "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "10 Release Defect Verification",
+      "item": [
+        {
+          "name": "Publish Application (compatibility)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{knowledge_base_url}}/api/v2/applications/{{application_id}}/publish",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"promote_on_validated\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Release-mode compatibility: HTTP 202, Application stays draft. Not the MANUAL-E2E-01 Happy Path. promote_on_validated true/false both return 202."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Publish Happy Path HTTP 202', () => pm.expect(pm.response.code).to.eql(202));",
+                  "const d = pm.response.json().data;",
+                  "pm.test('Application stays draft', () => pm.expect(d.status).to.eql('draft'));",
+                  "if (d.validation_job_id) { pm.environment.set('validation_job_id', d.validation_job_id); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Publish Application promote_on_validated true",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{knowledge_base_url}}/api/v2/applications/{{application_id}}/publish",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"promote_on_validated\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Release-mode compatibility: HTTP 202, Application stays draft. Not the MANUAL-E2E-01 Happy Path. promote_on_validated true/false both return 202."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Publish Happy Path HTTP 202', () => pm.expect(pm.response.code).to.eql(202));",
+                  "const d = pm.response.json().data;",
+                  "pm.test('Application stays draft', () => pm.expect(d.status).to.eql('draft'));",
+                  "if (d.validation_job_id) { pm.environment.set('validation_job_id', d.validation_job_id); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Application after publish",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{knowledge_base_url}}/api/v2/applications/{{application_id}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Get Application HTTP 200', () => pm.expect(pm.response.code).to.eql(200));",
+                  "const d = pm.response.json().data;",
+                  "pm.test('Application still draft after publish', () => pm.expect(d.status).to.eql('draft'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Rollback Stable Channel",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{knowledge_base_url}}/api/v2/applications/{{application_id}}/channels/stable/rollback",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP expected', () => pm.expect(pm.response.code).to.be.oneOf([200, 409]));",
+                  "const ct = pm.response.headers.get('Content-Type') || '';",
+                  "if (ct.includes('application/json') && pm.response.code < 400) {",
+                  "  const j = pm.response.json();",
+                  "  if (Object.prototype.hasOwnProperty.call(j, 'code')) pm.test('API code=0', () => pm.expect(j.code).to.eql(0));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "11 Evaluation by Release",
+      "item": [
+        {
+          "name": "Create Evaluation Run by Release",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{knowledge_base_url}}/api/v1/evaluation/runs",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"evaluation_set_id\": \"{{evaluation_set_id}}\",\n  \"retrieval_profile_id\": \"{{retrieval_profile_id}}\",\n  \"release_id\": \"{{stable_release_id}}\",\n  \"channel\": \"stable\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Bind evaluation metrics to the same stable Release used by HTTP/Agent/MCP."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Create Evaluation Run HTTP', () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));",
+                  "const d = pm.response.json().data;",
+                  "if (d && d.id) { pm.environment.set('evaluation_run_id', d.id); }"
                 ]
               }
             }

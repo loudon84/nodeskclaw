@@ -121,7 +121,7 @@ async def publish_application(
                 message_key="errors.knowledge.application_not_ready",
                 details=readiness.to_dict(),
             )
-    app.status = ApplicationStatus.active.value
+        app.status = ApplicationStatus.active.value
     from app.services import knowledge_quality_service
 
     app.runtime_snapshot = await knowledge_quality_service.build_runtime_snapshot(db, member, app)
