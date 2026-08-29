@@ -13,12 +13,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.deps import get_db
-from app.core.exceptions import BadRequestError, ForbiddenError, NotFoundError
+from app.core.exceptions import BadRequestError, ConflictError, ForbiddenError, NotFoundError
 from app.models.base import not_deleted
+from app.models.connector.edge_artifact_on_demand_request import EdgeArtifactOnDemandRequest, OnDemandRequestStatus
 from app.models.connector.edge_job import EdgeJob, EdgeJobStatus
 from app.models.connector.edge_node import EdgeNode, EdgeNodeStatus
 from app.models.hermes_skill.skill_installation import HermesSkillInstallation
-from app.services.connector.edge_node_service import hash_edge_token
+from app.services.connector.edge_node_service import EdgeNodeService, hash_edge_token
 from app.services.hermes_skill.runtime_skill_run_service import strip_internal_route_secrets
 from app.services.runtime.pg_notify import PGNotifyService
 
@@ -42,13 +43,36 @@ class EdgeLeaseRenewBody(BaseModel):
 
 
 class EdgeArtifactUploadBody(BaseModel):
-    artifact_id: str
+    artifact_id: str | None = None
     name: str
     content_type: str = "application/octet-stream"
     content_base64: str
     checksum_sha256: str
     delivery_generation: int | None = None
+    attempt_id: str | None = None
+    step_id: str | None = None
+    run_generation: int | None = None
+    size: int | None = None
+    upload_mode: str | None = "eager"
+    idempotency_key: str | None = None
     storage_state: str = "persisted"
+
+
+class EdgeArtifactRequestBody(BaseModel):
+    artifact_id: str | None = None
+    name: str
+    reason: str | None = None
+
+
+class IssueOnDemandRequestBody(BaseModel):
+    name: str
+    artifact_id: str | None = None
+    attempt_id: str | None = None
+    step_id: str | None = None
+    run_generation: int | None = None
+    delivery_generation: int | None = None
+    ttl_seconds: int = 300
+
 
 
 async def _authenticate_edge(
@@ -275,6 +299,16 @@ async def post_edge_job_events(
     if job.delivery_generation is not None and req_gen != job.delivery_generation:
         raise ForbiddenError("过期的 delivery generation 请求已拒绝", "errors.connector.stale_delivery_generation")
 
+    import json
+    for event in body.events:
+        payload = event.get("payload") or {}
+        payload_bytes = len(json.dumps(payload, default=str).encode("utf-8"))
+        if payload_bytes > 65536:
+            raise BadRequestError(
+                "Event payload 超过 64KB 限制，请使用 /artifacts/upload 独立上传产物",
+                "errors.connector.payload_too_large",
+            )
+
     now = datetime.now(timezone.utc)
     terminal = None
     for event in body.events:
@@ -361,42 +395,249 @@ async def upload_edge_job_artifact(
     if body.checksum_sha256 and calc_sha.lower() != body.checksum_sha256.lower():
         raise BadRequestError("Artifact checksum 不匹配", "errors.artifact.checksum_mismatch")
 
+    agent_data = None
     # Relay to agent storage if enabled
     if settings.SKILL_AGENT_ENABLED and settings.SKILL_AGENT_BASE_URL:
-        url = f"{settings.SKILL_AGENT_BASE_URL.rstrip('/')}/internal/v1/runs/{job.run_id}/artifacts/upload"
+        url = f"{settings.SKILL_AGENT_BASE_URL.rstrip('/')}/internal/v1/runs/{job.run_id}/artifacts"
         headers = {
             "X-Skill-Agent-Token": settings.SKILL_AGENT_INTERNAL_TOKEN,
             "X-Exec-Org-Id": node.org_id,
             "Content-Type": "application/json",
         }
+        payload = {
+            "name": body.name,
+            "content_type": body.content_type,
+            "content_base64": body.content_base64,
+            "checksum_sha256": calc_sha,
+            "attempt_id": body.attempt_id or job.attempt_id,
+            "step_id": body.step_id or job.step_id,
+            "generation": body.run_generation or job.run_generation,
+            "size": body.size or len(raw_bytes),
+            "upload_mode": body.upload_mode or "eager",
+            "idempotency_key": body.idempotency_key,
+        }
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=5.0)) as client:
-                res = await client.post(
-                    url,
-                    headers=headers,
-                    json={
-                        "artifact_id": body.artifact_id,
-                        "name": body.name,
-                        "content_type": body.content_type,
-                        "content_base64": body.content_base64,
-                        "checksum_sha256": calc_sha,
-                        "storage_state": body.storage_state,
-                    },
-                )
-                res.raise_for_status()
+                res = await client.post(url, headers=headers, json=payload)
+                if res.status_code >= 400:
+                    try:
+                        res_json = res.json()
+                        err_code = res_json.get("error_code") or res_json.get("message_key") or "errors.connector.edge_artifact_relay_failed"
+                        msg = res_json.get("message") or res_json.get("detail") or "中继产物失败"
+                    except Exception:
+                        err_code = "errors.connector.edge_artifact_relay_failed"
+                        msg = f"中继产物失败: {res.text}"
+                    if res.status_code == 400:
+                        raise BadRequestError(msg, err_code)
+                    elif res.status_code == 403:
+                        raise ForbiddenError(msg, err_code)
+                    elif res.status_code == 404:
+                        raise NotFoundError(msg, err_code)
+                    elif res.status_code == 409:
+                        raise ConflictError(msg, err_code)
+                    else:
+                        raise HTTPException(status_code=res.status_code, detail={"error_code": err_code, "message_key": err_code, "message": msg, "detail": msg})
+                agent_data = res.json() if res.content else {}
+        except (BadRequestError, ForbiddenError, NotFoundError, ConflictError, HTTPException):
+            raise
         except Exception as exc:
             import logging
             logging.getLogger(__name__).error("failed to forward edge artifact run_id=%s (fail-closed): %s", job.run_id, exc)
             raise ForbiddenError(f"中继产物失败: {exc}", "errors.connector.edge_artifact_relay_failed")
 
+    edge_service = EdgeNodeService(db)
+    await edge_service.consume_on_demand_request(
+        org_id=node.org_id,
+        job_id=job.id,
+        name=body.name,
+        artifact_id=agent_data.get("artifact_id") if isinstance(agent_data, dict) else body.artifact_id,
+        run_generation=job.run_generation,
+    )
+    await db.commit()
+
     return {
         "code": 0,
-        "data": {
+        "data": agent_data if isinstance(agent_data, dict) else {
             "artifact_id": body.artifact_id,
             "status": "uploaded",
             "checksum_sha256": calc_sha,
         },
     }
+
+
+@router.get("/artifacts/on-demand-requests")
+async def pull_edge_artifact_on_demand_requests(
+    db: AsyncSession = Depends(get_db),
+    x_edge_token: str | None = Header(default=None, alias="X-Edge-Token"),
+):
+    node = await _authenticate_edge(db, token=x_edge_token)
+    edge_service = EdgeNodeService(db)
+    items = await edge_service.pull_on_demand_requests(org_id=node.org_id, edge_node_id=node.id)
+    await db.commit()
+    return {
+        "code": 0,
+        "data": {
+            "items": [
+                {
+                    "id": item.id,
+                    "org_id": item.org_id,
+                    "edge_node_id": item.edge_node_id,
+                    "job_id": item.job_id,
+                    "run_id": item.run_id,
+                    "attempt_id": item.attempt_id,
+                    "step_id": item.step_id,
+                    "run_generation": item.run_generation,
+                    "delivery_generation": item.delivery_generation,
+                    "artifact_id": item.artifact_id,
+                    "name": item.name,
+                    "status": item.status,
+                    "expires_at": item.expires_at.isoformat() if item.expires_at else None,
+                }
+                for item in items
+            ]
+        },
+    }
+
+
+@router.post("/jobs/{job_id}/artifacts/on-demand-request")
+async def create_edge_job_artifact_on_demand_request(
+    job_id: str,
+    body: IssueOnDemandRequestBody,
+    db: AsyncSession = Depends(get_db),
+    x_edge_token: str | None = Header(default=None, alias="X-Edge-Token"),
+):
+    node = await _authenticate_edge(db, token=x_edge_token)
+    result = await db.execute(
+        select(EdgeJob).where(
+            not_deleted(EdgeJob),
+            EdgeJob.id == job_id,
+            EdgeJob.edge_node_id == node.id,
+            EdgeJob.org_id == node.org_id,
+        )
+    )
+    job = result.scalar_one_or_none()
+    if not job:
+        raise NotFoundError("Edge job 不存在", "errors.artifact.on_demand_not_found")
+
+    edge_service = EdgeNodeService(db)
+    req = await edge_service.issue_on_demand_request(
+        org_id=node.org_id,
+        edge_node_id=node.id,
+        job_id=job.id,
+        run_id=job.run_id,
+        name=body.name,
+        artifact_id=body.artifact_id,
+        attempt_id=body.attempt_id or job.attempt_id,
+        step_id=body.step_id or job.step_id,
+        run_generation=body.run_generation or job.run_generation,
+        delivery_generation=body.delivery_generation or job.delivery_generation,
+        ttl_seconds=body.ttl_seconds,
+    )
+    await db.commit()
+    return {
+        "code": 0,
+        "data": {
+            "id": req.id,
+            "job_id": req.job_id,
+            "name": req.name,
+            "status": req.status,
+            "expires_at": req.expires_at.isoformat() if req.expires_at else None,
+        },
+    }
+
+
+@router.post("/jobs/{job_id}/artifacts/request")
+async def request_edge_job_artifact(
+    job_id: str,
+    body: EdgeArtifactRequestBody,
+    db: AsyncSession = Depends(get_db),
+    x_edge_token: str | None = Header(default=None, alias="X-Edge-Token"),
+    x_delivery_generation: str | None = Header(default=None, alias="X-Delivery-Generation"),
+):
+    node = await _authenticate_edge(db, token=x_edge_token)
+    result = await db.execute(
+        select(EdgeJob).where(
+            not_deleted(EdgeJob),
+            EdgeJob.id == job_id,
+            EdgeJob.edge_node_id == node.id,
+            EdgeJob.org_id == node.org_id,
+        )
+    )
+    job = result.scalar_one_or_none()
+    if not job:
+        raise NotFoundError("Edge job 不存在", "errors.connector.edge_job_not_found")
+
+    req_gen = None
+    if x_delivery_generation and isinstance(x_delivery_generation, str):
+        try:
+            req_gen = int(x_delivery_generation)
+        except ValueError:
+            pass
+
+    if req_gen is None:
+        raise ForbiddenError("必须提供有效的 delivery generation", "errors.connector.missing_delivery_generation")
+
+    if job.delivery_generation is not None and req_gen != job.delivery_generation:
+        raise ForbiddenError("过期的 delivery generation 请求已拒绝", "errors.connector.stale_delivery_generation")
+
+    if not settings.SKILL_AGENT_ENABLED or not settings.SKILL_AGENT_BASE_URL:
+        raise NotFoundError("Skill Agent 未启用或产物不存在", "errors.artifact.not_found")
+
+    headers = {
+        "X-Skill-Agent-Token": settings.SKILL_AGENT_INTERNAL_TOKEN,
+        "X-Exec-Org-Id": node.org_id,
+        "X-Exec-User-Id": getattr(job, "user_id", "") or "",
+    }
+
+    target_artifact_id = body.artifact_id
+    if not target_artifact_id:
+        list_url = f"{settings.SKILL_AGENT_BASE_URL.rstrip('/')}/internal/v1/runs/{job.run_id}/artifacts"
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(15.0, connect=5.0)) as client:
+                res = await client.get(list_url, headers=headers)
+                res.raise_for_status()
+                artifacts_data = res.json().get("items") or []
+                for item in artifacts_data:
+                    if item.get("name") == body.name:
+                        target_artifact_id = item.get("artifact_id")
+                        break
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning("failed to list artifacts for run_id=%s: %s", job.run_id, exc)
+            raise NotFoundError(f"查找产物失败: {exc}", "errors.artifact.not_found")
+
+    if not target_artifact_id:
+        raise NotFoundError("未找到指定名称的产物", "errors.artifact.not_found")
+
+    bytes_url = f"{settings.SKILL_AGENT_BASE_URL.rstrip('/')}/internal/v1/runs/{job.run_id}/artifacts/{target_artifact_id}/bytes"
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=5.0)) as client:
+            res = await client.get(bytes_url, headers=headers)
+            if res.status_code == 404:
+                raise NotFoundError("产物不存在", "errors.artifact.not_found")
+            res.raise_for_status()
+            content_bytes = res.content
+            content_type = res.headers.get("content-type") or "application/octet-stream"
+            checksum = res.headers.get("x-checksum-sha256") or hashlib.sha256(content_bytes).hexdigest()
+            b64_content = base64.b64encode(content_bytes).decode("ascii")
+            return {
+                "code": 0,
+                "data": {
+                    "artifact_id": target_artifact_id,
+                    "name": body.name,
+                    "content_type": content_type,
+                    "content_base64": b64_content,
+                    "checksum_sha256": checksum,
+                    "size_bytes": len(content_bytes),
+                },
+            }
+    except NotFoundError:
+        raise
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).error("failed to fetch artifact bytes from skill agent: %s", exc)
+        raise ForbiddenError(f"获取产物失败: {exc}", "errors.artifact.fetch_failed")
+
 
 
 @router.get("/installations/desired")
@@ -454,16 +695,25 @@ async def report_installation_actual(
     if installation.edge_node_id and installation.edge_node_id != node.id:
         raise ForbiddenError("伪造 org/node 被拒绝", "errors.connector.edge_org_mismatch")
 
-    # If generation provided, check if actual generation is stale compared to current actual_generation
-    if body.generation is not None and hasattr(installation, "actual_generation"):
-        if installation.actual_generation and body.generation < installation.actual_generation:
-            raise ForbiddenError("过期的 actual generation 上报已拒绝", "errors.skill.stale_actual_generation")
-        installation.actual_generation = body.generation
+    if body.generation is None:
+        raise BadRequestError("缺少 generation 字段", "errors.skill.missing_generation")
 
+    desired_gen = getattr(installation, "desired_generation", 1) or 1
+    if body.generation < desired_gen:
+        raise ForbiddenError("过期的 actual generation 上报已拒绝", "errors.skill.stale_actual_generation")
+    if body.generation > desired_gen:
+        raise BadRequestError("超前的 generation 上报已拒绝", "errors.skill.future_generation")
+
+    installation.actual_generation = body.generation
     installation.actual_status = body.actual_status
     installation.actual_reported_at = datetime.now(timezone.utc)
     if body.meta:
         installation.routing_metadata = {**(installation.routing_metadata or {}), "actual_meta": body.meta}
+
+    if installation.status == "uninstalling" and body.actual_status in ("uninstalled", "removed"):
+        installation.status = "removed"
+        installation.deleted_at = datetime.now(timezone.utc)
+
     await db.commit()
     return {"code": 0, "data": {"installation_id": installation.id, "actual_status": installation.actual_status}}
 

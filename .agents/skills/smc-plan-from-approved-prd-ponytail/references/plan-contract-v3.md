@@ -14,6 +14,8 @@ Plan v3.2 是 APPROVED PRD 与 Execute 之间的实施合同，重点增加：
 - 有状态行为的 lifecycle closure；
 - 完成状态与证据条件的明确边界。
 
+Skill v3.3 在不改变 `smc.plan.v3.2` 静态合同标识的前提下，增加生成期真实性门禁。Ponytail minimality、Change ID、单写者和 Todo slicing 规则保持不变。
+
 ## Required Frontmatter
 
 最终 Plan（以及种子骨架）必须以 YAML frontmatter 开头，且至少包含：
@@ -24,10 +26,14 @@ plan_contract: smc.plan.v3.2
 commit_policy: post_review
 source_revision: <prd-work-item@version>
 grounded_commit: <prd-grounded-commit>
+grounding_source: committed_baseline
+working_tree_fingerprint: clean
 ---
 ```
 
 `commit_policy: post_review` 是硬字段。缺该字段则 Plan 未完成，不得进入 Execute。执行期若遇到历史 Plan 缺字段，一律推断为 `post_review`，禁止 Todo 完成即 commit。
+
+`grounding_source` 只能是 `committed_baseline` 或获得用户明确授权的 `working_tree`。后者必须记录不可为空的 `working_tree_fingerprint`；未提交实现不能静默成为批准事实。
 
 ## Required Sections
 
@@ -35,20 +41,34 @@ grounded_commit: <prd-grounded-commit>
 
 1. `## Approved PRD`
 2. `## Scope`
-3. `## Requirement Coverage Ledger`
-4. `## Lifecycle Closure Matrix`
-5. `## Verification Ledger`
-6. `## Immediate Read`
-7. `## Triggered Read`
-8. `## Change Matrix`
-9. `## Implementation Decisions`
-10. `## Write Ownership Ledger`
-11. `## Integration Hotspots`
-12. `## New File Justification` — conditional
-13. `## New Dependency Justification` — conditional
-14. `## Todo Tn — ...`
-15. `## Verification`
-16. `## Completion Gate`
+3. `## Grounding Evidence Ledger`
+4. `## Requirement Coverage Ledger`
+5. `## Lifecycle Closure Matrix`
+6. `## Contract / Data Flow Closure Matrix`
+7. `## Verification Ledger`
+8. `## Immediate Read`
+9. `## Triggered Read`
+10. `## Change Matrix`
+11. `## Implementation Decisions`
+12. `## Write Ownership Ledger`
+13. `## Integration Hotspots`
+14. `## Generated Outputs Ledger`
+15. `## New File Justification` — conditional
+16. `## New Dependency Justification` — conditional
+17. `## Todo Tn — ...`
+18. `## Verification`
+19. `## Completion Gate`
+
+## Grounding Evidence Ledger
+
+每个非 KEEP Change 必须证明基线 target、symbol/entry、最小调用链和复用搜索结果：
+
+```markdown
+| Change ID | Target | Baseline State | Symbol / Entry Resolution | Caller / Callee Evidence | Existing Reuse Search | Result |
+|---|---|---|---|---|---|---|
+```
+
+`Baseline State` 相对于 `grounded_commit`。既有 target 无法解析、验证入口不存在或 CLI 参数未经 parser/`--help` 证实时，Plan 未完成。
 
 ## Requirement Coverage Ledger
 
@@ -84,6 +104,17 @@ PRD 的每一条编号 Acceptance Criteria 和 Definition of Done 必须各有�
 
 每个 `LIFECYCLE` requirement 都必须至少出现一次，并使 success、failure / cancel writer 以及阻断验证证据显式可见；不可用 `None` 代替。
 
+## Contract / Data Flow Closure Matrix
+
+跨独立 owner、进程、网络、队列、持久化或生成边界时必需：
+
+```markdown
+| Flow | Requirements | Producer | Transport / Schema | Consumer | Required Fields | Validation Owner | Failure Mapping | Retry / Idempotency Identity | Evidence IDs |
+|---|---|---|---|---|---|---|---|---|---|
+```
+
+没有跨边界流时写 `None`。required field 必须有权威 producer、transport、consumer 和 failure mapping；异步/重试流还必须闭环 identity。
+
 ## Verification Ledger
 
 ```markdown
@@ -103,7 +134,7 @@ PRD 的每一条编号 Acceptance Criteria 和 Definition of Done 必须各有�
 
 ### Change ID
 
-- 推荐：`C01`, `C02`；
+- 生成器新建：`C01`, `C02`；上游 PRD 已存在稳定子变更 ID 时可继承 `C01.1`，Plan 不自行发明小数 ID；
 - 同一 ID 多行时必须同一 Todo Owner；
 - `REPLACE` 必须在同一 Change ID 下同时有对应 `REMOVE` row；
 - 非 KEEP 必须有 Todo Owner；
@@ -191,6 +222,17 @@ None
 ```
 
 Hotspot 使用 file-level single writer。
+
+## Generated Outputs Ledger
+
+没有生成物时写 `None`。有生成物时使用：
+
+```markdown
+| Source Change | Generator Owner | Generated Outputs | Command | Drift Check |
+|---|---|---|---|---|
+```
+
+生成物不作为人工 WRITE_OWNER，但必须能由唯一 generator owner 重建并检查漂移。
 
 ## New File Justification
 

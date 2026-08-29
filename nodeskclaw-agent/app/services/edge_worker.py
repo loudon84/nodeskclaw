@@ -7,12 +7,14 @@ import json
 import logging
 import os
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import httpx
 
 from app.config import settings
+from app.services.edge_skill_installer import EdgeSkillInstaller
 from app.services.engine_port import execute_engine
 from app.services.secret_store import SecretStore
 
@@ -30,6 +32,8 @@ class EdgeWorker:
         self._secrets = SecretStore()
         self._spool_dir = Path("./data/edge_spool")
         self._spool_dir.mkdir(parents=True, exist_ok=True)
+        self._installer = EdgeSkillInstaller()
+        self.last_heartbeat_at: datetime | None = None
 
     def stop(self) -> None:
         self._running = False
@@ -53,6 +57,7 @@ class EdgeWorker:
                 try:
                     await self._heartbeat(client)
                     await self._reconcile_desired_installations(client)
+                    await self._pull_and_fulfill_on_demand_requests(client)
                     await self._flush_spool(client)
                     job = await self._claim_job(client)
                     if job:
@@ -66,7 +71,7 @@ class EdgeWorker:
                     await asyncio.sleep(settings.SKILL_AGENT_EDGE_POLL_SECONDS)
 
     async def _reconcile_desired_installations(self, client: httpx.AsyncClient) -> None:
-        """Fetch desired installations for this node, reconcile state and report actual status."""
+        """Fetch desired installations for this node, reconcile state with real installer and report actual status."""
         try:
             url = f"{self._base_url}/api/v1/internal/edge/installations/desired"
             response = await client.get(url, headers=self._headers())
@@ -74,23 +79,101 @@ class EdgeWorker:
                 return
             data = response.json().get("data") or {}
             items = data.get("items") or []
+
+            local_state_file = self._spool_dir / "edge_installations.json"
+            local_state: dict[str, Any] = {}
+            if local_state_file.exists():
+                try:
+                    local_state = json.loads(local_state_file.read_text(encoding="utf-8"))
+                except Exception:
+                    local_state = {}
+
+            report_url = f"{self._base_url}/api/v1/internal/edge/installations/actual"
             for inst in items:
-                inst_id = inst.get("id")
-                desired_gen = inst.get("desired_generation") or 1
-                actual_gen = inst.get("actual_generation") or 0
-                if desired_gen != actual_gen:
-                    # In EdgeWorker, mark successfully prepared/ready on edge node
-                    report_url = f"{self._base_url}/api/v1/internal/edge/installations/actual"
+                inst_id = str(inst.get("id"))
+                skill_id = str(inst.get("skill_id") or "")
+                desired_status = str(inst.get("desired_status") or "installed")
+                desired_gen = int(inst.get("desired_generation") or 1)
+                actual_gen = int(inst.get("actual_generation") or 0)
+
+                if desired_status == "uninstalling":
+                    # Perform real filesystem uninstall
+                    self._installer.uninstall(skill_id=skill_id)
+                    if inst_id in local_state:
+                        local_state.pop(inst_id, None)
+                        local_state_file.write_text(json.dumps(local_state), encoding="utf-8")
+                    report_body = {
+                        "installation_id": inst_id,
+                        "actual_status": "uninstalled",
+                        "generation": desired_gen,
+                        "meta": {"reconciled_by": "edge_worker", "node_id": self._node_id, "action": "uninstalled"},
+                    }
+                    rep_res = await client.post(report_url, headers=self._headers(), json=report_body)
+                    rep_res.raise_for_status()
+                elif desired_gen != actual_gen:
+                    # Perform real filesystem install
+                    self._installer.install(
+                        skill_id=skill_id,
+                        version=str(desired_gen),
+                        meta={"installation_id": inst_id, "node_id": self._node_id},
+                    )
+                    if not self._installer.is_installed(skill_id=skill_id, version=str(desired_gen)):
+                        raise RuntimeError(f"Skill {skill_id} installation side effect verification failed")
+
+                    local_state[inst_id] = {
+                        "skill_id": skill_id,
+                        "generation": desired_gen,
+                    }
+                    local_state_file.write_text(json.dumps(local_state), encoding="utf-8")
                     report_body = {
                         "installation_id": inst_id,
                         "actual_status": "ready",
                         "generation": desired_gen,
-                        "meta": {"reconciled_by": "edge_worker", "node_id": self._node_id},
+                        "meta": {"reconciled_by": "edge_worker", "node_id": self._node_id, "action": "installed"},
                     }
                     rep_res = await client.post(report_url, headers=self._headers(), json=report_body)
                     rep_res.raise_for_status()
         except Exception:
             logger.debug("reconcile desired installations failed", exc_info=True)
+
+    async def _pull_and_fulfill_on_demand_requests(self, client: httpx.AsyncClient) -> None:
+        """Poll Central for on-demand artifact requests and fulfill them via outbound upload."""
+        try:
+            url = f"{self._base_url}/api/v1/internal/edge/artifacts/on-demand-requests"
+            response = await client.get(url, headers=self._headers())
+            if response.status_code != 200:
+                return
+            data = response.json().get("data") or {}
+            items = data.get("items") or []
+            for req in items:
+                req_name = req.get("name")
+                job_id = req.get("job_id")
+                deliv_gen = int(req.get("delivery_generation") or 1)
+                run_gen = int(req.get("run_generation") or 1)
+                attempt_id = req.get("attempt_id")
+                step_id = req.get("step_id")
+                if not req_name or not job_id:
+                    continue
+                # Look for local file in spool dir or artifacts
+                local_file = self._spool_dir / req_name
+                if local_file.exists():
+                    try:
+                        content_bytes = local_file.read_bytes()
+                        await self._upload_artifact(
+                            client,
+                            job_id,
+                            artifact_id=req.get("artifact_id") or str(uuid.uuid4()),
+                            name=req_name,
+                            content_bytes=content_bytes,
+                            delivery_generation=deliv_gen,
+                            attempt_id=attempt_id,
+                            step_id=step_id,
+                            run_generation=run_gen,
+                        )
+                    except Exception:
+                        logger.debug("fulfill on-demand artifact %s failed", req_name, exc_info=True)
+        except Exception:
+            logger.debug("pull on-demand requests failed", exc_info=True)
 
     async def _heartbeat(self, client: httpx.AsyncClient) -> None:
         url = f"{self._base_url}/api/v1/internal/edge/heartbeat"
@@ -100,6 +183,7 @@ class EdgeWorker:
         }
         response = await client.post(url, headers=self._headers(), json=body)
         response.raise_for_status()
+        self.last_heartbeat_at = datetime.now(timezone.utc)
 
     async def _claim_job(self, client: httpx.AsyncClient) -> dict[str, Any] | None:
         url = f"{self._base_url}/api/v1/internal/edge/jobs"
@@ -125,15 +209,22 @@ class EdgeWorker:
 
     async def _flush_spool(self, client: httpx.AsyncClient) -> None:
         """Flush persisted spool files on disk if any previous network failures occurred."""
-        for spool_file in list(self._spool_dir.glob("*.json")):
+        for spool_file in list(self._spool_dir.glob("spool_*.json")):
             try:
                 data = json.loads(spool_file.read_text(encoding="utf-8"))
                 job_id = data.get("job_id")
                 events = data.get("events") or []
                 delivery_generation = int(data.get("delivery_generation") or 1)
                 if job_id and events:
-                    await self._post_events(client, job_id, events, delivery_generation=delivery_generation)
-                spool_file.unlink(missing_ok=True)
+                    try:
+                        await self._post_events(client, job_id, events, delivery_generation=delivery_generation)
+                        spool_file.unlink(missing_ok=True)
+                    except httpx.HTTPStatusError as err:
+                        if err.response.status_code == 403:
+                            logger.warning("Spool event rejected with 403 (preempted) for job %s, discarding", job_id)
+                            spool_file.unlink(missing_ok=True)
+                        else:
+                            raise
             except Exception:
                 logger.debug("spool flush retry failed for %s", spool_file.name, exc_info=True)
 
@@ -145,6 +236,8 @@ class EdgeWorker:
         delivery_generation: int = 1,
         attempt_id: str | None = None,
         step_id: str | None = None,
+        request_trace_id: str | None = None,
+        idempotency_key: str | None = None,
     ) -> None:
         try:
             spool_file = self._spool_dir / f"spool_{job_id}_{uuid.uuid4().hex}.json"
@@ -154,6 +247,8 @@ class EdgeWorker:
                 "delivery_generation": delivery_generation,
                 "attempt_id": attempt_id,
                 "step_id": step_id,
+                "request_trace_id": request_trace_id,
+                "idempotency_key": idempotency_key,
             }
             spool_file.write_text(json.dumps(envelope), encoding="utf-8")
         except Exception:
@@ -186,6 +281,8 @@ class EdgeWorker:
         delivery_generation: int = 1,
         attempt_id: str | None = None,
         step_id: str | None = None,
+        request_trace_id: str | None = None,
+        idempotency_key: str | None = None,
     ) -> None:
         try:
             await self._post_events(client, job_id, [event], delivery_generation=delivery_generation)
@@ -197,6 +294,8 @@ class EdgeWorker:
                 delivery_generation=delivery_generation,
                 attempt_id=attempt_id,
                 step_id=step_id,
+                request_trace_id=request_trace_id,
+                idempotency_key=idempotency_key,
             )
 
     def _prepare_snapshot(self, snapshot: dict[str, Any]) -> dict[str, Any]:
@@ -233,6 +332,11 @@ class EdgeWorker:
         content_bytes: bytes,
         content_type: str = "application/octet-stream",
         delivery_generation: int = 1,
+        attempt_id: str | None = None,
+        step_id: str | None = None,
+        run_generation: int | None = None,
+        upload_mode: str = "eager",
+        idempotency_key: str | None = None,
     ) -> None:
         """Upload job artifact to central backend internal edge endpoint."""
         url = f"{self._base_url}/api/v1/internal/edge/jobs/{job_id}/artifacts/upload"
@@ -247,9 +351,43 @@ class EdgeWorker:
             "content_base64": b64_content,
             "checksum_sha256": checksum,
             "delivery_generation": delivery_generation,
+            "attempt_id": attempt_id,
+            "step_id": step_id,
+            "run_generation": run_generation,
+            "size": len(content_bytes),
+            "upload_mode": upload_mode,
+            "idempotency_key": idempotency_key,
         }
         res = await client.post(url, headers=headers, json=body)
         res.raise_for_status()
+
+    async def _request_artifact(
+        self,
+        client: httpx.AsyncClient,
+        job_id: str,
+        *,
+        name: str,
+        artifact_id: str | None = None,
+        delivery_generation: int = 1,
+    ) -> bytes:
+        """Pull central artifact on demand with SHA256 integrity verification."""
+        url = f"{self._base_url}/api/v1/internal/edge/jobs/{job_id}/artifacts/request"
+        headers = dict(self._headers())
+        headers["X-Delivery-Generation"] = str(delivery_generation)
+        body: dict[str, Any] = {"name": name}
+        if artifact_id:
+            body["artifact_id"] = artifact_id
+        res = await client.post(url, headers=headers, json=body)
+        res.raise_for_status()
+        data = res.json().get("data") or {}
+        b64_content = data.get("content_base64") or ""
+        expected_checksum = str(data.get("checksum_sha256") or "").lower()
+        content_bytes = base64.b64decode(b64_content)
+        actual_checksum = hashlib.sha256(content_bytes).hexdigest().lower()
+        if expected_checksum and actual_checksum != expected_checksum:
+            raise RuntimeError(f"Edge requested artifact checksum mismatch for '{name}': {actual_checksum} != {expected_checksum}")
+        return content_bytes
+
 
     async def _execute_job(self, client: httpx.AsyncClient, job: dict[str, Any]) -> None:
         job_id = str(job["id"])
@@ -277,6 +415,8 @@ class EdgeWorker:
                         logger.warning("edge job lease preempted job_id=%s generation=%s", job_id, delivery_generation)
                         cancel_event.set()
                         break
+                except asyncio.CancelledError:
+                    break
                 except Exception:
                     logger.debug("edge lease renew check error", exc_info=True)
 
@@ -293,6 +433,8 @@ class EdgeWorker:
                         if data.get("cancelled") or data.get("cancel_requested"):
                             cancel_event.set()
                             break
+                except asyncio.CancelledError:
+                    break
                 except Exception:
                     pass
 
@@ -303,6 +445,26 @@ class EdgeWorker:
             prepared = self._prepare_snapshot(snapshot)
             placement = prepared.get("placement") or {}
             engine_name = str(placement.get("engine") or "connector")
+            runtime_policy = prepared.get("runtime_policy") or {}
+            required_artifacts = runtime_policy.get("required_artifacts") or []
+            if isinstance(required_artifacts, str):
+                required_artifacts = [required_artifacts]
+            for art_spec in required_artifacts:
+                art_name = art_spec if isinstance(art_spec, str) else str(art_spec.get("name") or "")
+                art_id = None if isinstance(art_spec, str) else art_spec.get("artifact_id")
+                if art_name:
+                    try:
+                        fetched_bytes = await self._request_artifact(
+                            client,
+                            job_id,
+                            name=art_name,
+                            artifact_id=art_id,
+                            delivery_generation=delivery_generation,
+                        )
+                        logger.info("edge successfully fetched required artifact '%s' (%d bytes)", art_name, len(fetched_bytes))
+                    except Exception as req_exc:
+                        logger.warning("edge failed to fetch required artifact '%s': %s", art_name, req_exc)
+                        raise RuntimeError(f"Edge missing required artifact '{art_name}': {req_exc}")
 
             async for event in execute_engine(
                 engine=engine_name,

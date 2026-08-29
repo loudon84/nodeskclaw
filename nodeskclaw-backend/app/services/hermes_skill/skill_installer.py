@@ -93,10 +93,18 @@ class SkillInstaller:
         installation = await self.db.get(HermesSkillInstallation, installation_id)
         if not installation or installation.deleted_at is not None or installation.org_id != org_id:
             raise NotFoundError("安装记录不存在", "errors.skill.installation_not_found")
-        if installation.status != InstallStatus.INSTALLED:
+        if installation.status not in (InstallStatus.INSTALLED, "installed", "ready", "healthy"):
             raise BadRequestError("只能卸载已安装的 Skill", "errors.skill.cannot_uninstall")
 
+        if getattr(installation, "target_kind", "remote") == "edge":
+            installation.status = "uninstalling"
+            installation.desired_generation = (getattr(installation, "desired_generation", 1) or 1) + 1
+            await self.db.flush()
+            return installation
+
+        from datetime import datetime, timezone
         installation.status = InstallStatus.REMOVED
+        installation.deleted_at = datetime.now(timezone.utc)
         await self.db.flush()
         return installation
 

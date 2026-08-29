@@ -1,0 +1,44 @@
+{
+  "errors": [
+    {
+      "status_code": 400,
+      "error_code": "errors.artifact.missing_field",
+      "message": "name and content_base64 are required"
+    },
+    {
+      "status_code": 400,
+      "error_code": "errors.artifact.size_mismatch",
+      "message": "size mismatch"
+    },
+    {
+      "status_code": 400,
+      "error_code": "errors.artifact.checksum_mismatch",
+      "message": "checksum mismatch"
+    },
+    {
+      "status_code": 403,
+      "error_code": "errors.artifact.unauthorized_scope",
+      "message": "org_id scope mismatch"
+    },
+    {
+      "status_code": 409,
+      "error_code": "errors.artifact.stale_generation",
+      "message": "generation mismatch"
+    },
+    {
+      "status_code": 409,
+      "error_code": "errors.artifact.idempotency_conflict",
+      "message": "artifact idempotency conflict"
+    },
+    {
+      "status_code": 404,
+      "error_code": "errors.artifact.on_demand_not_found",
+      "message": "on-demand request not found"
+    },
+    {
+      "status_code": 409,
+      "error_code": "errors.artifact.on_demand_consumed",
+      "message": "on-demand request already consumed"
+    }
+  ]
+}

@@ -20,5 +20,5 @@ COPY nodeskclaw-agent/alembic.ini ./alembic.ini
 COPY nodeskclaw-agent/alembic ./alembic
 COPY nodeskclaw-agent/app ./app
 
-EXPOSE 4520
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "4520"]
+EXPOSE 4580
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "4580"]

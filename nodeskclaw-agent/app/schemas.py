@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 
 
 class CreateRunRequest(BaseModel):
-    run_id: str
+    run_id: str | None = None
     dispatch_id: str | None = None
     org_id: str | None = None
     user_id: str | None = None
@@ -97,4 +97,75 @@ class MutationResponse(BaseModel):
     run_id: str
     status: str
     idempotent: bool = True
+
+
+class IngestEventItem(BaseModel):
+    event_type: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+    event_seq: int | None = None
+    step_id: str | None = None
+    attempt_id: str | None = None
+    delivery_generation: int | None = None
+    source: str = "edge"
+    source_event_id: str | None = None
+
+
+class IngestEventsRequest(BaseModel):
+    events: list[IngestEventItem] = Field(default_factory=list)
+
+
+class IngestEventsResponse(BaseModel):
+    accepted_count: int
+    rejected_count: int = 0
+    run_id: str
+    status: str
+
+
+class RunStepView(BaseModel):
+    step_id: str
+    owner_role: str
+    engine: str
+    status: str
+    depends_on: list[str] = Field(default_factory=list)
+    required: bool = True
+    required_artifacts: list[str] = Field(default_factory=list)
+    attempt_id: str | None = None
+    run_generation: int = 0
+    edge_job_id: str | None = None
+    version: int = 1
+    result: dict[str, Any] | None = None
+    error_message: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+class StepPlanResponse(BaseModel):
+    run_id: str
+    org_id: str
+    steps: list[RunStepView] = Field(default_factory=list)
+
+
+class EventRejectionView(BaseModel):
+    id: str
+    run_id: str
+    event_id: str | None = None
+    source_event_id: str | None = None
+    reason: str
+    details: dict[str, Any] = Field(default_factory=dict)
+    created_at: str
+
+
+class ArtifactUploadRequest(BaseModel):
+    name: str
+    content_base64: str
+    content_type: str | None = "text/plain"
+    checksum_sha256: str | None = None
+    attempt_id: str | None = None
+    step_id: str | None = None
+    generation: int | None = None
+    size: int | None = None
+    upload_mode: str | None = "eager"
+    idempotency_key: str | None = None
+
+
 

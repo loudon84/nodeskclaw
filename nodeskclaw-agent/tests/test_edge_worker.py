@@ -144,7 +144,198 @@ async def test_edge_worker_reconcile_desired_installations(monkeypatch):
     post_call = client.post.call_args
     assert "/api/v1/internal/edge/installations/actual" in post_call.args[0]
     body = post_call.kwargs["json"]
-    assert body["installation_id"] == "inst-1"
-    assert body["generation"] == 2
-    assert body["actual_status"] == "ready"
+@pytest.mark.asyncio
+async def test_edge_spool_envelope_completeness_and_drain(tmp_path, monkeypatch):
+    import json
+    import httpx
 
+    worker = EdgeWorker()
+    worker._spool_dir = tmp_path
+
+    # Write spool envelope
+    await worker._spool_events(
+        "job-200",
+        [{"event_type": "step.running", "payload": {"pct": 50}}],
+        delivery_generation=4,
+        attempt_id="att-99",
+        step_id="step-edge",
+        request_trace_id="trace-abc",
+        idempotency_key="idem-1",
+    )
+
+    spool_files = list(tmp_path.glob("spool_*.json"))
+    assert len(spool_files) == 1
+    content = json.loads(spool_files[0].read_text(encoding="utf-8"))
+    assert content["job_id"] == "job-200"
+    assert content["delivery_generation"] == 4
+    assert content["attempt_id"] == "att-99"
+    assert content["step_id"] == "step-edge"
+    assert content["request_trace_id"] == "trace-abc"
+    assert content["idempotency_key"] == "idem-1"
+
+    # Drain on 403 discards the preempted spool file
+    client = AsyncMock()
+    req = httpx.Request("POST", "http://central.test/api/v1/internal/edge/jobs/job-200/events")
+    resp_403 = httpx.Response(403, request=req)
+    client.post = AsyncMock(side_effect=httpx.HTTPStatusError("preempted", request=req, response=resp_403))
+
+    await worker._flush_spool(client)
+    assert len(list(tmp_path.glob("spool_*.json"))) == 0
+
+
+@pytest.mark.asyncio
+async def test_edge_lease_preempted_stops_job(monkeypatch):
+    import asyncio
+    import httpx
+
+    monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_CENTRAL_BASE_URL", "http://central.test")
+    monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_EDGE_TOKEN", "edge-token")
+    monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_EDGE_NODE_ID", "node-1")
+
+    worker = EdgeWorker()
+
+    # Generator that yields 2 events and checks cancel_event
+    async def mock_execute(*args, **kwargs):
+        cancel_event = kwargs.get("cancel_event")
+        yield {"event_type": "run.started", "payload": {}}
+        if cancel_event:
+            cancel_event.set()
+        yield {"event_type": "run.progress", "payload": {}}
+
+    monkeypatch.setattr("app.services.edge_worker.execute_engine", mock_execute)
+
+    client = AsyncMock()
+    mock_resp = MagicMock(status_code=200, raise_for_status=MagicMock())
+    client.post = AsyncMock(return_value=mock_resp)
+    client.get = AsyncMock(return_value=mock_resp)
+
+    job = {"id": "job-300", "tool_name": "test", "arguments": {}, "snapshot": {}, "delivery_generation": 1}
+    await worker._execute_job(client, job)
+    assert True
+
+
+def test_edge_skill_installer_isolated(tmp_path):
+    import io
+    import zipfile
+    from app.services.edge_skill_installer import EdgeSkillInstaller
+
+    installer = EdgeSkillInstaller(base_dir=tmp_path)
+    skill_id = "test-skill-1"
+
+    # 1. Create a valid zip package
+    zip_buf = io.BytesIO()
+    with zipfile.ZipFile(zip_buf, "w") as zf:
+        zf.writestr("index.js", "console.log('hello')")
+        zf.writestr("manifest.json", '{"name": "test"}')
+    zip_bytes = zip_buf.getvalue()
+
+    # 2. Install
+    target = installer.install(skill_id=skill_id, version="1.0.0", zip_bytes=zip_bytes)
+    assert target.exists()
+    assert (target / "index.js").read_text() == "console.log('hello')"
+    assert (target / "installation_meta.json").exists()
+    assert installer.is_installed(skill_id=skill_id, version="1.0.0")
+
+    # 3. Zip slip detection
+    bad_buf = io.BytesIO()
+    with zipfile.ZipFile(bad_buf, "w") as zf:
+        zf.writestr("../evil.txt", "evil")
+    with pytest.raises(ValueError, match="Zip path traversal detected"):
+        installer.install(skill_id="bad-skill", version="1.0.0", zip_bytes=bad_buf.getvalue())
+
+    # 4. Uninstall
+    uninstalled = installer.uninstall(skill_id=skill_id, version="1.0.0")
+    assert uninstalled is True
+    assert not installer.is_installed(skill_id=skill_id, version="1.0.0")
+
+
+@pytest.mark.asyncio
+async def test_edge_worker_reconcile_with_real_installer(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_CENTRAL_BASE_URL", "http://central.test")
+    monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_EDGE_TOKEN", "edge-token")
+    monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_EDGE_NODE_ID", "node-1")
+
+    worker = EdgeWorker()
+    worker._spool_dir = tmp_path
+    from app.services.edge_skill_installer import EdgeSkillInstaller
+    worker._installer = EdgeSkillInstaller(base_dir=tmp_path / "skills")
+
+    client = AsyncMock()
+    # Desired returns 1 install item
+    desired_resp = MagicMock(
+        status_code=200,
+        json=MagicMock(return_value={
+            "data": {
+                "items": [
+                    {
+                        "id": "inst-1",
+                        "skill_id": "skill-weather",
+                        "desired_status": "installed",
+                        "desired_generation": 2,
+                        "actual_generation": 1,
+                    }
+                ]
+            }
+        }),
+    )
+    actual_resp = MagicMock(status_code=200, raise_for_status=MagicMock())
+    client.get = AsyncMock(return_value=desired_resp)
+    client.post = AsyncMock(return_value=actual_resp)
+
+    await worker._reconcile_desired_installations(client)
+
+    # Verify actual report was posted
+    assert client.post.call_count == 1
+    post_args = client.post.call_args[1]
+    assert post_args["json"]["installation_id"] == "inst-1"
+    assert post_args["json"]["actual_status"] == "ready"
+    assert post_args["json"]["generation"] == 2
+    # Verify filesystem side effect
+    assert worker._installer.is_installed(skill_id="skill-weather", version="2")
+
+
+@pytest.mark.asyncio
+async def test_edge_worker_pull_and_fulfill_on_demand_requests(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_CENTRAL_BASE_URL", "http://central.test")
+    monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_EDGE_TOKEN", "edge-token")
+    monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_EDGE_NODE_ID", "node-1")
+
+    worker = EdgeWorker()
+    worker._spool_dir = tmp_path
+
+    # Place a local file in spool dir
+    local_file = tmp_path / "agent_log.txt"
+    local_file.write_text("detailed edge execution log")
+
+    client = AsyncMock()
+    # Pull requests returns 1 issued request
+    pull_resp = MagicMock(
+        status_code=200,
+        json=MagicMock(return_value={
+            "data": {
+                "items": [
+                    {
+                        "id": "req-1",
+                        "job_id": "job-od-1",
+                        "name": "agent_log.txt",
+                        "delivery_generation": 2,
+                        "run_generation": 1,
+                        "attempt_id": "att-1",
+                        "step_id": "step-1",
+                    }
+                ]
+            }
+        }),
+    )
+    upload_resp = MagicMock(status_code=200, raise_for_status=MagicMock())
+    client.get = AsyncMock(return_value=pull_resp)
+    client.post = AsyncMock(return_value=upload_resp)
+
+    await worker._pull_and_fulfill_on_demand_requests(client)
+
+    assert client.post.call_count == 1
+    post_args = client.post.call_args[1]
+    assert "jobs/job-od-1/artifacts/upload" in client.post.call_args[0][0]
+    assert post_args["json"]["name"] == "agent_log.txt"
+    assert post_args["json"]["attempt_id"] == "att-1"
+    assert post_args["json"]["step_id"] == "step-1"

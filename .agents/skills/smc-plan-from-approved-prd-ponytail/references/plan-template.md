@@ -3,6 +3,8 @@ plan_contract: smc.plan.v3.2
 commit_policy: post_review
 source_revision: <prd-work-item@version>
 grounded_commit: <prd-grounded-commit>
+grounding_source: committed_baseline
+working_tree_fingerprint: clean
 ---
 
 # <Feature> Implementation Plan
@@ -16,6 +18,12 @@ grounded_commit: <prd-grounded-commit>
 - In: ...
 - Out: ...
 - Production Owner inherited from PRD: ...
+
+## Grounding Evidence Ledger
+
+| Change ID | Target | Baseline State | Symbol / Entry Resolution | Caller / Callee Evidence | Existing Reuse Search | Result |
+|---|---|---|---|---|---|---|
+| C01 | `path#symbol` | exists at `grounded_commit` | resolved | `caller -> owner -> callee` | existing helper/schema search result | PASS |
 
 ## Requirement Coverage Ledger
 
@@ -31,6 +39,12 @@ grounded_commit: <prd-grounded-commit>
 | Journey | Requirements | Trigger | Nonterminal State | Success Writer | Failure / Cancel Writer | Evidence IDs |
 |---|---|---|---|---|---|---|
 | <journey> | AC-01 | <trigger> | <state> | <owner> | <owner> | V01 |
+
+## Contract / Data Flow Closure Matrix
+
+<!-- Use None only when no data crosses an independent owner, process, network, persistence, queue, or generator boundary. -->
+
+None
 
 ## Verification Ledger
 
@@ -67,6 +81,10 @@ grounded_commit: <prd-grounded-commit>
 | T1 | C01 | `path#symbol` | - | - | no |
 
 ## Integration Hotspots
+
+None
+
+## Generated Outputs Ledger
 
 None
 

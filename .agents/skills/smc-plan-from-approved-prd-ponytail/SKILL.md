@@ -1,7 +1,7 @@
 ---
 name: smc-plan-from-approved-prd-ponytail
-description: 从 APPROVED SMC PRD 生成 ownership-aware、Ponytail-minimal 且可证明闭环的 Cursor implementation plan；先完成实现级 grounding，再建立需求覆盖、单写者所有权、生命周期和验证证据边界，最后交给 smc-plan-validator 做确定性校验。
-version: 3.2.0
+description: Use when an APPROVED SMC PRD needs a new or explicitly requested revised Cursor implementation plan, or when auditing the rules that produce such plans.
+version: 3.3.0
 disable-model-invocation: true
 ---
 
@@ -71,10 +71,28 @@ commit_policy: post_review
 1. [`references/plan-contract-v3.md`](references/plan-contract-v3.md)
 2. [`references/ponytail-minimality.md`](references/ponytail-minimality.md)
 3. [`references/ownership-aware-slicing.md`](references/ownership-aware-slicing.md)
+4. [`references/generation-integrity-gates.md`](references/generation-integrity-gates.md)
+5. [`references/source-basis.md`](references/source-basis.md)
 
 需要输出结构时读取：
 
-4. [`references/plan-template.md`](references/plan-template.md)
+6. [`references/plan-template.md`](references/plan-template.md)
+
+## Mode Gate
+
+读取 PRD 或 Plan 前必须先确定模式：
+
+- `CREATE`：用户明确要求从 APPROVED PRD 创建新 Plan；目标不得已存在。
+- `REVISE`：用户明确要求修订指定既有 Plan；覆盖必须再次显式授权。
+- `AUDIT`：用户要求检查 Skill、规则或包本身，或明确禁止处理 Plan。
+
+`AUDIT` 模式禁止读取、生成、修改、验证或执行任何 Plan，只能检查本 Skill 包及其直接治理依赖。目标已存在但没有明确修订授权时返回 `PLAN_ALREADY_EXISTS`，不得使用 `--force`。无法确定模式时返回 `SKILL_MODE_UNCLEAR`，不得默认进入 `CREATE`。
+
+后续 Gate 0 至 Exit 仅适用于 `CREATE` / `REVISE`。`AUDIT` 命中后跳过全部 Plan gate。
+
+### AUDIT Exit
+
+只在以下条件成立时退出：审查范围限于本包与 `source-basis.md` 声明的直接治理依赖；没有访问任何 Plan；结论区分规则缺陷、脚本缺陷与外部依赖缺陷；没有产生 Plan mutation。
 
 ## Gate 0 — APPROVED PRD
 
@@ -93,12 +111,21 @@ python tools/agent-skills/validate_prd.py <prd> --require-approved --require-evi
 
 必须先通过。
 
-也可使用本 Skill 的种子脚本先做状态门禁并生成 Plan 骨架：
+`CREATE` 可使用本 Skill 的种子脚本先做状态门禁并生成 Plan 骨架：
 
 ```bash
 python .agents/skills/smc-plan-from-approved-prd-ponytail/scripts/create_plan_seed.py \
   <approved-prd.md> \
   .cursor/plans/<feature>.plan.md
+```
+
+只有获得明确修订和覆盖授权后，`REVISE` 才可使用：
+
+```bash
+python .agents/skills/smc-plan-from-approved-prd-ponytail/scripts/create_plan_seed.py \
+  <approved-prd.md> \
+  .cursor/plans/<feature>.plan.md \
+  --mode revise --force
 ```
 
 种子只是结构起点；出现 `<GROUND>` / `<DECIDE>` / `<VERIFY>` 等占位符时，Plan 仍未完成，不能进入执行。
@@ -114,7 +141,7 @@ DOD-01 ... DOD-nn
 
 每一条必须进入 `## Requirement Coverage Ledger`，并明确：分类、关联 Change/Todo、至少一个阻断 Verification ID 与 Evidence Class。多个需求可以复用同一 Change 或验证；该 Ledger 是追踪事实源，**不得**为凑覆盖而复制 Todo 或实现。
 
-若 PRD 含 `## State and Concurrency Invariants`，还必须建立 `## Lifecycle Closure Matrix`，写明 trigger、非终态、成功 writer、失败/取消 writer 与证据。无法证明 owner 或状态闭环时，停止生成并返回 PRD revision。
+若 PRD 含 `## State and Concurrency Invariants`，或 requirement 涉及状态转换、原子性、幂等、重试、lease、generation、并发或单次消费，还必须建立 `## Lifecycle Closure Matrix`，写明 trigger、非终态、事务/CAS/锁边界、成功 writer、失败/取消 writer、重试身份与证据。无法证明 owner 或状态闭环时，返回 `CONCURRENCY_CLOSURE_MISSING`，不得生成最终 Plan。
 
 ## Gate 1 — Implementation Grounding
 
@@ -141,6 +168,36 @@ PRD_STALE_OR_CONFLICTING
 ```
 
 不得在 Plan 内改写 PRD 架构。
+
+### Grounding Evidence Ledger
+
+每个非 KEEP Change 必须进入 `## Grounding Evidence Ledger`：
+
+```markdown
+| Change ID | Target | Baseline State | Symbol / Entry Resolution | Caller / Callee Evidence | Existing Reuse Search | Result |
+|---|---|---|---|---|---|---|
+```
+
+- `grounded_commit` 是既有/新增判断基线；frontmatter 必须写 `grounding_source: committed_baseline`。只有用户明确授权才可改为 `working_tree`，并记录具体 `working_tree_fingerprint`；脏工作区不能静默成为批准事实。
+- `MODIFY` / `REPLACE` / `REMOVE` 的文件和 symbol 必须在基线解析成功；否则返回 `GROUNDING_TARGET_NOT_FOUND`。
+- `ADD` 必须明确为基线不存在，并通过 New File Justification。
+- existing test、脚本入口和 CLI 参数必须通过文件、测试收集器、parser 或 `--help` 预检；否则返回 `VERIFICATION_COMMAND_INVALID`。
+- `path#function`、`path#Class#method` 是代码 target 的规范形式；声明式文件与 hotspot 使用 file-level path，Matrix 与 Ledger 不得混用粒度。
+
+### Contract / Data Flow Closure Matrix
+
+跨 API、进程、队列、持久化、生成器或独立组件边界时必须增加：
+
+```markdown
+| Flow | Requirements | Producer | Transport / Schema | Consumer | Required Fields | Validation Owner | Failure Mapping | Retry / Idempotency Identity | Evidence IDs |
+|---|---|---|---|---|---|---|---|---|---|
+```
+
+每个 required field 必须有权威 producer、transport 和 consumer；缺任一环返回 `CROSS_BOUNDARY_SOURCE_MISSING`。只有没有跨边界流时才写 `None`。这张表证明数据闭环，不引入新的 production owner，也不改变 Ponytail minimality ladder。
+
+### Generated Outputs Ledger
+
+发生生成式变更时必须记录 generator owner、generated outputs、生成命令与 drift check；人工 WRITE_OWNER 仍只属于生成入口。没有生成物时写 `None`。详细规则见 [`references/generation-integrity-gates.md`](references/generation-integrity-gates.md)。
 
 ## Gate 2 — Ponytail Minimality Decision
 
@@ -194,6 +251,7 @@ C03
 
 - 若上游 PRD 已有稳定 Change ID，优先继承；
 - 若当前 PRD 没有 Change ID，则按 `Change Classification` 的稳定出现顺序创建 `C01...`；
+- 生成器只新建 `Cnn`；只有上游 PRD 已存在稳定子变更 ID 时才继承 `Cnn.m`，不得由 Plan 临时发明小数 ID；
 - 一个 Change ID 可以映射多个 file/symbol 行；
 - `REPLACE` 的新旧实现必须放在同一个 Change ID 下，并至少同时包含一条 `REPLACE` 与一条 `REMOVE` row；
 - **同一个 Change ID 只能有一个 Todo Owner**；
@@ -478,6 +536,17 @@ Plan 创建阶段可以按 Change 逐个做必要 grounding，但最终执行 Pl
 
 严格采用 [`references/plan-template.md`](references/plan-template.md)。
 
+## Generation Integrity Validator
+
+最终 Plan 必须先运行包内真实性门禁：
+
+```bash
+python .agents/skills/smc-plan-from-approved-prd-ponytail/scripts/validate_generation_integrity.py \
+  .cursor/plans/<feature>.plan.md
+```
+
+该脚本确定性检查三张完整性表、每个非 KEEP Change 的 grounding 覆盖、grounding PASS，以及 `grounded_commit` 中既有 file/symbol 的可解析性。失败必须回到 Gate 1；不得只修改 Result 文本绕过源码事实。
+
 ## Validator
 
 Plan 完成后必须调用独立 Skill：
@@ -493,7 +562,21 @@ python .agents/skills/smc-plan-validator/scripts/validate_plan.py \
   .cursor/plans/<feature>.plan.md
 ```
 
-Validator PASS 才能进入 Execute。
+Validator PASS 只证明确定性结构规则通过，不能直接进入 Execute。
+
+随后必须运行条件式语义风险判定：
+
+```bash
+python .agents/skills/smc-plan-review/scripts/assess_plan_review.py \
+  .cursor/plans/<feature>.plan.md
+```
+
+- `NOT_REQUIRED`：仅当 `Contract / Data Flow Closure Matrix` 是 `None` 时可以进入 Execute。
+- `REQUIRED`：返回 `SEMANTIC_REVIEW_REQUIRED`，必须调用 `smc-plan-review`；只有 Review PASS 才能进入 Execute。
+- `REVISE`：修订 Plan 后重新运行 Validator 与风险判定。
+- `RETURN_PRD`：返回 PRD revision，不得在 Plan 绕过。
+
+`Contract / Data Flow Closure Matrix` 不是 `None` 时，无论 assessor 输出什么都返回 `SEMANTIC_REVIEW_REQUIRED`；独立审查必须按 [`references/generation-integrity-gates.md`](references/generation-integrity-gates.md) 逐字段复核 producer → transport/schema → consumer、failure mapping 与 retry/idempotency identity。
 
 ### Validator 失败处理
 
@@ -503,6 +586,9 @@ Validator PASS 才能进入 Execute。
 - `PLAN_READ_AFTER_WRITE_WITHOUT_DEPENDENCY` → 明确执行顺序或重新分配 owner；
 - `PLAN_REQUIREMENT_COVERAGE_*` / `PLAN_BLOCKING_VERIFICATION_REQUIRED` → 补 Requirement Coverage Ledger 与阻断验证，不复制实现；
 - `PLAN_LIFECYCLE_CLOSURE_*` → 回到 Production Owner 与状态机，补唯一 writer / failure-cancel 闭环；
+- `GROUNDING_COMMIT_INVALID` / `GROUNDING_SOURCE_INVALID` / `GROUNDING_WORKTREE_FINGERPRINT_INVALID` / `GROUNDING_TARGET_NOT_FOUND` / `GROUNDING_SYMBOL_NOT_FOUND` / `PLAN_NEW_TARGET_ALREADY_EXISTS` → 回到 Gate 1，以明确基线重新定位真实 target；
+- `VERIFICATION_COMMAND_INVALID` → 修正为真实入口、参数和可留存 Evidence Output；
+- `CROSS_BOUNDARY_SOURCE_MISSING` / `CONCURRENCY_CLOSURE_MISSING` → 补 source-to-sink 或状态闭环，无法补齐则返回 PRD revision；
 - `PRD_STALE_OR_CONFLICTING` → 返回 PRD revision，不在 Plan 绕过。
 
 ## 禁止
@@ -520,6 +606,9 @@ Validator PASS 才能进入 Execute。
 - 手工编辑生成产物；
 - 将所有候选文件放进 Immediate Read；
 - 为了通过 Validator 修改 APPROVED PRD。
+- 在 `AUDIT` 模式读取或处理任何 Plan；
+- 未获明确授权时覆盖既有 Plan；
+- 把静态 Validator PASS 当作路径、符号、命令或数据流真实的证明；
 
 ## Exit
 
@@ -536,5 +625,9 @@ Validator PASS 才能进入 Execute。
 9. 每条 AC / DoD 均有唯一 Ledger 行、阻断 Verification 和 Evidence Class；
 10. 有状态 PRD 已具备 lifecycle success / failure / cancel closure；
 11. Completion Gate 完整，且 `IMPLEMENTED_AND_PROVEN` 的证据条件可验证；
-12. `smc-plan-validator` PASS；
-13. frontmatter 含 `commit_policy: post_review` —— 缺该字段则 Plan 未完成，不得 Execute。
+12. Grounding Evidence Ledger 的既有 target、symbol 与验证入口均可解析；
+13. 跨边界 Change 已完成 Contract / Data Flow Closure；
+14. `validate_generation_integrity.py` PASS；
+15. `smc-plan-validator` PASS；
+16. Plan Review assessor 为 `NOT_REQUIRED` 且没有跨边界流，或 `smc-plan-review` PASS；
+17. frontmatter 含 `commit_policy: post_review` —— 缺该字段则 Plan 未完成，不得 Execute。

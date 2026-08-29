@@ -35,6 +35,7 @@ async def test_report_installation_actual_success():
     body = EdgeActualReportBody(
         installation_id="inst-1",
         actual_status="healthy",
+        generation=1,
         meta={"version": "1.0.0"},
     )
 
@@ -94,7 +95,7 @@ async def test_report_installation_actual_generation_fencing():
     mock_res.scalar_one_or_none.return_value = installation
     db.execute = AsyncMock(return_value=mock_res)
 
-    # 1. Stale actual generation (1 < 2) rejected
+    # 1. Stale actual generation (1 < 3) rejected
     stale_body = EdgeActualReportBody(
         installation_id="inst-1",
         actual_status="healthy",
@@ -104,7 +105,18 @@ async def test_report_installation_actual_generation_fencing():
         with pytest.raises(ForbiddenError, match="stale_actual_generation"):
             await report_installation_actual(stale_body, db, x_edge_token="tok")
 
-    # 2. Modern actual generation (3 >= 2) accepted
+    # 2. Future actual generation (4 > 3) rejected
+    from app.core.exceptions import BadRequestError
+    future_body = EdgeActualReportBody(
+        installation_id="inst-1",
+        actual_status="healthy",
+        generation=4,
+    )
+    with patch("app.api.internal_edge._authenticate_edge", AsyncMock(return_value=node)):
+        with pytest.raises(BadRequestError, match="future_generation"):
+            await report_installation_actual(future_body, db, x_edge_token="tok")
+
+    # 3. Matching actual generation (3 == 3) accepted
     valid_body = EdgeActualReportBody(
         installation_id="inst-1",
         actual_status="healthy",
