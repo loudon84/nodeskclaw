@@ -410,6 +410,10 @@ v1.5.1 仅在以下条件全部满足时完成：
 | 合同清单试图绑定包含自身的 Git 提交 | 形成不可实现的 commit 自引用或错误发布证据 | 冻结实现提交 `I`，以合同发布提交 `R` 承载绑定清单，校验 `I..R` 仅含合同文件，Tag 指向 `R` |
 | 文档先于实现更新 | 架构事实再次超前 | `skill-agent.md` 固定为最后一个 Gate，保留或修正必须引用实现证据 |
 
+## Residual Transfer to v1.5.2
+
+本 PRD 保持 `APPROVED`，已关闭子集（Hybrid AC-01 至 AC-10、StoragePort AC-11、Edge fencing/Spool AC-17 至 AC-21 的实现）仍以本文为权威。下列 **未形成正式证据或合同缺口** 的剩余项于 2026-08-29 移交给唯一现行 Stage PRD `docs_agent/prd-v1.5.2-nodeskclaw-postman-acceptance-closure.md`（work item `NODESKCLAW-POSTMAN-ACCEPTANCE-CLOSURE-152`）：AC-12 至 AC-16、AC-22 至 AC-38，以及 DoD 中 Newman 两连跑、`skill-run-contract-v1.0.0` Tag 与正式故障证据条款。移交后禁止依据本 PRD 再创建同一合同 Tag 或第二套正式 Postman Collection。
+
 ## Source Anchors
 
 以下代码锚点用于复核现状，不冻结私有实现方式：
