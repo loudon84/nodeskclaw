@@ -4,23 +4,24 @@ version: 1.5.2
 status: APPROVED
 target_branch: main
 review_verdict: PASS
-approved_at: 2026-08-29T02:32:00Z
-source_revision: prd-v1.5.1@1.5.1/user-input:2026-08-29-postman-acceptance-closure
-grounded_commit: 45443c838f435672ec9a8ae418f460699f335d3d
+approved_at: 2026-08-29T04:26:00Z
+source_revision: prd-v1.5.2@1.5.2/user-input:2026-08-29-three-state-rebaseline
+grounded_commit: 8e2015ad47c5ff0e84ec8048fd018024be928906
 ---
 
 # DeskClaw 团队版 NoDeskClaw Postman Acceptance Closure PRD v1.5.2
 
-本文定义 NoDeskClaw 在 v1.5.1 功能实施后进入正式 Postman/Newman（接口调试与自动化验收工具）阶段前必须完成的验收闭环。v1.5.2 不扩展 Skill Platform（技能平台）业务范围，只补齐真实验收拓扑、缺失的 Artifact（产物）接口合同、Gate 5 故障证据、符合实际路由的 Postman Collection（接口集合）、Newman 两连跑以及 Skill Run Contract（技能运行合同）发布。
+本文定义 NoDeskClaw 在 v1.5.1 功能实施后进入正式 Postman/Newman（接口调试与自动化验收工具）阶段前必须完成的验收闭环。v1.5.2 不扩展 Skill Platform（技能平台）业务范围，只补齐真实验收拓扑、缺失的 Artifact（产物）接口合同、从 1.5.1 移交的真实 Installation（安装）副作用、Gate 5 故障证据、符合实际路由的 Postman Collection（接口集合）、Newman 两连跑以及 Skill Run Contract（技能运行合同）发布。
 
 ## Source Baseline
 
-- Source Revision（需求来源版本）：`prd-v1.5.1@1.5.1/user-input:2026-08-29-postman-acceptance-closure`。
-- Grounded Commit（源码校准提交）：`main@45443c838f435672ec9a8ae418f460699f335d3d`。
+- Source Revision（需求来源版本）：`prd-v1.5.2@1.5.2/user-input:2026-08-29-three-state-rebaseline`。
+- Grounded Commit（源码校准提交）：`main@8e2015ad47c5ff0e84ec8048fd018024be928906`。
 - Predecessor PRD（前序需求文档）：`docs_agent/prd-v1.5.1-nodeskclaw-agent-acceptance-closure.md`，状态为 `APPROVED`（已批准）。
 - Architecture Baseline（架构基线）：`lat.md/architecture/skill-agent.md`、`lat.md/architecture/runtime.md`、`lat.md/decisions/skill-platform-execution.md`。
-- Requirement Authority（需求权威来源）：用户在 2026-08-29 明确给出的六项正式验收缺口与“验收拓扑和真实路由优先、Postman/Newman 随后、合同发布最后”的顺序。
-- Grounding Mode（源码校准模式）：`revision`（审查修订）。`evidence_freshness.py` 结果为 `REUSE`（源码与 `grounded_commit` 未变），禁止 full Grounding；只关闭 Review OPEN MAJOR F-01 至 F-05。
+- Requirement Authority（需求权威来源）：用户在 2026-08-29 要求把 `skill-agent.md` 改成三态事实源，并只保留真实功能缺口与正式验证证据。
+- Grounding Mode（源码校准模式）：`revision`（审查修订）。Evidence Baseline 绑定 `grounded_commit`，工作区候选实现不得关闭 AC、Gate 或 DoD。
+- Working Tree Boundary（工作区边界）：当前存在未提交的 v1.5.2 候选实现。它们用于发现残余缺口，但不属于 `grounded_commit`，不能关闭 AC、Gate 或 DoD；只有 Review 与 Verification 通过后的 Implementation Commit 才能成为完成证据。
 
 ## Predecessor Residual Authority（前序剩余权威）
 
@@ -28,9 +29,11 @@ grounded_commit: 45443c838f435672ec9a8ae418f460699f335d3d
 
 | 前序范围 | 1.5.1 处置 | 1.5.2 唯一现行权威 |
 |---|---|---|
-| AC-01 至 AC-10、AC-11、AC-17 至 AC-21 的已落地实现 | 保留为 1.5.1 已关闭子集；本 PRD 不重开 Hybrid/Installation/Lease/Spool Owner | KEEP 前序 Owner |
+| AC-01 至 AC-05 Hybrid 终态、AC-11 StoragePort、AC-17 至 AC-21 Lease/Spool | 保留为 1.5.1 已实现子集；本 PRD 只补真实拓扑与故障证据 | KEEP 前序 Owner |
+| AC-06、AC-09、AC-10 Installation Generation 合同（Desired 递增、等代校验、跨租户/跨节点拒绝） | 保留为 1.5.1 已实现子集；本 PRD 不改 Backend Desired Owner | KEEP 前序 Owner |
+| AC-07、AC-08 真实 install/uninstall 副作用，以及 1.5.1 DoD 第 3 条中的真实安装条款 | 从 1.5.1 已关闭子集中移交；不再由 1.5.1 并行执行 | AC-33 / C11 |
 | AC-12 跨 Pod Artifact 读取证据 | 移交 | AC-11 / C01 |
-| AC-13 至 AC-16 Artifact eager/on-demand 合同缺口 | 移交 | AC-14 至 AC-17、AC-31 / C03+C04 |
+| AC-13 至 AC-16 Artifact eager/on-demand 合同缺口 | 移交 | AC-14 至 AC-17、AC-31、AC-32 / C03+C04+C10 |
 | AC-22 至 AC-24 readiness | 移交 | AC-05 至 AC-07 / C02 |
 | AC-25 至 AC-28 多 Worker/故障证据 | 移交 | AC-08 至 AC-13 / C01 |
 | AC-29 至 AC-33 Postman/Newman | 移交 | AC-18 至 AC-26 / C05+C06+C09 |
@@ -41,24 +44,25 @@ grounded_commit: 45443c838f435672ec9a8ae418f460699f335d3d
 
 ## Executive Summary
 
-v1.5.1 已在 `nodeskclaw-agent` 与 `nodeskclaw-backend` 中补入 Hybrid（混合执行）Step 状态、Installation Generation（安装代次）、StoragePort（存储端口）、Edge Lease（边缘租约）和 Spool（离线暂存）等实现，并且相关单元测试通过。但是，当前仓库还不能产生 v1.5.1 Gate 5 与 Gate 6 所要求的正式验收证据：根 Compose 只有一个可切换角色的 Agent；没有专用的真实 PostgreSQL、多实例和故障注入验收入口；Backend 调用的 Agent Artifact 上传路由不存在；Postman 集合覆盖错误的 AC 范围且存在宽松断言和无效请求体；Newman 只运行一次；合同清单仍绑定旧提交且发布 Tag 不存在。
+v1.5.1 已在 `nodeskclaw-agent` 与 `nodeskclaw-backend` 中补入 Hybrid（混合执行）Step、Run Fencing（运行栅栏）、StoragePort（存储端口）、Edge Lease（边缘租约）、Spool（离线暂存）和 Installation Generation（安装代次）合同，并有聚焦单元测试。重新校准后确认：这些代码原语不能替代真实多实例证据；Edge Installation 当前只维护本地 JSON 状态并上报 Actual，没有调用真实安装器；Artifact 上传路由与 Backend 转发路径不一致；on-demand 只是即时下载代理；readiness、故障注入、Postman/Newman 和合同发布仍未闭环。
 
 v1.5.2 的目标是建立一个可从干净环境重复执行的 NoDeskClaw 自身验收闭环。开发者可以在没有本地 Docker 的机器上连接受控外部验收环境进行 Postman 调试，但正式证据必须来自仓库定义的等价拓扑，且必须包含真实 PostgreSQL、两个 central Agent、一个 edge Agent、Backend、共享 Artifact Storage（产物存储）以及规定的故障注入场景。所有接口验证使用真实 API 创建资源和传递身份，不允许测试代码直接写数据库或伪造终态。
 
 ## Problem Statement
 
-当前状态只能证明局部实现可以通过 Mock（模拟）单元测试，不能证明真实服务组合可以被 Postman/Newman 连续验收。若直接进入正式 Gate 6，会出现三类假阳性：请求命中不存在的路由却被宽松断言接受；单角色或单进程环境掩盖租约、代次和多 Pod 竞争问题；合同 Tag 和 manifest（清单）没有绑定本轮实现却被误认为已发布。
+当前状态只能证明局部实现或候选脚本存在，不能证明真实服务组合可以被 Postman/Newman 连续验收。若直接进入正式 Gate 6，会出现四类假阳性：路由错误被宽松断言接受；写本地 JSON 被误认为真实安装成功；单进程或打印日志被误认为多 Pod 故障证据；未绑定实现提交的合同和 Tag 被误认为已发布。
 
 ## Goals
 
 1. 提供 Backend、两个 central Agent、一个 edge Agent、真实 PostgreSQL 和共享 Artifact Storage 同时运行的正式验收拓扑。
 2. 让无 Docker 的开发机可以通过 External Mode（外部环境模式）连接受控验收环境进行相同 Postman 调试，不降低正式验收标准。
 3. 完成 Backend 已依赖但 Agent 尚未暴露的 Artifact 上传合同，并补齐 Edge eager/on-demand（立即/按需）产物链路。
-4. 用可重复的故障注入证据关闭 v1.5.1 AC-22 至 AC-28。
-5. 重建 Postman 集合，关闭 v1.5.1 AC-29 至 AC-31，消除错误路由、无效请求、硬编码伪资源和宽松断言。
-6. 使用同一实现提交、同一合同与同一环境连续运行两次 Newman，分别保存 JSON（结构化报告）和 JUnit（测试报告）证据。
-7. 按 Implementation Commit（实现提交）`I` 与 Contract Release Commit（合同发布提交）`R` 的两提交协议发布 `SKILL-RUN-CONTRACT v1.0.0`，并创建不可变 Tag（标签）。
-8. 最终校正 `skill-agent.md` 的验收与生产就绪表述，使其只陈述已有代码和可复现证据。
+4. 让 Edge Installation 通过真实安装器执行 install/uninstall，成功后才上报同代 Actual。
+5. 用可重复的故障注入证据关闭 v1.5.1 AC-22 至 AC-28。
+6. 重建 Postman 集合，关闭 v1.5.1 AC-29 至 AC-31，消除错误路由、无效请求、硬编码伪资源和宽松断言。
+7. 使用同一实现提交、同一合同与同一环境连续运行两次 Newman，分别保存 JSON（结构化报告）和 JUnit（测试报告）证据。
+8. 按 Implementation Commit（实现提交）`I` 与 Contract Release Commit（合同发布提交）`R` 的两提交协议发布 `SKILL-RUN-CONTRACT v1.0.0`，并创建不可变 Tag（标签）。
+9. 最终校正 `skill-agent.md` 的验收与生产就绪表述，使其只陈述已有代码和可复现证据。
 
 ## Explicitly Deferred Items
 
@@ -99,51 +103,57 @@ v1.5.2 的目标是建立一个可从干净环境重复执行的 NoDeskClaw 自�
 以下顺序是强制 Delivery Gate（交付门禁）：
 
 1. 正式验收拓扑、双模式 Preflight 和环境身份校验。
-2. Agent Artifact 上传接口及 Edge eager/on-demand 链路。
-3. 真实 PostgreSQL、多 Pod、readiness 和故障注入证据。
-4. Postman 请求、动态变量、精确断言与覆盖范围修复。
-5. Newman 同环境连续两次执行及机器可读报告。
-6. 冻结实现提交 `I`，生成合同发布提交 `R`，执行 release check 并创建 Tag。
-7. 校正 Architecture SOT（架构事实源）并完成最终 DoD（完成定义）判定。
+2. Agent Artifact 上传接口、Backend on-demand 请求事实及 Edge 履约链路。
+3. Edge Installation 真实 install/uninstall 调谐。
+4. 真实 PostgreSQL、多 Pod、readiness 和故障注入证据。
+5. Postman 请求、动态变量、精确断言与覆盖范围修复。
+6. Newman 同环境连续两次执行及机器可读报告。
+7. 冻结实现提交 `I`，生成合同发布提交 `R`，执行 release check 并创建 Tag。
+8. 校正 Architecture SOT（架构事实源）并完成最终 DoD（完成定义）判定。
 
 ## Current Capability Inventory
 
-| Capability（能力） | Existing Owner（现有负责人） | Current Behaviour（当前行为） | Result（结论） |
+| Capability（能力） | Existing Owner（现有负责人） | Committed Baseline / Working Tree Candidate（已提交基线/工作区候选） | Result（结论） |
 |---|---|---|---|
-| Backend + PostgreSQL 基础 Compose | Repository Deployment Assets（仓库部署资产） | 根 `docker-compose.yml` 可启动 PostgreSQL、Backend 和一个 Agent 服务 | PARTIAL（部分完成） |
-| Central/Edge 并行验收拓扑 | Repository Test Assets（仓库测试资产） | Agent 只能通过一个 `SKILL_AGENT_ROLE` 配置选择 central 或 edge，没有两个 central 与一个 edge 同时运行的专用验收拓扑 | MISSING（缺失） |
-| Agent readiness | `nodeskclaw-agent` | 已检查数据库连通、`alembic_version` 非空、安全配置、Artifact 目录和 Credential Broker；没有校验实际 Alembic head、StoragePort 完整读写校验和、Worker 新鲜度和 edge 最近心跳 | PARTIAL |
-| Hybrid/Lease/Spool/Installation 单元验证 | Agent + Backend Test Suites（测试套件） | 当前实施关联测试通过，但以 Mock 为主，尚无真实 PostgreSQL、多实例和进程故障证据 | PARTIAL |
-| Fault Evidence Harness（故障证据入口） | Repository Test Assets | 没有专用故障注入 Runner、多 Pod 报告或进程/网络故障控制面 | MISSING |
-| Backend Edge Artifact 上传入口 | `nodeskclaw-backend` | 已暴露 `/internal/edge/jobs/{job_id}/artifacts/upload` 并转发到 Agent；鉴权在 Backend，不写 Agent Artifact 字节 | KEEP |
-| Agent Artifact 上传路由 | `nodeskclaw-agent` | 仅有 GET list/bytes；Backend 转发的 `POST /internal/v1/runs/{run_id}/artifacts/upload` 不存在 | PARTIAL |
-| On-demand Artifact Request（按需产物授权请求） | `nodeskclaw-backend` | 无持久化请求事实、出站拉取合同或单次消费状态 | MISSING |
-| Postman Collection | Repository Test Assets | 只有 16 个请求，标题和断言仍按旧 AC-01 至 AC-16；存在无效 JSON 表达式、错误路由、宽泛 HTTP 状态和不完整业务路径 | CONFLICT |
-| Newman Runner | Repository Test Assets | 通过 `npx newman` 运行一次集合，只输出一个 JUnit 文件 | PARTIAL |
-| Machine-readable Evidence（机器可读证据） | Repository Test Assets | 没有两次独立 JSON/JUnit 报告、环境摘要、提交与合同摘要 | MISSING |
-| Skill Run Contract | Backend Contract Package（合同包） | Schema（模式）、Fixture、manifest 和 checksum（校验和）存在，但 manifest 绑定旧提交，release check 仍要求 `backendCommit == HEAD`，Tag 不存在 | CONFLICT |
-| Architecture SOT | `lat.md` | 已陈述完整 Hybrid、Artifact、readiness 和 Edge 行为，但正式多 Pod/故障/Postman 证据尚未形成 | PARTIAL |
-| Instance Runtime | Backend Runtime Owner（后端运行时负责人） | `runtime.md` 的实例生命周期和 Compute Provider（计算提供者）边界不因本次验收 Harness 改变 | KEEP（保持） |
+| Backend + PostgreSQL 基础 Compose | Repository Deployment Assets（仓库部署资产） | 已提交开发拓扑可运行 Backend、PostgreSQL 和单 Agent；候选 `docker-compose.acceptance.yml` 仍只有一个 Central 和一个 Edge，缺少第二 Central、共享存储及 `linux/amd64` 完整约束 | PARTIAL（部分完成） |
+| Central/Edge 并行验收拓扑 | Repository Test Assets（仓库测试资产） | 没有两个 Central、一个 Edge、Backend、真实 PostgreSQL 和共享 Artifact Storage 同时运行并留存身份指纹的可执行入口 | MISSING（缺失） |
+| Agent readiness | `nodeskclaw-agent` | 已检查数据库连通、`alembic_version` 非空、安全配置和驱动构造；候选变更仍未比较全部 Alembic head、执行 StoragePort 写读校验清理、检查 Worker freshness 或 Edge heartbeat freshness | PARTIAL |
+| Hybrid/Lease/Spool 状态机 | `nodeskclaw-agent` | 持久化 Step、聚合器、Generation Fencing、续租和 Spool 有实现及聚焦测试；没有真实 PostgreSQL、多 Worker、跨租约断网和进程故障证据 | PARTIAL（只缺生产证据） |
+| Installation Generation 合同 | Backend + Edge Agent | Backend 严格代次校验和卸载软删除存在；Edge 只修改本地 JSON 并上报成功，没有调用真实安装器 | PARTIAL（缺真实副作用） |
+| Fault Evidence Harness（故障证据入口） | Repository Test Assets | 候选脚本仅打印 `simulated` 日志，不控制进程、容器或网络，也不生成不变量报告 | MISSING |
+| Backend Edge Artifact 上传入口 | `nodeskclaw-backend` | `/internal/edge/jobs/{job_id}/artifacts/upload` 已存在并保持 Backend 鉴权 Owner | KEEP |
+| Agent Artifact 上传合同 | `nodeskclaw-agent` | 候选路由是 `POST /internal/v1/runs/{run_id}/artifacts`，Backend 仍转发到 `/artifacts/upload`；请求也缺少完整身份、size、upload mode、幂等键和稳定错误码 | PARTIAL |
+| On-demand Artifact Request（按需产物授权请求） | `nodeskclaw-backend` | 候选 `/artifacts/request` 直接代理读取 Agent 字节，没有持久化请求、过期、授权范围和单次消费状态 | MISSING |
+| Edge On-demand Fulfillment（边缘按需履约） | Edge Agent | 候选代码直接下载中心产物；没有拉取 Backend 未消费请求、按授权上传和成功后消费的闭环 | PARTIAL |
+| Postman Collection | Repository Test Assets | 候选集合有 17 个请求，但仍使用硬编码伪 ID、宽泛状态组合和不完整业务链路；静态检查器没有对照 OpenAPI 或内部合同 | CONFLICT（冲突） |
+| Newman Runner | Repository Test Assets | 候选 Python Runner 连续调用两次 Newman，但每次只输出 JUnit；没有 Preflight、readiness、独立 JSON、环境身份和 Secret 扫描 | PARTIAL |
+| Machine-readable Evidence（机器可读证据） | Repository Test Assets | Verification Matrix 要求的拓扑、故障、JSON/JUnit、合同和索引报告均未形成 | MISSING |
+| Skill Run Contract | Backend Contract Package（合同包） | Schema、Fixture、manifest 和 checksum 存在，但正式 release check 仍失败，Tag 不存在；候选辅助脚本不能替代 `I`/`R` 协议 | CONFLICT |
+| Architecture SOT | `lat.md` | `skill-agent.md` 已改为三态事实源；完成态仍须等待实现提交和 V01 至 V10 证据后复核 | PARTIAL |
+| Instance Runtime | Backend Runtime Owner（后端运行时负责人） | `runtime.md` 的实例生命周期和 Compute Provider（计算提供者）边界不因验收 Harness 改变 | KEEP（保持） |
 
 ## Evidence Baseline
 
-以下证据绑定 `grounded_commit`，后续 Review 和 Plan（实施计划）应优先复用；源码变化只重新验证受影响锚点。
+以下证据以 `grounded_commit` 为提交基线，并明确记录工作区候选差异。候选差异不能作为完成证据，后续 Review 和 Plan（实施计划）只能用它们定位剩余工作。
 
 | Evidence ID（证据标识） | Check（检查） | Baseline Result（基线结果） | Consequence（影响） |
 |---|---|---|---|
-| E01 | `git rev-parse HEAD` | `45443c838f435672ec9a8ae418f460699f335d3d` | 本 PRD 的实现事实绑定到 v1.5.1 实施提交 |
-| E02 | Agent 测试 | 全量 82 passed，另有 4 条未处置警告；其中关联子集亦通过 | 局部实现可回归，但不满足真实 Gate 5 证据 |
-| E03 | Backend 关联测试 | 12 passed | Edge 与 Installation 局部合同可作为回归基线 |
-| E04 | Compose 服务检索 | 根 Compose 只有一个 `nodeskclaw-agent`，角色由单一环境变量选择 | 无法证明双 central Worker 和 edge 并存 |
-| E05 | Acceptance Asset（验收资产）检索 | 没有专用 acceptance compose、故障注入 Runner 或多 Pod 报告 | v1.5.1 AC-25 至 AC-28 尚无正式证据 |
-| E06 | Agent/Backend Artifact 路由对照 | Backend 转发到 Agent `/artifacts/upload`，Agent 路由不存在 | 真实 Edge Artifact 上传必然返回 404 |
-| E07 | Collection 静态检查 | 16 个请求；含 `oneOf([200, 404])` 等宽松断言及 `"A".repeat(70000)` 无效 JSON | 不满足 v1.5.1 AC-29、AC-30 |
-| E08 | Collection 范围检查 | 未形成完整 SSE replay、Approval、真实 Installation actual、Artifact on-demand 与租户隔离链路 | 不满足 v1.5.1 AC-31 |
-| E09 | Newman Runner 检查 | 仅一次运行和一个 JUnit 输出，无 JSON 与第二次报告 | 不满足 v1.5.1 AC-32、AC-33 |
-| E10 | Contract release check | `manifest.backendCommit does not match current HEAD in release mode` | 合同不可发布 |
-| E11 | Contract Tag 检查 | `skill-run-contract-v1.0.0` 不存在 | 没有不可变发布锚点 |
-| E12 | 当前主机工具检查 | Docker 命令不存在；`npx newman` 可提供 Newman 6.2.2 | 本机可做外部环境调试，不能本地生成 Compose 正式证据 |
-| E13 | `lat check` | All checks passed | Wiki Link（知识链接）结构有效，不等于验收语义已闭环 |
+| E01 | `git rev-parse HEAD` | `8e2015ad47c5ff0e84ec8048fd018024be928906` | 本 PRD 的可复用提交事实绑定到当前已提交基线 |
+| E02 | `git status --short` | Agent、Backend、Postman、验收脚本和 `skill-agent.md` 均有未提交候选变更 | 不得把工作区状态写成 Implementation Commit 或 DoD 证据 |
+| E03 | Agent 全量测试 | 82 passed，4 warnings | 已实现原语可回归；未包含正式 readiness、Artifact 上传和真实拓扑测试 |
+| E04 | Backend 关联测试 | 12 passed | Edge 与 Installation 局部合同可回归，不证明真实安装副作用和 on-demand 状态机 |
+| E05 | 计划证据路径检查 | `tests/acceptance/harness.py`、正式 fault suite、readiness/Artifact 聚焦测试和报告目录均不存在 | V01 至 V07 尚未产生 |
+| E06 | Agent/Backend Artifact 路由对照 | Backend 调用 `/artifacts/upload`，Agent 候选路由为 `/artifacts` | eager Artifact 端到端链路未闭环 |
+| E07 | On-demand Owner 检查 | 没有请求模型、Service、Alembic 迁移、过期和 consumed 状态 | C04 尚未实施；即时下载代理不得冒充授权请求 |
+| E08 | Installation Reconcile 检查 | Edge 只修改 `edge_installations.json` 并上报 Actual | C11 尚未执行真实 install/uninstall |
+| E09 | Fault Suite 检查 | 候选脚本只打印四类模拟故障文字 | 不能关闭多 Worker、断网、重启或跨 Pod AC |
+| E10 | Collection/Checker 检查 | 候选集合 17 请求且仍有宽泛状态；Checker 只验证 JSON、名称和 `.repeat()` | C05/C09 尚未闭环 |
+| E11 | Newman Runner 检查 | 候选 Runner 执行两次但仅导出 JUnit，没有 Preflight、readiness 和独立 JSON | C06 尚未闭环 |
+| E12 | Readiness 检查 | 仍以 `alembic_version` 非空作为迁移检查，Storage 只构造驱动 | C02 尚未闭环 |
+| E13 | Contract release check | 正式检查报 `manifest.backendCommit does not match current HEAD in release mode` | 合同不可发布 |
+| E14 | Contract Tag 检查 | `skill-run-contract-v1.0.0` 不存在 | 没有不可变发布锚点 |
+| E15 | 当前主机工具检查 | Docker 命令不存在；Newman 可通过 `npx` 使用 | 本机不能产生 Compose 正式证据，可使用受控 External Mode |
+| E16 | `lat check` | All checks passed | 只证明 Wiki Link 和 Code Ref 有效，不证明运行语义闭环 |
 
 ## Production Ownership and Boundaries
 
@@ -177,6 +187,7 @@ Backend Contract Package 是 `SKILL-RUN-CONTRACT v1.0.0` 的唯一发布 Owner�
 | Artifact Upload Contract | `nodeskclaw-agent` | 通过受保护的内部路由完成身份、代次、checksum、size 和幂等校验后写入 StoragePort |
 | On-demand Artifact Request | `nodeskclaw-backend` | 持久化单次消费授权请求；仅向已认证同组织同节点出站拉取暴露未过期未消费请求 |
 | Edge On-demand Fulfillment | Edge Agent | 无有效请求时不上传字节；拉取到未消费请求后经现有出站上传履约一次 |
+| Installation Actual Reconcile | Edge Agent | 通过真实 Skill 安装器执行 install/uninstall；只有副作用成功才上报与 Desired 同代的 Actual，失败可重试且不伪报成功 |
 | Postman Collection | Repository Test Assets | 仅使用真实路由和动态资源，完整覆盖 central/edge/hybrid/SSE/Approval/cancel/Installation/Artifact/tenant isolation |
 | Newman Evidence | Repository Test Assets | 同环境不重置数据库连续两次全绿，每次独立产生 JSON/JUnit 和运行摘要 |
 | Skill Run Contract Release | Backend Contract Package | 完整合同绑定实现提交 `I`，release check 在 `R` 通过，Tag 不可变指向 `R` |
@@ -190,17 +201,19 @@ Backend Contract Package 是 `SKILL-RUN-CONTRACT v1.0.0` 的唯一发布 Owner�
 | C02 | Production readiness | MODIFY | `nodeskclaw-agent` | 补齐 Alembic head 比对、StoragePort 探测、Worker freshness 与 edge heartbeat 检查 |
 | C03 | Agent Artifact 上传合同 | MODIFY | `nodeskclaw-agent` | 补齐 `POST /internal/v1/runs/{run_id}/artifacts/upload`，只复用现有 StoragePort；不新增 Artifact Owner |
 | C04 | On-demand Artifact Request | ADD | `nodeskclaw-backend` | 新增 Backend 唯一拥有的授权请求事实、出站拉取与单次消费；现有 Edge 上传入口保持 Backend KEEP |
-| C05 | Postman Collection | REPLACE | Repository Test Assets | 用符合 v1.5.1 AC-29 至 AC-31 的真实链路替换当前 16 请求及宽松断言 |
+| C05 | Postman Collection | REPLACE | Repository Test Assets | 用符合 v1.5.1 AC-29 至 AC-31 的真实链路替换旧集合及当前候选集合的宽松断言 |
 | C06 | Newman Runner 与报告 | REPLACE | Repository Test Assets | 单一入口完成 Preflight、两连跑及独立 JSON/JUnit 报告 |
 | C07 | Skill Run Contract 发布 | MODIFY | Backend Contract Package | 实现 `I`/`R` 两提交校验、刷新清单并创建不可变 Tag |
 | C08 | Architecture SOT 闭环 | MODIFY | `lat.md` | 在所有验证完成后校正事实描述并通过 `lat check` |
 | C09 | 旧验收资产与宽松语义 | REMOVE | Repository Test Assets | 移除旧 AC 命名、错误请求、宽泛断言及单次报告入口，不保留默认兼容分支 |
+| C10 | Edge On-demand Fulfillment | MODIFY | `nodeskclaw-agent` | Edge 只消费 Backend 签发的未过期未消费请求，并复用现有出站上传路径履约；不成为请求或 Artifact Owner |
+| C11 | Installation Actual Reconcile | MODIFY | `nodeskclaw-agent` | Edge 调用真实 Skill 安装器执行 install/uninstall，成功后才上报同代 Actual，失败保留可重试状态 |
 
 ## Replacement / Removal Matrix
 
 | Replacement Change（替换变更） | Removed by（移除变更） | REMOVE Condition（移除条件） |
 |---|---|---|
-| C05 Postman Collection | C09 | 当前 16 请求中的错误 AC 命名、无效请求体、错误路由、宽泛状态断言和硬编码伪资源从正式集合移除，且不保留默认跳过或兼容分支 |
+| C05 Postman Collection | C09 | 旧 16 请求集合及当前候选集合中的错误 AC 命名、无效请求体、错误路由、宽泛状态断言和硬编码伪资源从正式入口移除，且不保留默认跳过或兼容分支 |
 | C06 Newman Runner | C09 | 单次且只输出一个 JUnit 文件的 Runner 不再是正式验收入口，所有文档和自动化入口只指向两连跑 Runner |
 | C07 Contract Release | C07 | `backendCommit == HEAD` 的自引用式 release 条件从 Skill Run Contract 正式发布逻辑移除，改为 `I`/`R` 两提交协议 |
 
@@ -234,7 +247,7 @@ Backend Contract Package 是 `SKILL-RUN-CONTRACT v1.0.0` 的唯一发布 Owner�
 4. Backend 现有 Edge Artifact 上传入口保持 Backend Owner：转发前验证 edge token、org、node、job、run/attempt/step、run generation 和 delivery generation，并完整传递 Agent 所需身份；Backend 不写 Artifact 字节。
 5. eager 模式允许 Edge 在产物生成后立即上传；on-demand 模式在没有 **未过期且未消费** 的 Backend 请求时只能上报 Descriptor/availability（描述符/可用性），不得上传字节。
 6. Backend 必须持久化 on-demand 请求事实，绑定 org、node、job、run、attempt、step、run generation、delivery generation、artifact id、过期时间和 **单次消费** 状态。消费语义冻结为：请求在对应 Artifact 首次成功 `PERSISTED` 后进入 consumed；此后同一请求不得再次授权字节上传。
-7. 已认证 Edge 只能通过出站方式拉取绑定到 **该 token 对应 org_id 与 edge_node_id** 的未过期未消费请求。请求体自报的 org/node 不得覆盖鉴权身份。
+7. 已认证 Edge 只能通过出站方式拉取绑定到 **该 token 对应 org_id 与 edge_node_id** 的未过期未消费请求。请求体自报的 org/node 不得覆盖鉴权身份；Edge 只能作为 C10 履约客户端，不持久化第二份授权事实。
 8. 过期、错组织、错节点、错 Job、错 Run/Attempt/Step、旧代或已消费请求必须拒绝，稳定 `error_code` 分别为 `errors.artifact.on_demand_expired`、`errors.artifact.on_demand_scope_mismatch`、`errors.artifact.on_demand_consumed`（无匹配为 `errors.artifact.on_demand_not_found`），且不能创建或覆盖 Artifact。
 9. Agent 上传缺少或伪造 org、attempt、step、run generation、checksum、size 或 idempotency key 时必须拒绝，稳定 `error_code` 使用 `errors.artifact.unauthorized_scope`、`errors.artifact.stale_generation`、`errors.artifact.checksum_mismatch`、`errors.artifact.size_mismatch` 或 `errors.artifact.missing_field`，且无元数据和字节副作用。
 10. Artifact 成功上传后，Backend、Agent 与 Edge 对同一 idempotency key 的重试必须收敛到同一 Descriptor 和同一 checksum；任一 required Artifact 未达到 `PERSISTED` 且 checksum 未验证时，Hybrid Run 不得进入 `COMPLETED`。
@@ -270,10 +283,17 @@ Backend Contract Package 是 `SKILL-RUN-CONTRACT v1.0.0` 的唯一发布 Owner�
 
 ### FR-07 Architecture Documentation Closure
 
-1. 所有 Gate 完成后，逐项复核 `skill-agent.md` 的 Hybrid、Installation、Artifact、Edge、readiness、多 Pod 和故障证据描述。
-2. 有实现但没有正式证据的能力必须标记为限制；只有通过本 PRD 验收的能力才可保留完成态措辞。
+1. `skill-agent.md` 必须始终使用“已实现 / 部分实现 / 目标状态”三态；本轮开始时先纠正超前表述，所有 Gate 完成后再逐项复核 Hybrid、Installation、Artifact、Edge、readiness、多 Pod 和故障证据。
+2. 有实现但没有正式证据的能力必须保持“部分实现”；只有唯一 Owner、实现和所需证据全部存在时才可提升为“已实现”。
 3. `runtime.md` 默认保持不变；只有本次 Harness 实际改变 Runtime Production Boundary（运行时生产边界）时才允许修改。
 4. 新增关键行为和测试规格必须具有唯一 Code Ref（代码引用），并通过 `lat check`。
+
+### FR-08 Installation Actual Reconcile
+
+1. Edge 必须通过现有 Skill 安装能力或其最小适配层执行真实 install/uninstall，不得把写入本地状态文件视为安装成功。
+2. 只有副作用成功后才能上报 `actual_status` 与 `actual_generation == desired_generation`；失败不得推进 Actual，必须保留可重试状态和稳定错误证据。
+3. 同一 Installation 与 Generation 的重复 reconcile 必须幂等；旧代、未来代、错节点和已软删除 Installation 不得产生安装副作用。
+4. Edge 重启后必须从 Backend Desired 与本地可验证实际状态恢复调谐，不得仅依赖 `edge_installations.json` 自报成功。
 
 ## Acceptance Criteria
 
@@ -300,9 +320,14 @@ Backend Contract Package 是 `SKILL-RUN-CONTRACT v1.0.0` 的唯一发布 Owner�
 
 - **AC-14 / C03**：Backend 通过现有 Edge Artifact 接口上传有效 eager Artifact 时，Agent 的真实上传路由返回成功并持久化一个 `PERSISTED` Descriptor；重试返回同一 Artifact。
 - **AC-15 / C03**：Agent 上传请求缺少或伪造 org、attempt、step、run generation、checksum、size 或 idempotency key 时得到精确 HTTP 拒绝、稳定 `error_code`（`errors.artifact.unauthorized_scope` / `errors.artifact.stale_generation` / `errors.artifact.checksum_mismatch` / `errors.artifact.size_mismatch` / `errors.artifact.missing_field` / `errors.artifact.idempotency_conflict`），且无元数据和字节副作用。
-- **AC-16 / C04**：on-demand Artifact 在没有未过期未消费请求时不上传字节；已认证 Edge 只能拉取本 org/node 的请求；履约成功后 Artifact checksum 验证通过且该请求进入 consumed，同一请求再次拉取或上传被 `errors.artifact.on_demand_consumed` 拒绝。
-- **AC-17 / C04**：过期、错组织、错节点、错 Job、旧代或重复消费的 on-demand 请求分别返回 `errors.artifact.on_demand_expired`、`errors.artifact.on_demand_scope_mismatch`、`errors.artifact.on_demand_not_found` 或 `errors.artifact.on_demand_consumed`，不能创建重复或未授权 Artifact，也不能推进 Hybrid Run 终态。
-- **AC-31 / C03+C04**：含 required on-demand Artifact 的 Hybrid Run，在该 Artifact 达到 `PERSISTED` 且 checksum 验证前不得进入 `COMPLETED`；验证通过后由既有终态聚合器写入一次 `COMPLETED`。
+- **AC-16 / C04+C10**：on-demand Artifact 在没有未过期未消费请求时不上传字节；已认证 Edge 只能拉取本 org/node 的请求；履约成功后 Artifact checksum 验证通过且该请求进入 consumed，同一请求再次拉取或上传被 `errors.artifact.on_demand_consumed` 拒绝。
+- **AC-17 / C04+C10**：过期、错组织、错节点、错 Job、旧代或重复消费的 on-demand 请求分别返回 `errors.artifact.on_demand_expired`、`errors.artifact.on_demand_scope_mismatch`、`errors.artifact.on_demand_not_found` 或 `errors.artifact.on_demand_consumed`，不能创建重复或未授权 Artifact，也不能推进 Hybrid Run 终态。
+- **AC-31 / C03+C04+C10**：含 required on-demand Artifact 的 Hybrid Run，在该 Artifact 达到 `PERSISTED` 且 checksum 验证前不得进入 `COMPLETED`；验证通过后由既有终态聚合器写入一次 `COMPLETED`。
+- **AC-32 / C10**：Edge 只通过出站拉取获得本 org/node 的有效请求并复用现有上传路径履约；网络重试收敛到同一 Artifact 和同一 consumed 请求，不创建第二份授权事实。
+
+### Installation Reconcile
+
+- **AC-33 / C11**：在受控 Edge 环境下，install 与 uninstall 分别产生可观察的真实副作用；只有成功后 Actual 才推进到 Desired Generation。失败、重启重试、重复同代、旧代和错节点请求均不伪报成功、不重复副作用，并产生稳定证据。
 
 ### Postman Collection
 
@@ -310,7 +335,7 @@ Backend Contract Package 是 `SKILL-RUN-CONTRACT v1.0.0` 的唯一发布 Owner�
 - **AC-19 / C05+C09**：所有资源标识均由真实 Setup 请求或前序响应生成；Environment Template 中不存在可直接使用的 Token、密码、Cookie 或伪造 Run/Job/Approval ID。
 - **AC-20 / C05+C09**：全部正向请求只接受合同定义的成功状态和业务终态；不存在把 404、500 或未执行状态视为成功的断言。
 - **AC-21 / C05+C09**：全部安全负向请求断言精确 HTTP 状态、稳定 `error_code` 和无副作用结果；不存在 200/201/404/500 宽泛组合。
-- **AC-22 / C05+C09**：同一 Collection 完成真实 Skill 生命周期、central/edge/hybrid、SSE replay、Approval、cancel、Installation generation、Artifact eager/on-demand 和跨租户拒绝路径。
+- **AC-22 / C05+C09+C11**：同一 Collection 完成真实 Skill 生命周期、central/edge/hybrid、SSE replay、Approval、cancel、Installation install/uninstall 与 generation、Artifact eager/on-demand 和跨租户拒绝路径。
 
 ### Newman Evidence
 
@@ -334,11 +359,13 @@ Backend Contract Package 是 `SKILL-RUN-CONTRACT v1.0.0` 的唯一发布 Owner�
 | AC-13：eager 上传与幂等 | AC-14 |
 | AC-14、AC-15：on-demand 授权与拒绝 | AC-16、AC-17 |
 | AC-16：required Artifact 未验证不得 COMPLETED | AC-31 |
+| AC-06、AC-09、AC-10 Installation Generation 合同 | KEEP 前序 Owner |
+| AC-07、AC-08 真实 install/uninstall 与 1.5.1 DoD 第 3 条真实安装条款 | AC-33 / C11 |
 | AC-22 至 AC-24：readiness | AC-05 至 AC-07 |
 | AC-25 至 AC-28：多 Worker、恢复、故障、可观测性 | AC-08 至 AC-13 |
 | AC-29：路由与动态资源正确 | AC-18、AC-19 |
 | AC-30：精确断言 | AC-20、AC-21 |
-| AC-31：完整真实路径 | AC-14 至 AC-17、AC-22、AC-31 |
+| AC-31：完整真实路径 | AC-14 至 AC-17、AC-22、AC-31 至 AC-33 |
 | AC-32、AC-33：Newman 两连跑 | AC-23 至 AC-26 |
 | AC-34 至 AC-36：合同与 Tag | AC-27 至 AC-29 |
 | AC-37、AC-38：架构事实与 `lat check` | AC-30 |
@@ -350,7 +377,9 @@ Backend Contract Package 是 `SKILL-RUN-CONTRACT v1.0.0` 的唯一发布 Owner�
 | C01 | Compose/External Preflight、角色与版本检查、干净环境启动、故障注入 | 拓扑清单、readiness 输出、故障 JSON/JUnit、代次轨迹、无 Secret 报告 |
 | C02 | 真实 PostgreSQL 上的 Alembic head、StoragePort 探测、Worker/heartbeat | 503/恢复转换、稳定 check key、不含 Secret 的 reasons |
 | C03 | Agent 上传接口、幂等、checksum、租户与代次负向测试 | Descriptor、精确 `error_code`、存储摘要 |
-| C04 | on-demand 请求、出站拉取、单次消费、过期/错代/重复消费测试 | 请求审计、consumed 状态、`error_code`、无副作用拒绝 |
+| C04 | on-demand 请求事实、单次消费、过期/错代/重复消费测试 | 请求审计、consumed 状态、`error_code`、无副作用拒绝 |
+| C10 | Edge 出站拉取、授权履约、网络重试和幂等收敛 | Edge 请求轨迹、同一 Artifact/consumed 结果、无第二 Owner 证明 |
+| C11 | 真实 install/uninstall、失败重试、重启恢复和代次拒绝 | 安装副作用、Actual 轨迹、稳定错误和无重复副作用报告 |
 | C05+C09 | OpenAPI/内部路由静态校验、Collection dry-run、全链路 Postman | 路由映射、动态变量来源、精确断言清单、旧语义移除证明 |
 | C06+C09 | 同环境 Newman 连续两次 | 两组独立 JSON/JUnit、报告索引、旧入口移除证明 |
 | C07 | Schema/Fixture/checksum、`I`/`R` ancestry、允许文件白名单、Tag 指向 | release check 输出、`I`、`R`、Tag object |
@@ -360,11 +389,11 @@ Backend Contract Package 是 `SKILL-RUN-CONTRACT v1.0.0` 的唯一发布 Owner�
 
 ### Gate 1: Topology and Artifact Route Closure
 
-完成 C01、C03、C04 和 AC-01 至 AC-04、AC-14 至 AC-17、AC-31 后，才允许把验收环境作为真实 API 联调入口。
+完成 C01、C03、C04、C10 和 AC-01 至 AC-04、AC-14 至 AC-17、AC-31、AC-32 后，才允许把验收环境作为真实 API 联调入口。
 
 ### Gate 2: Production Evidence Closure
 
-完成 C01、C02 和 AC-05 至 AC-13 后，才允许启动正式 Postman/Newman 验收。开发期间可提前调试单个请求，但其结果不得记为 Gate 2 或 Gate 3 证据。
+完成 C01、C02、C11 和 AC-05 至 AC-13、AC-33 后，才允许启动正式 Postman/Newman 验收。开发期间可提前调试单个请求，但其结果不得记为 Gate 2 或 Gate 3 证据。
 
 ### Gate 3: Postman Collection Closure
 
@@ -386,18 +415,19 @@ Backend Contract Package 是 `SKILL-RUN-CONTRACT v1.0.0` 的唯一发布 Owner�
 
 v1.5.2 仅在以下条件全部满足时完成：
 
-1. AC-01 至 AC-31 全部有可复现证据并通过。
+1. AC-01 至 AC-33 全部有可复现证据并通过。
 2. 正式验收拓扑同时运行 Backend、两个 central Agent、一个 edge Agent、真实 PostgreSQL 和共享 Artifact Storage；External Mode 通过等价环境身份校验。
 3. Agent Artifact 上传路由、Backend 转发、Edge eager/on-demand、身份校验、代次 fencing、checksum 和幂等闭环全部通过。
-4. v1.5.1 AC-22 至 AC-28 的 readiness、多 Pod 与故障注入场景全部由机器可读报告证明。
-5. 正式 Postman Collection 不含不存在路由、无效请求体、硬编码伪资源、有效 Secret 或宽泛成功断言，并覆盖 v1.5.1 AC-29 至 AC-31。
-6. Newman 在同一实现提交、同一合同和同一环境中不重置数据库连续运行两次全绿，生成两组独立 JSON/JUnit 报告。
-7. Agent/Backend 相关全量测试、真实 PostgreSQL 集成测试、故障套件、Collection 静态检查、Newman 两连跑和 Secret 扫描均无失败；所有警告有明确处置或书面非阻断依据。
-8. Skill Run Contract 的 Schema、Fixture、manifest 和 checksum 完整；release check 在 `R` 证明 manifest 绑定 `I` 且 `I..R` 只有允许合同文件。
-9. `skill-run-contract-v1.0.0` Tag 已创建并不可变地指向 `R`。
-10. `skill-agent.md` 与源码和验收事实一致，`runtime.md` 边界核对无误，`lat check` 通过。
-11. 原 v1.0 DoD-04 和 DoD-15 继续明确延期，未修改 `smc-copilot/apps/work`，也未迁移或删除旧 Expert/Hermes 路径。
-12. PRD、Plan、实现、Review、Verification、Implementation Commit `I`、Contract Release Commit `R`、Tag 和 Roadmap Update（路线图更新）遵循治理提交顺序；DRAFT/REVIEW_REQUIRED PRD 不与实现代码混合提交。
+4. Edge Installation 的真实 install/uninstall、失败重试、重启恢复和代次保护通过，Actual 不再由本地 JSON 写入直接推进。
+5. v1.5.1 AC-22 至 AC-28 的 readiness、多 Pod 与故障注入场景全部由机器可读报告证明。
+6. 正式 Postman Collection 不含不存在路由、无效请求体、硬编码伪资源、有效 Secret 或宽泛成功断言，并覆盖 v1.5.1 AC-29 至 AC-31。
+7. Newman 在同一实现提交、同一合同和同一环境中不重置数据库连续运行两次全绿，生成两组独立 JSON/JUnit 报告。
+8. Agent/Backend 相关全量测试、真实 PostgreSQL 集成测试、故障套件、Collection 静态检查、Newman 两连跑和 Secret 扫描均无失败；所有警告有明确处置或书面非阻断依据。
+9. Skill Run Contract 的 Schema、Fixture、manifest 和 checksum 完整；release check 在 `R` 证明 manifest 绑定 `I` 且 `I..R` 只有允许合同文件。
+10. `skill-run-contract-v1.0.0` Tag 已创建并不可变地指向 `R`。
+11. `skill-agent.md` 保持“已实现 / 部分实现 / 目标状态”三态并与源码和验收事实一致，`runtime.md` 边界核对无误，`lat check` 通过。
+12. 原 v1.0 DoD-04 和 DoD-15 继续明确延期，未修改 `smc-copilot/apps/work`，也未迁移或删除旧 Expert/Hermes 路径。
+13. PRD、Plan、实现、Review、Verification、Implementation Commit `I`、Contract Release Commit `R`、Tag 和 Roadmap Update（路线图更新）遵循治理提交顺序；DRAFT/REVIEW_REQUIRED PRD 不与实现代码混合提交。
 
 ## Risks and Mitigations
 
@@ -406,18 +436,20 @@ v1.5.2 仅在以下条件全部满足时完成：
 | External Mode 环境漂移 | 本地 Postman 结果无法复现 | Preflight 校验组件提交、合同摘要、角色、迁移和配置指纹；不合格环境拒绝执行 |
 | 测试拓扑成为第二生产实现 | 生产与验收路径分叉 | Harness 只编排真实服务并调用真实 API，不实现 Run/Artifact 状态逻辑 |
 | 为修 Postman 仅增加假路由 | 请求成功但绕过 StoragePort 或鉴权 | Agent 接口必须复用现有 Artifact 状态机与 StoragePort，并由集成测试证明 |
+| 写本地 Installation JSON 后直接上报成功 | Actual 与真实安装状态分离 | Actual 只能由真实安装器成功结果推进，并以重启和失败注入验证 |
 | 故障注入直接改数据库 | 绕过真实锁、租约和恢复机制 | 只允许进程、容器、网络和依赖故障控制；业务状态只通过 API 观察 |
 | 两连跑之间隐式重置环境 | 无法证明幂等和重复执行 | 报告记录同一环境指纹和数据库连续性，Runner 禁止重置步骤 |
 | Postman 继续使用宽泛断言 | 404、500 或鉴权绕过形成假阳性 | 静态规则阻断宽泛状态集合，负向请求强制 `error_code` 与无副作用断言 |
 | 合同 manifest 自引用提交 | 无法形成真实可验证发布 | 使用 `I`/`R` 两提交协议和允许文件白名单，Tag 只指向 `R` |
 | 当前主机没有 Docker | 无法本地生成正式多实例证据 | 支持 External Mode 调试；正式 Compose 证据在 CI 或具备 Docker 的受控主机生成 |
-| 1.5.1 与 1.5.2 并行发布 | 同一 Tag 与 Collection 双权威 | 剩余 AC/DoD 移交本 PRD；1.5.1 禁止再创建 `skill-run-contract-v1.0.0` |
+| 1.5.1 与 1.5.2 并行发布 | 同一 Tag、Collection 或 Installation 副作用双权威 | 剩余 AC/DoD 与 AC-07/AC-08 移交本 PRD；1.5.1 禁止再创建 `skill-run-contract-v1.0.0`，也不得再把真实 install/uninstall 当作本阶段完成条件 |
 
 ## Source Anchors
 
 以下锚点用于验证当前事实和 Production Owner，不冻结 Plan 的私有实现方式：
 
 - `docker-compose.yml`：当前 Backend、PostgreSQL 与单 Agent 开发拓扑。
+- `docker-compose.acceptance.yml`：未提交验收拓扑候选，用于证明当前仍缺第二 Central、共享存储和正式平台约束。
 - `nodeskclaw-agent/app/main.py`：Agent role、readiness 和 metrics（指标）。
 - `nodeskclaw-agent/app/api/internal_runs.py`：Agent Run、Event、Approval、Cancel 和 Artifact 内部接口。
 - `nodeskclaw-agent/app/services/run_service.py`：Artifact Descriptor、StoragePort 调用和终态聚合。
@@ -427,11 +459,13 @@ v1.5.2 仅在以下条件全部满足时完成：
 - `nodeskclaw-backend/app/api/internal_edge.py`：Edge Job、租约、事件、Artifact 和 Installation 内部合同。
 - `nodeskclaw-backend/scripts/contracts.py`：合同生成、检查和 release 模式。
 - `nodeskclaw-backend/contracts/skill-run/v1.0.0/`：Skill Run Contract 包。
-- `tests/postman/nodeskclaw_agent_acceptance.postman_collection.json`：当前正式集合候选。
-- `tests/postman/nodeskclaw_agent_acceptance.postman_environment.json`：当前环境模板。
-- `tests/postman/run_newman.sh`：当前单次 Newman Runner。
+- `tests/postman/nodeskclaw_agent_acceptance.postman_collection.json`：`grounded_commit` 中的旧正式集合。
+- `tests/postman/nodeskclaw_agent_acceptance.postman_environment.json`：`grounded_commit` 中的旧环境文件。
+- `tests/postman/run_newman.sh`：`grounded_commit` 中的旧单次 Newman Runner。
+- `tests/postman/nodeskclaw_acceptance_closure.postman_collection.json`：未提交替换集合候选，用于验证路由、断言和业务覆盖缺口。
+- `tools/acceptance/fault_suite.py`、`tools/acceptance/check_postman_collection.py`、`tools/acceptance/run_newman.py`：未提交验收工具候选，不作为完成证据。
 - `lat.md/architecture/skill-agent.md`、`lat.md/architecture/runtime.md`、`lat.md/decisions/skill-platform-execution.md`：最终 Architecture SOT。
 
 ## Plan Handoff
 
-本 PRD 状态为 `APPROVED`。下一步使用 `smc-plan-from-approved-prd-ponytail` 生成实施 Plan；Plan 只继承本文件的 Owner、Change Classification、Boundary 与 AC，不得重开架构。
+本 PRD 已 `APPROVED`。下一步执行 `smc-plan-from-approved-prd-ponytail`。当前未提交 Plan 继承的是旧 Source Revision，且其 C10 语义与本 PRD 不一致，不得直接执行；必须按 C01 至 C11 重新生成或完整修订并通过 `smc-plan-validator`。

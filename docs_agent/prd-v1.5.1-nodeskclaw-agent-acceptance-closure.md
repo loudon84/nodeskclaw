@@ -387,7 +387,7 @@ v1.5.1 仅在以下条件全部满足时完成：
 
 1. AC-01 至 AC-38 全部有可复现证据并通过。
 2. Hybrid central/edge required Step、required Artifact、失败、取消、重试和迟到事件均由一个 Agent 终态聚合器收敛。
-3. Installation 执行真实 install/uninstall，Desired/Actual Generation 严格同代，跨组织和跨节点访问关闭。
+3. Installation Desired/Actual Generation 严格同代，跨组织和跨节点访问关闭。真实 install/uninstall 副作用已移交 v1.5.2（AC-07 / AC-08 → `docs_agent/prd-v1.5.2-nodeskclaw-postman-acceptance-closure.md` 的 AC-33 / C11），不再作为本 PRD 的完成条件。
 4. Artifact 生产字节访问全部通过 StoragePort，Edge eager/on-demand 和多 Pod 读取均通过。
 5. Edge 在租约失效或 fencing 后停止执行，完整 Spool Envelope 可跨断网和重启幂等重放。
 6. Agent/Backend 相关全量测试、真实 PostgreSQL 集成测试、多 Pod 测试和故障注入套件无失败；已知警告必须有明确处置或非阻断依据。
@@ -412,7 +412,7 @@ v1.5.1 仅在以下条件全部满足时完成：
 
 ## Residual Transfer to v1.5.2
 
-本 PRD 保持 `APPROVED`，已关闭子集（Hybrid AC-01 至 AC-10、StoragePort AC-11、Edge fencing/Spool AC-17 至 AC-21 的实现）仍以本文为权威。下列 **未形成正式证据或合同缺口** 的剩余项于 2026-08-29 移交给唯一现行 Stage PRD `docs_agent/prd-v1.5.2-nodeskclaw-postman-acceptance-closure.md`（work item `NODESKCLAW-POSTMAN-ACCEPTANCE-CLOSURE-152`）：AC-12 至 AC-16、AC-22 至 AC-38，以及 DoD 中 Newman 两连跑、`skill-run-contract-v1.0.0` Tag 与正式故障证据条款。移交后禁止依据本 PRD 再创建同一合同 Tag 或第二套正式 Postman Collection。
+本 PRD 保持 `APPROVED`，已关闭子集（Hybrid AC-01 至 AC-05、Installation Generation 合同 AC-06 / AC-09 / AC-10、StoragePort AC-11、Edge fencing/Spool AC-17 至 AC-21 的实现）仍以本文为权威。下列 **未形成正式证据或合同缺口** 的剩余项于 2026-08-29 移交给唯一现行 Stage PRD `docs_agent/prd-v1.5.2-nodeskclaw-postman-acceptance-closure.md`（work item `NODESKCLAW-POSTMAN-ACCEPTANCE-CLOSURE-152`）：AC-07 与 AC-08（真实 install/uninstall 副作用）及 DoD 第 3 条中的真实安装条款；AC-12 至 AC-16、AC-22 至 AC-38；以及 DoD 中 Newman 两连跑、`skill-run-contract-v1.0.0` Tag 与正式故障证据条款。移交后禁止依据本 PRD 再创建同一合同 Tag 或第二套正式 Postman Collection，也不得再把真实 install/uninstall 当作本 PRD 的完成条件。
 
 ## Source Anchors
 
