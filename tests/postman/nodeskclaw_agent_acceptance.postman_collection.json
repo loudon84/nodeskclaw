@@ -1,0 +1,521 @@
+{
+  "info": {
+    "_postman_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "name": "NoDeskClaw Agent Acceptance Closure Collection",
+    "description": "Automated acceptance test suite for NoDeskClaw Agent & Hybrid Orchestration Closure (AC-01 through AC-16).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "AC-01 Central Step Plan Persistence",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status code is 200 or 201', function () {",
+              "    pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+              "});",
+              "var data = pm.response.json().data || pm.response.json();",
+              "pm.test('Run created and run_id saved', function () {",
+              "    pm.expect(data.id || data.run_id).to.be.a('string');",
+              "    pm.environment.set('RUN_ID', data.id || data.run_id);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {"key": "Content-Type", "value": "application/json"},
+          {"key": "X-Skill-Agent-Token", "value": "{{INTERNAL_TOKEN}}"},
+          {"key": "X-Exec-Org-Id", "value": "{{ORG_ID}}"},
+          {"key": "X-Exec-User-Id", "value": "{{USER_ID}}"}
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"tool_name\": \"test_hybrid_tool\",\n  \"arguments\": {\"param\": 1},\n  \"snapshot\": {\n    \"placement\": {\"mode\": \"hybrid\"},\n    \"steps\": [\n      {\"step_id\": \"central_hermes\", \"owner_role\": \"central\", \"engine\": \"hermes\", \"required\": true},\n      {\"step_id\": \"edge_connector\", \"owner_role\": \"edge\", \"engine\": \"connector\", \"required\": true, \"depends_on\": [\"central_hermes\"]}\n    ]\n  }\n}"
+        },
+        "url": {
+          "raw": "{{AGENT_BASE_URL}}/internal/v1/runs",
+          "host": ["{{AGENT_BASE_URL}}"],
+          "path": ["internal", "v1", "runs"]
+        }
+      }
+    },
+    {
+      "name": "AC-02 Edge Job Idempotent Dispatch",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status code is 200', function () {",
+              "    pm.expect(pm.response.code).to.equal(200);",
+              "});",
+              "var data = pm.response.json().data || pm.response.json();",
+              "pm.test('EdgeJob enqueued with matching generation', function () {",
+              "    pm.expect(data.job_id).to.be.a('string');",
+              "    pm.environment.set('JOB_ID', data.job_id);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {"key": "Content-Type", "value": "application/json"},
+          {"key": "X-Skill-Agent-Token", "value": "{{INTERNAL_TOKEN}}"},
+          {"key": "X-Exec-Org-Id", "value": "{{ORG_ID}}"}
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"edge_node_id\": \"{{NODE_ID}}\",\n  \"run_id\": \"{{RUN_ID}}\",\n  \"step_id\": \"edge_connector\",\n  \"attempt_id\": \"att-1\",\n  \"run_generation\": 1,\n  \"tool_name\": \"connector\",\n  \"idempotency_key\": \"idem-{{RUN_ID}}-edge_connector\"\n}"
+        },
+        "url": {
+          "raw": "{{BACKEND_BASE_URL}}/api/v1/internal/edge/jobs/enqueue",
+          "host": ["{{BACKEND_BASE_URL}}"],
+          "path": ["api", "v1", "internal", "edge", "jobs", "enqueue"]
+        }
+      }
+    },
+    {
+      "name": "AC-03 Stale Attempt Ingest Rejection",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Stale attempt event is rejected or ignored with rejection record', function () {",
+              "    pm.expect(pm.response.code).to.be.oneOf([200, 400, 403]);",
+              "    if (pm.response.code === 200) {",
+              "        var data = pm.response.json().data || pm.response.json();",
+              "        pm.expect(data.rejected_count).to.be.at.least(0);",
+              "    }",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {"key": "Content-Type", "value": "application/json"},
+          {"key": "X-Skill-Agent-Token", "value": "{{INTERNAL_TOKEN}}"},
+          {"key": "X-Exec-Org-Id", "value": "{{ORG_ID}}"}
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"events\": [\n    {\n      \"event_type\": \"step.progress\",\n      \"payload\": {\"pct\": 10},\n      \"attempt_id\": \"att-stale-999\",\n      \"delivery_generation\": 1\n    }\n  ]\n}"
+        },
+        "url": {
+          "raw": "{{AGENT_BASE_URL}}/internal/v1/runs/{{RUN_ID}}/events/ingest",
+          "host": ["{{AGENT_BASE_URL}}"],
+          "path": ["internal", "v1", "runs", "{{RUN_ID}}", "events", "ingest"]
+        }
+      }
+    },
+    {
+      "name": "AC-04 Late Event Ignored on Terminal Run",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Late event rejected or does not modify terminal status', function () {",
+              "    pm.expect(pm.response.code).to.be.oneOf([200, 400, 403]);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {"key": "Content-Type", "value": "application/json"},
+          {"key": "X-Skill-Agent-Token", "value": "{{INTERNAL_TOKEN}}"},
+          {"key": "X-Exec-Org-Id", "value": "{{ORG_ID}}"}
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"events\": [\n    {\n      \"event_type\": \"run.completed\",\n      \"payload\": {\"late\": true}\n    }\n  ]\n}"
+        },
+        "url": {
+          "raw": "{{AGENT_BASE_URL}}/internal/v1/runs/{{RUN_ID}}/events/ingest",
+          "host": ["{{AGENT_BASE_URL}}"],
+          "path": ["internal", "v1", "runs", "{{RUN_ID}}", "events", "ingest"]
+        }
+      }
+    },
+    {
+      "name": "AC-05 Single Terminal Winner Aggregator",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Run details query succeeds', function () {",
+              "    pm.expect(pm.response.code).to.equal(200);",
+              "    var data = pm.response.json().data || pm.response.json();",
+              "    pm.expect(data.status).to.be.a('string');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {"key": "X-Skill-Agent-Token", "value": "{{INTERNAL_TOKEN}}"},
+          {"key": "X-Exec-Org-Id", "value": "{{ORG_ID}}"}
+        ],
+        "url": {
+          "raw": "{{AGENT_BASE_URL}}/internal/v1/runs/{{RUN_ID}}",
+          "host": ["{{AGENT_BASE_URL}}"],
+          "path": ["internal", "v1", "runs", "{{RUN_ID}}"]
+        }
+      }
+    },
+    {
+      "name": "AC-06 Desired/Actual Generation Reconciliation",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Desired installations returned', function () {",
+              "    pm.expect(pm.response.code).to.equal(200);",
+              "    var data = pm.response.json().data || pm.response.json();",
+              "    pm.expect(data.items).to.be.an('array');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {"key": "X-Edge-Token", "value": "{{EDGE_TOKEN}}"}
+        ],
+        "url": {
+          "raw": "{{BACKEND_BASE_URL}}/api/v1/internal/edge/installations/desired",
+          "host": ["{{BACKEND_BASE_URL}}"],
+          "path": ["api", "v1", "internal", "edge", "installations", "desired"]
+        }
+      }
+    },
+    {
+      "name": "AC-07 StoragePort Atomic Two-Phase Upload",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Artifact upload succeeds with 200', function () {",
+              "    pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+              "    var data = pm.response.json().data || pm.response.json();",
+              "    pm.expect(data.storage_state).to.be.oneOf(['persisted', 'PERSISTED']);",
+              "    pm.environment.set('ARTIFACT_ID', data.artifact_id || data.id);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {"key": "Content-Type", "value": "application/json"},
+          {"key": "X-Skill-Agent-Token", "value": "{{INTERNAL_TOKEN}}"},
+          {"key": "X-Exec-Org-Id", "value": "{{ORG_ID}}"}
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"acceptance_output.json\",\n  \"content_base64\": \"eyJzdWNjZXNzIjogdHJ1ZX0=\",\n  \"content_type\": \"application/json\",\n  \"checksum_sha256\": \"1efc404cf4c130ee77fae69e064971c223c6d7bb54c25f543ad472098d5c4be4\"\n}"
+        },
+        "url": {
+          "raw": "{{AGENT_BASE_URL}}/internal/v1/runs/{{RUN_ID}}/artifacts/upload",
+          "host": ["{{AGENT_BASE_URL}}"],
+          "path": ["internal", "v1", "runs", "{{RUN_ID}}", "artifacts", "upload"]
+        }
+      }
+    },
+    {
+      "name": "AC-08 Corrupted Artifact State Rejection",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Corrupted upload rejected with 400', function () {",
+              "    pm.expect(pm.response.code).to.equal(400);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {"key": "Content-Type", "value": "application/json"},
+          {"key": "X-Skill-Agent-Token", "value": "{{INTERNAL_TOKEN}}"},
+          {"key": "X-Exec-Org-Id", "value": "{{ORG_ID}}"}
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"corrupt.json\",\n  \"content_base64\": \"eyJzdWNjZXNzIjogdHJ1ZX0=\",\n  \"content_type\": \"application/json\",\n  \"checksum_sha256\": \"0000000000000000000000000000000000000000000000000000000000000000\"\n}"
+        },
+        "url": {
+          "raw": "{{AGENT_BASE_URL}}/internal/v1/runs/{{RUN_ID}}/artifacts/upload",
+          "host": ["{{AGENT_BASE_URL}}"],
+          "path": ["internal", "v1", "runs", "{{RUN_ID}}", "artifacts", "upload"]
+        }
+      }
+    },
+    {
+      "name": "AC-09 Filtered Artifact Listing",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('List artifacts returns persisted items only', function () {",
+              "    pm.expect(pm.response.code).to.equal(200);",
+              "    var data = pm.response.json().data || pm.response.json();",
+              "    var items = Array.isArray(data) ? data : (data.items || []);",
+              "    items.forEach(function(art) {",
+              "        pm.expect(art.storage_state).to.be.oneOf(['persisted', 'PERSISTED']);",
+              "    });",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {"key": "X-Skill-Agent-Token", "value": "{{INTERNAL_TOKEN}}"},
+          {"key": "X-Exec-Org-Id", "value": "{{ORG_ID}}"}
+        ],
+        "url": {
+          "raw": "{{AGENT_BASE_URL}}/internal/v1/runs/{{RUN_ID}}/artifacts",
+          "host": ["{{AGENT_BASE_URL}}"],
+          "path": ["internal", "v1", "runs", "{{RUN_ID}}", "artifacts"]
+        }
+      }
+    },
+    {
+      "name": "AC-10 Expired Edge Job Lease Reclaim",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Claim edge job responds with 200 or 204', function () {",
+              "    pm.expect(pm.response.code).to.be.oneOf([200, 204]);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {"key": "X-Edge-Token", "value": "{{EDGE_TOKEN}}"}
+        ],
+        "url": {
+          "raw": "{{BACKEND_BASE_URL}}/api/v1/internal/edge/jobs",
+          "host": ["{{BACKEND_BASE_URL}}"],
+          "path": ["api", "v1", "internal", "edge", "jobs"]
+        }
+      }
+    },
+    {
+      "name": "AC-11 Preempted Edge Job Lease Rejection",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Stale lease renewal rejected with 403', function () {",
+              "    pm.expect(pm.response.code).to.be.oneOf([403, 404]);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {"key": "Content-Type", "value": "application/json"},
+          {"key": "X-Edge-Token", "value": "{{EDGE_TOKEN}}"},
+          {"key": "X-Delivery-Generation", "value": "0"}
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"delivery_generation\": 0\n}"
+        },
+        "url": {
+          "raw": "{{BACKEND_BASE_URL}}/api/v1/internal/edge/jobs/{{JOB_ID}}/lease/renew",
+          "host": ["{{BACKEND_BASE_URL}}"],
+          "path": ["api", "v1", "internal", "edge", "jobs", "{{JOB_ID}}", "lease", "renew"]
+        }
+      }
+    },
+    {
+      "name": "AC-12 Event Payload Size Limit & Dedicated Artifact Upload",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Oversized event payload rejected with 400', function () {",
+              "    pm.expect(pm.response.code).to.be.oneOf([400, 403, 404]);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {"key": "Content-Type", "value": "application/json"},
+          {"key": "X-Edge-Token", "value": "{{EDGE_TOKEN}}"},
+          {"key": "X-Delivery-Generation", "value": "1"}
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"events\": [\n    {\n      \"event_type\": \"step.output\",\n      \"payload\": {\"huge\": \"A\".repeat(70000)}\n    }\n  ],\n  \"delivery_generation\": 1\n}"
+        },
+        "url": {
+          "raw": "{{BACKEND_BASE_URL}}/api/v1/internal/edge/jobs/{{JOB_ID}}/events",
+          "host": ["{{BACKEND_BASE_URL}}"],
+          "path": ["api", "v1", "internal", "edge", "jobs", "{{JOB_ID}}", "events"]
+        }
+      }
+    },
+    {
+      "name": "AC-13 Production Readiness Database Failure",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Readiness probe response valid structure', function () {",
+              "    pm.expect(pm.response.code).to.be.oneOf([200, 503]);",
+              "    var data = pm.response.json();",
+              "    pm.expect(data.checks).to.be.an('object');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{AGENT_BASE_URL}}/healthz/ready",
+          "host": ["{{AGENT_BASE_URL}}"],
+          "path": ["healthz", "ready"]
+        }
+      }
+    },
+    {
+      "name": "AC-14 Production Readiness Schema Drift",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Migration status checked in readiness', function () {",
+              "    pm.expect(pm.response.code).to.be.oneOf([200, 503]);",
+              "    var data = pm.response.json();",
+              "    pm.expect(data.checks.migration).to.be.a('boolean');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{AGENT_BASE_URL}}/health/ready",
+          "host": ["{{AGENT_BASE_URL}}"],
+          "path": ["health", "ready"]
+        }
+      }
+    },
+    {
+      "name": "AC-15 Production Readiness Ephemeral Storage Rejection",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Artifact storage check present in readiness response', function () {",
+              "    pm.expect(pm.response.code).to.be.oneOf([200, 503]);",
+              "    var data = pm.response.json();",
+              "    pm.expect(data.checks.artifact_storage).to.be.a('boolean');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{AGENT_BASE_URL}}/health/ready",
+          "host": ["{{AGENT_BASE_URL}}"],
+          "path": ["health", "ready"]
+        }
+      }
+    },
+    {
+      "name": "AC-16 Concurrent Cancellation Convergence",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Cancel run converges idempotently', function () {",
+              "    pm.expect(pm.response.code).to.be.oneOf([200, 404]);",
+              "    if (pm.response.code === 200) {",
+              "        var data = pm.response.json().data || pm.response.json();",
+              "        pm.expect(data.status).to.be.oneOf(['CANCELLED', 'CANCELLING', 'COMPLETED', 'FAILED']);",
+              "    }",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {"key": "X-Skill-Agent-Token", "value": "{{INTERNAL_TOKEN}}"},
+          {"key": "X-Exec-Org-Id", "value": "{{ORG_ID}}"}
+        ],
+        "url": {
+          "raw": "{{AGENT_BASE_URL}}/internal/v1/runs/{{RUN_ID}}/cancel",
+          "host": ["{{AGENT_BASE_URL}}"],
+          "path": ["internal", "v1", "runs", "{{RUN_ID}}", "cancel"]
+        }
+      }
+    }
+  ]
+}

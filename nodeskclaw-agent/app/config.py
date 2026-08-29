@@ -12,6 +12,12 @@ class Settings(BaseSettings):
     SKILL_AGENT_LEASE_SECONDS: int = 60
     SKILL_AGENT_SCHEMA: str = "agent"
     SKILL_AGENT_ARTIFACT_DIR: str = "./data/skill-agent-artifacts"
+    SKILL_AGENT_STORAGE_DRIVER: str = "local"
+    SKILL_AGENT_S3_ENDPOINT: str = ""
+    SKILL_AGENT_S3_BUCKET: str = "nodeskclaw-artifacts"
+    SKILL_AGENT_S3_ACCESS_KEY: str = ""
+    SKILL_AGENT_S3_SECRET_KEY: str = ""
+    SKILL_AGENT_S3_REGION: str = "auto"
     SKILL_AGENT_ROLE: str = "central"
     SKILL_AGENT_EDGE_TOKEN: str = ""
     SKILL_AGENT_EDGE_NODE_ID: str = ""

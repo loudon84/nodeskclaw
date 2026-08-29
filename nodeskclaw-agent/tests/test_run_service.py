@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+import hashlib
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -679,6 +680,139 @@ async def test_append_event_and_list_events_include_request_trace_id():
     listed = await run_service.list_events(db, "run-1")
     assert len(listed) == 1
     assert listed[0].request_trace_id == "trace-abc-123"
+
+
+@pytest.mark.asyncio
+async def test_aggregate_run_terminal_single_winner():
+    db = AsyncMock()
+
+    # 1. Test when required step fails -> run transitions to FAILED
+    dummy_run_running = MagicMock(status="RUNNING", run_id="r1", org_id="org-1")
+    dummy_run_failed = MagicMock(status="FAILED", run_id="r1", org_id="org-1")
+    steps_with_failure = [
+        {"step_id": "s1", "required": True, "status": "FAILED", "error_message": "failed step 1"},
+        {"step_id": "s2", "required": True, "status": "PENDING"},
+    ]
+
+    mock_steps_res = MagicMock()
+    mock_steps_res.mappings.return_value.all.return_value = steps_with_failure
+
+    with patch("app.services.run_service.get_run", side_effect=[dummy_run_running, dummy_run_failed]), \
+         patch("app.services.run_service.set_status", return_value=True) as mock_set_st, \
+         patch("app.services.run_service.append_event", return_value=MagicMock()):
+        db.execute = AsyncMock(return_value=mock_steps_res)
+        res = await run_service.aggregate_run_terminal(db, "r1", org_id="org-1")
+        assert res.status == "FAILED"
+        assert mock_set_st.call_count == 1
+        assert mock_set_st.call_args[0][2] == "FAILED"
+
+    # 2. Test when required artifact is missing -> COMPLETED blocked
+    dummy_run_waiting = MagicMock(status="WAITING_EDGE", run_id="r2", org_id="org-1")
+    steps_succeeded_with_artifact = [
+        {"step_id": "s1", "required": True, "status": "SUCCEEDED", "required_artifacts": ["output.csv"], "result": {"data": "done"}},
+    ]
+    mock_steps_succ = MagicMock()
+    mock_steps_succ.mappings.return_value.all.return_value = steps_succeeded_with_artifact
+
+    with patch("app.services.run_service.get_run", return_value=dummy_run_waiting), \
+         patch("app.services.run_service.list_artifacts", return_value=[]), \
+         patch("app.services.run_service.set_status") as mock_set_st:
+        db.execute = AsyncMock(return_value=mock_steps_succ)
+        res = await run_service.aggregate_run_terminal(db, "r2", org_id="org-1")
+        # Run remains in WAITING_EDGE because output.csv is missing
+        assert res.status == "WAITING_EDGE"
+        mock_set_st.assert_not_called()
+
+    # 3. Test when required steps all succeeded and artifact verified -> transitions to COMPLETED
+    artifact_desc = MagicMock(name="output.csv", checksum_sha256="sha256-123", storage_state="persisted")
+    artifact_desc.name = "output.csv"
+    dummy_run_completed = MagicMock(status="COMPLETED", run_id="r2", org_id="org-1")
+
+    with patch("app.services.run_service.get_run", side_effect=[dummy_run_waiting, dummy_run_completed]), \
+         patch("app.services.run_service.list_artifacts", return_value=[artifact_desc]), \
+         patch("app.services.run_service.set_status", return_value=True) as mock_set_st, \
+         patch("app.services.run_service.append_event", return_value=MagicMock()), \
+         patch("app.services.run_service.store_artifact_bytes", return_value=MagicMock()):
+        db.execute = AsyncMock(return_value=mock_steps_succ)
+        res = await run_service.aggregate_run_terminal(db, "r2", org_id="org-1")
+        assert res.status == "COMPLETED"
+        assert mock_set_st.call_count == 1
+        assert mock_set_st.call_args[0][2] == "COMPLETED"
+
+
+@pytest.mark.asyncio
+async def test_ingest_rejection_is_audited():
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=MagicMock())
+
+    await run_service.record_event_rejection(
+        db,
+        "run-1",
+        reason="old_attempt",
+        event_id="ev-1",
+        source_event_id="src-1",
+        details={"attempt_id": "att-old"},
+    )
+    assert db.execute.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_artifact_lifecycle_state_machine(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.services.run_service.settings.SKILL_AGENT_ARTIFACT_DIR", str(tmp_path))
+    db = AsyncMock()
+    mock_seq = MagicMock()
+    mock_seq.mappings.return_value.first.return_value = {"next_event_seq": 1}
+    db.execute = AsyncMock(return_value=mock_seq)
+
+    # 1. Store transitions from INIT to PERSISTED
+    desc = await run_service.store_artifact_bytes(
+        db,
+        "run-10",
+        name="test_artifact.txt",
+        content=b"hello-artifact",
+        content_type="text/plain",
+        attempt_id="att-1",
+    )
+    assert desc.name == "test_artifact.txt"
+    assert desc.storage_state == "persisted"
+    assert desc.size_bytes == 14
+
+    # 2. Mark corrupted
+    ok_corrupt = await run_service.mark_artifact_corrupted(db, desc.artifact_id, reason="disk read error")
+    assert ok_corrupt is True
+
+    # 3. Mark expired
+    ok_expire = await run_service.mark_artifact_expired(db, desc.artifact_id, reason="ttl exceeded")
+    assert ok_expire is True
+
+
+@pytest.mark.asyncio
+async def test_storage_port_sha256_and_size_integrity(tmp_path):
+    from app.services.storage_port import LocalStorageDriver, S3StorageDriver, StorageIntegrityError
+
+    local_driver = LocalStorageDriver(base_dir=str(tmp_path))
+    content = b"sample-binary-payload"
+    correct_sha256 = hashlib.sha256(content).hexdigest()
+
+    # 1. Write with matching sha256 and size succeeds
+    res = await local_driver.write("r1/a1.bin", content, expected_sha256=correct_sha256, expected_size=len(content))
+    assert res["size_bytes"] == len(content)
+    assert res["sha256"] == correct_sha256
+
+    # 2. Write with mismatching sha256 raises StorageIntegrityError
+    with pytest.raises(StorageIntegrityError, match="sha256 mismatch"):
+        await local_driver.write("r1/a2.bin", content, expected_sha256="bad-sha256")
+
+    # 3. Write with mismatching size raises StorageIntegrityError
+    with pytest.raises(StorageIntegrityError, match="size mismatch"):
+        await local_driver.write("r1/a3.bin", content, expected_size=999)
+
+    # 4. S3 driver integrity check
+    s3_driver = S3StorageDriver()
+    s3_res = await s3_driver.write("r1/s3_a1.bin", content, expected_sha256=correct_sha256, expected_size=len(content))
+    assert s3_res["storage_ref"] == "s3://nodeskclaw-artifacts/r1/s3_a1.bin"
+    assert await s3_driver.read("r1/s3_a1.bin") == content
+
 
 
 

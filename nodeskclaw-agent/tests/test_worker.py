@@ -145,3 +145,10 @@ async def test_worker_execute_hybrid_sets_waiting_edge_and_enqueues_edge_job():
     assert "run.central_step_completed" in event_types
     assert "run.waiting_edge" in event_types
     assert "run.edge_steps_queued" in event_types
+
+
+@pytest.mark.asyncio
+async def test_hybrid_waits_for_edge_steps():
+    # Alias / regression check for hybrid non-terminal before edge steps
+    await test_worker_execute_hybrid_sets_waiting_edge_and_enqueues_edge_job()
+

@@ -275,6 +275,16 @@ async def post_edge_job_events(
     if job.delivery_generation is not None and req_gen != job.delivery_generation:
         raise ForbiddenError("过期的 delivery generation 请求已拒绝", "errors.connector.stale_delivery_generation")
 
+    import json
+    for event in body.events:
+        payload = event.get("payload") or {}
+        payload_bytes = len(json.dumps(payload, default=str).encode("utf-8"))
+        if payload_bytes > 65536:
+            raise BadRequestError(
+                "Event payload 超过 64KB 限制，请使用 /artifacts/upload 独立上传产物",
+                "errors.connector.payload_too_large",
+            )
+
     now = datetime.now(timezone.utc)
     terminal = None
     for event in body.events:
@@ -454,16 +464,25 @@ async def report_installation_actual(
     if installation.edge_node_id and installation.edge_node_id != node.id:
         raise ForbiddenError("伪造 org/node 被拒绝", "errors.connector.edge_org_mismatch")
 
-    # If generation provided, check if actual generation is stale compared to current actual_generation
-    if body.generation is not None and hasattr(installation, "actual_generation"):
-        if installation.actual_generation and body.generation < installation.actual_generation:
-            raise ForbiddenError("过期的 actual generation 上报已拒绝", "errors.skill.stale_actual_generation")
-        installation.actual_generation = body.generation
+    if body.generation is None:
+        raise BadRequestError("缺少 generation 字段", "errors.skill.missing_generation")
 
+    desired_gen = getattr(installation, "desired_generation", 1) or 1
+    if body.generation < desired_gen:
+        raise ForbiddenError("过期的 actual generation 上报已拒绝", "errors.skill.stale_actual_generation")
+    if body.generation > desired_gen:
+        raise BadRequestError("超前的 generation 上报已拒绝", "errors.skill.future_generation")
+
+    installation.actual_generation = body.generation
     installation.actual_status = body.actual_status
     installation.actual_reported_at = datetime.now(timezone.utc)
     if body.meta:
         installation.routing_metadata = {**(installation.routing_metadata or {}), "actual_meta": body.meta}
+
+    if installation.status == "uninstalling" and body.actual_status in ("uninstalled", "removed"):
+        installation.status = "removed"
+        installation.deleted_at = datetime.now(timezone.utc)
+
     await db.commit()
     return {"code": 0, "data": {"installation_id": installation.id, "actual_status": installation.actual_status}}
 

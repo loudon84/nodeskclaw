@@ -24,6 +24,8 @@ NoDeskClaw 的交付工作流以 `.agents/skills` 为规范源，并以唯一 Ow
 
 SMC Plan v3.2 使用 Requirement Coverage、Lifecycle Closure 与 Verification Ledger，把每条 AC/DoD 映射到阻断验证和留存证据，同时不改变 Ponytail 的最小实现与单写者原则。
 
+PRD 需求提取接受两种稳定编号格式：有序列表项与显式编号 bullet（如 `- **AC-01 ...**`），由 [[.agents/skills/smc-plan-validator/scripts/validate_plan.py#extract_prd_requirements]] 统一解析为稳定 Requirement ID，禁止通过改写 APPROVED PRD 格式来迁就校验器。
+
 只有所有阻断验证实际产生约定 evidence output 时，执行结果才可为 `IMPLEMENTED_AND_PROVEN`；实现存在但验证未闭环必须保持 `IMPLEMENTED_NOT_PROVEN`，owner/boundary 冲突则返回 PRD。
 
 ## Commit Policy

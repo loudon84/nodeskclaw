@@ -82,3 +82,54 @@ def test_health_ready_succeeds_in_insecure_dev_mode(monkeypatch):
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "ok"
+
+
+def test_readiness_fails_on_db_down(monkeypatch):
+    monkeypatch.setattr(settings, "SKILL_AGENT_INSECURE_MODE", True)
+    mock_db = AsyncMock()
+    mock_db.execute.side_effect = Exception("DB connection refused")
+
+    for client in _test_client(monkeypatch, mock_db=mock_db):
+        resp = client.get("/healthz/ready")
+        assert resp.status_code == 503
+        data = resp.json()
+        assert data["database"] == "disconnected"
+        assert data["checks"]["database"] is False
+
+
+def test_readiness_fails_on_schema_drift(monkeypatch):
+    monkeypatch.setattr(settings, "SKILL_AGENT_INSECURE_MODE", True)
+    mock_db = AsyncMock()
+    # SELECT 1 succeeds, but alembic_version returns empty/error
+    mock_res_db = MagicMock()
+    mock_res_db.first.return_value = None
+    mock_db.execute.side_effect = [MagicMock(), mock_res_db]
+
+    for client in _test_client(monkeypatch, mock_db=mock_db):
+        resp = client.get("/healthz/ready")
+        assert resp.status_code == 503
+        data = resp.json()
+        assert data["checks"]["migration"] is False
+
+
+def test_readiness_fails_on_illegal_storage_path(monkeypatch):
+    monkeypatch.setattr(settings, "SKILL_AGENT_INSECURE_MODE", False)
+    monkeypatch.setattr(settings, "SKILL_AGENT_INTERNAL_TOKEN", "secure-token-123456")
+    monkeypatch.setattr(settings, "SKILL_AGENT_ARTIFACT_DIR", "/tmp/forbidden_artifacts")
+
+    for client in _test_client(monkeypatch):
+        resp = client.get("/healthz/ready")
+        assert resp.status_code == 503
+        data = resp.json()
+        assert data["checks"]["config_security"] is False
+        assert "ephemeral artifact directory configured in production" in data["reasons"]
+
+
+def test_insecure_mode_allows_ephemeral_storage_with_audit_warning(monkeypatch):
+    monkeypatch.setattr(settings, "SKILL_AGENT_INSECURE_MODE", True)
+    monkeypatch.setattr(settings, "SKILL_AGENT_ARTIFACT_DIR", "./tmp_ephemeral_dev")
+
+    for client in _test_client(monkeypatch):
+        resp = client.get("/healthz/ready")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "ok"

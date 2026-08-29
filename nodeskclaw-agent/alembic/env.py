@@ -12,6 +12,7 @@ from alembic import context
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from app.config import settings  # noqa: E402
+from app.db_metadata import agent_metadata  # noqa: E402
 
 config = context.config
 
@@ -19,7 +20,7 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
-target_metadata = None
+target_metadata = agent_metadata
 
 
 def run_migrations_offline() -> None:

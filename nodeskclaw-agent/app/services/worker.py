@@ -180,6 +180,26 @@ class RunWorker:
                     "run.recovered",
                     {"reason": "lease_expired", "previous_attempt_id": att_id},
                 )
+
+            # Also recover and attempt aggregation for WAITING_EDGE / CANCELLING runs
+            waiting_rows = (
+                await db.execute(
+                    text(
+                        f"""
+                        SELECT id, org_id, status
+                        FROM "{SCHEMA}".runs
+                        WHERE status IN ('WAITING_EDGE', 'CANCELLING')
+                        ORDER BY updated_at ASC
+                        LIMIT 50
+                        """
+                    )
+                )
+            ).mappings().all()
+            for wr in waiting_rows:
+                try:
+                    await run_service.aggregate_run_terminal(db, wr["id"], org_id=wr["org_id"])
+                except Exception:
+                    logger.debug("recovering WAITING_EDGE / CANCELLING run %s failed", wr["id"], exc_info=True)
             await db.commit()
 
     async def _claim_one(self) -> dict | None:
@@ -383,6 +403,14 @@ class RunWorker:
                 org_id = snapshot.get("org_id")
 
                 step_plan = build_hybrid_step_plan(snapshot)
+                await run_service.persist_step_plan(
+                    db,
+                    run_id,
+                    step_plan,
+                    org_id=org_id,
+                    attempt_id=attempt_id,
+                    run_generation=generation or 0,
+                )
                 await run_service.append_event(
                     db,
                     run_id,
@@ -391,6 +419,17 @@ class RunWorker:
                     org_id=org_id,
                     attempt_id=attempt_id,
                     generation=generation,
+                )
+                await db.commit()
+
+                central_step_id = "central_hermes" if any(s.get("step_id") == "central_hermes" for s in step_plan) else "central"
+                await run_service.update_step_state(
+                    db,
+                    run_id,
+                    central_step_id,
+                    "RUNNING",
+                    attempt_id=attempt_id,
+                    run_generation=generation,
                 )
                 await db.commit()
 
@@ -417,6 +456,15 @@ class RunWorker:
                     source = event.get("source") or "agent"
                     source_event_id = event.get("source_event_id")
                     if event_type == "run.completed":
+                        await run_service.update_step_state(
+                            db,
+                            run_id,
+                            central_step_id,
+                            "SUCCEEDED",
+                            attempt_id=attempt_id,
+                            run_generation=generation,
+                            result=payload,
+                        )
                         if has_pending_edge_steps:
                             # Central step completed; do not mark run as COMPLETED.
                             # Instead, transition to WAITING_EDGE and enqueue edge steps via Backend internal API.
@@ -450,20 +498,10 @@ class RunWorker:
                                 generation=generation,
                             )
                         else:
-                            await run_service.set_status(
-                                db,
-                                run_id,
-                                "COMPLETED",
-                                org_id=org_id,
-                                attempt_id=attempt_id,
-                                generation=generation,
-                                expected_status=["RUNNING", "PREPARING", "RESUMING"],
-                                result=payload,
-                            )
                             await run_service.append_event(
                                 db,
                                 run_id,
-                                "run.completed",
+                                "run.central_step_completed",
                                 payload,
                                 org_id=org_id,
                                 attempt_id=attempt_id,
@@ -471,29 +509,21 @@ class RunWorker:
                                 source=source,
                                 source_event_id=source_event_id,
                             )
-                            content = payload.get("content")
-                            if content is None:
-                                content = payload.get("summary") or ""
-                            raw = content if isinstance(content, (bytes, bytearray)) else str(content).encode("utf-8")
-                            await run_service.store_artifact_bytes(
+                            await run_service.aggregate_run_terminal(
                                 db,
                                 run_id,
-                                name="result.txt",
-                                content=bytes(raw),
-                                content_type="text/plain; charset=utf-8",
                                 org_id=org_id,
                                 attempt_id=attempt_id,
                                 generation=generation,
                             )
                     elif event_type == "run.cancelled":
-                        await run_service.set_status(
+                        await run_service.update_step_state(
                             db,
                             run_id,
+                            central_step_id,
                             "CANCELLED",
-                            org_id=org_id,
                             attempt_id=attempt_id,
-                            generation=generation,
-                            result=payload,
+                            run_generation=generation,
                         )
                         await run_service.append_event(
                             db,
@@ -506,15 +536,22 @@ class RunWorker:
                             source=source,
                             source_event_id=source_event_id,
                         )
-                    elif event_type == "run.failed":
-                        await run_service.set_status(
+                        await run_service.aggregate_run_terminal(
                             db,
                             run_id,
-                            "FAILED",
                             org_id=org_id,
                             attempt_id=attempt_id,
                             generation=generation,
-                            result=payload,
+                        )
+                    elif event_type == "run.failed":
+                        await run_service.update_step_state(
+                            db,
+                            run_id,
+                            central_step_id,
+                            "FAILED",
+                            attempt_id=attempt_id,
+                            run_generation=generation,
+                            error_message=str(payload.get("error") or "central engine failed"),
                         )
                         await run_service.append_event(
                             db,
@@ -526,6 +563,13 @@ class RunWorker:
                             generation=generation,
                             source=source,
                             source_event_id=source_event_id,
+                        )
+                        await run_service.aggregate_run_terminal(
+                            db,
+                            run_id,
+                            org_id=org_id,
+                            attempt_id=attempt_id,
+                            generation=generation,
                         )
                     else:
                         await run_service.append_event(
@@ -575,7 +619,17 @@ class RunWorker:
                                 resp = await http_client.post(enqueue_url, headers=req_headers, json=enqueue_payload)
                                 resp.raise_for_status()
                                 job_data = resp.json().get("data") or {}
-                                dispatched_jobs.append({"step_id": step_id, "job_id": job_data.get("job_id"), "status": job_data.get("status")})
+                                edge_job_id = job_data.get("job_id")
+                                dispatched_jobs.append({"step_id": step_id, "job_id": edge_job_id, "status": job_data.get("status")})
+                                await run_service.update_step_state(
+                                    db,
+                                    run_id,
+                                    step_id,
+                                    "DISPATCHED",
+                                    edge_job_id=edge_job_id,
+                                    attempt_id=attempt_id,
+                                    run_generation=generation,
+                                )
                             except Exception as exc:
                                 logger.error("failed to enqueue edge step %s for run_id=%s: %s", step_id, run_id, exc)
                                 raise RuntimeError(f"Edge job enqueue failed for step {step_id}: {exc}") from exc

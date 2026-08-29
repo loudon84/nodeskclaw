@@ -240,3 +240,76 @@ async def test_get_desired_installations():
     assert item["skill_id"] == "calculator"
     assert item["desired_generation"] == 2
     assert item["actual_generation"] == 1
+
+
+@pytest.mark.asyncio
+async def test_claim_expired_lease_reclaim_with_generation_bump():
+    from datetime import datetime, timezone, timedelta
+    from app.api.internal_edge import claim_edge_job
+
+    db = AsyncMock()
+    node = EdgeNode()
+    node.id = "node-1"
+    node.org_id = "org-1"
+    node.status = EdgeNodeStatus.ONLINE.value
+
+    # Job currently claimed with expired lease
+    job = EdgeJob()
+    job.id = "job-expired"
+    job.run_id = "run-1"
+    job.edge_node_id = "node-1"
+    job.org_id = "org-1"
+    job.status = EdgeJobStatus.CLAIMED.value
+    job.delivery_generation = 1
+    job.lease_until = datetime.now(timezone.utc) - timedelta(seconds=10)
+    job.arguments = {}
+    job.snapshot = {}
+    job.tool_name = "test_tool"
+    job.attempt_id = "att-1"
+    job.step_id = "step-1"
+    job.run_generation = 1
+    job.request_trace_id = "trace-1"
+
+    mock_res = MagicMock()
+    mock_res.scalar_one_or_none.return_value = job
+    db.execute = AsyncMock(return_value=mock_res)
+
+    with patch("app.api.internal_edge._authenticate_edge", AsyncMock(return_value=node)):
+        claimed_job = await claim_edge_job(db, x_edge_token="tok")
+
+    assert claimed_job["id"] == "job-expired"
+    assert claimed_job["delivery_generation"] == 2
+    assert job.delivery_generation == 2
+    assert job.lease_until is not None
+
+
+@pytest.mark.asyncio
+async def test_post_edge_job_events_rejects_payload_too_large():
+    from app.core.exceptions import BadRequestError
+
+    db = AsyncMock()
+    node = EdgeNode()
+    node.id = "node-1"
+    node.org_id = "org-1"
+    node.status = EdgeNodeStatus.ONLINE.value
+
+    job = EdgeJob()
+    job.id = "job-large"
+    job.edge_node_id = "node-1"
+    job.org_id = "org-1"
+    job.delivery_generation = 1
+    job.status = EdgeJobStatus.RUNNING.value
+
+    mock_res = MagicMock()
+    mock_res.scalar_one_or_none.return_value = job
+    db.execute = AsyncMock(return_value=mock_res)
+
+    huge_payload = {"large_data": "x" * 70000}
+    body = EdgeJobEventsBody(
+        events=[{"event_type": "run.completed", "payload": huge_payload}],
+        delivery_generation=1,
+    )
+
+    with patch("app.api.internal_edge._authenticate_edge", AsyncMock(return_value=node)):
+        with pytest.raises(BadRequestError, match="payload_too_large"):
+            await post_edge_job_events("job-large", body, db, x_edge_token="tok", x_delivery_generation="1")

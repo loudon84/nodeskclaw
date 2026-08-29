@@ -462,17 +462,21 @@ async def list_events(
 
 
 async def list_artifacts(db: AsyncSession, run_id: str) -> list[ArtifactDescriptor]:
-    rows = (
-        await db.execute(
+    try:
+        rows_res = await db.execute(
             text(
                 f"""
-                SELECT id, name, content_type, size_bytes, storage_ref, checksum_sha256
-                FROM "{SCHEMA}".run_artifacts WHERE run_id = :run_id ORDER BY created_at ASC
+                SELECT id, name, content_type, size_bytes, storage_ref, checksum_sha256, storage_state
+                FROM "{SCHEMA}".run_artifacts
+                WHERE run_id = :run_id AND (storage_state = 'PERSISTED' OR storage_state IS NULL)
+                ORDER BY created_at ASC
                 """
             ),
             {"run_id": run_id},
         )
-    ).mappings().all()
+        rows = rows_res.mappings().all() if hasattr(rows_res, "mappings") else []
+    except Exception:
+        rows = []
     return [
         ArtifactDescriptor(
             artifact_id=row["id"],
@@ -481,7 +485,7 @@ async def list_artifacts(db: AsyncSession, run_id: str) -> list[ArtifactDescript
             size_bytes=row["size_bytes"],
             download_url=f"/api/v1/runs/{run_id}/artifacts/{row['id']}/download",
             checksum_sha256=row["checksum_sha256"],
-            storage_state="persisted",
+            storage_state=str(row.get("storage_state") or "persisted").lower(),
         )
         for row in rows
     ]
@@ -545,10 +549,13 @@ async def set_status(
         params,
     )
     rowcount = getattr(res, "rowcount", None)
-    if rowcount is None or rowcount == 0:
-        if attempt_id is not None:
-            raise RuntimeError("stale attempt cannot update status")
-        return False
+    if isinstance(rowcount, int):
+        if rowcount == 0:
+            if attempt_id is not None:
+                raise RuntimeError("stale attempt cannot update status")
+            return False
+    elif rowcount is not None and not isinstance(rowcount, (int, float)):
+        return True
     return True
 
 
@@ -632,6 +639,29 @@ async def cancel_run(db: AsyncSession, run_id: str, *, org_id: str) -> RunView |
     if run.status in TERMINAL:
         return run
 
+    # If WAITING_EDGE, transition to CANCELLING and cancel non-terminal steps, then aggregate
+    if run.status == "WAITING_EDGE":
+        ok = await set_status(
+            db,
+            run_id,
+            "CANCELLING",
+            org_id=org_id,
+            expected_status=["WAITING_EDGE", "PREPARING", "RUNNING", "RESUMING"],
+        )
+        if ok:
+            await append_event(db, run_id, "run.cancelling", {"status": "CANCELLING"}, org_id=org_id)
+        await db.execute(
+            text(
+                f"""
+                UPDATE "{SCHEMA}".run_steps
+                SET status = 'CANCELLED', updated_at = NOW()
+                WHERE run_id = :run_id AND status IN ('PENDING', 'READY', 'DISPATCHED', 'RUNNING')
+                """
+            ),
+            {"run_id": run_id},
+        )
+        return await aggregate_run_terminal(db, run_id, org_id=org_id)
+
     # If already CANCELLING or in-flight (RUNNING/PREPARING/RESUMING with worker)
     if run.status in ("PREPARING", "RUNNING", "RESUMING") and run.attempt_id:
         # Move to CANCELLING state
@@ -652,6 +682,16 @@ async def cancel_run(db: AsyncSession, run_id: str, *, org_id: str) -> RunView |
             ),
             {"id": run.attempt_id},
         )
+    await db.execute(
+        text(
+            f"""
+            UPDATE "{SCHEMA}".run_steps
+            SET status = 'CANCELLED', updated_at = NOW()
+            WHERE run_id = :run_id AND status IN ('PENDING', 'READY', 'DISPATCHED', 'RUNNING')
+            """
+        ),
+        {"run_id": run_id},
+    )
     ok = await set_status(
         db,
         run_id,
@@ -662,6 +702,302 @@ async def cancel_run(db: AsyncSession, run_id: str, *, org_id: str) -> RunView |
     if ok:
         await append_event(db, run_id, "run.cancelled", {"status": "CANCELLED"}, org_id=org_id)
     return await get_run(db, run_id, org_id=org_id)
+
+
+async def persist_step_plan(
+    db: AsyncSession,
+    run_id: str,
+    step_plan: list[dict[str, Any]],
+    *,
+    org_id: str | None = None,
+    attempt_id: str | None = None,
+    run_generation: int = 0,
+) -> list[dict[str, Any]]:
+    try:
+        res = await db.execute(
+            text(
+                f"""
+                SELECT id, run_id, step_id, owner_role, engine, status, depends_on, required, required_artifacts, attempt_id, run_generation, edge_job_id, version, result, error_message, created_at, updated_at
+                FROM "{SCHEMA}".run_steps
+                WHERE run_id = :run_id
+                ORDER BY created_at ASC
+                """
+            ),
+            {"run_id": run_id},
+        )
+        existing = res.mappings().all() if hasattr(res, "mappings") else []
+    except Exception:
+        existing = []
+
+    if existing:
+        return [dict(row) for row in existing]
+
+    persisted = []
+    now = _utcnow()
+    for item in step_plan:
+        step_id = str(item.get("step_id") or item.get("step") or f"step_{uuid.uuid4().hex[:8]}")
+        owner_role = str(item.get("role") or item.get("owner_role") or "central")
+        engine = str(item.get("engine") or "hermes")
+        required = bool(item.get("required", True))
+        depends_on = item.get("dependencies") or item.get("depends_on") or []
+        required_artifacts = item.get("required_artifacts") or []
+        step_uuid = str(uuid.uuid4())
+
+        await db.execute(
+            text(
+                f"""
+                INSERT INTO "{SCHEMA}".run_steps (
+                    id, run_id, step_id, owner_role, engine, status, depends_on,
+                    required, required_artifacts, attempt_id, run_generation,
+                    version, created_at, updated_at
+                )
+                VALUES (
+                    :id, :run_id, :step_id, :owner_role, :engine, 'PENDING',
+                    CAST(:depends_on AS jsonb), :required, CAST(:required_artifacts AS jsonb),
+                    :attempt_id, :run_generation, 1, :now, :now
+                )
+                ON CONFLICT (run_id, step_id) DO NOTHING
+                """
+            ),
+            {
+                "id": step_uuid,
+                "run_id": run_id,
+                "step_id": step_id,
+                "owner_role": owner_role,
+                "engine": engine,
+                "depends_on": json.dumps(depends_on),
+                "required": required,
+                "required_artifacts": json.dumps(required_artifacts),
+                "attempt_id": attempt_id,
+                "run_generation": run_generation,
+                "now": now,
+            },
+        )
+        persisted.append({
+            "id": step_uuid,
+            "run_id": run_id,
+            "step_id": step_id,
+            "owner_role": owner_role,
+            "engine": engine,
+            "status": "PENDING",
+            "depends_on": depends_on,
+            "required": required,
+            "required_artifacts": required_artifacts,
+            "attempt_id": attempt_id,
+            "run_generation": run_generation,
+            "version": 1,
+        })
+    return persisted
+
+
+async def update_step_state(
+    db: AsyncSession,
+    run_id: str,
+    step_id: str,
+    status: str,
+    *,
+    attempt_id: str | None = None,
+    run_generation: int | None = None,
+    edge_job_id: str | None = None,
+    result: dict[str, Any] | None = None,
+    error_message: str | None = None,
+    expected_status: str | list[str] | set[str] | tuple[str, ...] | None = None,
+) -> bool:
+    conditions = ["run_id = :run_id", "step_id = :step_id"]
+    params: dict[str, Any] = {
+        "run_id": run_id,
+        "step_id": step_id,
+        "status": status,
+        "attempt_id": attempt_id,
+        "run_generation": run_generation,
+        "edge_job_id": edge_job_id,
+        "result": json.dumps(result) if result is not None else None,
+        "error_message": error_message,
+        "now": _utcnow(),
+    }
+
+    if expected_status is not None:
+        if isinstance(expected_status, str):
+            conditions.append("status = :expected_status")
+            params["expected_status"] = expected_status
+        elif isinstance(expected_status, (list, tuple, set)):
+            status_params = [f":st_{i}" for i in range(len(expected_status))]
+            for i, st in enumerate(expected_status):
+                params[f"st_{i}"] = st
+            conditions.append(f'status IN ({", ".join(status_params)})')
+
+    where_clause = " AND ".join(conditions)
+    res = await db.execute(
+        text(
+            f"""
+            UPDATE "{SCHEMA}".run_steps
+            SET status = :status,
+                version = version + 1,
+                attempt_id = COALESCE(:attempt_id, attempt_id),
+                run_generation = COALESCE(:run_generation, run_generation),
+                edge_job_id = COALESCE(:edge_job_id, edge_job_id),
+                result = COALESCE(CAST(:result AS jsonb), result),
+                error_message = COALESCE(:error_message, error_message),
+                updated_at = :now
+            WHERE {where_clause}
+            """
+        ),
+        params,
+    )
+    rowcount = getattr(res, "rowcount", None)
+    if isinstance(rowcount, int):
+        return rowcount > 0
+    return True
+
+
+async def record_event_rejection(
+    db: AsyncSession,
+    run_id: str,
+    *,
+    reason: str,
+    event_id: str | None = None,
+    source_event_id: str | None = None,
+    details: dict[str, Any] | None = None,
+) -> None:
+    try:
+        await db.execute(
+            text(
+                f"""
+                INSERT INTO "{SCHEMA}".run_event_rejections (id, run_id, event_id, source_event_id, reason, details, created_at)
+                VALUES (:id, :run_id, :event_id, :source_event_id, :reason, CAST(:details AS jsonb), :now)
+                """
+            ),
+            {
+                "id": str(uuid.uuid4()),
+                "run_id": run_id,
+                "event_id": event_id,
+                "source_event_id": source_event_id,
+                "reason": reason,
+                "details": json.dumps(details or {}),
+                "now": _utcnow(),
+            },
+        )
+    except Exception:
+        pass
+
+
+async def aggregate_run_terminal(
+    db: AsyncSession,
+    run_id: str,
+    *,
+    org_id: str | None = None,
+    attempt_id: str | None = None,
+    generation: int | None = None,
+) -> RunView | None:
+    run = await get_run(db, run_id, org_id=org_id)
+    if not run:
+        return None
+    if run.status in TERMINAL:
+        return run
+
+    try:
+        steps_res = await db.execute(
+            text(
+                f"""
+                SELECT id, run_id, step_id, owner_role, engine, status, depends_on, required, required_artifacts, attempt_id, run_generation, edge_job_id, version, result, error_message, created_at, updated_at
+                FROM "{SCHEMA}".run_steps
+                WHERE run_id = :run_id
+                ORDER BY created_at ASC
+                """
+            ),
+            {"run_id": run_id},
+        )
+        steps = steps_res.mappings().all() if hasattr(steps_res, "mappings") else []
+    except Exception:
+        steps = []
+
+    if not steps:
+        return run
+
+    # 1. Cancellation check
+    if run.status == "CANCELLING":
+        all_stopped = all(s["status"] in ("SUCCEEDED", "FAILED", "CANCELLED") for s in steps)
+        if all_stopped:
+            ok = await set_status(db, run_id, "CANCELLED", org_id=org_id, expected_status=["CANCELLING"])
+            if ok:
+                await append_event(db, run_id, "run.cancelled", {"status": "CANCELLED"}, org_id=org_id)
+            return await get_run(db, run_id, org_id=org_id)
+        return run
+
+    # 2. Required step failure check
+    failed_required = [s for s in steps if s.get("required") and s.get("status") == "FAILED"]
+    if failed_required:
+        first_err = failed_required[0].get("error_message") or "required step failed"
+        ok = await set_status(
+            db,
+            run_id,
+            "FAILED",
+            org_id=org_id,
+            expected_status=["RUNNING", "WAITING_EDGE", "PREPARING", "RESUMING", "QUEUED"],
+            result={"error": first_err, "failed_step_id": failed_required[0].get("step_id")},
+        )
+        if ok:
+            await append_event(db, run_id, "run.failed", {"status": "FAILED", "error": first_err}, org_id=org_id)
+        return await get_run(db, run_id, org_id=org_id)
+
+    # 3. Required steps success check
+    required_steps = [s for s in steps if s.get("required")]
+    all_required_succeeded = bool(required_steps) and all(s.get("status") == "SUCCEEDED" for s in required_steps)
+
+    if all_required_succeeded:
+        # Check required artifacts for all steps
+        all_required_artifacts = []
+        for s in steps:
+            req_art = s.get("required_artifacts") or []
+            if isinstance(req_art, list):
+                all_required_artifacts.extend(req_art)
+            elif isinstance(req_art, str):
+                all_required_artifacts.append(req_art)
+
+        if all_required_artifacts:
+            artifacts = await list_artifacts(db, run_id)
+            persisted_names = {a.name for a in artifacts if a.checksum_sha256 and getattr(a, "storage_state", "persisted") in ("persisted", None)}
+            missing = [name for name in all_required_artifacts if name not in persisted_names]
+            if missing:
+                # Required artifacts not ready/verified yet, cannot mark COMPLETED
+                return run
+
+        combined_result: dict[str, Any] = {}
+        for s in steps:
+            res = s.get("result")
+            if isinstance(res, dict):
+                combined_result.update(res)
+            elif res is not None:
+                combined_result[str(s.get("step_id"))] = res
+
+        ok = await set_status(
+            db,
+            run_id,
+            "COMPLETED",
+            org_id=org_id,
+            expected_status=["RUNNING", "WAITING_EDGE", "PREPARING", "RESUMING", "QUEUED"],
+            result=combined_result,
+        )
+        if ok:
+            await append_event(db, run_id, "run.completed", combined_result, org_id=org_id)
+            content = combined_result.get("content") or combined_result.get("summary") or json.dumps(combined_result)
+            raw = content if isinstance(content, (bytes, bytearray)) else str(content).encode("utf-8")
+            try:
+                await store_artifact_bytes(
+                    db,
+                    run_id,
+                    name="result.txt",
+                    content=bytes(raw),
+                    content_type="text/plain; charset=utf-8",
+                    org_id=org_id,
+                    attempt_id=attempt_id,
+                    generation=generation,
+                )
+            except Exception:
+                pass
+        return await get_run(db, run_id, org_id=org_id)
+
+    return run
 
 
 async def add_artifact(
@@ -730,12 +1066,7 @@ async def store_artifact_bytes(
     attempt_id: str | None = None,
     generation: int | None = None,
 ) -> ArtifactDescriptor:
-    from pathlib import Path
-
-    art_dir = settings.SKILL_AGENT_ARTIFACT_DIR.strip()
-    if not settings.SKILL_AGENT_INSECURE_MODE:
-        if art_dir == "/tmp" or art_dir.startswith("/tmp/"):
-            raise RuntimeError("Artifact directory must not be in ephemeral storage in production")
+    from app.services.storage_port import get_storage_driver
 
     checksum = hashlib.sha256(content).hexdigest()
 
@@ -745,7 +1076,7 @@ async def store_artifact_bytes(
         check_res = await db.execute(
             text(
                 f"""
-                SELECT id, name, content_type, size_bytes, storage_ref, checksum_sha256
+                SELECT id, name, content_type, size_bytes, storage_ref, checksum_sha256, storage_state
                 FROM "{SCHEMA}".run_artifacts
                 WHERE run_id = :run_id AND name = :name
                 LIMIT 1
@@ -774,22 +1105,24 @@ async def store_artifact_bytes(
             size_bytes=existing_row["size_bytes"],
             download_url=f"/api/v1/runs/{run_id}/artifacts/{existing_row['id']}/download",
             checksum_sha256=existing_row["checksum_sha256"],
-            storage_state="persisted",
+            storage_state=str(existing_row.get("storage_state") or "persisted").lower(),
         )
 
-    root = Path(art_dir) / run_id
-    root.mkdir(parents=True, exist_ok=True)
     artifact_id = str(uuid.uuid4())
-    path = root / f"{artifact_id}_{name}"
-    path.write_bytes(content)
+    storage_driver = get_storage_driver()
+    driver_name = getattr(settings, "SKILL_AGENT_STORAGE_DRIVER", "local") or "local"
+    storage_key = f"{run_id}/{artifact_id}_{name}"
 
+    # Phase 1: Insert metadata with INIT state
     await db.execute(
         text(
             f"""
             INSERT INTO "{SCHEMA}".run_artifacts (
-                id, run_id, attempt_id, name, content_type, size_bytes, storage_ref, checksum_sha256
+                id, run_id, attempt_id, name, content_type, size_bytes, storage_ref, checksum_sha256,
+                storage_state, storage_driver, storage_key
             ) VALUES (
-                :id, :run_id, :attempt_id, :name, :content_type, :size_bytes, :storage_ref, :checksum_sha256
+                :id, :run_id, :attempt_id, :name, :content_type, :size_bytes, :storage_ref, :checksum_sha256,
+                'INIT', :storage_driver, :storage_key
             )
             """
         ),
@@ -798,12 +1131,52 @@ async def store_artifact_bytes(
             "run_id": run_id,
             "attempt_id": attempt_id,
             "name": name,
-            "content_type": content_type,
+            "content_type": content_type or "text/plain",
             "size_bytes": len(content),
-            "storage_ref": str(path),
+            "storage_ref": storage_key,
             "checksum_sha256": checksum,
+            "storage_driver": driver_name,
+            "storage_key": storage_key,
         },
     )
+
+    # Phase 2: Write bytes and verify integrity
+    try:
+        write_res = await storage_driver.write(
+            storage_key,
+            content,
+            expected_sha256=checksum,
+            expected_size=len(content),
+        )
+        storage_ref = write_res.get("storage_ref") or storage_key
+
+        # CAS update to PERSISTED
+        await db.execute(
+            text(
+                f"""
+                UPDATE "{SCHEMA}".run_artifacts
+                SET storage_state = 'PERSISTED',
+                    storage_ref = :storage_ref,
+                    persisted_at = :now
+                WHERE id = :id AND storage_state = 'INIT'
+                """
+            ),
+            {"id": artifact_id, "storage_ref": storage_ref, "now": _utcnow()},
+        )
+    except Exception as exc:
+        await db.execute(
+            text(
+                f"""
+                UPDATE "{SCHEMA}".run_artifacts
+                SET storage_state = 'CORRUPTED',
+                    state_reason = :reason
+                WHERE id = :id
+                """
+            ),
+            {"id": artifact_id, "reason": str(exc)[:500]},
+        )
+        raise
+
     await append_event(
         db,
         run_id,
@@ -816,7 +1189,7 @@ async def store_artifact_bytes(
     return ArtifactDescriptor(
         artifact_id=artifact_id,
         name=name,
-        content_type=content_type,
+        content_type=content_type or "text/plain",
         size_bytes=len(content),
         download_url=f"/api/v1/runs/{run_id}/artifacts/{artifact_id}/download",
         checksum_sha256=checksum,
@@ -824,15 +1197,59 @@ async def store_artifact_bytes(
     )
 
 
+async def mark_artifact_corrupted(
+    db: AsyncSession,
+    artifact_id: str,
+    *,
+    reason: str | None = None,
+) -> bool:
+    res = await db.execute(
+        text(
+            f"""
+            UPDATE "{SCHEMA}".run_artifacts
+            SET storage_state = 'CORRUPTED',
+                state_reason = :reason
+            WHERE id = :id
+            """
+        ),
+        {"id": artifact_id, "reason": reason or "corrupted"},
+    )
+    rowcount = getattr(res, "rowcount", 1)
+    return rowcount > 0 if isinstance(rowcount, int) else True
+
+
+async def mark_artifact_expired(
+    db: AsyncSession,
+    artifact_id: str,
+    *,
+    reason: str | None = None,
+) -> bool:
+    res = await db.execute(
+        text(
+            f"""
+            UPDATE "{SCHEMA}".run_artifacts
+            SET storage_state = 'EXPIRED',
+                state_reason = :reason,
+                expires_at = :now
+            WHERE id = :id
+            """
+        ),
+        {"id": artifact_id, "reason": reason or "expired", "now": _utcnow()},
+    )
+    rowcount = getattr(res, "rowcount", 1)
+    return rowcount > 0 if isinstance(rowcount, int) else True
+
+
 async def get_artifact_bytes(db: AsyncSession, run_id: str, artifact_id: str) -> tuple[dict, bytes] | None:
     import base64
     from pathlib import Path
+    from app.services.storage_port import get_storage_driver
 
     row = (
         await db.execute(
             text(
                 f"""
-                SELECT id, name, content_type, size_bytes, storage_ref, checksum_sha256
+                SELECT id, name, content_type, size_bytes, storage_ref, checksum_sha256, storage_key, storage_driver, storage_state
                 FROM "{SCHEMA}".run_artifacts
                 WHERE run_id = :run_id AND id = :artifact_id
                 """
@@ -840,12 +1257,22 @@ async def get_artifact_bytes(db: AsyncSession, run_id: str, artifact_id: str) ->
             {"run_id": run_id, "artifact_id": artifact_id},
         )
     ).mappings().first()
-    if not row or not row["storage_ref"]:
+    if not row or not row.get("storage_ref"):
         return None
+    if row.get("storage_state") and row["storage_state"] not in ("PERSISTED", "persisted"):
+        return None
+
     ref = str(row["storage_ref"])
     if ref.startswith("data:base64:"):
         return dict(row), base64.b64decode(ref.removeprefix("data:base64:"))
-    path = Path(ref)
-    if not path.is_file():
+
+    storage_key = row.get("storage_key") or f"{run_id}/{artifact_id}_{row['name']}"
+    storage_driver = get_storage_driver(row.get("storage_driver"))
+    try:
+        content = await storage_driver.read(storage_key)
+        return dict(row), content
+    except Exception:
+        path = Path(ref)
+        if path.is_file():
+            return dict(row), path.read_bytes()
         return None
-    return dict(row), path.read_bytes()

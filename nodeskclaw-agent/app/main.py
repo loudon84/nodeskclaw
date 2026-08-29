@@ -45,6 +45,7 @@ app.include_router(internal_runs_router)
 
 
 @app.get("/health/live")
+@app.get("/healthz/live")
 async def health_live():
     return {
         "status": "ok",
@@ -54,6 +55,7 @@ async def health_live():
 
 
 @app.get("/health/ready")
+@app.get("/healthz/ready")
 @app.get("/health")
 async def health_ready(response: Response, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     reasons: list[str] = []

@@ -2,6 +2,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.responses import Response
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import require_internal_token
@@ -147,38 +148,129 @@ async def ingest_internal_events(
     if not run:
         raise HTTPException(status_code=404, detail="run not found")
     events = body.get("events") or []
+    valid_count = 0
+
+    try:
+        steps_res = await db.execute(
+            text(f'SELECT step_id, status, run_generation, attempt_id FROM "{run_service.SCHEMA}".run_steps WHERE run_id = :run_id'),
+            {"run_id": run_id},
+        )
+        steps_rows = steps_res.mappings().all() if hasattr(steps_res, "mappings") else []
+    except Exception:
+        steps_rows = []
+    valid_step_ids = {s["step_id"] for s in steps_rows}
+
     for event in events:
         event_type = str(event.get("event_type") or "run.progress")
         payload = event.get("payload") or {}
         source = str(event.get("source") or "edge")
         source_event_id = event.get("source_event_id") or event.get("event_id")
-        # Ingest endpoint is an event/evidence ingestion point only.
-        # It must NOT transition runs to COMPLETED terminal state; success terminal
-        # state is exclusively owned by the Run state machine / orchestrator.
-        if event_type == "run.failed":
-            await run_service.set_status(
+        step_id = event.get("step_id") or payload.get("step_id")
+        event_attempt_id = event.get("attempt_id") or payload.get("attempt_id")
+        event_run_gen = event.get("run_generation") or payload.get("run_generation")
+
+        # 1. Step id validation if steps exist
+        if valid_step_ids and step_id and step_id not in valid_step_ids:
+            await run_service.record_event_rejection(
                 db,
                 run_id,
-                "FAILED",
+                reason="invalid_step_id",
+                event_id=event.get("event_id"),
+                source_event_id=source_event_id,
+                details={"step_id": step_id, "event_type": event_type},
+            )
+            continue
+
+        # 2. Attempt / generation validation
+        if event_attempt_id and run.attempt_id and str(event_attempt_id) != str(run.attempt_id):
+            await run_service.record_event_rejection(
+                db,
+                run_id,
+                reason="old_attempt",
+                event_id=event.get("event_id"),
+                source_event_id=source_event_id,
+                details={"event_attempt_id": event_attempt_id, "run_attempt_id": run.attempt_id},
+            )
+            continue
+
+        if event_run_gen is not None and run.generation is not None and int(event_run_gen) != int(run.generation):
+            await run_service.record_event_rejection(
+                db,
+                run_id,
+                reason="old_generation",
+                event_id=event.get("event_id"),
+                source_event_id=source_event_id,
+                details={"event_run_generation": event_run_gen, "run_generation": run.generation},
+            )
+            continue
+
+        # 3. Append event
+        try:
+            await run_service.append_event(
+                db,
+                run_id,
+                event_type,
+                payload,
                 org_id=x_exec_org_id,
                 attempt_id=run.attempt_id,
                 generation=run.generation,
-                expected_status=["RUNNING", "PREPARING", "RESUMING", "WAITING_EDGE"],
-                result=payload,
+                source=source,
+                source_event_id=source_event_id,
             )
-        await run_service.append_event(
-            db,
-            run_id,
-            event_type,
-            payload,
-            org_id=x_exec_org_id,
-            attempt_id=run.attempt_id,
-            generation=run.generation,
-            source=source,
-            source_event_id=source_event_id,
-        )
+        except RuntimeError as err:
+            if "idempotency conflict" in str(err) or "stale attempt" in str(err):
+                await run_service.record_event_rejection(
+                    db,
+                    run_id,
+                    reason="duplicate_event_id" if "idempotency" in str(err) else "old_attempt",
+                    event_id=event.get("event_id"),
+                    source_event_id=source_event_id,
+                    details={"error": str(err)},
+                )
+                continue
+            raise
+
+        valid_count += 1
+
+        # 4. Update step state and trigger aggregator on step terminal events
+        if step_id and step_id in valid_step_ids:
+            if event_type in ("run.completed", "step.completed", "edge.job.completed"):
+                await run_service.update_step_state(
+                    db,
+                    run_id,
+                    step_id,
+                    "SUCCEEDED",
+                    result=payload,
+                )
+                await run_service.aggregate_run_terminal(db, run_id, org_id=x_exec_org_id)
+            elif event_type in ("run.failed", "step.failed", "edge.job.failed"):
+                await run_service.update_step_state(
+                    db,
+                    run_id,
+                    step_id,
+                    "FAILED",
+                    error_message=str(payload.get("error") or "step failed"),
+                )
+                await run_service.aggregate_run_terminal(db, run_id, org_id=x_exec_org_id)
+            elif event_type in ("run.cancelled", "step.cancelled", "edge.job.cancelled"):
+                await run_service.update_step_state(
+                    db,
+                    run_id,
+                    step_id,
+                    "CANCELLED",
+                )
+                await run_service.aggregate_run_terminal(db, run_id, org_id=x_exec_org_id)
+            else:
+                await run_service.update_step_state(
+                    db,
+                    run_id,
+                    step_id,
+                    "RUNNING",
+                    expected_status=["PENDING", "READY", "DISPATCHED"],
+                )
+
     await db.commit()
-    return {"ok": True, "count": len(events), "org_id": run.org_id, "run_id": run.run_id}
+    return {"ok": True, "count": valid_count, "org_id": run.org_id, "run_id": run.run_id}
 
 
 @router.post("/runs/{run_id}/cancel", response_model=MutationResponse, dependencies=[Depends(require_internal_token)])
