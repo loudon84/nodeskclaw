@@ -424,7 +424,3 @@ v1.5.1 仅在以下条件全部满足时完成：
 - `nodeskclaw-backend/contracts/skill-run/v1.0.0/`：合同包、manifest 和 checksum。
 - `tools/postman/`：Postman Collection、Environment Example 和 Newman Runner。
 - `lat.md/architecture/skill-agent.md`、`lat.md/architecture/runtime.md`：最终架构事实源。
-
-## Review Handoff
-
-本 PRD 已完成当前源码 Grounding（源码校准），状态为 `REVIEW_REQUIRED`。下一步应执行独立 `smc-prd-review`（PRD 审查）initial 模式；在 Review PASS（审查通过）和 converge（收敛）前，不得将文件改为 `APPROVED`，不得据此创建正式 Implementation Plan（实施计划），也不得提交本 DRAFT 文件或创建合同 Tag。
