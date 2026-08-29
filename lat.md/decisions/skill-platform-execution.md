@@ -2,7 +2,7 @@
 
 Skill Platform 把员工 MCP Catalog 与 Skill Run 执行拆开：Gateway 在 Backend，执行内核在独立 `nodeskclaw-agent`。
 
-Approved PRD：`docs_agent/prd-v1.5-nodeskclaw-api-acceptance-hardening.md`。前序文档包括 `docs_agent/prd-v1.3-skill-run-release-readiness.md`、`docs_agent/prd-skill-platform-v1.0.md`、`docs_agent/prd-skill-run-architecture-closure-v1.1.md` 与 `docs_agent/prd-skill-run-production-hardening-v1.0.md`。work-expert v1.0.2 目录与 checksum 冻结；新员工语义走 `contracts/skill-run/v1.0.0/`。生成入口：`scripts/contracts.py generate --family skill-run`。
+Approved PRD：`docs_agent/prd-v1.5.2-nodeskclaw-postman-acceptance-closure.md`。前序文档包括 `docs_agent/prd-v1.5-nodeskclaw-api-acceptance-hardening.md`、`docs_agent/prd-v1.3-skill-run-release-readiness.md`、`docs_agent/prd-skill-platform-v1.0.md`、`docs_agent/prd-skill-run-architecture-closure-v1.1.md` 与 `docs_agent/prd-skill-run-production-hardening-v1.0.md`。work-expert v1.0.2 目录与 checksum 冻结；新员工语义走 `contracts/skill-run/v1.0.0/`。生成与发布入口：`tools/contracts/release_skill_run_contracts.py` 与 `scripts/contracts.py generate --family skill-run`。
 
 ## Architecture Closure Invariants (v1.5)
 
@@ -37,7 +37,7 @@ Architecture Closure 与 Acceptance Hardening (v1.5) 确立了 Run 生产执行�
 - **Connector Center（定义 Owner）**：Backend 域 `connector`（[[nodeskclaw-backend/app/models/connector/definition.py#ConnectorDefinition]] / Instance / Tool / Binding / SecretRef / EdgeNode）；明文密钥不入库；Portal Hermes Connectors / Edge 页运营。
 - **Catalog Public Connector**：[[nodeskclaw-backend/app/services/hermes_skill/mcp_tool_mapper.py#McpToolMapper#list_tools]] 合并 `is_public` 且实例可用的 Connector Tool；Edge placement 需节点心跳在线，否则隐藏。
 - **Connector 执行**：Agent [[nodeskclaw-agent/app/services/connector_router.py#execute_connector_run]]（MCP/REST/DB）；凭证经 SecretRef + Edge SecretStore；Snapshot 只带 `secret_ref_id`。
-- **Edge 通道**：`SKILL_AGENT_ROLE=edge` 出站轮询 Backend [[nodeskclaw-backend/app/api/internal_edge.py]]（heartbeat / jobs / events）；EdgeJob 队列在 Backend；伪造 token/org 拒绝。
+- **Edge 通道**：`SKILL_AGENT_ROLE=edge` 出站轮询 Backend [[nodeskclaw-backend/app/api/internal_edge.py]]（heartbeat / jobs / events / artifacts/request）；EdgeJob 队列在 Backend；支持按需代理工件拉取并校验代际与 SHA256，伪造 token/org 拒绝。
 - **Hybrid Placement**：同一 SkillRelease 可声明 Remote Hermes + Edge Connector；一次 `tools/call` 一个 `run_id`；placement 由 [[nodeskclaw-backend/app/services/hermes_skill/runtime_skill_run_service.py#RuntimeSkillRunService#_resolve_placement]] 解析。
 - **Installation Desired/Actual**：Backend Desired（`target_kind` / `edge_node_id`）；Edge 回报 `actual_status`；客户端不可覆盖 installation 路由。
 - **Live-tail**：Run SSE 订阅 PG NOTIFY `skill_run_events:{run_id}` 唤醒后再拉 Agent 事件；不引入 Redis。

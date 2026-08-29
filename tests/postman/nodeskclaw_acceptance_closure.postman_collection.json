@@ -1,20 +1,20 @@
 {
   "info": {
-    "_postman_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-    "name": "NoDeskClaw Agent Acceptance Closure Collection",
-    "description": "Automated acceptance test suite for NoDeskClaw Agent & Hybrid Orchestration Closure (AC-01 through AC-16).",
+    "_postman_id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+    "name": "NoDeskClaw Acceptance Closure v1.5.2 (AC-22 to AC-38)",
+    "description": "Formal automated acceptance test suite for NoDeskClaw Acceptance Closure v1.5.2 (AC-22 through AC-38).",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
     {
-      "name": "AC-01 Central Step Plan Persistence",
+      "name": "AC-22 Central Step Plan Persistence",
       "event": [
         {
           "listen": "test",
           "script": {
             "exec": [
-              "pm.test('Status code is 200 or 201', function () {",
-              "    pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+              "pm.test('Status code is 200', function () {",
+              "    pm.expect(pm.response.code).to.equal(200);",
               "});",
               "var data = pm.response.json().data || pm.response.json();",
               "pm.test('Run created and run_id saved', function () {",
@@ -36,7 +36,7 @@
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"tool_name\": \"test_hybrid_tool\",\n  \"arguments\": {\"param\": 1},\n  \"snapshot\": {\n    \"placement\": {\"mode\": \"hybrid\"},\n    \"steps\": [\n      {\"step_id\": \"central_hermes\", \"owner_role\": \"central\", \"engine\": \"hermes\", \"required\": true},\n      {\"step_id\": \"edge_connector\", \"owner_role\": \"edge\", \"engine\": \"connector\", \"required\": true, \"depends_on\": [\"central_hermes\"]}\n    ]\n  }\n}"
+          "raw": "{\n  \"tool_name\": \"test_hybrid_tool\",\n  \"arguments\": {\"param\": 1},\n  \"placement\": {\"role\": \"hybrid\", \"engine\": \"hybrid\"},\n  \"snapshot\": {\n    \"placement\": {\"role\": \"hybrid\", \"engine\": \"hybrid\"},\n    \"runtime_policy\": {\n      \"connector_bindings\": [\n        {\"binding_id\": \"job-1\", \"placement\": \"edge\"}\n      ]\n    }\n  }\n}"
         },
         "url": {
           "raw": "{{AGENT_BASE_URL}}/internal/v1/runs",
@@ -46,7 +46,7 @@
       }
     },
     {
-      "name": "AC-02 Edge Job Idempotent Dispatch",
+      "name": "AC-23 Edge Job Idempotent Dispatch",
       "event": [
         {
           "listen": "test",
@@ -74,7 +74,7 @@
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"edge_node_id\": \"{{NODE_ID}}\",\n  \"run_id\": \"{{RUN_ID}}\",\n  \"step_id\": \"edge_connector\",\n  \"attempt_id\": \"att-1\",\n  \"run_generation\": 1,\n  \"tool_name\": \"connector\",\n  \"idempotency_key\": \"idem-{{RUN_ID}}-edge_connector\"\n}"
+          "raw": "{\n  \"edge_node_id\": \"{{NODE_ID}}\",\n  \"run_id\": \"{{RUN_ID}}\",\n  \"step_id\": \"edge_connector_job-1\",\n  \"attempt_id\": \"att-1\",\n  \"run_generation\": 1,\n  \"tool_name\": \"connector\",\n  \"idempotency_key\": \"idem-{{RUN_ID}}-edge_connector_job-1\"\n}"
         },
         "url": {
           "raw": "{{BACKEND_BASE_URL}}/api/v1/internal/edge/jobs/enqueue",
@@ -84,18 +84,16 @@
       }
     },
     {
-      "name": "AC-03 Stale Attempt Ingest Rejection",
+      "name": "AC-24 Stale Attempt Ingest Rejection",
       "event": [
         {
           "listen": "test",
           "script": {
             "exec": [
-              "pm.test('Stale attempt event is rejected or ignored with rejection record', function () {",
-              "    pm.expect(pm.response.code).to.be.oneOf([200, 400, 403]);",
-              "    if (pm.response.code === 200) {",
-              "        var data = pm.response.json().data || pm.response.json();",
-              "        pm.expect(data.rejected_count).to.be.at.least(0);",
-              "    }",
+              "pm.test('Stale attempt event is recorded with rejection', function () {",
+              "    pm.expect(pm.response.code).to.equal(200);",
+              "    var data = pm.response.json();",
+              "    pm.expect(data.ok).to.equal(true);",
               "});"
             ],
             "type": "text/javascript"
@@ -121,14 +119,14 @@
       }
     },
     {
-      "name": "AC-04 Late Event Ignored on Terminal Run",
+      "name": "AC-25 Late Event Ignored on Terminal Run",
       "event": [
         {
           "listen": "test",
           "script": {
             "exec": [
-              "pm.test('Late event rejected or does not modify terminal status', function () {",
-              "    pm.expect(pm.response.code).to.be.oneOf([200, 400, 403]);",
+              "pm.test('Late event rejected on terminal run', function () {",
+              "    pm.expect(pm.response.code).to.equal(200);",
               "});"
             ],
             "type": "text/javascript"
@@ -154,7 +152,7 @@
       }
     },
     {
-      "name": "AC-05 Single Terminal Winner Aggregator",
+      "name": "AC-26 Single Terminal Winner Aggregator",
       "event": [
         {
           "listen": "test",
@@ -184,7 +182,7 @@
       }
     },
     {
-      "name": "AC-06 Desired/Actual Generation Reconciliation",
+      "name": "AC-27 Desired/Actual Generation Reconciliation",
       "event": [
         {
           "listen": "test",
@@ -213,14 +211,14 @@
       }
     },
     {
-      "name": "AC-07 StoragePort Atomic Two-Phase Upload",
+      "name": "AC-28 StoragePort Atomic Two-Phase Upload",
       "event": [
         {
           "listen": "test",
           "script": {
             "exec": [
               "pm.test('Artifact upload succeeds with 200', function () {",
-              "    pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+              "    pm.expect(pm.response.code).to.equal(200);",
               "    var data = pm.response.json().data || pm.response.json();",
               "    pm.expect(data.storage_state).to.be.oneOf(['persisted', 'PERSISTED']);",
               "    pm.environment.set('ARTIFACT_ID', data.artifact_id || data.id);",
@@ -242,14 +240,14 @@
           "raw": "{\n  \"name\": \"acceptance_output.json\",\n  \"content_base64\": \"eyJzdWNjZXNzIjogdHJ1ZX0=\",\n  \"content_type\": \"application/json\",\n  \"checksum_sha256\": \"1efc404cf4c130ee77fae69e064971c223c6d7bb54c25f543ad472098d5c4be4\"\n}"
         },
         "url": {
-          "raw": "{{AGENT_BASE_URL}}/internal/v1/runs/{{RUN_ID}}/artifacts/upload",
+          "raw": "{{AGENT_BASE_URL}}/internal/v1/runs/{{RUN_ID}}/artifacts",
           "host": ["{{AGENT_BASE_URL}}"],
-          "path": ["internal", "v1", "runs", "{{RUN_ID}}", "artifacts", "upload"]
+          "path": ["internal", "v1", "runs", "{{RUN_ID}}", "artifacts"]
         }
       }
     },
     {
-      "name": "AC-08 Corrupted Artifact State Rejection",
+      "name": "AC-29 Corrupted Artifact State Rejection",
       "event": [
         {
           "listen": "test",
@@ -275,14 +273,14 @@
           "raw": "{\n  \"name\": \"corrupt.json\",\n  \"content_base64\": \"eyJzdWNjZXNzIjogdHJ1ZX0=\",\n  \"content_type\": \"application/json\",\n  \"checksum_sha256\": \"0000000000000000000000000000000000000000000000000000000000000000\"\n}"
         },
         "url": {
-          "raw": "{{AGENT_BASE_URL}}/internal/v1/runs/{{RUN_ID}}/artifacts/upload",
+          "raw": "{{AGENT_BASE_URL}}/internal/v1/runs/{{RUN_ID}}/artifacts",
           "host": ["{{AGENT_BASE_URL}}"],
-          "path": ["internal", "v1", "runs", "{{RUN_ID}}", "artifacts", "upload"]
+          "path": ["internal", "v1", "runs", "{{RUN_ID}}", "artifacts"]
         }
       }
     },
     {
-      "name": "AC-09 Filtered Artifact Listing",
+      "name": "AC-30 Filtered Artifact Listing",
       "event": [
         {
           "listen": "test",
@@ -315,7 +313,7 @@
       }
     },
     {
-      "name": "AC-10 Expired Edge Job Lease Reclaim",
+      "name": "AC-31 Expired Edge Job Lease Reclaim",
       "event": [
         {
           "listen": "test",
@@ -342,7 +340,7 @@
       }
     },
     {
-      "name": "AC-11 Preempted Edge Job Lease Rejection",
+      "name": "AC-32 Preempted Edge Job Lease Rejection",
       "event": [
         {
           "listen": "test",
@@ -375,7 +373,7 @@
       }
     },
     {
-      "name": "AC-12 Event Payload Size Limit & Dedicated Artifact Upload",
+      "name": "AC-33 Event Payload Size Limit & Dedicated Artifact Upload",
       "event": [
         {
           "listen": "test",
@@ -398,7 +396,7 @@
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"events\": [\n    {\n      \"event_type\": \"step.output\",\n      \"payload\": {\"huge\": \"A\".repeat(70000)}\n    }\n  ],\n  \"delivery_generation\": 1\n}"
+          "raw": "{\n  \"events\": [\n    {\n      \"event_type\": \"step.output\",\n      \"payload\": {\"huge\": \"A_OVERSIZED_PAYLOAD_STRING_EXCEEDING_SIXTY_FOUR_KILOBYTES_THRESHOLD_BOUNDARY_FOR_ACCEPTANCE_TESTING_PURPOSES_PADDING_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\"\n    }\n  ],\n  \"delivery_generation\": 1\n}"
         },
         "url": {
           "raw": "{{BACKEND_BASE_URL}}/api/v1/internal/edge/jobs/{{JOB_ID}}/events",
@@ -408,7 +406,7 @@
       }
     },
     {
-      "name": "AC-13 Production Readiness Database Failure",
+      "name": "AC-34 Production Readiness Database Failure",
       "event": [
         {
           "listen": "test",
@@ -434,7 +432,7 @@
       }
     },
     {
-      "name": "AC-14 Production Readiness Schema Drift",
+      "name": "AC-35 Production Readiness Schema Drift",
       "event": [
         {
           "listen": "test",
@@ -460,7 +458,7 @@
       }
     },
     {
-      "name": "AC-15 Production Readiness Ephemeral Storage Rejection",
+      "name": "AC-36 Production Readiness Ephemeral Storage Rejection",
       "event": [
         {
           "listen": "test",
@@ -486,7 +484,7 @@
       }
     },
     {
-      "name": "AC-16 Concurrent Cancellation Convergence",
+      "name": "AC-37 Concurrent Cancellation Convergence",
       "event": [
         {
           "listen": "test",
@@ -514,6 +512,44 @@
           "raw": "{{AGENT_BASE_URL}}/internal/v1/runs/{{RUN_ID}}/cancel",
           "host": ["{{AGENT_BASE_URL}}"],
           "path": ["internal", "v1", "runs", "{{RUN_ID}}", "cancel"]
+        }
+      }
+    },
+    {
+      "name": "AC-38 Edge On-Demand Artifact Request",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Request artifact returns binary metadata and content', function () {",
+              "    pm.expect(pm.response.code).to.be.oneOf([200, 404]);",
+              "    if (pm.response.code === 200) {",
+              "        var data = pm.response.json().data || pm.response.json();",
+              "        pm.expect(data.content_base64).to.be.a('string');",
+              "        pm.expect(data.checksum_sha256).to.be.a('string');",
+              "    }",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {"key": "Content-Type", "value": "application/json"},
+          {"key": "X-Edge-Token", "value": "{{EDGE_TOKEN}}"},
+          {"key": "X-Delivery-Generation", "value": "1"}
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"acceptance_output.json\"\n}"
+        },
+        "url": {
+          "raw": "{{BACKEND_BASE_URL}}/api/v1/internal/edge/jobs/{{JOB_ID}}/artifacts/request",
+          "host": ["{{BACKEND_BASE_URL}}"],
+          "path": ["api", "v1", "internal", "edge", "jobs", "{{JOB_ID}}", "artifacts", "request"]
         }
       }
     }

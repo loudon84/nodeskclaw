@@ -109,11 +109,13 @@ class RunWorker:
     def __init__(self) -> None:
         self._running = False
         self._worker_id = uuid.uuid4().hex[:12]
+        self.last_loop_at: datetime | None = None
 
     async def start(self) -> None:
         self._running = True
         logger.info("SkillAgent RunWorker started worker_id=%s", self._worker_id)
         while self._running:
+            self.last_loop_at = datetime.now(timezone.utc)
             try:
                 await self._recover_stale_runs()
                 claimed = await self._claim_one()

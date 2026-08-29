@@ -13,6 +13,7 @@ from app.api.internal_runs import router as internal_runs_router
 from app.config import settings
 from app.db import get_db
 from app.services.edge_worker import EdgeWorker
+from app.services.storage_port import get_storage_driver
 from app.services.worker import RunWorker
 
 logger = logging.getLogger(__name__)
@@ -27,10 +28,12 @@ async def lifespan(app: FastAPI):
     if settings.SKILL_AGENT_WORKER_ENABLED:
         if settings.SKILL_AGENT_ROLE == "edge":
             worker = EdgeWorker()
+            app.state.worker = worker
             worker_task = asyncio.create_task(worker.start())
             logger.info("nodeskclaw-agent edge worker enabled")
         else:
             worker = RunWorker()
+            app.state.worker = worker
             worker_task = asyncio.create_task(worker.start())
             logger.info("nodeskclaw-agent worker enabled")
     yield
@@ -113,7 +116,10 @@ async def health_ready(response: Response, db: AsyncSession = Depends(get_db)) -
 
     # 4. Artifact directory check
     try:
-        os.makedirs(settings.SKILL_AGENT_ARTIFACT_DIR, exist_ok=True)
+        if settings.SKILL_AGENT_ROLE != "edge":
+            get_storage_driver()
+        else:
+            os.makedirs(settings.SKILL_AGENT_ARTIFACT_DIR, exist_ok=True)
     except Exception:
         checks["artifact_storage"] = False
         reasons.append("cannot create or access artifact storage directory")

@@ -1,3 +1,5 @@
+import base64
+import hashlib
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Header, HTTPException
@@ -8,6 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth import require_internal_token
 from app.db import get_db
 from app.schemas import (
+    ArtifactDescriptor,
+    ArtifactUploadRequest,
     ArtifactsResponse,
     CreateRunRequest,
     CreateRunResponse,
@@ -106,6 +110,46 @@ async def get_internal_artifacts(
         run_id=run.run_id,
         items=items,
     )
+
+
+@router.post("/runs/{run_id}/artifacts", response_model=ArtifactDescriptor, dependencies=[Depends(require_internal_token)])
+async def upload_internal_artifact(
+    run_id: str,
+    body: ArtifactUploadRequest,
+    db: AsyncSession = Depends(get_db),
+    x_exec_org_id: str = Header(alias="X-Exec-Org-Id"),
+) -> ArtifactDescriptor:
+    run = await run_service.get_run(db, run_id, org_id=x_exec_org_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="run not found")
+
+    try:
+        content_bytes = base64.b64decode(body.content_base64)
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid base64 content")
+
+    if body.checksum_sha256:
+        actual_checksum = hashlib.sha256(content_bytes).hexdigest()
+        if actual_checksum.lower() != body.checksum_sha256.lower():
+            raise HTTPException(status_code=400, detail="checksum sha256 mismatch")
+
+    try:
+        descriptor = await run_service.store_artifact_bytes(
+            db,
+            run_id,
+            name=body.name,
+            content=content_bytes,
+            content_type=body.content_type,
+            org_id=x_exec_org_id,
+            attempt_id=body.attempt_id,
+            generation=body.generation,
+        )
+        await db.commit()
+        return descriptor
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @router.get("/runs/{run_id}/artifacts/{artifact_id}/bytes", dependencies=[Depends(require_internal_token)])

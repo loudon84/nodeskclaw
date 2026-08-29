@@ -155,3 +155,13 @@ class EventRejectionView(BaseModel):
     created_at: str
 
 
+class ArtifactUploadRequest(BaseModel):
+    name: str
+    content_base64: str
+    content_type: str | None = "text/plain"
+    checksum_sha256: str | None = None
+    attempt_id: str | None = None
+    generation: int | None = None
+
+
+

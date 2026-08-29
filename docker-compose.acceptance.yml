@@ -1,0 +1,82 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-nodeskclaw}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nodeskclaw}
+      POSTGRES_DB: ${POSTGRES_DB:-nodeskclaw}
+      TZ: Asia/Shanghai
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-nodeskclaw}"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+    restart: "no"
+
+  nodeskclaw-backend:
+    build:
+      context: .
+      dockerfile: nodeskclaw-backend/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nodeskclaw-agent:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgresql+asyncpg://nodeskclaw:nodeskclaw@postgres:5432/nodeskclaw
+      NODESKCLAW_EDITION: ce
+      SKILL_AGENT_BASE_URL: http://nodeskclaw-agent:4520
+      SKILL_AGENT_INTERNAL_TOKEN: ${SKILL_AGENT_INTERNAL_TOKEN:-postman-acceptance-agent-token-secure-32b}
+      SKILL_AGENT_ENABLED: "true"
+      JWT_SECRET: ${JWT_SECRET:-acceptance-jwt-secret-key-32b}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=}
+      INIT_ADMIN_ACCOUNT: admin
+      DEBUG: "true"
+      TZ: Asia/Shanghai
+    ports:
+      - "4510:8000"
+    restart: "no"
+
+  nodeskclaw-agent:
+    build:
+      context: .
+      dockerfile: nodeskclaw-agent/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://nodeskclaw:nodeskclaw@postgres:5432/nodeskclaw
+      SKILL_AGENT_INTERNAL_TOKEN: ${SKILL_AGENT_INTERNAL_TOKEN:-postman-acceptance-agent-token-secure-32b}
+      SKILL_AGENT_WORKER_ENABLED: "true"
+      SKILL_AGENT_SCHEMA: agent
+      SKILL_AGENT_ROLE: central
+      SKILL_AGENT_STORAGE_DRIVER: local
+      SKILL_AGENT_ARTIFACT_DIR: /data/artifacts
+      SKILL_AGENT_CENTRAL_BASE_URL: http://nodeskclaw-backend:8000
+      SKILL_AGENT_INSECURE_MODE: "true"
+      TZ: Asia/Shanghai
+    ports:
+      - "4520:4520"
+    restart: "no"
+
+  nodeskclaw-agent-edge:
+    build:
+      context: .
+      dockerfile: nodeskclaw-agent/Dockerfile
+    depends_on:
+      nodeskclaw-backend:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgresql+asyncpg://nodeskclaw:nodeskclaw@postgres:5432/nodeskclaw
+      SKILL_AGENT_INTERNAL_TOKEN: ${SKILL_AGENT_INTERNAL_TOKEN:-postman-acceptance-agent-token-secure-32b}
+      SKILL_AGENT_WORKER_ENABLED: "true"
+      SKILL_AGENT_ROLE: edge
+      SKILL_AGENT_EDGE_NODE_ID: acceptance-edge-node-01
+      SKILL_AGENT_EDGE_TOKEN: ${SKILL_AGENT_EDGE_TOKEN:-acceptance-edge-token-secure-32b}
+      SKILL_AGENT_CENTRAL_BASE_URL: http://nodeskclaw-backend:8000
+      SKILL_AGENT_EDGE_POLL_SECONDS: "1"
+      SKILL_AGENT_INSECURE_MODE: "true"
+      TZ: Asia/Shanghai
+    restart: "no"

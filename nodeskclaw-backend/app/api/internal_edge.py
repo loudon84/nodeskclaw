@@ -51,6 +51,13 @@ class EdgeArtifactUploadBody(BaseModel):
     storage_state: str = "persisted"
 
 
+class EdgeArtifactRequestBody(BaseModel):
+    artifact_id: str | None = None
+    name: str
+    reason: str | None = None
+
+
+
 async def _authenticate_edge(
     db: AsyncSession,
     *,
@@ -407,6 +414,100 @@ async def upload_edge_job_artifact(
             "checksum_sha256": calc_sha,
         },
     }
+
+
+@router.post("/jobs/{job_id}/artifacts/request")
+async def request_edge_job_artifact(
+    job_id: str,
+    body: EdgeArtifactRequestBody,
+    db: AsyncSession = Depends(get_db),
+    x_edge_token: str | None = Header(default=None, alias="X-Edge-Token"),
+    x_delivery_generation: str | None = Header(default=None, alias="X-Delivery-Generation"),
+):
+    node = await _authenticate_edge(db, token=x_edge_token)
+    result = await db.execute(
+        select(EdgeJob).where(
+            not_deleted(EdgeJob),
+            EdgeJob.id == job_id,
+            EdgeJob.edge_node_id == node.id,
+            EdgeJob.org_id == node.org_id,
+        )
+    )
+    job = result.scalar_one_or_none()
+    if not job:
+        raise NotFoundError("Edge job 不存在", "errors.connector.edge_job_not_found")
+
+    req_gen = None
+    if x_delivery_generation and isinstance(x_delivery_generation, str):
+        try:
+            req_gen = int(x_delivery_generation)
+        except ValueError:
+            pass
+
+    if req_gen is None:
+        raise ForbiddenError("必须提供有效的 delivery generation", "errors.connector.missing_delivery_generation")
+
+    if job.delivery_generation is not None and req_gen != job.delivery_generation:
+        raise ForbiddenError("过期的 delivery generation 请求已拒绝", "errors.connector.stale_delivery_generation")
+
+    if not settings.SKILL_AGENT_ENABLED or not settings.SKILL_AGENT_BASE_URL:
+        raise NotFoundError("Skill Agent 未启用或产物不存在", "errors.artifact.not_found")
+
+    headers = {
+        "X-Skill-Agent-Token": settings.SKILL_AGENT_INTERNAL_TOKEN,
+        "X-Exec-Org-Id": node.org_id,
+        "X-Exec-User-Id": getattr(job, "user_id", "") or "",
+    }
+
+    target_artifact_id = body.artifact_id
+    if not target_artifact_id:
+        list_url = f"{settings.SKILL_AGENT_BASE_URL.rstrip('/')}/internal/v1/runs/{job.run_id}/artifacts"
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(15.0, connect=5.0)) as client:
+                res = await client.get(list_url, headers=headers)
+                res.raise_for_status()
+                artifacts_data = res.json().get("items") or []
+                for item in artifacts_data:
+                    if item.get("name") == body.name:
+                        target_artifact_id = item.get("artifact_id")
+                        break
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning("failed to list artifacts for run_id=%s: %s", job.run_id, exc)
+            raise NotFoundError(f"查找产物失败: {exc}", "errors.artifact.not_found")
+
+    if not target_artifact_id:
+        raise NotFoundError("未找到指定名称的产物", "errors.artifact.not_found")
+
+    bytes_url = f"{settings.SKILL_AGENT_BASE_URL.rstrip('/')}/internal/v1/runs/{job.run_id}/artifacts/{target_artifact_id}/bytes"
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=5.0)) as client:
+            res = await client.get(bytes_url, headers=headers)
+            if res.status_code == 404:
+                raise NotFoundError("产物不存在", "errors.artifact.not_found")
+            res.raise_for_status()
+            content_bytes = res.content
+            content_type = res.headers.get("content-type") or "application/octet-stream"
+            checksum = res.headers.get("x-checksum-sha256") or hashlib.sha256(content_bytes).hexdigest()
+            b64_content = base64.b64encode(content_bytes).decode("ascii")
+            return {
+                "code": 0,
+                "data": {
+                    "artifact_id": target_artifact_id,
+                    "name": body.name,
+                    "content_type": content_type,
+                    "content_base64": b64_content,
+                    "checksum_sha256": checksum,
+                    "size_bytes": len(content_bytes),
+                },
+            }
+    except NotFoundError:
+        raise
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).error("failed to fetch artifact bytes from skill agent: %s", exc)
+        raise ForbiddenError(f"获取产物失败: {exc}", "errors.artifact.fetch_failed")
+
 
 
 @router.get("/installations/desired")

@@ -30,6 +30,7 @@ class EdgeWorker:
         self._secrets = SecretStore()
         self._spool_dir = Path("./data/edge_spool")
         self._spool_dir.mkdir(parents=True, exist_ok=True)
+        self.last_heartbeat_at: datetime | None = None
 
     def stop(self) -> None:
         self._running = False
@@ -294,6 +295,34 @@ class EdgeWorker:
         res = await client.post(url, headers=headers, json=body)
         res.raise_for_status()
 
+    async def _request_artifact(
+        self,
+        client: httpx.AsyncClient,
+        job_id: str,
+        *,
+        name: str,
+        artifact_id: str | None = None,
+        delivery_generation: int = 1,
+    ) -> bytes:
+        """Pull central artifact on demand with SHA256 integrity verification."""
+        url = f"{self._base_url}/api/v1/internal/edge/jobs/{job_id}/artifacts/request"
+        headers = dict(self._headers())
+        headers["X-Delivery-Generation"] = str(delivery_generation)
+        body: dict[str, Any] = {"name": name}
+        if artifact_id:
+            body["artifact_id"] = artifact_id
+        res = await client.post(url, headers=headers, json=body)
+        res.raise_for_status()
+        data = res.json().get("data") or {}
+        b64_content = data.get("content_base64") or ""
+        expected_checksum = str(data.get("checksum_sha256") or "").lower()
+        content_bytes = base64.b64decode(b64_content)
+        actual_checksum = hashlib.sha256(content_bytes).hexdigest().lower()
+        if expected_checksum and actual_checksum != expected_checksum:
+            raise RuntimeError(f"Edge requested artifact checksum mismatch for '{name}': {actual_checksum} != {expected_checksum}")
+        return content_bytes
+
+
     async def _execute_job(self, client: httpx.AsyncClient, job: dict[str, Any]) -> None:
         job_id = str(job["id"])
         tool_name = str(job.get("tool_name") or "connector")
@@ -350,6 +379,26 @@ class EdgeWorker:
             prepared = self._prepare_snapshot(snapshot)
             placement = prepared.get("placement") or {}
             engine_name = str(placement.get("engine") or "connector")
+            runtime_policy = prepared.get("runtime_policy") or {}
+            required_artifacts = runtime_policy.get("required_artifacts") or []
+            if isinstance(required_artifacts, str):
+                required_artifacts = [required_artifacts]
+            for art_spec in required_artifacts:
+                art_name = art_spec if isinstance(art_spec, str) else str(art_spec.get("name") or "")
+                art_id = None if isinstance(art_spec, str) else art_spec.get("artifact_id")
+                if art_name:
+                    try:
+                        fetched_bytes = await self._request_artifact(
+                            client,
+                            job_id,
+                            name=art_name,
+                            artifact_id=art_id,
+                            delivery_generation=delivery_generation,
+                        )
+                        logger.info("edge successfully fetched required artifact '%s' (%d bytes)", art_name, len(fetched_bytes))
+                    except Exception as req_exc:
+                        logger.warning("edge failed to fetch required artifact '%s': %s", art_name, req_exc)
+                        raise RuntimeError(f"Edge missing required artifact '{art_name}': {req_exc}")
 
             async for event in execute_engine(
                 engine=engine_name,
