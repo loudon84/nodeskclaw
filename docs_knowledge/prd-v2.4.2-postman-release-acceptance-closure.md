@@ -23,6 +23,7 @@ Postman 合同闭环与 Release 验收收口。本 Stage 不新增 Artifact / On
 
 - Evidence freshness：`UNKNOWN`（原 DRAFT 无 `grounded_commit`）→ 首次 full Grounding。
 - 无 READY `RM-*`；不伪造 Roadmap。
+- Plan-contract v3.2 要求 AC/DoD 为编号条目：将原 `### AC-01` 分组与 bullet 收成 8 条编号 AC、5 条编号 DoD，语义不变。
 - Channel History HTTP 与 Integrity 调试 HTTP 原草案标为 SHOULD：现有 Channel 读接口与 `release_integrity_service.evaluate` 已能承载验收；本 Stage **不 ADD** 新 HTTP Owner。
 - `runtime_status` 派生字段不是 Goal B 阻塞项，本 Stage **不 ADD**。
 
@@ -203,65 +204,22 @@ Newman 作为上线阻塞（Collection 保持 schema 可被后续 Newman 使用�
 
 ## Acceptance Criteria
 
-### AC-01 Postman Contract
-
-- Collection `info.name` 标识 v2.4.1 runtime contract。
-- Collection 按 00–11 固定 Folder 分组（见 Observable Behaviour），Release Happy Path 不得混在单一不可定位 Folder。
-- Validate Happy Path 只接受 HTTP 202，且响应含 `validating` 与 `validation_job_id`。
-- Publish Release mode Happy Path 只接受 HTTP 202（`promote_on_validated` true/false 均为 202）。
-- Environment 至少有：`validation_job_id`、`release_manifest_hash`、`stable_release_id`、`preview_release_id`、`release_status`、`channel`。
-- Validate 后有 BuildJob poll；poll 完成前不得 Promote。
-- ApplicationRetrievalPolicy body 使用当前 compiler key（`allow_chunk`、`max_candidates`、`max_kb_fanout`、`max_ms`、`fusion_policy.mode` 等）。
-- Happy Path 禁止宽泛 `[200,201,202,400,409]` 断言。
-
-### AC-02 Release Manifest（Collection 断言）
-
-- Create Release 保存 `release_id` 与 `manifest_hash`。
-- `schema_version=1`；无 `knowledge_set_ids` 平行字段；KB weight 与 policy revision id 可验证。
-
-### AC-03 Async Validation
-
-- `POST validate` 返回 validating；`validation_job_id` 可轮询至 completed/failed。
-- Worker 完成后 Release=`validated`；失败可从 job stage 结果定位。
-
-### AC-04 Runtime Authority
-
-- stable Retrieval 返回 `release_id`、`channel=stable`、`manifest_hash`；answer model 与 Manifest 一致。
-- Agent `knowledge.search` 与 MCP 调用解析同一 Release。
-
-### AC-05 Snapshot Freshness
-
-- Settings 暴露 `KNOWLEDGE_RELEASE_QUALITY_MAX_AGE_SECONDS`；Compose 透传到 Knowledge API 与 Worker。
-- stable promotion 拒绝过期 snapshot，`message_key=errors.knowledge.release_quality_snapshot_stale`。
-- 新 Snapshot 后可 promote；preview 不强制 freshness。
-
-### AC-06 Continuous Rollback
-
-- R1→R2→R3 后第一次 rollback 到 R2，第二次到 R1，不发生 R2→R3 toggle。
-- 分支（rollback 到 R2 后 promote R4）再 rollback 到 R2。
-- stale previous Release 阻塞 rollback，不自动跳过。
-
-### AC-07 Publish Active Semantics
-
-- Release mode publish 202 后 Application 仍为 draft；`promote_on_validated=true` 时同样保持 draft，直到 stable promote 成功。
-- 写 `Application.status=active` 的唯一路径是 stable promote 成功事务。
-- preview Promotion 不设 active。
-- stable Promotion 成功后 Application=active。
-- stable rollback 后仍 active。
-- disabled Application 产品路径 fail_closed。
-
-### AC-08 Manual E2E
-
-- Health Ready HTTP 200，且 `database=true`、`ragflow=true`、`backend=true`；503 不得当 PASS。
-- 真实文档 Upload → RAGFlow parse → Active Version；Build worker 执行异步 validation；stable Promotion；HTTP Retrieval / Agent / MCP / Evidence 成功且同一 Release。
+1. Collection `info.name` 标识 v2.4.1 runtime contract。Collection 按 00–11 固定 Folder 分组（见 Observable Behaviour），Release Happy Path 不得混在单一不可定位 Folder。Validate Happy Path 只接受 HTTP 202，且响应含 `validating` 与 `validation_job_id`。Publish Release mode Happy Path 只接受 HTTP 202（`promote_on_validated` true/false 均为 202）。Environment 至少有：`validation_job_id`、`release_manifest_hash`、`stable_release_id`、`preview_release_id`、`release_status`、`channel`。Validate 后有 BuildJob poll；poll 完成前不得 Promote。ApplicationRetrievalPolicy body 使用当前 compiler key（`allow_chunk`、`max_candidates`、`max_kb_fanout`、`max_ms`、`fusion_policy.mode` 等）。Happy Path 禁止宽泛 `[200,201,202,400,409]` 断言。
+2. Create Release 保存 `release_id` 与 `manifest_hash`。`schema_version=1`；无 `knowledge_set_ids` 平行字段；KB weight 与 policy revision id 可验证。
+3. `POST validate` 返回 validating；`validation_job_id` 可轮询至 completed/failed。Worker 完成后 Release=`validated`；失败可从 job stage 结果定位。
+4. stable Retrieval 返回 `release_id`、`channel=stable`、`manifest_hash`；answer model 与 Manifest 一致。Agent `knowledge.search` 与 MCP 调用解析同一 Release。
+5. Settings 暴露 `KNOWLEDGE_RELEASE_QUALITY_MAX_AGE_SECONDS`；Compose 透传到 Knowledge API 与 Worker。stable promotion 拒绝过期 snapshot，`message_key=errors.knowledge.release_quality_snapshot_stale`。新 Snapshot 后可 promote；preview 不强制 freshness。
+6. R1→R2→R3 后第一次 rollback 到 R2，第二次到 R1，不发生 R2→R3 toggle。分支（rollback 到 R2 后 promote R4）再 rollback 到 R2。stale previous Release 阻塞 rollback，不自动跳过。
+7. Release mode publish 202 后 Application 仍为 draft；`promote_on_validated=true` 时同样保持 draft，直到 stable promote 成功。写 `Application.status=active` 的唯一路径是 stable promote 成功事务。preview Promotion 不设 active。stable Promotion 成功后 Application=active。stable rollback 后仍 active。disabled Application 产品路径 fail_closed。
+8. Health Ready HTTP 200，且 `database=true`、`ragflow=true`、`backend=true`；503 不得当 PASS。真实文档 Upload → RAGFlow parse → Active Version；Build worker 执行异步 validation；stable Promotion；HTTP Retrieval / Agent / MCP / Evidence 成功且同一 Release。
 
 ## Definition of Done
 
-- Collection/Environment 与 v2.4.1 API 合同一致，可被 Postman import，无同步 validate/publish 错误说明。
-- MANUAL-E2E-01 在真实 PostgreSQL + RAGFlow + Workers 上 PASS。
-- F1/F2/F3 验收语义生效。
-- `lat.md/architecture/knowledge.md` 记录 v2.4.2 行为（Plan/实施后更新）。
-- 不新增第二 Manifest / Promotion / Quality Owner、不新增 Worker、RAGFlow 仍是唯一 Runtime。
+1. Collection/Environment 与 v2.4.1 API 合同一致，可被 Postman import，无同步 validate/publish 错误说明。
+2. MANUAL-E2E-01 在真实 PostgreSQL + RAGFlow + Workers 上 PASS。
+3. F1/F2/F3 验收语义生效。
+4. `lat.md/architecture/knowledge.md` 记录 v2.4.2 行为（Plan/实施后更新）。
+5. 不新增第二 Manifest / Promotion / Quality Owner、不新增 Worker、RAGFlow 仍是唯一 Runtime。
 
 ## Evidence Baseline
 

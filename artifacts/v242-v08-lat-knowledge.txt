@@ -1,0 +1,3 @@
+V08 PASS
+timestamp: 2026-08-28T15:28:10.412052+00:00
+lat.md/architecture/knowledge.md documents: publish keeps draft; only stable promote writes active; KNOWLEDGE_RELEASE_QUALITY_MAX_AGE_SECONDS; history-back rollback (not latest-event toggle); release_promotion_service owner.

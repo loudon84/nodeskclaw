@@ -1,0 +1,4 @@
+V02 PASS
+timestamp: 2026-08-28T15:28:10.412052+00:00
+command: uv run pytest tests/test_knowledge_release.py::test_publish_application_uses_release_flow_when_v24 tests/test_knowledge_release.py::test_publish_application_promote_on_validated_passes_flag tests/test_application_readiness.py::test_publish_application_sets_active_when_ready -q
+result: 3 passed

@@ -1,0 +1,4 @@
+V10 PASS
+timestamp: 2026-08-28T15:28:10.412052+00:00
+git diff 6b20c761^..6b20c761 -- workers / release_manifest_service / release_integrity_service / runtime: empty (no new worker, no second Manifest/Integrity/Runtime owner).
+Implementation touches: compose max-age, Settings, publish_application, release_promotion_service, tests, Postman, lat.md only.

@@ -1,0 +1,11 @@
+V01 PASS
+timestamp: 2026-08-28T15:28:10.412052+00:00
+info.name: nodeskclaw-knowledge v2.4.1 runtime contract
+folders 00-11: present (12 folders)
+Validate Explicit Release: HTTP 202 + validating + validation_job_id
+Publish Application Release-mode: HTTP 202 (promote_on_validated true/false)
+env keys present: validation_job_id, release_manifest_hash, stable_release_id, preview_release_id, release_status, channel
+Create Release: release_id/manifest_hash/schema_version=1/no knowledge_set_ids
+compiler policy keys: allow_chunk, max_candidates, max_kb_fanout, max_ms, fusion_policy.mode
+Happy Path Validate/Publish: no wide [200,409] asserts
+note: folder 10 Defect Rollback may use multi-status (negative path), not Happy Path

@@ -1,0 +1,7 @@
+V07 BLOCKED
+timestamp: 2026-08-28T15:28:10.412052+00:00
+MANUAL-E2E-01 not executable on this host.
+Probe: Invoke-WebRequest http://127.0.0.1:4530/health/ready -> connection refused / cannot connect.
+Docker: docker / docker.exe not found on PATH; C:\Program Files\Docker\Docker\resources\bin\docker.exe absent.
+Cannot start compose PostgreSQL + RAGFlow + Knowledge API + build worker.
+Exit classification: BLOCKED (compose/RAGFlow/workers cannot run so V07 cannot be attempted).

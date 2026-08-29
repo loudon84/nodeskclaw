@@ -1,0 +1,4 @@
+V06 PASS
+timestamp: 2026-08-28T15:28:10.412052+00:00
+command: uv run pytest tests/test_knowledge_application.py tests/test_application_readiness.py -k "disabled" -q
+result: 3 passed, 10 deselected

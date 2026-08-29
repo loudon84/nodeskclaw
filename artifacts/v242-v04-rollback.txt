@@ -1,0 +1,4 @@
+V04 PASS
+timestamp: 2026-08-28T15:28:10.412052+00:00
+command: uv run pytest tests/test_release_promotion.py -k "rollback" -q
+result: 5 passed, 6 deselected
