@@ -83,6 +83,25 @@ approved_at:
             ("AC-01", "AC", "Create one run."),
         )
 
+    def test_extracts_explicit_id_bullet_requirements(self) -> None:
+        text = """## Acceptance Criteria
+
+- **AC-01 / C01**：Create one run for a stable idempotency key.
+- **AC-02 / C01**：Reject a conflicting request.
+
+## Definition of Done
+
+- **DOD-01**：The integration suite passes.
+"""
+        self.assertEqual(
+            module.extract_requirements(text),
+            [
+                ("AC-01", "AC", "Create one run for a stable idempotency key."),
+                ("AC-02", "AC", "Reject a conflicting request."),
+                ("DOD-01", "DOD", "The integration suite passes."),
+            ],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

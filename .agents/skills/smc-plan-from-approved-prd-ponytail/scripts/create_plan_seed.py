@@ -139,19 +139,33 @@ def extract_changes(prd_text: str) -> list[tuple[str, str, str]]:
     return changes
 
 
+EXPLICIT_ID_BULLET = r"^\s*[-*]\s+\*\*([A-Za-z]+-\d+)(?:\s*/\s*[^*：:]+)?\*\*\s*[：:]\s*(.+?)\s*$"
+
+
 def extract_requirements(prd_text: str) -> list[tuple[str, str, str]]:
-    """Return stable requirement ids from the approved PRD's numbered AC and DoD lists."""
+    """Return stable requirement ids from the approved PRD's AC and DoD lists.
+
+    Supports numbered items (positional ids) and explicit-id bullets
+    such as ``- **AC-01 / C01**：obligation``.
+    """
     requirements: list[tuple[str, str, str]] = []
     for heading, source in REQUIREMENT_SECTIONS:
         body = section(prd_text, heading)
         if not body:
             raise ValueError(f"PRD missing {heading}")
+        explicit = [
+            (match.group(1).upper(), re.sub(r"\s+", " ", clean_md(match.group(2))).strip())
+            for match in re.finditer(EXPLICIT_ID_BULLET, body, flags=re.MULTILINE)
+        ]
+        if explicit:
+            requirements.extend((req_id, source, item) for req_id, item in explicit)
+            continue
         items = [
             re.sub(r"\s+", " ", clean_md(match.group(1))).strip()
             for match in re.finditer(r"^\s*\d+[.)]\s+(.+?)\s*$", body, flags=re.MULTILINE)
         ]
         if not items:
-            raise ValueError(f"PRD {heading} must contain numbered requirements")
+            raise ValueError(f"PRD {heading} must contain numbered or explicit-id requirements")
         requirements.extend(
             (f"{source}-{idx:02d}", source, item)
             for idx, item in enumerate(items, 1)
