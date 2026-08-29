@@ -25,7 +25,7 @@ grounded_commit: 8e2015ad47c5ff0e84ec8048fd018024be928906
 
 ## Predecessor Residual Authority（前序剩余权威）
 
-`docs_agent/prd-v1.5.1-nodeskclaw-agent-acceptance-closure.md`（work item `NODESKCLAW-AGENT-ACCEPTANCE-CLOSURE-151`）保持 `APPROVED`，但其 **未闭环剩余项不再是有效生产需求权威**。本 PRD（work item `NODESKCLAW-POSTMAN-ACCEPTANCE-CLOSURE-152`）是下列剩余能力的 **唯一现行 Stage PRD**：
+`docs_agent/prd-v1.5.1-nodeskclaw-agent-acceptance-closure.md`（work item `NODESKCLAW-AGENT-ACCEPTANCE-CLOSURE-151`）保持 `APPROVED`，但其 **未闭环剩余项不再是有效生产需求权威**。本 PRD（work item `NODESKCLAW-POSTMAN-ACCEPTANCE-CLOSURE-152`）**曾经是**下列剩余能力的唯一现行 Stage PRD；未闭环项已于 2026-08-29 移交 v1.5.3，见 Residual Transfer to v1.5.3。
 
 | 前序范围 | 1.5.1 处置 | 1.5.2 唯一现行权威 |
 |---|---|---|
@@ -40,7 +40,7 @@ grounded_commit: 8e2015ad47c5ff0e84ec8048fd018024be928906
 | AC-34 至 AC-38 合同 Tag 与架构 SOT | 移交 | AC-27 至 AC-30 / C07+C08 |
 | `skill-run-contract-v1.0.0` Tag 与 Newman 两连跑 DoD | 移交；禁止 1.5.1 再创建同一 Tag 或第二套正式集合 | 本 PRD Gate 4 至 Gate 6 |
 
-1.5.1 剩余 DoD 条款不得与本 PRD 并行执行。Plan 与发布只继承本 PRD 的 Change ID 与 Owner。
+1.5.1 剩余 DoD 条款不得与本 PRD 并行执行。未闭环项的 Plan 与发布只继承后续现行 Stage PRD 的 Change ID 与 Owner。
 
 ## Executive Summary
 
@@ -413,7 +413,9 @@ Backend Contract Package 是 `SKILL-RUN-CONTRACT v1.0.0` 的唯一发布 Owner�
 
 ## Definition of Done
 
-v1.5.2 仅在以下条件全部满足时完成：
+v1.5.2 的未闭环剩余项已移交 v1.5.3（见 Residual Transfer to v1.5.3）。下列条款 **不再作为本 PRD 的并行完成条件**：AC-01 至 AC-33 中尚未取得正式证据的项、Newman 两连跑实跑、`skill-run-contract-v1.0.0` Tag，以及真实多 Pod 故障证据。已关闭且仍以本文为权威的内容仅限于 1.5.1 已实现子集经本 PRD 确认 KEEP 的 Owner 边界。
+
+历史目标（保留备查，不作为现行执行 DoD）：
 
 1. AC-01 至 AC-33 全部有可复现证据并通过。
 2. 正式验收拓扑同时运行 Backend、两个 central Agent、一个 edge Agent、真实 PostgreSQL 和共享 Artifact Storage；External Mode 通过等价环境身份校验。
@@ -466,6 +468,26 @@ v1.5.2 仅在以下条件全部满足时完成：
 - `tools/acceptance/fault_suite.py`、`tools/acceptance/check_postman_collection.py`、`tools/acceptance/run_newman.py`：未提交验收工具候选，不作为完成证据。
 - `lat.md/architecture/skill-agent.md`、`lat.md/architecture/runtime.md`、`lat.md/decisions/skill-platform-execution.md`：最终 Architecture SOT。
 
+## Residual Transfer to v1.5.3
+
+本 PRD 保持 `APPROVED`，已从 1.5.1 接收的移交链不断开，但 **未形成开发完成证据或运行证据的剩余项不再是有效生产需求权威**。下列范围于 2026-08-29 移交给唯一现行 Stage PRD `docs_agent/prd-v1.5.3-nodeskclaw-postman-integration-readiness.md`（work item `NODESKCLAW-POSTMAN-INTEGRATION-READINESS-153`）。移交后禁止依据本 PRD 再生成实现 Plan，也不得把下列条款当作本 PRD 的并行完成条件。
+
+| 1.5.2 范围 | 1.5.2 处置 | 1.5.3 唯一现行权威 |
+|---|---|---|
+| AC-14、AC-15 Artifact 上传与 Relay 合同 | 移交开发闭环 | C01 / AC-01 至 AC-03 |
+| AC-16、AC-17 on-demand 请求事实与失败合同 | 移交开发闭环 | C02 / AC-04 至 AC-06 |
+| AC-32 Edge on-demand 履约 | 移交开发闭环 | C03 / AC-07 |
+| AC-33 真实 Installation 副作用 | 移交开发闭环 | C04 / AC-08 至 AC-10 |
+| AC-05 至 AC-07 readiness | 移交开发闭环 | C05 / AC-11 至 AC-13 |
+| AC-03、AC-04 拓扑定义与无 Secret/不写业务库（离线可证） | 移交开发资产 | C06 / AC-14，C07 / AC-16 |
+| AC-02 无 Docker 时 `docker_unavailable` | 移交开发负向 | C07 / AC-15 |
+| AC-18 至 AC-22 Postman 静态资产 | 移交开发联调准入 | C08 / AC-17 至 AC-20 |
+| AC-23 Newman 校验失败不得启动 | 移交 validate-only / 命令构造 | C09 / AC-21、AC-22 |
+| AC-27 非 release 合同检查 | 移交 | C10 / AC-23 |
+| AC-30 三态 SOT 代码级复核 | 移交 | C11 / AC-24 |
+| AC-31 Hybrid required-Artifact 终态门禁 | KEEP 既有状态机；不作为本 PRD 并行开发项 | 1.5.3 KEEP，不新开 Capability |
+| AC-01 Compose 实跑、AC-02 External Mode 真跑、AC-08 至 AC-13 故障、AC-24 至 AC-26 Newman 两连跑实跑、AC-28 与 AC-29 `I/R` 与 Tag | 移交为延期运行/发布验证，不再由本 PRD 并行执行 | 1.5.3 Deferred Runtime Validation |
+
 ## Plan Handoff
 
-本 PRD 已 `APPROVED`。下一步执行 `smc-plan-from-approved-prd-ponytail`。当前未提交 Plan 继承的是旧 Source Revision，且其 C10 语义与本 PRD 不一致，不得直接执行；必须按 C01 至 C11 重新生成或完整修订并通过 `smc-plan-validator`。
+本 PRD 保持 `APPROVED`，但未闭环剩余项已移交 v1.5.3。**禁止**再对本 PRD 执行 `smc-plan-from-approved-prd-ponytail`。现行实现 Plan 只能按已 `APPROVED` 的 v1.5.3 C01 至 C12 生成。当前未跟踪的旧 Plan 不得执行。
