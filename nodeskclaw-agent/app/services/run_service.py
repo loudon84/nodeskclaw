@@ -1065,25 +1065,41 @@ async def store_artifact_bytes(
     org_id: str | None = None,
     attempt_id: str | None = None,
     generation: int | None = None,
+    step_id: str | None = None,
+    upload_mode: str | None = "eager",
+    idempotency_key: str | None = None,
 ) -> ArtifactDescriptor:
     from app.services.storage_port import get_storage_driver
 
     checksum = hashlib.sha256(content).hexdigest()
 
-    # Idempotency check: if artifact with same name and run_id exists
+    # Idempotency check: if artifact with same idempotency_key or name and run_id exists
     existing_row = None
     try:
-        check_res = await db.execute(
-            text(
-                f"""
-                SELECT id, name, content_type, size_bytes, storage_ref, checksum_sha256, storage_state
-                FROM "{SCHEMA}".run_artifacts
-                WHERE run_id = :run_id AND name = :name
-                LIMIT 1
-                """
-            ),
-            {"run_id": run_id, "name": name},
-        )
+        if idempotency_key:
+            check_res = await db.execute(
+                text(
+                    f"""
+                    SELECT id, name, content_type, size_bytes, storage_ref, checksum_sha256, storage_state, idempotency_key
+                    FROM "{SCHEMA}".run_artifacts
+                    WHERE run_id = :run_id AND idempotency_key = :idempotency_key
+                    LIMIT 1
+                    """
+                ),
+                {"run_id": run_id, "idempotency_key": idempotency_key},
+            )
+        else:
+            check_res = await db.execute(
+                text(
+                    f"""
+                    SELECT id, name, content_type, size_bytes, storage_ref, checksum_sha256, storage_state, idempotency_key
+                    FROM "{SCHEMA}".run_artifacts
+                    WHERE run_id = :run_id AND name = :name
+                    LIMIT 1
+                    """
+                ),
+                {"run_id": run_id, "name": name},
+            )
         if hasattr(check_res, "mappings"):
             mappings = check_res.mappings()
             if hasattr(mappings, "first"):
@@ -1096,8 +1112,8 @@ async def store_artifact_bytes(
         pass
 
     if existing_row and isinstance(existing_row, dict) and "checksum_sha256" in existing_row:
-        if existing_row["checksum_sha256"] != checksum:
-            raise RuntimeError(f"Artifact conflict: '{name}' already exists with different checksum")
+        if existing_row["checksum_sha256"] != checksum or (existing_row.get("name") and existing_row["name"] != name):
+            raise RuntimeError(f"errors.artifact.idempotency_conflict: Artifact conflict: '{name}' already exists with different checksum")
         return ArtifactDescriptor(
             artifact_id=existing_row["id"],
             name=existing_row["name"],
@@ -1118,11 +1134,11 @@ async def store_artifact_bytes(
         text(
             f"""
             INSERT INTO "{SCHEMA}".run_artifacts (
-                id, run_id, attempt_id, name, content_type, size_bytes, storage_ref, checksum_sha256,
-                storage_state, storage_driver, storage_key
+                id, run_id, attempt_id, step_id, name, content_type, size_bytes, storage_ref, checksum_sha256,
+                storage_state, storage_driver, storage_key, upload_mode, idempotency_key
             ) VALUES (
-                :id, :run_id, :attempt_id, :name, :content_type, :size_bytes, :storage_ref, :checksum_sha256,
-                'INIT', :storage_driver, :storage_key
+                :id, :run_id, :attempt_id, :step_id, :name, :content_type, :size_bytes, :storage_ref, :checksum_sha256,
+                'INIT', :storage_driver, :storage_key, :upload_mode, :idempotency_key
             )
             """
         ),
@@ -1130,6 +1146,7 @@ async def store_artifact_bytes(
             "id": artifact_id,
             "run_id": run_id,
             "attempt_id": attempt_id,
+            "step_id": step_id,
             "name": name,
             "content_type": content_type or "text/plain",
             "size_bytes": len(content),
@@ -1137,6 +1154,8 @@ async def store_artifact_bytes(
             "checksum_sha256": checksum,
             "storage_driver": driver_name,
             "storage_key": storage_key,
+            "upload_mode": upload_mode or "eager",
+            "idempotency_key": idempotency_key,
         },
     )
 

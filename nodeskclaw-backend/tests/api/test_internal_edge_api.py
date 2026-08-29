@@ -313,3 +313,172 @@ async def test_post_edge_job_events_rejects_payload_too_large():
     with patch("app.api.internal_edge._authenticate_edge", AsyncMock(return_value=node)):
         with pytest.raises(BadRequestError, match="payload_too_large"):
             await post_edge_job_events("job-large", body, db, x_edge_token="tok", x_delivery_generation="1")
+
+
+@pytest.mark.asyncio
+async def test_upload_edge_job_artifact_relays_and_transmits_error():
+    import base64
+    import hashlib
+    import httpx
+    from app.api.internal_edge import EdgeArtifactUploadBody, upload_edge_job_artifact
+    from app.core.exceptions import ConflictError
+
+    db = AsyncMock()
+    node = EdgeNode()
+    node.id = "node-1"
+    node.org_id = "org-1"
+    node.status = EdgeNodeStatus.ONLINE.value
+
+    job = EdgeJob()
+    job.id = "job-art-1"
+    job.run_id = "run-1"
+    job.edge_node_id = "node-1"
+    job.org_id = "org-1"
+    job.delivery_generation = 1
+    job.run_generation = 2
+    job.attempt_id = "att-1"
+    job.step_id = "step-1"
+
+    mock_res = MagicMock()
+    mock_res.scalar_one_or_none.return_value = job
+    db.execute = AsyncMock(return_value=mock_res)
+
+    content = b"hello artifact bytes"
+    b64_content = base64.b64encode(content).decode()
+    chk = hashlib.sha256(content).hexdigest()
+
+    body = EdgeArtifactUploadBody(
+        name="output.txt",
+        content_base64=b64_content,
+        checksum_sha256=chk,
+        delivery_generation=1,
+        idempotency_key="idem-key-1",
+    )
+
+    # 1. Success relay
+    mock_response = MagicMock()
+    mock_response.is_error = False
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "artifact_id": "art-101",
+        "name": "output.txt",
+        "storage_state": "persisted",
+        "checksum_sha256": chk,
+    }
+
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+    mock_client.__aenter__.return_value = mock_client
+    mock_client.__aexit__.return_value = None
+
+    with patch("app.api.internal_edge._authenticate_edge", AsyncMock(return_value=node)), \
+         patch("httpx.AsyncClient", return_value=mock_client), \
+         patch("app.api.internal_edge.settings.SKILL_AGENT_ENABLED", True), \
+         patch("app.api.internal_edge.settings.SKILL_AGENT_BASE_URL", "http://agent:4580"):
+        res = await upload_edge_job_artifact("job-art-1", body, db, x_edge_token="tok", x_delivery_generation="1")
+
+    assert res["code"] == 0
+    assert res["data"]["artifact_id"] == "art-101"
+    # Verify destination URL matches /internal/v1/runs/{run_id}/artifacts
+    called_url = mock_client.post.call_args[0][0]
+    assert called_url == "http://agent:4580/internal/v1/runs/run-1/artifacts"
+    called_json = mock_client.post.call_args[1]["json"]
+    assert called_json["idempotency_key"] == "idem-key-1"
+    assert called_json["generation"] == 2
+
+    # 2. Transmit error from Agent without rewriting to 403 ForbiddenError
+    mock_err_response = MagicMock()
+    mock_err_response.is_error = True
+    mock_err_response.status_code = 409
+    mock_err_response.json.return_value = {
+        "error_code": "errors.artifact.idempotency_conflict",
+        "message_key": "errors.artifact.idempotency_conflict",
+        "message": "artifact idempotency conflict",
+        "detail": "artifact idempotency conflict",
+    }
+    mock_client.post.return_value = mock_err_response
+
+    with patch("app.api.internal_edge._authenticate_edge", AsyncMock(return_value=node)), \
+         patch("httpx.AsyncClient", return_value=mock_client), \
+         patch("app.api.internal_edge.settings.SKILL_AGENT_ENABLED", True), \
+         patch("app.api.internal_edge.settings.SKILL_AGENT_BASE_URL", "http://agent:4580"):
+        with pytest.raises(ConflictError) as exc_info:
+            await upload_edge_job_artifact("job-art-1", body, db, x_edge_token="tok", x_delivery_generation="1")
+        assert exc_info.value.message_key == "errors.artifact.idempotency_conflict"
+
+
+@pytest.mark.asyncio
+async def test_edge_artifact_on_demand_requests_lifecycle():
+    from app.api.internal_edge import (
+        IssueOnDemandRequestBody,
+        create_edge_job_artifact_on_demand_request,
+        pull_edge_artifact_on_demand_requests,
+    )
+    from app.services.connector.edge_node_service import EdgeNodeService
+    from app.models.connector.edge_artifact_on_demand_request import EdgeArtifactOnDemandRequest, OnDemandRequestStatus
+
+    db = AsyncMock()
+    node = EdgeNode()
+    node.id = "node-1"
+    node.org_id = "org-1"
+    node.status = EdgeNodeStatus.ONLINE.value
+
+    job = EdgeJob()
+    job.id = "job-od-1"
+    job.run_id = "run-1"
+    job.edge_node_id = "node-1"
+    job.org_id = "org-1"
+    job.run_generation = 1
+    job.delivery_generation = 1
+    job.attempt_id = "att-1"
+    job.step_id = "step-1"
+
+    mock_res = MagicMock()
+    mock_res.scalar_one_or_none.return_value = job
+    mock_res.scalars.return_value.all.return_value = []
+    db.execute = AsyncMock(return_value=mock_res)
+
+    # 1. Issue on-demand request
+    issue_body = IssueOnDemandRequestBody(name="custom.log", ttl_seconds=600)
+    with patch("app.api.internal_edge._authenticate_edge", AsyncMock(return_value=node)):
+        res_issue = await create_edge_job_artifact_on_demand_request("job-od-1", issue_body, db, x_edge_token="tok")
+
+    assert res_issue["code"] == 0
+    assert res_issue["data"]["name"] == "custom.log"
+    assert res_issue["data"]["status"] == "issued"
+
+    # 2. Pull on-demand requests
+    from datetime import datetime, timedelta, timezone
+    mock_od_req = EdgeArtifactOnDemandRequest(
+        id="od-req-1",
+        org_id="org-1",
+        edge_node_id="node-1",
+        job_id="job-od-1",
+        run_id="run-1",
+        name="custom.log",
+        status=OnDemandRequestStatus.ISSUED.value,
+        expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
+    )
+    mock_pull_res = MagicMock()
+    mock_pull_res.scalars.return_value.all.return_value = [mock_od_req]
+    db.execute = AsyncMock(return_value=mock_pull_res)
+
+    with patch("app.api.internal_edge._authenticate_edge", AsyncMock(return_value=node)):
+        res_pull = await pull_edge_artifact_on_demand_requests(db, x_edge_token="tok")
+
+    assert res_pull["code"] == 0
+    items = res_pull["data"]["items"]
+    assert len(items) == 1
+    assert items[0]["name"] == "custom.log"
+    assert items[0]["status"] == "issued"
+
+    # 3. Consume on-demand request
+    mock_od_res = MagicMock()
+    mock_od_res.scalar_one_or_none.return_value = mock_od_req
+    db.execute = AsyncMock(return_value=mock_od_res)
+
+    service = EdgeNodeService(db)
+    consumed = await service.consume_on_demand_request(org_id="org-1", job_id="job-od-1", name="custom.log", artifact_id="art-999")
+    assert consumed.status == OnDemandRequestStatus.CONSUMED.value
+    assert consumed.artifact_id == "art-999"
+    assert consumed.consumed_at is not None

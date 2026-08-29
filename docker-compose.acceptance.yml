@@ -1,6 +1,7 @@
 services:
   postgres:
     image: postgres:16-alpine
+    platform: linux/amd64
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-nodeskclaw}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nodeskclaw}
@@ -16,6 +17,7 @@ services:
     restart: "no"
 
   nodeskclaw-backend:
+    platform: linux/amd64
     build:
       context: .
       dockerfile: nodeskclaw-backend/Dockerfile
@@ -27,7 +29,7 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://nodeskclaw:nodeskclaw@postgres:5432/nodeskclaw
       NODESKCLAW_EDITION: ce
-      SKILL_AGENT_BASE_URL: http://nodeskclaw-agent:4520
+      SKILL_AGENT_BASE_URL: http://nodeskclaw-agent:4580
       SKILL_AGENT_INTERNAL_TOKEN: ${SKILL_AGENT_INTERNAL_TOKEN:-postman-acceptance-agent-token-secure-32b}
       SKILL_AGENT_ENABLED: "true"
       JWT_SECRET: ${JWT_SECRET:-acceptance-jwt-secret-key-32b}
@@ -40,6 +42,7 @@ services:
     restart: "no"
 
   nodeskclaw-agent:
+    platform: linux/amd64
     build:
       context: .
       dockerfile: nodeskclaw-agent/Dockerfile
@@ -57,11 +60,39 @@ services:
       SKILL_AGENT_CENTRAL_BASE_URL: http://nodeskclaw-backend:8000
       SKILL_AGENT_INSECURE_MODE: "true"
       TZ: Asia/Shanghai
+    volumes:
+      - artifact_data:/data/artifacts
     ports:
-      - "4520:4520"
+      - "4580:4580"
+    restart: "no"
+
+  nodeskclaw-agent-b:
+    platform: linux/amd64
+    build:
+      context: .
+      dockerfile: nodeskclaw-agent/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://nodeskclaw:nodeskclaw@postgres:5432/nodeskclaw
+      SKILL_AGENT_INTERNAL_TOKEN: ${SKILL_AGENT_INTERNAL_TOKEN:-postman-acceptance-agent-token-secure-32b}
+      SKILL_AGENT_WORKER_ENABLED: "true"
+      SKILL_AGENT_SCHEMA: agent
+      SKILL_AGENT_ROLE: central
+      SKILL_AGENT_STORAGE_DRIVER: local
+      SKILL_AGENT_ARTIFACT_DIR: /data/artifacts
+      SKILL_AGENT_CENTRAL_BASE_URL: http://nodeskclaw-backend:8000
+      SKILL_AGENT_INSECURE_MODE: "true"
+      TZ: Asia/Shanghai
+    volumes:
+      - artifact_data:/data/artifacts
+    ports:
+      - "4521:4580"
     restart: "no"
 
   nodeskclaw-agent-edge:
+    platform: linux/amd64
     build:
       context: .
       dockerfile: nodeskclaw-agent/Dockerfile
@@ -80,3 +111,6 @@ services:
       SKILL_AGENT_INSECURE_MODE: "true"
       TZ: Asia/Shanghai
     restart: "no"
+
+volumes:
+  artifact_data:

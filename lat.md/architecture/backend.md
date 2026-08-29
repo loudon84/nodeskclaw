@@ -20,7 +20,7 @@
 
 业务按域拆分 service，Runtime 与 K8s 为专项子树。
 
-高频域：`auth_service`、`deploy_service`、`gene_service`、`collaboration_service`、`cluster_service`、`hermes_*`、`connector/`（[[nodeskclaw-backend/app/services/connector/connector_service.py#ConnectorService]]、[[nodeskclaw-backend/app/services/connector/edge_node_service.py#EdgeNodeService]]）、`mcp_skill_gateway/`、`runtime/`、`k8s/`；Skill Run 投影路由 `app/api/runs.py`（执行在 `nodeskclaw-agent`）；Edge 边缘通道与工件代理路由 `app/api/internal_edge.py`。
+高频域：`auth_service`、`deploy_service`、`gene_service`、`collaboration_service`、`cluster_service`、`hermes_*`、`connector/`（[[nodeskclaw-backend/app/services/connector/connector_service.py#ConnectorService]]、[[nodeskclaw-backend/app/services/connector/edge_node_service.py#EdgeNodeService]]，拥有 [[nodeskclaw-backend/app/models/connector/edge_artifact_on_demand_request.py#EdgeArtifactOnDemandRequest]] 请求事实）、`mcp_skill_gateway/`、`runtime/`、`k8s/`；Skill Run 投影路由 `app/api/runs.py`（执行在 `nodeskclaw-agent`）；Edge 边缘通道、On-Demand 工件拉取与工件中继路由 `app/api/internal_edge.py`。
 
 修改 API 的默认触及链：`api` → `schemas` → `services` →（可选）`models` + Alembic + tests。
 

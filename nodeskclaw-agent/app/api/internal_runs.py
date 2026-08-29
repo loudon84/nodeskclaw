@@ -3,7 +3,7 @@ import hashlib
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Header, HTTPException
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -112,26 +112,55 @@ async def get_internal_artifacts(
     )
 
 
+def _artifact_error_response(status_code: int, error_code: str, message: str) -> JSONResponse:
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "error_code": error_code,
+            "message_key": error_code,
+            "message": message,
+            "detail": message,
+        },
+    )
+
+
 @router.post("/runs/{run_id}/artifacts", response_model=ArtifactDescriptor, dependencies=[Depends(require_internal_token)])
 async def upload_internal_artifact(
     run_id: str,
     body: ArtifactUploadRequest,
     db: AsyncSession = Depends(get_db),
     x_exec_org_id: str = Header(alias="X-Exec-Org-Id"),
-) -> ArtifactDescriptor:
+):
+    if not x_exec_org_id:
+        return _artifact_error_response(400, "errors.artifact.missing_field", "X-Exec-Org-Id header is required")
+
     run = await run_service.get_run(db, run_id, org_id=x_exec_org_id)
     if not run:
         raise HTTPException(status_code=404, detail="run not found")
 
+    if run.org_id != x_exec_org_id:
+        return _artifact_error_response(403, "errors.artifact.unauthorized_scope", "org_id scope mismatch")
+
+    if not body.name or not body.content_base64:
+        return _artifact_error_response(400, "errors.artifact.missing_field", "name and content_base64 are required")
+
+    if body.generation is not None and body.generation != run.generation:
+        return _artifact_error_response(409, "errors.artifact.stale_generation", f"generation mismatch: expected {run.generation}, got {body.generation}")
+
+    if body.attempt_id and run.attempt_id and body.attempt_id != run.attempt_id:
+        return _artifact_error_response(403, "errors.artifact.unauthorized_scope", f"attempt_id mismatch: expected {run.attempt_id}, got {body.attempt_id}")
+
     try:
         content_bytes = base64.b64decode(body.content_base64)
     except Exception:
-        raise HTTPException(status_code=400, detail="invalid base64 content")
+        return _artifact_error_response(400, "errors.artifact.missing_field", "invalid base64 content")
 
-    if body.checksum_sha256:
-        actual_checksum = hashlib.sha256(content_bytes).hexdigest()
-        if actual_checksum.lower() != body.checksum_sha256.lower():
-            raise HTTPException(status_code=400, detail="checksum sha256 mismatch")
+    if body.size is not None and body.size != len(content_bytes):
+        return _artifact_error_response(400, "errors.artifact.size_mismatch", f"size mismatch: expected {body.size}, got {len(content_bytes)}")
+
+    actual_checksum = hashlib.sha256(content_bytes).hexdigest()
+    if body.checksum_sha256 and actual_checksum.lower() != body.checksum_sha256.lower():
+        return _artifact_error_response(400, "errors.artifact.checksum_mismatch", f"checksum mismatch: expected {body.checksum_sha256}, got {actual_checksum}")
 
     try:
         descriptor = await run_service.store_artifact_bytes(
@@ -143,11 +172,17 @@ async def upload_internal_artifact(
             org_id=x_exec_org_id,
             attempt_id=body.attempt_id,
             generation=body.generation,
+            step_id=body.step_id,
+            upload_mode=body.upload_mode,
+            idempotency_key=body.idempotency_key,
         )
         await db.commit()
         return descriptor
     except RuntimeError as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
+        err_msg = str(exc)
+        if "idempotency_conflict" in err_msg or err_msg == "errors.artifact.idempotency_conflict":
+            return _artifact_error_response(409, "errors.artifact.idempotency_conflict", "artifact idempotency conflict: checksum or name mismatch")
+        return _artifact_error_response(409, "errors.artifact.idempotency_conflict", err_msg)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 

@@ -278,7 +278,7 @@ class Settings(BaseSettings):
     HERMES_TASK_SSE_HEARTBEAT_SECONDS: int = 30
 
     # ── Skill Agent Execution Plane ───────────────────────
-    SKILL_AGENT_BASE_URL: str = "http://127.0.0.1:4520"
+    SKILL_AGENT_BASE_URL: str = "http://127.0.0.1:4580"
     SKILL_AGENT_INTERNAL_TOKEN: str = "change-me-skill-agent-token"
     SKILL_AGENT_INTERNAL_TOKEN_PREVIOUS: str = ""
     SKILL_AGENT_ENABLED: bool = True

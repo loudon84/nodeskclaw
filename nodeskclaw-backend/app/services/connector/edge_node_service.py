@@ -140,3 +140,126 @@ class EdgeNodeService:
         self.db.add(node)
         await self.db.flush()
         return node, plain_token
+
+    async def issue_on_demand_request(
+        self,
+        *,
+        org_id: str,
+        edge_node_id: str,
+        job_id: str,
+        run_id: str,
+        name: str,
+        artifact_id: str | None = None,
+        attempt_id: str | None = None,
+        step_id: str | None = None,
+        run_generation: int = 1,
+        delivery_generation: int = 0,
+        ttl_seconds: int = 300,
+    ) -> EdgeArtifactOnDemandRequest:
+        from datetime import datetime, timedelta, timezone
+        from app.models.connector.edge_artifact_on_demand_request import EdgeArtifactOnDemandRequest, OnDemandRequestStatus
+
+        now = datetime.now(timezone.utc)
+        # Check if active request already exists
+        result = await self.db.execute(
+            select(EdgeArtifactOnDemandRequest).where(
+                not_deleted(EdgeArtifactOnDemandRequest),
+                EdgeArtifactOnDemandRequest.org_id == org_id,
+                EdgeArtifactOnDemandRequest.job_id == job_id,
+                EdgeArtifactOnDemandRequest.name == name,
+                EdgeArtifactOnDemandRequest.run_generation == run_generation,
+            ).limit(1)
+        )
+        existing = result.scalar_one_or_none()
+        if existing:
+            if existing.status == OnDemandRequestStatus.ISSUED.value and existing.expires_at > now:
+                return existing
+            if existing.status == OnDemandRequestStatus.ISSUED.value and existing.expires_at <= now:
+                existing.status = OnDemandRequestStatus.EXPIRED.value
+                await self.db.flush()
+
+        req = EdgeArtifactOnDemandRequest(
+            org_id=org_id,
+            edge_node_id=edge_node_id,
+            job_id=job_id,
+            run_id=run_id,
+            attempt_id=attempt_id,
+            step_id=step_id,
+            run_generation=run_generation,
+            delivery_generation=delivery_generation,
+            artifact_id=artifact_id,
+            name=name,
+            status=OnDemandRequestStatus.ISSUED.value,
+            expires_at=now + timedelta(seconds=ttl_seconds),
+        )
+        self.db.add(req)
+        await self.db.flush()
+        return req
+
+    async def pull_on_demand_requests(
+        self,
+        *,
+        org_id: str,
+        edge_node_id: str,
+    ) -> list[EdgeArtifactOnDemandRequest]:
+        from datetime import datetime, timezone
+        from app.models.connector.edge_artifact_on_demand_request import EdgeArtifactOnDemandRequest, OnDemandRequestStatus
+
+        now = datetime.now(timezone.utc)
+        result = await self.db.execute(
+            select(EdgeArtifactOnDemandRequest).where(
+                not_deleted(EdgeArtifactOnDemandRequest),
+                EdgeArtifactOnDemandRequest.org_id == org_id,
+                EdgeArtifactOnDemandRequest.edge_node_id == edge_node_id,
+                EdgeArtifactOnDemandRequest.status == OnDemandRequestStatus.ISSUED.value,
+            )
+        )
+        items = list(result.scalars().all())
+        active_items = []
+        for req in items:
+            if req.expires_at <= now:
+                req.status = OnDemandRequestStatus.EXPIRED.value
+            else:
+                active_items.append(req)
+        await self.db.flush()
+        return active_items
+
+    async def consume_on_demand_request(
+        self,
+        *,
+        org_id: str,
+        job_id: str,
+        name: str | None = None,
+        artifact_id: str | None = None,
+        run_generation: int | None = None,
+    ) -> EdgeArtifactOnDemandRequest | None:
+        from datetime import datetime, timezone
+        from app.models.connector.edge_artifact_on_demand_request import EdgeArtifactOnDemandRequest, OnDemandRequestStatus
+
+        now = datetime.now(timezone.utc)
+        query = select(EdgeArtifactOnDemandRequest).where(
+            not_deleted(EdgeArtifactOnDemandRequest),
+            EdgeArtifactOnDemandRequest.org_id == org_id,
+            EdgeArtifactOnDemandRequest.job_id == job_id,
+        )
+        if name:
+            query = query.where(EdgeArtifactOnDemandRequest.name == name)
+        if run_generation is not None:
+            query = query.where(EdgeArtifactOnDemandRequest.run_generation == run_generation)
+
+        result = await self.db.execute(query.order_by(EdgeArtifactOnDemandRequest.created_at.desc()).limit(1))
+        req = result.scalar_one_or_none()
+        if not req:
+            return None
+
+        if req.status == OnDemandRequestStatus.ISSUED.value:
+            if req.expires_at <= now:
+                req.status = OnDemandRequestStatus.EXPIRED.value
+                await self.db.flush()
+                return req
+            req.status = OnDemandRequestStatus.CONSUMED.value
+            req.consumed_at = now
+            if artifact_id:
+                req.artifact_id = artifact_id
+            await self.db.flush()
+        return req

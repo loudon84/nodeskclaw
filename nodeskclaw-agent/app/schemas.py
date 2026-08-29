@@ -161,7 +161,11 @@ class ArtifactUploadRequest(BaseModel):
     content_type: str | None = "text/plain"
     checksum_sha256: str | None = None
     attempt_id: str | None = None
+    step_id: str | None = None
     generation: int | None = None
+    size: int | None = None
+    upload_mode: str | None = "eager"
+    idempotency_key: str | None = None
 
 
 

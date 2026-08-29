@@ -68,6 +68,7 @@ async def health_ready(response: Response, db: AsyncSession = Depends(get_db)) -
         "config_security": True,
         "artifact_storage": True,
         "credential_broker": True,
+        "worker": True,
     }
 
     # 1. DB connectivity
@@ -114,17 +115,46 @@ async def health_ready(response: Response, db: AsyncSession = Depends(get_db)) -
                 checks["config_security"] = False
                 reasons.append("insecure edge central base url (must be https://)")
 
-    # 4. Artifact directory check
+    # 4. StoragePort isolation probe
     try:
         if settings.SKILL_AGENT_ROLE != "edge":
-            get_storage_driver()
+            driver = get_storage_driver()
+            # Probe driver instance readiness without polluting business data
+            if hasattr(driver, "exists"):
+                res_exists = driver.exists(".probe_health_check_nonexistent")
+                if asyncio.iscoroutine(res_exists):
+                    await res_exists
         else:
             os.makedirs(settings.SKILL_AGENT_ARTIFACT_DIR, exist_ok=True)
-    except Exception:
+    except Exception as exc:
         checks["artifact_storage"] = False
-        reasons.append("cannot create or access artifact storage directory")
+        reasons.append(f"cannot create or access artifact storage directory: {exc}")
 
-    # 5. Credential Broker check (production readiness)
+    # 5. Worker loop / edge heartbeat freshness check
+    if settings.SKILL_AGENT_WORKER_ENABLED:
+        worker_inst = getattr(app.state, "worker", None)
+        if not worker_inst:
+            checks["worker"] = False
+            reasons.append("worker enabled but worker instance not found")
+        else:
+            if settings.SKILL_AGENT_ROLE == "edge":
+                # Edge role: verify last_heartbeat_at
+                last_hb = getattr(worker_inst, "last_heartbeat_at", None)
+                if last_hb is not None:
+                    from datetime import datetime, timedelta, timezone
+                    if datetime.now(timezone.utc) - last_hb > timedelta(seconds=120):
+                        checks["worker"] = False
+                        reasons.append("edge worker heartbeat stale")
+            else:
+                # Central role: verify last_loop_at
+                last_loop = getattr(worker_inst, "last_loop_at", None)
+                if last_loop is not None:
+                    from datetime import datetime, timedelta, timezone
+                    if datetime.now(timezone.utc) - last_loop > timedelta(seconds=120):
+                        checks["worker"] = False
+                        reasons.append("central run worker loop stale")
+
+    # 6. Credential Broker check (production readiness)
     if not settings.SKILL_AGENT_INSECURE_MODE:
         if not settings.SKILL_AGENT_CENTRAL_BASE_URL:
             checks["credential_broker"] = False

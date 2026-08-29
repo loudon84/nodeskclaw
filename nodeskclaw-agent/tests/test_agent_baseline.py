@@ -133,3 +133,36 @@ def test_insecure_mode_allows_ephemeral_storage_with_audit_warning(monkeypatch):
         resp = client.get("/healthz/ready")
         assert resp.status_code == 200
         assert resp.json()["status"] == "ok"
+
+
+def test_health_ready_worker_freshness_check(monkeypatch):
+    import app.main as main_module
+    from datetime import datetime, timedelta, timezone
+
+    monkeypatch.setattr(settings, "SKILL_AGENT_INSECURE_MODE", True)
+    monkeypatch.setattr(settings, "SKILL_AGENT_WORKER_ENABLED", True)
+    monkeypatch.setattr(settings, "SKILL_AGENT_ROLE", "central")
+
+    # 1. Stale central worker loop
+    mock_worker = MagicMock()
+    mock_worker.last_loop_at = datetime.now(timezone.utc) - timedelta(seconds=300)
+    main_module.app.state.worker = mock_worker
+
+    for client in _test_client(monkeypatch):
+        # Override dependency monkeypatch so worker_enabled stays True
+        monkeypatch.setattr(settings, "SKILL_AGENT_WORKER_ENABLED", True)
+        resp = client.get("/health/ready")
+        assert resp.status_code == 503
+        data = resp.json()
+        assert data["checks"]["worker"] is False
+        assert "central run worker loop stale" in data["reasons"]
+
+    # 2. Fresh central worker loop
+    mock_worker.last_loop_at = datetime.now(timezone.utc) - timedelta(seconds=5)
+    for client in _test_client(monkeypatch):
+        monkeypatch.setattr(settings, "SKILL_AGENT_WORKER_ENABLED", True)
+        resp = client.get("/health/ready")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["checks"]["worker"] is True
+        assert data["status"] == "ok"

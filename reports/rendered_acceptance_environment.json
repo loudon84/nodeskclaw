@@ -4,7 +4,7 @@
   "values": [
     {
       "key": "AGENT_BASE_URL",
-      "value": "http://127.0.0.1:4580",
+      "value": "http://127.0.0.1:4520",
       "type": "default",
       "enabled": true
     },
@@ -16,13 +16,13 @@
     },
     {
       "key": "INTERNAL_TOKEN",
-      "value": "${SKILL_AGENT_INTERNAL_TOKEN}",
+      "value": "postman-acceptance-agent-token-secure-32b",
       "type": "secret",
       "enabled": true
     },
     {
       "key": "EDGE_TOKEN",
-      "value": "${SKILL_AGENT_EDGE_TOKEN}",
+      "value": "acceptance-edge-token-secure-32b",
       "type": "secret",
       "enabled": true
     },

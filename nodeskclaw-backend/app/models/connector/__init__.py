@@ -1,5 +1,6 @@
 from app.models.connector.binding import SkillConnectorBinding
 from app.models.connector.definition import ConnectorDefinition, ConnectorKind
+from app.models.connector.edge_artifact_on_demand_request import EdgeArtifactOnDemandRequest, OnDemandRequestStatus
 from app.models.connector.edge_job import EdgeJob, EdgeJobStatus
 from app.models.connector.edge_node import EdgeNode, EdgeNodeStatus
 from app.models.connector.instance import ConnectorInstance, ConnectorPlacement
@@ -12,10 +13,12 @@ __all__ = [
     "ConnectorKind",
     "ConnectorPlacement",
     "ConnectorTool",
+    "EdgeArtifactOnDemandRequest",
     "EdgeJob",
     "EdgeJobStatus",
     "EdgeNode",
     "EdgeNodeStatus",
+    "OnDemandRequestStatus",
     "SecretRef",
     "SkillConnectorBinding",
 ]

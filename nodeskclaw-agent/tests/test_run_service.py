@@ -814,6 +814,144 @@ async def test_storage_port_sha256_and_size_integrity(tmp_path):
     assert await s3_driver.read("r1/s3_a1.bin") == content
 
 
+@pytest.mark.asyncio
+async def test_artifact_idempotency_key_behavior(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.services.run_service.settings.SKILL_AGENT_ARTIFACT_DIR", str(tmp_path))
+    db = AsyncMock()
+    mock_seq = MagicMock()
+    mock_seq.mappings.return_value.first.return_value = {"next_event_seq": 1}
+    db.execute = AsyncMock(return_value=mock_seq)
 
+    # 1. First upload with idempotency_key
+    desc1 = await run_service.store_artifact_bytes(
+        db,
+        "run-idem-1",
+        name="output.txt",
+        content=b"content-v1",
+        content_type="text/plain",
+        idempotency_key="key-123",
+        step_id="step-1",
+    )
+    assert desc1.name == "output.txt"
+    assert desc1.storage_state == "persisted"
+
+    # 2. Simulate DB returning existing record for same idempotency_key with same checksum
+    existing_row = {
+        "id": desc1.artifact_id,
+        "name": "output.txt",
+        "content_type": "text/plain",
+        "size_bytes": len(b"content-v1"),
+        "storage_ref": f"run-idem-1/{desc1.artifact_id}_output.txt",
+        "checksum_sha256": hashlib.sha256(b"content-v1").hexdigest(),
+        "storage_state": "PERSISTED",
+        "idempotency_key": "key-123",
+    }
+    mock_existing = MagicMock()
+    mock_existing.mappings.return_value.first.return_value = existing_row
+    db.execute = AsyncMock(return_value=mock_existing)
+
+    desc2 = await run_service.store_artifact_bytes(
+        db,
+        "run-idem-1",
+        name="output.txt",
+        content=b"content-v1",
+        idempotency_key="key-123",
+    )
+    assert desc2.artifact_id == desc1.artifact_id
+
+    # 3. Same idempotency_key with different checksum raises idempotency_conflict
+    with pytest.raises(RuntimeError, match="errors.artifact.idempotency_conflict"):
+        await run_service.store_artifact_bytes(
+            db,
+            "run-idem-1",
+            name="output.txt",
+            content=b"different-content",
+            idempotency_key="key-123",
+        )
+
+
+@pytest.mark.asyncio
+async def test_upload_internal_artifact_error_codes(monkeypatch, tmp_path):
+    from app.api.internal_runs import upload_internal_artifact
+    from app.schemas import ArtifactUploadRequest, RunView
+    from fastapi.responses import JSONResponse
+    import json
+
+    monkeypatch.setattr("app.services.run_service.settings.SKILL_AGENT_ARTIFACT_DIR", str(tmp_path))
+    db = AsyncMock()
+
+    mock_run = RunView(
+        run_id="run-err-1",
+        org_id="org-good",
+        user_id="user-1",
+        tool_name="tool-1",
+        status="RUNNING",
+        snapshot={},
+        generation=2,
+        attempt_id="att-2",
+        created_at="2026-08-29T00:00:00Z",
+        updated_at="2026-08-29T00:00:00Z",
+    )
+
+    with patch("app.services.run_service.get_run", return_value=mock_run):
+        # 1. unauthorized_scope (org mismatch)
+        res_org = await upload_internal_artifact(
+            "run-err-1",
+            ArtifactUploadRequest(name="a.txt", content_base64="aGVsbG8="),
+            db=db,
+            x_exec_org_id="org-bad",
+        )
+        assert isinstance(res_org, JSONResponse)
+        assert res_org.status_code == 403
+        body = json.loads(res_org.body.decode())
+        assert body["error_code"] == "errors.artifact.unauthorized_scope"
+
+        # 2. stale_generation
+        res_gen = await upload_internal_artifact(
+            "run-err-1",
+            ArtifactUploadRequest(name="a.txt", content_base64="aGVsbG8=", generation=1),
+            db=db,
+            x_exec_org_id="org-good",
+        )
+        assert isinstance(res_gen, JSONResponse)
+        assert res_gen.status_code == 409
+        body = json.loads(res_gen.body.decode())
+        assert body["error_code"] == "errors.artifact.stale_generation"
+
+        # 3. size_mismatch
+        res_sz = await upload_internal_artifact(
+            "run-err-1",
+            ArtifactUploadRequest(name="a.txt", content_base64="aGVsbG8=", size=999),
+            db=db,
+            x_exec_org_id="org-good",
+        )
+        assert isinstance(res_sz, JSONResponse)
+        assert res_sz.status_code == 400
+        body = json.loads(res_sz.body.decode())
+        assert body["error_code"] == "errors.artifact.size_mismatch"
+
+        # 4. checksum_mismatch
+        res_chk = await upload_internal_artifact(
+            "run-err-1",
+            ArtifactUploadRequest(name="a.txt", content_base64="aGVsbG8=", checksum_sha256="badchecksum"),
+            db=db,
+            x_exec_org_id="org-good",
+        )
+        assert isinstance(res_chk, JSONResponse)
+        assert res_chk.status_code == 400
+        body = json.loads(res_chk.body.decode())
+        assert body["error_code"] == "errors.artifact.checksum_mismatch"
+
+        # 5. missing_field (empty name)
+        res_mf = await upload_internal_artifact(
+            "run-err-1",
+            ArtifactUploadRequest(name="", content_base64="aGVsbG8="),
+            db=db,
+            x_exec_org_id="org-good",
+        )
+        assert isinstance(res_mf, JSONResponse)
+        assert res_mf.status_code == 400
+        body = json.loads(res_mf.body.decode())
+        assert body["error_code"] == "errors.artifact.missing_field"
 
 
