@@ -263,10 +263,13 @@ class SkillReleaseService:
         existing_annotations = extra.get("annotations")
         if not isinstance(existing_annotations, dict):
             existing_annotations = {}
+        requires_approval = bool(existing_annotations.get("requiresApproval", extra.get("requires_approval", False)))
         extra["annotations"] = {
             "riskLevel": existing_annotations.get("riskLevel") or extra.get("riskLevel") or "low",
-            "requiresApproval": bool(existing_annotations.get("requiresApproval", extra.get("requires_approval", False))),
-            "approvalMode": existing_annotations.get("approvalMode") or extra.get("approval_mode") or "sync",
+            "requiresApproval": requires_approval,
+            "approvalMode": existing_annotations.get("approvalMode")
+            or extra.get("approval_mode")
+            or ("server" if requires_approval else "none"),
             "streaming": bool(existing_annotations.get("streaming", extra.get("streaming", False))),
             "artifacts": bool(existing_annotations.get("artifacts", extra.get("artifacts", False))),
         }

@@ -144,6 +144,8 @@ async def test_publish_chat_mode_success():
     assert published.extra_metadata["supportsAttachments"] is False
     assert "annotations" in published.extra_metadata
     assert published.extra_metadata["annotations"]["riskLevel"] == "low"
+    assert published.extra_metadata["annotations"]["requiresApproval"] is False
+    assert published.extra_metadata["annotations"]["approvalMode"] == "none"
 
 
 @pytest.mark.asyncio
@@ -228,4 +230,3 @@ async def test_publish_chat_mode_non_object_schema():
     with pytest.raises(BadRequestError) as exc_info:
         await service.publish(org_id="org-1", skill_id="foo", release_id="rel-1", operator_user_id="user-1")
     assert exc_info.value.message_key == "errors.skill.catalog.invalid_interaction_contract"
-
