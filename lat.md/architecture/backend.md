@@ -28,7 +28,7 @@
 
 Hermes Skill、任务产物、Agent 绑定与 MCP Skill Gateway 是独立能力域。组织 MCP 契约见 `docs/backend/mcp_skill_gateway.md`；Hermes Task 见 `docs/backend/hermes_skill.md`。
 
-**员工 Catalog 发布门禁**：`HermesSkill` 是工作副本；员工 `tools/list` 只投影 **已 published** 的 [[nodeskclaw-backend/app/models/hermes_skill/skill_release.py#HermesSkillRelease]]（见 [[decisions/skill-platform-execution]]）。仅 `is_mcp_exposed` 不足以进入 Catalog。Chat 发布须通过 [[nodeskclaw-backend/app/services/hermes_skill/skill_release_service.py#SkillReleaseService#_validate_interaction_contract]]；投影字段含 `capabilityKind` / `interactionMode` / `promptField` / `supportsAttachments` / `annotations`。
+**员工 Catalog 发布门禁**：`HermesSkill` 是工作副本；员工 `tools/list` 只投影 **已 published** 的 [[nodeskclaw-backend/app/models/hermes_skill/skill_release.py#HermesSkillRelease]]（见 [[decisions/skill-platform-execution]]）。仅 `is_mcp_exposed` 不足以进入 Catalog。Chat 发布须通过 [[nodeskclaw-backend/app/services/hermes_skill/skill_release_service.py#SkillReleaseService#_validate_interaction_contract]]；投影字段含 `capabilityKind` / `interactionMode` / `promptField` / `supportsAttachments` / `annotations`。新 Release 冻结注解时，未要求审批的默认 `approvalMode` 为 `none`，要求审批但未显式指定时为 `server`。
 
 **员工 Skill 执行平面**已迁到独立进程 `nodeskclaw-agent`（[[decisions/skill-platform-execution]]）：Gateway 仍在 Backend；入队经 [[nodeskclaw-backend/app/services/hermes_skill/runtime_skill_run_service.py#RuntimeSkillRunService]]（冻结 Release digest + gateway）；对外 Run 投影为 `/api/v1/runs/*`（剥离内部凭证；POST 经 `json_body` 转发，Agent 4xx 经 [[nodeskclaw-backend/app/api/runs.py#_handle_agent_error_response]] 映射）。员工 Catalog 合同基线为 `contracts/skill-run/v1.0.0/`，RM-01 新增支持 `contracts/skill-run/v1.1.0/`（含 Catalog v1.1 投影与可选 `contract_version`）。
 
