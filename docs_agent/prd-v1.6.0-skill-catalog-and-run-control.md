@@ -4,9 +4,9 @@ version: 1.6.0
 status: APPROVED
 target_branch: main
 review_verdict: PASS
-approved_at: 2026-08-30T13:17:32+08:00
+approved_at: 2026-08-30T16:23:00+08:00
 source_revision: AD-SKILL-AGENT-V16@1.0.0/RM-01
-grounded_commit: cdd23a22d36dcb26a9ada1dc2e0b8b5afff8065b
+grounded_commit: 636af7adc7905776674074775c0da943ffa09d63
 ---
 
 # DeskClaw 团队版 Skill Catalog 与 Run Control PRD v1.6.0
@@ -25,7 +25,7 @@ Backend 负责认证、组织授权、Published Release 投影和公共错误映
 
 ## Current Capability Inventory
 
-当前能力以 `cdd23a22d36dcb26a9ada1dc2e0b8b5afff8065b` 为源码基线；相关未提交工作树改动不计入本清单。
+当前能力以首次 discovery 基线 `cdd23a22d36dcb26a9ada1dc2e0b8b5afff8065b` 为准，并在 `636af7adc7905776674074775c0da943ffa09d63` 上完成 `VERIFY_ONLY` 抽查：已提交 diff 未触及 Evidence Anchor，Inventory / Owner / Classification 全部复用。工作树中未提交的 RM-01 实现不计入本清单。
 
 | Capability | Current State | Production Owner | Evidence | Grounding Result |
 |---|---|---|---|---|
@@ -97,47 +97,20 @@ Chat Skill（对话技能）发布必须同时满足：
 
 ## Acceptance Criteria
 
-以下 AC（验收条件）证明公共行为，不规定私有实现文件或测试文件。
+- **AC-01 / C01**：对有权访问且处于可恢复状态的 Run 调用 `POST /api/v1/runs/{run_id}/resume` 时，Backend 必须把原始 JSON 请求体及组织/用户执行身份转发给 Agent，不产生 `unexpected keyword argument` 或等价 Python 参数错误。
+- **AC-02 / C01**：对有权访问的 Approval 调用 `POST /api/v1/runs/{run_id}/approvals/{approval_id}` 时，Backend 必须完整转发 decision（决策）与 evidence（证据）；Agent 返回的已处理结果必须安全投影，重复相同决策不得产生第二次状态副作用。
+- **AC-03 / C01**：无权限、组织不匹配或响应中的 `run_id/org_id` 与请求上下文不一致时，Backend 必须 fail-closed，且不得返回 Agent Internal Token（内部令牌）、Runtime URL 或 traceback（调用栈）。
+- **AC-04 / C02**：每个 `tools/list` 条目必须具有 `capabilityKind`、`interactionMode`、`supportsAttachments` 和完整 `annotations`。Skill 还必须具有与 Published Release 一致的 `skillReleaseId` 与 `skillReleaseDigest`；Connector 不得伪造 SkillRelease 标识。
+- **AC-05 / C03**：发布 `interactionMode=chat` 的 Release 时，缺失 `promptField`、字段不存在、字段类型不是字符串或字段属于禁止的运行路由键，均必须以 `errors.skill.catalog.invalid_interaction_contract` 拒绝；有效合同可发布并在后续 Catalog 请求中保持稳定。
+- **AC-06 / C02**：对缺少 v1.1 元数据的既有 Published Release，Catalog 必须只依据该冻结 Release 的 Schema 与元数据做确定性映射；修改工作副本后，同一 Release 的 v1.1 投影不得改变。
+- **AC-07 / C06**：`tools/list` 携带 `agent_alias/profile/workspace_id`，或 `tools/call.arguments` 携带 `_routing/_execution/route_config` 等运行路由字段时，必须返回既有稳定拒绝错误；v1.1 不得放宽该边界。
+- **AC-08 / C04**：生成 v1.1.0 后，v1.0.0 的全部文件和 manifest checksum 必须保持不变。v1.1.0 的 Schema 必须验证其正向 Fixture，并拒绝缺少必填字段或枚举非法的负向 Fixture。
+- **AC-09 / C08**：`tools/call` 已接受响应中的 `committed`、`run_id`、`status`、`tool_name`、`event_stream`、`result_url`、`artifact_url`、`execution_mode` 和 `request_trace_id` 语义不变；新增 `contract_version` 时必须是可选字段，旧客户端忽略它后仍能工作。
+- **AC-10 / C07**：Agent 对 Resume/Approval 返回可预期 4xx 时，Backend 必须返回稳定 `error_code`、`message_key` 与安全 `message`，不能退化为未处理 HTTP client exception（HTTP 客户端异常）或 500。
 
-### AC-RM01-01 — Resume 请求正确转发
+## Definition of Done
 
-对有权访问且处于可恢复状态的 Run 调用 `POST /api/v1/runs/{run_id}/resume` 时，Backend 必须把原始 JSON 请求体及组织/用户执行身份转发给 Agent，不产生 `unexpected keyword argument` 或等价 Python 参数错误。
-
-### AC-RM01-02 — Approval 请求正确且幂等转发
-
-对有权访问的 Approval 调用 `POST /api/v1/runs/{run_id}/approvals/{approval_id}` 时，Backend 必须完整转发 decision（决策）与 evidence（证据）；Agent 返回的已处理结果必须安全投影，重复相同决策不得产生第二次状态副作用。
-
-### AC-RM01-03 — Run Control 保持组织隔离
-
-无权限、组织不匹配或响应中的 `run_id/org_id` 与请求上下文不一致时，Backend 必须 fail-closed，且不得返回 Agent Internal Token（内部令牌）、Runtime URL 或 traceback（调用栈）。
-
-### AC-RM01-04 — Catalog 类型可判定
-
-每个 `tools/list` 条目必须具有 `capabilityKind`、`interactionMode`、`supportsAttachments` 和完整 `annotations`。Skill 还必须具有与 Published Release 一致的 `skillReleaseId` 与 `skillReleaseDigest`；Connector 不得伪造 SkillRelease 标识。
-
-### AC-RM01-05 — Chat Skill 发布门禁
-
-发布 `interactionMode=chat` 的 Release 时，缺失 `promptField`、字段不存在、字段类型不是字符串或字段属于禁止的运行路由键，均必须以 `errors.skill.catalog.invalid_interaction_contract` 拒绝；有效合同可发布并在后续 Catalog 请求中保持稳定。
-
-### AC-RM01-06 — 历史 Release 兼容映射稳定
-
-对缺少 v1.1 元数据的既有 Published Release，Catalog 必须只依据该冻结 Release 的 Schema 与元数据做确定性映射；修改工作副本后，同一 Release 的 v1.1 投影不得改变。
-
-### AC-RM01-07 — 路由覆盖继续拒绝
-
-`tools/list` 携带 `agent_alias/profile/workspace_id`，或 `tools/call.arguments` 携带 `_routing/_execution/route_config` 等运行路由字段时，必须返回既有稳定拒绝错误；v1.1 不得放宽该边界。
-
-### AC-RM01-08 — 合同版本兼容
-
-生成 v1.1.0 后，v1.0.0 的全部文件和 manifest checksum 必须保持不变。v1.1.0 的 Schema 必须验证其正向 Fixture，并拒绝缺少必填字段或枚举非法的负向 Fixture。
-
-### AC-RM01-09 — Accepted Result 向后兼容
-
-`tools/call` 已接受响应中的 `committed`、`run_id`、`status`、`tool_name`、`event_stream`、`result_url`、`artifact_url`、`execution_mode` 和 `request_trace_id` 语义不变；新增 `contract_version` 时必须是可选字段，旧客户端忽略它后仍能工作。
-
-### AC-RM01-10 — 稳定错误而非通用 500
-
-Agent 对 Resume/Approval 返回可预期 4xx 时，Backend 必须返回稳定 `error_code`、`message_key` 与安全 `message`，不能退化为未处理 HTTP client exception（HTTP 客户端异常）或 500。
+- **DOD-01**：AC-01 至 AC-10 的阻断验证证据已全部留存；v1.0.0 合同文件与 checksum 不变；未新增独立 Catalog/Run Control 服务，Backend 也未成为第二 Run 状态 Owner。
 
 ## Non-Goals
 
@@ -149,18 +122,20 @@ Agent 对 Resume/Approval 返回可预期 4xx 时，Backend 必须返回稳定 `
 
 ## Evidence Baseline
 
-证据只覆盖 RM-01 所需的最小 Owner、合同和行为锚点；`grounded_commit` 之后的工作树变化必须通过 Evidence Freshness（证据新鲜度）重新判断。
+证据只覆盖 RM-01 所需的最小 Owner、合同和行为锚点。本轮 Grounding 模式为 `verify`：`evidence_freshness.py` 对 `AD-SKILL-AGENT-V16@1.0.0/RM-01` 返回 `VERIFY_ONLY`（仓库已前进，已提交 diff 未相交 Evidence Anchor）。禁止 full discovery；Owner、KEEP/MODIFY/ADD 与 AC 保持不变。未提交工作树若合入并碰到下列锚点，必须再跑 Freshness，必要时 targeted reground。
 
 | Claim | Evidence Anchor | Result |
 |---|---|---|
-| Backend 是公共 Run Proxy Owner | `nodeskclaw-backend/app/api/runs.py#_agent_post`、`#resume_run`、`#approve_run` at `cdd23a2` | 已证实；C01/C07 修改现有 Owner |
-| Resume/Approval 当前存在关键字参数不一致 | 同上 | 已证实；调用传入 `body`，被调用者只声明 `json_body` |
-| Published Release 是员工 Catalog 的发布事实源 | `nodeskclaw-backend/app/models/hermes_skill/skill_release.py#HermesSkillRelease`、`nodeskclaw-backend/app/services/hermes_skill/mcp_tool_mapper.py#McpToolMapper#list_tools` at `cdd23a2` | 已证实；不新增元数据 Owner |
+| Backend 是公共 Run Proxy Owner | `nodeskclaw-backend/app/api/runs.py#_agent_post`、`#resume_run`、`#approve_run` at `636af7ad`（与 `cdd23a2` 字节一致） | 已证实；C01/C07 修改现有 Owner |
+| Resume/Approval 当前存在关键字参数不一致 | 同上 | 已证实；HEAD 仍为调用传入 `body`，被调用者只声明 `json_body` |
+| Published Release 是员工 Catalog 的发布事实源 | `nodeskclaw-backend/app/models/hermes_skill/skill_release.py#HermesSkillRelease`、`nodeskclaw-backend/app/services/hermes_skill/mcp_tool_mapper.py#McpToolMapper#list_tools` at `636af7ad` | 已证实；不新增元数据 Owner |
 | 现有 Release 可承载结构化发布元数据 | `nodeskclaw-backend/app/models/hermes_skill/skill_release.py#HermesSkillRelease` 的结构化列与 `extra_metadata` | 已证实；只有现有结构无法满足约束时才允许数据库变更 |
-| Chat 交互发布门禁不存在 | `nodeskclaw-backend/app/services/hermes_skill/skill_release_service.py#SkillReleaseService` at `cdd23a2` | 未发现等价校验；C03 为现有 Owner 下的新增能力 |
-| v1.0.0 合同包及生成链存在 | `nodeskclaw-backend/contracts/skill-run/v1.0.0/`、`nodeskclaw-backend/scripts/contracts.py` at `cdd23a2` | 已证实；C04 复用生成链，C05 冻结旧版本 |
-| Server-managed Route 已 fail-closed | `nodeskclaw-backend/app/services/mcp_skill_gateway/handler.py#_handle_tools_list`、`nodeskclaw-backend/app/services/hermes_skill/mcp_tool_mapper.py#McpToolMapper#call_tool` at `cdd23a2` | 已证实；C06 保持 |
+| Chat 交互发布门禁不存在 | `nodeskclaw-backend/app/services/hermes_skill/skill_release_service.py#SkillReleaseService` at `636af7ad` | HEAD 仍无 `_validate_interaction_contract`；C03 为现有 Owner 下的新增能力 |
+| Catalog 投影仍回退工作副本 | `nodeskclaw-backend/app/services/hermes_skill/mcp_tool_mapper.py#McpToolMapper#_skill_to_tool_dict` at `636af7ad` | 已证实：`published.extra_metadata or skill.extra_metadata`；C02 禁止该回退 |
+| v1.0.0 合同包及生成链存在 | `nodeskclaw-backend/contracts/skill-run/v1.0.0/`、`nodeskclaw-backend/scripts/contracts.py`、`nodeskclaw-backend/app/schemas/skill_run/constants.py` at `636af7ad` | 已证实；常量仍为 `1.0.0`，无已提交 v1.1.0 包；C04 复用生成链，C05 冻结旧版本 |
+| Server-managed Route 已 fail-closed | `nodeskclaw-backend/app/services/mcp_skill_gateway/handler.py#_handle_tools_list`、`nodeskclaw-backend/app/services/hermes_skill/mcp_tool_mapper.py#McpToolMapper#call_tool` at `636af7ad` | 已证实；C06 保持 |
+| Evidence Freshness | `python tools/agent-skills/evidence_freshness.py docs_agent/prd-v1.6.0-skill-catalog-and-run-control.md --source-revision AD-SKILL-AGENT-V16@1.0.0/RM-01` | `VERIFY_ONLY`；已提交变更仅为本 PRD 与 initial review，未改代码锚点 |
 
 ## Dependencies And Handoff
 
-本 PRD 已批准。下一步由 `smc-plan-from-approved-prd-ponytail` 生成实施计划。只有 RM-01 实施、Review（代码审查）、Verification（验证）和真实 implementation commit（实施提交）完成并把 Roadmap 更新为 `DONE`，RM-02 才能进入 `READY` 与下一轮 Grounding。
+本 PRD 已批准。下一步由 `smc-plan-from-approved-prd-ponytail` 生成或修订实施计划。工作树中未提交的实现不得当作 Current Capability 已 EXISTS；implementation commit 触及锚点后必须再跑 Evidence Freshness。只有 RM-01 实施、Review、Verification 和真实 implementation commit 完成并把 Roadmap 更新为 `DONE`，RM-02 才能进入 `READY`。
