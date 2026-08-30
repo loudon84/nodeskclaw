@@ -44,6 +44,8 @@ uv run uvicorn app.main:app --reload --port 4580
 
 先修改下列变量；不要把真实 Token 提交回仓库。
 
+Agent 内部接口不用 Postman 的 Bearer Token（持有者令牌）。集合级 Auth 已设为 API Key，请求选 **Inherit auth from parent**（从父级继承）即可自动带上请求头 `X-Skill-Agent-Token`。把 `agent_internal_token` 改成与 Agent `.env` 中 `SKILL_AGENT_INTERNAL_TOKEN` 完全相同的值；占位符 `REPLACE_WITH_AGENT_INTERNAL_TOKEN` 会返回 HTTP `401`。已打开的旧 Collection 需要重新导入或同步本文件后，Auth 才会变成 API Key。
+
 | 变量 | 必填 | 来源与用途 |
 | --- | --- | --- |
 | `backend_base_url` | 是 | Backend 地址，默认 `http://127.0.0.1:4510` |
@@ -76,7 +78,7 @@ Collection 已内置精确断言。遇到失败时先保留请求和响应，再
 | 场景 | 正确结果 | 常见原因 |
 | --- | --- | --- |
 | `/health/ready` | `200`，`status: "ok"` | 数据库、迁移、内部 Token、存储或 Worker 配置未就绪 |
-| 创建 Agent Run | `200`，`WAITING_APPROVAL` 或 `QUEUED` | `X-Skill-Agent-Token`、`X-Exec-Org-Id`、`X-Exec-User-Id` 不匹配 |
+| 创建 / 查询 Agent Run | `200` | `agent_internal_token` 仍是占位符，或与 Agent `SKILL_AGENT_INTERNAL_TOKEN` 不一致；或缺少 `X-Exec-Org-Id` |
 | 审批 Run | `200`，`RESUMING` | Run 不是 `WAITING_APPROVAL`，或 `approval_id` 不一致 |
 | Artifact 旧代上传 | `409`，`errors.artifact.stale_generation` | 这是预期负向结果，不应改为成功断言 |
 | 跨组织读取 Run | `404` | `other_org_id` 与 `org_id` 相同会使负向验证无效 |

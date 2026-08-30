@@ -792,7 +792,44 @@ def check_contracts(release: bool = False) -> None:
                 )
                 if not tag_check.stdout.strip():
                     raise SystemExit(f"skill-run contract tag '{tag_name}' not found in release mode")
-        print("SKILL-RUN-CONTRACT check passed")
+
+    skill_run_v11_root = SKILL_RUN_CONTRACTS_HOME / "v1.1.0"
+    if skill_run_v11_root.exists():
+        _validate_checksums(skill_run_v11_root)
+        _validate_skill_run_fixtures(skill_run_v11_root)
+        _validate_skill_run_v11_negative_fixtures(skill_run_v11_root)
+        manifest_v11 = _read_manifest(skill_run_v11_root)
+        if release and manifest_v11.get("backendCommit") != _git_head():
+            raise SystemExit("skill-run v1.1.0 manifest.backendCommit does not match current HEAD in release mode")
+
+    print("SKILL-RUN-CONTRACT check passed")
+
+
+def _validate_skill_run_v11_negative_fixtures(root: Path) -> None:
+    import jsonschema
+
+    tools_schema_path = root / "mcp" / "tools-list.response.schema.json"
+    if not tools_schema_path.exists():
+        return
+    tools_schema = json.loads(tools_schema_path.read_text(encoding="utf-8"))
+
+    # Test invalid descriptor missing capabilityKind
+    invalid_descriptor = {
+        "tools": [
+            {
+                "name": "invalid_tool",
+                "interactionMode": "chat",
+                "supportsAttachments": False,
+                "annotations": {"riskLevel": "low"},
+            }
+        ]
+    }
+    try:
+        jsonschema.validate(invalid_descriptor, tools_schema)
+    except jsonschema.ValidationError:
+        pass
+    else:
+        raise SystemExit("tools-list.response.schema.json unexpectedly accepted descriptor missing capabilityKind")
 
 
 def generate_skill_run_contracts() -> None:
@@ -806,6 +843,7 @@ def generate_skill_run_contracts() -> None:
         SKILL_RUN_CAPABILITIES,
         SKILL_RUN_CONTRACT_NAME,
         SKILL_RUN_CONTRACT_VERSION,
+        SKILL_RUN_CONTRACT_VERSION_V11,
         SKILL_RUN_TAG_NAME,
     )
     from app.schemas.skill_run.mcp_jsonrpc import (
@@ -814,50 +852,202 @@ def generate_skill_run_contracts() -> None:
         RunEvent,
         RunRecord,
         SkillToolAnnotations,
+        SkillToolAnnotationsV11,
+        SkillToolDescriptorV11,
         ToolsCallAcceptedResult,
+        ToolsCallAcceptedResultV11,
         ToolsListResult,
+        ToolsListResultV11,
     )
     from app.schemas.work_expert.mcp_jsonrpc import JsonRpcErrorResponse, JsonRpcRequest
 
-    root = SKILL_RUN_CONTRACTS_HOME / f"v{SKILL_RUN_CONTRACT_VERSION}"
-    root.mkdir(parents=True, exist_ok=True)
-    (root / "mcp").mkdir(exist_ok=True)
-    (root / "events").mkdir(exist_ok=True)
-    (root / "runs").mkdir(exist_ok=True)
-    (root / "edge").mkdir(exist_ok=True)
-    (root / "installations").mkdir(exist_ok=True)
-    (root / "fixtures").mkdir(exist_ok=True)
+    root_v10 = SKILL_RUN_CONTRACTS_HOME / f"v{SKILL_RUN_CONTRACT_VERSION}"
+    if not root_v10.exists():
+        root_v10.mkdir(parents=True, exist_ok=True)
+        (root_v10 / "mcp").mkdir(exist_ok=True)
+        (root_v10 / "events").mkdir(exist_ok=True)
+        (root_v10 / "runs").mkdir(exist_ok=True)
+        (root_v10 / "edge").mkdir(exist_ok=True)
+        (root_v10 / "installations").mkdir(exist_ok=True)
+        (root_v10 / "fixtures").mkdir(exist_ok=True)
 
-    mcp_models = {
+        mcp_models = {
+            "tools-list.request.schema.json": JsonRpcRequest,
+            "tools-list.response.schema.json": ToolsListResult,
+            "skill-tool-annotations.schema.json": SkillToolAnnotations,
+            "tools-call.request.schema.json": JsonRpcRequest,
+            "tools-call.response.schema.json": ToolsCallAcceptedResult,
+            "json-rpc-error.schema.json": JsonRpcErrorResponse,
+        }
+        for filename, model in mcp_models.items():
+            _write_json(root_v10 / "mcp" / filename, _model_schema(model))
+
+        _write_json(root_v10 / "events" / "run-event.schema.json", _model_schema(RunEvent))
+        _write_json(root_v10 / "runs" / "run.schema.json", _model_schema(RunRecord))
+        _write_json(root_v10 / "runs" / "execution-snapshot.schema.json", _model_schema(ExecutionSnapshot))
+        _write_json(root_v10 / "runs" / "artifact-descriptor.schema.json", _model_schema(ArtifactDescriptor))
+
+        _write_json(root_v10 / "edge" / "lease-renew.schema.json", _model_schema(EdgeLeaseRenewBody))
+        _write_json(root_v10 / "edge" / "artifact-upload.schema.json", _model_schema(EdgeArtifactUploadBody))
+        _write_json(root_v10 / "installations" / "actual-report.schema.json", _model_schema(EdgeActualReportBody))
+        _write_json(root_v10 / "installations" / "installation.schema.json", _model_schema(InstallationRead))
+
+        _write_json(
+            root_v10 / "fixtures" / "edge-lease-renew.json",
+            {
+                "extend_seconds": 60,
+                "delivery_generation": 1,
+            },
+        )
+        _write_json(
+            root_v10 / "fixtures" / "edge-artifact-upload.json",
+            {
+                "artifact_id": "art-1",
+                "name": "result.json",
+                "content_base64": "eyJyZXN1bHQiOiA0Mn0=",
+                "checksum_sha256": "35a9e381b1a27567549b5f8a6f783c167ebf809630c3991446f41f72a3e01c5c",
+                "size_bytes": 16,
+                "content_type": "application/json",
+                "run_generation": 1,
+            },
+        )
+        _write_json(
+            root_v10 / "fixtures" / "desired-installation.json",
+            {
+                "id": "inst-1",
+                "org_id": "org-1",
+                "agent_id": "agent-1",
+                "skill_id": "skill-1",
+                "target_kind": "edge",
+                "edge_node_id": "edge-node-1",
+                "installed_version": "1.0.0",
+                "status": "installed",
+                "actual_status": "synced",
+                "desired_generation": 1,
+                "actual_generation": 1,
+                "reconciled_status": "synced",
+                "created_at": "2026-08-28T00:00:00Z",
+                "updated_at": "2026-08-28T00:00:00Z",
+            },
+        )
+        _write_json(
+            root_v10 / "fixtures" / "tools-call-accepted.json",
+            {
+                "jsonrpc": "2.0",
+                "id": "call-1",
+                "result": {
+                    "content": [{"type": "text", "text": "accepted"}],
+                    "structuredContent": {
+                        "committed": True,
+                        "run_id": "run-1",
+                        "status": "QUEUED",
+                        "tool_name": "writer_article_generate",
+                        "event_stream": "/api/v1/runs/run-1/events?token=example",
+                        "result_url": "/api/v1/runs/run-1/result",
+                        "artifact_url": "/api/v1/runs/run-1/artifacts",
+                        "execution_mode": "async_event",
+                    },
+                    "isError": False,
+                },
+            },
+        )
+        _write_json(
+            root_v10 / "fixtures" / "skill-tools-list.json",
+            {
+                "jsonrpc": "2.0",
+                "id": "list-1",
+                "result": {
+                    "tools": [
+                        {
+                            "name": "writer_article_generate",
+                            "title": "Writer",
+                            "description": "Generate article",
+                            "inputSchema": {"type": "object"},
+                            "version": "1.0.0",
+                            "category": "writer",
+                            "annotations": {
+                                "category": "writer",
+                                "riskLevel": "low",
+                                "requiresApproval": False,
+                                "streaming": True,
+                                "artifacts": True,
+                                "version": "1.0.0",
+                            },
+                        }
+                    ]
+                },
+            },
+        )
+
+        release = (
+            f"# {SKILL_RUN_CONTRACT_NAME} v{SKILL_RUN_CONTRACT_VERSION}\n\n"
+            "Skill-first employee MCP and Run identity contract.\n"
+            "Does not modify work-expert v1.0.2.\n"
+        )
+        (root_v10 / "RELEASE.md").write_text(release, encoding="utf-8")
+
+        backend_commit = _git_head()
+        file_hashes = {
+            str(path.relative_to(root_v10)).replace("\\", "/"): _sha256_file(path)
+            for path in _artifact_files(root_v10)
+            if path.name != "manifest.json"
+        }
+        manifest = {
+            "contractName": SKILL_RUN_CONTRACT_NAME,
+            "contractVersion": SKILL_RUN_CONTRACT_VERSION,
+            "provider": "nodeskclaw-backend",
+            "consumer": "smc-copilot/apps/work",
+            "backendCommit": backend_commit,
+            "tagName": SKILL_RUN_TAG_NAME,
+            "generatedAt": datetime.now(timezone.utc).isoformat(),
+            "artifacts": file_hashes,
+            "capabilities": SKILL_RUN_CAPABILITIES,
+        }
+        _write_json(root_v10 / "manifest.json", manifest)
+        checksum_lines = [f"{digest}  {relative}" for relative, digest in sorted(file_hashes.items())]
+        (root_v10 / "SHA256SUMS").write_text("\n".join(checksum_lines) + "\n", encoding="utf-8")
+        print(f"Generated {SKILL_RUN_CONTRACT_NAME} at {root_v10} (backendCommit={backend_commit})")
+
+    # Generate v1.1.0 contract
+    root_v11 = SKILL_RUN_CONTRACTS_HOME / f"v{SKILL_RUN_CONTRACT_VERSION_V11}"
+    root_v11.mkdir(parents=True, exist_ok=True)
+    (root_v11 / "mcp").mkdir(exist_ok=True)
+    (root_v11 / "events").mkdir(exist_ok=True)
+    (root_v11 / "runs").mkdir(exist_ok=True)
+    (root_v11 / "edge").mkdir(exist_ok=True)
+    (root_v11 / "installations").mkdir(exist_ok=True)
+    (root_v11 / "fixtures").mkdir(exist_ok=True)
+
+    mcp_models_v11 = {
         "tools-list.request.schema.json": JsonRpcRequest,
-        "tools-list.response.schema.json": ToolsListResult,
-        "skill-tool-annotations.schema.json": SkillToolAnnotations,
+        "tools-list.response.schema.json": ToolsListResultV11,
+        "skill-tool-annotations.schema.json": SkillToolAnnotationsV11,
         "tools-call.request.schema.json": JsonRpcRequest,
-        "tools-call.response.schema.json": ToolsCallAcceptedResult,
+        "tools-call.response.schema.json": ToolsCallAcceptedResultV11,
         "json-rpc-error.schema.json": JsonRpcErrorResponse,
     }
-    for filename, model in mcp_models.items():
-        _write_json(root / "mcp" / filename, _model_schema(model))
+    for filename, model in mcp_models_v11.items():
+        _write_json(root_v11 / "mcp" / filename, _model_schema(model))
 
-    _write_json(root / "events" / "run-event.schema.json", _model_schema(RunEvent))
-    _write_json(root / "runs" / "run.schema.json", _model_schema(RunRecord))
-    _write_json(root / "runs" / "execution-snapshot.schema.json", _model_schema(ExecutionSnapshot))
-    _write_json(root / "runs" / "artifact-descriptor.schema.json", _model_schema(ArtifactDescriptor))
+    _write_json(root_v11 / "events" / "run-event.schema.json", _model_schema(RunEvent))
+    _write_json(root_v11 / "runs" / "run.schema.json", _model_schema(RunRecord))
+    _write_json(root_v11 / "runs" / "execution-snapshot.schema.json", _model_schema(ExecutionSnapshot))
+    _write_json(root_v11 / "runs" / "artifact-descriptor.schema.json", _model_schema(ArtifactDescriptor))
 
-    _write_json(root / "edge" / "lease-renew.schema.json", _model_schema(EdgeLeaseRenewBody))
-    _write_json(root / "edge" / "artifact-upload.schema.json", _model_schema(EdgeArtifactUploadBody))
-    _write_json(root / "installations" / "actual-report.schema.json", _model_schema(EdgeActualReportBody))
-    _write_json(root / "installations" / "installation.schema.json", _model_schema(InstallationRead))
+    _write_json(root_v11 / "edge" / "lease-renew.schema.json", _model_schema(EdgeLeaseRenewBody))
+    _write_json(root_v11 / "edge" / "artifact-upload.schema.json", _model_schema(EdgeArtifactUploadBody))
+    _write_json(root_v11 / "installations" / "actual-report.schema.json", _model_schema(EdgeActualReportBody))
+    _write_json(root_v11 / "installations" / "installation.schema.json", _model_schema(InstallationRead))
 
     _write_json(
-        root / "fixtures" / "edge-lease-renew.json",
+        root_v11 / "fixtures" / "edge-lease-renew.json",
         {
             "extend_seconds": 60,
             "delivery_generation": 1,
         },
     )
     _write_json(
-        root / "fixtures" / "edge-artifact-upload.json",
+        root_v11 / "fixtures" / "edge-artifact-upload.json",
         {
             "artifact_id": "art-1",
             "name": "result.json",
@@ -869,7 +1059,7 @@ def generate_skill_run_contracts() -> None:
         },
     )
     _write_json(
-        root / "fixtures" / "desired-installation.json",
+        root_v11 / "fixtures" / "desired-installation.json",
         {
             "id": "inst-1",
             "org_id": "org-1",
@@ -887,9 +1077,8 @@ def generate_skill_run_contracts() -> None:
             "updated_at": "2026-08-28T00:00:00Z",
         },
     )
-
     _write_json(
-        root / "fixtures" / "tools-call-accepted.json",
+        root_v11 / "fixtures" / "tools-call-accepted.json",
         {
             "jsonrpc": "2.0",
             "id": "call-1",
@@ -904,13 +1093,14 @@ def generate_skill_run_contracts() -> None:
                     "result_url": "/api/v1/runs/run-1/result",
                     "artifact_url": "/api/v1/runs/run-1/artifacts",
                     "execution_mode": "async_event",
+                    "contract_version": "1.1.0",
                 },
                 "isError": False,
             },
         },
     )
     _write_json(
-        root / "fixtures" / "skill-tools-list.json",
+        root_v11 / "fixtures" / "skill-tools-list.json",
         {
             "jsonrpc": "2.0",
             "id": "list-1",
@@ -920,16 +1110,23 @@ def generate_skill_run_contracts() -> None:
                         "name": "writer_article_generate",
                         "title": "Writer",
                         "description": "Generate article",
-                        "inputSchema": {"type": "object"},
-                        "version": "1.0.0",
+                        "inputSchema": {"type": "object", "properties": {"prompt": {"type": "string"}}},
+                        "version": "1.1.0",
                         "category": "writer",
+                        "capabilityKind": "skill",
+                        "interactionMode": "chat",
+                        "promptField": "prompt",
+                        "supportsAttachments": False,
+                        "skillReleaseId": "rel-12345",
+                        "skillReleaseDigest": "digest-abcdef",
                         "annotations": {
                             "category": "writer",
                             "riskLevel": "low",
                             "requiresApproval": False,
+                            "approvalMode": "none",
                             "streaming": True,
                             "artifacts": True,
-                            "version": "1.0.0",
+                            "version": "1.1.0",
                         },
                     }
                 ]
@@ -937,34 +1134,37 @@ def generate_skill_run_contracts() -> None:
         },
     )
 
-    release = (
-        f"# {SKILL_RUN_CONTRACT_NAME} v{SKILL_RUN_CONTRACT_VERSION}\n\n"
-        "Skill-first employee MCP and Run identity contract.\n"
-        "Does not modify work-expert v1.0.2.\n"
+    release_v11 = (
+        f"# {SKILL_RUN_CONTRACT_NAME} v{SKILL_RUN_CONTRACT_VERSION_V11}\n\n"
+        "Skill-first employee MCP and Run identity contract v1.1.0.\n"
+        "Adds Catalog v1.1 descriptors and optional contract_version.\n"
     )
-    (root / "RELEASE.md").write_text(release, encoding="utf-8")
+    (root_v11 / "RELEASE.md").write_text(release_v11, encoding="utf-8")
 
     backend_commit = _git_head()
-    file_hashes = {
-        str(path.relative_to(root)).replace("\\", "/"): _sha256_file(path)
-        for path in _artifact_files(root)
+    file_hashes_v11 = {
+        str(path.relative_to(root_v11)).replace("\\", "/"): _sha256_file(path)
+        for path in _artifact_files(root_v11)
         if path.name != "manifest.json"
     }
-    manifest = {
+    manifest_v11 = {
         "contractName": SKILL_RUN_CONTRACT_NAME,
-        "contractVersion": SKILL_RUN_CONTRACT_VERSION,
+        "contractVersion": SKILL_RUN_CONTRACT_VERSION_V11,
         "provider": "nodeskclaw-backend",
         "consumer": "smc-copilot/apps/work",
         "backendCommit": backend_commit,
-        "tagName": SKILL_RUN_TAG_NAME,
+        "tagName": f"skill-run-contract-v{SKILL_RUN_CONTRACT_VERSION_V11}",
         "generatedAt": datetime.now(timezone.utc).isoformat(),
-        "artifacts": file_hashes,
-        "capabilities": SKILL_RUN_CAPABILITIES,
+        "artifacts": file_hashes_v11,
+        "capabilities": {
+            **SKILL_RUN_CAPABILITIES,
+            "catalogV11": True,
+        },
     }
-    _write_json(root / "manifest.json", manifest)
-    checksum_lines = [f"{digest}  {relative}" for relative, digest in sorted(file_hashes.items())]
-    (root / "SHA256SUMS").write_text("\n".join(checksum_lines) + "\n", encoding="utf-8")
-    print(f"Generated {SKILL_RUN_CONTRACT_NAME} at {root} (backendCommit={backend_commit})")
+    _write_json(root_v11 / "manifest.json", manifest_v11)
+    checksum_lines_v11 = [f"{digest}  {relative}" for relative, digest in sorted(file_hashes_v11.items())]
+    (root_v11 / "SHA256SUMS").write_text("\n".join(checksum_lines_v11) + "\n", encoding="utf-8")
+    print(f"Generated {SKILL_RUN_CONTRACT_NAME} at {root_v11} (backendCommit={backend_commit})")
 
 
 def main() -> None:

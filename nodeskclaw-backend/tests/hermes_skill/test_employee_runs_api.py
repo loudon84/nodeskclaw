@@ -3,8 +3,17 @@ from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi import HTTPException
-from app.api.runs import get_run, get_run_result, get_run_artifacts, download_run_artifact, cancel_run, resume_run, approve_run
-from app.core.exceptions import ForbiddenError, NotFoundError
+from app.api.runs import (
+    _agent_post,
+    approve_run,
+    cancel_run,
+    download_run_artifact,
+    get_run,
+    get_run_artifacts,
+    get_run_result,
+    resume_run,
+)
+from app.core.exceptions import AppException, ForbiddenError, NotFoundError
 from app.models.hermes_skill.hermes_task import HermesTask, TaskStatus
 from app.models.hermes_skill.run_dispatch_outbox import RunDispatchOutbox, RunDispatchStatus
 
@@ -160,3 +169,100 @@ async def test_resume_undelivered_outbox_rejected():
 
         with pytest.raises(ForbiddenError):
             await resume_run(run_id="run-1", user_org=user_org, db=db)
+
+
+@pytest.mark.asyncio
+async def test_resume_run_proxies_json_body_and_exec_headers():
+    db = AsyncMock()
+    user_org = _mock_user_org()
+
+    task = HermesTask(
+        id="run-1",
+        org_id="org-1",
+        user_id="user-1",
+        tool_name="test_tool",
+        status=TaskStatus.RUNNING,
+    )
+
+    with patch("app.api.runs.PermissionChecker.require_permission", new=AsyncMock()), \
+         patch("app.api.runs.TaskService.get_task", new=AsyncMock(return_value=task)), \
+         patch("app.api.runs.TaskService.assert_task_access", new=AsyncMock()), \
+         patch("app.api.runs._get_outbox_entry", new=AsyncMock(return_value=None)), \
+         patch("app.api.runs._agent_post", new=AsyncMock(return_value={"run_id": "run-1", "org_id": "org-1", "status": "RUNNING"})) as mock_post:
+
+        payload = {"action": "continue", "input": {"val": 42}}
+        res = await resume_run(run_id="run-1", body=payload, user_org=user_org, db=db)
+        assert res["code"] == 0
+        assert res["data"]["run_id"] == "run-1"
+        mock_post.assert_called_once_with(
+            "/internal/v1/runs/run-1/resume",
+            json_body=payload,
+            org_id="org-1",
+            user_id="user-1",
+        )
+
+
+@pytest.mark.asyncio
+async def test_approve_run_proxies_json_body_and_exec_headers():
+    db = AsyncMock()
+    user_org = _mock_user_org()
+
+    task = HermesTask(
+        id="run-1",
+        org_id="org-1",
+        user_id="user-1",
+        tool_name="test_tool",
+        status=TaskStatus.RUNNING,
+    )
+
+    with patch("app.api.runs.PermissionChecker.require_permission", new=AsyncMock()), \
+         patch("app.api.runs.TaskService.get_task", new=AsyncMock(return_value=task)), \
+         patch("app.api.runs.TaskService.assert_task_access", new=AsyncMock()), \
+         patch("app.api.runs._get_outbox_entry", new=AsyncMock(return_value=None)), \
+         patch("app.api.runs._agent_post", new=AsyncMock(return_value={"run_id": "run-1", "org_id": "org-1", "status": "APPROVED"})) as mock_post:
+
+        payload = {"decision": "APPROVE", "evidence": "verified by admin"}
+        res = await approve_run(run_id="run-1", approval_id="app-1", body=payload, user_org=user_org, db=db)
+        assert res["code"] == 0
+        assert res["data"]["status"] == "APPROVED"
+        mock_post.assert_called_once_with(
+            "/internal/v1/runs/run-1/approvals/app-1",
+            json_body=payload,
+            org_id="org-1",
+            user_id="user-1",
+        )
+
+
+@pytest.mark.asyncio
+async def test_agent_4xx_mapped_to_app_exception():
+    import httpx
+
+    fake_response = httpx.Response(
+        status_code=400,
+        json={"error_code": 40001, "message_key": "errors.run.invalid_state", "message": "Run cannot be resumed"},
+        request=httpx.Request("POST", "http://test/internal/v1/runs/run-1/resume"),
+    )
+
+    with patch("httpx.AsyncClient.post", new=AsyncMock(return_value=fake_response)):
+        with pytest.raises(AppException) as exc_info:
+            await _agent_post("/internal/v1/runs/run-1/resume", json_body={}, org_id="org-1", user_id="user-1")
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.message_key == "errors.run.invalid_state"
+        assert exc_info.value.message == "Run cannot be resumed"
+
+
+@pytest.mark.asyncio
+async def test_agent_404_mapped_to_not_found():
+    import httpx
+
+    fake_response = httpx.Response(
+        status_code=404,
+        request=httpx.Request("POST", "http://test/internal/v1/runs/run-nonexistent/resume"),
+    )
+
+    with patch("httpx.AsyncClient.post", new=AsyncMock(return_value=fake_response)):
+        with pytest.raises(NotFoundError) as exc_info:
+            await _agent_post("/internal/v1/runs/run-nonexistent/resume", json_body={}, org_id="org-1", user_id="user-1")
+        assert exc_info.value.status_code == 404
+        assert exc_info.value.message_key == "errors.run.not_found"
+

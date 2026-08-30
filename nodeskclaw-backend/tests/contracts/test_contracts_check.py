@@ -16,3 +16,10 @@ def test_is_empty_json_schema():
     assert is_empty_json_schema(None) is True
     assert is_empty_json_schema({"$ref": "#/components/schemas/TaskRead"}) is False
     assert is_empty_json_schema({"type": "string", "format": "binary"}) is False
+
+
+def test_skill_run_contracts_v10_and_v11_exist():
+    backend_root = Path(__file__).resolve().parents[2]
+    assert (backend_root / "contracts/skill-run/v1.0.0/SHA256SUMS").exists()
+    assert (backend_root / "contracts/skill-run/v1.1.0/SHA256SUMS").exists()
+

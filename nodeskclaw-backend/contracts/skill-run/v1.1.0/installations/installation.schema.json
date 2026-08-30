@@ -1,0 +1,247 @@
+{
+  "properties": {
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "org_id": {
+      "title": "Org Id",
+      "type": "string"
+    },
+    "skill_id": {
+      "title": "Skill Id",
+      "type": "string"
+    },
+    "agent_id": {
+      "title": "Agent Id",
+      "type": "string"
+    },
+    "profile_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Profile Id"
+    },
+    "workspace_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Workspace Id"
+    },
+    "install_mode": {
+      "default": "copy",
+      "title": "Install Mode",
+      "type": "string"
+    },
+    "installed_path": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Installed Path"
+    },
+    "installed_version": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Installed Version"
+    },
+    "status": {
+      "default": "pending",
+      "title": "Status",
+      "type": "string"
+    },
+    "error_message": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Error Message"
+    },
+    "installed_by": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Installed By"
+    },
+    "profile_root_path": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Profile Root Path"
+    },
+    "is_default": {
+      "default": false,
+      "title": "Is Default",
+      "type": "boolean"
+    },
+    "priority": {
+      "default": 0,
+      "title": "Priority",
+      "type": "integer"
+    },
+    "routing_scope": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Routing Scope"
+    },
+    "routing_metadata": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Routing Metadata"
+    },
+    "target_kind": {
+      "default": "remote",
+      "title": "Target Kind",
+      "type": "string"
+    },
+    "edge_node_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Edge Node Id"
+    },
+    "actual_status": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Actual Status"
+    },
+    "actual_reported_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Actual Reported At"
+    },
+    "desired_generation": {
+      "default": 1,
+      "title": "Desired Generation",
+      "type": "integer"
+    },
+    "actual_generation": {
+      "default": 0,
+      "title": "Actual Generation",
+      "type": "integer"
+    },
+    "reconciled_status": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reconciled Status"
+    },
+    "created_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Created At"
+    },
+    "updated_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Updated At"
+    }
+  },
+  "required": [
+    "id",
+    "org_id",
+    "skill_id",
+    "agent_id"
+  ],
+  "title": "InstallationRead",
+  "type": "object"
+}

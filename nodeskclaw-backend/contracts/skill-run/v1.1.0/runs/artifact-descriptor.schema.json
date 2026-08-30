@@ -1,0 +1,66 @@
+{
+  "properties": {
+    "artifact_id": {
+      "title": "Artifact Id",
+      "type": "string"
+    },
+    "name": {
+      "title": "Name",
+      "type": "string"
+    },
+    "content_type": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Content Type"
+    },
+    "size_bytes": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Size Bytes"
+    },
+    "download_url": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Download Url"
+    },
+    "checksum_sha256": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Checksum Sha256"
+    }
+  },
+  "required": [
+    "artifact_id",
+    "name"
+  ],
+  "title": "ArtifactDescriptor",
+  "type": "object"
+}

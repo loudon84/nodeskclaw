@@ -53,7 +53,7 @@ Cancel-safe：RUNNING 取消后 Worker 不得 `mark_completed`。Retry 复制 ro
 
 `scripts/contracts.py generate` / `check` 校验 OpenAPI、非空 200 schema、fixtures、SHA256SUMS、冻结 v1.0.0/v1.0.1 checksum；quality-gate 在 pytest 后执行 check。v1.0.2 补齐 MCP `tools/list` Catalog/Skill `annotations` 合同。
 
-员工 Skill-first 合同族由同脚本 `generate --family skill-run` 产出到 `contracts/skill-run/v1.0.0/`，**不得**改写本目录 checksum（见 [[decisions/skill-platform-execution]]）。
+员工 Skill-first 合同族由同脚本 `generate --family skill-run` 产出到 `contracts/skill-run/v1.0.0/` 与 `v1.1.0/`，**不得**改写本目录 checksum（见 [[decisions/skill-platform-execution]]）。
 
 ## OpenAPI Coverage
 

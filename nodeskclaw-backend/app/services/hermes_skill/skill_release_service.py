@@ -201,6 +201,49 @@ class SkillReleaseService:
             }
         return release
 
+    def _validate_interaction_contract(self, release: HermesSkillRelease) -> None:
+        extra = dict(release.extra_metadata or {})
+        mode = extra.get("interactionMode")
+        if mode == "chat":
+            prompt_field = extra.get("promptField")
+            if not prompt_field or not isinstance(prompt_field, str) or not prompt_field.strip():
+                raise BadRequestError(
+                    "Chat 技能必须指定 promptField",
+                    "errors.skill.catalog.invalid_interaction_contract",
+                )
+            prompt_field = prompt_field.strip()
+            if prompt_field in {
+                "_routing",
+                "_execution",
+                "route_config",
+                "agent_alias",
+                "profile",
+                "workspace_id",
+                "hermes_agent_instance_id",
+            }:
+                raise BadRequestError(
+                    f"promptField 不能使用保留路由字段: {prompt_field}",
+                    "errors.skill.catalog.invalid_interaction_contract",
+                )
+            schema = release.input_schema
+            if not isinstance(schema, dict) or schema.get("type") != "object":
+                raise BadRequestError(
+                    "Chat 技能 input_schema 必须是 object 类型",
+                    "errors.skill.catalog.invalid_interaction_contract",
+                )
+            properties = schema.get("properties")
+            if not isinstance(properties, dict):
+                raise BadRequestError(
+                    "Chat 技能 input_schema 必须包含 properties 字典",
+                    "errors.skill.catalog.invalid_interaction_contract",
+                )
+            field_def = properties.get(prompt_field)
+            if not isinstance(field_def, dict) or field_def.get("type") != "string":
+                raise BadRequestError(
+                    f"promptField '{prompt_field}' 必须在 input_schema.properties 中且类型为 string",
+                    "errors.skill.catalog.invalid_interaction_contract",
+                )
+
     async def publish(self, *, org_id: str, skill_id: str, release_id: str, operator_user_id: str) -> HermesSkillRelease:
         skill = await self.get_skill(org_id, skill_id)
         release = await self._get_release(org_id, skill.id, release_id)
@@ -212,6 +255,22 @@ class SkillReleaseService:
                 "errors.skill.release_invalid_status",
                 message_params={"status": release.status},
             )
+
+        self._validate_interaction_contract(release)
+
+        extra = dict(release.extra_metadata or {})
+        extra["supportsAttachments"] = bool(extra.get("supportsAttachments", False))
+        existing_annotations = extra.get("annotations")
+        if not isinstance(existing_annotations, dict):
+            existing_annotations = {}
+        extra["annotations"] = {
+            "riskLevel": existing_annotations.get("riskLevel") or extra.get("riskLevel") or "low",
+            "requiresApproval": bool(existing_annotations.get("requiresApproval", extra.get("requires_approval", False))),
+            "approvalMode": existing_annotations.get("approvalMode") or extra.get("approval_mode") or "sync",
+            "streaming": bool(existing_annotations.get("streaming", extra.get("streaming", False))),
+            "artifacts": bool(existing_annotations.get("artifacts", extra.get("artifacts", False))),
+        }
+        release.extra_metadata = extra
 
         current = await self.get_published_by_skill_db_id(skill.id)
         now = datetime.now(timezone.utc)

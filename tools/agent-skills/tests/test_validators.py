@@ -40,16 +40,20 @@ grounded_commit: abcdef1234567
 | config | MODIFY | final |
 
 ## Acceptance Criteria
-- [ ] works
+1. works
+
+## Definition of Done
+1. focused tests pass
 """
 
 
+# @lat: [[decisions/agent-skills-governance#Plan Closure Contract#Wrapper Validator Fixtures]]
 def valid_plan(
     prd_link: str = "PRD-test.md", row: str | None = None, target: str = "a.ts#symbol"
 ) -> str:
     change_row = row or "| C01 | `a.ts#symbol` | PROD | MODIFY | owner | T1 | final | config | no |"
     return f"""---
-plan_contract: smc.plan.v3
+plan_contract: smc.plan.v3.2
 commit_policy: post_review
 source_revision: TEST-1@1.0.0
 grounded_commit: abcdef1234567
@@ -61,6 +65,20 @@ grounded_commit: abcdef1234567
 
 ## Scope
 Implement config.
+
+## Requirement Coverage Ledger
+| Requirement | Source | Obligation | Classification | Change IDs | Todo | Verification IDs | Evidence Class | Blocking |
+|---|---|---|---|---|---|---|---|---|
+| AC-01 | AC | works | BEHAVIOR | C01 | T1 | V01 | UNIT | yes |
+| DOD-01 | DOD | focused tests pass | EVIDENCE | - | - | V01 | UNIT | yes |
+
+## Lifecycle Closure Matrix
+None
+
+## Verification Ledger
+| Verification ID | Level | Entry Point / Command | Oracle | Negative / Regression | Evidence Output | Environment | Blocking |
+|---|---|---|---|---|---|---|---|
+| V01 | UNIT | python -m unittest tools.agent-skills.tests.test_validators | config owner is updated | missing justification is rejected | reports/validators.txt | LOCAL | yes |
 
 ## Immediate Read
 - `a.ts#symbol`
@@ -109,6 +127,14 @@ Update the existing owner.
 
 ## Verification
 - focused tests
+
+## Completion Gate
+| Exit State | Allowed When | Blocking Evidence |
+|---|---|---|
+| IMPLEMENTED_AND_PROVEN | all Coverage Ledger verification ids pass | V01 reports exist |
+| IMPLEMENTED_NOT_PROVEN | any blocking evidence is pending | pending output is recorded |
+| BLOCKED | environment or dependency prevents proof | blocker is recorded |
+| RETURN_PRD | owner or boundary conflicts with PRD | revision is requested |
 """
 
 

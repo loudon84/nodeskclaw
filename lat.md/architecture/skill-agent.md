@@ -12,6 +12,16 @@
 - **部分实现**：已有可复用实现，但接口合同、真实副作用、跨组件链路或生产验收证据至少一项尚未闭环。
 - **目标状态**：架构要求已经冻结，但当前 Production Owner 尚未提供完整实现或阻断证据。
 
+## Configuration
+
+Agent 从工作目录 `.env` 加载配置，模板见 `nodeskclaw-agent/.env.example`，字段与 [[nodeskclaw-agent/app/config.py#Settings]] 对齐。应用启动不执行 DDL，须先 `uv run alembic upgrade head`。
+
+- **角色**：`SKILL_AGENT_ROLE` 为 `central` 或 `edge`；与 Backend 共用 `SKILL_AGENT_INTERNAL_TOKEN`，轮换时填 `SKILL_AGENT_INTERNAL_TOKEN_PREVIOUS`。
+- **迁移表隔离**：即使与 Backend 共用同一 PostgreSQL 库，Alembic 版本表必须写在 `agent.alembic_version`，禁止读写 `public.alembic_version`。`version_num` 使用 `VARCHAR(64)`，以容纳描述式 revision ID。
+- **存储**：`local` 时 `SKILL_AGENT_ARTIFACT_DIR` 不得指向 `/tmp`；`s3` 时填 Endpoint、Bucket 与 Access Key。
+- **生产门禁**：`SKILL_AGENT_INSECURE_MODE=false` 时拒绝默认 Token、临时 Artifact 目录，以及 Edge 的 `http://` Central URL。
+- **未入 Settings**：HTTP 端口由 uvicorn `--port 4580` 指定；Edge Spool 与 Skill 安装目录仍硬编码为 `./data/edge_spool` 与 `./data/edge_skills`。
+
 ## Role Modes
 
 Agent 的 Central（中心执行）与 Edge（边缘执行）角色已经存在，生产级并行拓扑仍待正式验收。
@@ -86,8 +96,8 @@ Artifact StoragePort 与描述符状态机已经存在，跨 Pod 存储、上传
 
 Agent 已具备基础探针与内部鉴权，生产就绪和发布证据尚未达到完成态。
 
-- **已实现**：Agent 使用独立 PostgreSQL `agent` Schema，应用启动不执行 DDL；`/health/live` 与 `/healthz/live` 提供进程存活检查。
+- **已实现**：Agent 使用独立 PostgreSQL `agent` Schema，Alembic 版本表位于 `agent.alembic_version`（[[nodeskclaw-agent/app/config.py#alembic_context_version_options]]），应用启动不执行 DDL；`/health/live` 与 `/healthz/live` 提供进程存活检查。
 - **已实现**：[[nodeskclaw-agent/app/auth.py#require_internal_token]] 校验内部 Token，并基于组织和用户 Header 实施 fail-closed 隔离；支持 previous Token 双密钥轮换。
 - **部分实现**：[[nodeskclaw-agent/app/main.py#health_ready]] 已检查数据库连通、安全配置、存储驱动可访问性和 Worker/Edge 时间戳，但尚未比较数据库版本与全部 Alembic head、执行 StoragePort 读写清理，也未把首次循环或首次心跳缺失判为不就绪。
-- **部分实现**：Central A/B Compose、[[tools/acceptance/harness.py#validate_topology]]、[[tools/acceptance/check_postman_collection.py#check_collection]] 与 [[tools/acceptance/run_newman.py#construct_newman_command]] 已存在；人工调试集合及操作说明位于 `tools/postman/nodeskclaw-agent-full-flow.postman_collection.json` 与 `tools/postman/GUIDE.md`。现有 Harness、Checker 和 Runner 仍缺完整生命周期、递归 OpenAPI 合同校验与一致的 validate-only 参数合同，不能声明验收资产闭环。
+- **部分实现**：Central A/B Compose、[[tools/acceptance/harness.py#validate_topology]]、[[tools/acceptance/check_postman_collection.py#check_collection]] 与 [[tools/acceptance/run_newman.py#construct_newman_command]] 已存在；人工调试集合及操作说明位于 `tools/postman/nodeskclaw-agent-full-flow.postman_collection.json` 与 `tools/postman/GUIDE.md`。集合级 Auth 使用 `X-Skill-Agent-Token`（内部 Token 请求头），取值来自变量 `agent_internal_token`。现有 Harness、Checker 和 Runner 仍缺完整生命周期、递归 OpenAPI 合同校验与一致的 validate-only 参数合同，不能声明验收资产闭环。
 - **目标状态**：真实 PostgreSQL、多 Pod、故障注入、Postman/Newman 真实环境两连跑、Secret 扫描和合同 release check 全部生成可复现证据后，才允许声明生产验收闭环。

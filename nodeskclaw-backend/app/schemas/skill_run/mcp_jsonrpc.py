@@ -107,3 +107,54 @@ class RunEvent(BaseModel):
     source_event_id: str | None = None
     timestamp: str
     payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class SkillToolAnnotationsV11(BaseModel):
+    category: str | None = None
+    riskLevel: str = "low"
+    requiresApproval: bool = False
+    approvalMode: str = "none"
+    streaming: bool = True
+    artifacts: bool = True
+    version: str | None = None
+
+
+class SkillToolDescriptorV11(BaseModel):
+    name: str
+    title: str | None = None
+    description: str = ""
+    inputSchema: dict[str, Any] = Field(default_factory=dict)
+    version: str | None = None
+    category: str | None = None
+    capabilityKind: Literal["skill", "connector"]
+    interactionMode: Literal["chat", "form"]
+    promptField: str | None = None
+    supportsAttachments: bool = False
+    skillReleaseId: str | None = None
+    skillReleaseDigest: str | None = None
+    annotations: SkillToolAnnotationsV11 = Field(default_factory=SkillToolAnnotationsV11)
+
+
+class ToolsListResultV11(BaseModel):
+    tools: list[SkillToolDescriptorV11] = Field(default_factory=list)
+
+
+class SkillRunAcceptedStructuredContentV11(BaseModel):
+    committed: bool = True
+    run_id: str
+    status: str
+    tool_name: str | None = None
+    event_stream: str
+    result_url: str
+    artifact_url: str | None = None
+    execution_mode: str | None = "async_event"
+    message: str | None = None
+    request_trace_id: str | None = None
+    contract_version: str | None = None
+
+
+class ToolsCallAcceptedResultV11(BaseModel):
+    content: list[dict[str, Any]] = Field(default_factory=list)
+    structuredContent: SkillRunAcceptedStructuredContentV11
+    isError: bool = False
+

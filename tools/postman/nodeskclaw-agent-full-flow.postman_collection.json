@@ -20,598 +20,2363 @@
           "ensure('artifact_run_id', 'run-artifact-' + pm.variables.replaceIn('{{$guid}}'));",
           "ensure('edge_run_id', 'run-edge-' + pm.variables.replaceIn('{{$guid}}'));",
           "ensure('approval_id', 'approval-' + pm.variables.replaceIn('{{$guid}}'));",
-          "ensure('source_event_id', 'event-' + pm.variables.replaceIn('{{$guid}}'));"
+          "ensure('source_event_id', 'event-' + pm.variables.replaceIn('{{$guid}}'));",
+          "const token = pm.collectionVariables.get('agent_internal_token') || '';",
+          "const url = pm.request.url.toString();",
+          "if (url.indexOf('/internal/v1/') !== -1) {",
+          "  if (!token || token.indexOf('REPLACE_WITH') === 0) {",
+          "    throw new Error('Set collection variable agent_internal_token to the same value as Agent SKILL_AGENT_INTERNAL_TOKEN. Do not use Postman Bearer auth.');",
+          "  }",
+          "  pm.request.headers.upsert({ key: 'X-Skill-Agent-Token', value: token });",
+          "}"
         ]
       }
     }
   ],
   "variable": [
-    { "key": "backend_base_url", "value": "http://127.0.0.1:4510" },
-    { "key": "agent_base_url", "value": "http://127.0.0.1:4580" },
-    { "key": "backend_access_token", "value": "REPLACE_WITH_BACKEND_JWT", "type": "string" },
-    { "key": "org_id", "value": "REPLACE_WITH_ORG_ID" },
-    { "key": "user_id", "value": "REPLACE_WITH_USER_ID" },
-    { "key": "other_org_id", "value": "REPLACE_WITH_OTHER_ORG_ID" },
-    { "key": "agent_internal_token", "value": "REPLACE_WITH_AGENT_INTERNAL_TOKEN", "type": "string" },
-    { "key": "skill_key", "value": "" },
-    { "key": "skill_db_id", "value": "" },
-    { "key": "release_id", "value": "" },
-    { "key": "release_version", "value": "" },
-    { "key": "edge_node_id", "value": "" },
-    { "key": "edge_token", "value": "", "type": "string" },
-    { "key": "central_run_id", "value": "" },
-    { "key": "cancel_run_id", "value": "" },
-    { "key": "artifact_run_id", "value": "" },
-    { "key": "edge_run_id", "value": "" },
-    { "key": "approval_id", "value": "" },
-    { "key": "source_event_id", "value": "" },
-    { "key": "artifact_id", "value": "" },
-    { "key": "artifact_content_base64", "value": "bm9kZXNrY2xhdy1hZ2VudC1hcnRpZmFjdA==" },
-    { "key": "artifact_checksum_sha256", "value": "61680f4a6911194ff38af54d2d2574692fab68ab09830765e6b29ace213938c6" },
-    { "key": "artifact_size", "value": "25" },
-    { "key": "artifact_run_generation", "value": "0" },
-    { "key": "stale_artifact_generation", "value": "1" },
-    { "key": "edge_run_generation", "value": "0" },
-    { "key": "edge_job_id", "value": "" },
-    { "key": "edge_delivery_generation", "value": "" },
-    { "key": "stale_delivery_generation", "value": "0" },
-    { "key": "on_demand_request_id", "value": "" },
-    { "key": "edge_artifact_id", "value": "" },
-    { "key": "installation_id", "value": "" },
-    { "key": "installation_generation", "value": "1" },
-    { "key": "previous_installation_generation", "value": "0" }
+    {
+      "key": "backend_base_url",
+      "value": "http://127.0.0.1:4510"
+    },
+    {
+      "key": "agent_base_url",
+      "value": "http://127.0.0.1:4580"
+    },
+    {
+      "key": "backend_access_token",
+      "value": "REPLACE_WITH_BACKEND_JWT",
+      "type": "string"
+    },
+    {
+      "key": "org_id",
+      "value": "REPLACE_WITH_ORG_ID"
+    },
+    {
+      "key": "user_id",
+      "value": "REPLACE_WITH_USER_ID"
+    },
+    {
+      "key": "other_org_id",
+      "value": "REPLACE_WITH_OTHER_ORG_ID"
+    },
+    {
+      "key": "agent_internal_token",
+      "value": "REPLACE_WITH_AGENT_INTERNAL_TOKEN",
+      "type": "string"
+    },
+    {
+      "key": "skill_key",
+      "value": ""
+    },
+    {
+      "key": "skill_db_id",
+      "value": ""
+    },
+    {
+      "key": "release_id",
+      "value": ""
+    },
+    {
+      "key": "release_version",
+      "value": ""
+    },
+    {
+      "key": "edge_node_id",
+      "value": ""
+    },
+    {
+      "key": "edge_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "central_run_id",
+      "value": ""
+    },
+    {
+      "key": "cancel_run_id",
+      "value": ""
+    },
+    {
+      "key": "artifact_run_id",
+      "value": ""
+    },
+    {
+      "key": "edge_run_id",
+      "value": ""
+    },
+    {
+      "key": "approval_id",
+      "value": ""
+    },
+    {
+      "key": "source_event_id",
+      "value": ""
+    },
+    {
+      "key": "artifact_id",
+      "value": ""
+    },
+    {
+      "key": "artifact_content_base64",
+      "value": "bm9kZXNrY2xhdy1hZ2VudC1hcnRpZmFjdA=="
+    },
+    {
+      "key": "artifact_checksum_sha256",
+      "value": "61680f4a6911194ff38af54d2d2574692fab68ab09830765e6b29ace213938c6"
+    },
+    {
+      "key": "artifact_size",
+      "value": "25"
+    },
+    {
+      "key": "artifact_run_generation",
+      "value": "0"
+    },
+    {
+      "key": "stale_artifact_generation",
+      "value": "1"
+    },
+    {
+      "key": "edge_run_generation",
+      "value": "0"
+    },
+    {
+      "key": "edge_job_id",
+      "value": ""
+    },
+    {
+      "key": "edge_delivery_generation",
+      "value": ""
+    },
+    {
+      "key": "stale_delivery_generation",
+      "value": "0"
+    },
+    {
+      "key": "on_demand_request_id",
+      "value": ""
+    },
+    {
+      "key": "edge_artifact_id",
+      "value": ""
+    },
+    {
+      "key": "installation_id",
+      "value": ""
+    },
+    {
+      "key": "installation_generation",
+      "value": "1"
+    },
+    {
+      "key": "previous_installation_generation",
+      "value": "0"
+    }
   ],
   "item": [
     {
       "name": "01 - Backend Health",
-      "request": { "method": "GET", "url": { "raw": "{{backend_base_url}}/api/v1/health" } },
-      "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Backend health is 200', () => pm.response.to.have.status(200));"] } }]
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{backend_base_url}}/api/v1/health",
+          "host": [
+            "{{backend_base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "health"
+          ]
+        },
+        "header": []
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Backend health is 200', () => pm.response.to.have.status(200));"
+            ]
+          }
+        }
+      ]
     },
     {
       "name": "02 - Agent Live",
-      "request": { "method": "GET", "url": { "raw": "{{agent_base_url}}/health/live" } },
-      "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Agent live is 200', () => pm.response.to.have.status(200));", "pm.test('Agent reports ok', () => pm.expect(pm.response.json().status).to.eql('ok'));"] } }]
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{agent_base_url}}/health/live",
+          "host": [
+            "{{agent_base_url}}"
+          ],
+          "path": [
+            "health",
+            "live"
+          ]
+        },
+        "header": []
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Agent live is 200', () => pm.response.to.have.status(200));",
+              "pm.test('Agent reports ok', () => pm.expect(pm.response.json().status).to.eql('ok'));"
+            ]
+          }
+        }
+      ]
     },
     {
       "name": "03 - Agent Ready",
-      "request": { "method": "GET", "url": { "raw": "{{agent_base_url}}/health/ready" } },
-      "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Agent readiness is 200', () => pm.response.to.have.status(200));", "pm.test('Agent reports ok', () => pm.expect(pm.response.json().status).to.eql('ok'));"] } }]
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{agent_base_url}}/health/ready",
+          "host": [
+            "{{agent_base_url}}"
+          ],
+          "path": [
+            "health",
+            "ready"
+          ]
+        },
+        "header": []
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Agent readiness is 200', () => pm.response.to.have.status(200));",
+              "pm.test('Agent reports ok', () => pm.expect(pm.response.json().status).to.eql('ok'));"
+            ]
+          }
+        }
+      ]
     },
     {
       "name": "04 - Create Debug Skill",
       "request": {
         "method": "POST",
         "header": [
-          { "key": "Authorization", "value": "Bearer {{backend_access_token}}" },
-          { "key": "X-Org-Id", "value": "{{org_id}}" },
-          { "key": "Content-Type", "value": "application/json" }
+          {
+            "key": "Authorization",
+            "value": "Bearer {{backend_access_token}}"
+          },
+          {
+            "key": "X-Org-Id",
+            "value": "{{org_id}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
         ],
-        "body": { "mode": "raw", "raw": "{\n  \"skill_id\": \"{{skill_key}}\",\n  \"name\": \"Postman Agent Debug Skill\",\n  \"tool_name\": \"postman_agent_debug\",\n  \"version\": \"{{release_version}}\",\n  \"runtime\": \"hermes\",\n  \"is_mcp_exposed\": false,\n  \"input_schema\": {\"type\": \"object\"},\n  \"output_schema\": {\"type\": \"object\"}\n}" },
-        "url": { "raw": "{{backend_base_url}}/api/v1/hermes/skills" }
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"skill_id\": \"{{skill_key}}\",\n  \"name\": \"Postman Agent Debug Skill\",\n  \"tool_name\": \"postman_agent_debug\",\n  \"version\": \"{{release_version}}\",\n  \"runtime\": \"hermes\",\n  \"is_mcp_exposed\": false,\n  \"input_schema\": {\"type\": \"object\"},\n  \"output_schema\": {\"type\": \"object\"}\n}"
+        },
+        "url": {
+          "raw": "{{backend_base_url}}/api/v1/hermes/skills",
+          "host": [
+            "{{backend_base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "hermes",
+            "skills"
+          ]
+        }
       },
-      "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Skill create is 200', () => pm.response.to.have.status(200));", "const j = pm.response.json(); pm.expect(j.code).to.eql(0); pm.expect(j.data.id).to.be.a('string'); pm.collectionVariables.set('skill_db_id', j.data.id);"] } }]
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Skill create is 200', () => pm.response.to.have.status(200));",
+              "const j = pm.response.json(); pm.expect(j.code).to.eql(0); pm.expect(j.data.id).to.be.a('string'); pm.collectionVariables.set('skill_db_id', j.data.id);"
+            ]
+          }
+        }
+      ]
     },
     {
       "name": "05 - Create Skill Release",
       "request": {
         "method": "POST",
         "header": [
-          { "key": "Authorization", "value": "Bearer {{backend_access_token}}" },
-          { "key": "X-Org-Id", "value": "{{org_id}}" },
-          { "key": "Content-Type", "value": "application/json" }
+          {
+            "key": "Authorization",
+            "value": "Bearer {{backend_access_token}}"
+          },
+          {
+            "key": "X-Org-Id",
+            "value": "{{org_id}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
         ],
-        "body": { "mode": "raw", "raw": "{\"version\": \"{{release_version}}\", \"notes\": \"Postman manual debug release\"}" },
-        "url": { "raw": "{{backend_base_url}}/api/v1/hermes/skills/{{skill_key}}/releases" }
+        "body": {
+          "mode": "raw",
+          "raw": "{\"version\": \"{{release_version}}\", \"notes\": \"Postman manual debug release\"}"
+        },
+        "url": {
+          "raw": "{{backend_base_url}}/api/v1/hermes/skills/{{skill_key}}/releases",
+          "host": [
+            "{{backend_base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "hermes",
+            "skills",
+            "{{skill_key}}",
+            "releases"
+          ]
+        }
       },
-      "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Release create is 200', () => pm.response.to.have.status(200));", "const j = pm.response.json(); pm.expect(j.code).to.eql(0); pm.expect(j.data.id).to.be.a('string'); pm.collectionVariables.set('release_id', j.data.id);"] } }]
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Release create is 200', () => pm.response.to.have.status(200));",
+              "const j = pm.response.json(); pm.expect(j.code).to.eql(0); pm.expect(j.data.id).to.be.a('string'); pm.collectionVariables.set('release_id', j.data.id);"
+            ]
+          }
+        }
+      ]
     },
     {
       "name": "06 - Publish Skill Release",
       "request": {
         "method": "POST",
         "header": [
-          { "key": "Authorization", "value": "Bearer {{backend_access_token}}" },
-          { "key": "X-Org-Id", "value": "{{org_id}}" }
+          {
+            "key": "Authorization",
+            "value": "Bearer {{backend_access_token}}"
+          },
+          {
+            "key": "X-Org-Id",
+            "value": "{{org_id}}"
+          }
         ],
-        "url": { "raw": "{{backend_base_url}}/api/v1/hermes/skills/{{skill_key}}/releases/{{release_id}}/publish" }
+        "url": {
+          "raw": "{{backend_base_url}}/api/v1/hermes/skills/{{skill_key}}/releases/{{release_id}}/publish",
+          "host": [
+            "{{backend_base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "hermes",
+            "skills",
+            "{{skill_key}}",
+            "releases",
+            "{{release_id}}",
+            "publish"
+          ]
+        }
       },
-      "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Release publish is 200', () => pm.response.to.have.status(200));", "const j = pm.response.json(); pm.expect(j.code).to.eql(0); pm.expect(j.data.status).to.eql('published');"] } }]
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Release publish is 200', () => pm.response.to.have.status(200));",
+              "const j = pm.response.json(); pm.expect(j.code).to.eql(0); pm.expect(j.data.status).to.eql('published');"
+            ]
+          }
+        }
+      ]
     },
     {
       "name": "07 - Register Isolated Edge Node",
       "request": {
         "method": "POST",
         "header": [
-          { "key": "Authorization", "value": "Bearer {{backend_access_token}}" },
-          { "key": "X-Org-Id", "value": "{{org_id}}" },
-          { "key": "Content-Type", "value": "application/json" }
+          {
+            "key": "Authorization",
+            "value": "Bearer {{backend_access_token}}"
+          },
+          {
+            "key": "X-Org-Id",
+            "value": "{{org_id}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
         ],
-        "body": { "mode": "raw", "raw": "{\"name\": \"Postman Isolated Edge Node\"}" },
-        "url": { "raw": "{{backend_base_url}}/api/v1/hermes/edge-nodes" }
+        "body": {
+          "mode": "raw",
+          "raw": "{\"name\": \"Postman Isolated Edge Node\"}"
+        },
+        "url": {
+          "raw": "{{backend_base_url}}/api/v1/hermes/edge-nodes",
+          "host": [
+            "{{backend_base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "hermes",
+            "edge-nodes"
+          ]
+        }
       },
-      "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Edge node register is 200', () => pm.response.to.have.status(200));", "const j = pm.response.json(); pm.expect(j.code).to.eql(0); pm.expect(j.data.node.id).to.be.a('string'); pm.expect(j.data.token).to.be.a('string'); pm.collectionVariables.set('edge_node_id', j.data.node.id); pm.collectionVariables.set('edge_token', j.data.token);"] } }]
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Edge node register is 200', () => pm.response.to.have.status(200));",
+              "const j = pm.response.json(); pm.expect(j.code).to.eql(0); pm.expect(j.data.node.id).to.be.a('string'); pm.expect(j.data.token).to.be.a('string'); pm.collectionVariables.set('edge_node_id', j.data.node.id); pm.collectionVariables.set('edge_token', j.data.token);"
+            ]
+          }
+        }
+      ]
     },
     {
       "name": "08 - Edge Heartbeat",
       "request": {
         "method": "POST",
-        "header": [{ "key": "X-Edge-Token", "value": "{{edge_token}}" }, { "key": "Content-Type", "value": "application/json" }],
-        "body": { "mode": "raw", "raw": "{\"node_id\": \"{{edge_node_id}}\", \"status_meta\": {\"source\": \"postman-manual-debug\"}}" },
-        "url": { "raw": "{{backend_base_url}}/api/v1/internal/edge/heartbeat" }
+        "header": [
+          {
+            "key": "X-Edge-Token",
+            "value": "{{edge_token}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"node_id\": \"{{edge_node_id}}\", \"status_meta\": {\"source\": \"postman-manual-debug\"}}"
+        },
+        "url": {
+          "raw": "{{backend_base_url}}/api/v1/internal/edge/heartbeat",
+          "host": [
+            "{{backend_base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "internal",
+            "edge",
+            "heartbeat"
+          ]
+        }
       },
-      "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Edge heartbeat is 200', () => pm.response.to.have.status(200));", "const j = pm.response.json(); pm.expect(j.code).to.eql(0); pm.expect(j.data.node_id).to.eql(pm.collectionVariables.get('edge_node_id'));"] } }]
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Edge heartbeat is 200', () => pm.response.to.have.status(200));",
+              "const j = pm.response.json(); pm.expect(j.code).to.eql(0); pm.expect(j.data.node_id).to.eql(pm.collectionVariables.get('edge_node_id'));"
+            ]
+          }
+        }
+      ]
     },
     {
       "name": "10 - Create Approval-Gated Central Run",
       "request": {
         "method": "POST",
         "header": [
-          { "key": "X-Skill-Agent-Token", "value": "{{agent_internal_token}}" },
-          { "key": "X-Exec-Org-Id", "value": "{{org_id}}" },
-          { "key": "X-Exec-User-Id", "value": "{{user_id}}" },
-          { "key": "Content-Type", "value": "application/json" }
+          {
+            "key": "X-Exec-Org-Id",
+            "value": "{{org_id}}"
+          },
+          {
+            "key": "X-Exec-User-Id",
+            "value": "{{user_id}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
         ],
-        "body": { "mode": "raw", "raw": "{\n  \"run_id\": \"{{central_run_id}}\",\n  \"tool_name\": \"postman_agent_debug\",\n  \"skill_id\": \"{{skill_key}}\",\n  \"skill_release_id\": \"{{release_id}}\",\n  \"placement\": {\"role\": \"central\", \"engine\": \"hermes\"},\n  \"arguments\": {\"message\": \"manual central run\"},\n  \"requires_approval\": true,\n  \"request_trace_id\": \"postman-central-{{central_run_id}}\",\n  \"idempotency_key\": \"postman-central-{{central_run_id}}\"\n}" },
-        "url": { "raw": "{{agent_base_url}}/internal/v1/runs" }
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"run_id\": \"{{central_run_id}}\",\n  \"tool_name\": \"postman_agent_debug\",\n  \"skill_id\": \"{{skill_key}}\",\n  \"skill_release_id\": \"{{release_id}}\",\n  \"placement\": {\"role\": \"central\", \"engine\": \"hermes\"},\n  \"arguments\": {\"message\": \"manual central run\"},\n  \"requires_approval\": true,\n  \"request_trace_id\": \"postman-central-{{central_run_id}}\",\n  \"idempotency_key\": \"postman-central-{{central_run_id}}\"\n}"
+        },
+        "url": {
+          "raw": "{{agent_base_url}}/internal/v1/runs",
+          "host": [
+            "{{agent_base_url}}"
+          ],
+          "path": [
+            "internal",
+            "v1",
+            "runs"
+          ]
+        }
       },
-      "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Central run create is 200', () => pm.response.to.have.status(200));", "const j = pm.response.json(); pm.expect(j.run_id).to.eql(pm.collectionVariables.get('central_run_id')); pm.expect(j.status).to.eql('WAITING_APPROVAL');"] } }]
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Central run create is 200', () => pm.response.to.have.status(200));",
+              "const j = pm.response.json(); pm.expect(j.run_id).to.eql(pm.collectionVariables.get('central_run_id')); pm.expect(j.status).to.eql('WAITING_APPROVAL');"
+            ]
+          }
+        }
+      ]
     },
     {
       "name": "11 - Repeat Central Run Idempotently",
       "request": {
         "method": "POST",
         "header": [
-          { "key": "X-Skill-Agent-Token", "value": "{{agent_internal_token}}" },
-          { "key": "X-Exec-Org-Id", "value": "{{org_id}}" },
-          { "key": "X-Exec-User-Id", "value": "{{user_id}}" },
-          { "key": "Content-Type", "value": "application/json" }
+          {
+            "key": "X-Exec-Org-Id",
+            "value": "{{org_id}}"
+          },
+          {
+            "key": "X-Exec-User-Id",
+            "value": "{{user_id}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
         ],
-        "body": { "mode": "raw", "raw": "{\n  \"run_id\": \"{{central_run_id}}\",\n  \"tool_name\": \"postman_agent_debug\",\n  \"skill_id\": \"{{skill_key}}\",\n  \"skill_release_id\": \"{{release_id}}\",\n  \"placement\": {\"role\": \"central\", \"engine\": \"hermes\"},\n  \"arguments\": {\"message\": \"manual central run\"},\n  \"requires_approval\": true,\n  \"request_trace_id\": \"postman-central-{{central_run_id}}\",\n  \"idempotency_key\": \"postman-central-{{central_run_id}}\"\n}" },
-        "url": { "raw": "{{agent_base_url}}/internal/v1/runs" }
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"run_id\": \"{{central_run_id}}\",\n  \"tool_name\": \"postman_agent_debug\",\n  \"skill_id\": \"{{skill_key}}\",\n  \"skill_release_id\": \"{{release_id}}\",\n  \"placement\": {\"role\": \"central\", \"engine\": \"hermes\"},\n  \"arguments\": {\"message\": \"manual central run\"},\n  \"requires_approval\": true,\n  \"request_trace_id\": \"postman-central-{{central_run_id}}\",\n  \"idempotency_key\": \"postman-central-{{central_run_id}}\"\n}"
+        },
+        "url": {
+          "raw": "{{agent_base_url}}/internal/v1/runs",
+          "host": [
+            "{{agent_base_url}}"
+          ],
+          "path": [
+            "internal",
+            "v1",
+            "runs"
+          ]
+        }
       },
-      "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Idempotent create is 200', () => pm.response.to.have.status(200));", "const j = pm.response.json(); pm.expect(j.run_id).to.eql(pm.collectionVariables.get('central_run_id')); pm.expect(j.status).to.eql('WAITING_APPROVAL');"] } }]
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Idempotent create is 200', () => pm.response.to.have.status(200));",
+              "const j = pm.response.json(); pm.expect(j.run_id).to.eql(pm.collectionVariables.get('central_run_id')); pm.expect(j.status).to.eql('WAITING_APPROVAL');"
+            ]
+          }
+        }
+      ]
     },
     {
       "name": "12 - Get Central Run",
       "request": {
         "method": "GET",
-        "header": [{ "key": "X-Skill-Agent-Token", "value": "{{agent_internal_token}}" }, { "key": "X-Exec-Org-Id", "value": "{{org_id}}" }],
-        "url": { "raw": "{{agent_base_url}}/internal/v1/runs/{{central_run_id}}" }
+        "header": [
+          {
+            "key": "X-Exec-Org-Id",
+            "value": "{{org_id}}"
+          }
+        ],
+        "url": {
+          "raw": "{{agent_base_url}}/internal/v1/runs/{{central_run_id}}",
+          "host": [
+            "{{agent_base_url}}"
+          ],
+          "path": [
+            "internal",
+            "v1",
+            "runs",
+            "{{central_run_id}}"
+          ]
+        }
       },
-      "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Central run query is 200', () => pm.response.to.have.status(200));", "const j = pm.response.json(); pm.expect(j.run_id).to.eql(pm.collectionVariables.get('central_run_id')); pm.expect(j.org_id).to.eql(pm.collectionVariables.get('org_id'));"] } }]
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Central run query is 200', () => pm.response.to.have.status(200));",
+              "const j = pm.response.json(); pm.expect(j.run_id).to.eql(pm.collectionVariables.get('central_run_id')); pm.expect(j.org_id).to.eql(pm.collectionVariables.get('org_id'));"
+            ]
+          }
+        }
+      ]
     },
     {
       "name": "13 - Replay Central Run Events",
       "request": {
         "method": "GET",
-        "header": [{ "key": "X-Skill-Agent-Token", "value": "{{agent_internal_token}}" }, { "key": "X-Exec-Org-Id", "value": "{{org_id}}" }],
-        "url": { "raw": "{{agent_base_url}}/internal/v1/runs/{{central_run_id}}/events?after_seq=0" }
+        "header": [
+          {
+            "key": "X-Exec-Org-Id",
+            "value": "{{org_id}}"
+          }
+        ],
+        "url": {
+          "raw": "{{agent_base_url}}/internal/v1/runs/{{central_run_id}}/events?after_seq=0",
+          "host": [
+            "{{agent_base_url}}"
+          ],
+          "path": [
+            "internal",
+            "v1",
+            "runs",
+            "{{central_run_id}}",
+            "events"
+          ],
+          "query": [
+            {
+              "key": "after_seq",
+              "value": "0"
+            }
+          ]
+        }
       },
-      "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Event replay is 200', () => pm.response.to.have.status(200));", "const j = pm.response.json(); pm.expect(j.run_id).to.eql(pm.collectionVariables.get('central_run_id')); pm.expect(j.items).to.be.an('array'); pm.expect(j.next_seq).to.be.a('number');"] } }]
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Event replay is 200', () => pm.response.to.have.status(200));",
+              "const j = pm.response.json(); pm.expect(j.run_id).to.eql(pm.collectionVariables.get('central_run_id')); pm.expect(j.items).to.be.an('array'); pm.expect(j.next_seq).to.be.a('number');"
+            ]
+          }
+        }
+      ]
     },
     {
       "name": "14 - Get Central Run Result",
       "request": {
         "method": "GET",
-        "header": [{ "key": "X-Skill-Agent-Token", "value": "{{agent_internal_token}}" }, { "key": "X-Exec-Org-Id", "value": "{{org_id}}" }],
-        "url": { "raw": "{{agent_base_url}}/internal/v1/runs/{{central_run_id}}/result" }
+        "header": [
+          {
+            "key": "X-Exec-Org-Id",
+            "value": "{{org_id}}"
+          }
+        ],
+        "url": {
+          "raw": "{{agent_base_url}}/internal/v1/runs/{{central_run_id}}/result",
+          "host": [
+            "{{agent_base_url}}"
+          ],
+          "path": [
+            "internal",
+            "v1",
+            "runs",
+            "{{central_run_id}}",
+            "result"
+          ]
+        }
       },
-      "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Result query is 200', () => pm.response.to.have.status(200));", "const j = pm.response.json(); pm.expect(j.run_id).to.eql(pm.collectionVariables.get('central_run_id')); pm.expect(j.status).to.eql('WAITING_APPROVAL');"] } }]
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Result query is 200', () => pm.response.to.have.status(200));",
+              "const j = pm.response.json(); pm.expect(j.run_id).to.eql(pm.collectionVariables.get('central_run_id')); pm.expect(j.status).to.eql('WAITING_APPROVAL');"
+            ]
+          }
+        }
+      ]
     },
     {
       "name": "15 - Approve Central Run",
       "request": {
         "method": "POST",
         "header": [
-          { "key": "X-Skill-Agent-Token", "value": "{{agent_internal_token}}" },
-          { "key": "X-Exec-Org-Id", "value": "{{org_id}}" },
-          { "key": "Content-Type", "value": "application/json" }
+          {
+            "key": "X-Exec-Org-Id",
+            "value": "{{org_id}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
         ],
-        "body": { "mode": "raw", "raw": "{\"evidence\": {\"source\": \"postman\", \"decision\": \"approved\"}}" },
-        "url": { "raw": "{{agent_base_url}}/internal/v1/runs/{{central_run_id}}/approvals/{{approval_id}}" }
+        "body": {
+          "mode": "raw",
+          "raw": "{\"evidence\": {\"source\": \"postman\", \"decision\": \"approved\"}}"
+        },
+        "url": {
+          "raw": "{{agent_base_url}}/internal/v1/runs/{{central_run_id}}/approvals/{{approval_id}}",
+          "host": [
+            "{{agent_base_url}}"
+          ],
+          "path": [
+            "internal",
+            "v1",
+            "runs",
+            "{{central_run_id}}",
+            "approvals",
+            "{{approval_id}}"
+          ]
+        }
       },
-      "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Approval is 200', () => pm.response.to.have.status(200));", "const j = pm.response.json(); pm.expect(j.run_id).to.eql(pm.collectionVariables.get('central_run_id')); pm.expect(j.status).to.eql('RESUMING');"] } }]
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Approval is 200', () => pm.response.to.have.status(200));",
+              "const j = pm.response.json(); pm.expect(j.run_id).to.eql(pm.collectionVariables.get('central_run_id')); pm.expect(j.status).to.eql('RESUMING');"
+            ]
+          }
+        }
+      ]
     },
     {
       "name": "16 - Create Cancel Run",
       "request": {
         "method": "POST",
         "header": [
-          { "key": "X-Skill-Agent-Token", "value": "{{agent_internal_token}}" },
-          { "key": "X-Exec-Org-Id", "value": "{{org_id}}" },
-          { "key": "X-Exec-User-Id", "value": "{{user_id}}" },
-          { "key": "Content-Type", "value": "application/json" }
+          {
+            "key": "X-Exec-Org-Id",
+            "value": "{{org_id}}"
+          },
+          {
+            "key": "X-Exec-User-Id",
+            "value": "{{user_id}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
         ],
-        "body": { "mode": "raw", "raw": "{\"run_id\": \"{{cancel_run_id}}\", \"tool_name\": \"postman_cancel_debug\", \"requires_approval\": true, \"placement\": {\"role\": \"central\"}, \"idempotency_key\": \"postman-cancel-{{cancel_run_id}}\"}" },
-        "url": { "raw": "{{agent_base_url}}/internal/v1/runs" }
+        "body": {
+          "mode": "raw",
+          "raw": "{\"run_id\": \"{{cancel_run_id}}\", \"tool_name\": \"postman_cancel_debug\", \"requires_approval\": true, \"placement\": {\"role\": \"central\"}, \"idempotency_key\": \"postman-cancel-{{cancel_run_id}}\"}"
+        },
+        "url": {
+          "raw": "{{agent_base_url}}/internal/v1/runs",
+          "host": [
+            "{{agent_base_url}}"
+          ],
+          "path": [
+            "internal",
+            "v1",
+            "runs"
+          ]
+        }
       },
-      "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Cancel run create is 200', () => pm.response.to.have.status(200));", "pm.expect(pm.response.json().status).to.eql('WAITING_APPROVAL');"] } }]
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Cancel run create is 200', () => pm.response.to.have.status(200));",
+              "pm.expect(pm.response.json().status).to.eql('WAITING_APPROVAL');"
+            ]
+          }
+        }
+      ]
     },
     {
       "name": "17 - Cancel Run",
       "request": {
         "method": "POST",
-        "header": [{ "key": "X-Skill-Agent-Token", "value": "{{agent_internal_token}}" }, { "key": "X-Exec-Org-Id", "value": "{{org_id}}" }],
-        "url": { "raw": "{{agent_base_url}}/internal/v1/runs/{{cancel_run_id}}/cancel" }
+        "header": [
+          {
+            "key": "X-Exec-Org-Id",
+            "value": "{{org_id}}"
+          }
+        ],
+        "url": {
+          "raw": "{{agent_base_url}}/internal/v1/runs/{{cancel_run_id}}/cancel",
+          "host": [
+            "{{agent_base_url}}"
+          ],
+          "path": [
+            "internal",
+            "v1",
+            "runs",
+            "{{cancel_run_id}}",
+            "cancel"
+          ]
+        }
       },
-      "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Cancel is 200', () => pm.response.to.have.status(200));", "const j = pm.response.json(); pm.expect(j.status).to.eql('CANCELLED'); pm.expect(j.idempotent).to.eql(true);"] } }]
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Cancel is 200', () => pm.response.to.have.status(200));",
+              "const j = pm.response.json(); pm.expect(j.status).to.eql('CANCELLED'); pm.expect(j.idempotent).to.eql(true);"
+            ]
+          }
+        }
+      ]
     },
     {
       "name": "18 - Repeat Cancel Idempotently",
       "request": {
         "method": "POST",
-        "header": [{ "key": "X-Skill-Agent-Token", "value": "{{agent_internal_token}}" }, { "key": "X-Exec-Org-Id", "value": "{{org_id}}" }],
-        "url": { "raw": "{{agent_base_url}}/internal/v1/runs/{{cancel_run_id}}/cancel" }
+        "header": [
+          {
+            "key": "X-Exec-Org-Id",
+            "value": "{{org_id}}"
+          }
+        ],
+        "url": {
+          "raw": "{{agent_base_url}}/internal/v1/runs/{{cancel_run_id}}/cancel",
+          "host": [
+            "{{agent_base_url}}"
+          ],
+          "path": [
+            "internal",
+            "v1",
+            "runs",
+            "{{cancel_run_id}}",
+            "cancel"
+          ]
+        }
       },
-      "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Repeated cancel is 200', () => pm.response.to.have.status(200));", "pm.expect(pm.response.json().status).to.eql('CANCELLED');"] } }]
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Repeated cancel is 200', () => pm.response.to.have.status(200));",
+              "pm.expect(pm.response.json().status).to.eql('CANCELLED');"
+            ]
+          }
+        }
+      ]
     },
     {
       "name": "20 - Create Artifact Run",
       "request": {
         "method": "POST",
         "header": [
-          { "key": "X-Skill-Agent-Token", "value": "{{agent_internal_token}}" },
-          { "key": "X-Exec-Org-Id", "value": "{{org_id}}" },
-          { "key": "X-Exec-User-Id", "value": "{{user_id}}" },
-          { "key": "Content-Type", "value": "application/json" }
+          {
+            "key": "X-Exec-Org-Id",
+            "value": "{{org_id}}"
+          },
+          {
+            "key": "X-Exec-User-Id",
+            "value": "{{user_id}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
         ],
-        "body": { "mode": "raw", "raw": "{\"run_id\": \"{{artifact_run_id}}\", \"tool_name\": \"postman_artifact_debug\", \"requires_approval\": true, \"placement\": {\"role\": \"central\"}, \"idempotency_key\": \"postman-artifact-{{artifact_run_id}}\"}" },
-        "url": { "raw": "{{agent_base_url}}/internal/v1/runs" }
+        "body": {
+          "mode": "raw",
+          "raw": "{\"run_id\": \"{{artifact_run_id}}\", \"tool_name\": \"postman_artifact_debug\", \"requires_approval\": true, \"placement\": {\"role\": \"central\"}, \"idempotency_key\": \"postman-artifact-{{artifact_run_id}}\"}"
+        },
+        "url": {
+          "raw": "{{agent_base_url}}/internal/v1/runs",
+          "host": [
+            "{{agent_base_url}}"
+          ],
+          "path": [
+            "internal",
+            "v1",
+            "runs"
+          ]
+        }
       },
-      "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Artifact run create is 200', () => pm.response.to.have.status(200));", "pm.expect(pm.response.json().status).to.eql('WAITING_APPROVAL');"] } }]
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Artifact run create is 200', () => pm.response.to.have.status(200));",
+              "pm.expect(pm.response.json().status).to.eql('WAITING_APPROVAL');"
+            ]
+          }
+        }
+      ]
     },
     {
       "name": "21 - Get Artifact Run Generation",
       "request": {
         "method": "GET",
-        "header": [{ "key": "X-Skill-Agent-Token", "value": "{{agent_internal_token}}" }, { "key": "X-Exec-Org-Id", "value": "{{org_id}}" }],
-        "url": { "raw": "{{agent_base_url}}/internal/v1/runs/{{artifact_run_id}}" }
+        "header": [
+          {
+            "key": "X-Exec-Org-Id",
+            "value": "{{org_id}}"
+          }
+        ],
+        "url": {
+          "raw": "{{agent_base_url}}/internal/v1/runs/{{artifact_run_id}}",
+          "host": [
+            "{{agent_base_url}}"
+          ],
+          "path": [
+            "internal",
+            "v1",
+            "runs",
+            "{{artifact_run_id}}"
+          ]
+        }
       },
-      "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Artifact run query is 200', () => pm.response.to.have.status(200));", "const j = pm.response.json(); pm.collectionVariables.set('artifact_run_generation', String(j.generation)); pm.collectionVariables.set('stale_artifact_generation', String(j.generation + 1));"] } }]
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Artifact run query is 200', () => pm.response.to.have.status(200));",
+              "const j = pm.response.json(); pm.collectionVariables.set('artifact_run_generation', String(j.generation)); pm.collectionVariables.set('stale_artifact_generation', String(j.generation + 1));"
+            ]
+          }
+        }
+      ]
     },
     {
       "name": "22 - Upload Eager Artifact",
       "request": {
         "method": "POST",
         "header": [
-          { "key": "X-Skill-Agent-Token", "value": "{{agent_internal_token}}" },
-          { "key": "X-Exec-Org-Id", "value": "{{org_id}}" },
-          { "key": "Content-Type", "value": "application/json" }
+          {
+            "key": "X-Exec-Org-Id",
+            "value": "{{org_id}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
         ],
-        "body": { "mode": "raw", "raw": "{\n  \"name\": \"agent-debug.txt\",\n  \"content_type\": \"text/plain\",\n  \"content_base64\": \"{{artifact_content_base64}}\",\n  \"checksum_sha256\": \"{{artifact_checksum_sha256}}\",\n  \"generation\": {{artifact_run_generation}},\n  \"size\": {{artifact_size}},\n  \"upload_mode\": \"eager\",\n  \"idempotency_key\": \"artifact-{{artifact_run_id}}\"\n}" },
-        "url": { "raw": "{{agent_base_url}}/internal/v1/runs/{{artifact_run_id}}/artifacts" }
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"agent-debug.txt\",\n  \"content_type\": \"text/plain\",\n  \"content_base64\": \"{{artifact_content_base64}}\",\n  \"checksum_sha256\": \"{{artifact_checksum_sha256}}\",\n  \"generation\": {{artifact_run_generation}},\n  \"size\": {{artifact_size}},\n  \"upload_mode\": \"eager\",\n  \"idempotency_key\": \"artifact-{{artifact_run_id}}\"\n}"
+        },
+        "url": {
+          "raw": "{{agent_base_url}}/internal/v1/runs/{{artifact_run_id}}/artifacts",
+          "host": [
+            "{{agent_base_url}}"
+          ],
+          "path": [
+            "internal",
+            "v1",
+            "runs",
+            "{{artifact_run_id}}",
+            "artifacts"
+          ]
+        }
       },
-      "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Artifact upload is 200', () => pm.response.to.have.status(200));", "const j = pm.response.json(); pm.expect(j.storage_state).to.eql('persisted'); pm.expect(j.checksum_sha256).to.eql(pm.collectionVariables.get('artifact_checksum_sha256')); pm.collectionVariables.set('artifact_id', j.artifact_id);"] } }]
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Artifact upload is 200', () => pm.response.to.have.status(200));",
+              "const j = pm.response.json(); pm.expect(j.storage_state).to.eql('persisted'); pm.expect(j.checksum_sha256).to.eql(pm.collectionVariables.get('artifact_checksum_sha256')); pm.collectionVariables.set('artifact_id', j.artifact_id);"
+            ]
+          }
+        }
+      ]
     },
     {
       "name": "23 - Repeat Artifact Upload Idempotently",
       "request": {
         "method": "POST",
         "header": [
-          { "key": "X-Skill-Agent-Token", "value": "{{agent_internal_token}}" },
-          { "key": "X-Exec-Org-Id", "value": "{{org_id}}" },
-          { "key": "Content-Type", "value": "application/json" }
+          {
+            "key": "X-Exec-Org-Id",
+            "value": "{{org_id}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
         ],
-        "body": { "mode": "raw", "raw": "{\"name\": \"agent-debug.txt\", \"content_type\": \"text/plain\", \"content_base64\": \"{{artifact_content_base64}}\", \"checksum_sha256\": \"{{artifact_checksum_sha256}}\", \"generation\": {{artifact_run_generation}}, \"size\": {{artifact_size}}, \"upload_mode\": \"eager\", \"idempotency_key\": \"artifact-{{artifact_run_id}}\"}" },
-        "url": { "raw": "{{agent_base_url}}/internal/v1/runs/{{artifact_run_id}}/artifacts" }
+        "body": {
+          "mode": "raw",
+          "raw": "{\"name\": \"agent-debug.txt\", \"content_type\": \"text/plain\", \"content_base64\": \"{{artifact_content_base64}}\", \"checksum_sha256\": \"{{artifact_checksum_sha256}}\", \"generation\": {{artifact_run_generation}}, \"size\": {{artifact_size}}, \"upload_mode\": \"eager\", \"idempotency_key\": \"artifact-{{artifact_run_id}}\"}"
+        },
+        "url": {
+          "raw": "{{agent_base_url}}/internal/v1/runs/{{artifact_run_id}}/artifacts",
+          "host": [
+            "{{agent_base_url}}"
+          ],
+          "path": [
+            "internal",
+            "v1",
+            "runs",
+            "{{artifact_run_id}}",
+            "artifacts"
+          ]
+        }
       },
-      "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Repeated artifact upload is 200', () => pm.response.to.have.status(200));", "pm.expect(pm.response.json().artifact_id).to.eql(pm.collectionVariables.get('artifact_id'));"] } }]
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Repeated artifact upload is 200', () => pm.response.to.have.status(200));",
+              "pm.expect(pm.response.json().artifact_id).to.eql(pm.collectionVariables.get('artifact_id'));"
+            ]
+          }
+        }
+      ]
     },
     {
       "name": "24 - List Persisted Artifacts",
       "request": {
         "method": "GET",
-        "header": [{ "key": "X-Skill-Agent-Token", "value": "{{agent_internal_token}}" }, { "key": "X-Exec-Org-Id", "value": "{{org_id}}" }],
-        "url": { "raw": "{{agent_base_url}}/internal/v1/runs/{{artifact_run_id}}/artifacts" }
+        "header": [
+          {
+            "key": "X-Exec-Org-Id",
+            "value": "{{org_id}}"
+          }
+        ],
+        "url": {
+          "raw": "{{agent_base_url}}/internal/v1/runs/{{artifact_run_id}}/artifacts",
+          "host": [
+            "{{agent_base_url}}"
+          ],
+          "path": [
+            "internal",
+            "v1",
+            "runs",
+            "{{artifact_run_id}}",
+            "artifacts"
+          ]
+        }
       },
-      "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Artifact list is 200', () => pm.response.to.have.status(200));", "const j = pm.response.json(); pm.expect(j.items.some(x => x.artifact_id === pm.collectionVariables.get('artifact_id'))).to.eql(true);"] } }]
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Artifact list is 200', () => pm.response.to.have.status(200));",
+              "const j = pm.response.json(); pm.expect(j.items.some(x => x.artifact_id === pm.collectionVariables.get('artifact_id'))).to.eql(true);"
+            ]
+          }
+        }
+      ]
     },
     {
       "name": "25 - Download Artifact Bytes",
       "request": {
         "method": "GET",
-        "header": [{ "key": "X-Skill-Agent-Token", "value": "{{agent_internal_token}}" }, { "key": "X-Exec-Org-Id", "value": "{{org_id}}" }],
-        "url": { "raw": "{{agent_base_url}}/internal/v1/runs/{{artifact_run_id}}/artifacts/{{artifact_id}}/bytes" }
+        "header": [
+          {
+            "key": "X-Exec-Org-Id",
+            "value": "{{org_id}}"
+          }
+        ],
+        "url": {
+          "raw": "{{agent_base_url}}/internal/v1/runs/{{artifact_run_id}}/artifacts/{{artifact_id}}/bytes",
+          "host": [
+            "{{agent_base_url}}"
+          ],
+          "path": [
+            "internal",
+            "v1",
+            "runs",
+            "{{artifact_run_id}}",
+            "artifacts",
+            "{{artifact_id}}",
+            "bytes"
+          ]
+        }
       },
-      "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Artifact bytes download is 200', () => pm.response.to.have.status(200));", "pm.test('Artifact checksum header matches', () => pm.expect(pm.response.headers.get('X-Checksum-SHA256')).to.eql(pm.collectionVariables.get('artifact_checksum_sha256')));", "pm.test('Artifact content matches', () => pm.expect(pm.response.text()).to.eql('nodeskclaw-agent-artifact'));"] } }]
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Artifact bytes download is 200', () => pm.response.to.have.status(200));",
+              "pm.test('Artifact checksum header matches', () => pm.expect(pm.response.headers.get('X-Checksum-SHA256')).to.eql(pm.collectionVariables.get('artifact_checksum_sha256')));",
+              "pm.test('Artifact content matches', () => pm.expect(pm.response.text()).to.eql('nodeskclaw-agent-artifact'));"
+            ]
+          }
+        }
+      ]
     },
     {
       "name": "26 - Reject Stale Artifact Generation",
       "request": {
         "method": "POST",
         "header": [
-          { "key": "X-Skill-Agent-Token", "value": "{{agent_internal_token}}" },
-          { "key": "X-Exec-Org-Id", "value": "{{org_id}}" },
-          { "key": "Content-Type", "value": "application/json" }
+          {
+            "key": "X-Exec-Org-Id",
+            "value": "{{org_id}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
         ],
-        "body": { "mode": "raw", "raw": "{\"name\": \"stale.txt\", \"content_base64\": \"{{artifact_content_base64}}\", \"checksum_sha256\": \"{{artifact_checksum_sha256}}\", \"generation\": {{stale_artifact_generation}}, \"size\": {{artifact_size}}, \"idempotency_key\": \"stale-{{artifact_run_id}}\"}" },
-        "url": { "raw": "{{agent_base_url}}/internal/v1/runs/{{artifact_run_id}}/artifacts" }
+        "body": {
+          "mode": "raw",
+          "raw": "{\"name\": \"stale.txt\", \"content_base64\": \"{{artifact_content_base64}}\", \"checksum_sha256\": \"{{artifact_checksum_sha256}}\", \"generation\": {{stale_artifact_generation}}, \"size\": {{artifact_size}}, \"idempotency_key\": \"stale-{{artifact_run_id}}\"}"
+        },
+        "url": {
+          "raw": "{{agent_base_url}}/internal/v1/runs/{{artifact_run_id}}/artifacts",
+          "host": [
+            "{{agent_base_url}}"
+          ],
+          "path": [
+            "internal",
+            "v1",
+            "runs",
+            "{{artifact_run_id}}",
+            "artifacts"
+          ]
+        }
       },
-      "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Stale artifact generation is 409', () => pm.response.to.have.status(409));", "pm.expect(pm.response.json().error_code).to.eql('errors.artifact.stale_generation');"] } }]
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Stale artifact generation is 409', () => pm.response.to.have.status(409));",
+              "pm.expect(pm.response.json().error_code).to.eql('errors.artifact.stale_generation');"
+            ]
+          }
+        }
+      ]
     },
     {
       "name": "27 - Reject Cross-Org Run Read",
       "request": {
         "method": "GET",
-        "header": [{ "key": "X-Skill-Agent-Token", "value": "{{agent_internal_token}}" }, { "key": "X-Exec-Org-Id", "value": "{{other_org_id}}" }],
-        "url": { "raw": "{{agent_base_url}}/internal/v1/runs/{{artifact_run_id}}" }
+        "header": [
+          {
+            "key": "X-Exec-Org-Id",
+            "value": "{{other_org_id}}"
+          }
+        ],
+        "url": {
+          "raw": "{{agent_base_url}}/internal/v1/runs/{{artifact_run_id}}",
+          "host": [
+            "{{agent_base_url}}"
+          ],
+          "path": [
+            "internal",
+            "v1",
+            "runs",
+            "{{artifact_run_id}}"
+          ]
+        }
       },
-      "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Cross-org run read is 404', () => pm.response.to.have.status(404));"] } }]
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Cross-org run read is 404', () => pm.response.to.have.status(404));"
+            ]
+          }
+        }
+      ]
     },
     {
       "name": "28 - Ingest Incremental Event",
       "request": {
         "method": "POST",
         "header": [
-          { "key": "X-Skill-Agent-Token", "value": "{{agent_internal_token}}" },
-          { "key": "X-Exec-Org-Id", "value": "{{org_id}}" },
-          { "key": "Content-Type", "value": "application/json" }
+          {
+            "key": "X-Exec-Org-Id",
+            "value": "{{org_id}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
         ],
-        "body": { "mode": "raw", "raw": "{\"org_id\": \"{{org_id}}\", \"events\": [{\"event_type\": \"run.progress\", \"source\": \"postman\", \"source_event_id\": \"{{source_event_id}}\", \"payload\": {\"progress\": 50}}]}" },
-        "url": { "raw": "{{agent_base_url}}/internal/v1/runs/{{artifact_run_id}}/events/ingest" }
+        "body": {
+          "mode": "raw",
+          "raw": "{\"org_id\": \"{{org_id}}\", \"events\": [{\"event_type\": \"run.progress\", \"source\": \"postman\", \"source_event_id\": \"{{source_event_id}}\", \"payload\": {\"progress\": 50}}]}"
+        },
+        "url": {
+          "raw": "{{agent_base_url}}/internal/v1/runs/{{artifact_run_id}}/events/ingest",
+          "host": [
+            "{{agent_base_url}}"
+          ],
+          "path": [
+            "internal",
+            "v1",
+            "runs",
+            "{{artifact_run_id}}",
+            "events",
+            "ingest"
+          ]
+        }
       },
-      "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Event ingest is 200', () => pm.response.to.have.status(200));", "const j = pm.response.json(); pm.expect(j.ok).to.eql(true); pm.expect(j.count).to.eql(1);"] } }]
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Event ingest is 200', () => pm.response.to.have.status(200));",
+              "const j = pm.response.json(); pm.expect(j.ok).to.eql(true); pm.expect(j.count).to.eql(1);"
+            ]
+          }
+        }
+      ]
     },
     {
       "name": "29 - Replay Same Event Idempotently",
       "request": {
         "method": "POST",
         "header": [
-          { "key": "X-Skill-Agent-Token", "value": "{{agent_internal_token}}" },
-          { "key": "X-Exec-Org-Id", "value": "{{org_id}}" },
-          { "key": "Content-Type", "value": "application/json" }
+          {
+            "key": "X-Exec-Org-Id",
+            "value": "{{org_id}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
         ],
-        "body": { "mode": "raw", "raw": "{\"org_id\": \"{{org_id}}\", \"events\": [{\"event_type\": \"run.progress\", \"source\": \"postman\", \"source_event_id\": \"{{source_event_id}}\", \"payload\": {\"progress\": 50}}]}" },
-        "url": { "raw": "{{agent_base_url}}/internal/v1/runs/{{artifact_run_id}}/events/ingest" }
+        "body": {
+          "mode": "raw",
+          "raw": "{\"org_id\": \"{{org_id}}\", \"events\": [{\"event_type\": \"run.progress\", \"source\": \"postman\", \"source_event_id\": \"{{source_event_id}}\", \"payload\": {\"progress\": 50}}]}"
+        },
+        "url": {
+          "raw": "{{agent_base_url}}/internal/v1/runs/{{artifact_run_id}}/events/ingest",
+          "host": [
+            "{{agent_base_url}}"
+          ],
+          "path": [
+            "internal",
+            "v1",
+            "runs",
+            "{{artifact_run_id}}",
+            "events",
+            "ingest"
+          ]
+        }
       },
-      "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Duplicate event request is 200', () => pm.response.to.have.status(200));", "const j = pm.response.json(); pm.expect(j.ok).to.eql(true); pm.expect(j.count).to.eql(0);"] } }]
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Duplicate event request is 200', () => pm.response.to.have.status(200));",
+              "const j = pm.response.json(); pm.expect(j.ok).to.eql(true); pm.expect(j.count).to.eql(0);"
+            ]
+          }
+        }
+      ]
     },
     {
       "name": "30 - Reject Resume While Waiting Approval",
       "request": {
         "method": "POST",
         "header": [
-          { "key": "X-Skill-Agent-Token", "value": "{{agent_internal_token}}" },
-          { "key": "X-Exec-Org-Id", "value": "{{org_id}}" },
-          { "key": "Content-Type", "value": "application/json" }
+          {
+            "key": "X-Exec-Org-Id",
+            "value": "{{org_id}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
         ],
-        "body": { "mode": "raw", "raw": "{\"evidence\": {\"source\": \"postman\"}}" },
-        "url": { "raw": "{{agent_base_url}}/internal/v1/runs/{{artifact_run_id}}/resume" }
+        "body": {
+          "mode": "raw",
+          "raw": "{\"evidence\": {\"source\": \"postman\"}}"
+        },
+        "url": {
+          "raw": "{{agent_base_url}}/internal/v1/runs/{{artifact_run_id}}/resume",
+          "host": [
+            "{{agent_base_url}}"
+          ],
+          "path": [
+            "internal",
+            "v1",
+            "runs",
+            "{{artifact_run_id}}",
+            "resume"
+          ]
+        }
       },
-      "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Resume without approval is 400', () => pm.response.to.have.status(400));", "pm.expect(pm.response.json().detail).to.contain('requires approval');"] } }]
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Resume without approval is 400', () => pm.response.to.have.status(400));",
+              "pm.expect(pm.response.json().detail).to.contain('requires approval');"
+            ]
+          }
+        }
+      ]
     },
     {
       "name": "40 - Create Edge-Placed Agent Run",
       "request": {
         "method": "POST",
         "header": [
-          { "key": "X-Skill-Agent-Token", "value": "{{agent_internal_token}}" },
-          { "key": "X-Exec-Org-Id", "value": "{{org_id}}" },
-          { "key": "X-Exec-User-Id", "value": "{{user_id}}" },
-          { "key": "Content-Type", "value": "application/json" }
+          {
+            "key": "X-Exec-Org-Id",
+            "value": "{{org_id}}"
+          },
+          {
+            "key": "X-Exec-User-Id",
+            "value": "{{user_id}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
         ],
-        "body": { "mode": "raw", "raw": "{\"run_id\": \"{{edge_run_id}}\", \"tool_name\": \"postman_edge_debug\", \"placement\": {\"role\": \"edge\", \"engine\": \"connector\", \"edge_node_id\": \"{{edge_node_id}}\"}, \"arguments\": {\"message\": \"manual edge run\"}, \"idempotency_key\": \"postman-edge-{{edge_run_id}}\"}" },
-        "url": { "raw": "{{agent_base_url}}/internal/v1/runs" }
+        "body": {
+          "mode": "raw",
+          "raw": "{\"run_id\": \"{{edge_run_id}}\", \"tool_name\": \"postman_edge_debug\", \"placement\": {\"role\": \"edge\", \"engine\": \"connector\", \"edge_node_id\": \"{{edge_node_id}}\"}, \"arguments\": {\"message\": \"manual edge run\"}, \"idempotency_key\": \"postman-edge-{{edge_run_id}}\"}"
+        },
+        "url": {
+          "raw": "{{agent_base_url}}/internal/v1/runs",
+          "host": [
+            "{{agent_base_url}}"
+          ],
+          "path": [
+            "internal",
+            "v1",
+            "runs"
+          ]
+        }
       },
-      "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Edge run create is 200', () => pm.response.to.have.status(200));", "const j = pm.response.json(); pm.expect(j.status).to.eql('QUEUED');"] } }]
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Edge run create is 200', () => pm.response.to.have.status(200));",
+              "const j = pm.response.json(); pm.expect(j.status).to.eql('QUEUED');"
+            ]
+          }
+        }
+      ]
     },
     {
       "name": "41 - Get Edge Run Generation",
       "request": {
         "method": "GET",
-        "header": [{ "key": "X-Skill-Agent-Token", "value": "{{agent_internal_token}}" }, { "key": "X-Exec-Org-Id", "value": "{{org_id}}" }],
-        "url": { "raw": "{{agent_base_url}}/internal/v1/runs/{{edge_run_id}}" }
+        "header": [
+          {
+            "key": "X-Exec-Org-Id",
+            "value": "{{org_id}}"
+          }
+        ],
+        "url": {
+          "raw": "{{agent_base_url}}/internal/v1/runs/{{edge_run_id}}",
+          "host": [
+            "{{agent_base_url}}"
+          ],
+          "path": [
+            "internal",
+            "v1",
+            "runs",
+            "{{edge_run_id}}"
+          ]
+        }
       },
-      "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Edge run query is 200', () => pm.response.to.have.status(200));", "pm.collectionVariables.set('edge_run_generation', String(pm.response.json().generation));"] } }]
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Edge run query is 200', () => pm.response.to.have.status(200));",
+              "pm.collectionVariables.set('edge_run_generation', String(pm.response.json().generation));"
+            ]
+          }
+        }
+      ]
     },
     {
       "name": "42 - Enqueue Edge Job",
       "request": {
         "method": "POST",
         "header": [
-          { "key": "X-Skill-Agent-Token", "value": "{{agent_internal_token}}" },
-          { "key": "X-Exec-Org-Id", "value": "{{org_id}}" },
-          { "key": "Content-Type", "value": "application/json" }
+          {
+            "key": "X-Exec-Org-Id",
+            "value": "{{org_id}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
         ],
-        "body": { "mode": "raw", "raw": "{\n  \"edge_node_id\": \"{{edge_node_id}}\",\n  \"run_id\": \"{{edge_run_id}}\",\n  \"tool_name\": \"postman_edge_debug\",\n  \"arguments\": {\"message\": \"manual edge job\"},\n  \"snapshot\": {\"placement\": {\"role\": \"edge\", \"engine\": \"connector\"}},\n  \"idempotency_key\": \"edge-job-{{edge_run_id}}\",\n  \"step_id\": \"edge_connector\",\n  \"run_generation\": {{edge_run_generation}},\n  \"request_trace_id\": \"postman-edge-{{edge_run_id}}\"\n}" },
-        "url": { "raw": "{{backend_base_url}}/api/v1/internal/edge/jobs/enqueue" }
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"edge_node_id\": \"{{edge_node_id}}\",\n  \"run_id\": \"{{edge_run_id}}\",\n  \"tool_name\": \"postman_edge_debug\",\n  \"arguments\": {\"message\": \"manual edge job\"},\n  \"snapshot\": {\"placement\": {\"role\": \"edge\", \"engine\": \"connector\"}},\n  \"idempotency_key\": \"edge-job-{{edge_run_id}}\",\n  \"step_id\": \"edge_connector\",\n  \"run_generation\": {{edge_run_generation}},\n  \"request_trace_id\": \"postman-edge-{{edge_run_id}}\"\n}"
+        },
+        "url": {
+          "raw": "{{backend_base_url}}/api/v1/internal/edge/jobs/enqueue",
+          "host": [
+            "{{backend_base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "internal",
+            "edge",
+            "jobs",
+            "enqueue"
+          ]
+        }
       },
-      "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Edge job enqueue is 200', () => pm.response.to.have.status(200));", "const j = pm.response.json(); pm.expect(j.code).to.eql(0); pm.expect(j.data.run_id).to.eql(pm.collectionVariables.get('edge_run_id')); pm.collectionVariables.set('edge_job_id', j.data.job_id);"] } }]
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Edge job enqueue is 200', () => pm.response.to.have.status(200));",
+              "const j = pm.response.json(); pm.expect(j.code).to.eql(0); pm.expect(j.data.run_id).to.eql(pm.collectionVariables.get('edge_run_id')); pm.collectionVariables.set('edge_job_id', j.data.job_id);"
+            ]
+          }
+        }
+      ]
     },
     {
       "name": "43 - Claim Edge Job",
       "request": {
         "method": "GET",
-        "header": [{ "key": "X-Edge-Token", "value": "{{edge_token}}" }],
-        "url": { "raw": "{{backend_base_url}}/api/v1/internal/edge/jobs" }
+        "header": [
+          {
+            "key": "X-Edge-Token",
+            "value": "{{edge_token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{backend_base_url}}/api/v1/internal/edge/jobs",
+          "host": [
+            "{{backend_base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "internal",
+            "edge",
+            "jobs"
+          ]
+        }
       },
-      "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Edge job claim is 200', () => pm.response.to.have.status(200));", "const j = pm.response.json(); pm.expect(j.job_id).to.eql(pm.collectionVariables.get('edge_job_id')); pm.expect(j.delivery_generation).to.be.a('number'); pm.collectionVariables.set('edge_delivery_generation', String(j.delivery_generation)); pm.collectionVariables.set('stale_delivery_generation', String(j.delivery_generation - 1));"] } }]
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Edge job claim is 200', () => pm.response.to.have.status(200));",
+              "const j = pm.response.json(); pm.expect(j.job_id).to.eql(pm.collectionVariables.get('edge_job_id')); pm.expect(j.delivery_generation).to.be.a('number'); pm.collectionVariables.set('edge_delivery_generation', String(j.delivery_generation)); pm.collectionVariables.set('stale_delivery_generation', String(j.delivery_generation - 1));"
+            ]
+          }
+        }
+      ]
     },
     {
       "name": "44 - Renew Edge Lease",
       "request": {
         "method": "POST",
-        "header": [{ "key": "X-Edge-Token", "value": "{{edge_token}}" }, { "key": "X-Delivery-Generation", "value": "{{edge_delivery_generation}}" }, { "key": "Content-Type", "value": "application/json" }],
-        "body": { "mode": "raw", "raw": "{\"delivery_generation\": {{edge_delivery_generation}}}" },
-        "url": { "raw": "{{backend_base_url}}/api/v1/internal/edge/jobs/{{edge_job_id}}/lease/renew" }
+        "header": [
+          {
+            "key": "X-Edge-Token",
+            "value": "{{edge_token}}"
+          },
+          {
+            "key": "X-Delivery-Generation",
+            "value": "{{edge_delivery_generation}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"delivery_generation\": {{edge_delivery_generation}}}"
+        },
+        "url": {
+          "raw": "{{backend_base_url}}/api/v1/internal/edge/jobs/{{edge_job_id}}/lease/renew",
+          "host": [
+            "{{backend_base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "internal",
+            "edge",
+            "jobs",
+            "{{edge_job_id}}",
+            "lease",
+            "renew"
+          ]
+        }
       },
-      "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Lease renew is 200', () => pm.response.to.have.status(200));", "const j = pm.response.json(); pm.expect(j.code).to.eql(0); pm.expect(String(j.data.delivery_generation)).to.eql(pm.collectionVariables.get('edge_delivery_generation'));"] } }]
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Lease renew is 200', () => pm.response.to.have.status(200));",
+              "const j = pm.response.json(); pm.expect(j.code).to.eql(0); pm.expect(String(j.data.delivery_generation)).to.eql(pm.collectionVariables.get('edge_delivery_generation'));"
+            ]
+          }
+        }
+      ]
     },
     {
       "name": "45 - Reject Stale Edge Lease",
       "request": {
         "method": "POST",
-        "header": [{ "key": "X-Edge-Token", "value": "{{edge_token}}" }, { "key": "X-Delivery-Generation", "value": "{{stale_delivery_generation}}" }, { "key": "Content-Type", "value": "application/json" }],
-        "body": { "mode": "raw", "raw": "{\"delivery_generation\": {{stale_delivery_generation}}}" },
-        "url": { "raw": "{{backend_base_url}}/api/v1/internal/edge/jobs/{{edge_job_id}}/lease/renew" }
+        "header": [
+          {
+            "key": "X-Edge-Token",
+            "value": "{{edge_token}}"
+          },
+          {
+            "key": "X-Delivery-Generation",
+            "value": "{{stale_delivery_generation}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"delivery_generation\": {{stale_delivery_generation}}}"
+        },
+        "url": {
+          "raw": "{{backend_base_url}}/api/v1/internal/edge/jobs/{{edge_job_id}}/lease/renew",
+          "host": [
+            "{{backend_base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "internal",
+            "edge",
+            "jobs",
+            "{{edge_job_id}}",
+            "lease",
+            "renew"
+          ]
+        }
       },
-      "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Stale lease is 403', () => pm.response.to.have.status(403));", "pm.expect(pm.response.json().error_code).to.eql('errors.connector.stale_delivery_generation');"] } }]
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Stale lease is 403', () => pm.response.to.have.status(403));",
+              "pm.expect(pm.response.json().error_code).to.eql('errors.connector.stale_delivery_generation');"
+            ]
+          }
+        }
+      ]
     },
     {
       "name": "46 - Post Edge Started Event",
       "request": {
         "method": "POST",
-        "header": [{ "key": "X-Edge-Token", "value": "{{edge_token}}" }, { "key": "X-Delivery-Generation", "value": "{{edge_delivery_generation}}" }, { "key": "Content-Type", "value": "application/json" }],
-        "body": { "mode": "raw", "raw": "{\"delivery_generation\": {{edge_delivery_generation}}, \"events\": [{\"event_type\": \"run.started\", \"source_event_id\": \"edge-start-{{edge_job_id}}\", \"payload\": {\"step_id\": \"edge_connector\", \"run_generation\": {{edge_run_generation}}}}]}" },
-        "url": { "raw": "{{backend_base_url}}/api/v1/internal/edge/jobs/{{edge_job_id}}/events" }
+        "header": [
+          {
+            "key": "X-Edge-Token",
+            "value": "{{edge_token}}"
+          },
+          {
+            "key": "X-Delivery-Generation",
+            "value": "{{edge_delivery_generation}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"delivery_generation\": {{edge_delivery_generation}}, \"events\": [{\"event_type\": \"run.started\", \"source_event_id\": \"edge-start-{{edge_job_id}}\", \"payload\": {\"step_id\": \"edge_connector\", \"run_generation\": {{edge_run_generation}}}}]}"
+        },
+        "url": {
+          "raw": "{{backend_base_url}}/api/v1/internal/edge/jobs/{{edge_job_id}}/events",
+          "host": [
+            "{{backend_base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "internal",
+            "edge",
+            "jobs",
+            "{{edge_job_id}}",
+            "events"
+          ]
+        }
       },
-      "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Edge started event is 200', () => pm.response.to.have.status(200));", "const j = pm.response.json(); pm.expect(j.code).to.eql(0); pm.expect(j.data.status).to.eql('running');"] } }]
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Edge started event is 200', () => pm.response.to.have.status(200));",
+              "const j = pm.response.json(); pm.expect(j.code).to.eql(0); pm.expect(j.data.status).to.eql('running');"
+            ]
+          }
+        }
+      ]
     },
     {
       "name": "47 - Issue On-Demand Artifact Request",
       "request": {
         "method": "POST",
-        "header": [{ "key": "X-Edge-Token", "value": "{{edge_token}}" }, { "key": "Content-Type", "value": "application/json" }],
-        "body": { "mode": "raw", "raw": "{\"name\": \"edge-on-demand.txt\", \"run_generation\": {{edge_run_generation}}, \"delivery_generation\": {{edge_delivery_generation}}, \"ttl_seconds\": 300}" },
-        "url": { "raw": "{{backend_base_url}}/api/v1/internal/edge/jobs/{{edge_job_id}}/artifacts/on-demand-request" }
+        "header": [
+          {
+            "key": "X-Edge-Token",
+            "value": "{{edge_token}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"name\": \"edge-on-demand.txt\", \"run_generation\": {{edge_run_generation}}, \"delivery_generation\": {{edge_delivery_generation}}, \"ttl_seconds\": 300}"
+        },
+        "url": {
+          "raw": "{{backend_base_url}}/api/v1/internal/edge/jobs/{{edge_job_id}}/artifacts/on-demand-request",
+          "host": [
+            "{{backend_base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "internal",
+            "edge",
+            "jobs",
+            "{{edge_job_id}}",
+            "artifacts",
+            "on-demand-request"
+          ]
+        }
       },
-      "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('On-demand request issue is 200', () => pm.response.to.have.status(200));", "const j = pm.response.json(); pm.expect(j.code).to.eql(0); pm.expect(j.data.status).to.eql('issued'); pm.collectionVariables.set('on_demand_request_id', j.data.id);"] } }]
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('On-demand request issue is 200', () => pm.response.to.have.status(200));",
+              "const j = pm.response.json(); pm.expect(j.code).to.eql(0); pm.expect(j.data.status).to.eql('issued'); pm.collectionVariables.set('on_demand_request_id', j.data.id);"
+            ]
+          }
+        }
+      ]
     },
     {
       "name": "48 - Pull On-Demand Artifact Requests",
       "request": {
         "method": "GET",
-        "header": [{ "key": "X-Edge-Token", "value": "{{edge_token}}" }],
-        "url": { "raw": "{{backend_base_url}}/api/v1/internal/edge/artifacts/on-demand-requests" }
+        "header": [
+          {
+            "key": "X-Edge-Token",
+            "value": "{{edge_token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{backend_base_url}}/api/v1/internal/edge/artifacts/on-demand-requests",
+          "host": [
+            "{{backend_base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "internal",
+            "edge",
+            "artifacts",
+            "on-demand-requests"
+          ]
+        }
       },
-      "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('On-demand pull is 200', () => pm.response.to.have.status(200));", "const j = pm.response.json(); pm.expect(j.code).to.eql(0); pm.expect(j.data.items.some(x => x.id === pm.collectionVariables.get('on_demand_request_id'))).to.eql(true);"] } }]
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('On-demand pull is 200', () => pm.response.to.have.status(200));",
+              "const j = pm.response.json(); pm.expect(j.code).to.eql(0); pm.expect(j.data.items.some(x => x.id === pm.collectionVariables.get('on_demand_request_id'))).to.eql(true);"
+            ]
+          }
+        }
+      ]
     },
     {
       "name": "49 - Upload On-Demand Artifact Through Backend Relay",
       "request": {
         "method": "POST",
-        "header": [{ "key": "X-Edge-Token", "value": "{{edge_token}}" }, { "key": "X-Delivery-Generation", "value": "{{edge_delivery_generation}}" }, { "key": "Content-Type", "value": "application/json" }],
-        "body": { "mode": "raw", "raw": "{\n  \"name\": \"edge-on-demand.txt\",\n  \"content_type\": \"text/plain\",\n  \"content_base64\": \"{{artifact_content_base64}}\",\n  \"checksum_sha256\": \"{{artifact_checksum_sha256}}\",\n  \"delivery_generation\": {{edge_delivery_generation}},\n  \"run_generation\": {{edge_run_generation}},\n  \"size\": {{artifact_size}},\n  \"upload_mode\": \"on_demand\",\n  \"idempotency_key\": \"edge-artifact-{{edge_job_id}}\"\n}" },
-        "url": { "raw": "{{backend_base_url}}/api/v1/internal/edge/jobs/{{edge_job_id}}/artifacts/upload" }
+        "header": [
+          {
+            "key": "X-Edge-Token",
+            "value": "{{edge_token}}"
+          },
+          {
+            "key": "X-Delivery-Generation",
+            "value": "{{edge_delivery_generation}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"edge-on-demand.txt\",\n  \"content_type\": \"text/plain\",\n  \"content_base64\": \"{{artifact_content_base64}}\",\n  \"checksum_sha256\": \"{{artifact_checksum_sha256}}\",\n  \"delivery_generation\": {{edge_delivery_generation}},\n  \"run_generation\": {{edge_run_generation}},\n  \"size\": {{artifact_size}},\n  \"upload_mode\": \"on_demand\",\n  \"idempotency_key\": \"edge-artifact-{{edge_job_id}}\"\n}"
+        },
+        "url": {
+          "raw": "{{backend_base_url}}/api/v1/internal/edge/jobs/{{edge_job_id}}/artifacts/upload",
+          "host": [
+            "{{backend_base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "internal",
+            "edge",
+            "jobs",
+            "{{edge_job_id}}",
+            "artifacts",
+            "upload"
+          ]
+        }
       },
-      "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Backend artifact relay is 200', () => pm.response.to.have.status(200));", "const j = pm.response.json(); pm.expect(j.code).to.eql(0); pm.expect(j.data.artifact_id).to.be.a('string'); pm.collectionVariables.set('edge_artifact_id', j.data.artifact_id);"] } }]
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Backend artifact relay is 200', () => pm.response.to.have.status(200));",
+              "const j = pm.response.json(); pm.expect(j.code).to.eql(0); pm.expect(j.data.artifact_id).to.be.a('string'); pm.collectionVariables.set('edge_artifact_id', j.data.artifact_id);"
+            ]
+          }
+        }
+      ]
     },
     {
       "name": "50 - Request Edge Artifact Bytes",
       "request": {
         "method": "POST",
-        "header": [{ "key": "X-Edge-Token", "value": "{{edge_token}}" }, { "key": "X-Delivery-Generation", "value": "{{edge_delivery_generation}}" }, { "key": "Content-Type", "value": "application/json" }],
-        "body": { "mode": "raw", "raw": "{\"artifact_id\": \"{{edge_artifact_id}}\", \"name\": \"edge-on-demand.txt\", \"reason\": \"postman-manual-debug\"}" },
-        "url": { "raw": "{{backend_base_url}}/api/v1/internal/edge/jobs/{{edge_job_id}}/artifacts/request" }
+        "header": [
+          {
+            "key": "X-Edge-Token",
+            "value": "{{edge_token}}"
+          },
+          {
+            "key": "X-Delivery-Generation",
+            "value": "{{edge_delivery_generation}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"artifact_id\": \"{{edge_artifact_id}}\", \"name\": \"edge-on-demand.txt\", \"reason\": \"postman-manual-debug\"}"
+        },
+        "url": {
+          "raw": "{{backend_base_url}}/api/v1/internal/edge/jobs/{{edge_job_id}}/artifacts/request",
+          "host": [
+            "{{backend_base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "internal",
+            "edge",
+            "jobs",
+            "{{edge_job_id}}",
+            "artifacts",
+            "request"
+          ]
+        }
       },
-      "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Edge artifact request is 200', () => pm.response.to.have.status(200));", "const j = pm.response.json(); pm.expect(j.code).to.eql(0); pm.expect(j.data.checksum_sha256).to.eql(pm.collectionVariables.get('artifact_checksum_sha256')); pm.expect(j.data.content_base64).to.eql(pm.collectionVariables.get('artifact_content_base64'));"] } }]
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Edge artifact request is 200', () => pm.response.to.have.status(200));",
+              "const j = pm.response.json(); pm.expect(j.code).to.eql(0); pm.expect(j.data.checksum_sha256).to.eql(pm.collectionVariables.get('artifact_checksum_sha256')); pm.expect(j.data.content_base64).to.eql(pm.collectionVariables.get('artifact_content_base64'));"
+            ]
+          }
+        }
+      ]
     },
     {
       "name": "51 - Request Edge Job Cancel",
       "request": {
         "method": "POST",
-        "header": [{ "key": "X-Edge-Token", "value": "{{edge_token}}" }],
-        "url": { "raw": "{{backend_base_url}}/api/v1/internal/edge/jobs/{{edge_job_id}}/cancel" }
+        "header": [
+          {
+            "key": "X-Edge-Token",
+            "value": "{{edge_token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{backend_base_url}}/api/v1/internal/edge/jobs/{{edge_job_id}}/cancel",
+          "host": [
+            "{{backend_base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "internal",
+            "edge",
+            "jobs",
+            "{{edge_job_id}}",
+            "cancel"
+          ]
+        }
       },
-      "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Edge cancel request is 200', () => pm.response.to.have.status(200));", "const j = pm.response.json(); pm.expect(j.code).to.eql(0); pm.expect(j.data.cancel_requested).to.eql(true);"] } }]
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Edge cancel request is 200', () => pm.response.to.have.status(200));",
+              "const j = pm.response.json(); pm.expect(j.code).to.eql(0); pm.expect(j.data.cancel_requested).to.eql(true);"
+            ]
+          }
+        }
+      ]
     },
     {
       "name": "52 - Check Edge Job Cancel",
       "request": {
         "method": "GET",
-        "header": [{ "key": "X-Edge-Token", "value": "{{edge_token}}" }],
-        "url": { "raw": "{{backend_base_url}}/api/v1/internal/edge/jobs/{{edge_job_id}}/cancel" }
+        "header": [
+          {
+            "key": "X-Edge-Token",
+            "value": "{{edge_token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{backend_base_url}}/api/v1/internal/edge/jobs/{{edge_job_id}}/cancel",
+          "host": [
+            "{{backend_base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "internal",
+            "edge",
+            "jobs",
+            "{{edge_job_id}}",
+            "cancel"
+          ]
+        }
       },
-      "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Edge cancel check is 200', () => pm.response.to.have.status(200));", "const j = pm.response.json(); pm.expect(j.code).to.eql(0); pm.expect(j.data.cancel_requested).to.eql(true);"] } }]
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Edge cancel check is 200', () => pm.response.to.have.status(200));",
+              "const j = pm.response.json(); pm.expect(j.code).to.eql(0); pm.expect(j.data.cancel_requested).to.eql(true);"
+            ]
+          }
+        }
+      ]
     },
     {
       "name": "53 - Reject Invalid Edge Token",
       "request": {
         "method": "GET",
-        "header": [{ "key": "X-Edge-Token", "value": "invalid-postman-edge-token" }],
-        "url": { "raw": "{{backend_base_url}}/api/v1/internal/edge/jobs" }
+        "header": [
+          {
+            "key": "X-Edge-Token",
+            "value": "invalid-postman-edge-token"
+          }
+        ],
+        "url": {
+          "raw": "{{backend_base_url}}/api/v1/internal/edge/jobs",
+          "host": [
+            "{{backend_base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "internal",
+            "edge",
+            "jobs"
+          ]
+        }
       },
-      "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Invalid edge token is 403', () => pm.response.to.have.status(403));", "pm.expect(pm.response.json().error_code).to.eql('errors.connector.edge_token_invalid');"] } }]
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Invalid edge token is 403', () => pm.response.to.have.status(403));",
+              "pm.expect(pm.response.json().error_code).to.eql('errors.connector.edge_token_invalid');"
+            ]
+          }
+        }
+      ]
     },
     {
       "name": "60 - Create Edge Installation Desired State",
       "request": {
         "method": "POST",
         "header": [
-          { "key": "Authorization", "value": "Bearer {{backend_access_token}}" },
-          { "key": "X-Org-Id", "value": "{{org_id}}" },
-          { "key": "Content-Type", "value": "application/json" }
+          {
+            "key": "Authorization",
+            "value": "Bearer {{backend_access_token}}"
+          },
+          {
+            "key": "X-Org-Id",
+            "value": "{{org_id}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
         ],
-        "body": { "mode": "raw", "raw": "{\"skill_id\": \"{{skill_key}}\", \"agent_id\": \"edge-{{edge_node_id}}\", \"install_mode\": \"copy\", \"target_kind\": \"edge\", \"edge_node_id\": \"{{edge_node_id}}\"}" },
-        "url": { "raw": "{{backend_base_url}}/api/v1/hermes/skill-installations" }
+        "body": {
+          "mode": "raw",
+          "raw": "{\"skill_id\": \"{{skill_key}}\", \"agent_id\": \"edge-{{edge_node_id}}\", \"install_mode\": \"copy\", \"target_kind\": \"edge\", \"edge_node_id\": \"{{edge_node_id}}\"}"
+        },
+        "url": {
+          "raw": "{{backend_base_url}}/api/v1/hermes/skill-installations",
+          "host": [
+            "{{backend_base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "hermes",
+            "skill-installations"
+          ]
+        }
       },
-      "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Edge installation create is 200', () => pm.response.to.have.status(200));", "const j = pm.response.json(); pm.expect(j.code).to.eql(0); pm.expect(j.data.target_kind).to.eql('edge'); pm.collectionVariables.set('installation_id', j.data.id); pm.collectionVariables.set('installation_generation', String(j.data.desired_generation));"] } }]
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Edge installation create is 200', () => pm.response.to.have.status(200));",
+              "const j = pm.response.json(); pm.expect(j.code).to.eql(0); pm.expect(j.data.target_kind).to.eql('edge'); pm.collectionVariables.set('installation_id', j.data.id); pm.collectionVariables.set('installation_generation', String(j.data.desired_generation));"
+            ]
+          }
+        }
+      ]
     },
     {
       "name": "61 - Pull Desired Installations",
       "request": {
         "method": "GET",
-        "header": [{ "key": "X-Edge-Token", "value": "{{edge_token}}" }],
-        "url": { "raw": "{{backend_base_url}}/api/v1/internal/edge/installations/desired" }
+        "header": [
+          {
+            "key": "X-Edge-Token",
+            "value": "{{edge_token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{backend_base_url}}/api/v1/internal/edge/installations/desired",
+          "host": [
+            "{{backend_base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "internal",
+            "edge",
+            "installations",
+            "desired"
+          ]
+        }
       },
-      "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Desired installations pull is 200', () => pm.response.to.have.status(200));", "const j = pm.response.json(); const item = j.data.items.find(x => x.id === pm.collectionVariables.get('installation_id')); pm.expect(item).to.be.an('object'); pm.collectionVariables.set('installation_generation', String(item.desired_generation));"] } }]
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Desired installations pull is 200', () => pm.response.to.have.status(200));",
+              "const j = pm.response.json(); const item = j.data.items.find(x => x.id === pm.collectionVariables.get('installation_id')); pm.expect(item).to.be.an('object'); pm.collectionVariables.set('installation_generation', String(item.desired_generation));"
+            ]
+          }
+        }
+      ]
     },
     {
       "name": "62 - Report Installation Ready",
       "request": {
         "method": "POST",
-        "header": [{ "key": "X-Edge-Token", "value": "{{edge_token}}" }, { "key": "Content-Type", "value": "application/json" }],
-        "body": { "mode": "raw", "raw": "{\"installation_id\": \"{{installation_id}}\", \"actual_status\": \"ready\", \"generation\": {{installation_generation}}, \"meta\": {\"source\": \"postman-control-contract\"}}" },
-        "url": { "raw": "{{backend_base_url}}/api/v1/internal/edge/installations/actual" }
+        "header": [
+          {
+            "key": "X-Edge-Token",
+            "value": "{{edge_token}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"installation_id\": \"{{installation_id}}\", \"actual_status\": \"ready\", \"generation\": {{installation_generation}}, \"meta\": {\"source\": \"postman-control-contract\"}}"
+        },
+        "url": {
+          "raw": "{{backend_base_url}}/api/v1/internal/edge/installations/actual",
+          "host": [
+            "{{backend_base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "internal",
+            "edge",
+            "installations",
+            "actual"
+          ]
+        }
       },
-      "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Installation actual ready is 200', () => pm.response.to.have.status(200));", "const j = pm.response.json(); pm.expect(j.code).to.eql(0); pm.expect(j.data.actual_status).to.eql('ready');"] } }]
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Installation actual ready is 200', () => pm.response.to.have.status(200));",
+              "const j = pm.response.json(); pm.expect(j.code).to.eql(0); pm.expect(j.data.actual_status).to.eql('ready');"
+            ]
+          }
+        }
+      ]
     },
     {
       "name": "63 - Increment Installation Desired Generation",
       "request": {
         "method": "POST",
-        "header": [{ "key": "Authorization", "value": "Bearer {{backend_access_token}}" }, { "key": "X-Org-Id", "value": "{{org_id}}" }],
-        "url": { "raw": "{{backend_base_url}}/api/v1/hermes/skill-installations/{{installation_id}}/sync" }
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{backend_access_token}}"
+          },
+          {
+            "key": "X-Org-Id",
+            "value": "{{org_id}}"
+          }
+        ],
+        "url": {
+          "raw": "{{backend_base_url}}/api/v1/hermes/skill-installations/{{installation_id}}/sync",
+          "host": [
+            "{{backend_base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "hermes",
+            "skill-installations",
+            "{{installation_id}}",
+            "sync"
+          ]
+        }
       },
-      "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Installation sync is 200', () => pm.response.to.have.status(200));", "const j = pm.response.json(); pm.expect(j.code).to.eql(0); pm.collectionVariables.set('previous_installation_generation', pm.collectionVariables.get('installation_generation')); pm.collectionVariables.set('installation_generation', String(j.data.desired_generation));"] } }]
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Installation sync is 200', () => pm.response.to.have.status(200));",
+              "const j = pm.response.json(); pm.expect(j.code).to.eql(0); pm.collectionVariables.set('previous_installation_generation', pm.collectionVariables.get('installation_generation')); pm.collectionVariables.set('installation_generation', String(j.data.desired_generation));"
+            ]
+          }
+        }
+      ]
     },
     {
       "name": "64 - Reject Stale Installation Actual",
       "request": {
         "method": "POST",
-        "header": [{ "key": "X-Edge-Token", "value": "{{edge_token}}" }, { "key": "Content-Type", "value": "application/json" }],
-        "body": { "mode": "raw", "raw": "{\"installation_id\": \"{{installation_id}}\", \"actual_status\": \"ready\", \"generation\": {{previous_installation_generation}}}" },
-        "url": { "raw": "{{backend_base_url}}/api/v1/internal/edge/installations/actual" }
+        "header": [
+          {
+            "key": "X-Edge-Token",
+            "value": "{{edge_token}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"installation_id\": \"{{installation_id}}\", \"actual_status\": \"ready\", \"generation\": {{previous_installation_generation}}}"
+        },
+        "url": {
+          "raw": "{{backend_base_url}}/api/v1/internal/edge/installations/actual",
+          "host": [
+            "{{backend_base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "internal",
+            "edge",
+            "installations",
+            "actual"
+          ]
+        }
       },
-      "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Stale installation generation is 403', () => pm.response.to.have.status(403));", "pm.expect(pm.response.json().error_code).to.eql('errors.skill.stale_actual_generation');"] } }]
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Stale installation generation is 403', () => pm.response.to.have.status(403));",
+              "pm.expect(pm.response.json().error_code).to.eql('errors.skill.stale_actual_generation');"
+            ]
+          }
+        }
+      ]
     },
     {
       "name": "65 - Report Current Installation Generation",
       "request": {
         "method": "POST",
-        "header": [{ "key": "X-Edge-Token", "value": "{{edge_token}}" }, { "key": "Content-Type", "value": "application/json" }],
-        "body": { "mode": "raw", "raw": "{\"installation_id\": \"{{installation_id}}\", \"actual_status\": \"ready\", \"generation\": {{installation_generation}}}" },
-        "url": { "raw": "{{backend_base_url}}/api/v1/internal/edge/installations/actual" }
+        "header": [
+          {
+            "key": "X-Edge-Token",
+            "value": "{{edge_token}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"installation_id\": \"{{installation_id}}\", \"actual_status\": \"ready\", \"generation\": {{installation_generation}}}"
+        },
+        "url": {
+          "raw": "{{backend_base_url}}/api/v1/internal/edge/installations/actual",
+          "host": [
+            "{{backend_base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "internal",
+            "edge",
+            "installations",
+            "actual"
+          ]
+        }
       },
-      "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Current installation generation is 200', () => pm.response.to.have.status(200));", "pm.expect(pm.response.json().data.actual_status).to.eql('ready');"] } }]
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Current installation generation is 200', () => pm.response.to.have.status(200));",
+              "pm.expect(pm.response.json().data.actual_status).to.eql('ready');"
+            ]
+          }
+        }
+      ]
     },
     {
       "name": "66 - Request Edge Installation Uninstall",
       "request": {
         "method": "DELETE",
-        "header": [{ "key": "Authorization", "value": "Bearer {{backend_access_token}}" }, { "key": "X-Org-Id", "value": "{{org_id}}" }],
-        "url": { "raw": "{{backend_base_url}}/api/v1/hermes/skill-installations/{{installation_id}}" }
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{backend_access_token}}"
+          },
+          {
+            "key": "X-Org-Id",
+            "value": "{{org_id}}"
+          }
+        ],
+        "url": {
+          "raw": "{{backend_base_url}}/api/v1/hermes/skill-installations/{{installation_id}}",
+          "host": [
+            "{{backend_base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "hermes",
+            "skill-installations",
+            "{{installation_id}}"
+          ]
+        }
       },
-      "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Uninstall desired state is 200', () => pm.response.to.have.status(200));", "const j = pm.response.json(); pm.expect(j.code).to.eql(0); pm.expect(j.data.status).to.eql('uninstalling'); pm.collectionVariables.set('installation_generation', String(j.data.desired_generation));"] } }]
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Uninstall desired state is 200', () => pm.response.to.have.status(200));",
+              "const j = pm.response.json(); pm.expect(j.code).to.eql(0); pm.expect(j.data.status).to.eql('uninstalling'); pm.collectionVariables.set('installation_generation', String(j.data.desired_generation));"
+            ]
+          }
+        }
+      ]
     },
     {
       "name": "67 - Pull Uninstall Desired State",
       "request": {
         "method": "GET",
-        "header": [{ "key": "X-Edge-Token", "value": "{{edge_token}}" }],
-        "url": { "raw": "{{backend_base_url}}/api/v1/internal/edge/installations/desired" }
+        "header": [
+          {
+            "key": "X-Edge-Token",
+            "value": "{{edge_token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{backend_base_url}}/api/v1/internal/edge/installations/desired",
+          "host": [
+            "{{backend_base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "internal",
+            "edge",
+            "installations",
+            "desired"
+          ]
+        }
       },
-      "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Uninstall desired pull is 200', () => pm.response.to.have.status(200));", "const item = pm.response.json().data.items.find(x => x.id === pm.collectionVariables.get('installation_id')); pm.expect(item.desired_status).to.eql('uninstalling'); pm.expect(String(item.desired_generation)).to.eql(pm.collectionVariables.get('installation_generation'));"] } }]
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Uninstall desired pull is 200', () => pm.response.to.have.status(200));",
+              "const item = pm.response.json().data.items.find(x => x.id === pm.collectionVariables.get('installation_id')); pm.expect(item.desired_status).to.eql('uninstalling'); pm.expect(String(item.desired_generation)).to.eql(pm.collectionVariables.get('installation_generation'));"
+            ]
+          }
+        }
+      ]
     },
     {
       "name": "68 - Report Installation Uninstalled",
       "request": {
         "method": "POST",
-        "header": [{ "key": "X-Edge-Token", "value": "{{edge_token}}" }, { "key": "Content-Type", "value": "application/json" }],
-        "body": { "mode": "raw", "raw": "{\"installation_id\": \"{{installation_id}}\", \"actual_status\": \"uninstalled\", \"generation\": {{installation_generation}}, \"meta\": {\"source\": \"postman-control-contract\"}}" },
-        "url": { "raw": "{{backend_base_url}}/api/v1/internal/edge/installations/actual" }
+        "header": [
+          {
+            "key": "X-Edge-Token",
+            "value": "{{edge_token}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"installation_id\": \"{{installation_id}}\", \"actual_status\": \"uninstalled\", \"generation\": {{installation_generation}}, \"meta\": {\"source\": \"postman-control-contract\"}}"
+        },
+        "url": {
+          "raw": "{{backend_base_url}}/api/v1/internal/edge/installations/actual",
+          "host": [
+            "{{backend_base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "internal",
+            "edge",
+            "installations",
+            "actual"
+          ]
+        }
       },
-      "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Installation uninstalled report is 200', () => pm.response.to.have.status(200));", "const j = pm.response.json(); pm.expect(j.code).to.eql(0); pm.expect(j.data.actual_status).to.eql('uninstalled');"] } }]
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Installation uninstalled report is 200', () => pm.response.to.have.status(200));",
+              "const j = pm.response.json(); pm.expect(j.code).to.eql(0); pm.expect(j.data.actual_status).to.eql('uninstalled');"
+            ]
+          }
+        }
+      ]
     }
-  ]
+  ],
+  "auth": {
+    "type": "apikey",
+    "apikey": [
+      {
+        "key": "key",
+        "value": "X-Skill-Agent-Token",
+        "type": "string"
+      },
+      {
+        "key": "value",
+        "value": "{{agent_internal_token}}",
+        "type": "string"
+      },
+      {
+        "key": "in",
+        "value": "header",
+        "type": "string"
+      }
+    ]
+  }
 }

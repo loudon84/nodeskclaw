@@ -1,0 +1,40 @@
+{
+  "contractName": "SKILL-RUN-CONTRACT",
+  "contractVersion": "1.1.0",
+  "provider": "nodeskclaw-backend",
+  "consumer": "smc-copilot/apps/work",
+  "backendCommit": "636af7adc7905776674074775c0da943ffa09d63",
+  "tagName": "skill-run-contract-v1.1.0",
+  "generatedAt": "2026-08-30T05:54:29.702557+00:00",
+  "artifacts": {
+    "RELEASE.md": "7178b3d4d2afd82c2b43f41f6b744457464a7a6f71c048f3690f755abd680197",
+    "events/run-event.schema.json": "e0c7d026e614b62efcca5bb9360553e3b19b23cbbd4d140e3693f26311b5704e",
+    "mcp/json-rpc-error.schema.json": "4debb9b0cb090d76bb791448bd459914579e0467b140ce91c2827dbc2b7a3748",
+    "mcp/skill-tool-annotations.schema.json": "b000b739e623edadf0df84811b859f779e99444d387e34a8c4c9d6f63adeb5d1",
+    "mcp/tools-call.request.schema.json": "d715c92793ae56ed9acf5160c39f04d18ab9a340a7afaafd271a7c5a9d18ca90",
+    "mcp/tools-call.response.schema.json": "d421f7b0090a4256bd35c502c7ca2492ed291ca4e5c941d08320e2c40dafb49f",
+    "mcp/tools-list.request.schema.json": "d715c92793ae56ed9acf5160c39f04d18ab9a340a7afaafd271a7c5a9d18ca90",
+    "mcp/tools-list.response.schema.json": "428bfe6da2aaac8d88ab4982985ef86b10c581d414007afd9213b98b78cca86c",
+    "runs/artifact-descriptor.schema.json": "300fa3b4dc7e77f7ca5beedd5f00b9d42ee7236ddb80192f8092da9440136f95",
+    "runs/execution-snapshot.schema.json": "a83367bf3f8d9f866016fbdaa8238055c33cf0ead6ed257221aa83de0a275979",
+    "runs/run.schema.json": "8a75f0bca8850c31f3d7d4ada7e3466e799a28dbd8dc5ca646e2e9a0c2fde850",
+    "edge/artifact-upload.schema.json": "409484eb933fa43b367bb3178aa732e92788e83c3b5943beeb70fbcb125ead79",
+    "edge/lease-renew.schema.json": "127a194f500b1ede886f3c80b151f869d2fd4d90aa7b2dd9e35d7169f90276fa",
+    "installations/actual-report.schema.json": "c6e18e0ff4aaf8113c91122365747e3f22ff572fc80fb2690d0f21bf7483d07f",
+    "installations/installation.schema.json": "c4e938aa271de7c4595404115074ce2f2bbb71570f53902804e4f0bf4d6413a3",
+    "fixtures/desired-installation.json": "6a5c867a186db2111ebb24d4c48e9310074561995a5d9e6b7285670c65737473",
+    "fixtures/edge-artifact-upload.json": "740926355119aefb62efa13803c0cb1bb17aa666c5f1f4fdab21319b20c8f1b9",
+    "fixtures/edge-lease-renew.json": "229bab3fafb247319bb563e8bdc40fc016691e12669853a62e75f43ee0a1667e",
+    "fixtures/skill-tools-list.json": "c205dff9cfe92a4568e3f4650e021aa6151d52e642e5067a9459b13bb35c9d46",
+    "fixtures/tools-call-accepted.json": "672de67aa01271b48dc3c784131fb3934b4d366e6437eadd6033023d16e5f33a"
+  },
+  "capabilities": {
+    "skillFirst": true,
+    "asyncEvent": true,
+    "sseResume": true,
+    "runIdentity": true,
+    "artifactDescriptor": true,
+    "approvalGate": true,
+    "catalogV11": true
+  }
+}

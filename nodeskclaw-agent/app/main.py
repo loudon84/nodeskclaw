@@ -10,7 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.internal_runs import router as internal_runs_router
-from app.config import settings
+from app.config import alembic_version_relation, settings
 from app.db import get_db
 from app.services.edge_worker import EdgeWorker
 from app.services.storage_port import get_storage_driver
@@ -84,7 +84,9 @@ async def health_ready(response: Response, db: AsyncSession = Depends(get_db)) -
     # 2. Migration status (alembic_version)
     if db_ok:
         try:
-            res = await db.execute(text("SELECT version_num FROM alembic_version LIMIT 1"))
+            res = await db.execute(
+                text(f"SELECT version_num FROM {alembic_version_relation()} LIMIT 1")
+            )
             version_row = res.first()
             if not version_row or not version_row[0]:
                 checks["migration"] = False

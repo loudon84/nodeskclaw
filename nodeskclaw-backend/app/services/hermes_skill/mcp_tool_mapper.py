@@ -190,6 +190,17 @@ class McpToolMapper:
             if category and tool_category != category:
                 continue
             placement = instance.placement or ConnectorPlacement.CENTRAL.value
+            raw_ann = meta.get("annotations") if isinstance(meta.get("annotations"), dict) else {}
+            requires_approval = bool(
+                raw_ann.get("requiresApproval", meta.get("requires_approval") or meta.get("requiresApproval", False))
+            )
+            annotations = {
+                "riskLevel": raw_ann.get("riskLevel") or meta.get("riskLevel") or "low",
+                "requiresApproval": requires_approval,
+                "approvalMode": raw_ann.get("approvalMode") or meta.get("approval_mode") or ("server" if requires_approval else "none"),
+                "streaming": bool(raw_ann.get("streaming", meta.get("streaming", False))),
+                "artifacts": bool(raw_ann.get("artifacts", meta.get("artifacts", False))),
+            }
             tools.append(
                 {
                     "name": connector_tool.tool_name,
@@ -198,8 +209,12 @@ class McpToolMapper:
                     "inputSchema": connector_tool.input_schema or {},
                     "version": meta.get("version"),
                     "category": tool_category,
-                    "approvalMode": "server" if bool(meta.get("requires_approval")) else "none",
-                    "requiresApproval": bool(meta.get("requires_approval")),
+                    "capabilityKind": "connector",
+                    "interactionMode": meta.get("interactionMode") or "form",
+                    "supportsAttachments": bool(meta.get("supportsAttachments", False)),
+                    "annotations": annotations,
+                    "approvalMode": annotations["approvalMode"],
+                    "requiresApproval": requires_approval,
                     "authorized": True,
                     "grantStatus": "active",
                     "kind": "connector",
@@ -327,9 +342,8 @@ class McpToolMapper:
         org_id: str,
         user_id: str,
     ) -> dict[str, Any]:
-        extra = skill.extra_metadata or {}
         published = await SkillReleaseService(self.db).get_published_by_skill_db_id(skill.id)
-        release_extra = (published.extra_metadata if published else None) or extra
+        release_extra = dict(published.extra_metadata or {}) if published else {}
         installation = None
         inst_result = await self.db.execute(
             select(HermesSkillInstallation).where(
@@ -349,21 +363,53 @@ class McpToolMapper:
             if not authorized:
                 grant_status = "denied"
 
+        input_schema = (published.input_schema if published else skill.input_schema) or {}
+        explicit_mode = release_extra.get("interactionMode")
+        if explicit_mode in ("chat", "form"):
+            interaction_mode = explicit_mode
+            prompt_field = release_extra.get("promptField")
+        else:
+            props = input_schema.get("properties") if isinstance(input_schema, dict) else None
+            if isinstance(props, dict) and isinstance(props.get("prompt"), dict) and props.get("prompt", {}).get("type") == "string":
+                interaction_mode = "chat"
+                prompt_field = "prompt"
+            else:
+                interaction_mode = "form"
+                prompt_field = None
+
+        supports_attachments = bool(release_extra.get("supportsAttachments", False))
+
+        raw_ann = release_extra.get("annotations") if isinstance(release_extra.get("annotations"), dict) else {}
         requires_approval = bool(
-            release_extra.get("requires_approval") or release_extra.get("requiresApproval")
+            raw_ann.get("requiresApproval", release_extra.get("requires_approval") or release_extra.get("requiresApproval", False))
         )
+        annotations = {
+            "riskLevel": raw_ann.get("riskLevel") or release_extra.get("riskLevel") or "low",
+            "requiresApproval": requires_approval,
+            "approvalMode": raw_ann.get("approvalMode") or release_extra.get("approval_mode") or ("server" if requires_approval else "none"),
+            "streaming": bool(raw_ann.get("streaming", release_extra.get("streaming", False))),
+            "artifacts": bool(raw_ann.get("artifacts", release_extra.get("artifacts", False))),
+        }
+
         tool: dict[str, Any] = {
             "name": skill.tool_name,
             "title": (published.title if published else None) or skill.title or skill.name,
             "description": (published.description if published else None) or skill.description or "",
-            "inputSchema": (published.input_schema if published else None) or skill.input_schema or {},
+            "inputSchema": input_schema,
             "version": published.version if published else skill.version,
             "category": (published.category if published else None) or skill.category,
-            "approvalMode": "server" if requires_approval else "none",
+            "capabilityKind": "skill",
+            "interactionMode": interaction_mode,
+            "supportsAttachments": supports_attachments,
+            "annotations": annotations,
+            "approvalMode": annotations["approvalMode"],
             "requiresApproval": requires_approval,
             "authorized": authorized,
             "grantStatus": grant_status,
         }
+        if prompt_field and interaction_mode == "chat":
+            tool["promptField"] = prompt_field
+
         if published:
             tool["skillReleaseId"] = published.id
             tool["skillReleaseDigest"] = published.digest

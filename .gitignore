@@ -27,6 +27,7 @@ nodeskclaw-frontend/
 .env
 .env.*
 !nodeskclaw-task/.env.example
+!nodeskclaw-agent/.env.example
 
 # ========================
 # Python / 后端

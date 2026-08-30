@@ -4,7 +4,13 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fastapi.testclient import TestClient
 
-from app.config import Settings, settings
+from app.config import (
+    ALEMBIC_VERSION_NUM_LENGTH,
+    Settings,
+    alembic_context_version_options,
+    alembic_version_relation,
+    settings,
+)
 from app.db import get_db
 
 migration_path = Path(__file__).resolve().parent.parent / "alembic" / "versions" / "0001_initial_agent_schema.py"
@@ -38,6 +44,42 @@ def test_schema_configuration_and_migration_alignment():
     default_settings = Settings()
     assert default_settings.SKILL_AGENT_SCHEMA == "agent"
     assert migration_0001.SCHEMA == "agent"
+    assert alembic_context_version_options() == {
+        "version_table": "alembic_version",
+        "version_table_schema": "agent",
+    }
+    assert alembic_version_relation() == '"agent".alembic_version'
+
+
+def test_agent_revision_ids_fit_version_column():
+    versions_dir = Path(__file__).resolve().parent.parent / "alembic" / "versions"
+    for path in sorted(versions_dir.glob("*.py")):
+        revision = None
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if line.startswith("revision") and "=" in line:
+                revision = line.split("=", 1)[1].strip().strip('"').strip("'")
+                break
+        assert revision, f"missing revision in {path.name}"
+        assert len(revision) <= ALEMBIC_VERSION_NUM_LENGTH, (
+            f"{path.name} revision {revision!r} exceeds VARCHAR({ALEMBIC_VERSION_NUM_LENGTH})"
+        )
+
+
+def test_health_ready_queries_schema_qualified_alembic_version(monkeypatch):
+    monkeypatch.setattr(settings, "SKILL_AGENT_INSECURE_MODE", True)
+    mock_db = AsyncMock()
+    mock_ok = MagicMock()
+    mock_version = MagicMock()
+    mock_version.first.return_value = ("0005_artifact_upload_idempotency_and_step",)
+    mock_db.execute.side_effect = [mock_ok, mock_version]
+
+    for client in _test_client(monkeypatch, mock_db=mock_db):
+        resp = client.get("/health/ready")
+        assert resp.status_code == 200
+
+    version_sql = str(mock_db.execute.call_args_list[1].args[0])
+    assert '"agent".alembic_version' in version_sql
+    assert "FROM alembic_version" not in version_sql.replace('"agent".alembic_version', "")
 
 
 def test_health_ready_fails_on_insecure_defaults_in_production(monkeypatch):

@@ -468,6 +468,7 @@ class RuntimeSkillRunService:
         request: StartRuntimeSkillRunRequest,
         event_sse_url: str,
         output_policy: dict[str, Any],
+        contract_version: str | None = None,
     ) -> dict[str, Any]:
         status = task.status.value if hasattr(task.status, "value") else str(task.status)
         if status in ("queued", "accepted"):
@@ -501,6 +502,8 @@ class RuntimeSkillRunService:
                 "entrypoint": request.entrypoint,
                 "task_source": request.task_source,
             }
+            if contract_version:
+                content["contract_version"] = contract_version
             if request.catalog_kind:
                 content["catalog_kind"] = request.catalog_kind
             if request.catalog_slug:
@@ -540,6 +543,8 @@ class RuntimeSkillRunService:
             "agent_profile": request.agent_profile,
             "runtime_skill_id": request.runtime_skill_id,
         }
+        if contract_version:
+            content["contract_version"] = contract_version
         if request.catalog_kind:
             content["catalog_kind"] = request.catalog_kind
         if request.catalog_slug:

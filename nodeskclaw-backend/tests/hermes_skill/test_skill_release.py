@@ -117,3 +117,115 @@ async def test_deprecate_rejects_non_published():
 
     with pytest.raises(BadRequestError):
         await service.deprecate(org_id="org-1", skill_id="foo", release_id="rel-1")
+
+
+@pytest.mark.asyncio
+async def test_publish_chat_mode_success():
+    db = AsyncMock()
+    service = SkillReleaseService(db)
+    skill = _skill()
+    service.get_skill = AsyncMock(return_value=skill)
+    service.get_published_by_skill_db_id = AsyncMock(return_value=None)
+
+    draft = SimpleNamespace(
+        id="rel-1",
+        status=SkillReleaseStatus.DRAFT.value,
+        skill_db_id=skill.id,
+        input_schema={"type": "object", "properties": {"user_prompt": {"type": "string"}}},
+        extra_metadata={"interactionMode": "chat", "promptField": "user_prompt"},
+        published_at=None,
+        published_by=None,
+        deprecated_at=None,
+    )
+    service._get_release = AsyncMock(return_value=draft)
+
+    published = await service.publish(org_id="org-1", skill_id="foo", release_id="rel-1", operator_user_id="user-1")
+    assert published.status == SkillReleaseStatus.PUBLISHED.value
+    assert published.extra_metadata["supportsAttachments"] is False
+    assert "annotations" in published.extra_metadata
+    assert published.extra_metadata["annotations"]["riskLevel"] == "low"
+
+
+@pytest.mark.asyncio
+async def test_publish_chat_mode_missing_prompt_field():
+    db = AsyncMock()
+    service = SkillReleaseService(db)
+    skill = _skill()
+    service.get_skill = AsyncMock(return_value=skill)
+
+    draft = SimpleNamespace(
+        id="rel-1",
+        status=SkillReleaseStatus.DRAFT.value,
+        skill_db_id=skill.id,
+        input_schema={"type": "object", "properties": {"user_prompt": {"type": "string"}}},
+        extra_metadata={"interactionMode": "chat"},
+    )
+    service._get_release = AsyncMock(return_value=draft)
+
+    with pytest.raises(BadRequestError) as exc_info:
+        await service.publish(org_id="org-1", skill_id="foo", release_id="rel-1", operator_user_id="user-1")
+    assert exc_info.value.message_key == "errors.skill.catalog.invalid_interaction_contract"
+
+
+@pytest.mark.asyncio
+async def test_publish_chat_mode_forbidden_routing_key():
+    db = AsyncMock()
+    service = SkillReleaseService(db)
+    skill = _skill()
+    service.get_skill = AsyncMock(return_value=skill)
+
+    draft = SimpleNamespace(
+        id="rel-1",
+        status=SkillReleaseStatus.DRAFT.value,
+        skill_db_id=skill.id,
+        input_schema={"type": "object", "properties": {"_routing": {"type": "string"}}},
+        extra_metadata={"interactionMode": "chat", "promptField": "_routing"},
+    )
+    service._get_release = AsyncMock(return_value=draft)
+
+    with pytest.raises(BadRequestError) as exc_info:
+        await service.publish(org_id="org-1", skill_id="foo", release_id="rel-1", operator_user_id="user-1")
+    assert exc_info.value.message_key == "errors.skill.catalog.invalid_interaction_contract"
+
+
+@pytest.mark.asyncio
+async def test_publish_chat_mode_non_string_field():
+    db = AsyncMock()
+    service = SkillReleaseService(db)
+    skill = _skill()
+    service.get_skill = AsyncMock(return_value=skill)
+
+    draft = SimpleNamespace(
+        id="rel-1",
+        status=SkillReleaseStatus.DRAFT.value,
+        skill_db_id=skill.id,
+        input_schema={"type": "object", "properties": {"prompt": {"type": "number"}}},
+        extra_metadata={"interactionMode": "chat", "promptField": "prompt"},
+    )
+    service._get_release = AsyncMock(return_value=draft)
+
+    with pytest.raises(BadRequestError) as exc_info:
+        await service.publish(org_id="org-1", skill_id="foo", release_id="rel-1", operator_user_id="user-1")
+    assert exc_info.value.message_key == "errors.skill.catalog.invalid_interaction_contract"
+
+
+@pytest.mark.asyncio
+async def test_publish_chat_mode_non_object_schema():
+    db = AsyncMock()
+    service = SkillReleaseService(db)
+    skill = _skill()
+    service.get_skill = AsyncMock(return_value=skill)
+
+    draft = SimpleNamespace(
+        id="rel-1",
+        status=SkillReleaseStatus.DRAFT.value,
+        skill_db_id=skill.id,
+        input_schema={"type": "array"},
+        extra_metadata={"interactionMode": "chat", "promptField": "prompt"},
+    )
+    service._get_release = AsyncMock(return_value=draft)
+
+    with pytest.raises(BadRequestError) as exc_info:
+        await service.publish(org_id="org-1", skill_id="foo", release_id="rel-1", operator_user_id="user-1")
+    assert exc_info.value.message_key == "errors.skill.catalog.invalid_interaction_contract"
+

@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.deps import get_db, require_org_member
-from app.core.exceptions import ForbiddenError, NotFoundError
+from app.core.exceptions import AppException, ForbiddenError, NotFoundError
 from app.models.base import not_deleted
 from app.models.hermes_skill.hermes_task import HermesTask
 from app.models.hermes_skill.run_dispatch_outbox import RunDispatchOutbox, RunDispatchStatus
@@ -41,6 +41,36 @@ def _agent_headers(*, org_id: str | None = None, user_id: str | None = None) -> 
     return headers
 
 
+def _handle_agent_error_response(response: httpx.Response) -> None:
+    status_code = response.status_code
+    if status_code == 404:
+        raise NotFoundError("Run 不存在", "errors.run.not_found")
+    if 400 <= status_code < 500:
+        msg = "Agent 请求失败"
+        msg_key = "errors.run.agent_error"
+        err_code = status_code * 100
+        try:
+            err_payload = response.json()
+            if isinstance(err_payload, dict):
+                msg = err_payload.get("message") or err_payload.get("detail") or msg
+                msg_key = err_payload.get("message_key") or msg_key
+                raw_code = err_payload.get("error_code") or err_payload.get("code")
+                if raw_code is not None:
+                    try:
+                        err_code = int(raw_code)
+                    except (ValueError, TypeError):
+                        pass
+        except Exception:
+            pass
+        raise AppException(
+            code=err_code,
+            message=str(msg),
+            status_code=status_code,
+            message_key=str(msg_key),
+        )
+    response.raise_for_status()
+
+
 async def _agent_get(
     path: str,
     *,
@@ -50,15 +80,16 @@ async def _agent_get(
 ) -> Any:
     url = f"{settings.SKILL_AGENT_BASE_URL.rstrip('/')}{path}"
     async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=5.0)) as client:
-        response = await client.get(
-            url,
-            headers=_agent_headers(org_id=org_id, user_id=user_id),
-            params=params,
-        )
-        if response.status_code == 404:
-            raise NotFoundError("Run 不存在", "errors.run.not_found")
-        response.raise_for_status()
-        return response.json()
+        try:
+            response = await client.get(
+                url,
+                headers=_agent_headers(org_id=org_id, user_id=user_id),
+                params=params,
+            )
+            _handle_agent_error_response(response)
+            return response.json()
+        except httpx.HTTPStatusError as exc:
+            _handle_agent_error_response(exc.response)
 
 
 async def _agent_post(
@@ -70,15 +101,16 @@ async def _agent_post(
 ) -> Any:
     url = f"{settings.SKILL_AGENT_BASE_URL.rstrip('/')}{path}"
     async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=5.0)) as client:
-        response = await client.post(
-            url,
-            headers=_agent_headers(org_id=org_id, user_id=user_id),
-            json=json_body or {},
-        )
-        if response.status_code == 404:
-            raise NotFoundError("Run 不存在", "errors.run.not_found")
-        response.raise_for_status()
-        return response.json()
+        try:
+            response = await client.post(
+                url,
+                headers=_agent_headers(org_id=org_id, user_id=user_id),
+                json=json_body or {},
+            )
+            _handle_agent_error_response(response)
+            return response.json()
+        except httpx.HTTPStatusError as exc:
+            _handle_agent_error_response(exc.response)
 
 
 async def _authorize_run(db: AsyncSession, user_id: str, org_id: str, run_id: str) -> HermesTask:
@@ -282,7 +314,7 @@ async def resume_run(
     payload = body or {}
     data = await _agent_post(
         f"/internal/v1/runs/{run_id}/resume",
-        body=payload,
+        json_body=payload,
         org_id=org.id,
         user_id=user.id,
     )
@@ -309,7 +341,7 @@ async def approve_run(
     payload = body or {}
     data = await _agent_post(
         f"/internal/v1/runs/{run_id}/approvals/{approval_id}",
-        body=payload,
+        json_body=payload,
         org_id=org.id,
         user_id=user.id,
     )

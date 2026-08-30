@@ -2,7 +2,16 @@
 
 Skill Platform 把员工 MCP Catalog 与 Skill Run 执行拆开：Gateway 在 Backend，执行内核在独立 `nodeskclaw-agent`。
 
-Approved PRD：`docs_agent/prd-v1.5.3-nodeskclaw-postman-integration-readiness.md`。前序文档包括 `docs_agent/prd-v1.5.2-nodeskclaw-postman-acceptance-closure.md`、`docs_agent/prd-v1.5-nodeskclaw-api-acceptance-hardening.md`、`docs_agent/prd-v1.3-skill-run-release-readiness.md`、`docs_agent/prd-skill-platform-v1.0.md`、`docs_agent/prd-skill-run-architecture-closure-v1.1.md` 与 `docs_agent/prd-skill-run-production-hardening-v1.0.md`。work-expert v1.0.2 目录与 checksum 冻结；新员工语义走 `contracts/skill-run/v1.0.0/`。生成与发布入口：`tools/contracts/release_skill_run_contracts.py` 与 `scripts/contracts.py generate --family skill-run`。
+Approved PRD：`docs_agent/prd-v1.5.3-nodeskclaw-postman-integration-readiness.md`。前序文档包括 `docs_agent/prd-v1.5.2-nodeskclaw-postman-acceptance-closure.md`、`docs_agent/prd-v1.5-nodeskclaw-api-acceptance-hardening.md`、`docs_agent/prd-v1.3-skill-run-release-readiness.md`、`docs_agent/prd-skill-platform-v1.0.md`、`docs_agent/prd-skill-run-architecture-closure-v1.1.md` 与 `docs_agent/prd-skill-run-production-hardening-v1.0.md`。work-expert v1.0.2 目录与 checksum 冻结；员工合同基线为 `contracts/skill-run/v1.0.0/`，RM-01 增量在 `v1.1.0/`。生成与发布入口：`tools/contracts/release_skill_run_contracts.py` 与 `scripts/contracts.py generate --family skill-run`。
+
+## v1.6 Delivery Governance
+
+v1.6 保持既有 Production Owner 与信任边界，通过四项顺序 Roadmap 分别关闭客户端合同、语义事件、Edge Bundle 和生产验收，不再用单体 PRD 混合四种发布门禁。
+
+- Approved Architecture（已批准架构）：[AD-SKILL-AGENT-V16](../../docs_agent/architecture/AD-SKILL-AGENT-V16.md)。
+- Active Roadmap（活动路线图）：[ROADMAP-SKILL-AGENT-V16](../../docs_agent/roadmaps/ROADMAP-SKILL-AGENT-V16.md)。
+- Current Stage PRD（当前阶段需求）：[RM-01 Catalog 与 Run Control](../../docs_agent/prd-v1.6.0-skill-catalog-and-run-control.md)，状态为 `APPROVED`（已批准）。
+- RM-02–RM-04 在前序 Item（交付项）达到 `DONE`（完成）后才进入 Grounding（源码校准）。
 
 ## Architecture Closure Invariants (v1.5)
 
@@ -27,13 +36,13 @@ Architecture Closure 与 Acceptance Hardening (v1.5) 确立了 Run 生产执行�
 
 - **Skill Registry / 工作副本**：仍由 `hermes_skill` 拥有 `HermesSkill`；运营可改工作副本，不等于员工立刻可调。
 - **SkillRelease（不可变发布）**：[[nodeskclaw-backend/app/models/hermes_skill/skill_release.py#HermesSkillRelease]]；生命周期 `draft | published | deprecated | retired`；每个 Skill 同时最多一条 `published`；服务：[[nodeskclaw-backend/app/services/hermes_skill/skill_release_service.py#SkillReleaseService]]；REST：`/hermes/skills/{skill_id}/releases*`。
-- **MCP Gateway / 员工 Catalog**：[[nodeskclaw-backend/app/services/mcp_skill_gateway/handler.py#_collect_tools]]；`POST /api/v1/mcp` 只暴露 **已 published** Release 投影的 Skill（`is_mcp_exposed AND is_active AND published`）；无 `hermes.*` / `genehub.*` / `nodeskclaw_task_*`。公开 descriptor 的 `version` / digest 取自 published Release（见 [[nodeskclaw-backend/app/services/hermes_skill/mcp_tool_mapper.py#McpToolMapper#list_tools]]）。
+- **MCP Gateway / 员工 Catalog**：[[nodeskclaw-backend/app/services/mcp_skill_gateway/handler.py#_collect_tools]]；`POST /api/v1/mcp` 只暴露 **已 published** Release 投影的 Skill（`is_mcp_exposed AND is_active AND published`）；无 `hermes.*` / `genehub.*` / `nodeskclaw_task_*`。公开 descriptor 的 `version` / digest 取自 published Release。Skill/Connector 投影还带 `capabilityKind`、`interactionMode`、`supportsAttachments`、`annotations`（及 Chat 的 `promptField`）；Skill 行只读 published `extra_metadata`，不回退工作副本（见 [[nodeskclaw-backend/app/services/hermes_skill/mcp_tool_mapper.py#McpToolMapper#_skill_to_tool_dict]]）。
 - **Catalog 寻址拒绝**：[[nodeskclaw-backend/app/services/mcp_skill_gateway/handler.py#_handle_tools_list]] 拒绝 `agent_alias` / `profile` / `workspace_id`；公开 descriptor 不泄漏 Runtime 身份。
 - **Skill Run Execution**：`nodeskclaw-agent` central；Run / Snapshot / Queue Attempt / Event SoT（PG schema `agent`）。内部 HTTP：[[nodeskclaw-agent/app/api/internal_runs.py#create_internal_run]]；持久化：[[nodeskclaw-agent/app/services/run_service.py#create_run]]；认领：[[nodeskclaw-agent/app/services/worker.py#RunWorker]]。
 - **Hermes 实时 Adapter**：[[nodeskclaw-agent/app/services/hermes_engine.py#execute_hermes_run]] 流式 yield `run.progress`；无 gateway 才 stub。
 - **Artifact 字节 SoT**：Agent `run_artifacts`；员工下载经 Backend 鉴权代理 `GET /api/v1/runs/{id}/artifacts/{artifact_id}/download`。
 - **内部信任**：[[nodeskclaw-agent/app/auth.py#require_internal_token]]（`X-Skill-Agent-Token`）；执行上下文以 `X-Exec-Org-Id` / `X-Exec-User-Id` 为准，拒绝体里伪造 org/user。
-- **Run 投影**：Backend [[nodeskclaw-backend/app/api/runs.py#get_run]] `/api/v1/runs/*` 鉴权反代 Agent（含 SSE）；员工可见 JSON **剥离** `gateway_url` / token；不对员工开放 Run 创建。配置：`SKILL_AGENT_BASE_URL` / `SKILL_AGENT_INTERNAL_TOKEN` / `SKILL_AGENT_ENABLED`；禁止复用 `AGENT_API_BASE_URL`。
+- **Run 投影**：Backend [[nodeskclaw-backend/app/api/runs.py#get_run]] `/api/v1/runs/*` 鉴权反代 Agent（含 SSE）；员工可见 JSON **剥离** `gateway_url` / token；不对员工开放 Run 创建。POST 体必须经 `json_body` 转发；Agent 4xx 由 [[nodeskclaw-backend/app/api/runs.py#_handle_agent_error_response]] 映射为公共 `error_code` / `message_key` / HTTP 状态，404 仍为 Run 不存在。配置：`SKILL_AGENT_BASE_URL` / `SKILL_AGENT_INTERNAL_TOKEN` / `SKILL_AGENT_ENABLED`；禁止复用 `AGENT_API_BASE_URL`。
 - **C2 投影**：`HermesTask.id == run_id`；Expert 仍用 `/hermes/tasks/*`（[[decisions/work-expert-contract|v1.0.2]]）。
 - **Connector Center（定义 Owner）**：Backend 域 `connector`（[[nodeskclaw-backend/app/models/connector/definition.py#ConnectorDefinition]] / Instance / Tool / Binding / SecretRef / EdgeNode）；明文密钥不入库；Portal Hermes Connectors / Edge 页运营。
 - **Catalog Public Connector**：[[nodeskclaw-backend/app/services/hermes_skill/mcp_tool_mapper.py#McpToolMapper#list_tools]] 合并 `is_public` 且实例可用的 Connector Tool；Edge placement 需节点心跳在线，否则隐藏。
@@ -53,10 +62,12 @@ Architecture Closure 与 Acceptance Hardening (v1.5) 确立了 Run 生产执行�
 
 运营在 Portal Hermes Skills 创建/发布/废弃 Release；员工可见性由 published 决定，与 `is_active` 开关正交。
 
-创建 draft 时同步计算 content digest；发布新 version 时旧 published 自动 deprecated。员工 `tools/call` 无 published 则拒绝（Expert 可回退工作副本 digest）。Strip 规则：[[nodeskclaw-backend/app/services/hermes_skill/runtime_skill_run_service.py#strip_internal_route_secrets]]。
+创建 draft 时同步计算 content digest；发布新 version 时旧 published 自动 deprecated。`publish` 对 `interactionMode=chat` 强制校验 `promptField` 存在于 object schema 的 string 属性，且不得使用保留路由字段；同时规范化 `annotations` 与 `supportsAttachments`（[[nodeskclaw-backend/app/services/hermes_skill/skill_release_service.py#SkillReleaseService#_validate_interaction_contract]]）。员工 `tools/call` 无 published 则拒绝（Expert 可回退工作副本 digest）。Strip 规则：[[nodeskclaw-backend/app/services/hermes_skill/runtime_skill_run_service.py#strip_internal_route_secrets]]。
 
 ## Employee Contract
 
-员工 `tools/call` 返回 `run_id` + `/api/v1/runs/*`（`contracts/skill-run/v1.0.0`）。Expert `task_source=expert_mcp` 仍返回冻结 `task_id` + `/hermes/tasks/*`。
+员工 `tools/call` 返回 `run_id` + `/api/v1/runs/*`（`contracts/skill-run/v1.0.0` 与 `v1.1.0`）。Expert `task_source=expert_mcp` 仍返回冻结 `task_id` + `/hermes/tasks/*`。
+
+v1.1.0 在保持 v1.0.0 兼容的同时，扩展了 MCP Tools List 描述符与 Accepted Result 结构：[[nodeskclaw-backend/app/schemas/skill_run/mcp_jsonrpc.py#SkillToolDescriptorV11]]、[[nodeskclaw-backend/app/schemas/skill_run/mcp_jsonrpc.py#SkillRunAcceptedStructuredContentV11]] 与常量 [[nodeskclaw-backend/app/schemas/skill_run/constants.py#SKILL_RUN_CONTRACT_VERSION_V11]]。
 
 Schema 事实源：[[nodeskclaw-backend/app/schemas/skill_run/mcp_jsonrpc.py#SkillRunAcceptedStructuredContent]]；常量：[[nodeskclaw-backend/app/schemas/skill_run/constants.py#SKILL_RUN_CONTRACT_VERSION]]。

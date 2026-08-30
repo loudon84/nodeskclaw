@@ -28,3 +28,21 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+ALEMBIC_VERSION_NUM_LENGTH = 64
+
+
+def alembic_context_version_options() -> dict[str, str]:
+    return {
+        "version_table": "alembic_version",
+        "version_table_schema": settings.SKILL_AGENT_SCHEMA,
+    }
+
+
+def alembic_version_relation() -> str:
+    schema = settings.SKILL_AGENT_SCHEMA.replace('"', "")
+    return f'"{schema}".alembic_version'
+
+
+def alembic_schema_name() -> str:
+    return settings.SKILL_AGENT_SCHEMA.replace('"', "")
