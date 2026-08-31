@@ -1,6 +1,6 @@
 # RM-02 Implementation Closure Review
 
-**Scope:** `b8d69828` 的结构化语义事件实现，以及随后完成的 ingest 边界修复。  
+**Scope:** `b8d69828` 的结构化语义事件实现，以及随后完成的 ingest 边界修复。
 **Verdict:** PASS
 
 ## Review Findings And Resolution
