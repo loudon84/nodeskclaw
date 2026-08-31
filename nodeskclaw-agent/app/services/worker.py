@@ -18,6 +18,7 @@ from sqlalchemy import text
 
 from app.config import settings
 from app.db import SessionLocal
+from app.schemas import is_semantic_event_type
 from app.services import run_service
 from app.services.engine_port import execute_engine
 
@@ -457,7 +458,19 @@ class RunWorker:
                     payload = event.get("payload") or {}
                     source = event.get("source") or "agent"
                     source_event_id = event.get("source_event_id")
-                    if event_type == "run.completed":
+                    if is_semantic_event_type(event_type):
+                        await run_service.append_event(
+                            db,
+                            run_id,
+                            event_type,
+                            payload,
+                            org_id=org_id,
+                            attempt_id=attempt_id,
+                            generation=generation,
+                            source=source,
+                            source_event_id=source_event_id,
+                        )
+                    elif event_type == "run.completed":
                         await run_service.update_step_state(
                             db,
                             run_id,

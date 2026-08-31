@@ -2,6 +2,148 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+SEMANTIC_EVENT_TYPES = frozenset(
+    {
+        "assistant.message",
+        "reasoning.summary",
+        "tool.call",
+        "clarify.requested",
+        "approval.requested",
+        "artifact.persisted",
+    }
+)
+
+CONTROL_EVENT_PREFIXES_KEEP = ("run.", "step.", "edge.job.")
+
+# Documented known control types (non-exhaustive; KEEP is prefix-based).
+CONTROL_EVENT_TYPES_KEEP = frozenset(
+    {
+        "run.progress",
+        "run.completed",
+        "run.failed",
+        "run.cancelled",
+        "run.started",
+        "run.plan",
+        "run.central_step_completed",
+        "run.waiting_edge",
+        "run.edge_steps_queued",
+        "run.recovered",
+        "run.artifact_ready",
+        "run.created",
+        "run.queued",
+        "run.resuming",
+        "run.cancelling",
+        "step.init",
+        "step.completed",
+        "step.failed",
+        "step.cancelled",
+        "step.running",
+        "edge.job.completed",
+        "edge.job.failed",
+        "edge.job.cancelled",
+    }
+)
+
+TOOL_CALL_STATUSES = frozenset({"started", "completed", "failed"})
+
+_FORBIDDEN_PAYLOAD_KEYS = frozenset(
+    {
+        "storage_key",
+        "storage_ref",
+        "gateway_url",
+        "gateway_token",
+        "token",
+        "authorization",
+        "arguments",
+        "raw_arguments",
+        "presigned_url",
+        "bytes",
+        "content_base64",
+        "chain_of_thought",
+        "reasoning",
+    }
+)
+
+
+def is_semantic_event_type(event_type: str) -> bool:
+    return event_type in SEMANTIC_EVENT_TYPES
+
+
+def is_control_event_type(event_type: str) -> bool:
+    if not event_type or is_semantic_event_type(event_type):
+        return False
+    return event_type.startswith(CONTROL_EVENT_PREFIXES_KEEP)
+
+def validate_semantic_event_payload(event_type: str, payload: dict[str, Any] | None) -> str | None:
+    """Return stable rejection reason, or None when the semantic payload is valid."""
+    data = payload or {}
+    if not isinstance(data, dict):
+        return "invalid_semantic_payload"
+    if _FORBIDDEN_PAYLOAD_KEYS.intersection(data.keys()):
+        return "forbidden_semantic_payload_field"
+
+    if event_type == "assistant.message":
+        text = data.get("text")
+        if not isinstance(text, str) or not text:
+            return "missing_assistant_text"
+        return None
+
+    if event_type == "reasoning.summary":
+        summary = data.get("summary")
+        if not isinstance(summary, str) or not summary:
+            return "missing_reasoning_summary"
+        return None
+
+    if event_type == "tool.call":
+        tool_name = data.get("tool_name")
+        call_id = data.get("call_id")
+        status = data.get("status")
+        if not isinstance(tool_name, str) or not tool_name:
+            return "missing_tool_name"
+        if not isinstance(call_id, str) or not call_id:
+            return "missing_call_id"
+        if status not in TOOL_CALL_STATUSES:
+            return "invalid_tool_call_status"
+        return None
+
+    if event_type == "clarify.requested":
+        question = data.get("question")
+        if not isinstance(question, str) or not question:
+            return "missing_clarify_question"
+        options = data.get("options")
+        if options is not None and not isinstance(options, list):
+            return "invalid_clarify_options"
+        return None
+
+    if event_type == "approval.requested":
+        approval_id = data.get("approval_id")
+        summary = data.get("summary")
+        if not isinstance(approval_id, str) or not approval_id:
+            return "missing_approval_id"
+        if not isinstance(summary, str) or not summary:
+            return "missing_approval_summary"
+        return None
+
+    if event_type == "artifact.persisted":
+        artifact_id = data.get("artifact_id")
+        name = data.get("name")
+        size = data.get("size")
+        checksum = data.get("checksum_sha256")
+        if not isinstance(artifact_id, str) or not artifact_id:
+            return "missing_artifact_id"
+        if not isinstance(name, str) or not name:
+            return "missing_artifact_name"
+        if not isinstance(size, int) or size < 0:
+            return "invalid_artifact_size"
+        if not isinstance(checksum, str) or not checksum:
+            return "missing_artifact_checksum"
+        content_type = data.get("content_type")
+        if content_type is not None and not isinstance(content_type, str):
+            return "invalid_artifact_content_type"
+        return None
+
+    return "unknown_semantic_type"
+
 
 class CreateRunRequest(BaseModel):
     run_id: str | None = None

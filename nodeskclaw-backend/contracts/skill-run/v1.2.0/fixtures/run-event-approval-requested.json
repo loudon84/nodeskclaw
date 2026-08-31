@@ -1,0 +1,13 @@
+{
+  "event_id": "evt-6",
+  "run_id": "run-1",
+  "event_type": "approval.requested",
+  "event_seq": 7,
+  "source": "agent",
+  "source_event_id": "hermes:run-1:att-1:approval:1",
+  "timestamp": "2026-08-31T00:00:05Z",
+  "payload": {
+    "approval_id": "appr-1",
+    "summary": "delete file"
+  }
+}

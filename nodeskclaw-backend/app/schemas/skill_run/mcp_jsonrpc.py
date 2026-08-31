@@ -158,3 +158,123 @@ class ToolsCallAcceptedResultV11(BaseModel):
     structuredContent: SkillRunAcceptedStructuredContentV11
     isError: bool = False
 
+
+class AssistantMessagePayload(BaseModel):
+    text: str
+
+
+class ReasoningSummaryPayload(BaseModel):
+    summary: str
+
+
+class ToolCallPayload(BaseModel):
+    tool_name: str
+    call_id: str
+    status: Literal["started", "completed", "failed"]
+
+
+class ClarifyRequestedPayload(BaseModel):
+    question: str
+    options: list[Any] | None = None
+
+
+class ApprovalRequestedPayload(BaseModel):
+    approval_id: str
+    summary: str
+
+
+class ArtifactPersistedPayload(BaseModel):
+    artifact_id: str
+    name: str
+    content_type: str | None = None
+    size: int
+    checksum_sha256: str
+
+
+class RunEventAssistantMessageV12(BaseModel):
+    event_id: str
+    run_id: str
+    event_type: Literal["assistant.message"]
+    event_seq: int
+    source: str = "agent"
+    source_event_id: str | None = None
+    timestamp: str
+    payload: AssistantMessagePayload
+
+
+class RunEventReasoningSummaryV12(BaseModel):
+    event_id: str
+    run_id: str
+    event_type: Literal["reasoning.summary"]
+    event_seq: int
+    source: str = "agent"
+    source_event_id: str | None = None
+    timestamp: str
+    payload: ReasoningSummaryPayload
+
+
+class RunEventToolCallV12(BaseModel):
+    event_id: str
+    run_id: str
+    event_type: Literal["tool.call"]
+    event_seq: int
+    source: str = "agent"
+    source_event_id: str | None = None
+    timestamp: str
+    payload: ToolCallPayload
+
+
+class RunEventClarifyRequestedV12(BaseModel):
+    event_id: str
+    run_id: str
+    event_type: Literal["clarify.requested"]
+    event_seq: int
+    source: str = "agent"
+    source_event_id: str | None = None
+    timestamp: str
+    payload: ClarifyRequestedPayload
+
+
+class RunEventApprovalRequestedV12(BaseModel):
+    event_id: str
+    run_id: str
+    event_type: Literal["approval.requested"]
+    event_seq: int
+    source: str = "agent"
+    source_event_id: str | None = None
+    timestamp: str
+    payload: ApprovalRequestedPayload
+
+
+class RunEventArtifactPersistedV12(BaseModel):
+    event_id: str
+    run_id: str
+    event_type: Literal["artifact.persisted"]
+    event_seq: int
+    source: str = "agent"
+    source_event_id: str | None = None
+    timestamp: str
+    payload: ArtifactPersistedPayload
+
+
+class RunEventControlV12(BaseModel):
+    event_id: str
+    run_id: str
+    event_type: str = Field(pattern=r"^(run|step|edge\.job)\.")
+    event_seq: int
+    source: str = "agent"
+    source_event_id: str | None = None
+    timestamp: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+RUN_EVENT_V12_MODELS = (
+    RunEventAssistantMessageV12,
+    RunEventReasoningSummaryV12,
+    RunEventToolCallV12,
+    RunEventClarifyRequestedV12,
+    RunEventApprovalRequestedV12,
+    RunEventArtifactPersistedV12,
+    RunEventControlV12,
+)
+

@@ -19,6 +19,9 @@ from app.schemas import (
     MutationResponse,
     ResultResponse,
     RunView,
+    is_control_event_type,
+    is_semantic_event_type,
+    validate_semantic_event_payload,
 )
 from app.services import run_service
 
@@ -283,6 +286,53 @@ async def ingest_internal_events(
             )
             continue
 
+        semantic = is_semantic_event_type(event_type)
+        control = is_control_event_type(event_type)
+        if not semantic and not control:
+            await run_service.record_event_rejection(
+                db,
+                run_id,
+                reason="unknown_event_type",
+                event_id=event.get("event_id"),
+                source_event_id=source_event_id,
+                details={"event_type": event_type},
+            )
+            continue
+
+        if semantic:
+            reason = validate_semantic_event_payload(event_type, payload if isinstance(payload, dict) else {})
+            if reason:
+                await run_service.record_event_rejection(
+                    db,
+                    run_id,
+                    reason=reason,
+                    event_id=event.get("event_id"),
+                    source_event_id=source_event_id,
+                    details={"event_type": event_type},
+                )
+                continue
+            if event_type == "artifact.persisted":
+                artifacts = await run_service.list_artifacts(db, run_id)
+                matched = next(
+                    (
+                        a
+                        for a in artifacts
+                        if a.artifact_id == payload.get("artifact_id")
+                        and str(getattr(a, "storage_state", "persisted")).lower() == "persisted"
+                    ),
+                    None,
+                )
+                if not matched:
+                    await run_service.record_event_rejection(
+                        db,
+                        run_id,
+                        reason="artifact_not_persisted",
+                        event_id=event.get("event_id"),
+                        source_event_id=source_event_id,
+                        details={"event_type": event_type, "artifact_id": payload.get("artifact_id")},
+                    )
+                    continue
+
         # 3. Append event
         try:
             await run_service.append_event(
@@ -311,7 +361,9 @@ async def ingest_internal_events(
 
         valid_count += 1
 
-        # 4. Update step state and trigger aggregator on step terminal events
+        # 4. Control events may update step state; semantic events must not.
+        if semantic:
+            continue
         if step_id and step_id in valid_step_ids:
             if event_type in ("run.completed", "step.completed", "edge.job.completed"):
                 await run_service.update_step_state(

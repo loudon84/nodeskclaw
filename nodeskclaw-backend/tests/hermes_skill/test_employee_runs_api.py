@@ -12,6 +12,7 @@ from app.api.runs import (
     get_run_artifacts,
     get_run_result,
     resume_run,
+    stream_run_events,
 )
 from app.core.exceptions import AppException, ForbiddenError, NotFoundError
 from app.models.hermes_skill.hermes_task import HermesTask, TaskStatus
@@ -265,4 +266,71 @@ async def test_agent_404_mapped_to_not_found():
             await _agent_post("/internal/v1/runs/run-nonexistent/resume", json_body={}, org_id="org-1", user_id="user-1")
         assert exc_info.value.status_code == 404
         assert exc_info.value.message_key == "errors.run.not_found"
+
+
+@pytest.mark.asyncio
+async def test_stream_run_events_passes_semantic_event_type_and_seq():
+    db = AsyncMock()
+    user_org = _mock_user_org()
+    request = MagicMock()
+    request.is_disconnected = AsyncMock(return_value=False)
+
+    task = HermesTask(
+        id="run-1",
+        org_id="org-1",
+        user_id="user-1",
+        tool_name="test_tool",
+        status=TaskStatus.RUNNING,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+    )
+
+    semantic_item = {
+        "event_id": "evt-sem-1",
+        "run_id": "run-1",
+        "event_type": "assistant.message",
+        "event_seq": 7,
+        "source": "agent",
+        "source_event_id": "hermes:run-1:att-1:assistant:1",
+        "timestamp": "2026-08-31T00:00:00Z",
+        "payload": {"text": "hello"},
+    }
+    terminal_item = {
+        "event_id": "evt-done",
+        "run_id": "run-1",
+        "event_type": "run.completed",
+        "event_seq": 8,
+        "source": "agent",
+        "timestamp": "2026-08-31T00:00:01Z",
+        "payload": {},
+    }
+
+    async def _agent_get_side_effect(path, params=None, org_id=None, user_id=None):
+        if path.endswith("/events"):
+            return {"items": [semantic_item, terminal_item]}
+        return {"run_id": "run-1", "org_id": "org-1", "status": "COMPLETED"}
+
+    with patch("app.api.runs._authorize_run", new=AsyncMock(return_value=task)), \
+         patch("app.api.runs._get_outbox_entry", new=AsyncMock(return_value=None)), \
+         patch("app.api.runs.pg_notify_service.subscribe"), \
+         patch("app.api.runs.pg_notify_service.unsubscribe"), \
+         patch("app.api.runs._agent_get", new=AsyncMock(side_effect=_agent_get_side_effect)):
+
+        response = await stream_run_events(
+            run_id="run-1",
+            request=request,
+            last_event_id=None,
+            user_org=user_org,
+            db=db,
+            last_event_id_header=None,
+        )
+        chunks: list[str] = []
+        async for chunk in response.body_iterator:
+            chunks.append(chunk if isinstance(chunk, str) else chunk.decode())
+        body = "".join(chunks)
+
+    assert "event: assistant.message\n" in body
+    assert "id: 7\n" in body
+    assert "event: run.completed\n" in body
+    assert "id: 8\n" in body
 

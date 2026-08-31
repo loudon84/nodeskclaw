@@ -10,7 +10,7 @@ NoDeskClaw 由 Portal、Backend、Skill Agent、LLM Proxy、Knowledge、Task、�
 
 1. **Portal / Admin REST**：`/api/v1` 与 `/api/v1/admin` → Backend 业务服务。
 2. **LLM 调用**：实例 / Agent → LLM Proxy → Provider（额度先检后转）。
-3. **MCP / Expert / Skill Run**：JSON-RPC MCP Gateway（组织 MCP + Expert MCP）；员工 Catalog 只列 published SkillRelease，执行经 [[decisions/skill-platform-execution|Skill Platform]] 入队 `nodeskclaw-agent`；apps/work Expert 消费面仍冻结 [[decisions/work-expert-contract|WORK-EXPERT-CONTRACT v1.0.2]]，员工新合同为 `contracts/skill-run/v1.0.0`。
+3. **MCP / Expert / Skill Run**：JSON-RPC MCP Gateway（组织 MCP + Expert MCP）；员工 Catalog 只列 published SkillRelease，执行经 [[decisions/skill-platform-execution|Skill Platform]] 入队 `nodeskclaw-agent`；apps/work Expert 消费面仍冻结 [[decisions/work-expert-contract|WORK-EXPERT-CONTRACT v1.0.2]]，员工合同为 `contracts/skill-run/v1.0.0`、`v1.1.0` 与 `v1.2.0`（语义 Run Event）。
 4. **Knowledge / RAG**：Desktop / Agent → Knowledge（ACL + Adapter）→ RAGFlow；禁止直连 RAGFlow。
 5. **AutoTask**：Portal / Worker / MCP → `nodeskclaw-task`（`/api/v1/autotask`）→ 自有 PostgreSQL 与 RPA Engine；后继作业与模板生命周期见 [[task]]、[[autotask-objects]]。
 

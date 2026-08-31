@@ -152,3 +152,79 @@ async def test_hybrid_waits_for_edge_steps():
     # Alias / regression check for hybrid non-terminal before edge steps
     await test_worker_execute_hybrid_sets_waiting_edge_and_enqueues_edge_job()
 
+
+@pytest.mark.asyncio
+async def test_worker_semantic_events_do_not_aggregate_terminal():
+    worker = RunWorker()
+    claimed = {
+        "id": "run-sem-1",
+        "org_id": "org-1",
+        "tool_name": "test_tool",
+        "arguments": {"q": "hello"},
+        "snapshot": {
+            "org_id": "org-1",
+            "placement": {"role": "central", "engine": "hermes"},
+            "request_trace_id": "trace-sem",
+        },
+        "attempt_id": "attempt-1",
+        "generation": 1,
+    }
+
+    mock_db = AsyncMock()
+    mock_db.commit = AsyncMock()
+    mock_db.rollback = AsyncMock()
+
+    async def mock_engine_gen(*args, **kwargs):
+        yield {
+            "event_type": "assistant.message",
+            "payload": {"text": "hello"},
+            "source": "agent",
+            "source_event_id": "asst-1",
+        }
+        yield {
+            "event_type": "tool.call",
+            "payload": {"tool_name": "search", "call_id": "c1", "status": "started"},
+            "source": "agent",
+            "source_event_id": "tool-1",
+        }
+        yield {"event_type": "run.completed", "payload": {"summary": "done"}}
+
+    set_status_calls = []
+    events_appended = []
+    aggregate_calls = []
+
+    async def mock_set_status(db, run_id, status, **kwargs):
+        set_status_calls.append(status)
+        return True
+
+    async def mock_append_event(db, run_id, event_type, payload, **kwargs):
+        events_appended.append(
+            {
+                "event_type": event_type,
+                "payload": payload,
+                "source_event_id": kwargs.get("source_event_id"),
+            }
+        )
+        return MagicMock(event_id="evt", event_seq=len(events_appended))
+
+    async def mock_aggregate(*args, **kwargs):
+        aggregate_calls.append(kwargs)
+
+    with patch("app.services.worker.SessionLocal", return_value=mock_db), \
+         patch("app.services.worker.execute_engine", side_effect=mock_engine_gen), \
+         patch("app.services.worker.run_service.set_status", side_effect=mock_set_status), \
+         patch("app.services.worker.run_service.append_event", side_effect=mock_append_event), \
+         patch("app.services.worker.run_service.aggregate_run_terminal", side_effect=mock_aggregate), \
+         patch("app.services.worker.run_service.update_step_state", new=AsyncMock()), \
+         patch("app.services.worker.run_service.persist_step_plan", new=AsyncMock(return_value=[])), \
+         patch("app.services.worker.run_service.get_run", return_value=None):
+        await worker._execute(claimed)
+
+    event_types = [e["event_type"] for e in events_appended]
+    assert "assistant.message" in event_types
+    assert "tool.call" in event_types
+    assert any(e["source_event_id"] == "asst-1" for e in events_appended)
+    assert len(aggregate_calls) == 1
+    terminal = next(t for t in event_types if t in ("run.completed", "run.central_step_completed"))
+    assert event_types.index("assistant.message") < event_types.index(terminal)
+

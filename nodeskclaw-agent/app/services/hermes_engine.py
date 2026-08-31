@@ -37,6 +37,123 @@ def build_chat_completions_payload(
     }
 
 
+def _emit_semantic_from_choice(
+    choice: dict[str, Any],
+    *,
+    source_prefix: str,
+    counter: list[int],
+) -> list[dict[str, Any]]:
+    """Map only explicit structured Provider fields into semantic events."""
+    events: list[dict[str, Any]] = []
+    delta = choice.get("delta") if isinstance(choice.get("delta"), dict) else {}
+    message = choice.get("message") if isinstance(choice.get("message"), dict) else {}
+
+    def _next_id(kind: str) -> str:
+        counter[0] += 1
+        return f"{source_prefix}:{kind}:{counter[0]}"
+
+    content = delta.get("content") or message.get("content") or ""
+    if isinstance(content, str) and content:
+        events.append(
+            {
+                "event_type": "assistant.message",
+                "payload": {"text": content},
+                "source": "agent",
+                "source_event_id": _next_id("assistant"),
+            }
+        )
+
+    summary = None
+    for src in (delta, message, choice):
+        if isinstance(src.get("reasoning_summary"), str) and src["reasoning_summary"]:
+            summary = src["reasoning_summary"]
+            break
+    if summary:
+        events.append(
+            {
+                "event_type": "reasoning.summary",
+                "payload": {"summary": summary},
+                "source": "agent",
+                "source_event_id": _next_id("reasoning"),
+            }
+        )
+
+    tool_calls = delta.get("tool_calls") or message.get("tool_calls") or []
+    if isinstance(tool_calls, list):
+        for tc in tool_calls:
+            if not isinstance(tc, dict):
+                continue
+            fn = tc.get("function") if isinstance(tc.get("function"), dict) else {}
+            tool_name = tc.get("name") or fn.get("name")
+            call_id = tc.get("id") or tc.get("call_id")
+            status = tc.get("status") or "started"
+            if not isinstance(tool_name, str) or not tool_name:
+                continue
+            if not isinstance(call_id, str) or not call_id:
+                continue
+            if status not in {"started", "completed", "failed"}:
+                status = "started"
+            events.append(
+                {
+                    "event_type": "tool.call",
+                    "payload": {
+                        "tool_name": tool_name,
+                        "call_id": call_id,
+                        "status": status,
+                    },
+                    "source": "agent",
+                    "source_event_id": _next_id(f"tool:{call_id}"),
+                }
+            )
+
+    clarify = None
+    for src in (delta, message, choice):
+        if isinstance(src.get("clarify"), dict):
+            clarify = src["clarify"]
+            break
+        if isinstance(src.get("clarification"), dict):
+            clarify = src["clarification"]
+            break
+    if clarify and isinstance(clarify.get("question"), str) and clarify["question"]:
+        payload: dict[str, Any] = {"question": clarify["question"]}
+        if isinstance(clarify.get("options"), list):
+            payload["options"] = clarify["options"]
+        events.append(
+            {
+                "event_type": "clarify.requested",
+                "payload": payload,
+                "source": "agent",
+                "source_event_id": _next_id("clarify"),
+            }
+        )
+
+    approval = None
+    for src in (delta, message, choice):
+        if isinstance(src.get("approval"), dict):
+            approval = src["approval"]
+            break
+    if (
+        approval
+        and isinstance(approval.get("approval_id"), str)
+        and approval["approval_id"]
+        and isinstance(approval.get("summary"), str)
+        and approval["summary"]
+    ):
+        events.append(
+            {
+                "event_type": "approval.requested",
+                "payload": {
+                    "approval_id": approval["approval_id"],
+                    "summary": approval["summary"],
+                },
+                "source": "agent",
+                "source_event_id": _next_id("approval"),
+            }
+        )
+
+    return events
+
+
 async def fetch_credential_lease(
     *,
     org_id: str,
@@ -150,12 +267,18 @@ async def execute_hermes_run(
     yield {"event_type": "run.progress", "payload": {"stage": "tool_calling", "message": "calling hermes"}}
 
     content_parts: list[str] = []
+    event_counter = [0]
+    source_prefix = f"hermes:{run_id or 'run'}:{attempt_id or 'attempt'}"
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=10.0)) as client:
             async with client.stream("POST", url, json=payload, headers=headers) as response:
                 response.raise_for_status()
                 content_type = response.headers.get("content-type", "")
                 if "text/event-stream" in content_type or "stream" in content_type:
+                    yield {
+                        "event_type": "run.progress",
+                        "payload": {"stage": "streaming", "message": "streaming"},
+                    }
                     async for line in response.aiter_lines():
                         if cancel_event and cancel_event.is_set():
                             yield {"event_type": "run.cancelled", "payload": {"message": "cancelled during stream"}}
@@ -169,31 +292,38 @@ async def execute_hermes_run(
                             chunk = json.loads(data_str)
                         except json.JSONDecodeError:
                             continue
-                        delta = ""
                         choices = chunk.get("choices") or []
-                        if choices:
-                            delta = ((choices[0].get("delta") or {}).get("content")) or ""
-                            if not delta:
-                                delta = ((choices[0].get("message") or {}).get("content")) or ""
-                        if delta:
-                            content_parts.append(delta)
-                            yield {
-                                "event_type": "run.progress",
-                                "payload": {
-                                    "stage": "streaming",
-                                    "message": delta[:200],
-                                    "delta": delta,
-                                },
-                            }
+                        for choice in choices:
+                            if not isinstance(choice, dict):
+                                continue
+                            for semantic in _emit_semantic_from_choice(
+                                choice,
+                                source_prefix=source_prefix,
+                                counter=event_counter,
+                            ):
+                                text = (semantic.get("payload") or {}).get("text")
+                                if semantic["event_type"] == "assistant.message" and isinstance(text, str):
+                                    content_parts.append(text)
+                                yield semantic
                 else:
                     data = response.json()
                     choices = data.get("choices") or []
-                    if choices:
-                        content_parts.append(((choices[0].get("message") or {}).get("content")) or "")
                     yield {
                         "event_type": "run.progress",
                         "payload": {"stage": "processing", "message": "hermes response received"},
                     }
+                    for choice in choices:
+                        if not isinstance(choice, dict):
+                            continue
+                        for semantic in _emit_semantic_from_choice(
+                            choice,
+                            source_prefix=source_prefix,
+                            counter=event_counter,
+                        ):
+                            text = (semantic.get("payload") or {}).get("text")
+                            if semantic["event_type"] == "assistant.message" and isinstance(text, str):
+                                content_parts.append(text)
+                            yield semantic
 
         content = "".join(content_parts)
         yield {

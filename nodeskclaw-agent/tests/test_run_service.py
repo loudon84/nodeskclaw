@@ -7,8 +7,45 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.schemas import CreateRunRequest
+from app.schemas import (
+    CreateRunRequest,
+    validate_semantic_event_payload,
+)
 from app.services import run_service
+
+
+def test_validate_semantic_event_payload_shapes():
+    assert validate_semantic_event_payload("assistant.message", {"text": "hi"}) is None
+    assert validate_semantic_event_payload("assistant.message", {}) == "missing_assistant_text"
+    assert (
+        validate_semantic_event_payload(
+            "tool.call",
+            {"tool_name": "t", "call_id": "c1", "status": "started"},
+        )
+        is None
+    )
+    assert (
+        validate_semantic_event_payload(
+            "tool.call",
+            {"tool_name": "t", "call_id": "c1", "status": "running"},
+        )
+        == "invalid_tool_call_status"
+    )
+    assert (
+        validate_semantic_event_payload(
+            "artifact.persisted",
+            {
+                "artifact_id": "a1",
+                "name": "out.txt",
+                "content_type": "text/plain",
+                "size": 3,
+                "checksum_sha256": "abc",
+                "storage_key": "secret",
+            },
+        )
+        == "forbidden_semantic_payload_field"
+    )
+    assert validate_semantic_event_payload("unknown.type", {"text": "x"}) == "unknown_semantic_type"
 
 
 @pytest.mark.asyncio
@@ -281,14 +318,15 @@ async def test_store_and_get_artifact_bytes_local_file(tmp_path, monkeypatch):
     db.execute = AsyncMock(return_value=mock_seq)
 
     # Store
-    desc = await run_service.store_artifact_bytes(
-        db,
-        "run-1",
-        name="output.json",
-        content=b'{"result": "success"}',
-        content_type="application/json",
-        attempt_id="att-1",
-    )
+    with patch("app.services.run_service.append_event", new=AsyncMock()):
+        desc = await run_service.store_artifact_bytes(
+            db,
+            "run-1",
+            name="output.json",
+            content=b'{"result": "success"}',
+            content_type="application/json",
+            attempt_id="att-1",
+        )
     assert desc.name == "output.json"
     assert desc.size_bytes == 21
     assert desc.checksum_sha256 is not None
@@ -567,13 +605,14 @@ async def test_store_artifact_bytes_and_read_across_restarts(monkeypatch, tmp_pa
     mock_seq.mappings.return_value.first.return_value = {"next_event_seq": 1}
     db.execute = AsyncMock(return_value=mock_seq)
 
-    desc = await run_service.store_artifact_bytes(
-        db,
-        "run-1",
-        name="test_artifact.json",
-        content=b'{"result": 42}',
-        content_type="application/json",
-    )
+    with patch("app.services.run_service.append_event", new=AsyncMock()):
+        desc = await run_service.store_artifact_bytes(
+            db,
+            "run-1",
+            name="test_artifact.json",
+            content=b'{"result": 42}',
+            content_type="application/json",
+        )
     assert desc.size_bytes == len(b'{"result": 42}')
     assert desc.checksum_sha256 is not None
 
@@ -765,17 +804,31 @@ async def test_artifact_lifecycle_state_machine(tmp_path, monkeypatch):
     db.execute = AsyncMock(return_value=mock_seq)
 
     # 1. Store transitions from INIT to PERSISTED
-    desc = await run_service.store_artifact_bytes(
-        db,
-        "run-10",
-        name="test_artifact.txt",
-        content=b"hello-artifact",
-        content_type="text/plain",
-        attempt_id="att-1",
-    )
-    assert desc.name == "test_artifact.txt"
-    assert desc.storage_state == "persisted"
-    assert desc.size_bytes == 14
+    with patch("app.services.run_service.append_event", new=AsyncMock()) as mock_append:
+        desc = await run_service.store_artifact_bytes(
+            db,
+            "run-10",
+            name="test_artifact.txt",
+            content=b"hello-artifact",
+            content_type="text/plain",
+            attempt_id="att-1",
+        )
+        assert desc.name == "test_artifact.txt"
+        assert desc.storage_state == "persisted"
+        assert desc.size_bytes == 14
+        persisted_calls = [
+            call
+            for call in mock_append.await_args_list
+            if call.args[2] == "artifact.persisted"
+        ]
+        assert len(persisted_calls) == 1
+        payload = persisted_calls[0].args[3]
+        assert payload["artifact_id"] == desc.artifact_id
+        assert payload["name"] == "test_artifact.txt"
+        assert payload["size"] == 14
+        assert "checksum_sha256" in payload
+        assert "storage_key" not in payload
+        assert persisted_calls[0].kwargs["source_event_id"] == f"artifact:{desc.artifact_id}:persisted"
 
     # 2. Mark corrupted
     ok_corrupt = await run_service.mark_artifact_corrupted(db, desc.artifact_id, reason="disk read error")
@@ -823,15 +876,16 @@ async def test_artifact_idempotency_key_behavior(tmp_path, monkeypatch):
     db.execute = AsyncMock(return_value=mock_seq)
 
     # 1. First upload with idempotency_key
-    desc1 = await run_service.store_artifact_bytes(
-        db,
-        "run-idem-1",
-        name="output.txt",
-        content=b"content-v1",
-        content_type="text/plain",
-        idempotency_key="key-123",
-        step_id="step-1",
-    )
+    with patch("app.services.run_service.append_event", new=AsyncMock()):
+        desc1 = await run_service.store_artifact_bytes(
+            db,
+            "run-idem-1",
+            name="output.txt",
+            content=b"content-v1",
+            content_type="text/plain",
+            idempotency_key="key-123",
+            step_id="step-1",
+        )
     assert desc1.name == "output.txt"
     assert desc1.storage_state == "persisted"
 

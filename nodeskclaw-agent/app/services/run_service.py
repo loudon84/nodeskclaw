@@ -1170,7 +1170,7 @@ async def store_artifact_bytes(
         storage_ref = write_res.get("storage_ref") or storage_key
 
         # CAS update to PERSISTED
-        await db.execute(
+        cas = await db.execute(
             text(
                 f"""
                 UPDATE "{SCHEMA}".run_artifacts
@@ -1182,6 +1182,11 @@ async def store_artifact_bytes(
             ),
             {"id": artifact_id, "storage_ref": storage_ref, "now": _utcnow()},
         )
+        cas_rowcount = getattr(cas, "rowcount", None)
+        if isinstance(cas_rowcount, int):
+            persisted = cas_rowcount > 0
+        else:
+            persisted = True
     except Exception as exc:
         await db.execute(
             text(
@@ -1205,6 +1210,23 @@ async def store_artifact_bytes(
         attempt_id=attempt_id,
         generation=generation,
     )
+    if persisted:
+        await append_event(
+            db,
+            run_id,
+            "artifact.persisted",
+            {
+                "artifact_id": artifact_id,
+                "name": name,
+                "content_type": content_type or "text/plain",
+                "size": len(content),
+                "checksum_sha256": checksum,
+            },
+            org_id=org_id,
+            attempt_id=attempt_id,
+            generation=generation,
+            source_event_id=f"artifact:{artifact_id}:persisted",
+        )
     return ArtifactDescriptor(
         artifact_id=artifact_id,
         name=name,

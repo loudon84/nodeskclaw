@@ -184,6 +184,21 @@ def _model_schema(model) -> dict:
     return model.model_json_schema(mode="serialization")
 
 
+def _run_event_v12_union_schema(models: tuple) -> dict:
+    """Build oneOf schema with $defs hoisted to root so #/$defs refs resolve."""
+    one_of: list[dict] = []
+    all_defs: dict = {}
+    for model in models:
+        schema = _model_schema(model)
+        defs = schema.pop("$defs", {}) or {}
+        all_defs.update(defs)
+        one_of.append({"title": model.__name__, **schema})
+    result: dict = {"title": "RunEvent", "oneOf": one_of}
+    if all_defs:
+        result["$defs"] = all_defs
+    return result
+
+
 def _write_json(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -802,7 +817,82 @@ def check_contracts(release: bool = False) -> None:
         if release and manifest_v11.get("backendCommit") != _git_head():
             raise SystemExit("skill-run v1.1.0 manifest.backendCommit does not match current HEAD in release mode")
 
+    skill_run_v12_root = SKILL_RUN_CONTRACTS_HOME / "v1.2.0"
+    if skill_run_v12_root.exists():
+        _validate_checksums(skill_run_v12_root)
+        _validate_skill_run_fixtures(skill_run_v12_root)
+        _validate_skill_run_v12_event_fixtures(skill_run_v12_root)
+        _validate_skill_run_v12_negative_fixtures(skill_run_v12_root)
+        manifest_v12 = _read_manifest(skill_run_v12_root)
+        if release and manifest_v12.get("backendCommit") != _git_head():
+            raise SystemExit("skill-run v1.2.0 manifest.backendCommit does not match current HEAD in release mode")
+
     print("SKILL-RUN-CONTRACT check passed")
+
+
+def _validate_skill_run_v12_event_fixtures(root: Path) -> None:
+    import jsonschema
+
+    schema_path = root / "events" / "run-event.schema.json"
+    if not schema_path.exists():
+        raise SystemExit(f"Missing run-event schema: {schema_path}")
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    for fixture_rel in (
+        "fixtures/run-event-assistant-message.json",
+        "fixtures/run-event-tool-call.json",
+        "fixtures/run-event-artifact-persisted.json",
+        "fixtures/run-event-reasoning-summary.json",
+        "fixtures/run-event-clarify-requested.json",
+        "fixtures/run-event-approval-requested.json",
+        "fixtures/run-event-control-progress.json",
+        "fixtures/run-event-control-created.json",
+    ):
+        fixture_path = root / fixture_rel
+        if not fixture_path.exists():
+            raise SystemExit(f"Missing skill-run v1.2 fixture: {fixture_rel}")
+        fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+        jsonschema.validate(fixture, schema)
+
+
+def _validate_skill_run_v12_negative_fixtures(root: Path) -> None:
+    import jsonschema
+
+    schema_path = root / "events" / "run-event.schema.json"
+    if not schema_path.exists():
+        return
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+
+    unknown_type = {
+        "event_id": "evt-x",
+        "run_id": "run-1",
+        "event_type": "unknown.semantic",
+        "event_seq": 1,
+        "source": "agent",
+        "timestamp": "2026-08-31T00:00:00Z",
+        "payload": {},
+    }
+    try:
+        jsonschema.validate(unknown_type, schema)
+    except jsonschema.ValidationError:
+        pass
+    else:
+        raise SystemExit("run-event.schema.json unexpectedly accepted unknown event_type")
+
+    missing_category = {
+        "event_id": "evt-y",
+        "run_id": "run-1",
+        "event_type": "tool.call",
+        "event_seq": 1,
+        "source": "agent",
+        "timestamp": "2026-08-31T00:00:00Z",
+        "payload": {"tool_name": "search"},
+    }
+    try:
+        jsonschema.validate(missing_category, schema)
+    except jsonschema.ValidationError:
+        pass
+    else:
+        raise SystemExit("run-event.schema.json unexpectedly accepted tool.call missing required fields")
 
 
 def _validate_skill_run_v11_negative_fixtures(root: Path) -> None:
@@ -844,11 +934,13 @@ def generate_skill_run_contracts() -> None:
         SKILL_RUN_CONTRACT_NAME,
         SKILL_RUN_CONTRACT_VERSION,
         SKILL_RUN_CONTRACT_VERSION_V11,
+        SKILL_RUN_CONTRACT_VERSION_V12,
         SKILL_RUN_TAG_NAME,
     )
     from app.schemas.skill_run.mcp_jsonrpc import (
         ArtifactDescriptor,
         ExecutionSnapshot,
+        RUN_EVENT_V12_MODELS,
         RunEvent,
         RunRecord,
         SkillToolAnnotations,
@@ -1008,163 +1100,351 @@ def generate_skill_run_contracts() -> None:
         (root_v10 / "SHA256SUMS").write_text("\n".join(checksum_lines) + "\n", encoding="utf-8")
         print(f"Generated {SKILL_RUN_CONTRACT_NAME} at {root_v10} (backendCommit={backend_commit})")
 
-    # Generate v1.1.0 contract
+    # Generate v1.1.0 contract only when missing (freeze committed package).
     root_v11 = SKILL_RUN_CONTRACTS_HOME / f"v{SKILL_RUN_CONTRACT_VERSION_V11}"
-    root_v11.mkdir(parents=True, exist_ok=True)
-    (root_v11 / "mcp").mkdir(exist_ok=True)
-    (root_v11 / "events").mkdir(exist_ok=True)
-    (root_v11 / "runs").mkdir(exist_ok=True)
-    (root_v11 / "edge").mkdir(exist_ok=True)
-    (root_v11 / "installations").mkdir(exist_ok=True)
-    (root_v11 / "fixtures").mkdir(exist_ok=True)
+    if root_v11.exists() and (root_v11 / "SHA256SUMS").exists():
+        print(f"Kept frozen {SKILL_RUN_CONTRACT_NAME} at {root_v11}")
+    else:
+        root_v11.mkdir(parents=True, exist_ok=True)
+        (root_v11 / "mcp").mkdir(exist_ok=True)
+        (root_v11 / "events").mkdir(exist_ok=True)
+        (root_v11 / "runs").mkdir(exist_ok=True)
+        (root_v11 / "edge").mkdir(exist_ok=True)
+        (root_v11 / "installations").mkdir(exist_ok=True)
+        (root_v11 / "fixtures").mkdir(exist_ok=True)
 
-    mcp_models_v11 = {
-        "tools-list.request.schema.json": JsonRpcRequest,
-        "tools-list.response.schema.json": ToolsListResultV11,
-        "skill-tool-annotations.schema.json": SkillToolAnnotationsV11,
-        "tools-call.request.schema.json": JsonRpcRequest,
-        "tools-call.response.schema.json": ToolsCallAcceptedResultV11,
-        "json-rpc-error.schema.json": JsonRpcErrorResponse,
-    }
-    for filename, model in mcp_models_v11.items():
-        _write_json(root_v11 / "mcp" / filename, _model_schema(model))
+        mcp_models_v11 = {
+            "tools-list.request.schema.json": JsonRpcRequest,
+            "tools-list.response.schema.json": ToolsListResultV11,
+            "skill-tool-annotations.schema.json": SkillToolAnnotationsV11,
+            "tools-call.request.schema.json": JsonRpcRequest,
+            "tools-call.response.schema.json": ToolsCallAcceptedResultV11,
+            "json-rpc-error.schema.json": JsonRpcErrorResponse,
+        }
+        for filename, model in mcp_models_v11.items():
+            _write_json(root_v11 / "mcp" / filename, _model_schema(model))
 
-    _write_json(root_v11 / "events" / "run-event.schema.json", _model_schema(RunEvent))
-    _write_json(root_v11 / "runs" / "run.schema.json", _model_schema(RunRecord))
-    _write_json(root_v11 / "runs" / "execution-snapshot.schema.json", _model_schema(ExecutionSnapshot))
-    _write_json(root_v11 / "runs" / "artifact-descriptor.schema.json", _model_schema(ArtifactDescriptor))
+        _write_json(root_v11 / "events" / "run-event.schema.json", _model_schema(RunEvent))
+        _write_json(root_v11 / "runs" / "run.schema.json", _model_schema(RunRecord))
+        _write_json(root_v11 / "runs" / "execution-snapshot.schema.json", _model_schema(ExecutionSnapshot))
+        _write_json(root_v11 / "runs" / "artifact-descriptor.schema.json", _model_schema(ArtifactDescriptor))
 
-    _write_json(root_v11 / "edge" / "lease-renew.schema.json", _model_schema(EdgeLeaseRenewBody))
-    _write_json(root_v11 / "edge" / "artifact-upload.schema.json", _model_schema(EdgeArtifactUploadBody))
-    _write_json(root_v11 / "installations" / "actual-report.schema.json", _model_schema(EdgeActualReportBody))
-    _write_json(root_v11 / "installations" / "installation.schema.json", _model_schema(InstallationRead))
+        _write_json(root_v11 / "edge" / "lease-renew.schema.json", _model_schema(EdgeLeaseRenewBody))
+        _write_json(root_v11 / "edge" / "artifact-upload.schema.json", _model_schema(EdgeArtifactUploadBody))
+        _write_json(root_v11 / "installations" / "actual-report.schema.json", _model_schema(EdgeActualReportBody))
+        _write_json(root_v11 / "installations" / "installation.schema.json", _model_schema(InstallationRead))
 
-    _write_json(
-        root_v11 / "fixtures" / "edge-lease-renew.json",
-        {
-            "extend_seconds": 60,
-            "delivery_generation": 1,
-        },
-    )
-    _write_json(
-        root_v11 / "fixtures" / "edge-artifact-upload.json",
-        {
-            "artifact_id": "art-1",
-            "name": "result.json",
-            "content_base64": "eyJyZXN1bHQiOiA0Mn0=",
-            "checksum_sha256": "35a9e381b1a27567549b5f8a6f783c167ebf809630c3991446f41f72a3e01c5c",
-            "size_bytes": 16,
-            "content_type": "application/json",
-            "run_generation": 1,
-        },
-    )
-    _write_json(
-        root_v11 / "fixtures" / "desired-installation.json",
-        {
-            "id": "inst-1",
-            "org_id": "org-1",
-            "agent_id": "agent-1",
-            "skill_id": "skill-1",
-            "target_kind": "edge",
-            "edge_node_id": "edge-node-1",
-            "installed_version": "1.0.0",
-            "status": "installed",
-            "actual_status": "synced",
-            "desired_generation": 1,
-            "actual_generation": 1,
-            "reconciled_status": "synced",
-            "created_at": "2026-08-28T00:00:00Z",
-            "updated_at": "2026-08-28T00:00:00Z",
-        },
-    )
-    _write_json(
-        root_v11 / "fixtures" / "tools-call-accepted.json",
-        {
-            "jsonrpc": "2.0",
-            "id": "call-1",
-            "result": {
-                "content": [{"type": "text", "text": "accepted"}],
-                "structuredContent": {
-                    "committed": True,
-                    "run_id": "run-1",
-                    "status": "QUEUED",
-                    "tool_name": "writer_article_generate",
-                    "event_stream": "/api/v1/runs/run-1/events?token=example",
-                    "result_url": "/api/v1/runs/run-1/result",
-                    "artifact_url": "/api/v1/runs/run-1/artifacts",
-                    "execution_mode": "async_event",
-                    "contract_version": "1.1.0",
+        _write_json(
+            root_v11 / "fixtures" / "edge-lease-renew.json",
+            {
+                "extend_seconds": 60,
+                "delivery_generation": 1,
+            },
+        )
+        _write_json(
+            root_v11 / "fixtures" / "edge-artifact-upload.json",
+            {
+                "artifact_id": "art-1",
+                "name": "result.json",
+                "content_base64": "eyJyZXN1bHQiOiA0Mn0=",
+                "checksum_sha256": "35a9e381b1a27567549b5f8a6f783c167ebf809630c3991446f41f72a3e01c5c",
+                "size_bytes": 16,
+                "content_type": "application/json",
+                "run_generation": 1,
+            },
+        )
+        _write_json(
+            root_v11 / "fixtures" / "desired-installation.json",
+            {
+                "id": "inst-1",
+                "org_id": "org-1",
+                "agent_id": "agent-1",
+                "skill_id": "skill-1",
+                "target_kind": "edge",
+                "edge_node_id": "edge-node-1",
+                "installed_version": "1.0.0",
+                "status": "installed",
+                "actual_status": "synced",
+                "desired_generation": 1,
+                "actual_generation": 1,
+                "reconciled_status": "synced",
+                "created_at": "2026-08-28T00:00:00Z",
+                "updated_at": "2026-08-28T00:00:00Z",
+            },
+        )
+        _write_json(
+            root_v11 / "fixtures" / "tools-call-accepted.json",
+            {
+                "jsonrpc": "2.0",
+                "id": "call-1",
+                "result": {
+                    "content": [{"type": "text", "text": "accepted"}],
+                    "structuredContent": {
+                        "committed": True,
+                        "run_id": "run-1",
+                        "status": "QUEUED",
+                        "tool_name": "writer_article_generate",
+                        "event_stream": "/api/v1/runs/run-1/events?token=example",
+                        "result_url": "/api/v1/runs/run-1/result",
+                        "artifact_url": "/api/v1/runs/run-1/artifacts",
+                        "execution_mode": "async_event",
+                        "contract_version": "1.1.0",
+                    },
+                    "isError": False,
                 },
-                "isError": False,
+            },
+        )
+        _write_json(
+            root_v11 / "fixtures" / "skill-tools-list.json",
+            {
+                "jsonrpc": "2.0",
+                "id": "list-1",
+                "result": {
+                    "tools": [
+                        {
+                            "name": "writer_article_generate",
+                            "title": "Writer",
+                            "description": "Generate article",
+                            "inputSchema": {"type": "object", "properties": {"prompt": {"type": "string"}}},
+                            "version": "1.1.0",
+                            "category": "writer",
+                            "capabilityKind": "skill",
+                            "interactionMode": "chat",
+                            "promptField": "prompt",
+                            "supportsAttachments": False,
+                            "skillReleaseId": "rel-12345",
+                            "skillReleaseDigest": "digest-abcdef",
+                            "annotations": {
+                                "category": "writer",
+                                "riskLevel": "low",
+                                "requiresApproval": False,
+                                "approvalMode": "none",
+                                "streaming": True,
+                                "artifacts": True,
+                                "version": "1.1.0",
+                            },
+                        }
+                    ]
+                },
+            },
+        )
+
+        release_v11 = (
+            f"# {SKILL_RUN_CONTRACT_NAME} v{SKILL_RUN_CONTRACT_VERSION_V11}\n\n"
+            "Skill-first employee MCP and Run identity contract v1.1.0.\n"
+            "Adds Catalog v1.1 descriptors and optional contract_version.\n"
+        )
+        (root_v11 / "RELEASE.md").write_text(release_v11, encoding="utf-8")
+
+        backend_commit = _git_head()
+        file_hashes_v11 = {
+            str(path.relative_to(root_v11)).replace("\\", "/"): _sha256_file(path)
+            for path in _artifact_files(root_v11)
+            if path.name != "manifest.json"
+        }
+        manifest_v11 = {
+            "contractName": SKILL_RUN_CONTRACT_NAME,
+            "contractVersion": SKILL_RUN_CONTRACT_VERSION_V11,
+            "provider": "nodeskclaw-backend",
+            "consumer": "smc-copilot/apps/work",
+            "backendCommit": backend_commit,
+            "tagName": f"skill-run-contract-v{SKILL_RUN_CONTRACT_VERSION_V11}",
+            "generatedAt": datetime.now(timezone.utc).isoformat(),
+            "artifacts": file_hashes_v11,
+            "capabilities": {
+                **SKILL_RUN_CAPABILITIES,
+                "catalogV11": True,
+            },
+        }
+        _write_json(root_v11 / "manifest.json", manifest_v11)
+        checksum_lines_v11 = [f"{digest}  {relative}" for relative, digest in sorted(file_hashes_v11.items())]
+        (root_v11 / "SHA256SUMS").write_text("\n".join(checksum_lines_v11) + "\n", encoding="utf-8")
+        print(f"Generated {SKILL_RUN_CONTRACT_NAME} at {root_v11} (backendCommit={backend_commit})")
+
+    # Generate v1.2.0 semantic event contract
+    root_v12 = SKILL_RUN_CONTRACTS_HOME / f"v{SKILL_RUN_CONTRACT_VERSION_V12}"
+    root_v12.mkdir(parents=True, exist_ok=True)
+    (root_v12 / "mcp").mkdir(exist_ok=True)
+    (root_v12 / "events").mkdir(exist_ok=True)
+    (root_v12 / "runs").mkdir(exist_ok=True)
+    (root_v12 / "edge").mkdir(exist_ok=True)
+    (root_v12 / "installations").mkdir(exist_ok=True)
+    (root_v12 / "fixtures").mkdir(exist_ok=True)
+
+    for rel in (
+        "mcp/tools-list.request.schema.json",
+        "mcp/tools-list.response.schema.json",
+        "mcp/skill-tool-annotations.schema.json",
+        "mcp/tools-call.request.schema.json",
+        "mcp/tools-call.response.schema.json",
+        "mcp/json-rpc-error.schema.json",
+        "runs/run.schema.json",
+        "runs/execution-snapshot.schema.json",
+        "runs/artifact-descriptor.schema.json",
+        "edge/lease-renew.schema.json",
+        "edge/artifact-upload.schema.json",
+        "installations/actual-report.schema.json",
+        "installations/installation.schema.json",
+        "fixtures/edge-lease-renew.json",
+        "fixtures/edge-artifact-upload.json",
+        "fixtures/desired-installation.json",
+        "fixtures/tools-call-accepted.json",
+        "fixtures/skill-tools-list.json",
+    ):
+        src = root_v11 / rel
+        if src.exists():
+            dest = root_v12 / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(src.read_bytes())
+
+    _write_json(
+        root_v12 / "events" / "run-event.schema.json",
+        _run_event_v12_union_schema(RUN_EVENT_V12_MODELS),
+    )
+
+    _write_json(
+        root_v12 / "fixtures" / "run-event-assistant-message.json",
+        {
+            "event_id": "evt-1",
+            "run_id": "run-1",
+            "event_type": "assistant.message",
+            "event_seq": 2,
+            "source": "agent",
+            "source_event_id": "hermes:run-1:att-1:assistant:1",
+            "timestamp": "2026-08-31T00:00:00Z",
+            "payload": {"text": "hello"},
+        },
+    )
+    _write_json(
+        root_v12 / "fixtures" / "run-event-tool-call.json",
+        {
+            "event_id": "evt-2",
+            "run_id": "run-1",
+            "event_type": "tool.call",
+            "event_seq": 3,
+            "source": "agent",
+            "source_event_id": "hermes:run-1:att-1:tool:call-1:1",
+            "timestamp": "2026-08-31T00:00:01Z",
+            "payload": {"tool_name": "search", "call_id": "call-1", "status": "started"},
+        },
+    )
+    _write_json(
+        root_v12 / "fixtures" / "run-event-artifact-persisted.json",
+        {
+            "event_id": "evt-3",
+            "run_id": "run-1",
+            "event_type": "artifact.persisted",
+            "event_seq": 4,
+            "source": "agent",
+            "source_event_id": "artifact:art-1:persisted",
+            "timestamp": "2026-08-31T00:00:02Z",
+            "payload": {
+                "artifact_id": "art-1",
+                "name": "out.txt",
+                "content_type": "text/plain",
+                "size": 12,
+                "checksum_sha256": "abc123",
             },
         },
     )
     _write_json(
-        root_v11 / "fixtures" / "skill-tools-list.json",
+        root_v12 / "fixtures" / "run-event-reasoning-summary.json",
         {
-            "jsonrpc": "2.0",
-            "id": "list-1",
-            "result": {
-                "tools": [
-                    {
-                        "name": "writer_article_generate",
-                        "title": "Writer",
-                        "description": "Generate article",
-                        "inputSchema": {"type": "object", "properties": {"prompt": {"type": "string"}}},
-                        "version": "1.1.0",
-                        "category": "writer",
-                        "capabilityKind": "skill",
-                        "interactionMode": "chat",
-                        "promptField": "prompt",
-                        "supportsAttachments": False,
-                        "skillReleaseId": "rel-12345",
-                        "skillReleaseDigest": "digest-abcdef",
-                        "annotations": {
-                            "category": "writer",
-                            "riskLevel": "low",
-                            "requiresApproval": False,
-                            "approvalMode": "none",
-                            "streaming": True,
-                            "artifacts": True,
-                            "version": "1.1.0",
-                        },
-                    }
-                ]
-            },
+            "event_id": "evt-4",
+            "run_id": "run-1",
+            "event_type": "reasoning.summary",
+            "event_seq": 5,
+            "source": "agent",
+            "source_event_id": "hermes:run-1:att-1:reasoning:1",
+            "timestamp": "2026-08-31T00:00:03Z",
+            "payload": {"summary": "checked docs"},
+        },
+    )
+    _write_json(
+        root_v12 / "fixtures" / "run-event-clarify-requested.json",
+        {
+            "event_id": "evt-5",
+            "run_id": "run-1",
+            "event_type": "clarify.requested",
+            "event_seq": 6,
+            "source": "agent",
+            "source_event_id": "hermes:run-1:att-1:clarify:1",
+            "timestamp": "2026-08-31T00:00:04Z",
+            "payload": {"question": "which file?", "options": ["a", "b"]},
+        },
+    )
+    _write_json(
+        root_v12 / "fixtures" / "run-event-approval-requested.json",
+        {
+            "event_id": "evt-6",
+            "run_id": "run-1",
+            "event_type": "approval.requested",
+            "event_seq": 7,
+            "source": "agent",
+            "source_event_id": "hermes:run-1:att-1:approval:1",
+            "timestamp": "2026-08-31T00:00:05Z",
+            "payload": {"approval_id": "appr-1", "summary": "delete file"},
+        },
+    )
+    _write_json(
+        root_v12 / "fixtures" / "run-event-control-progress.json",
+        {
+            "event_id": "evt-0",
+            "run_id": "run-1",
+            "event_type": "run.progress",
+            "event_seq": 1,
+            "source": "agent",
+            "source_event_id": None,
+            "timestamp": "2026-08-31T00:00:00Z",
+            "payload": {"stage": "preparing", "message": "preparing hermes"},
+        },
+    )
+    _write_json(
+        root_v12 / "fixtures" / "run-event-control-created.json",
+        {
+            "event_id": "evt-created",
+            "run_id": "run-1",
+            "event_type": "run.created",
+            "event_seq": 0,
+            "source": "agent",
+            "source_event_id": None,
+            "timestamp": "2026-08-31T00:00:00Z",
+            "payload": {},
         },
     )
 
-    release_v11 = (
-        f"# {SKILL_RUN_CONTRACT_NAME} v{SKILL_RUN_CONTRACT_VERSION_V11}\n\n"
-        "Skill-first employee MCP and Run identity contract v1.1.0.\n"
-        "Adds Catalog v1.1 descriptors and optional contract_version.\n"
+    (root_v12 / "RELEASE.md").write_text(
+        f"# {SKILL_RUN_CONTRACT_NAME} v{SKILL_RUN_CONTRACT_VERSION_V12}\n\n"
+        "Skill Run event contract v1.2.0.\n"
+        "Adds enumerated semantic run events while keeping control event replay.\n",
+        encoding="utf-8",
     )
-    (root_v11 / "RELEASE.md").write_text(release_v11, encoding="utf-8")
 
     backend_commit = _git_head()
-    file_hashes_v11 = {
-        str(path.relative_to(root_v11)).replace("\\", "/"): _sha256_file(path)
-        for path in _artifact_files(root_v11)
+    file_hashes_v12 = {
+        str(path.relative_to(root_v12)).replace("\\", "/"): _sha256_file(path)
+        for path in _artifact_files(root_v12)
         if path.name != "manifest.json"
     }
-    manifest_v11 = {
+    manifest_v12 = {
         "contractName": SKILL_RUN_CONTRACT_NAME,
-        "contractVersion": SKILL_RUN_CONTRACT_VERSION_V11,
+        "contractVersion": SKILL_RUN_CONTRACT_VERSION_V12,
         "provider": "nodeskclaw-backend",
         "consumer": "smc-copilot/apps/work",
         "backendCommit": backend_commit,
-        "tagName": f"skill-run-contract-v{SKILL_RUN_CONTRACT_VERSION_V11}",
+        "tagName": f"skill-run-contract-v{SKILL_RUN_CONTRACT_VERSION_V12}",
         "generatedAt": datetime.now(timezone.utc).isoformat(),
-        "artifacts": file_hashes_v11,
+        "artifacts": file_hashes_v12,
         "capabilities": {
             **SKILL_RUN_CAPABILITIES,
             "catalogV11": True,
+            "semanticRunEvents": True,
         },
     }
-    _write_json(root_v11 / "manifest.json", manifest_v11)
-    checksum_lines_v11 = [f"{digest}  {relative}" for relative, digest in sorted(file_hashes_v11.items())]
-    (root_v11 / "SHA256SUMS").write_text("\n".join(checksum_lines_v11) + "\n", encoding="utf-8")
-    print(f"Generated {SKILL_RUN_CONTRACT_NAME} at {root_v11} (backendCommit={backend_commit})")
+    _write_json(root_v12 / "manifest.json", manifest_v12)
+    checksum_lines_v12 = [f"{digest}  {relative}" for relative, digest in sorted(file_hashes_v12.items())]
+    (root_v12 / "SHA256SUMS").write_text("\n".join(checksum_lines_v12) + "\n", encoding="utf-8")
+    print(f"Generated {SKILL_RUN_CONTRACT_NAME} at {root_v12} (backendCommit={backend_commit})")
 
 
 def main() -> None:
