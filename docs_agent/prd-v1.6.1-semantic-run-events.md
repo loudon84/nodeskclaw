@@ -86,10 +86,10 @@ Work 仍只消费 Backend 的 `/api/v1/runs/{run_id}/events`（运行事件流�
 
 ## Definition of Done
 
-- C01–C04 具有针对结构化输入、文本不推断、重复/迟到/旧代、终态隔离、Artifact 状态和合同正负 Fixture 的自动化验证证据。
-- Run 终态仍只由 Agent RunService 聚合；Backend 未成为状态或事件规范化 Owner。
-- 新合同版本、Fixture、manifest、checksum 由现有 Backend 生成链产生；v1.1.0 内容保持逐字节不变。
-- `lat.md` 中 Skill Agent 与 Backend 的事件事实与合同版本说明同步，且 `lat check` 通过。
+- **DOD-01**：C01–C04 具有针对结构化输入、文本不推断、重复/迟到/旧代、终态隔离、Artifact 状态和合同正负 Fixture 的自动化验证证据。
+- **DOD-02**：Run 终态仍只由 Agent RunService 聚合；Backend 未成为状态或事件规范化 Owner。
+- **DOD-03**：新合同版本、Fixture、manifest、checksum 由现有 Backend 生成链产生；v1.1.0 内容保持逐字节不变。
+- **DOD-04**：`lat.md` 中 Skill Agent 与 Backend 的事件事实与合同版本说明同步，且 `lat check` 通过。
 
 ## Evidence Baseline
 
