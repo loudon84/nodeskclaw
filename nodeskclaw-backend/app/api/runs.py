@@ -19,7 +19,6 @@ from app.models.base import not_deleted
 from app.models.hermes_skill.hermes_task import HermesTask
 from app.models.hermes_skill.run_dispatch_outbox import RunDispatchOutbox, RunDispatchStatus
 from app.services.hermes_skill.permission_checker import PermissionChecker
-from app.services.hermes_skill.runtime_skill_run_service import strip_internal_route_secrets
 from app.services.hermes_skill.task_service import TaskService
 from app.services.runtime.pg_notify import pg_notify_service
 from sqlalchemy import select
@@ -27,6 +26,103 @@ from sqlalchemy import select
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/runs", tags=["Runs"])
+
+_PUBLIC_RUN_STATUSES = frozenset(
+    {
+        "CREATED",
+        "QUEUED",
+        "PREPARING",
+        "RUNNING",
+        "WAITING_APPROVAL",
+        "RESUMING",
+        "CANCELLING",
+        "COMPLETED",
+        "FAILED",
+        "CANCELLED",
+        "TIMED_OUT",
+    }
+)
+
+
+def _public_run_status(value: Any, fallback: str = "FAILED") -> str:
+    normalized = str(value or "").upper()
+    if normalized == "DISPATCH_PENDING":
+        return "QUEUED"
+    if normalized == "DISPATCH_FAILED":
+        return "FAILED"
+    return normalized if normalized in _PUBLIC_RUN_STATUSES else fallback
+
+
+def _public_run_view(data: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "run_id": str(data["run_id"]),
+        "tool_name": str(data["tool_name"]),
+        "status": _public_run_status(data.get("status")),
+        "created_at": data.get("created_at"),
+        "updated_at": data.get("updated_at"),
+    }
+
+
+def _public_run_result(data: dict[str, Any], run_id: str) -> dict[str, Any]:
+    error = data.get("error") if isinstance(data.get("error"), dict) else {}
+    text = next(
+        (
+            value
+            for value in (data.get("result_content"), data.get("content"), data.get("message"))
+            if isinstance(value, str)
+        ),
+        None,
+    )
+    return {
+        "run_id": run_id,
+        "status": _public_run_status(data.get("status"), fallback="QUEUED"),
+        "text": text,
+        "error_code": data.get("error_code") or error.get("code"),
+        "error_message": data.get("error_message") or error.get("message"),
+    }
+
+
+def _public_artifact_descriptor(data: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "artifact_id": str(data.get("artifact_id") or data.get("id")),
+        "name": str(data.get("name") or data.get("file_name") or "artifact"),
+        "content_type": data.get("content_type"),
+        "size_bytes": int(data.get("size_bytes") or 0),
+        "checksum_sha256": str(data.get("checksum_sha256") or data.get("sha256") or ""),
+    }
+
+
+def _public_run_event(data: dict[str, Any], run_id: str) -> dict[str, Any] | None:
+    event_type = str(data.get("event_type") or "")
+    event_seq = int(data.get("event_seq") or 0)
+    payload = data.get("payload") if isinstance(data.get("payload"), dict) else {}
+    event = {
+        "event_id": f"{run_id}:{event_seq}",
+        "run_id": run_id,
+        "event_type": event_type,
+        "event_seq": event_seq,
+        "timestamp": data.get("timestamp"),
+    }
+    if event_type in {
+        "run.created",
+        "run.progress",
+        "run.completed",
+        "run.failed",
+        "run.cancelled",
+        "run.timed_out",
+    }:
+        event["payload"] = {
+            "phase": str(payload.get("phase") or data.get("status") or event_type.rsplit(".", 1)[-1]).upper(),
+            **({"message": payload["message"]} if isinstance(payload.get("message"), str) else {}),
+        }
+        return event
+    if event_type == "assistant.message" and isinstance(payload.get("text"), str):
+        event["payload"] = {"text": payload["text"]}
+        return event
+    if event_type == "artifact.persisted":
+        event["payload"] = _public_artifact_descriptor(payload)
+        return event
+    return None
 
 
 def _agent_headers(*, org_id: str | None = None, user_id: str | None = None) -> dict[str, str]:
@@ -154,24 +250,21 @@ async def get_run(
         derived_status = "DISPATCH_PENDING" if outbox.status == RunDispatchStatus.PENDING.value else "DISPATCH_FAILED"
         return {
             "code": 0,
-            "data": {
-                "run_id": task.id,
-                "org_id": task.org_id,
-                "user_id": task.user_id,
-                "tool_name": task.tool_name,
-                "status": derived_status,
-                "snapshot": {},
-                "result": None,
-                "attempt_id": None,
-                "created_at": task.created_at.isoformat() if task.created_at else None,
-                "updated_at": task.updated_at.isoformat() if task.updated_at else None,
-            },
+            "data": _public_run_view(
+                {
+                    "run_id": task.id,
+                    "tool_name": task.tool_name,
+                    "status": derived_status,
+                    "created_at": task.created_at.isoformat() if task.created_at else None,
+                    "updated_at": task.updated_at.isoformat() if task.updated_at else None,
+                }
+            ),
         }
 
     data = await _agent_get(f"/internal/v1/runs/{run_id}", org_id=org.id, user_id=user.id)
     if str(data.get("org_id") or "") != org.id or str(data.get("run_id") or "") != run_id:
         raise ForbiddenError("无权访问该 Run", "errors.run.forbidden")
-    return {"code": 0, "data": strip_internal_route_secrets(data)}
+    return {"code": 0, "data": _public_run_view(data)}
 
 
 @router.get("/{run_id}/result")
@@ -184,12 +277,12 @@ async def get_run_result(
     task = await _authorize_run(db, user.id, org.id, run_id)
     outbox = await _get_outbox_entry(db, run_id, org.id)
     if _is_outbox_undelivered(outbox):
-        return {"code": 0, "data": None}
+        return {"code": 0, "data": _public_run_result({"status": "QUEUED"}, run_id)}
 
     data = await _agent_get(f"/internal/v1/runs/{run_id}/result", org_id=org.id, user_id=user.id)
     if str(data.get("org_id") or "") != org.id or str(data.get("run_id") or "") != run_id:
         raise ForbiddenError("无权访问该 Run", "errors.run.forbidden")
-    return {"code": 0, "data": strip_internal_route_secrets(data)}
+    return {"code": 0, "data": _public_run_result(data, run_id)}
 
 
 @router.get("/{run_id}/artifacts")
@@ -202,12 +295,18 @@ async def get_run_artifacts(
     task = await _authorize_run(db, user.id, org.id, run_id)
     outbox = await _get_outbox_entry(db, run_id, org.id)
     if _is_outbox_undelivered(outbox):
-        return {"code": 0, "data": {"items": []}}
+        return {"code": 0, "data": {"run_id": run_id, "items": []}}
 
     data = await _agent_get(f"/internal/v1/runs/{run_id}/artifacts", org_id=org.id, user_id=user.id)
     if str(data.get("org_id") or "") != org.id or str(data.get("run_id") or "") != run_id:
         raise ForbiddenError("无权访问该 Run", "errors.run.forbidden")
-    return {"code": 0, "data": data}
+    return {
+        "code": 0,
+        "data": {
+            "run_id": run_id,
+            "items": [_public_artifact_descriptor(item) for item in data.get("items") or []],
+        },
+    }
 
 
 @router.get("/{run_id}/artifacts/{artifact_id}/download")
@@ -249,6 +348,8 @@ async def download_run_artifact(
             media_type=response.headers.get("content-type") or target_art.get("content_type") or "application/octet-stream",
             headers={
                 "Content-Disposition": content_disposition,
+                "Content-Length": str(len(response.content)),
+                "X-Checksum-SHA256": str(target_art.get("checksum_sha256") or target_art.get("sha256") or ""),
             },
         )
 
@@ -269,17 +370,19 @@ async def cancel_run(
         await db.commit()
         return {
             "code": 0,
-            "data": {
+            "data": _public_run_view({
                 "run_id": run_id,
+                "tool_name": task.tool_name,
                 "status": "CANCELLED",
-                "org_id": org.id,
-            },
+                "created_at": task.created_at.isoformat() if task.created_at else None,
+                "updated_at": task.updated_at.isoformat() if task.updated_at else None,
+            }),
         }
 
     data = await _agent_post(f"/internal/v1/runs/{run_id}/cancel", org_id=org.id, user_id=user.id)
     if str(data.get("org_id") or "") != org.id or str(data.get("run_id") or "") != run_id:
         raise ForbiddenError("无权访问该 Run", "errors.run.forbidden")
-    return {"code": 0, "data": data}
+    return {"code": 0, "data": _public_run_view(data)}
 
 
 @router.post("/{run_id}/resume")
@@ -402,10 +505,12 @@ async def stream_run_events(
                 items = payload.get("items") or []
                 for item in items:
                     cursor = max(cursor, int(item.get("event_seq") or 0))
-                    event_id = str(item.get("event_seq") or cursor)
-                    data = json.dumps(item, ensure_ascii=False)
-                    yield f"id: {event_id}\nevent: {item.get('event_type') or 'message'}\ndata: {data}\n\n"
-                    if item.get("event_type") in ("run.completed", "run.failed", "run.cancelled"):
+                    public_event = _public_run_event(item, run_id)
+                    if public_event is None:
+                        continue
+                    data = json.dumps(public_event, ensure_ascii=False)
+                    yield f"id: {public_event['event_id']}\nevent: {public_event['event_type']}\ndata: {data}\n\n"
+                    if public_event["event_type"] in ("run.completed", "run.failed", "run.cancelled", "run.timed_out"):
                         return
                 current = await _agent_get(
                     f"/internal/v1/runs/{run_id}",

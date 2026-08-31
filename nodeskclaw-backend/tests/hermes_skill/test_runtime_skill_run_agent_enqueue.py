@@ -105,6 +105,44 @@ async def test_start_delegates_to_skill_agent_and_returns_run_id():
 
 
 @pytest.mark.asyncio
+async def test_same_idempotency_key_from_two_clients_creates_one_run():
+    db = AsyncMock()
+    db.add = MagicMock()
+    task = MagicMock()
+    task.id = "run-abc"
+    task.task_no = "TASK-0001"
+    task.status = MagicMock(value="queued")
+    task.event_url = "/api/v1/runs/run-abc/events"
+    task.artifact_url = "/api/v1/runs/run-abc/artifacts"
+    task.server_artifacts = []
+    task.output_policy = {}
+
+    with patch("app.services.hermes_skill.runtime_skill_run_service.settings") as mock_settings, \
+         patch("app.services.hermes_skill.runtime_skill_run_service.TaskService") as task_cls, \
+         patch("app.services.hermes_skill.runtime_skill_run_service.TaskEventTokenService") as token_cls, \
+         patch.object(RuntimeSkillRunService, "_resolve_release_meta", new=AsyncMock(return_value=_release_meta())), \
+         patch.object(RuntimeSkillRunService, "_enrich_route_snapshot", new=AsyncMock(side_effect=lambda request, route: dict(route))):
+        mock_settings.SKILL_AGENT_ENABLED = True
+        mock_settings.HERMES_TASK_DEFAULT_TIMEOUT_SECONDS = 900
+        mock_settings.MCP_TASK_SSE_TOKEN_TTL_SECONDS = 900
+        mock_settings.EXPERT_EVENT_TOKEN_TTL_SECONDS = 900
+
+        task_svc = AsyncMock()
+        task_svc.find_idempotent_task = AsyncMock(side_effect=[None, task])
+        task_svc.create_task = AsyncMock(return_value=task)
+        task_cls.return_value = task_svc
+        token_cls.return_value.create_token = AsyncMock(return_value={"event_url": task.event_url})
+
+        service = RuntimeSkillRunService(db)
+        first = await service.start(_request(idempotency_key="cross-client-key", client_context={"client": "work"}))
+        replay = await service.start(_request(idempotency_key="cross-client-key", client_context={"client": "portal"}))
+
+    assert first.task.id == replay.task.id == "run-abc"
+    task_svc.create_task.assert_awaited_once()
+    assert db.add.call_count == 1
+
+
+@pytest.mark.asyncio
 async def test_expert_start_keeps_task_id_contract():
     db = AsyncMock()
     db.add = MagicMock()

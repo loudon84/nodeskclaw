@@ -1,9 +1,0 @@
-{
-  "artifact_id": "art-1",
-  "name": "result.json",
-  "content_base64": "eyJyZXN1bHQiOiA0Mn0=",
-  "checksum_sha256": "35a9e381b1a27567549b5f8a6f783c167ebf809630c3991446f41f72a3e01c5c",
-  "size_bytes": 16,
-  "content_type": "application/json",
-  "run_generation": 1
-}

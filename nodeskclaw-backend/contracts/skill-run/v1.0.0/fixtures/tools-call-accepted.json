@@ -1,23 +1,19 @@
 {
-  "jsonrpc": "2.0",
-  "id": "call-1",
-  "result": {
-    "content": [
-      {
-        "type": "text",
-        "text": "accepted"
-      }
-    ],
-    "structuredContent": {
-      "committed": true,
-      "run_id": "run-1",
-      "status": "QUEUED",
-      "tool_name": "writer_article_generate",
-      "event_stream": "/api/v1/runs/run-1/events?token=example",
-      "result_url": "/api/v1/runs/run-1/result",
-      "artifact_url": "/api/v1/runs/run-1/artifacts",
-      "execution_mode": "async_event"
-    },
-    "isError": false
-  }
+  "content": [
+    {
+      "type": "text",
+      "text": "accepted"
+    }
+  ],
+  "structuredContent": {
+    "committed": true,
+    "run_id": "run-1",
+    "status": "QUEUED",
+    "tool_name": "writer.article",
+    "event_stream": "/api/v1/runs/run-1/events",
+    "result_url": "/api/v1/runs/run-1/result",
+    "artifact_url": "/api/v1/runs/run-1/artifacts",
+    "execution_mode": "async_event"
+  },
+  "isError": false
 }

@@ -257,18 +257,16 @@ class TaskService:
         self,
         org_id: str,
         user_id: str | None,
-        catalog_slug: str | None,
         tool_name: str,
         idempotency_key: str,
     ) -> HermesTask | None:
-        if not idempotency_key or not user_id or not catalog_slug:
+        if not idempotency_key or not user_id:
             return None
         result = await self.db.execute(
             select(HermesTask).where(
                 not_deleted(HermesTask),
                 HermesTask.org_id == org_id,
                 HermesTask.user_id == user_id,
-                HermesTask.catalog_slug == catalog_slug,
                 HermesTask.tool_name == tool_name,
                 HermesTask.idempotency_key == idempotency_key,
             ).limit(1)

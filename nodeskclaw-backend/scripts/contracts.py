@@ -8,6 +8,7 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -211,6 +212,8 @@ def _artifact_files(root: Path) -> list[Path]:
         "events/*.schema.json",
         "mcp/*.schema.json",
         "runs/*.schema.json",
+        "http/*.json",
+        "capabilities/*.json",
         "edge/*.schema.json",
         "installations/*.schema.json",
         "fixtures/*",
@@ -730,6 +733,28 @@ def _validate_frozen_versions() -> None:
 def _validate_skill_run_fixtures(root: Path) -> None:
     import jsonschema
 
+    if (root / "runs/public-run.schema.json").exists():
+        schema_map = {
+            "fixtures/skill-tools-list.json": ("mcp/tools-list.response.schema.json", None),
+            "fixtures/tools-call-accepted.json": ("mcp/tools-call.response.schema.json", None),
+            "fixtures/run-cancelled.json": ("runs/public-run.schema.json", None),
+            "fixtures/run-timeout.json": ("runs/result.schema.json", None),
+            "fixtures/artifact-with-checksum.json": ("runs/artifact-list.schema.json", None),
+            "fixtures/unsupported-capabilities.json": ("capabilities/unsupported.schema.json", None),
+        }
+        for fixture_rel, (schema_rel, key) in schema_map.items():
+            fixture = json.loads((root / fixture_rel).read_text(encoding="utf-8"))
+            schema = json.loads((root / schema_rel).read_text(encoding="utf-8"))
+            payload = fixture if key is None else fixture[key]
+            jsonschema.validate(payload, schema)
+
+        replay = json.loads((root / "fixtures/sse-resume-duplicate.json").read_text(encoding="utf-8"))
+        if replay.get("last_event_id") != replay["events"][0].get("event_id"):
+            raise SystemExit("SSE replay fixture must begin after the stable duplicate event identity")
+        if len({event.get("event_id") for event in replay["events"]}) != len(replay["events"]):
+            raise SystemExit("SSE replay fixture contains duplicate stable event identities")
+        return
+
     schema_map = {
         "fixtures/skill-tools-list.json": (
             "mcp/tools-list.response.schema.json",
@@ -751,8 +776,70 @@ def _validate_skill_run_fixtures(root: Path) -> None:
         jsonschema.validate(payload, schema)
 
 
-def check_contracts(release: bool = False) -> None:
+def _validate_skill_run_release(manifest: dict[str, Any]) -> None:
+    implementation_commit = str(manifest.get("backendCommit") or "")
+    tag_name = str(manifest.get("tagName") or "")
+    if not implementation_commit or not tag_name:
+        raise SystemExit("skill-run release manifest requires backendCommit and tagName")
+
+    repository = BACKEND_ROOT.parent
+    ancestor_check = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", implementation_commit, "HEAD"],
+        cwd=repository,
+        capture_output=True,
+        text=True,
+    )
+    if ancestor_check.returncode != 0:
+        raise SystemExit("skill-run manifest.backendCommit must be an ancestor of the release commit")
+
+    tag_type = subprocess.run(
+        ["git", "cat-file", "-t", f"refs/tags/{tag_name}"],
+        cwd=repository,
+        capture_output=True,
+        text=True,
+    )
+    if tag_type.returncode != 0 or tag_type.stdout.strip() != "tag":
+        raise SystemExit(f"skill-run contract tag '{tag_name}' must be an annotated tag")
+
+    peeled_tag = subprocess.run(
+        ["git", "rev-parse", f"refs/tags/{tag_name}^{{}}"],
+        cwd=repository,
+        capture_output=True,
+        text=True,
+    )
+    if peeled_tag.returncode != 0 or peeled_tag.stdout.strip() != _git_head():
+        raise SystemExit(f"skill-run contract tag '{tag_name}' must point at the release commit")
+
+    release_diff = subprocess.run(
+        ["git", "diff", "--name-only", f"{implementation_commit}..HEAD"],
+        cwd=repository,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    contract_prefix = "nodeskclaw-backend/contracts/skill-run/v1.0.0/"
+    changed_paths = [path for path in release_diff.stdout.splitlines() if path]
+    if not changed_paths or any(not path.startswith(contract_prefix) for path in changed_paths):
+        raise SystemExit("skill-run release commit may only contain the immutable v1.0.0 contract artifacts")
+
+
+def _check_skill_run_contracts(release: bool = False) -> None:
+    skill_run_root = SKILL_RUN_CONTRACTS_HOME / "v1.0.0"
+    if not skill_run_root.exists():
+        raise SystemExit(f"Skill-run contract directory missing: {skill_run_root}")
+    _validate_checksums(skill_run_root)
+    _validate_skill_run_fixtures(skill_run_root)
+    if release:
+        _validate_skill_run_release(_read_manifest(skill_run_root))
+    print("SKILL-RUN-CONTRACT check passed")
+
+
+def check_contracts(release: bool = False, family: str = "all") -> None:
     sys.path.insert(0, str(BACKEND_ROOT))
+    if family == "skill-run":
+        _check_skill_run_contracts(release=release)
+        return
+
     root = contract_root()
     if not root.exists():
         raise SystemExit(f"Contract directory missing: {root}")
@@ -789,24 +876,7 @@ def check_contracts(release: bool = False) -> None:
 
     print("WORK-EXPERT-CONTRACT check passed")
 
-    skill_run_root = SKILL_RUN_CONTRACTS_HOME / "v1.0.0"
-    if skill_run_root.exists():
-        _validate_checksums(skill_run_root)
-        _validate_skill_run_fixtures(skill_run_root)
-        manifest = _read_manifest(skill_run_root)
-        if release:
-            if manifest.get("backendCommit") != _git_head():
-                raise SystemExit("skill-run manifest.backendCommit does not match current HEAD in release mode")
-            tag_name = manifest.get("tagName")
-            if tag_name:
-                tag_check = subprocess.run(
-                    ["git", "tag", "-l", tag_name],
-                    cwd=BACKEND_ROOT.parent,
-                    capture_output=True,
-                    text=True,
-                )
-                if not tag_check.stdout.strip():
-                    raise SystemExit(f"skill-run contract tag '{tag_name}' not found in release mode")
+    _check_skill_run_contracts(release=release)
 
     skill_run_v11_root = SKILL_RUN_CONTRACTS_HOME / "v1.1.0"
     if skill_run_v11_root.exists():
@@ -922,7 +992,187 @@ def _validate_skill_run_v11_negative_fixtures(root: Path) -> None:
         raise SystemExit("tools-list.response.schema.json unexpectedly accepted descriptor missing capabilityKind")
 
 
-def generate_skill_run_contracts() -> None:
+def _generate_skill_run_v10_public_contract() -> None:
+    from app.schemas.skill_run.mcp_jsonrpc import (
+        PublicArtifactDescriptor,
+        PublicArtifactDownloadResponse,
+        PublicArtifactList,
+        PublicRunResult,
+        PublicRunView,
+        PublicToolsCallAccepted,
+        PublicToolsListResult,
+        UnsupportedCapabilities,
+    )
+    from app.schemas.work_expert.mcp_jsonrpc import JsonRpcErrorResponse, JsonRpcRequest
+    from app.schemas.skill_run.constants import (
+        SKILL_RUN_CAPABILITIES,
+        SKILL_RUN_CONTRACT_NAME,
+        SKILL_RUN_CONTRACT_VERSION,
+        SKILL_RUN_TAG_NAME,
+    )
+
+    root = SKILL_RUN_CONTRACTS_HOME / f"v{SKILL_RUN_CONTRACT_VERSION}"
+    for directory in ("mcp", "runs", "events", "http", "capabilities", "fixtures"):
+        (root / directory).mkdir(parents=True, exist_ok=True)
+
+    legacy_artifacts = (
+        "mcp/skill-tool-annotations.schema.json",
+        "runs/run.schema.json",
+        "runs/execution-snapshot.schema.json",
+        "edge/artifact-upload.schema.json",
+        "edge/lease-renew.schema.json",
+        "installations/actual-report.schema.json",
+        "installations/installation.schema.json",
+        "fixtures/desired-installation.json",
+        "fixtures/edge-artifact-negative-errors.json",
+        "fixtures/edge-artifact-upload.json",
+        "fixtures/edge-lease-renew.json",
+    )
+    for relative in legacy_artifacts:
+        (root / relative).unlink(missing_ok=True)
+
+    models = {
+        "mcp/tools-list.request.schema.json": JsonRpcRequest,
+        "mcp/tools-list.response.schema.json": PublicToolsListResult,
+        "mcp/tools-call.request.schema.json": JsonRpcRequest,
+        "mcp/tools-call.response.schema.json": PublicToolsCallAccepted,
+        "mcp/json-rpc-error.schema.json": JsonRpcErrorResponse,
+        "runs/public-run.schema.json": PublicRunView,
+        "runs/result.schema.json": PublicRunResult,
+        "runs/artifact-descriptor.schema.json": PublicArtifactDescriptor,
+        "runs/artifact-list.schema.json": PublicArtifactList,
+        "runs/artifact-download.response.schema.json": PublicArtifactDownloadResponse,
+        "capabilities/unsupported.schema.json": UnsupportedCapabilities,
+    }
+    for relative, model in models.items():
+        _write_json(root / relative, _model_schema(model))
+
+    event_schema = {
+        "title": "PublicRunEvent",
+        "oneOf": [
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "event_id": {"type": "string"},
+                    "run_id": {"type": "string"},
+                    "event_type": {"enum": ["run.created", "run.progress", "run.completed", "run.failed", "run.cancelled", "run.timed_out"]},
+                    "event_seq": {"type": "integer", "minimum": 0},
+                    "timestamp": {"type": "string"},
+                    "payload": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {"phase": {"type": "string"}, "message": {"type": "string"}},
+                        "required": ["phase"],
+                    },
+                },
+                "required": ["event_id", "run_id", "event_type", "event_seq", "timestamp", "payload"],
+            },
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "event_id": {"type": "string"},
+                    "run_id": {"type": "string"},
+                    "event_type": {"const": "assistant.message"},
+                    "event_seq": {"type": "integer", "minimum": 0},
+                    "timestamp": {"type": "string"},
+                    "payload": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {"text": {"type": "string"}},
+                        "required": ["text"],
+                    },
+                },
+                "required": ["event_id", "run_id", "event_type", "event_seq", "timestamp", "payload"],
+            },
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "event_id": {"type": "string"},
+                    "run_id": {"type": "string"},
+                    "event_type": {"const": "artifact.persisted"},
+                    "event_seq": {"type": "integer", "minimum": 0},
+                    "timestamp": {"type": "string"},
+                    "payload": {"$ref": "../runs/artifact-descriptor.schema.json"},
+                },
+                "required": ["event_id", "run_id", "event_type", "event_seq", "timestamp", "payload"],
+            },
+        ],
+        "discriminator": {"propertyName": "event_type"},
+    }
+    _write_json(root / "events/run-event.schema.json", event_schema)
+
+    _write_json(
+        root / "http/endpoint-matrix.json",
+        {
+            "authentication": "Authorization: Bearer <access-token>",
+            "sseReplay": {"header": "Last-Event-ID", "eventIdentity": "event_id", "cache": "no-store"},
+            "idempotency": {
+                "header": "X-Idempotency-Key",
+                "scope": "authenticated org_id + user_id + tool_name",
+                "ttlSeconds": 86400,
+                "conflict": {"status": 409, "errorCode": "IDEMPOTENCY_CONFLICT"},
+                "replay": {"status": 200, "returns": "original accepted run_id"},
+            },
+            "endpoints": [
+                {"method": "POST", "path": "/api/v1/mcp", "operation": "tools/list", "success": [200], "retry": "safe"},
+                {"method": "POST", "path": "/api/v1/mcp", "operation": "tools/call", "success": [200], "retry": "same-idempotency-key"},
+                {"method": "GET", "path": "/api/v1/runs/{run_id}", "success": [200], "retry": "safe", "cache": "no-store"},
+                {"method": "GET", "path": "/api/v1/runs/{run_id}/result", "success": [200], "retry": "safe", "cache": "no-store"},
+                {"method": "GET", "path": "/api/v1/runs/{run_id}/artifacts", "success": [200], "retry": "safe", "cache": "no-store"},
+                {"method": "GET", "path": "/api/v1/runs/{run_id}/artifacts/{artifact_id}/download", "success": [200], "retry": "safe", "cache": "no-store"},
+                {"method": "GET", "path": "/api/v1/runs/{run_id}/events", "success": [200], "retry": "Last-Event-ID"},
+                {"method": "POST", "path": "/api/v1/runs/{run_id}/cancel", "success": [200, 409], "retry": "safe"},
+            ],
+        },
+    )
+
+    fixtures = {
+        "skill-tools-list.json": {"tools": [{"name": "writer.article", "title": "Writer", "description": "Generate an article", "inputSchema": {"type": "object", "properties": {"prompt": {"type": "string"}}, "required": ["prompt"]}, "version": "1.0.0", "category": "writing", "capabilityKind": "skill", "interactionMode": "chat", "promptField": "prompt", "supportsAttachments": False, "annotations": {"category": "writing", "riskLevel": "low", "requiresApproval": False, "streaming": True, "artifacts": True, "version": "1.0.0"}}]},
+        "tools-call-accepted.json": {"content": [{"type": "text", "text": "accepted"}], "structuredContent": {"committed": True, "run_id": "run-1", "status": "QUEUED", "tool_name": "writer.article", "event_stream": "/api/v1/runs/run-1/events", "result_url": "/api/v1/runs/run-1/result", "artifact_url": "/api/v1/runs/run-1/artifacts", "execution_mode": "async_event"}, "isError": False},
+        "run-cancelled.json": {"run_id": "run-1", "tool_name": "writer.article", "status": "CANCELLED", "created_at": "2026-08-31T00:00:00Z", "updated_at": "2026-08-31T00:01:00Z"},
+        "run-timeout.json": {"run_id": "run-1", "status": "TIMED_OUT", "text": None, "error_code": "RUN_TIMED_OUT", "error_message": "Run timed out"},
+        "artifact-with-checksum.json": {"run_id": "run-1", "items": [{"artifact_id": "artifact-1", "name": "result.txt", "content_type": "text/plain", "size_bytes": 12, "checksum_sha256": "4f85f7e7d5d1b8c7a898d0e51fc5de49536c870353302dacfe7d8e6c03e8ad7a"}]},
+        "sse-resume-duplicate.json": {"last_event_id": "evt-1", "events": [{"event_id": "evt-1", "run_id": "run-1", "event_type": "run.progress", "event_seq": 1, "timestamp": "2026-08-31T00:00:00Z", "payload": {"phase": "RUNNING"}}, {"event_id": "evt-2", "run_id": "run-1", "event_type": "run.completed", "event_seq": 2, "timestamp": "2026-08-31T00:00:01Z", "payload": {"phase": "COMPLETED"}}]},
+        "auth-tenant-denial.json": {"status": 403, "error_code": "RUN_FORBIDDEN", "message_key": "errors.run.forbidden"},
+        "idempotency-replay.json": {"key": "request-1", "first": {"status": 200, "run_id": "run-1"}, "replay": {"status": 200, "run_id": "run-1"}, "conflict": {"status": 409, "error_code": "IDEMPOTENCY_CONFLICT"}},
+        "unsupported-capabilities.json": {"approval": "unsupported", "attachments": "unsupported"},
+    }
+    for name, payload in fixtures.items():
+        _write_json(root / "fixtures" / name, payload)
+
+    (root / "RELEASE.md").write_text(
+        f"# {SKILL_RUN_CONTRACT_NAME} v{SKILL_RUN_CONTRACT_VERSION}\n\n"
+        "Public, authenticated employee Skill Run contract. Approval and attachments are unsupported and fail closed.\n",
+        encoding="utf-8",
+    )
+    file_hashes = {
+        str(path.relative_to(root)).replace("\\", "/"): _sha256_file(path)
+        for path in _artifact_files(root)
+        if path.name not in {"manifest.json", "SHA256SUMS"}
+    }
+    _write_json(
+        root / "manifest.json",
+        {
+            "contractName": SKILL_RUN_CONTRACT_NAME,
+            "contractVersion": SKILL_RUN_CONTRACT_VERSION,
+            "provider": "nodeskclaw-backend",
+            "consumer": "smc-copilot/apps/work",
+            "backendCommit": _git_head(),
+            "tagName": SKILL_RUN_TAG_NAME,
+            "artifacts": file_hashes,
+            "capabilities": {**SKILL_RUN_CAPABILITIES, "approval": "unsupported", "attachments": "unsupported"},
+        },
+    )
+    (root / "SHA256SUMS").write_text(
+        "\n".join(f"{digest}  {relative}" for relative, digest in sorted(file_hashes.items())) + "\n",
+        encoding="utf-8",
+    )
+
+
+def generate_skill_run_contracts(version: str | None = None) -> None:
     from app.api.internal_edge import (
         EdgeActualReportBody,
         EdgeArtifactUploadBody,
@@ -952,6 +1202,10 @@ def generate_skill_run_contracts() -> None:
         ToolsListResultV11,
     )
     from app.schemas.work_expert.mcp_jsonrpc import JsonRpcErrorResponse, JsonRpcRequest
+
+    _generate_skill_run_v10_public_contract()
+    if version == SKILL_RUN_CONTRACT_VERSION:
+        return
 
     root_v10 = SKILL_RUN_CONTRACTS_HOME / f"v{SKILL_RUN_CONTRACT_VERSION}"
     if not root_v10.exists():
@@ -1462,8 +1716,14 @@ def main() -> None:
         default="work-expert",
         help="Contract family to generate",
     )
+    generate_parser.add_argument(
+        "--version",
+        choices=("1.0.0", "1.1.0", "1.2.0"),
+        help="Generate only the requested skill-run contract version",
+    )
     check_parser = sub.add_parser("check", help="Validate committed contract artifacts")
     check_parser.add_argument("--release", action="store_true")
+    check_parser.add_argument("--family", choices=("work-expert", "skill-run", "all"), default="all")
     args = parser.parse_args()
 
     sys.path.insert(0, str(BACKEND_ROOT))
@@ -1471,9 +1731,9 @@ def main() -> None:
         if args.family in ("work-expert", "all"):
             generate_contracts()
         if args.family in ("skill-run", "all"):
-            generate_skill_run_contracts()
+            generate_skill_run_contracts(version=args.version)
     else:
-        check_contracts(release=args.release)
+        check_contracts(release=args.release, family=args.family)
 
 
 if __name__ == "__main__":

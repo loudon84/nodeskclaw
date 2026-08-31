@@ -1,6 +1,7 @@
 {
   "$defs": {
-    "SkillToolAnnotations": {
+    "PublicSkillToolAnnotations": {
+      "additionalProperties": false,
       "properties": {
         "category": {
           "anyOf": [
@@ -15,33 +16,20 @@
           "title": "Category"
         },
         "riskLevel": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
+          "default": "low",
+          "enum": [
+            "low",
+            "medium",
+            "high",
+            "critical"
           ],
-          "default": null,
-          "title": "Risklevel"
+          "title": "Risklevel",
+          "type": "string"
         },
         "requiresApproval": {
           "default": false,
           "title": "Requiresapproval",
           "type": "boolean"
-        },
-        "approvalMode": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Approvalmode"
         },
         "streaming": {
           "default": true,
@@ -66,29 +54,21 @@
           "title": "Version"
         }
       },
-      "title": "SkillToolAnnotations",
+      "title": "PublicSkillToolAnnotations",
       "type": "object"
     },
-    "SkillToolDescriptor": {
+    "PublicSkillToolDescriptor": {
+      "additionalProperties": false,
       "properties": {
         "name": {
           "title": "Name",
           "type": "string"
         },
         "title": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Title"
+          "title": "Title",
+          "type": "string"
         },
         "description": {
-          "default": "",
           "title": "Description",
           "type": "string"
         },
@@ -98,16 +78,8 @@
           "type": "object"
         },
         "version": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Version"
+          "title": "Version",
+          "type": "string"
         },
         "category": {
           "anyOf": [
@@ -121,34 +93,64 @@
           "default": null,
           "title": "Category"
         },
-        "annotations": {
+        "capabilityKind": {
+          "const": "skill",
+          "title": "Capabilitykind",
+          "type": "string"
+        },
+        "interactionMode": {
+          "enum": [
+            "chat",
+            "form"
+          ],
+          "title": "Interactionmode",
+          "type": "string"
+        },
+        "promptField": {
           "anyOf": [
             {
-              "$ref": "#/$defs/SkillToolAnnotations"
+              "type": "string"
             },
             {
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "title": "Promptfield"
+        },
+        "supportsAttachments": {
+          "default": false,
+          "title": "Supportsattachments",
+          "type": "boolean"
+        },
+        "annotations": {
+          "$ref": "#/$defs/PublicSkillToolAnnotations"
         }
       },
       "required": [
-        "name"
+        "name",
+        "title",
+        "description",
+        "inputSchema",
+        "version",
+        "capabilityKind",
+        "interactionMode",
+        "annotations"
       ],
-      "title": "SkillToolDescriptor",
+      "title": "PublicSkillToolDescriptor",
       "type": "object"
     }
   },
+  "additionalProperties": false,
   "properties": {
     "tools": {
       "items": {
-        "$ref": "#/$defs/SkillToolDescriptor"
+        "$ref": "#/$defs/PublicSkillToolDescriptor"
       },
       "title": "Tools",
       "type": "array"
     }
   },
-  "title": "ToolsListResult",
+  "title": "PublicToolsListResult",
   "type": "object"
 }

@@ -1,26 +1,34 @@
 {
-  "jsonrpc": "2.0",
-  "id": "list-1",
-  "result": {
-    "tools": [
-      {
-        "name": "writer_article_generate",
-        "title": "Writer",
-        "description": "Generate article",
-        "inputSchema": {
-          "type": "object"
+  "tools": [
+    {
+      "name": "writer.article",
+      "title": "Writer",
+      "description": "Generate an article",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "prompt": {
+            "type": "string"
+          }
         },
-        "version": "1.0.0",
-        "category": "writer",
-        "annotations": {
-          "category": "writer",
-          "riskLevel": "low",
-          "requiresApproval": false,
-          "streaming": true,
-          "artifacts": true,
-          "version": "1.0.0"
-        }
+        "required": [
+          "prompt"
+        ]
+      },
+      "version": "1.0.0",
+      "category": "writing",
+      "capabilityKind": "skill",
+      "interactionMode": "chat",
+      "promptField": "prompt",
+      "supportsAttachments": false,
+      "annotations": {
+        "category": "writing",
+        "riskLevel": "low",
+        "requiresApproval": false,
+        "streaming": true,
+        "artifacts": true,
+        "version": "1.0.0"
       }
-    ]
-  }
+    }
+  ]
 }

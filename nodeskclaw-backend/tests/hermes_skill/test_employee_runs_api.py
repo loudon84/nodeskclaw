@@ -75,7 +75,7 @@ async def test_get_run_undelivered_outbox_returns_dispatch_pending():
 
         res = await get_run(run_id="run-1", user_org=user_org, db=db)
         assert res["code"] == 0
-        assert res["data"]["status"] == "DISPATCH_PENDING"
+        assert res["data"]["status"] == "QUEUED"
         assert res["data"]["run_id"] == "run-1"
         mock_agent_get.assert_not_called()
 
@@ -101,6 +101,109 @@ async def test_get_run_delivered_outbox_proxies_agent_and_verifies_org():
 
         with pytest.raises(ForbiddenError):
             await get_run(run_id="run-1", user_org=user_org, db=db)
+
+
+@pytest.mark.asyncio
+async def test_get_run_returns_only_the_public_run_projection():
+    db = AsyncMock()
+    user_org = _mock_user_org()
+    task = HermesTask(id="run-1", org_id="org-1", user_id="user-1", tool_name="test_tool", status=TaskStatus.RUNNING)
+    agent_run = {
+        "run_id": "run-1",
+        "org_id": "org-1",
+        "user_id": "user-1",
+        "tool_name": "test_tool",
+        "status": "RUNNING",
+        "snapshot": {"runtime_policy": {"internal_url": "http://agent"}},
+        "created_at": "2026-08-31T00:00:00Z",
+        "updated_at": "2026-08-31T00:01:00Z",
+    }
+
+    with patch("app.api.runs.PermissionChecker.require_permission", new=AsyncMock()), \
+         patch("app.api.runs.TaskService.get_task", new=AsyncMock(return_value=task)), \
+         patch("app.api.runs.TaskService.assert_task_access", new=AsyncMock()), \
+         patch("app.api.runs._get_outbox_entry", new=AsyncMock(return_value=None)), \
+         patch("app.api.runs._agent_get", new=AsyncMock(return_value=agent_run)):
+
+        result = await get_run(run_id="run-1", user_org=user_org, db=db)
+
+    assert result["data"] == {
+        "run_id": "run-1",
+        "tool_name": "test_tool",
+        "status": "RUNNING",
+        "created_at": "2026-08-31T00:00:00Z",
+        "updated_at": "2026-08-31T00:01:00Z",
+    }
+
+
+@pytest.mark.asyncio
+async def test_get_run_result_returns_only_public_text_and_error_fields():
+    db = AsyncMock()
+    user_org = _mock_user_org()
+    task = HermesTask(id="run-1", org_id="org-1", user_id="user-1", tool_name="test_tool", status=TaskStatus.RUNNING)
+    agent_result = {
+        "run_id": "run-1",
+        "org_id": "org-1",
+        "user_id": "user-1",
+        "status": "COMPLETED",
+        "result_content": "done",
+        "routing_metadata": {"gateway_token": "secret"},
+    }
+
+    with patch("app.api.runs.PermissionChecker.require_permission", new=AsyncMock()), \
+         patch("app.api.runs.TaskService.get_task", new=AsyncMock(return_value=task)), \
+         patch("app.api.runs.TaskService.assert_task_access", new=AsyncMock()), \
+         patch("app.api.runs._get_outbox_entry", new=AsyncMock(return_value=None)), \
+         patch("app.api.runs._agent_get", new=AsyncMock(return_value=agent_result)):
+
+        result = await get_run_result(run_id="run-1", user_org=user_org, db=db)
+
+    assert result["data"] == {
+        "run_id": "run-1",
+        "status": "COMPLETED",
+        "text": "done",
+        "error_code": None,
+        "error_message": None,
+    }
+
+
+@pytest.mark.asyncio
+async def test_get_run_artifacts_returns_only_public_descriptors():
+    db = AsyncMock()
+    user_org = _mock_user_org()
+    task = HermesTask(id="run-1", org_id="org-1", user_id="user-1", tool_name="test_tool", status=TaskStatus.RUNNING)
+    agent_artifacts = {
+        "run_id": "run-1",
+        "org_id": "org-1",
+        "items": [{
+            "artifact_id": "artifact-1",
+            "name": "result.txt",
+            "content_type": "text/plain",
+            "size_bytes": 12,
+            "checksum_sha256": "abc",
+            "storage_url": "s3://internal-bucket/result.txt",
+            "credential": "secret",
+        }],
+    }
+
+    with patch("app.api.runs.PermissionChecker.require_permission", new=AsyncMock()), \
+         patch("app.api.runs.TaskService.get_task", new=AsyncMock(return_value=task)), \
+         patch("app.api.runs.TaskService.assert_task_access", new=AsyncMock()), \
+         patch("app.api.runs._get_outbox_entry", new=AsyncMock(return_value=None)), \
+         patch("app.api.runs._agent_get", new=AsyncMock(return_value=agent_artifacts)):
+
+        result = await get_run_artifacts(run_id="run-1", user_org=user_org, db=db)
+
+    assert result["data"] == {
+        "run_id": "run-1",
+        "items": [{
+            "artifact_id": "artifact-1",
+            "name": "result.txt",
+            "content_type": "text/plain",
+            "size_bytes": 12,
+            "checksum_sha256": "abc",
+        }],
+    }
 
 
 @pytest.mark.asyncio
@@ -330,7 +433,9 @@ async def test_stream_run_events_passes_semantic_event_type_and_seq():
         body = "".join(chunks)
 
     assert "event: assistant.message\n" in body
-    assert "id: 7\n" in body
+    assert "id: run-1:7\n" in body
     assert "event: run.completed\n" in body
-    assert "id: 8\n" in body
+    assert "id: run-1:8\n" in body
+    assert "source_event_id" not in body
+    assert '"source"' not in body
 

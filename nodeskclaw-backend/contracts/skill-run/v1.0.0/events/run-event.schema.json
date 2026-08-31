@@ -1,55 +1,135 @@
 {
-  "properties": {
-    "event_id": {
-      "title": "Event Id",
-      "type": "string"
-    },
-    "run_id": {
-      "title": "Run Id",
-      "type": "string"
-    },
-    "event_type": {
-      "title": "Event Type",
-      "type": "string"
-    },
-    "event_seq": {
-      "title": "Event Seq",
-      "type": "integer"
-    },
-    "source": {
-      "default": "agent",
-      "title": "Source",
-      "type": "string"
-    },
-    "source_event_id": {
-      "anyOf": [
-        {
+  "title": "PublicRunEvent",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "event_id": {
           "type": "string"
         },
-        {
-          "type": "null"
+        "run_id": {
+          "type": "string"
+        },
+        "event_type": {
+          "enum": [
+            "run.created",
+            "run.progress",
+            "run.completed",
+            "run.failed",
+            "run.cancelled",
+            "run.timed_out"
+          ]
+        },
+        "event_seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "timestamp": {
+          "type": "string"
+        },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "phase": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "phase"
+          ]
         }
-      ],
-      "default": null,
-      "title": "Source Event Id"
+      },
+      "required": [
+        "event_id",
+        "run_id",
+        "event_type",
+        "event_seq",
+        "timestamp",
+        "payload"
+      ]
     },
-    "timestamp": {
-      "title": "Timestamp",
-      "type": "string"
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "event_id": {
+          "type": "string"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "event_type": {
+          "const": "assistant.message"
+        },
+        "event_seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "timestamp": {
+          "type": "string"
+        },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "text"
+          ]
+        }
+      },
+      "required": [
+        "event_id",
+        "run_id",
+        "event_type",
+        "event_seq",
+        "timestamp",
+        "payload"
+      ]
     },
-    "payload": {
-      "additionalProperties": true,
-      "title": "Payload",
-      "type": "object"
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "event_id": {
+          "type": "string"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "event_type": {
+          "const": "artifact.persisted"
+        },
+        "event_seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "timestamp": {
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "../runs/artifact-descriptor.schema.json"
+        }
+      },
+      "required": [
+        "event_id",
+        "run_id",
+        "event_type",
+        "event_seq",
+        "timestamp",
+        "payload"
+      ]
     }
-  },
-  "required": [
-    "event_id",
-    "run_id",
-    "event_type",
-    "event_seq",
-    "timestamp"
   ],
-  "title": "RunEvent",
-  "type": "object"
+  "discriminator": {
+    "propertyName": "event_type"
+  }
 }
