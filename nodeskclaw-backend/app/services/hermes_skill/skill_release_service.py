@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import logging
 import uuid
+import zipfile
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
 from app.models.base import not_deleted
 from app.models.connector.binding import SkillConnectorBinding
@@ -37,6 +41,55 @@ def compute_skill_content_digest(skill: HermesSkill) -> str:
     }
     raw = json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def build_bundle_zip_bytes(skill_dir: Path) -> bytes:
+    if skill_dir.is_symlink() or not skill_dir.is_dir():
+        raise BadRequestError(
+            "Skill 工作副本目录不存在",
+            "errors.skill.canonical_path_missing",
+        )
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for file_path in sorted(skill_dir.rglob("*")):
+            if file_path.is_symlink():
+                raise BadRequestError(
+                    "Skill 工作副本不得包含符号链接",
+                    "errors.skill.bundle_symlink_rejected",
+                )
+            if not file_path.is_file():
+                continue
+            arcname = file_path.relative_to(skill_dir).as_posix()
+            zf.write(file_path, arcname)
+    return buffer.getvalue()
+
+
+def bundle_descriptor_from_release(release: HermesSkillRelease) -> dict[str, Any] | None:
+    if not release.bundle_ref or not release.bundle_sha256 or release.bundle_size_bytes is None:
+        return None
+    return {
+        "release_id": release.id,
+        "bundle_ref": release.bundle_ref,
+        "version": release.version,
+        "size": int(release.bundle_size_bytes),
+        "sha256": release.bundle_sha256,
+    }
+
+
+def bundle_zip_path(bundle_ref: str) -> Path:
+    try:
+        normalized_ref = str(uuid.UUID(str(bundle_ref)))
+    except (ValueError, AttributeError, TypeError) as exc:
+        raise BadRequestError(
+            "Bundle reference 无效",
+            "errors.skill.bundle_reference_invalid",
+        ) from exc
+    if normalized_ref != str(bundle_ref).lower():
+        raise BadRequestError(
+            "Bundle reference 无效",
+            "errors.skill.bundle_reference_invalid",
+        )
+    return Path(settings.HERMES_SKILL_HUB_ROOT) / "releases" / f"{normalized_ref}.zip"
 
 
 def snapshot_hash(*, skill_release_id: str, digest: str, route_snapshot: dict[str, Any]) -> str:
@@ -274,6 +327,23 @@ class SkillReleaseService:
             "artifacts": bool(existing_annotations.get("artifacts", extra.get("artifacts", False))),
         }
         release.extra_metadata = extra
+
+        if not release.bundle_ref:
+            if not skill.canonical_path:
+                raise BadRequestError(
+                    "Skill 缺少 canonical_path，无法发布 Bundle",
+                    "errors.skill.canonical_path_missing",
+                )
+            skill_dir = Path(skill.canonical_path)
+            zip_bytes = build_bundle_zip_bytes(skill_dir)
+            bundle_ref = str(uuid.uuid4())
+            releases_dir = Path(settings.HERMES_SKILL_HUB_ROOT) / "releases"
+            releases_dir.mkdir(parents=True, exist_ok=True)
+            bundle_path = releases_dir / f"{bundle_ref}.zip"
+            bundle_path.write_bytes(zip_bytes)
+            release.bundle_ref = bundle_ref
+            release.bundle_sha256 = hashlib.sha256(zip_bytes).hexdigest()
+            release.bundle_size_bytes = len(zip_bytes)
 
         current = await self.get_published_by_skill_db_id(skill.id)
         now = datetime.now(timezone.utc)

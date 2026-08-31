@@ -5,7 +5,6 @@ import base64
 import hashlib
 import json
 import logging
-import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -70,6 +69,43 @@ class EdgeWorker:
                     logger.exception("EdgeWorker poll error")
                     await asyncio.sleep(settings.SKILL_AGENT_EDGE_POLL_SECONDS)
 
+    async def _report_installation_error(
+        self,
+        client: httpx.AsyncClient,
+        *,
+        installation_id: str,
+        generation: int,
+        error_code: str,
+    ) -> None:
+        report_url = f"{self._base_url}/api/v1/internal/edge/installations/actual"
+        report_body = {
+            "installation_id": installation_id,
+            "actual_status": "error",
+            "generation": generation,
+            "meta": {
+                "reconciled_by": "edge_worker",
+                "node_id": self._node_id,
+                "error_code": error_code,
+            },
+        }
+        rep_res = await client.post(report_url, headers=self._headers(), json=report_body)
+        rep_res.raise_for_status()
+
+    async def _download_installation_bundle(
+        self,
+        client: httpx.AsyncClient,
+        *,
+        installation_id: str,
+        generation: int,
+    ) -> bytes:
+        url = (
+            f"{self._base_url}/api/v1/internal/edge/installations/"
+            f"{installation_id}/bundle?generation={generation}"
+        )
+        response = await client.get(url, headers=self._headers())
+        response.raise_for_status()
+        return response.content
+
     async def _reconcile_desired_installations(self, client: httpx.AsyncClient) -> None:
         """Fetch desired installations for this node, reconcile state with real installer and report actual status."""
         try:
@@ -97,7 +133,6 @@ class EdgeWorker:
                 actual_gen = int(inst.get("actual_generation") or 0)
 
                 if desired_status == "uninstalling":
-                    # Perform real filesystem uninstall
                     self._installer.uninstall(skill_id=skill_id)
                     if inst_id in local_state:
                         local_state.pop(inst_id, None)
@@ -111,30 +146,81 @@ class EdgeWorker:
                     rep_res = await client.post(report_url, headers=self._headers(), json=report_body)
                     rep_res.raise_for_status()
                 elif desired_gen != actual_gen:
-                    # Perform real filesystem install
-                    self._installer.install(
-                        skill_id=skill_id,
-                        version=str(desired_gen),
-                        meta={"installation_id": inst_id, "node_id": self._node_id},
-                    )
-                    if not self._installer.is_installed(skill_id=skill_id, version=str(desired_gen)):
-                        raise RuntimeError(f"Skill {skill_id} installation side effect verification failed")
+                    bundle = inst.get("bundle")
+                    if not isinstance(bundle, dict):
+                        await self._report_installation_error(
+                            client,
+                            installation_id=inst_id,
+                            generation=desired_gen,
+                            error_code="errors.skill.bundle_unavailable",
+                        )
+                        continue
+                    try:
+                        release_id = bundle.get("release_id")
+                        bundle_ref = bundle.get("bundle_ref")
+                        bundle_version = bundle.get("version")
+                        bundle_sha256 = bundle.get("sha256")
+                        bundle_size = bundle.get("size")
+                        if not all(
+                            isinstance(value, str) and value.strip()
+                            for value in (release_id, bundle_ref, bundle_version, bundle_sha256)
+                        ):
+                            raise ValueError("Incomplete bundle descriptor")
+                        if len(bundle_sha256) != 64 or any(char not in "0123456789abcdefABCDEF" for char in bundle_sha256):
+                            raise ValueError("Invalid bundle SHA-256")
+                        if isinstance(bundle_size, bool) or not isinstance(bundle_size, int) or bundle_size < 0:
+                            raise ValueError("Invalid bundle size")
+                        zip_bytes = await self._download_installation_bundle(
+                            client,
+                            installation_id=inst_id,
+                            generation=desired_gen,
+                        )
+                        self._installer.install(
+                            skill_id=skill_id,
+                            version=str(desired_gen),
+                            zip_bytes=zip_bytes,
+                            expected_sha256=bundle_sha256,
+                            expected_size=bundle_size,
+                            meta={
+                                "installation_id": inst_id,
+                                "node_id": self._node_id,
+                                "release_id": release_id,
+                                "bundle_ref": bundle_ref,
+                            },
+                        )
+                        if not self._installer.is_installed(skill_id=skill_id, version=str(desired_gen)):
+                            raise RuntimeError(f"Skill {skill_id} installation side effect verification failed")
 
-                    local_state[inst_id] = {
-                        "skill_id": skill_id,
-                        "generation": desired_gen,
-                    }
-                    local_state_file.write_text(json.dumps(local_state), encoding="utf-8")
-                    report_body = {
-                        "installation_id": inst_id,
-                        "actual_status": "ready",
-                        "generation": desired_gen,
-                        "meta": {"reconciled_by": "edge_worker", "node_id": self._node_id, "action": "installed"},
-                    }
-                    rep_res = await client.post(report_url, headers=self._headers(), json=report_body)
-                    rep_res.raise_for_status()
+                        local_state[inst_id] = {
+                            "skill_id": skill_id,
+                            "generation": desired_gen,
+                        }
+                        local_state_file.write_text(json.dumps(local_state), encoding="utf-8")
+                        report_body = {
+                            "installation_id": inst_id,
+                            "actual_status": "ready",
+                            "generation": desired_gen,
+                            "meta": {
+                                "reconciled_by": "edge_worker",
+                                "node_id": self._node_id,
+                                "action": "installed",
+                                "release_id": release_id,
+                                "bundle_ref": bundle_ref,
+                                "sha256": bundle_sha256,
+                            },
+                        }
+                        rep_res = await client.post(report_url, headers=self._headers(), json=report_body)
+                        rep_res.raise_for_status()
+                    except Exception as exc:
+                        logger.warning("installation reconcile failed for %s: %s", inst_id, exc)
+                        await self._report_installation_error(
+                            client,
+                            installation_id=inst_id,
+                            generation=desired_gen,
+                            error_code="errors.skill.install_failed",
+                        )
         except Exception:
-            logger.debug("reconcile desired installations failed", exc_info=True)
+            logger.exception("reconcile desired installations failed")
 
     async def _pull_and_fulfill_on_demand_requests(self, client: httpx.AsyncClient) -> None:
         """Poll Central for on-demand artifact requests and fulfill them via outbound upload."""

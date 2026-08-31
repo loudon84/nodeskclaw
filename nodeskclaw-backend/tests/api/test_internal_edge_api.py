@@ -243,6 +243,142 @@ async def test_get_desired_installations():
 
 
 @pytest.mark.asyncio
+async def test_get_desired_installations_pins_bundle(tmp_path, monkeypatch):
+    from app.api.internal_edge import get_desired_installations
+    from app.models.hermes_skill.skill_installation import HermesSkillInstallation
+    from app.models.hermes_skill.skill_release import HermesSkillRelease
+
+    db = AsyncMock()
+    node = EdgeNode()
+    node.id = "node-1"
+    node.org_id = "org-1"
+    node.status = EdgeNodeStatus.ONLINE.value
+
+    inst = HermesSkillInstallation()
+    inst.id = "inst-1"
+    inst.org_id = "org-1"
+    inst.skill_id = "calculator"
+    inst.target_kind = "edge"
+    inst.edge_node_id = "node-1"
+    inst.status = "installed"
+    inst.desired_generation = 2
+    inst.actual_generation = 1
+    inst.install_metadata = {"pkg": "calc"}
+    inst.routing_metadata = {}
+
+    release = HermesSkillRelease()
+    release.id = "rel-1"
+    release.bundle_ref = "11111111-1111-4111-8111-111111111111"
+    release.bundle_sha256 = "abc123"
+    release.bundle_size_bytes = 42
+    release.version = "1.0.0"
+
+    mock_res = MagicMock()
+    mock_res.scalars.return_value.all.return_value = [inst]
+    db.execute = AsyncMock(return_value=mock_res)
+    db.commit = AsyncMock()
+    db.flush = AsyncMock()
+
+    with patch("app.api.internal_edge._authenticate_edge", AsyncMock(return_value=node)), patch(
+        "app.api.internal_edge.SkillReleaseService.get_published", AsyncMock(return_value=release)
+    ):
+        res = await get_desired_installations(db, x_edge_token="tok")
+
+    item = res["data"]["items"][0]
+    assert item["bundle"]["release_id"] == "rel-1"
+    assert item["bundle"]["bundle_ref"] == "11111111-1111-4111-8111-111111111111"
+    assert item["bundle"]["sha256"] == "abc123"
+    assert item["bundle"]["size"] == 42
+    assert "releases/" not in str(item)
+    assert inst.install_metadata["published_bundle"]["generation"] == 2
+
+
+@pytest.mark.asyncio
+async def test_download_installation_bundle_generation_fencing(tmp_path, monkeypatch):
+    from app.api.internal_edge import download_installation_bundle
+    from app.models.hermes_skill.skill_installation import HermesSkillInstallation
+
+    db = AsyncMock()
+    node = EdgeNode()
+    node.id = "node-1"
+    node.org_id = "org-1"
+    node.status = EdgeNodeStatus.ONLINE.value
+
+    inst = HermesSkillInstallation()
+    inst.id = "inst-1"
+    inst.org_id = "org-1"
+    inst.skill_id = "calculator"
+    inst.target_kind = "edge"
+    inst.edge_node_id = "node-1"
+    inst.status = "installed"
+    inst.desired_generation = 2
+    inst.install_metadata = {
+        "published_bundle": {
+            "generation": 2,
+            "release_id": "rel-1",
+            "bundle_ref": "11111111-1111-4111-8111-111111111111",
+            "version": "1.0.0",
+            "size": 5,
+            "sha256": "deadbeef",
+        }
+    }
+
+    mock_res = MagicMock()
+    mock_res.scalar_one_or_none.return_value = inst
+    db.execute = AsyncMock(return_value=mock_res)
+    db.commit = AsyncMock()
+
+    hub_root = tmp_path / "hub"
+    releases_dir = hub_root / "releases"
+    releases_dir.mkdir(parents=True)
+    zip_bytes = b"hello"
+    (releases_dir / "11111111-1111-4111-8111-111111111111.zip").write_bytes(zip_bytes)
+    monkeypatch.setattr(
+        "app.api.internal_edge.settings.HERMES_SKILL_HUB_ROOT",
+        str(hub_root),
+    )
+
+    with patch("app.api.internal_edge._authenticate_edge", AsyncMock(return_value=node)):
+        response = await download_installation_bundle("inst-1", generation=2, db=db, x_edge_token="tok")
+    chunks: list[bytes] = []
+    async for chunk in response.body_iterator:
+        chunks.append(chunk)
+    assert b"".join(chunks) == zip_bytes
+
+    with patch("app.api.internal_edge._authenticate_edge", AsyncMock(return_value=node)):
+        with pytest.raises(ForbiddenError, match="stale_actual_generation"):
+            await download_installation_bundle("inst-1", generation=1, db=db, x_edge_token="tok")
+
+
+@pytest.mark.asyncio
+async def test_download_installation_bundle_requires_exact_node_binding():
+    from app.api.internal_edge import download_installation_bundle
+    from app.models.hermes_skill.skill_installation import HermesSkillInstallation
+
+    db = AsyncMock()
+    node = EdgeNode()
+    node.id = "node-1"
+    node.org_id = "org-1"
+    node.status = EdgeNodeStatus.ONLINE.value
+
+    inst = HermesSkillInstallation()
+    inst.id = "inst-1"
+    inst.org_id = "org-1"
+    inst.target_kind = "edge"
+    inst.edge_node_id = None
+    inst.status = "installed"
+    inst.desired_generation = 2
+
+    mock_res = MagicMock()
+    mock_res.scalar_one_or_none.return_value = inst
+    db.execute = AsyncMock(return_value=mock_res)
+
+    with patch("app.api.internal_edge._authenticate_edge", AsyncMock(return_value=node)):
+        with pytest.raises(ForbiddenError, match="org/node"):
+            await download_installation_bundle("inst-1", generation=2, db=db, x_edge_token="tok")
+
+
+@pytest.mark.asyncio
 async def test_claim_expired_lease_reclaim_with_generation_bump():
     from datetime import datetime, timezone, timedelta
     from app.api.internal_edge import claim_edge_job

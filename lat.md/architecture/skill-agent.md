@@ -52,12 +52,16 @@ Run 生命周期的幂等、CAS 状态迁移、Attempt 代次和取消审批分�
 
 ## Installation Generation Closed Loop
 
-Installation 的 Desired/Actual Generation 合同已实现，Edge 已有本地目录副作用，但真实 Skill 包安装合同尚未闭环。
+Installation 的 Desired/Actual Generation 合同已实现，Edge 通过 Backend 授权的 Published Bundle 完成真实包安装闭环。
 
 - **已实现**：Backend 在安装、卸载、参数更新或重新同步时递增 `desired_generation`，并严格要求 Actual 上报满足 `generation == desired_generation`。
 - **已实现**：卸载进入 `uninstalling`，Edge 上报同代 `uninstalled` 后由 Backend 软删除记录并收敛到移除状态。
-- **部分实现**：[[nodeskclaw-agent/app/services/edge_worker.py#EdgeWorker]] 结合 [[nodeskclaw-agent/app/services/edge_skill_installer.py#EdgeSkillInstaller]] 创建或删除代次目录并校验元数据；Desired 合同尚未传递可验证的包引用、版本和摘要，当前安装路径未写入真实 Skill 内容。
-- **目标状态**：Edge 重启后继续真实调谐，只有安装或卸载副作用成功才上报同代 Actual；失败保持可重试状态并留存稳定错误证据。
+- **已实现**：[[nodeskclaw-backend/app/services/hermes_skill/skill_release_service.py#SkillReleaseService#publish]] 从 `canonical_path` 打包写入 Hub `releases/{bundle_ref}.zip`，冻结 opaque `bundle_ref`、包 SHA-256 与 size（与 content digest 分开）；已 published Release 不可被工作副本覆盖。
+- **已实现**：[[nodeskclaw-backend/app/api/internal_edge.py#get_desired_installations]] 在 `install_metadata.published_bundle` 按 `desired_generation` 钉住最小描述符 `{release_id, bundle_ref, version, size, sha256}`；Desired/Actual/日志不含 Hub 路径、Storage Key 或凭据。
+- **已实现**：[[nodeskclaw-backend/app/api/internal_edge.py#download_installation_bundle]] 仅对已认证 Edge、匹配 org/node 且 `generation == desired_generation` 流式返回 ZIP；错代、超前代、卸载态或未发布 fail-closed。
+- **已实现**：[[nodeskclaw-agent/app/services/edge_worker.py#EdgeWorker#_reconcile_desired_installations]] 无 bundle 或安装失败时同代上报 `error`；成功路径经 [[nodeskclaw-agent/app/services/edge_worker.py#EdgeWorker#_download_installation_bundle]] 下载真实 ZIP 后由 [[nodeskclaw-agent/app/services/edge_skill_installer.py#EdgeSkillInstaller#install]] 强制 `zip_bytes`、校验 size/sha256，拒绝 zip-slip/符号链接/重复条目，staging 验证后 `os.replace` 并写 `current.json` 指针（不用符号链接）；失败保留旧 Current；卸载由 [[nodeskclaw-agent/app/services/edge_skill_installer.py#EdgeSkillInstaller#uninstall]] 限定托管根。
+- **已实现**：[[nodeskclaw-backend/app/api/internal_edge.py#report_installation_actual]] 接受同代 Actual 并按状态分支：对齐或持久化错误但不推进代次。
+- **已实现**：同代 `ready` / `uninstalled` / `removed` 才对齐 `actual_generation`；同代 `error` / `failed` 由 Backend 接受并持久化 `error_message` 但不推进代次，Desired 保持未对齐以便重试。
 
 ## Hermes Engine Adapter
 
@@ -80,6 +84,7 @@ Edge 出站执行、租约续期与磁盘 Spool 已有实现，跨租约断网�
 
 - **已实现**：Edge 主动向 Backend 心跳、认领 EdgeJob、续租并回传增量事件；收到 403 租约抢占响应后设置 `cancel_event` 中断本地执行。
 - **已实现**：Spool Envelope 保存 `job_id`、`delivery_generation`、`attempt_id`、`step_id`、`request_trace_id` 和 `idempotency_key`，单元测试覆盖落盘、排空和 403 丢弃旧代信封。
+- **已实现**：Desired Installation 调谐、Bundle 下载与本地安装闭环见 [[architecture/skill-agent#Installation Generation Closed Loop]]。
 - **已实现**：出站拉取并在授权下履约 on-demand Artifact；通过标准 `/artifacts` 路由中继。
 - **目标状态**：真实断网跨租约、Edge 重启和网络恢复证明事件只重放一次；on-demand Artifact 只能在有效 Backend 授权下履约并校验 SHA256。
 

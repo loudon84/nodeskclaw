@@ -6,7 +6,8 @@ import hmac
 from datetime import datetime, timedelta, timezone
 
 import httpx
-from fastapi import APIRouter, Depends, Header, HTTPException, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,6 +22,11 @@ from app.models.connector.edge_node import EdgeNode, EdgeNodeStatus
 from app.models.hermes_skill.skill_installation import HermesSkillInstallation
 from app.services.connector.edge_node_service import EdgeNodeService, hash_edge_token
 from app.services.hermes_skill.runtime_skill_run_service import strip_internal_route_secrets
+from app.services.hermes_skill.skill_release_service import (
+    SkillReleaseService,
+    bundle_descriptor_from_release,
+    bundle_zip_path,
+)
 from app.services.runtime.pg_notify import PGNotifyService
 
 router = APIRouter(prefix="/internal/edge", tags=["Internal Edge"])
@@ -97,6 +103,76 @@ async def _authenticate_edge(
     if node.status == EdgeNodeStatus.DISABLED.value:
         raise ForbiddenError("Edge 节点已禁用", "errors.connector.edge_node_disabled")
     return node
+
+
+ACTUAL_ALIGN_STATUSES = frozenset({"ready", "uninstalled", "removed"})
+ACTUAL_ERROR_STATUSES = frozenset({"error", "failed"})
+
+
+async def _resolve_published_bundle(
+    db: AsyncSession,
+    *,
+    org_id: str,
+    skill_id: str,
+) -> dict | None:
+    release = await SkillReleaseService(db).get_published(org_id, skill_id)
+    if not release:
+        return None
+    return bundle_descriptor_from_release(release)
+
+
+async def _ensure_pinned_bundle(
+    db: AsyncSession,
+    inst: HermesSkillInstallation,
+) -> dict | None:
+    if inst.status == "uninstalling":
+        return None
+    desired_gen = getattr(inst, "desired_generation", 1) or 1
+    metadata = dict(inst.install_metadata or {})
+    pinned = metadata.get("published_bundle")
+    if (
+        isinstance(pinned, dict)
+        and pinned.get("generation") == desired_gen
+        and pinned.get("release_id")
+        and pinned.get("bundle_ref")
+        and pinned.get("sha256")
+        and pinned.get("size") is not None
+    ):
+        return {
+            "release_id": pinned["release_id"],
+            "bundle_ref": pinned["bundle_ref"],
+            "version": pinned.get("version"),
+            "size": pinned["size"],
+            "sha256": pinned["sha256"],
+        }
+    bundle = await _resolve_published_bundle(db, org_id=inst.org_id, skill_id=inst.skill_id)
+    if not bundle:
+        return None
+    metadata["published_bundle"] = {
+        **bundle,
+        "generation": desired_gen,
+    }
+    inst.install_metadata = metadata
+    await db.flush()
+    return bundle
+
+
+def _read_pinned_bundle(inst: HermesSkillInstallation) -> dict | None:
+    desired_gen = getattr(inst, "desired_generation", 1) or 1
+    if inst.status == "uninstalling":
+        return None
+    pinned = (inst.install_metadata or {}).get("published_bundle")
+    if not isinstance(pinned, dict) or pinned.get("generation") != desired_gen:
+        return None
+    if not pinned.get("bundle_ref") or not pinned.get("sha256") or pinned.get("size") is None:
+        return None
+    return {
+        "release_id": pinned.get("release_id"),
+        "bundle_ref": pinned["bundle_ref"],
+        "version": pinned.get("version"),
+        "size": pinned["size"],
+        "sha256": pinned["sha256"],
+    }
 
 
 @router.post("/heartbeat")
@@ -656,7 +732,8 @@ async def get_desired_installations(
     )
     items = []
     for inst in result.scalars().all():
-        items.append({
+        bundle = await _ensure_pinned_bundle(db, inst)
+        item = {
             "id": inst.id,
             "skill_id": inst.skill_id,
             "desired_status": inst.status,
@@ -664,8 +741,59 @@ async def get_desired_installations(
             "actual_generation": getattr(inst, "actual_generation", 0) or 0,
             "install_metadata": inst.install_metadata or {},
             "routing_metadata": inst.routing_metadata or {},
-        })
+        }
+        if bundle:
+            item["bundle"] = bundle
+        items.append(item)
+    await db.commit()
     return {"code": 0, "data": {"items": items, "node_id": node.id}}
+
+
+@router.get("/installations/{installation_id}/bundle")
+async def download_installation_bundle(
+    installation_id: str,
+    generation: int = Query(..., ge=1),
+    db: AsyncSession = Depends(get_db),
+    x_edge_token: str | None = Header(default=None, alias="X-Edge-Token"),
+):
+    node = await _authenticate_edge(db, token=x_edge_token)
+    result = await db.execute(
+        select(HermesSkillInstallation).where(
+            not_deleted(HermesSkillInstallation),
+            HermesSkillInstallation.id == installation_id,
+            HermesSkillInstallation.org_id == node.org_id,
+        )
+    )
+    installation = result.scalar_one_or_none()
+    if not installation:
+        raise NotFoundError("Installation 不存在", "errors.skill.installation_not_found")
+    if installation.edge_node_id != node.id:
+        raise ForbiddenError("伪造 org/node 被拒绝", "errors.connector.edge_org_mismatch")
+    if installation.target_kind != "edge":
+        raise ForbiddenError("非 Edge Installation", "errors.skill.installation_not_found")
+    if installation.status == "uninstalling":
+        raise BadRequestError("卸载态不可下载 Bundle", "errors.skill.bundle_unavailable")
+    desired_gen = getattr(installation, "desired_generation", 1) or 1
+    if generation != desired_gen:
+        if generation < desired_gen:
+            raise ForbiddenError("过期的 generation 请求已拒绝", "errors.skill.stale_actual_generation")
+        raise BadRequestError("超前的 generation 请求已拒绝", "errors.skill.future_generation")
+    bundle = _read_pinned_bundle(installation)
+    if not bundle:
+        bundle = await _ensure_pinned_bundle(db, installation)
+        await db.commit()
+    if not bundle:
+        raise NotFoundError("Bundle 不可用", "errors.skill.bundle_unavailable")
+    bundle_path = bundle_zip_path(str(bundle["bundle_ref"]))
+    if not bundle_path.is_file():
+        raise NotFoundError("Bundle 不可用", "errors.skill.bundle_unavailable")
+
+    def iterfile():
+        with bundle_path.open("rb") as handle:
+            while chunk := handle.read(65536):
+                yield chunk
+
+    return StreamingResponse(iterfile(), media_type="application/zip")
 
 
 class EdgeActualReportBody(BaseModel):
@@ -692,8 +820,10 @@ async def report_installation_actual(
     installation = result.scalar_one_or_none()
     if not installation:
         raise NotFoundError("Installation 不存在", "errors.skill.installation_not_found")
-    if installation.edge_node_id and installation.edge_node_id != node.id:
+    if installation.edge_node_id != node.id:
         raise ForbiddenError("伪造 org/node 被拒绝", "errors.connector.edge_org_mismatch")
+    if installation.target_kind != "edge":
+        raise ForbiddenError("非 Edge Installation", "errors.skill.installation_not_found")
 
     if body.generation is None:
         raise BadRequestError("缺少 generation 字段", "errors.skill.missing_generation")
@@ -704,13 +834,29 @@ async def report_installation_actual(
     if body.generation > desired_gen:
         raise BadRequestError("超前的 generation 上报已拒绝", "errors.skill.future_generation")
 
-    installation.actual_generation = body.generation
-    installation.actual_status = body.actual_status
+    status = body.actual_status
+    if status not in ACTUAL_ALIGN_STATUSES and status not in ACTUAL_ERROR_STATUSES:
+        raise BadRequestError("Actual status 无效", "errors.skill.actual_status_invalid")
+    if installation.status == "uninstalling":
+        if status == "ready":
+            raise BadRequestError("Actual status 与 Desired 状态不匹配", "errors.skill.actual_status_invalid")
+    elif status in {"uninstalled", "removed"}:
+        raise BadRequestError("Actual status 与 Desired 状态不匹配", "errors.skill.actual_status_invalid")
+    installation.actual_status = status
     installation.actual_reported_at = datetime.now(timezone.utc)
     if body.meta:
         installation.routing_metadata = {**(installation.routing_metadata or {}), "actual_meta": body.meta}
 
-    if installation.status == "uninstalling" and body.actual_status in ("uninstalled", "removed"):
+    if status in ACTUAL_ALIGN_STATUSES:
+        installation.actual_generation = body.generation
+        installation.error_message = None
+    elif status in ACTUAL_ERROR_STATUSES:
+        error_code = None
+        if body.meta and isinstance(body.meta.get("error_code"), str):
+            error_code = body.meta["error_code"].strip()
+        installation.error_message = (error_code or status)[:1024]
+
+    if installation.status == "uninstalling" and status in ("uninstalled", "removed"):
         installation.status = "removed"
         installation.deleted_at = datetime.now(timezone.utc)
 

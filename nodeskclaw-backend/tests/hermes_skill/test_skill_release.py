@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import io
+import zipfile
+from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -11,6 +14,9 @@ from app.core.exceptions import BadRequestError, ConflictError
 from app.models.hermes_skill.skill_release import SkillReleaseStatus
 from app.services.hermes_skill.skill_release_service import (
     SkillReleaseService,
+    build_bundle_zip_bytes,
+    bundle_descriptor_from_release,
+    bundle_zip_path,
     compute_skill_content_digest,
     snapshot_hash,
 )
@@ -34,6 +40,7 @@ def _skill(**overrides):
         "tags": ["a"],
         "source_type": "hermes_api_server",
         "source_ref": "hermes://x",
+        "canonical_path": None,
     }
     base.update(overrides)
     return SimpleNamespace(**base)
@@ -120,17 +127,29 @@ async def test_deprecate_rejects_non_published():
 
 
 @pytest.mark.asyncio
-async def test_publish_chat_mode_success():
+async def test_publish_chat_mode_success(tmp_path: Path, monkeypatch):
     db = AsyncMock()
     service = SkillReleaseService(db)
-    skill = _skill()
+    skill_dir = tmp_path / "skill-copy"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text("hello bundle", encoding="utf-8")
+    skill = _skill(canonical_path=str(skill_dir))
     service.get_skill = AsyncMock(return_value=skill)
     service.get_published_by_skill_db_id = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        "app.services.hermes_skill.skill_release_service.settings.HERMES_SKILL_HUB_ROOT",
+        str(tmp_path / "hub"),
+    )
 
     draft = SimpleNamespace(
         id="rel-1",
         status=SkillReleaseStatus.DRAFT.value,
         skill_db_id=skill.id,
+        version="1.0.0",
+        digest=compute_skill_content_digest(skill),
+        bundle_ref=None,
+        bundle_sha256=None,
+        bundle_size_bytes=None,
         input_schema={"type": "object", "properties": {"user_prompt": {"type": "string"}}},
         extra_metadata={"interactionMode": "chat", "promptField": "user_prompt"},
         published_at=None,
@@ -141,11 +160,101 @@ async def test_publish_chat_mode_success():
 
     published = await service.publish(org_id="org-1", skill_id="foo", release_id="rel-1", operator_user_id="user-1")
     assert published.status == SkillReleaseStatus.PUBLISHED.value
+    assert published.bundle_ref
+    assert published.bundle_sha256
+    assert published.bundle_sha256 != published.digest
+    assert published.bundle_size_bytes == len(build_bundle_zip_bytes(skill_dir))
+    assert bundle_zip_path(published.bundle_ref).is_file()
+    descriptor = bundle_descriptor_from_release(published)
+    assert descriptor
+    assert "releases/" not in str(descriptor)
     assert published.extra_metadata["supportsAttachments"] is False
     assert "annotations" in published.extra_metadata
     assert published.extra_metadata["annotations"]["riskLevel"] == "low"
     assert published.extra_metadata["annotations"]["requiresApproval"] is False
     assert published.extra_metadata["annotations"]["approvalMode"] == "none"
+
+
+@pytest.mark.asyncio
+async def test_publish_freezes_bundle_against_working_copy_changes(tmp_path: Path, monkeypatch):
+    db = AsyncMock()
+    service = SkillReleaseService(db)
+    skill_dir = tmp_path / "skill-copy"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text("v1", encoding="utf-8")
+    skill = _skill(canonical_path=str(skill_dir))
+    service.get_skill = AsyncMock(return_value=skill)
+    service.get_published_by_skill_db_id = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        "app.services.hermes_skill.skill_release_service.settings.HERMES_SKILL_HUB_ROOT",
+        str(tmp_path / "hub"),
+    )
+
+    draft = SimpleNamespace(
+        id="rel-1",
+        status=SkillReleaseStatus.DRAFT.value,
+        skill_db_id=skill.id,
+        version="1.0.0",
+        digest=compute_skill_content_digest(skill),
+        bundle_ref=None,
+        bundle_sha256=None,
+        bundle_size_bytes=None,
+        input_schema={"type": "object", "properties": {"prompt": {"type": "string"}}},
+        extra_metadata={},
+        published_at=None,
+        published_by=None,
+        deprecated_at=None,
+    )
+    service._get_release = AsyncMock(return_value=draft)
+    published = await service.publish(org_id="org-1", skill_id="foo", release_id="rel-1", operator_user_id="user-1")
+    frozen_sha = published.bundle_sha256
+
+    (skill_dir / "SKILL.md").write_text("v2 changed", encoding="utf-8")
+    republished = await service.publish(org_id="org-1", skill_id="foo", release_id="rel-1", operator_user_id="user-1")
+    assert republished.bundle_sha256 == frozen_sha
+
+
+@pytest.mark.asyncio
+async def test_publish_rejects_missing_canonical_path():
+    db = AsyncMock()
+    service = SkillReleaseService(db)
+    skill = _skill(canonical_path=None)
+    service.get_skill = AsyncMock(return_value=skill)
+    draft = SimpleNamespace(
+        id="rel-1",
+        status=SkillReleaseStatus.DRAFT.value,
+        skill_db_id=skill.id,
+        version="1.0.0",
+        digest=compute_skill_content_digest(skill),
+        bundle_ref=None,
+        bundle_sha256=None,
+        bundle_size_bytes=None,
+        input_schema={"type": "object", "properties": {"prompt": {"type": "string"}}},
+        extra_metadata={},
+    )
+    service._get_release = AsyncMock(return_value=draft)
+
+    with pytest.raises(BadRequestError, match="canonical_path"):
+        await service.publish(org_id="org-1", skill_id="foo", release_id="rel-1", operator_user_id="user-1")
+
+
+def test_bundle_zip_path_rejects_non_opaque_reference():
+    with pytest.raises(BadRequestError, match="Bundle reference"):
+        bundle_zip_path("../outside")
+
+
+def test_build_bundle_rejects_symlink(tmp_path: Path):
+    outside = tmp_path / "secret.txt"
+    outside.write_text("secret", encoding="utf-8")
+    skill_dir = tmp_path / "skill-copy"
+    skill_dir.mkdir()
+    try:
+        (skill_dir / "linked-secret.txt").symlink_to(outside)
+    except OSError:
+        pytest.skip("当前平台不允许创建测试符号链接")
+
+    with pytest.raises(BadRequestError, match="符号链接"):
+        build_bundle_zip_bytes(skill_dir)
 
 
 @pytest.mark.asyncio

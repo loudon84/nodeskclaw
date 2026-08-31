@@ -121,7 +121,13 @@ async def test_edge_worker_reconcile_desired_installations(monkeypatch):
         "code": 0,
         "data": {
             "items": [
-                {"id": "inst-1", "desired_generation": 2, "actual_generation": 1},
+                {
+                    "id": "inst-1",
+                    "skill_id": "skill-1",
+                    "desired_status": "installed",
+                    "desired_generation": 2,
+                    "actual_generation": 1,
+                },
                 {"id": "inst-2", "desired_generation": 1, "actual_generation": 1},
             ]
         },
@@ -144,9 +150,91 @@ async def test_edge_worker_reconcile_desired_installations(monkeypatch):
     post_call = client.post.call_args
     assert "/api/v1/internal/edge/installations/actual" in post_call.args[0]
     body = post_call.kwargs["json"]
+    assert body["actual_status"] == "error"
+    assert body["generation"] == 2
+
+
+@pytest.mark.asyncio
+async def test_edge_worker_uninstall_removes_current_bundle(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_CENTRAL_BASE_URL", "http://central.test")
+    monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_EDGE_TOKEN", "edge-token")
+    monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_EDGE_NODE_ID", "node-1")
+
+    worker = EdgeWorker()
+    worker._spool_dir = tmp_path
+    worker._installer = MagicMock()
+    worker._installer.uninstall.return_value = True
+    desired_response = MagicMock(status_code=200)
+    desired_response.json.return_value = {
+        "data": {
+            "items": [
+                {
+                    "id": "inst-1",
+                    "skill_id": "skill-1",
+                    "desired_status": "uninstalling",
+                    "desired_generation": 3,
+                    "actual_generation": 2,
+                }
+            ]
+        }
+    }
+    report_response = MagicMock()
+    report_response.raise_for_status = MagicMock()
+    client = AsyncMock()
+    client.get.return_value = desired_response
+    client.post.return_value = report_response
+
+    await worker._reconcile_desired_installations(client)
+
+    worker._installer.uninstall.assert_called_once_with(skill_id="skill-1")
+    assert client.post.call_args.kwargs["json"]["actual_status"] == "uninstalled"
+
+
+@pytest.mark.asyncio
+async def test_edge_worker_rejects_incomplete_bundle_descriptor(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_CENTRAL_BASE_URL", "http://central.test")
+    monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_EDGE_TOKEN", "edge-token")
+    monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_EDGE_NODE_ID", "node-1")
+
+    worker = EdgeWorker()
+    worker._spool_dir = tmp_path
+    worker._installer = MagicMock()
+    desired_response = MagicMock(status_code=200)
+    desired_response.json.return_value = {
+        "data": {
+            "items": [
+                {
+                    "id": "inst-1",
+                    "skill_id": "skill-1",
+                    "desired_status": "installed",
+                    "desired_generation": 2,
+                    "actual_generation": 1,
+                    "bundle": {
+                        "release_id": "rel-1",
+                        "bundle_ref": "bundle-1",
+                        "version": "1.0.0",
+                        "size": 3,
+                    },
+                }
+            ]
+        }
+    }
+    download_response = MagicMock(status_code=200, content=b"zip", raise_for_status=MagicMock())
+    report_response = MagicMock(status_code=200, raise_for_status=MagicMock())
+    client = AsyncMock()
+    client.get.side_effect = [desired_response, download_response]
+    client.post.return_value = report_response
+
+    await worker._reconcile_desired_installations(client)
+
+    worker._installer.install.assert_not_called()
+    assert client.post.call_args.kwargs["json"]["actual_status"] == "error"
+
+
 @pytest.mark.asyncio
 async def test_edge_spool_envelope_completeness_and_drain(tmp_path, monkeypatch):
     import json
+
     import httpx
 
     worker = EdgeWorker()
@@ -185,9 +273,6 @@ async def test_edge_spool_envelope_completeness_and_drain(tmp_path, monkeypatch)
 
 @pytest.mark.asyncio
 async def test_edge_lease_preempted_stops_job(monkeypatch):
-    import asyncio
-    import httpx
-
     monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_CENTRAL_BASE_URL", "http://central.test")
     monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_EDGE_TOKEN", "edge-token")
     monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_EDGE_NODE_ID", "node-1")
@@ -217,33 +302,30 @@ async def test_edge_lease_preempted_stops_job(monkeypatch):
 def test_edge_skill_installer_isolated(tmp_path):
     import io
     import zipfile
+
     from app.services.edge_skill_installer import EdgeSkillInstaller
 
     installer = EdgeSkillInstaller(base_dir=tmp_path)
     skill_id = "test-skill-1"
 
-    # 1. Create a valid zip package
     zip_buf = io.BytesIO()
     with zipfile.ZipFile(zip_buf, "w") as zf:
         zf.writestr("index.js", "console.log('hello')")
         zf.writestr("manifest.json", '{"name": "test"}')
     zip_bytes = zip_buf.getvalue()
 
-    # 2. Install
     target = installer.install(skill_id=skill_id, version="1.0.0", zip_bytes=zip_bytes)
     assert target.exists()
     assert (target / "index.js").read_text() == "console.log('hello')"
     assert (target / "installation_meta.json").exists()
     assert installer.is_installed(skill_id=skill_id, version="1.0.0")
 
-    # 3. Zip slip detection
     bad_buf = io.BytesIO()
     with zipfile.ZipFile(bad_buf, "w") as zf:
         zf.writestr("../evil.txt", "evil")
     with pytest.raises(ValueError, match="Zip path traversal detected"):
         installer.install(skill_id="bad-skill", version="1.0.0", zip_bytes=bad_buf.getvalue())
 
-    # 4. Uninstall
     uninstalled = installer.uninstall(skill_id=skill_id, version="1.0.0")
     assert uninstalled is True
     assert not installer.is_installed(skill_id=skill_id, version="1.0.0")
@@ -251,6 +333,9 @@ def test_edge_skill_installer_isolated(tmp_path):
 
 @pytest.mark.asyncio
 async def test_edge_worker_reconcile_with_real_installer(tmp_path, monkeypatch):
+    import io
+    import zipfile
+
     monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_CENTRAL_BASE_URL", "http://central.test")
     monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_EDGE_TOKEN", "edge-token")
     monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_EDGE_NODE_ID", "node-1")
@@ -258,39 +343,61 @@ async def test_edge_worker_reconcile_with_real_installer(tmp_path, monkeypatch):
     worker = EdgeWorker()
     worker._spool_dir = tmp_path
     from app.services.edge_skill_installer import EdgeSkillInstaller
+
     worker._installer = EdgeSkillInstaller(base_dir=tmp_path / "skills")
 
+    zip_buf = io.BytesIO()
+    with zipfile.ZipFile(zip_buf, "w") as zf:
+        zf.writestr("main.txt", "bundle-content")
+    zip_bytes = zip_buf.getvalue()
+
     client = AsyncMock()
-    # Desired returns 1 install item
+
+    bundle = {
+        "release_id": "rel-1",
+        "bundle_ref": "bundle-ref-1",
+        "version": "1.0.0",
+        "size": len(zip_bytes),
+        "sha256": __import__("hashlib").sha256(zip_bytes).hexdigest(),
+    }
+
     desired_resp = MagicMock(
         status_code=200,
-        json=MagicMock(return_value={
-            "data": {
-                "items": [
-                    {
-                        "id": "inst-1",
-                        "skill_id": "skill-weather",
-                        "desired_status": "installed",
-                        "desired_generation": 2,
-                        "actual_generation": 1,
-                    }
-                ]
+        json=MagicMock(
+            return_value={
+                "data": {
+                    "items": [
+                        {
+                            "id": "inst-1",
+                            "skill_id": "skill-weather",
+                            "desired_status": "installed",
+                            "desired_generation": 2,
+                            "actual_generation": 1,
+                            "bundle": bundle,
+                        }
+                    ]
+                }
             }
-        }),
+        ),
     )
+    download_resp = MagicMock(status_code=200, content=zip_bytes, raise_for_status=MagicMock())
     actual_resp = MagicMock(status_code=200, raise_for_status=MagicMock())
-    client.get = AsyncMock(return_value=desired_resp)
+
+    async def fake_get(url, **kwargs):
+        if "/bundle?" in url:
+            return download_resp
+        return desired_resp
+
+    client.get = AsyncMock(side_effect=fake_get)
     client.post = AsyncMock(return_value=actual_resp)
 
     await worker._reconcile_desired_installations(client)
 
-    # Verify actual report was posted
     assert client.post.call_count == 1
     post_args = client.post.call_args[1]
     assert post_args["json"]["installation_id"] == "inst-1"
     assert post_args["json"]["actual_status"] == "ready"
     assert post_args["json"]["generation"] == 2
-    # Verify filesystem side effect
     assert worker._installer.is_installed(skill_id="skill-weather", version="2")
 
 
