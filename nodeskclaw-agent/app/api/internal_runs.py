@@ -332,6 +332,22 @@ async def ingest_internal_events(
                         details={"event_type": event_type, "artifact_id": payload.get("artifact_id")},
                     )
                     continue
+                expected_descriptor = {
+                    "name": matched.name,
+                    "content_type": matched.content_type,
+                    "size": matched.size_bytes,
+                    "checksum_sha256": matched.checksum_sha256,
+                }
+                if any(payload.get(field) != expected for field, expected in expected_descriptor.items()):
+                    await run_service.record_event_rejection(
+                        db,
+                        run_id,
+                        reason="artifact_descriptor_mismatch",
+                        event_id=event.get("event_id"),
+                        source_event_id=source_event_id,
+                        details={"event_type": event_type, "artifact_id": payload.get("artifact_id")},
+                    )
+                    continue
 
         # 3. Append event
         try:

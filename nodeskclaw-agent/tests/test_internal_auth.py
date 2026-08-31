@@ -404,6 +404,16 @@ def test_ingest_rejects_unknown_and_invalid_semantic_types(monkeypatch):
                         "source_event_id": "u3",
                     },
                     {
+                        "event_type": "tool.call",
+                        "payload": {
+                            "tool_name": "t",
+                            "call_id": "c2",
+                            "status": "started",
+                            "headers": {"Authorization": "Bearer secret"},
+                        },
+                        "source_event_id": "u3a",
+                    },
+                    {
                         "event_type": "artifact.persisted",
                         "payload": {
                             "artifact_id": "missing",
@@ -442,6 +452,7 @@ def test_ingest_rejects_unknown_and_invalid_semantic_types(monkeypatch):
         assert "unknown_event_type" in reasons
         assert "invalid_tool_call_status" in reasons
         assert "forbidden_semantic_payload_field" in reasons
+        assert "unexpected_semantic_payload_field" in reasons
         assert "artifact_not_persisted" in reasons
         assert all("arguments" not in (r["details"] or {}) for r in rejections)
         assert all("token" not in str(r["details"]) for r in rejections)
@@ -450,7 +461,7 @@ def test_ingest_rejects_unknown_and_invalid_semantic_types(monkeypatch):
         mock_update_step.assert_not_called()
 
 
-def test_ingest_artifact_persisted_requires_persisted_descriptor(monkeypatch):
+def test_ingest_artifact_persisted_requires_matching_persisted_descriptor(monkeypatch):
     monkeypatch.setattr(settings, "SKILL_AGENT_INTERNAL_TOKEN", "secret")
     from app.schemas import ArtifactDescriptor
     from app.services import run_service
@@ -478,11 +489,16 @@ def test_ingest_artifact_persisted_requires_persisted_descriptor(monkeypatch):
     )
     mock_append = AsyncMock()
     mock_update_step = AsyncMock()
+    rejections = []
+
+    async def mock_reject(db, run_id, *, reason, event_id=None, source_event_id=None, details=None):
+        rejections.append({"reason": reason, "details": details or {}})
+
     monkeypatch.setattr(run_service, "get_run", AsyncMock(return_value=dummy_run))
     monkeypatch.setattr(run_service, "append_event", mock_append)
     monkeypatch.setattr(run_service, "update_step_state", mock_update_step)
     monkeypatch.setattr(run_service, "list_artifacts", AsyncMock(return_value=[desc]))
-    monkeypatch.setattr(run_service, "record_event_rejection", AsyncMock())
+    monkeypatch.setattr(run_service, "record_event_rejection", mock_reject)
 
     for client in _client(monkeypatch):
         resp = client.post(
@@ -511,4 +527,32 @@ def test_ingest_artifact_persisted_requires_persisted_descriptor(monkeypatch):
         assert resp.status_code == 200
         mock_append.assert_called_once()
         mock_update_step.assert_not_called()
+
+        mock_append.reset_mock()
+        rejections.clear()
+        mismatch = client.post(
+            "/internal/v1/runs/r1/events/ingest",
+            json={
+                "events": [
+                    {
+                        "event_type": "artifact.persisted",
+                        "payload": {
+                            "artifact_id": "art-1",
+                            "name": "forged.txt",
+                            "content_type": "text/plain",
+                            "size": 3,
+                            "checksum_sha256": "abc",
+                        },
+                        "source_event_id": "art-evt-2",
+                    }
+                ],
+            },
+            headers={
+                "X-Skill-Agent-Token": "secret",
+                "X-Exec-Org-Id": "org-1",
+            },
+        )
+        assert mismatch.status_code == 200
+        mock_append.assert_not_called()
+        assert [rejection["reason"] for rejection in rejections] == ["artifact_descriptor_mismatch"]
 

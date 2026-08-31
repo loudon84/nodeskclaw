@@ -46,6 +46,15 @@ CONTROL_EVENT_TYPES_KEEP = frozenset(
 
 TOOL_CALL_STATUSES = frozenset({"started", "completed", "failed"})
 
+_SEMANTIC_PAYLOAD_FIELDS = {
+    "assistant.message": frozenset({"text"}),
+    "reasoning.summary": frozenset({"summary"}),
+    "tool.call": frozenset({"tool_name", "call_id", "status"}),
+    "clarify.requested": frozenset({"question", "options"}),
+    "approval.requested": frozenset({"approval_id", "summary"}),
+    "artifact.persisted": frozenset({"artifact_id", "name", "content_type", "size", "checksum_sha256"}),
+}
+
 _FORBIDDEN_PAYLOAD_KEYS = frozenset(
     {
         "storage_key",
@@ -81,6 +90,9 @@ def validate_semantic_event_payload(event_type: str, payload: dict[str, Any] | N
         return "invalid_semantic_payload"
     if _FORBIDDEN_PAYLOAD_KEYS.intersection(data.keys()):
         return "forbidden_semantic_payload_field"
+    allowed_fields = _SEMANTIC_PAYLOAD_FIELDS.get(event_type)
+    if allowed_fields is not None and set(data).difference(allowed_fields):
+        return "unexpected_semantic_payload_field"
 
     if event_type == "assistant.message":
         text = data.get("text")
