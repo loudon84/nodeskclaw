@@ -3,7 +3,7 @@
   "contractVersion": "1.0.0",
   "provider": "nodeskclaw-backend",
   "consumer": "smc-copilot/apps/work",
-  "backendCommit": "47e442cb58fb12c3198e9572bee9bccb3e492c72",
+  "backendCommit": "6afab6fbf4574c0458ec4fc809a2dc1f88482c9e",
   "tagName": "skill-run-contract-v1.0.0",
   "artifacts": {
     "RELEASE.md": "f4df5e3977e089ca58dd551378c7608848ef6c7eaf2868fc5ea97ca4054ca4ef",
