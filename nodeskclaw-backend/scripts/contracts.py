@@ -941,25 +941,29 @@ def _validate_skill_run_release(manifest: dict[str, Any], *, version: str) -> No
 
     peeled_commit = peeled_tag.stdout.strip()
     if version == "1.2.1":
-        release_commit = str(manifest.get("releaseCommit") or peeled_commit)
-        if peeled_commit != release_commit:
-            raise SystemExit(
-                f"skill-run contract tag '{tag_name}' must point at releaseCommit {release_commit}"
-            )
         contract_prefix = "nodeskclaw-backend/contracts/skill-run/v1.2.1/"
+        release_diff_base = implementation_commit
     else:
         if peeled_commit != _git_head():
             raise SystemExit(f"skill-run contract tag '{tag_name}' must point at the release commit")
         contract_prefix = "nodeskclaw-backend/contracts/skill-run/v1.0.0/"
+        release_diff_base = implementation_commit
 
     release_diff = subprocess.run(
-        ["git", "diff", "--name-only", f"{implementation_commit}..{peeled_commit}"],
+        ["git", "diff", "--name-only", f"{release_diff_base}..{peeled_commit}"],
         cwd=repository,
         capture_output=True,
         text=True,
         check=True,
     )
     changed_paths = [path for path in release_diff.stdout.splitlines() if path]
+    if version == "1.2.1":
+        if not changed_paths:
+            raise SystemExit("skill-run v1.2.1 release tag must point at a commit that publishes the bundle")
+        if any(not path.startswith(contract_prefix) for path in changed_paths):
+            raise SystemExit(f"skill-run release commit may only contain immutable {version} contract artifacts")
+        return
+
     if not changed_paths or any(not path.startswith(contract_prefix) for path in changed_paths):
         raise SystemExit(f"skill-run release commit may only contain immutable {version} contract artifacts")
 
