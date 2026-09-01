@@ -270,3 +270,84 @@ async def test_public_connector_tool_starts_agent_run():
     request = run_svc_cls.return_value.start.await_args.args[0]
     assert request.catalog_kind == "connector"
     assert request.extra_route_snapshot["connector_kind"] == "rest"
+
+
+@pytest.mark.asyncio
+async def test_public_edge_connector_mapper_only_creates_agent_run():
+    db = AsyncMock()
+    db.add = MagicMock()
+    mapper = McpToolMapper(db)
+    run_task = MagicMock(id="run-1")
+    bundle = {
+        "tool": MagicMock(id="tool-1", tool_name="crm_lookup", title="CRM Lookup", description="lookup crm"),
+        "instance": MagicMock(
+            id="inst-1",
+            placement="edge",
+            edge_node_id="edge-1",
+            config={"url": "https://example.com", "network_policy": {"allowlist": ["example.com:443"]}},
+            secret_ref_id=None,
+        ),
+        "definition": MagicMock(id="def-1", kind="rest"),
+        "secret_ref_name": None,
+    }
+    online_node = MagicMock()
+
+    with (
+        patch.object(PermissionChecker, "require_permission", AsyncMock()),
+        patch.object(SkillRoutingService, "get_exposed_skill", AsyncMock(return_value=None)),
+        patch("app.services.hermes_skill.mcp_tool_mapper.ConnectorService") as connector_cls,
+        patch("app.services.hermes_skill.mcp_tool_mapper.RuntimeSkillRunService") as run_svc_cls,
+        patch("app.services.hermes_skill.mcp_tool_mapper.is_edge_node_online", return_value=True),
+    ):
+        connector_cls.return_value.get_public_tool_bundle = AsyncMock(return_value=bundle)
+        db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=online_node)))
+        run_svc_cls.return_value.start = AsyncMock(
+            return_value=RuntimeSkillRunResult(
+                task=run_task,
+                sse_token="tok",
+                structured_content={"run_id": "run-1"},
+            )
+        )
+
+        await mapper.call_tool("crm_lookup", {"customer_id": "c-1"}, "org-1", "user-1")
+
+    db.add.assert_not_called()
+    request = run_svc_cls.return_value.start.await_args.args[0]
+    assert request.extra_route_snapshot["network_policy"] == {"allowlist": ["example.com:443"]}
+
+
+@pytest.mark.asyncio
+async def test_public_connector_server_approval_cannot_be_lowered_by_client():
+    db = AsyncMock()
+    mapper = McpToolMapper(db)
+    run_task = MagicMock(id="run-1")
+    tool = MagicMock(id="tool-1", tool_name="crm_lookup", title="CRM Lookup", description="lookup crm")
+    tool.extra_metadata = {"requires_approval": True}
+    bundle = {
+        "tool": tool,
+        "instance": MagicMock(id="inst-1", placement="central", config={"url": "https://example.com"}, secret_ref_id=None),
+        "definition": MagicMock(id="def-1", kind="rest"),
+        "secret_ref_name": None,
+    }
+
+    with (
+        patch.object(PermissionChecker, "require_permission", AsyncMock()),
+        patch.object(SkillRoutingService, "get_exposed_skill", AsyncMock(return_value=None)),
+        patch("app.services.hermes_skill.mcp_tool_mapper.ConnectorService") as connector_cls,
+        patch("app.services.hermes_skill.mcp_tool_mapper.RuntimeSkillRunService") as run_svc_cls,
+    ):
+        connector_cls.return_value.get_public_tool_bundle = AsyncMock(return_value=bundle)
+        run_svc_cls.return_value.start = AsyncMock(
+            return_value=RuntimeSkillRunResult(task=run_task, sse_token="tok", structured_content={"run_id": "run-1"})
+        )
+
+        await mapper.call_tool(
+            "crm_lookup",
+            {"customer_id": "c-1"},
+            "org-1",
+            "user-1",
+            client_context={"requires_approval": False},
+        )
+
+    request = run_svc_cls.return_value.start.await_args.args[0]
+    assert request.client_context["requires_approval"] is True

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -16,12 +17,13 @@ from app.core.config import settings
 from app.core.deps import get_db, require_org_member
 from app.core.exceptions import AppException, ForbiddenError, NotFoundError
 from app.models.base import not_deleted
+from app.models.connector.edge_job import EdgeJob, EdgeJobStatus
 from app.models.hermes_skill.hermes_task import HermesTask
 from app.models.hermes_skill.run_dispatch_outbox import RunDispatchOutbox, RunDispatchStatus
 from app.services.hermes_skill.permission_checker import PermissionChecker
 from app.services.hermes_skill.task_service import TaskService
 from app.services.runtime.pg_notify import pg_notify_service
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 logger = logging.getLogger(__name__)
 
@@ -382,6 +384,23 @@ async def cancel_run(
     data = await _agent_post(f"/internal/v1/runs/{run_id}/cancel", org_id=org.id, user_id=user.id)
     if str(data.get("org_id") or "") != org.id or str(data.get("run_id") or "") != run_id:
         raise ForbiddenError("无权访问该 Run", "errors.run.forbidden")
+    await db.execute(
+        update(EdgeJob)
+        .where(
+            not_deleted(EdgeJob),
+            EdgeJob.org_id == org.id,
+            EdgeJob.run_id == run_id,
+            EdgeJob.status.in_(
+                [
+                    EdgeJobStatus.QUEUED.value,
+                    EdgeJobStatus.CLAIMED.value,
+                    EdgeJobStatus.RUNNING.value,
+                ]
+            ),
+        )
+        .values(cancel_requested_at=datetime.now(timezone.utc))
+    )
+    await db.commit()
     return {"code": 0, "data": _public_run_view(data)}
 
 

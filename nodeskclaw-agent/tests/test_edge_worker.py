@@ -7,6 +7,26 @@ import pytest
 from app.services.edge_worker import EdgeWorker
 
 
+def test_edge_worker_prepared_snapshot_keeps_connector_secret_reference_opaque(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_SECRET_STORE", str(tmp_path))
+    (tmp_path / "tok-1").write_text("super-token", encoding="utf-8")
+    worker = EdgeWorker()
+
+    prepared = worker._prepare_snapshot(
+        {
+            "runtime_policy": {
+                "connector_secret_ref_id": "tok-1",
+                "connector_config": {"headers": {"X-Static": "safe"}, "db_url": "postgresql://app:{secret}@db"},
+            }
+        }
+    )
+
+    policy = prepared["runtime_policy"]
+    assert policy["connector_secret_ref_id"] == "tok-1"
+    assert policy["connector_config"]["headers"] == {"X-Static": "safe"}
+    assert policy["connector_config"]["db_url"] == "postgresql://app:{secret}@db"
+
+
 @pytest.mark.asyncio
 async def test_edge_worker_heartbeat_then_jobs_poll(monkeypatch):
     monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_CENTRAL_BASE_URL", "http://central.test")
@@ -105,6 +125,47 @@ async def test_edge_worker_incremental_events_and_spool(tmp_path, monkeypatch):
     client_recover.post = AsyncMock(return_value=mock_resp)
     await worker._flush_spool(client_recover)
     assert len(list(tmp_path.glob("*.json"))) == 0
+
+
+@pytest.mark.asyncio
+async def test_edge_worker_executes_frozen_connector_binding_snapshot(monkeypatch):
+    worker = EdgeWorker()
+    seen: dict[str, object] = {}
+
+    async def mock_execute(*, engine, route_snapshot, **_kwargs):
+        seen["engine"] = engine
+        seen["route_snapshot"] = route_snapshot
+        yield {"event_type": "run.completed", "payload": {"summary": "ok"}}
+
+    client = AsyncMock()
+    response = MagicMock()
+    response.raise_for_status = MagicMock()
+    client.post = AsyncMock(return_value=response)
+    client.get = AsyncMock(return_value=MagicMock(status_code=204))
+    monkeypatch.setattr("app.services.edge_worker.execute_engine", mock_execute)
+
+    await worker._execute_job(
+        client,
+        {
+            "id": "job-edge-1",
+            "tool_name": "edge_lookup",
+            "snapshot": {
+                "placement": {"role": "edge", "engine": "connector", "edge_node_id": "node-1"},
+                "runtime_policy": {
+                    "connector_kind": "rest",
+                    "connector_config": {"url": "https://edge.example.com"},
+                    "connector_secret_ref_id": "secret-1",
+                },
+            },
+        },
+    )
+
+    assert seen["engine"] == "connector"
+    assert seen["route_snapshot"] == {
+        "connector_kind": "rest",
+        "connector_config": {"url": "https://edge.example.com"},
+        "connector_secret_ref_id": "secret-1",
+    }
 
 
 @pytest.mark.asyncio

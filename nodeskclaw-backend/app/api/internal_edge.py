@@ -338,6 +338,50 @@ async def request_edge_job_cancel(
     return {"code": 0, "data": {"job_id": job.id, "status": job.status, "cancel_requested": True}}
 
 
+def _authenticate_internal_skill_agent(token: str | None) -> None:
+    expected_curr = settings.SKILL_AGENT_INTERNAL_TOKEN
+    expected_prev = settings.SKILL_AGENT_INTERNAL_TOKEN_PREVIOUS
+    if not token:
+        raise ForbiddenError("Internal skill agent token 无效", "errors.auth.invalid_token")
+    curr_match = expected_curr and hmac.compare_digest(token, expected_curr)
+    prev_match = expected_prev and hmac.compare_digest(token, expected_prev)
+    if not curr_match and not prev_match:
+        raise ForbiddenError("Internal skill agent token 无效", "errors.auth.invalid_token")
+
+
+@router.post("/jobs/{job_id}/cancel/agent")
+async def request_agent_edge_job_cancel(
+    job_id: str,
+    db: AsyncSession = Depends(get_db),
+    x_skill_agent_token: str | None = Header(default=None, alias="X-Skill-Agent-Token"),
+    x_exec_org_id: str | None = Header(default=None, alias="X-Exec-Org-Id"),
+):
+    _authenticate_internal_skill_agent(x_skill_agent_token)
+    if not x_exec_org_id:
+        raise ForbiddenError("缺少 X-Exec-Org-Id header", "errors.auth.missing_org_header")
+    result = await db.execute(
+        select(EdgeJob).where(
+            not_deleted(EdgeJob),
+            EdgeJob.id == job_id,
+            EdgeJob.org_id == x_exec_org_id,
+        )
+    )
+    job = result.scalar_one_or_none()
+    if not job:
+        raise NotFoundError("Edge job 不存在", "errors.connector.edge_job_not_found")
+    if job.status in (EdgeJobStatus.QUEUED.value, EdgeJobStatus.CLAIMED.value, EdgeJobStatus.RUNNING.value):
+        job.cancel_requested_at = datetime.now(timezone.utc)
+        await db.commit()
+    return {
+        "code": 0,
+        "data": {
+            "job_id": job.id,
+            "status": job.status,
+            "cancel_requested": bool(job.cancel_requested_at),
+        },
+    }
+
+
 @router.post("/jobs/{job_id}/events")
 async def post_edge_job_events(
     job_id: str,
@@ -884,14 +928,7 @@ async def enqueue_edge_job_endpoint(
     x_skill_agent_token: str | None = Header(default=None, alias="X-Skill-Agent-Token"),
     x_exec_org_id: str | None = Header(default=None, alias="X-Exec-Org-Id"),
 ):
-    expected_curr = settings.SKILL_AGENT_INTERNAL_TOKEN
-    expected_prev = settings.SKILL_AGENT_INTERNAL_TOKEN_PREVIOUS
-    if not x_skill_agent_token:
-        raise ForbiddenError("Internal skill agent token 无效", "errors.auth.invalid_token")
-    curr_match = expected_curr and hmac.compare_digest(x_skill_agent_token, expected_curr)
-    prev_match = expected_prev and hmac.compare_digest(x_skill_agent_token, expected_prev)
-    if not curr_match and not prev_match:
-        raise ForbiddenError("Internal skill agent token 无效", "errors.auth.invalid_token")
+    _authenticate_internal_skill_agent(x_skill_agent_token)
 
     if not x_exec_org_id:
         raise ForbiddenError("缺少 X-Exec-Org-Id header", "errors.auth.missing_org_header")

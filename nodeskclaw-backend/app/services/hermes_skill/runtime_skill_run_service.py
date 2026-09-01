@@ -16,6 +16,7 @@ from app.core.config import settings
 from app.core.exceptions import BadRequestError
 from app.models.base import not_deleted
 from app.models.connector.binding import SkillConnectorBinding
+from app.models.connector.definition import ConnectorDefinition
 from app.models.connector.instance import ConnectorInstance, ConnectorPlacement
 from app.models.hermes_skill.hermes_agent_instance import HermesAgentInstance
 from app.models.hermes_skill.hermes_task import TaskStatus
@@ -173,6 +174,9 @@ class RuntimeSkillRunService:
     ) -> RunDispatchOutbox:
         release_meta = await self._resolve_release_meta(request)
         enriched_route = await self._enrich_route_snapshot(request, route_snapshot)
+        connector_bindings = list((release_meta.get("placement") or {}).get("connector_bindings") or [])
+        if connector_bindings:
+            enriched_route["connector_bindings"] = connector_bindings
         requires_approval = bool((request.client_context or {}).get("requires_approval"))
         body = {
             "run_id": run_id,
@@ -250,6 +254,7 @@ class RuntimeSkillRunService:
                 "placement": {
                     "role": connector_snapshot.get("placement", "central"),
                     "engine": "connector",
+                    "edge_node_id": connector_snapshot.get("edge_node_id"),
                 },
                 "snapshot_hash": snapshot_hash(
                     skill_release_id=request.tool_name,
@@ -312,23 +317,45 @@ class RuntimeSkillRunService:
             return {"role": "central", "engine": "hermes"}
 
         result = await self.db.execute(
-            select(ConnectorInstance.placement)
+            select(
+                SkillConnectorBinding.id.label("binding_id"),
+                ConnectorInstance.id.label("connector_instance_id"),
+                ConnectorDefinition.kind.label("connector_kind"),
+                ConnectorInstance.config.label("connector_config"),
+                ConnectorInstance.secret_ref_id.label("connector_secret_ref_id"),
+                ConnectorInstance.placement.label("placement"),
+                ConnectorInstance.edge_node_id.label("edge_node_id"),
+            )
             .join(SkillConnectorBinding, SkillConnectorBinding.connector_instance_id == ConnectorInstance.id)
+            .join(ConnectorDefinition, ConnectorDefinition.id == ConnectorInstance.definition_id)
             .where(
                 not_deleted(SkillConnectorBinding),
                 not_deleted(ConnectorInstance),
+                not_deleted(ConnectorDefinition),
                 SkillConnectorBinding.org_id == org_id,
                 SkillConnectorBinding.id.in_(binding_ids),
+                ConnectorInstance.org_id == org_id,
+                ConnectorInstance.is_active.is_(True),
             )
         )
-        placements = {row[0] for row in result.all()}
+        bindings = [dict(row) for row in result.mappings().all()]
+        for binding in bindings:
+            binding["network_policy"] = dict((binding.get("connector_config") or {}).get("network_policy") or {})
+        found_binding_ids = {str(binding["binding_id"]) for binding in bindings}
+        missing_binding_ids = {str(binding_id) for binding_id in binding_ids} - found_binding_ids
+        if missing_binding_ids:
+            raise BadRequestError(
+                "Connector 绑定不存在、不可用或不属于当前组织",
+                "errors.connector.binding_unavailable",
+            )
+        placements = {binding["placement"] for binding in bindings}
         has_edge = ConnectorPlacement.EDGE.value in placements
         has_central = ConnectorPlacement.CENTRAL.value in placements or not placements
         if has_edge and has_central:
-            return {"role": "hybrid", "engine": "hybrid"}
+            return {"role": "hybrid", "engine": "hybrid", "connector_bindings": bindings}
         if has_edge:
-            return {"role": "edge", "engine": "connector"}
-        return {"role": "central", "engine": "hermes"}
+            return {"role": "edge", "engine": "connector", "connector_bindings": bindings}
+        return {"role": "central", "engine": "hermes", "connector_bindings": bindings}
 
     async def _enrich_route_snapshot(
         self,
@@ -336,6 +363,8 @@ class RuntimeSkillRunService:
         route_snapshot: dict[str, Any],
     ) -> dict[str, Any]:
         enriched = dict(route_snapshot)
+        if request.catalog_kind == "connector":
+            return enriched
         instance_id = request.hermes_agent_instance_id or enriched.get("hermes_agent_instance_id")
         record: HermesAgentInstance | None = None
         if instance_id:

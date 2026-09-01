@@ -15,7 +15,6 @@ import httpx
 from app.config import settings
 from app.services.edge_skill_installer import EdgeSkillInstaller
 from app.services.engine_port import execute_engine
-from app.services.secret_store import SecretStore
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +27,6 @@ class EdgeWorker:
         self._base_url = settings.SKILL_AGENT_CENTRAL_BASE_URL.rstrip("/")
         self._token = settings.SKILL_AGENT_EDGE_TOKEN
         self._node_id = settings.SKILL_AGENT_EDGE_NODE_ID
-        self._secrets = SecretStore()
         self._spool_dir = Path("./data/edge_spool")
         self._spool_dir.mkdir(parents=True, exist_ok=True)
         self._installer = EdgeSkillInstaller()
@@ -385,27 +383,11 @@ class EdgeWorker:
             )
 
     def _prepare_snapshot(self, snapshot: dict[str, Any]) -> dict[str, Any]:
-        """Ensure connector config can use SecretStore; fail-closed and never put plaintext into returned events."""
+        """Copy the route snapshot without resolving secret material into the job payload."""
         prepared = dict(snapshot)
         policy = dict(prepared.get("runtime_policy") or {})
-        config = dict(policy.get("connector_config") or {})
-        secret_ref_id = policy.get("connector_secret_ref_id") or config.get("secret_ref_id")
-        if secret_ref_id:
-            secret = self._secrets.resolve(str(secret_ref_id), fail_closed=True)
-            if not secret:
-                raise RuntimeError(f"secret ref unresolved: {secret_ref_id} (fail-closed)")
-            secret_header = str(config.get("secret_header") or "").strip()
-            headers = dict(config.get("headers") or {})
-            if secret_header:
-                headers[secret_header] = secret
-            elif _looks_like_token(secret):
-                headers["Authorization"] = f"Bearer {secret}"
-            config["headers"] = headers
-            db_url = str(config.get("db_url") or "")
-            if "{secret}" in db_url:
-                config["db_url"] = db_url.replace("{secret}", secret)
-            policy["connector_config"] = config
-            prepared["runtime_policy"] = policy
+        policy["connector_config"] = dict(policy.get("connector_config") or {})
+        prepared["runtime_policy"] = policy
         return prepared
 
     async def _upload_artifact(
@@ -556,11 +538,11 @@ class EdgeWorker:
                 engine=engine_name,
                 tool_name=tool_name,
                 arguments=arguments,
-                route_snapshot=prepared,
+                route_snapshot=runtime_policy,
                 cancel_event=cancel_event,
             ):
                 if cancel_event.is_set():
-                    break
+                    raise asyncio.CancelledError
                 event_type = event.get("event_type")
                 payload = dict(event.get("payload") or {})
                 safe_event = {
@@ -597,6 +579,24 @@ class EdgeWorker:
                         )
                     except Exception:
                         logger.debug("edge artifact upload failed", exc_info=True)
+        except asyncio.CancelledError:
+            cancelled_event = {
+                "event_type": "run.cancelled",
+                "payload": {"reason": "cancel_requested"},
+                "source": "edge",
+                "source_event_id": f"{job_id}:run.cancelled:{int(asyncio.get_event_loop().time() * 1000)}",
+                "delivery_generation": delivery_generation,
+                "attempt_id": attempt_id,
+                "step_id": step_id,
+            }
+            await self._send_or_spool_event(
+                client,
+                job_id,
+                cancelled_event,
+                delivery_generation=delivery_generation,
+                attempt_id=attempt_id,
+                step_id=step_id,
+            )
         except Exception as exc:
             logger.exception("edge job failed job_id=%s", job_id)
             err_event = {
@@ -628,8 +628,3 @@ class EdgeWorker:
                 await cancel_task
             except asyncio.CancelledError:
                 pass
-
-
-def _looks_like_token(value: str) -> bool:
-    stripped = value.strip()
-    return bool(stripped) and " " not in stripped and "\n" not in stripped

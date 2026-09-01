@@ -1,5 +1,5 @@
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -17,6 +17,58 @@ def _task():
         status=TaskStatus.QUEUED,
         server_artifacts=[],
     )
+
+
+@pytest.mark.asyncio
+async def test_resolve_placement_freezes_executable_connector_bindings():
+    db = AsyncMock()
+    rows = [
+        {
+            "binding_id": "binding-edge",
+            "connector_instance_id": "instance-edge",
+            "connector_kind": "rest",
+            "connector_config": {"url": "https://edge.example.com", "network_policy": {"allowlist": ["edge.example.com:443"]}},
+            "connector_secret_ref_id": "secret-edge",
+            "placement": "edge",
+            "edge_node_id": "node-1",
+        },
+        {
+            "binding_id": "binding-central",
+            "connector_instance_id": "instance-central",
+            "connector_kind": "db",
+            "connector_config": {"db_url": "postgresql://analytics"},
+            "connector_secret_ref_id": None,
+            "placement": "central",
+            "edge_node_id": None,
+        },
+    ]
+    result = MagicMock()
+    result.mappings.return_value.all.return_value = rows
+    db.execute = AsyncMock(return_value=result)
+
+    placement = await RuntimeSkillRunService(db)._resolve_placement(
+        org_id="org-1",
+        requirements={"connector_binding_ids": ["binding-edge", "binding-central"]},
+    )
+
+    assert placement["role"] == "hybrid"
+    assert placement["engine"] == "hybrid"
+    assert placement["connector_bindings"][0]["network_policy"] == {"allowlist": ["edge.example.com:443"]}
+    assert placement["connector_bindings"][1]["network_policy"] == {}
+
+
+@pytest.mark.asyncio
+async def test_connector_route_skips_hermes_gateway_enrichment():
+    db = AsyncMock()
+    service = RuntimeSkillRunService(db)
+
+    route = await service._enrich_route_snapshot(
+        SimpleNamespace(catalog_kind="connector", hermes_agent_instance_id="connector-central", agent_profile="connector", org_id="org-1", runtime_skill_id="tool-1"),
+        {"route_type": "connector", "connector_kind": "rest"},
+    )
+
+    assert route == {"route_type": "connector", "connector_kind": "rest"}
+    db.execute.assert_not_awaited()
 
 
 @pytest.mark.asyncio

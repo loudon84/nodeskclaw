@@ -35,10 +35,10 @@ async def test_get_run_projection_missing_fails_closed():
     with patch("app.api.runs.PermissionChecker.require_permission", new=AsyncMock()), \
          patch("app.api.runs.TaskService.get_task", side_effect=NotFoundError("Task 不存在", "errors.task.not_found")), \
          patch("app.api.runs._agent_get", new=AsyncMock()) as mock_agent_get:
-        
+
         with pytest.raises(NotFoundError):
             await get_run(run_id="run-nonexistent", user_org=user_org, db=db)
-        
+
         mock_agent_get.assert_not_called()
 
 
@@ -241,6 +241,26 @@ async def test_cancel_undelivered_outbox_cancels_projection():
         assert outbox.status == RunDispatchStatus.CANCELLED.value
         assert task.status == "cancelled"
         mock_agent_post.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_cancel_delivered_run_requests_cancellation_for_active_edge_jobs():
+    db = AsyncMock()
+    user_org = _mock_user_org()
+    task = HermesTask(id="run-1", org_id="org-1", user_id="user-1", tool_name="test_tool", status=TaskStatus.RUNNING)
+
+    with patch("app.api.runs.PermissionChecker.require_permission", new=AsyncMock()), \
+         patch("app.api.runs.TaskService.get_task", new=AsyncMock(return_value=task)), \
+         patch("app.api.runs.TaskService.assert_task_access", new=AsyncMock()), \
+         patch("app.api.runs._get_outbox_entry", new=AsyncMock(return_value=None)), \
+         patch("app.api.runs._agent_post", new=AsyncMock(return_value={"org_id": "org-1", "run_id": "run-1", "tool_name": "test_tool", "status": "CANCELLING"})):
+        result = await cancel_run(run_id="run-1", user_org=user_org, db=db)
+
+    assert result["data"]["status"] == "CANCELLING"
+    statement = str(db.execute.await_args.args[0])
+    assert "edge_jobs" in statement
+    assert "cancel_requested_at" in statement
+    db.commit.assert_awaited_once()
 
 
 @pytest.mark.asyncio
