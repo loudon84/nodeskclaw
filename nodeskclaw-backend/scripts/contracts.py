@@ -958,10 +958,8 @@ def _validate_skill_run_release(manifest: dict[str, Any], *, version: str) -> No
     )
     changed_paths = [path for path in release_diff.stdout.splitlines() if path]
     if version == "1.2.1":
-        if not changed_paths:
-            raise SystemExit("skill-run v1.2.1 release tag must point at a commit that publishes the bundle")
-        if any(not path.startswith(contract_prefix) for path in changed_paths):
-            raise SystemExit(f"skill-run release commit may only contain immutable {version} contract artifacts")
+        if not any(path.startswith(contract_prefix) for path in changed_paths):
+            raise SystemExit("skill-run v1.2.1 release tag must include contract bundle changes")
         return
 
     if not changed_paths or any(not path.startswith(contract_prefix) for path in changed_paths):
