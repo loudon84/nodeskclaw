@@ -6,3 +6,6 @@ __pycache__/
 .ruff_cache/
 storage/
 *.egg-info/
+contracts/skill-run/**/*.json text eol=lf
+contracts/skill-run/**/*.md text eol=lf
+contracts/skill-run/**/SHA256SUMS text eol=lf
