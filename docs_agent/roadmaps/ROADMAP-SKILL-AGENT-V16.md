@@ -1,10 +1,10 @@
 ---
 roadmap_id: ROADMAP-SKILL-AGENT-V16
-version: 1.1.0
+version: 1.2.0
 status: ACTIVE
 architecture_decision: docs_agent/architecture/AD-SKILL-AGENT-V16.md
-source_revision: AD-SKILL-AGENT-V16@1.1.0
-updated_at: 2026-09-01T09:26:59+08:00
+source_revision: AD-SKILL-AGENT-V16@1.2.0
+updated_at: 2026-09-01T11:15:00+08:00
 ---
 
 # Roadmap: Skill Agent v1.6 客户端合同与生产闭环
@@ -37,3 +37,4 @@ updated_at: 2026-09-01T09:26:59+08:00
 | RM-08 | 中立 Shared Agent Contract（共享执行合同）可由 Backend 单一生成链发布 | RM-06, RM-07 | BACKLOG | Schema、OpenAPI、TypeScript 类型、Fixture（固定样例）与兼容测试同源；旧合同不可改写，不形成第二手写 Schema 事实源 | - | - | - | - |
 | RM-09 | Backend 发布外部 Work Skill-first Consumer Contract（技能优先消费合同）并实现合同符合性；外部前端只作为仓外 Consumer（消费者） | RM-08 | BACKLOG | 本仓只交付版本化合同、Backend 公共行为和 Conformance（符合性）证据；外部前端源码、构建和发布不在范围内；任何新前端需求先修订合同，再由本项目按批准合同反推 Backend 实现 | - | - | - | - |
 | RM-10 | Agent 执行面具备统一 Trace（链路追踪）与运行指标 | RM-05 | BACKLOG | Run/Attempt/Session/Edge/Connector/Artifact 可关联；队列、时延、失败、租约和重放指标可观测，且不形成第二事件事实源 | - | - | - | - |
+| RM-11 | 已发布 P0 Skill Run Consumer Contract Bundle（消费合同包）成为外部 Work 可离线导入的合同导出项 | RM-01 | READY | Provider 侧证明 tag `skill-run-contract-v1.0.0` 身份、LF checksum 与 P0 产物集完整；不改写 v1.0.0 字节；不含 Work 前端；矩阵增量留给 RM-09 | - | - | - | - |
