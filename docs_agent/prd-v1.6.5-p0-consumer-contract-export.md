@@ -1,17 +1,21 @@
 ---
 work_item_id: RM-11
 version: 1.6.5
-status: APPROVED
+status: SUPERSEDED
 target_branch: main
 review_verdict: PASS
 approved_at: 2026-09-01T11:33:35+08:00
 source_revision: AD-SKILL-AGENT-V16@1.2.0/RM-11
 grounded_commit: 21bdc38afc44a780659f3d589daf37bdf6c47328
+superseded_by: docs_agent/prd-v1.6.6-cumulative-public-consumer-contract.md
+superseded_at: 2026-09-01T13:18:01+08:00
 ---
 
 # DeskClaw 团队版 P0 Skill Run Consumer Contract 导出 PRD v1.6.5
 
-本文定义 v1.6 系列的 RM-11：把已发布的 P0（当前阶段）Skill Run Consumer Contract Bundle（消费合同包）冻结为外部 Work（工作端）可离线导入的合同导出项。本阶段复用现有 Backend Contract Package（合同包）与 tag `skill-run-contract-v1.0.0`，不新建合同 Owner（生产归属），不改写已发布 v1.0.0 字节，不把 Work 前端纳入本仓完成条件。
+**SUPERSEDED.** Architecture v1.3.0 将 RM-11 Work canonical 改为累积 Public `v1.2.1`。本文的 KEEP-only v1.0.0 导出定义不再实施。后继 Stage PRD：`docs_agent/prd-v1.6.6-cumulative-public-consumer-contract.md`。历史 `v1.0.0` 目录与 tag `skill-run-contract-v1.0.0` 仍冻结只读。
+
+本文曾定义 v1.6 系列的 RM-11：把已发布的 P0（当前阶段）Skill Run Consumer Contract Bundle（消费合同包）冻结为外部 Work（工作端）可离线导入的合同导出项。本阶段复用现有 Backend Contract Package（合同包）与 tag `skill-run-contract-v1.0.0`，不新建合同 Owner（生产归属），不改写已发布 v1.0.0 字节，不把 Work 前端纳入本仓完成条件。
 
 ## Scope
 
