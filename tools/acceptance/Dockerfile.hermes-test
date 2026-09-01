@@ -1,0 +1,5 @@
+FROM python:3.12-alpine
+WORKDIR /app
+COPY tools/acceptance/hermes_test_server.py /app/hermes_test_server.py
+EXPOSE 8088
+CMD ["python", "/app/hermes_test_server.py", "--host", "0.0.0.0", "--port", "8088"]
