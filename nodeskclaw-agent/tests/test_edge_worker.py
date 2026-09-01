@@ -65,6 +65,7 @@ async def test_edge_worker_incremental_events_and_spool(tmp_path, monkeypatch):
         yield {"event_type": "run.completed", "payload": {"result": "ok"}}
 
     monkeypatch.setattr("app.services.edge_worker.execute_engine", mock_execute)
+    monkeypatch.setattr("app.services.edge_worker.revalidate_execution_context", AsyncMock())
 
     # 1. Post succeeds
     client = AsyncMock()
@@ -288,6 +289,7 @@ async def test_edge_lease_preempted_stops_job(monkeypatch):
         yield {"event_type": "run.progress", "payload": {}}
 
     monkeypatch.setattr("app.services.edge_worker.execute_engine", mock_execute)
+    monkeypatch.setattr("app.services.edge_worker.revalidate_execution_context", AsyncMock())
 
     client = AsyncMock()
     mock_resp = MagicMock(status_code=200, raise_for_status=MagicMock())
@@ -446,3 +448,52 @@ async def test_edge_worker_pull_and_fulfill_on_demand_requests(tmp_path, monkeyp
     assert post_args["json"]["name"] == "agent_log.txt"
     assert post_args["json"]["attempt_id"] == "att-1"
     assert post_args["json"]["step_id"] == "step-1"
+
+
+@pytest.mark.asyncio
+async def test_edge_worker_skips_execute_engine_when_context_revalidate_denied(monkeypatch):
+    monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_CENTRAL_BASE_URL", "http://central.test")
+    monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_EDGE_TOKEN", "edge-token")
+    monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_EDGE_NODE_ID", "node-1")
+
+    worker = EdgeWorker()
+    engine_called = {"value": False}
+
+    async def mock_execute(*args, **kwargs):
+        engine_called["value"] = True
+        yield {"event_type": "run.completed", "payload": {}}
+
+    async def deny_revalidate(**kwargs):
+        from app.services.context_revalidate import ContextRevalidationError
+        raise ContextRevalidationError("context revalidation denied")
+
+    monkeypatch.setattr("app.services.edge_worker.execute_engine", mock_execute)
+    monkeypatch.setattr("app.services.edge_worker.revalidate_execution_context", deny_revalidate)
+
+    client = AsyncMock()
+    mock_resp = MagicMock(status_code=200, raise_for_status=MagicMock())
+    client.post = AsyncMock(return_value=mock_resp)
+    client.get = AsyncMock(return_value=mock_resp)
+
+    job = {
+        "id": "job-deny",
+        "run_id": "run-deny",
+        "tool_name": "test",
+        "arguments": {},
+        "snapshot": {
+            "org_id": "org-1",
+            "user_id": "user-1",
+            "context_version": 3,
+            "execution_context": {"context_version": 3, "descriptors": []},
+        },
+        "delivery_generation": 1,
+    }
+    await worker._execute_job(client, job)
+
+    assert engine_called["value"] is False
+    failed_calls = [
+        call
+        for call in client.post.call_args_list
+        if call.kwargs.get("json", {}).get("events", [{}])[0].get("event_type") == "run.failed"
+    ]
+    assert failed_calls

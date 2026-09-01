@@ -6,7 +6,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.exceptions import BadRequestError, ForbiddenError, NotFoundError
+from app.core.exceptions import BadRequestError, ConflictError, ForbiddenError, NotFoundError
 from app.services.hermes_skill.mcp_tool_mapper import McpToolMapper
 from app.services.mcp_skill_gateway.builtin_task_tools import is_builtin_task_tool
 from app.services.mcp_skill_gateway.mcp_task_dedup_service import build_mcp_task_dedup_key
@@ -816,6 +816,7 @@ async def _handle_tools_call(
             auth_ctx=auth_ctx,
             request_trace_id=request_trace_id,
             request_snapshot=request_snapshot,
+            request_headers=request_headers,
         )
         duration_ms = int((time.perf_counter() - started) * 1000)
         await log_mcp_call(
@@ -838,7 +839,7 @@ async def _handle_tools_call(
             client_name=client_name,
         )
         await db.commit()
-    except (NotFoundError, BadRequestError, ForbiddenError) as exc:
+    except (NotFoundError, BadRequestError, ForbiddenError, ConflictError) as exc:
         error_response = map_app_error(
             jsonrpc_id,
             exc.message_key,

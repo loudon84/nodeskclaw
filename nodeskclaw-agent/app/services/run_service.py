@@ -64,11 +64,97 @@ def build_snapshot(request: CreateRunRequest, *, org_id: str, user_id: str) -> d
         "request_trace_id": request.request_trace_id,
         "run_session_id": request.run_session_id,
     }
+    if request.execution_context is not None:
+        body["execution_context"] = _sanitize_sensitive_keys(dict(request.execution_context))
+    if request.context_version is not None:
+        body["context_version"] = int(request.context_version)
     snapshot_hash = request.snapshot_hash or hashlib.sha256(
         json.dumps(body, sort_keys=True, default=str).encode()
     ).hexdigest()
     body["snapshot_hash"] = snapshot_hash
     return body
+
+
+async def _ensure_run_session(
+    db: AsyncSession,
+    *,
+    run_session_id: str,
+    org_id: str,
+    user_id: str,
+    context_version: int | None = None,
+) -> int:
+    if not run_session_id or len(run_session_id) > 36:
+        raise ValueError("run session id invalid")
+
+    sess_row = (
+        await db.execute(
+            text(
+                f"""
+                SELECT id, org_id, user_id, context_version, deleted_at, expires_at
+                FROM "{SCHEMA}".run_sessions
+                WHERE id = :id
+                LIMIT 1
+                """
+            ),
+            {"id": run_session_id},
+        )
+    ).mappings().first()
+
+    now = _utcnow()
+    if sess_row:
+        if sess_row["org_id"] != org_id:
+            raise ValueError("cross-org run session access rejected")
+        if sess_row["user_id"] != user_id:
+            raise ValueError("run session subject mismatch rejected")
+        if sess_row.get("deleted_at") is not None:
+            raise ValueError("run session unrecoverable: soft deleted")
+        expires_at = sess_row.get("expires_at")
+        if expires_at is not None:
+            exp = expires_at
+            if exp.tzinfo is None:
+                exp = exp.replace(tzinfo=timezone.utc)
+            if exp <= now:
+                raise ValueError("run session unrecoverable: expired")
+        current_version = int(sess_row.get("context_version") or 0)
+        if context_version is not None and context_version > current_version:
+            await db.execute(
+                text(
+                    f"""
+                    UPDATE "{SCHEMA}".run_sessions
+                    SET context_version = :context_version, updated_at = :now
+                    WHERE id = :id AND org_id = :org_id AND user_id = :user_id AND deleted_at IS NULL
+                    """
+                ),
+                {
+                    "id": run_session_id,
+                    "org_id": org_id,
+                    "user_id": user_id,
+                    "context_version": int(context_version),
+                    "now": now,
+                },
+            )
+            return int(context_version)
+        return current_version
+
+    await db.execute(
+        text(
+            f"""
+            INSERT INTO "{SCHEMA}".run_sessions (
+                id, org_id, user_id, metadata, context_version, created_at, updated_at
+            ) VALUES (
+                :id, :org_id, :user_id, '{{}}'::jsonb, :context_version, :now, :now
+            )
+            """
+        ),
+        {
+            "id": run_session_id,
+            "org_id": org_id,
+            "user_id": user_id,
+            "context_version": int(context_version or 0),
+            "now": now,
+        },
+    )
+    return int(context_version or 0)
 
 
 async def create_run(
@@ -81,31 +167,14 @@ async def create_run(
     if not request.run_id:
         raise ValueError("run_id is required")
 
-    # Session cross-org validation and creation
     if request.run_session_id:
-        try:
-            sess_row = (
-                await db.execute(
-                    text(f'SELECT id, org_id FROM "{SCHEMA}".run_sessions WHERE id = :id LIMIT 1'),
-                    {"id": request.run_session_id},
-                )
-            ).mappings().first()
-            if sess_row:
-                if sess_row["org_id"] != org_id:
-                    raise ValueError("cross-org run session access rejected")
-            else:
-                await db.execute(
-                    text(
-                        f"""
-                        INSERT INTO "{SCHEMA}".run_sessions (id, org_id, user_id, metadata, created_at, updated_at)
-                        VALUES (:id, :org_id, :user_id, '{{}}'::jsonb, :now, :now)
-                        """
-                    ),
-                    {"id": request.run_session_id, "org_id": org_id, "user_id": user_id, "now": _utcnow()},
-                )
-        except Exception as exc:
-            if "cross-org" in str(exc):
-                raise
+        await _ensure_run_session(
+            db,
+            run_session_id=request.run_session_id,
+            org_id=org_id,
+            user_id=user_id,
+            context_version=request.context_version,
+        )
 
     snapshot = build_snapshot(request, org_id=org_id, user_id=user_id)
     cmd_body = {
@@ -283,8 +352,11 @@ async def append_event(
     source: str = "agent",
     source_event_id: str | None = None,
     request_trace_id: str | None = None,
+    context_version: int | None = None,
 ) -> RunEventView:
-    payload = payload or {}
+    payload = dict(payload or {})
+    if context_version is not None and "context_version" not in payload:
+        payload["context_version"] = context_version
     now = _utcnow()
 
     # If request_trace_id not explicitly provided, try to fetch from run's snapshot

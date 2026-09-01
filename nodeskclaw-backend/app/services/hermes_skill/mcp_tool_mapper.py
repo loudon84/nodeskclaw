@@ -33,6 +33,8 @@ from app.services.mcp_skill_gateway.mcp_execution_mode import (
 from app.services.mcp_skill_gateway.mcp_task_dedup_service import McpTaskDedupService
 from app.services.mcp_skill_gateway.mcp_task_wait_service import McpTaskWaitService
 from app.services.mcp_skill_gateway.output_policy_service import OutputPolicyService
+from app.services.expert_gateway.expert_mcp_auth_guard import ExpertMcpAuthGuard
+from app.services.hermes_external.hermes_docker_binding_service import HermesDockerBindingService
 from app.core.config import settings
 from app.services.hermes_skill.task_event_token_service import TaskEventTokenService
 
@@ -40,6 +42,17 @@ logger = logging.getLogger(__name__)
 
 RUNTIME_SKILL_ROUTE_TYPE = "hermes_api_server"
 RUNTIME_SKILL_FORBIDDEN_ARGUMENT_KEYS = ("_routing", "_execution", "route_config")
+
+
+def _runtime_session_and_attachment_refs(client_context: dict | None) -> tuple[str | None, list[str]]:
+    ctx = dict(client_context or {})
+    session_id = ctx.get("session_id") or ctx.get("run_session_id")
+    attachment_refs = list(ctx.get("attachment_refs") or [])
+    if isinstance(session_id, str):
+        session_id = session_id.strip() or None
+    else:
+        session_id = None
+    return session_id, attachment_refs
 
 
 class McpToolMapper:
@@ -466,8 +479,6 @@ class McpToolMapper:
         route_meta: dict[str, Any],
         profile_name: str | None,
     ) -> dict[str, bool]:
-        from app.services.hermes_external.hermes_docker_binding_service import HermesDockerBindingService
-
         profile = profile_name or route_meta.get("agent_profile")
         instance_id = route_meta.get("hermes_agent_instance_id")
         if not profile:
@@ -502,6 +513,7 @@ class McpToolMapper:
         auth_ctx: Any = None,
         request_trace_id: str | None = None,
         request_snapshot: dict | None = None,
+        request_headers: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         if user_id:
             await PermissionChecker.require_permission(self.db, user_id, org_id, "skill:view")
@@ -712,6 +724,7 @@ class McpToolMapper:
             )
 
         fingerprint = (client_context or {}).get("request_fingerprint")
+        idempotency_key = ExpertMcpAuthGuard.extract_idempotency_key(request_headers)
         if fingerprint:
             existing = await McpTaskDedupService(self.db).find_dedupe_task(org_id, fingerprint)
             if existing:
@@ -778,6 +791,7 @@ class McpToolMapper:
             release_extra = (published.extra_metadata if published else None) or (skill.extra_metadata or {})
             if release_extra.get("requires_approval") or release_extra.get("requiresApproval"):
                 client_ctx["requires_approval"] = True
+            session_id, attachment_refs = _runtime_session_and_attachment_refs(client_context)
             run_request = StartRuntimeSkillRunRequest(
                 org_id=org_id,
                 user_id=user_id or "",
@@ -805,6 +819,9 @@ class McpToolMapper:
                     "workspace_id": installation.workspace_id,
                     "routing_reason": routing_result.reason,
                 },
+                idempotency_key=idempotency_key,
+                session_id=session_id,
+                attachment_refs=attachment_refs,
             )
             logger.info(
                 "mcp.tools_call.delegated_to_runtime_skill_run trace_id=%s tool=%s "
@@ -822,6 +839,7 @@ class McpToolMapper:
             release_extra = (published.extra_metadata if published else None) or (skill.extra_metadata or {})
             if release_extra.get("requires_approval") or release_extra.get("requiresApproval"):
                 client_ctx["requires_approval"] = True
+            session_id, attachment_refs = _runtime_session_and_attachment_refs(client_context)
             run_request = StartRuntimeSkillRunRequest(
                 org_id=org_id,
                 user_id=user_id or "",
@@ -849,6 +867,9 @@ class McpToolMapper:
                     "workspace_id": installation.workspace_id,
                     "routing_reason": routing_result.reason,
                 },
+                idempotency_key=idempotency_key,
+                session_id=session_id,
+                attachment_refs=attachment_refs,
             )
             runtime_run_result = await RuntimeSkillRunService(self.db).start(run_request)
             task = runtime_run_result.task

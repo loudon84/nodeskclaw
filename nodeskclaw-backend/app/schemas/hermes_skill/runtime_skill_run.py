@@ -35,6 +35,8 @@ class StartRuntimeSkillRunRequest:
     routing_metadata_extras: dict[str, Any] = field(default_factory=dict)
     sse_token_ttl_seconds: int | None = None
     idempotency_key: str | None = None
+    session_id: str | None = None
+    attachment_refs: list[str] = field(default_factory=list)
 
 
 @dataclass

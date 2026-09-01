@@ -79,6 +79,15 @@ Architecture Closure 与 Acceptance Hardening (v1.5) 确立了 Run 生产执行�
 
 v1.1.0 在保持 v1.0.0 兼容的同时，扩展了 MCP Tools List 描述符与 Accepted Result 结构：[[nodeskclaw-backend/app/schemas/skill_run/mcp_jsonrpc.py#SkillToolDescriptorV11]]、[[nodeskclaw-backend/app/schemas/skill_run/mcp_jsonrpc.py#SkillRunAcceptedStructuredContentV11]] 与常量 [[nodeskclaw-backend/app/schemas/skill_run/constants.py#SKILL_RUN_CONTRACT_VERSION_V11]]。
 
-v1.2.0 增加结构化语义 Run Event 合同（六类语义 + KEEP 控制事件回放），Schema 见 [[nodeskclaw-backend/app/schemas/skill_run/mcp_jsonrpc.py#RUN_EVENT_V12_MODELS]] 与常量 [[nodeskclaw-backend/app/schemas/skill_run/constants.py#SKILL_RUN_CONTRACT_VERSION_V12]]；v1.1.0 目录与 checksum 冻结不改写。Backend SSE `GET /api/v1/runs/{run_id}/events` 透传 Agent `event_type` 与 `event_seq`。
+v1.2.0 增加结构化语义 Run Event 合同（六类语义 + KEEP 控制事件回放），Schema 见 [[nodeskclaw-backend/app/schemas/skill_run/mcp_jsonrpc.py#RUN_EVENT_V12_MODELS]] 与常量 [[nodeskclaw-backend/app/schemas/skill_run/constants.py#SKILL_RUN_CONTRACT_VERSION_V12]]；v1.1.0 目录与 checksum 冻结不改写。Backend SSE `GET /api/v1/runs/{run_id}/events` 经 [[nodeskclaw-backend/app/api/runs.py#_public_run_event]] 投影：当前对外仅控制事件、`assistant.message` 与 `artifact.persisted`；`reasoning.summary` / `tool.call` / `clarify.requested` / `approval.requested` 暂未进入公共 SSE（已知限制，待立项补齐）。
 
 Schema 事实源：[[nodeskclaw-backend/app/schemas/skill_run/mcp_jsonrpc.py#SkillRunAcceptedStructuredContent]]；常量：[[nodeskclaw-backend/app/schemas/skill_run/constants.py#SKILL_RUN_CONTRACT_VERSION]]。
+
+## RM-06 Session And Authorized Execution Context
+
+Approved PRD：[RM-06 Session 与授权执行上下文](../../docs_agent/prd-v1.6.7-session-context-authorized-execution.md)（`APPROVED`）。
+
+- **Formal Run Session**：Agent `run_sessions` 绑定 `org_id`+`user_id`；软删除/过期/主体不一致 fail-closed，不创建 Run；Snapshot 携带 opaque `execution_context`/`context_version`（不进 Public 包）。
+- **Runtime Auth Gate**：Backend [[nodeskclaw-backend/app/services/hermes_skill/runtime_skill_run_service.py#RuntimeSkillRunService#start]] 经 [[nodeskclaw-backend/app/services/hermes_skill/runtime_skill_run_service.py#RuntimeSkillRunService#_build_authorized_execution_context]] 入队前消费 Workspace/Attachment 证明与 Knowledge [[nodeskclaw-knowledge/app/api/v2/skill_run_auth.py#issue_skill_run_auth_proofs]]；[[nodeskclaw-backend/app/services/hermes_skill/mcp_tool_mapper.py#McpToolMapper#call_tool]] 转发 opaque ref；Descriptor 只写入 Agent Snapshot/Outbox，Backend 不持久化第二份 Context Store。
+- **Execute-Time Revalidate**：Agent [[nodeskclaw-agent/app/services/context_revalidate.py#revalidate_execution_context]] 在引擎副作用前调用 [[nodeskclaw-backend/app/api/internal_edge.py#revalidate_skill_run_execution_context]]（内部复用 [[nodeskclaw-backend/app/services/hermes_skill/runtime_skill_run_service.py#RuntimeSkillRunService#revalidate_execution_context]]）；撤权/超时/版本不一致 fail-closed。
+- **Public Contract KEEP**：`contracts/skill-run/v1.0.0`–`v1.2.1` 的 `session_id`/`knowledge_refs`/`attachment_refs` 字符串形态不变。

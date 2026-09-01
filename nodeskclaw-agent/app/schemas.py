@@ -179,6 +179,8 @@ class CreateRunRequest(BaseModel):
     request_trace_id: str | None = None
     idempotency_key: str | None = None
     run_session_id: str | None = None
+    execution_context: dict[str, Any] | None = None
+    context_version: int | None = None
 
 
 class CreateRunResponse(BaseModel):

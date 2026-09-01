@@ -62,6 +62,10 @@ async def test_start_delegates_to_skill_agent_and_returns_run_id():
         new=AsyncMock(return_value=_release_meta()),
     ), patch.object(
         RuntimeSkillRunService,
+        "_build_authorized_execution_context",
+        new=AsyncMock(return_value={"context_version": 42, "descriptors": [{"type": "knowledge", "stable_id": "kb://doc-1", "auth_version": "abc", "expires_at": None}]}),
+    ), patch.object(
+        RuntimeSkillRunService,
         "_enrich_route_snapshot",
         new=AsyncMock(side_effect=lambda request, route: {**route, "gateway_url": "http://gw"}),
     ):
@@ -100,6 +104,9 @@ async def test_start_delegates_to_skill_agent_and_returns_run_id():
     assert payload["knowledge_refs"] == ["kb://doc-1"]
     assert payload["placement"] == {"role": "central", "engine": "hermes"}
     assert payload["route_snapshot"]["gateway_url"] == "http://gw"
+    assert payload["execution_context"]["context_version"] == 42
+    assert payload["context_version"] == 42
+    assert payload["execution_context"]["descriptors"][0]["stable_id"] == "kb://doc-1"
     assert "credential_lease" not in payload["route_snapshot"]
     assert "token" not in str(payload["route_snapshot"].get("credential_lease_ref") or {})
 
@@ -116,11 +123,13 @@ async def test_same_idempotency_key_from_two_clients_creates_one_run():
     task.artifact_url = "/api/v1/runs/run-abc/artifacts"
     task.server_artifacts = []
     task.output_policy = {}
+    task.arguments = {"prompt": "hi"}
 
     with patch("app.services.hermes_skill.runtime_skill_run_service.settings") as mock_settings, \
          patch("app.services.hermes_skill.runtime_skill_run_service.TaskService") as task_cls, \
          patch("app.services.hermes_skill.runtime_skill_run_service.TaskEventTokenService") as token_cls, \
          patch.object(RuntimeSkillRunService, "_resolve_release_meta", new=AsyncMock(return_value=_release_meta())), \
+         patch.object(RuntimeSkillRunService, "_build_authorized_execution_context", new=AsyncMock(return_value={"context_version": 42, "descriptors": []})), \
          patch.object(RuntimeSkillRunService, "_enrich_route_snapshot", new=AsyncMock(side_effect=lambda request, route: dict(route))):
         mock_settings.SKILL_AGENT_ENABLED = True
         mock_settings.HERMES_TASK_DEFAULT_TIMEOUT_SECONDS = 900
@@ -165,6 +174,10 @@ async def test_expert_start_keeps_task_id_contract():
         RuntimeSkillRunService,
         "_resolve_release_meta",
         new=AsyncMock(return_value=_release_meta()),
+    ), patch.object(
+        RuntimeSkillRunService,
+        "_build_authorized_execution_context",
+        new=AsyncMock(return_value={"context_version": 42, "descriptors": []}),
     ), patch.object(
         RuntimeSkillRunService,
         "_enrich_route_snapshot",

@@ -13,6 +13,7 @@ from typing import Any
 import httpx
 
 from app.config import settings
+from app.services.context_revalidate import ContextRevalidationError, revalidate_execution_context
 from app.services.edge_skill_installer import EdgeSkillInstaller
 from app.services.engine_port import execute_engine
 from app.services.secret_store import SecretStore
@@ -552,6 +553,15 @@ class EdgeWorker:
                         logger.warning("edge failed to fetch required artifact '%s': %s", art_name, req_exc)
                         raise RuntimeError(f"Edge missing required artifact '{art_name}': {req_exc}")
 
+            await revalidate_execution_context(
+                snapshot=snapshot,
+                run_id=str(job.get("run_id") or snapshot.get("run_id") or ""),
+                attempt_id=attempt_id,
+                generation=delivery_generation,
+                org_id=str(snapshot.get("org_id") or ""),
+                user_id=str(snapshot.get("user_id") or ""),
+            )
+
             async for event in execute_engine(
                 engine=engine_name,
                 tool_name=tool_name,
@@ -597,6 +607,25 @@ class EdgeWorker:
                         )
                     except Exception:
                         logger.debug("edge artifact upload failed", exc_info=True)
+        except ContextRevalidationError as exc:
+            logger.warning("edge context revalidation denied job_id=%s: %s", job_id, exc)
+            err_event = {
+                "event_type": "run.failed",
+                "payload": {"error": "context revalidation denied", "reason": "context_revalidation_denied"},
+                "source": "edge",
+                "source_event_id": f"{job_id}:run.failed:{int(asyncio.get_event_loop().time() * 1000)}",
+                "delivery_generation": delivery_generation,
+                "attempt_id": attempt_id,
+                "step_id": step_id,
+            }
+            await self._send_or_spool_event(
+                client,
+                job_id,
+                err_event,
+                delivery_generation=delivery_generation,
+                attempt_id=attempt_id,
+                step_id=step_id,
+            )
         except Exception as exc:
             logger.exception("edge job failed job_id=%s", job_id)
             err_event = {

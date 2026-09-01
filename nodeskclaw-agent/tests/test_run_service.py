@@ -524,8 +524,14 @@ async def test_terminal_status_cannot_be_overwritten():
 async def test_create_run_session_cross_org_rejected():
     db = AsyncMock()
     mock_res = MagicMock()
-    # Existing session belonging to another org
-    mock_res.mappings.return_value.first.return_value = {"id": "sess-1", "org_id": "org-other"}
+    mock_res.mappings.return_value.first.return_value = {
+        "id": "sess-1",
+        "org_id": "org-other",
+        "user_id": "user-other",
+        "context_version": 0,
+        "deleted_at": None,
+        "expires_at": None,
+    }
     db.execute = AsyncMock(return_value=mock_res)
 
     req = CreateRunRequest(
@@ -535,6 +541,63 @@ async def test_create_run_session_cross_org_rejected():
     )
     with pytest.raises(ValueError, match="cross-org run session access rejected"):
         await run_service.create_run(db, req, org_id="org-1", user_id="user-1")
+
+
+@pytest.mark.asyncio
+async def test_create_run_session_subject_mismatch_rejected():
+    db = AsyncMock()
+    mock_res = MagicMock()
+    mock_res.mappings.return_value.first.return_value = {
+        "id": "sess-1",
+        "org_id": "org-1",
+        "user_id": "user-other",
+        "context_version": 0,
+        "deleted_at": None,
+        "expires_at": None,
+    }
+    db.execute = AsyncMock(return_value=mock_res)
+
+    req = CreateRunRequest(run_id="run-1", tool_name="test_tool", run_session_id="sess-1")
+    with pytest.raises(ValueError, match="run session subject mismatch rejected"):
+        await run_service.create_run(db, req, org_id="org-1", user_id="user-1")
+
+
+@pytest.mark.asyncio
+async def test_create_run_session_soft_deleted_rejected():
+    from datetime import datetime, timezone
+
+    db = AsyncMock()
+    mock_res = MagicMock()
+    mock_res.mappings.return_value.first.return_value = {
+        "id": "sess-1",
+        "org_id": "org-1",
+        "user_id": "user-1",
+        "context_version": 1,
+        "deleted_at": datetime.now(timezone.utc),
+        "expires_at": None,
+    }
+    db.execute = AsyncMock(return_value=mock_res)
+
+    req = CreateRunRequest(run_id="run-1", tool_name="test_tool", run_session_id="sess-1")
+    with pytest.raises(ValueError, match="run session unrecoverable: soft deleted"):
+        await run_service.create_run(db, req, org_id="org-1", user_id="user-1")
+
+
+def test_build_snapshot_persists_execution_context_and_version():
+    req = CreateRunRequest(
+        run_id="run-1",
+        tool_name="test_tool",
+        execution_context={
+            "context_version": 2,
+            "descriptors": [
+                {"type": "knowledge", "stable_id": "ks-1", "auth_version": "v1"},
+            ],
+        },
+        context_version=2,
+    )
+    snap = run_service.build_snapshot(req, org_id="org-1", user_id="user-1")
+    assert snap["context_version"] == 2
+    assert snap["execution_context"]["descriptors"][0]["stable_id"] == "ks-1"
 
 
 def test_build_snapshot_sanitizes_sensitive_tokens():

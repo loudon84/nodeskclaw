@@ -51,6 +51,10 @@ async def test_start_builds_hermes_api_server_route_and_contract():
         AsyncMock(return_value={"skill_version": "1.0.0", "snapshot_hash": "hash-1"}),
     ), patch.object(
         RuntimeSkillRunService,
+        "_build_authorized_execution_context",
+        AsyncMock(return_value={"context_version": 1, "descriptors": []}),
+    ), patch.object(
+        RuntimeSkillRunService,
         "_enrich_route_snapshot",
         AsyncMock(return_value={"gateway_url": "http://example.com"}),
     ):
@@ -116,6 +120,10 @@ async def test_start_expert_mcp_includes_catalog_fields():
         RuntimeSkillRunService,
         "_resolve_release_meta",
         AsyncMock(return_value={"skill_version": "1.0.0", "snapshot_hash": "hash-1"}),
+    ), patch.object(
+        RuntimeSkillRunService,
+        "_build_authorized_execution_context",
+        AsyncMock(return_value={"context_version": 1, "descriptors": []}),
     ), patch.object(
         RuntimeSkillRunService,
         "_enrich_route_snapshot",

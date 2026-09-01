@@ -286,6 +286,25 @@ async def ingest_internal_events(
             )
             continue
 
+        snap = run.snapshot if isinstance(run.snapshot, dict) else {}
+        if run.status in run_service.TERMINAL:
+            snap_ctx = snap.get("context_version")
+            evt_ctx = payload.get("context_version")
+            if snap_ctx is not None and evt_ctx is not None and int(evt_ctx) != int(snap_ctx):
+                await run_service.record_event_rejection(
+                    db,
+                    run_id,
+                    reason="context_stale",
+                    event_id=event.get("event_id"),
+                    source_event_id=source_event_id,
+                    details={
+                        "event_context_version": evt_ctx,
+                        "snapshot_context_version": snap_ctx,
+                        "event_type": event_type,
+                    },
+                )
+                continue
+
         semantic = is_semantic_event_type(event_type)
         control = is_control_event_type(event_type)
         if not semantic and not control:

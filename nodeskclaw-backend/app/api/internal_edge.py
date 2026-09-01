@@ -21,7 +21,7 @@ from app.models.connector.edge_job import EdgeJob, EdgeJobStatus
 from app.models.connector.edge_node import EdgeNode, EdgeNodeStatus
 from app.models.hermes_skill.skill_installation import HermesSkillInstallation
 from app.services.connector.edge_node_service import EdgeNodeService, hash_edge_token
-from app.services.hermes_skill.runtime_skill_run_service import strip_internal_route_secrets
+from app.services.hermes_skill.runtime_skill_run_service import RuntimeSkillRunService, strip_internal_route_secrets
 from app.services.hermes_skill.skill_release_service import (
     SkillReleaseService,
     bundle_descriptor_from_release,
@@ -864,6 +864,48 @@ async def report_installation_actual(
     return {"code": 0, "data": {"installation_id": installation.id, "actual_status": installation.actual_status}}
 
 
+class RevalidateExecutionContextBody(BaseModel):
+    run_id: str
+    user_id: str
+    context_version: int
+    execution_context: dict = Field(default_factory=dict)
+    attempt_id: str | None = None
+    generation: int | None = None
+
+
+def _authenticate_internal_skill_agent(
+    x_skill_agent_token: str | None,
+) -> None:
+    expected_curr = settings.SKILL_AGENT_INTERNAL_TOKEN
+    expected_prev = settings.SKILL_AGENT_INTERNAL_TOKEN_PREVIOUS
+    if not x_skill_agent_token:
+        raise ForbiddenError("Internal skill agent token 无效", "errors.auth.invalid_token")
+    curr_match = expected_curr and hmac.compare_digest(x_skill_agent_token, expected_curr)
+    prev_match = expected_prev and hmac.compare_digest(x_skill_agent_token, expected_prev)
+    if not curr_match and not prev_match:
+        raise ForbiddenError("Internal skill agent token 无效", "errors.auth.invalid_token")
+
+
+@router.post("/skill-run/revalidate")
+async def revalidate_skill_run_execution_context(
+    body: RevalidateExecutionContextBody,
+    db: AsyncSession = Depends(get_db),
+    x_skill_agent_token: str | None = Header(default=None, alias="X-Skill-Agent-Token"),
+    x_exec_org_id: str | None = Header(default=None, alias="X-Exec-Org-Id"),
+):
+    _authenticate_internal_skill_agent(x_skill_agent_token)
+    if not x_exec_org_id:
+        raise ForbiddenError("缺少 X-Exec-Org-Id header", "errors.auth.missing_org_header")
+    service = RuntimeSkillRunService(db)
+    await service.revalidate_execution_context(
+        org_id=x_exec_org_id,
+        user_id=body.user_id,
+        execution_context=body.execution_context,
+        context_version=body.context_version,
+    )
+    return {"code": 0, "data": {"run_id": body.run_id, "ok": True}}
+
+
 class EnqueueEdgeJobRequest(BaseModel):
     edge_node_id: str
     run_id: str
@@ -884,14 +926,7 @@ async def enqueue_edge_job_endpoint(
     x_skill_agent_token: str | None = Header(default=None, alias="X-Skill-Agent-Token"),
     x_exec_org_id: str | None = Header(default=None, alias="X-Exec-Org-Id"),
 ):
-    expected_curr = settings.SKILL_AGENT_INTERNAL_TOKEN
-    expected_prev = settings.SKILL_AGENT_INTERNAL_TOKEN_PREVIOUS
-    if not x_skill_agent_token:
-        raise ForbiddenError("Internal skill agent token 无效", "errors.auth.invalid_token")
-    curr_match = expected_curr and hmac.compare_digest(x_skill_agent_token, expected_curr)
-    prev_match = expected_prev and hmac.compare_digest(x_skill_agent_token, expected_prev)
-    if not curr_match and not prev_match:
-        raise ForbiddenError("Internal skill agent token 无效", "errors.auth.invalid_token")
+    _authenticate_internal_skill_agent(x_skill_agent_token)
 
     if not x_exec_org_id:
         raise ForbiddenError("缺少 X-Exec-Org-Id header", "errors.auth.missing_org_header")

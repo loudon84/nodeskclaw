@@ -52,6 +52,15 @@ Run 生命周期的幂等、CAS 状态迁移、Attempt 代次和取消审批分�
 - **部分实现**：租约续期、过期恢复和 Fencing 已有实现与 Mock 测试；Harness 已定义 kill Central A 故障注入，但尚未取得真实 PostgreSQL 上双 Central 崩溃接管与迟到写入的实跑证据。
 - **目标状态**：故障报告证明最多一个有效 Attempt、终态不回退、旧代事件和 Artifact 无副作用地被拒绝。
 
+## Formal Run Session And Execute-Time Revalidation
+
+RM-06 在 Agent Run Owner 上扩展 Formal Run Session、Snapshot 内授权 Context Descriptor，以及 Worker/Edge 执行前复核。
+
+- **已实现**：[[nodeskclaw-agent/app/services/run_service.py#create_run]] 与 [[nodeskclaw-agent/app/services/run_service.py#_ensure_run_session]] 校验 `run_sessions` 的 `org_id`+`user_id`、软删除与过期；不可恢复 Session 拒绝且不 INSERT `runs`；可恢复 Session 单调递增 `context_version`。
+- **已实现**：[[nodeskclaw-agent/app/services/run_service.py#build_snapshot]] 持久化 opaque `execution_context` 与 `context_version`；不含知识正文、附件字节或内部路径。
+- **已实现**：[[nodeskclaw-agent/app/services/run_service.py#append_event]] 与 [[nodeskclaw-agent/app/api/internal_runs.py#ingest_internal_events]] 在终态 Run 上拒绝 `context_stale` 事件；[[nodeskclaw-agent/app/services/run_service.py#record_event_rejection]] 审计拒绝原因。
+- **已实现**：[[nodeskclaw-agent/app/services/context_revalidate.py#revalidate_execution_context]] 在 [[nodeskclaw-agent/app/services/worker.py#RunWorker#_execute]] 调用 `execute_engine` 与 Hybrid EdgeJob enqueue 前，以及 [[nodeskclaw-agent/app/services/edge_worker.py#EdgeWorker#_execute_job]] 执行前，经 Backend Internal Edge 复核；失败 fail-closed，不写引擎副作用。
+
 ## Installation Generation Closed Loop
 
 Installation 的 Desired/Actual Generation 合同已实现，Edge 通过 Backend 授权的 Published Bundle 完成真实包安装闭环。

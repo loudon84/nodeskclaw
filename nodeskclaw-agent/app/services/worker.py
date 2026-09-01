@@ -20,6 +20,7 @@ from app.config import settings
 from app.db import SessionLocal
 from app.schemas import is_semantic_event_type
 from app.services import run_service
+from app.services.context_revalidate import ContextRevalidationError, revalidate_execution_context
 from app.services.engine_port import execute_engine
 
 logger = logging.getLogger(__name__)
@@ -406,6 +407,16 @@ class RunWorker:
                 route_snapshot = snapshot.get("runtime_policy") or {}
                 placement = snapshot.get("placement") or {}
                 org_id = snapshot.get("org_id")
+                user_id = snapshot.get("user_id")
+
+                await revalidate_execution_context(
+                    snapshot=snapshot,
+                    run_id=run_id,
+                    attempt_id=attempt_id,
+                    generation=generation,
+                    org_id=org_id,
+                    user_id=user_id,
+                )
 
                 step_plan = build_hybrid_step_plan(snapshot)
                 await run_service.persist_step_plan(
@@ -604,6 +615,14 @@ class RunWorker:
 
                 # Hybrid: after central section, dispatch edge jobs to transport port
                 if has_pending_edge_steps:
+                    await revalidate_execution_context(
+                        snapshot=snapshot,
+                        run_id=run_id,
+                        attempt_id=attempt_id,
+                        generation=generation,
+                        org_id=org_id,
+                        user_id=user_id,
+                    )
                     edge_steps = [s for s in step_plan if s.get("role") == "edge"]
                     dispatched_jobs = []
                     central_url = (settings.SKILL_AGENT_CENTRAL_BASE_URL or "http://localhost:4510").rstrip("/")
@@ -661,6 +680,35 @@ class RunWorker:
                         generation=generation,
                     )
                     await db.commit()
+            except ContextRevalidationError as exc:
+                logger.warning("context revalidation denied run_id=%s: %s", run_id, exc)
+                await db.rollback()
+                async with SessionLocal() as err_db:
+                    snap_ctx = (claimed.get("snapshot") or {}).get("context_version")
+                    try:
+                        await run_service.set_status(
+                            err_db,
+                            run_id,
+                            "FAILED",
+                            org_id=org_id,
+                            attempt_id=attempt_id,
+                            generation=generation,
+                            result={"error": "context revalidation denied"},
+                        )
+                        await run_service.append_event(
+                            err_db,
+                            run_id,
+                            "run.failed",
+                            {"error": "context revalidation denied", "reason": "context_revalidation_denied"},
+                            org_id=org_id,
+                            attempt_id=attempt_id,
+                            generation=generation,
+                            context_version=snap_ctx,
+                        )
+                        await err_db.commit()
+                    except Exception:
+                        await err_db.rollback()
+                        logger.exception("failed to persist context revalidation failure run_id=%s", run_id)
             except Exception as exc:
                 logger.exception("run execute failed run_id=%s", run_id)
                 await db.rollback()

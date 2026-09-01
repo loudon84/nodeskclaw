@@ -113,6 +113,7 @@ async def test_worker_execute_hybrid_sets_waiting_edge_and_enqueues_edge_job():
         return MagicMock(event_id="evt-1", event_seq=1)
 
     with patch("app.services.worker.SessionLocal", return_value=mock_db), \
+         patch("app.services.worker.revalidate_execution_context", new=AsyncMock()), \
          patch("app.services.worker.execute_engine", side_effect=mock_engine_gen), \
          patch("app.services.worker.httpx.AsyncClient", return_value=mock_client), \
          patch("app.services.worker.run_service.set_status", side_effect=mock_set_status), \
@@ -211,6 +212,7 @@ async def test_worker_semantic_events_do_not_aggregate_terminal():
         aggregate_calls.append(kwargs)
 
     with patch("app.services.worker.SessionLocal", return_value=mock_db), \
+         patch("app.services.worker.revalidate_execution_context", new=AsyncMock()), \
          patch("app.services.worker.execute_engine", side_effect=mock_engine_gen), \
          patch("app.services.worker.run_service.set_status", side_effect=mock_set_status), \
          patch("app.services.worker.run_service.append_event", side_effect=mock_append_event), \
@@ -227,4 +229,56 @@ async def test_worker_semantic_events_do_not_aggregate_terminal():
     assert len(aggregate_calls) == 1
     terminal = next(t for t in event_types if t in ("run.completed", "run.central_step_completed"))
     assert event_types.index("assistant.message") < event_types.index(terminal)
+
+
+@pytest.mark.asyncio
+async def test_worker_skips_execute_engine_when_context_revalidate_denied():
+    worker = RunWorker()
+    claimed = {
+        "id": "run-deny-1",
+        "org_id": "org-1",
+        "tool_name": "test_tool",
+        "arguments": {},
+        "snapshot": {
+            "org_id": "org-1",
+            "user_id": "user-1",
+            "context_version": 9,
+            "execution_context": {"context_version": 9, "descriptors": []},
+            "placement": {"role": "central", "engine": "hermes"},
+        },
+        "attempt_id": "attempt-1",
+        "generation": 1,
+    }
+
+    mock_db = AsyncMock()
+    mock_db.commit = AsyncMock()
+    mock_db.rollback = AsyncMock()
+    engine_called = {"value": False}
+
+    async def mock_engine(*args, **kwargs):
+        engine_called["value"] = True
+        yield {"event_type": "run.completed", "payload": {}}
+
+    async def deny_revalidate(**kwargs):
+        from app.services.context_revalidate import ContextRevalidationError
+        raise ContextRevalidationError("context revalidation denied")
+
+    set_status_calls = []
+
+    async def mock_set_status(db, run_id, status, **kwargs):
+        set_status_calls.append(status)
+        return True
+
+    with patch("app.services.worker.SessionLocal", return_value=mock_db), \
+         patch("app.services.worker.revalidate_execution_context", side_effect=deny_revalidate), \
+         patch("app.services.worker.execute_engine", side_effect=mock_engine), \
+         patch("app.services.worker.run_service.set_status", side_effect=mock_set_status), \
+         patch("app.services.worker.run_service.append_event", new=AsyncMock()), \
+         patch("app.services.worker.run_service.get_run", return_value=None), \
+         patch("app.services.worker.run_service.persist_step_plan", new=AsyncMock(return_value=[])), \
+         patch("app.services.worker.run_service.update_step_state", new=AsyncMock()):
+        await worker._execute(claimed)
+
+    assert engine_called["value"] is False
+    assert "FAILED" in set_status_calls
 
