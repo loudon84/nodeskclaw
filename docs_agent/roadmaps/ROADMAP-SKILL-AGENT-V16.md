@@ -4,7 +4,7 @@ version: 1.3.0
 status: ACTIVE
 architecture_decision: docs_agent/architecture/AD-SKILL-AGENT-V16.md
 source_revision: AD-SKILL-AGENT-V16@1.3.0
-updated_at: 2026-09-01T13:18:01+08:00
+updated_at: 2026-09-01T13:25:00+08:00
 ---
 
 # Roadmap: Skill Agent v1.6 客户端合同与生产闭环
@@ -37,4 +37,4 @@ updated_at: 2026-09-01T13:18:01+08:00
 | RM-08 | 中立 Shared Agent Contract（共享执行合同）可由 Backend 单一生成链发布 | RM-06, RM-07 | BACKLOG | Schema、OpenAPI、TypeScript 类型、Fixture（固定样例）与兼容测试同源；旧合同不可改写，不形成第二手写 Schema 事实源 | - | - | - | - |
 | RM-09 | Backend 对已发布 Public Consumer Contract 做符合性，并实现 v1.2.1 之后的批准增量；外部前端只作为仓外 Consumer | RM-08 | BACKLOG | 不首次发布 Work canonical；本仓只交付符合性证据与后续版本化合同；外部前端源码、构建和发布不在范围内 | - | - | - | - |
 | RM-10 | Agent 执行面具备统一 Trace（链路追踪）与运行指标 | RM-05 | BACKLOG | Run/Attempt/Session/Edge/Connector/Artifact 可关联；队列、时延、失败、租约和重放指标可观测，且不形成第二事件事实源 | - | - | - | - |
-| RM-11 | 累积 Public Skill Run Consumer Contract v1.2.1 成为外部 Work 可离线导入的当前合同导出项 | RM-01, RM-02 | READY | 生成并发布 `v1.2.1/` 与 tag `skill-run-contract-v1.2.1`；manifest 纳入 SHA256SUMS；Public 包不含 Internal Southbound；不改写 v1.0.0/v1.1.0/v1.2.0；不含 Work 前端；Internal Agent 合同留给 RM-08 | - | - | - | - |
+| RM-11 | 累积 Public Skill Run Consumer Contract v1.2.1 成为外部 Work 可离线导入的当前合同导出项 | RM-01, RM-02 | PLANNED | 生成并发布 `v1.2.1/` 与 tag `skill-run-contract-v1.2.1`；manifest 纳入 SHA256SUMS；Public 包不含 Internal Southbound；不改写 v1.0.0/v1.1.0/v1.2.0；不含 Work 前端；Internal Agent 合同留给 RM-08 | docs_agent/prd-v1.6.6-cumulative-public-consumer-contract.md | .cursor/plans/rm-11_v121_cumulative_public_contract.plan.md | - | - |
