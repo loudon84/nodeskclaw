@@ -5,10 +5,10 @@
   "provider": "nodeskclaw-backend",
   "consumer": "external-agent-clients",
   "primaryConsumer": "smc-copilot/apps/work",
-  "backendCommit": "5dc25e64",
-  "releaseCommit": "5dc25e64",
+  "backendCommit": "902e53a9c38a781b4b8311c9b356acf28e6de78b",
+  "releaseCommit": "902e53a9c38a781b4b8311c9b356acf28e6de78b",
   "tagName": "skill-run-contract-v1.2.1",
-  "generatedAt": "2026-09-01T06:01:15.593572+00:00",
+  "generatedAt": "2026-09-01T06:01:51.390118+00:00",
   "compatibility": {
     "supersedesForWork": [
       "1.0.0",
