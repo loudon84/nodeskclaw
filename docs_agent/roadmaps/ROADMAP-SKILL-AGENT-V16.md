@@ -1,10 +1,10 @@
 ---
 roadmap_id: ROADMAP-SKILL-AGENT-V16
-version: 1.2.0
+version: 1.3.0
 status: ACTIVE
 architecture_decision: docs_agent/architecture/AD-SKILL-AGENT-V16.md
-source_revision: AD-SKILL-AGENT-V16@1.2.0
-updated_at: 2026-09-01T11:33:35+08:00
+source_revision: AD-SKILL-AGENT-V16@1.3.0
+updated_at: 2026-09-01T13:18:01+08:00
 ---
 
 # Roadmap: Skill Agent v1.6 客户端合同与生产闭环
@@ -35,6 +35,6 @@ updated_at: 2026-09-01T11:33:35+08:00
 | RM-06 | Session（运行会话）与 ContextBuilder（上下文构建器）形成授权、可恢复的执行上下文 | RM-05 | BACKLOG | Session 成为正式运行对象；Knowledge/Workspace/Attachment（知识/工作区/附件）引用经 Backend 授权并在执行前复核，撤权时 fail-closed（失败关闭） | - | - | - | - |
 | RM-07 | Edge Control Channel（边缘控制通道）具备身份轮换与命令完整性 | RM-05 | BACKLOG | 出站通道验证身份、过期、Nonce（随机数）、签名与序列；重放、错节点和过期命令无副作用 | - | - | - | - |
 | RM-08 | 中立 Shared Agent Contract（共享执行合同）可由 Backend 单一生成链发布 | RM-06, RM-07 | BACKLOG | Schema、OpenAPI、TypeScript 类型、Fixture（固定样例）与兼容测试同源；旧合同不可改写，不形成第二手写 Schema 事实源 | - | - | - | - |
-| RM-09 | Backend 发布外部 Work Skill-first Consumer Contract（技能优先消费合同）并实现合同符合性；外部前端只作为仓外 Consumer（消费者） | RM-08 | BACKLOG | 本仓只交付版本化合同、Backend 公共行为和 Conformance（符合性）证据；外部前端源码、构建和发布不在范围内；任何新前端需求先修订合同，再由本项目按批准合同反推 Backend 实现 | - | - | - | - |
+| RM-09 | Backend 对已发布 Public Consumer Contract 做符合性，并实现 v1.2.1 之后的批准增量；外部前端只作为仓外 Consumer | RM-08 | BACKLOG | 不首次发布 Work canonical；本仓只交付符合性证据与后续版本化合同；外部前端源码、构建和发布不在范围内 | - | - | - | - |
 | RM-10 | Agent 执行面具备统一 Trace（链路追踪）与运行指标 | RM-05 | BACKLOG | Run/Attempt/Session/Edge/Connector/Artifact 可关联；队列、时延、失败、租约和重放指标可观测，且不形成第二事件事实源 | - | - | - | - |
-| RM-11 | 已发布 P0 Skill Run Consumer Contract Bundle（消费合同包）成为外部 Work 可离线导入的合同导出项 | RM-01 | IN_PRD | Provider 侧证明 tag `skill-run-contract-v1.0.0` 身份、LF checksum 与 P0 产物集完整；不改写 v1.0.0 字节；不含 Work 前端；矩阵增量留给 RM-09 | docs_agent/prd-v1.6.5-p0-consumer-contract-export.md | - | - | - |
+| RM-11 | 累积 Public Skill Run Consumer Contract v1.2.1 成为外部 Work 可离线导入的当前合同导出项 | RM-01, RM-02 | READY | 生成并发布 `v1.2.1/` 与 tag `skill-run-contract-v1.2.1`；manifest 纳入 SHA256SUMS；Public 包不含 Internal Southbound；不改写 v1.0.0/v1.1.0/v1.2.0；不含 Work 前端；Internal Agent 合同留给 RM-08 | - | - | - | - |
