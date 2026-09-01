@@ -2,16 +2,25 @@
 
 Skill Platform 把员工 MCP Catalog 与 Skill Run 执行拆开：Gateway 在 Backend，执行内核在独立 `nodeskclaw-agent`。
 
-Approved PRD：`docs_agent/prd-v1.5.3-nodeskclaw-postman-integration-readiness.md`。前序文档包括 `docs_agent/prd-v1.5.2-nodeskclaw-postman-acceptance-closure.md`、`docs_agent/prd-v1.5-nodeskclaw-api-acceptance-hardening.md`、`docs_agent/prd-v1.3-skill-run-release-readiness.md`、`docs_agent/prd-skill-platform-v1.0.md`、`docs_agent/prd-skill-run-architecture-closure-v1.1.md` 与 `docs_agent/prd-skill-run-production-hardening-v1.0.md`。work-expert v1.0.2 目录与 checksum 冻结；员工合同基线为 `contracts/skill-run/v1.0.0/`，RM-01 增量在 `v1.1.0/`，RM-02 语义事件增量在 `v1.2.0/`。生成与发布入口：`tools/contracts/release_skill_run_contracts.py` 与 `scripts/contracts.py generate --family skill-run`。
+Approved PRD（v1.6 当前）：[RM-04 Strict Readiness 与 Production Acceptance](../../docs_agent/prd-v1.6.3-strict-readiness-production-acceptance.md)。v1.5 前序包括 `docs_agent/prd-v1.5.3-nodeskclaw-postman-integration-readiness.md`、`docs_agent/prd-v1.5.2-nodeskclaw-postman-acceptance-closure.md`、`docs_agent/prd-v1.5-nodeskclaw-api-acceptance-hardening.md`、`docs_agent/prd-v1.3-skill-run-release-readiness.md`、`docs_agent/prd-skill-platform-v1.0.md`、`docs_agent/prd-skill-run-architecture-closure-v1.1.md` 与 `docs_agent/prd-skill-run-production-hardening-v1.0.md`。work-expert v1.0.2 目录与 checksum 冻结；员工合同基线为 `contracts/skill-run/v1.0.0/`，RM-01 增量在 `v1.1.0/`，RM-02 语义事件增量在 `v1.2.0/`。生成与发布入口：`tools/contracts/release_skill_run_contracts.py` 与 `scripts/contracts.py generate --family skill-run`。
 
 ## v1.6 Delivery Governance
 
-v1.6 保持既有 Production Owner 与信任边界，通过四项顺序 Roadmap 分别关闭客户端合同、语义事件、Edge Bundle 和生产验收，不再用单体 PRD 混合四种发布门禁。
+v1.6 保持既有 Production Owner 与信任边界，以独立 Roadmap Item 关闭合同、执行、Edge、安全和生产证据，避免单体 PRD 混合不同发布门禁。
 
 - Approved Architecture（已批准架构）：[AD-SKILL-AGENT-V16](../../docs_agent/architecture/AD-SKILL-AGENT-V16.md)。
 - Active Roadmap（活动路线图）：[ROADMAP-SKILL-AGENT-V16](../../docs_agent/roadmaps/ROADMAP-SKILL-AGENT-V16.md)。
-- Current Stage PRD（当前阶段需求）：[RM-01 Catalog 与 Run Control](../../docs_agent/prd-v1.6.0-skill-catalog-and-run-control.md)，状态为 `APPROVED`（已批准）。
-- RM-02–RM-04 在前序 Item（交付项）达到 `DONE`（完成）后才进入 Grounding（源码校准）。
+- Current Stage PRD（当前阶段需求）：[RM-04 Strict Readiness 与 Production Acceptance](../../docs_agent/prd-v1.6.3-strict-readiness-production-acceptance.md)，PRD 状态为 `APPROVED`（已批准）；Roadmap Item 仍为 `IN_PRD`，待 Implementation Commit 与 Verification Evidence。前序 RM-01–RM-03 已分别关闭 Catalog、语义事件与 Edge Bundle 合同。
+- Next Stage PRD（下一阶段需求）：[RM-05 Connector Runtime Execution Closure](../../docs_agent/prd-v1.6.4-connector-runtime-execution-closure.md)，状态为 `REVIEW_REQUIRED`（待审查）；其依赖 RM-03，可与仍在生产证据闭环中的 RM-04 并行推进。
+- RM-01：[Catalog 与 Run Control](../../docs_agent/prd-v1.6.0-skill-catalog-and-run-control.md)（`APPROVED`）。
+- RM-02：[Semantic Run Events](../../docs_agent/prd-v1.6.1-semantic-run-events.md)（`APPROVED`）。
+- RM-03：[Edge Published Bundle Lifecycle](../../docs_agent/prd-v1.6.2-edge-published-bundle-lifecycle.md)（`APPROVED`）。
+
+## Contract-First External Work Boundary
+
+本仓只拥有 Backend、Agent 与版本化外部消费合同；外部 Work 前端源码、构建和发布不属于本项目交付范围。
+
+任何外部前端语义变更必须先形成可审查、可版本化且兼容策略明确的合同修订；外部前端按批准合同适配，本仓 Backend 再从同一批准合同推导实现与 Conformance（符合性）证据。旧合同版本保持不可变，禁止以前端源码、页面行为或未版本化字段作为 Backend 的事实源。
 
 ## Architecture Closure Invariants (v1.5)
 
@@ -24,10 +33,10 @@ Architecture Closure 与 Acceptance Hardening (v1.5) 确立了 Run 生产执行�
 - **Cancel/Resume/Approval State Machine**：取消请求支持 `CANCELLING` 中间态与 `cancel_event` 异步中断；`resume_run` 仅处理 `PAUSED`/`SUSPENDED` 并显式拒绝 `WAITING_APPROVAL`；[[nodeskclaw-agent/app/services/run_service.py#approve_run]] 专门处理审批与幂等记录。
 - **Hybrid Real Dispatch & Edge Delivery Envelope**：[[nodeskclaw-agent/app/services/worker.py#build_hybrid_step_plan]] 确定性规划执行步骤；Central 步骤完成后真实派发 EdgeJob 并流转至 `WAITING_EDGE` 等待边缘完成；[[nodeskclaw-agent/app/services/edge_worker.py#EdgeWorker]] 与 `/internal/edge/jobs/{job_id}/events` 强制携带并校验 `delivery_generation`、`attempt_id` 与 `source_event_id`。
 - **Installation Desired/Actual Reconcile & Edge Side Effects**：Backend 维护 Desired 状态与单调代次 `desired_generation`，在 Desired 中钉住 Published Bundle 描述符并通过 Internal Edge 授权下载字节流；Edge 节点通过 [[nodeskclaw-agent/app/services/edge_skill_installer.py#EdgeSkillInstaller]] 在本地隔离目录完成暂存、校验、原子激活与卸载后，向 [[nodeskclaw-backend/app/api/internal_edge.py#report_installation_actual]] 上报 `actual_status`；仅同代 `ready` / `uninstalled` / `removed` 对齐 `actual_generation`，同代 `error` / `failed` 不对齐以便重试；严格校验 `edge_node_id` 归属并拒绝过期代次上报，Backend 不执行生产安装文件副作用。
-- **Persistent StoragePort & Trace Invariants**：工件存储收敛至 StoragePort，生产环境禁用 `/tmp` 临时路径，按 SHA256 与 `idempotency_key` 幂等防冲突持久化；`request_trace_id` 贯穿 Snapshot、Event、EdgeJob 与 Artifact。
+- **Persistent StoragePort & Trace Invariants**：工件存储收敛至 StoragePort（[[nodeskclaw-agent/app/services/storage_port.py#S3StorageDriver]] 走 httpx + SigV4 真实 S3 兼容后端；[[nodeskclaw-agent/app/services/storage_port.py#StoragePort#probe_isolation]] 供 readiness 探针），生产环境禁用 `/tmp` 临时路径，按 SHA256 与 `idempotency_key` 幂等防冲突持久化；`request_trace_id` 贯穿 Snapshot、Event、EdgeJob 与 Artifact。
 - **Edge On-demand Request Fact & Single Consumer**：Backend 唯一持久化 [[nodeskclaw-backend/app/models/connector/edge_artifact_on_demand_request.py#EdgeArtifactOnDemandRequest]] 请求事实，通过 `/internal/edge/artifacts/on-demand-requests` 供 Edge 出站拉取履约；在工件成功持久化后由 [[nodeskclaw-backend/app/services/connector/edge_node_service.py#EdgeNodeService#consume_on_demand_request]] 实施原子单次消费与代次校验。
 - **Security & SSRF Gates**：Connector 固定配置优先于动态参数，REST/MCP 严格拦截 169.254.169.254 及 link-local / internal 目标，DB 严格限制 SELECT/WITH 只读查询。
-- **Zero-DDL Startup & Alembic Migrations**：Agent 移除服务启动直接 DDL，全量 DDL 纳入 Alembic 迁移链管理；生产环境独立运行 `/health/live`（存活）与 `/health/ready`（就绪）探针，深度探测 Alembic head、StoragePort 隔离性与 Worker / Edge 心跳新鲜度。
+- **Zero-DDL Startup & Alembic Migrations**：Agent 移除服务启动直接 DDL，全量 DDL 纳入 Alembic 迁移链管理；生产环境独立运行 `/health/live`（存活）与 `/health/ready`（就绪）探针，深度探测唯一 Alembic head、StoragePort `probe_isolation`、Worker 首次成功 loop 与 Edge heartbeat 新鲜度，并返回稳定 readiness `codes`。
 - **Identity Rotation**：Agent 内部鉴权支持 `SKILL_AGENT_INTERNAL_TOKEN_PREVIOUS` 双密钥平滑轮换，暴露 `/health` 与 `/metrics` 探针。
 
 ## Owners

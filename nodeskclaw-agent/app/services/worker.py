@@ -111,12 +111,12 @@ class RunWorker:
         self._running = False
         self._worker_id = uuid.uuid4().hex[:12]
         self.last_loop_at: datetime | None = None
+        self.last_successful_loop_at: datetime | None = None
 
     async def start(self) -> None:
         self._running = True
         logger.info("SkillAgent RunWorker started worker_id=%s", self._worker_id)
         while self._running:
-            self.last_loop_at = datetime.now(timezone.utc)
             try:
                 await self._recover_stale_runs()
                 claimed = await self._claim_one()
@@ -124,6 +124,8 @@ class RunWorker:
                     await self._execute(claimed)
                 else:
                     await asyncio.sleep(settings.SKILL_AGENT_WORKER_INTERVAL_SECONDS)
+                self.last_loop_at = datetime.now(timezone.utc)
+                self.last_successful_loop_at = datetime.now(timezone.utc)
             except asyncio.CancelledError:
                 raise
             except Exception:

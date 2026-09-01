@@ -860,11 +860,23 @@ async def test_storage_port_sha256_and_size_integrity(tmp_path):
     with pytest.raises(StorageIntegrityError, match="size mismatch"):
         await local_driver.write("r1/a3.bin", content, expected_size=999)
 
-    # 4. S3 driver integrity check
-    s3_driver = S3StorageDriver()
+    # 4. S3 driver integrity check uses isolated client operations
+    from unittest.mock import AsyncMock
+
+    s3_driver = S3StorageDriver(
+        endpoint="http://127.0.0.1:9000",
+        bucket="test-bucket",
+        access_key="test-key",
+        secret_key="test-secret",
+        region="us-east-1",
+    )
+    s3_driver._client.put_object = AsyncMock()
+    s3_driver._client.get_object = AsyncMock(return_value=content)
+    s3_driver._client.head_object = AsyncMock(return_value={"size_bytes": len(content), "sha256": correct_sha256})
     s3_res = await s3_driver.write("r1/s3_a1.bin", content, expected_sha256=correct_sha256, expected_size=len(content))
-    assert s3_res["storage_ref"] == "s3://nodeskclaw-artifacts/r1/s3_a1.bin"
-    assert await s3_driver.read("r1/s3_a1.bin") == content
+    assert s3_res["storage_ref"] == "s3://test-bucket/r1/s3_a1.bin"
+    read_back = await s3_driver.read("r1/s3_a1.bin")
+    assert read_back == content
 
 
 @pytest.mark.asyncio

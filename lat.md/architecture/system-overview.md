@@ -35,7 +35,7 @@ Portal 页面不得散落 axios；LLM Proxy 不得承载 Portal UI 逻辑。
 
 权威数据在火山云 RDS PostgreSQL；启动走 Alembic `upgrade head`，禁止依赖 `create_all` 作为生产建表路径。Skill Agent 在同一库使用独立 schema `agent` 存放 Run / Event SoT（见 [[decisions/skill-platform-execution]]）。
 
-软删除与 Partial Unique Index 是全库不变量（[[decisions/soft-delete]]）。对象存储经 `storage_service`（S3 + 本地双后端）服务共享文件与产物。AutoTask 自有库含 `task_successor_jobs` 与 `rpa_runs.output`（迁移 `7c1f4d8e2a90`，见 [[task#Schema Migration Successor]]）。
+软删除与 Partial Unique Index 是全库不变量（[[decisions/soft-delete]]）。Backend 共享文件经 `storage_service`（S3 + 本地双后端）；Skill Agent 工件经独立 [[nodeskclaw-agent/app/services/storage_port.py#StoragePort]]（local 或真实 S3 兼容后端，验收拓扑用 MinIO），不复用 Backend `storage_service`。AutoTask 自有库含 `task_successor_jobs` 与 `rpa_runs.output`（迁移 `7c1f4d8e2a90`，见 [[task#Schema Migration Successor]]）。
 
 ## Security Boundaries
 

@@ -6,6 +6,42 @@ from fastapi.testclient import TestClient
 from app.config import settings
 from app.db import get_db
 from app.schemas import RunView
+from app.services.readiness import expected_alembic_heads
+
+DEFAULT_HEAD = next(iter(expected_alembic_heads()))
+
+
+def _mock_session_local(monkeypatch, mock_db: AsyncMock) -> None:
+    import app.main as main_module
+
+    class _SessionCtx:
+        async def __aenter__(self):
+            return mock_db
+
+        async def __aexit__(self, *args):
+            return False
+
+    monkeypatch.setattr(main_module, "SessionLocal", lambda: _SessionCtx())
+
+
+def _default_health_mock_db() -> AsyncMock:
+    mock_db = AsyncMock()
+    mock_ok = MagicMock()
+    mock_version = MagicMock()
+    mock_version.fetchall.return_value = [(DEFAULT_HEAD,)]
+    run_res = MagicMock()
+    run_res.mappings.return_value.first.return_value = None
+
+    async def _execute(sql, *args, **kwargs):
+        sql_text = str(sql)
+        if "alembic_version" in sql_text:
+            return mock_version
+        if 'FROM "' in sql_text and ".runs" in sql_text:
+            return run_res
+        return mock_ok
+
+    mock_db.execute = AsyncMock(side_effect=_execute)
+    return mock_db
 
 
 def _client(monkeypatch, mock_db=None):
@@ -14,11 +50,9 @@ def _client(monkeypatch, mock_db=None):
     import app.main as main_module
 
     if mock_db is None:
-        mock_db = AsyncMock()
-        mock_res = MagicMock()
-        mock_res.mappings.return_value.first.return_value = None
-        mock_res.first.return_value = ("0001_initial_agent_schema",)
-        mock_db.execute.return_value = mock_res
+        mock_db = _default_health_mock_db()
+
+    _mock_session_local(monkeypatch, mock_db)
 
     async def _override_db():
         yield mock_db
@@ -267,12 +301,23 @@ def test_dual_token_grace_period_rotation(monkeypatch):
         assert r3.status_code == 401
 
 
-def test_health_and_metrics_endpoints(monkeypatch):
+def test_health_and_metrics_endpoints(monkeypatch, tmp_path):
     mock_db = AsyncMock()
-    # Mock for metrics query
     mapping_res = MagicMock()
     mapping_res.mappings.return_value.all.return_value = [{"status": "COMPLETED", "count": 5}]
-    mock_db.execute = AsyncMock(return_value=mapping_res)
+    mock_version = MagicMock()
+    mock_version.fetchall.return_value = [(DEFAULT_HEAD,)]
+
+    async def _execute(sql, *args, **kwargs):
+        sql_text = str(sql)
+        if "alembic_version" in sql_text:
+            return mock_version
+        if "runs" in sql_text and "GROUP BY" in sql_text:
+            return mapping_res
+        return MagicMock()
+
+    mock_db.execute = AsyncMock(side_effect=_execute)
+    monkeypatch.setattr(settings, "SKILL_AGENT_ARTIFACT_DIR", str(tmp_path))
 
     for client in _client(monkeypatch, mock_db=mock_db):
         # Health check

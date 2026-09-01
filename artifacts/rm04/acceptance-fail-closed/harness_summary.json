@@ -1,0 +1,7 @@
+{
+  "status": "FAILED",
+  "error": "Docker daemon unavailable",
+  "compose_file": "docker-compose.acceptance.yml",
+  "scenarios": [],
+  "faults": []
+}

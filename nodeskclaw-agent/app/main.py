@@ -1,7 +1,7 @@
 import asyncio
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 import logging
-import os
 from typing import Any
 
 import httpx
@@ -11,9 +11,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.internal_runs import router as internal_runs_router
 from app.config import alembic_version_relation, settings
-from app.db import get_db
+from app.db import SessionLocal, get_db
 from app.services.edge_worker import EdgeWorker
-from app.services.storage_port import get_storage_driver
+from app.services.readiness import expected_alembic_heads
+from app.services.storage_port import StorageProbeError, get_storage_driver
 from app.services.worker import RunWorker
 
 logger = logging.getLogger(__name__)
@@ -21,8 +22,6 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # DDL operations are strictly handled by Alembic migrations.
-    # App startup maintains zero-DDL policy in production.
     worker_task = None
     worker = None
     if settings.SKILL_AGENT_WORKER_ENABLED:
@@ -57,121 +56,282 @@ async def health_live():
     }
 
 
+def _append_failure(
+    checks: dict[str, bool],
+    reasons: list[str],
+    codes: list[str],
+    check_key: str,
+    code: str,
+    reason: str,
+) -> None:
+    checks[check_key] = False
+    codes.append(code)
+    reasons.append(reason)
+
+
 @app.get("/health/ready")
 @app.get("/healthz/ready")
 @app.get("/health")
-async def health_ready(response: Response, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+async def health_ready(response: Response) -> dict[str, Any]:
     reasons: list[str] = []
+    codes: list[str] = []
+    is_edge = settings.SKILL_AGENT_ROLE == "edge"
     checks: dict[str, bool] = {
-        "database": True,
-        "migration": True,
         "config_security": True,
-        "artifact_storage": True,
-        "credential_broker": True,
         "worker": True,
     }
+    if not is_edge:
+        checks.update({"database": True, "migration": True, "artifact_storage": True, "credential_broker": True})
 
-    # 1. DB connectivity
     db_ok = True
-    try:
-        await db.execute(text("SELECT 1"))
-    except Exception:
-        db_ok = False
-        checks["database"] = False
-        reasons.append("database connectivity check failed")
-        logger.exception("database health check failed")
-
-    # 2. Migration status (alembic_version)
-    if db_ok:
+    if not is_edge:
         try:
-            res = await db.execute(
-                text(f"SELECT version_num FROM {alembic_version_relation()} LIMIT 1")
-            )
-            version_row = res.first()
-            if not version_row or not version_row[0]:
-                checks["migration"] = False
-                reasons.append("alembic migration head missing")
-        except Exception:
-            # Table might not exist yet if not migrated
-            checks["migration"] = False
-            reasons.append("alembic_version check failed")
+            async with SessionLocal() as db:
+                await db.execute(text("SELECT 1"))
 
-    # 3. Safe production config check
+                try:
+                    expected_heads = expected_alembic_heads()
+                    if len(expected_heads) != 1:
+                        _append_failure(
+                            checks,
+                            reasons,
+                            codes,
+                            "migration",
+                            "migration.multiple_heads",
+                            "multiple alembic heads configured in code",
+                        )
+                    else:
+                        expected_head = next(iter(expected_heads))
+                        res = await db.execute(
+                            text(f"SELECT version_num FROM {alembic_version_relation()}")
+                        )
+                        db_versions = {row[0] for row in res.fetchall() if row and row[0]}
+                        if not db_versions:
+                            _append_failure(
+                                checks,
+                                reasons,
+                                codes,
+                                "migration",
+                                "migration.head_missing",
+                                "alembic migration head missing",
+                            )
+                        elif db_versions != {expected_head}:
+                            _append_failure(
+                                checks,
+                                reasons,
+                                codes,
+                                "migration",
+                                "migration.head_mismatch",
+                                f"alembic migration head mismatch: db={sorted(db_versions)} expected={expected_head}",
+                            )
+                except Exception:
+                    checks["migration"] = False
+                    codes.append("migration.check_failed")
+                    reasons.append("alembic_version check failed")
+                    logger.exception("migration health check failed")
+        except Exception:
+            db_ok = False
+            checks["database"] = False
+            codes.append("database.connectivity_failed")
+            reasons.append("database connectivity check failed")
+            logger.exception("database health check failed")
+
     if not settings.SKILL_AGENT_INSECURE_MODE:
         if settings.SKILL_AGENT_INTERNAL_TOKEN in ("change-me-skill-agent-token", "", "default"):
-            checks["config_security"] = False
-            reasons.append("insecure default internal token in production")
+            _append_failure(
+                checks,
+                reasons,
+                codes,
+                "config_security",
+                "config.security.insecure_token",
+                "insecure default internal token in production",
+            )
 
-        if settings.SKILL_AGENT_ARTIFACT_DIR.startswith("/tmp") or settings.SKILL_AGENT_ARTIFACT_DIR.startswith("\\tmp"):
-            checks["config_security"] = False
-            reasons.append("ephemeral artifact directory configured in production")
+        if settings.SKILL_AGENT_ARTIFACT_DIR.startswith("/tmp") or settings.SKILL_AGENT_ARTIFACT_DIR.startswith(
+            "\\tmp"
+        ):
+            _append_failure(
+                checks,
+                reasons,
+                codes,
+                "config_security",
+                "config.security.ephemeral_artifact_dir",
+                "ephemeral artifact directory configured in production",
+            )
 
-        if settings.SKILL_AGENT_ROLE == "edge":
+        if is_edge:
             if not settings.SKILL_AGENT_EDGE_TOKEN:
-                checks["config_security"] = False
-                reasons.append("missing edge token")
+                _append_failure(
+                    checks,
+                    reasons,
+                    codes,
+                    "config_security",
+                    "config.security.missing_edge_token",
+                    "missing edge token",
+                )
             if not settings.SKILL_AGENT_EDGE_NODE_ID:
-                checks["config_security"] = False
-                reasons.append("missing edge node id")
+                _append_failure(
+                    checks,
+                    reasons,
+                    codes,
+                    "config_security",
+                    "config.security.missing_edge_node_id",
+                    "missing edge node id",
+                )
             if not settings.SKILL_AGENT_CENTRAL_BASE_URL.startswith("https://"):
-                checks["config_security"] = False
-                reasons.append("insecure edge central base url (must be https://)")
+                _append_failure(
+                    checks,
+                    reasons,
+                    codes,
+                    "config_security",
+                    "config.security.insecure_edge_central_url",
+                    "insecure edge central base url (must be https://)",
+                )
 
-    # 4. StoragePort isolation probe
-    try:
-        if settings.SKILL_AGENT_ROLE != "edge":
+    if not is_edge:
+        driver = None
+        try:
             driver = get_storage_driver()
-            # Probe driver instance readiness without polluting business data
-            if hasattr(driver, "exists"):
-                res_exists = driver.exists(".probe_health_check_nonexistent")
-                if asyncio.iscoroutine(res_exists):
-                    await res_exists
-        else:
-            os.makedirs(settings.SKILL_AGENT_ARTIFACT_DIR, exist_ok=True)
-    except Exception as exc:
-        checks["artifact_storage"] = False
-        reasons.append(f"cannot create or access artifact storage directory: {exc}")
+            probe_result = await driver.probe_isolation()
+            if probe_result.get("cleanup_failed"):
+                _append_failure(
+                    checks,
+                    reasons,
+                    codes,
+                    "artifact_storage",
+                    "storage.probe.cleanup_failed",
+                    "storage probe cleanup failed",
+                )
+        except StorageProbeError as exc:
+            _append_failure(
+                checks,
+                reasons,
+                codes,
+                "artifact_storage",
+                "storage.probe.failed",
+                f"storage probe failed: {exc}",
+            )
+        except Exception as exc:
+            _append_failure(
+                checks,
+                reasons,
+                codes,
+                "artifact_storage",
+                "storage.probe.failed",
+                f"storage probe failed: {exc}",
+            )
+        finally:
+            if driver is not None:
+                try:
+                    await driver.close()
+                except Exception as exc:
+                    _append_failure(
+                        checks,
+                        reasons,
+                        codes,
+                        "artifact_storage",
+                        "storage.probe.close_failed",
+                        f"storage probe client close failed: {exc}",
+                    )
+    stale_after = timedelta(seconds=settings.SKILL_AGENT_READINESS_STALE_SECONDS)
+    now = datetime.now(timezone.utc)
 
-    # 5. Worker loop / edge heartbeat freshness check
-    if settings.SKILL_AGENT_WORKER_ENABLED:
+    if is_edge:
         worker_inst = getattr(app.state, "worker", None)
         if not worker_inst:
-            checks["worker"] = False
-            reasons.append("worker enabled but worker instance not found")
+            _append_failure(
+                checks,
+                reasons,
+                codes,
+                "worker",
+                "edge.heartbeat.missing",
+                "edge worker heartbeat missing",
+            )
         else:
-            if settings.SKILL_AGENT_ROLE == "edge":
-                # Edge role: verify last_heartbeat_at
-                last_hb = getattr(worker_inst, "last_heartbeat_at", None)
-                if last_hb is not None:
-                    from datetime import datetime, timedelta, timezone
-                    if datetime.now(timezone.utc) - last_hb > timedelta(seconds=120):
-                        checks["worker"] = False
-                        reasons.append("edge worker heartbeat stale")
-            else:
-                # Central role: verify last_loop_at
-                last_loop = getattr(worker_inst, "last_loop_at", None)
-                if last_loop is not None:
-                    from datetime import datetime, timedelta, timezone
-                    if datetime.now(timezone.utc) - last_loop > timedelta(seconds=120):
-                        checks["worker"] = False
-                        reasons.append("central run worker loop stale")
+            last_hb = getattr(worker_inst, "last_heartbeat_at", None)
+            if last_hb is None:
+                _append_failure(
+                    checks,
+                    reasons,
+                    codes,
+                    "worker",
+                    "edge.heartbeat.missing",
+                    "edge worker heartbeat missing",
+                )
+            elif now - last_hb > stale_after:
+                _append_failure(
+                    checks,
+                    reasons,
+                    codes,
+                    "worker",
+                    "edge.heartbeat.stale",
+                    "edge worker heartbeat stale",
+                )
+    elif settings.SKILL_AGENT_WORKER_ENABLED:
+        worker_inst = getattr(app.state, "worker", None)
+        if not worker_inst:
+            _append_failure(
+                checks,
+                reasons,
+                codes,
+                "worker",
+                "worker.instance_missing",
+                "worker enabled but worker instance not found",
+            )
+        else:
+            last_success = getattr(worker_inst, "last_successful_loop_at", None)
+            if last_success is None:
+                _append_failure(
+                    checks,
+                    reasons,
+                    codes,
+                    "worker",
+                    "worker.loop.missing",
+                    "central run worker successful loop missing",
+                )
+            elif now - last_success > stale_after:
+                _append_failure(
+                    checks,
+                    reasons,
+                    codes,
+                    "worker",
+                    "worker.loop.stale",
+                    "central run worker loop stale",
+                )
 
-    # 6. Credential Broker check (production readiness)
-    if not settings.SKILL_AGENT_INSECURE_MODE:
+    if not is_edge and not settings.SKILL_AGENT_INSECURE_MODE:
         if not settings.SKILL_AGENT_CENTRAL_BASE_URL:
-            checks["credential_broker"] = False
-            reasons.append("missing central base url for credential broker")
+            _append_failure(
+                checks,
+                reasons,
+                codes,
+                "credential_broker",
+                "credential_broker.missing_base_url",
+                "missing central base url for credential broker",
+            )
         else:
             try:
                 async with httpx.AsyncClient(timeout=httpx.Timeout(2.0, connect=1.0)) as client:
-                    broker_health = f"{settings.SKILL_AGENT_CENTRAL_BASE_URL.rstrip('/')}/api/health"
+                    broker_health = f"{settings.SKILL_AGENT_CENTRAL_BASE_URL.rstrip('/')}/api/v1/health"
                     res = await client.get(broker_health)
                     if res.status_code >= 500:
-                        checks["credential_broker"] = False
-                        reasons.append("credential broker returned server error")
+                        _append_failure(
+                            checks,
+                            reasons,
+                            codes,
+                            "credential_broker",
+                            "credential_broker.server_error",
+                            "credential broker returned server error",
+                        )
             except Exception:
-                checks["credential_broker"] = False
-                reasons.append("credential broker connectivity check failed")
+                _append_failure(
+                    checks,
+                    reasons,
+                    codes,
+                    "credential_broker",
+                    "credential_broker.connectivity_failed",
+                    "credential broker connectivity check failed",
+                )
 
     all_ok = all(checks.values())
     if not all_ok:
@@ -182,10 +342,11 @@ async def health_ready(response: Response, db: AsyncSession = Depends(get_db)) -
 
     return {
         "status": status_str,
-        "database": "connected" if db_ok else "disconnected",
+        "database": "not_required" if is_edge else "connected" if db_ok else "disconnected",
         "service": "nodeskclaw-agent",
         "role": settings.SKILL_AGENT_ROLE,
         "checks": checks,
+        "codes": codes,
         "reasons": reasons,
     }
 

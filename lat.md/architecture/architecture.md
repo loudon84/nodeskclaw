@@ -4,7 +4,7 @@
 
 - [[system-overview]] — 总体请求路径、分层、数据存储与安全边界
 - [[backend]] — FastAPI 后端、双前缀 API、租户鉴权、Hermes/MCP 与 Skill Run 投影
-- [[skill-agent]] — Skill Run 执行平面、Worker 调度、Attempt Fencing、Hermes/Connector 引擎与 Edge Spool
+- [[skill-agent]] — Skill Run 执行平面、Worker 调度、Attempt Fencing、严格就绪探针、StoragePort 与验收 Harness
 - [[portal]] — 用户门户页面域、API 客户端、i18n 与可视化
 - [[llm-proxy]] — LLM 转发、HMAC 归因、额度预检与用量记录
 - [[knowledge]] — 知识治理、ACL、安全检索、评测与 RAGFlow Adapter

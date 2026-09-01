@@ -55,6 +55,12 @@ Cancel-safe：RUNNING 取消后 Worker 不得 `mark_completed`。Retry 复制 ro
 
 员工 Skill-first 合同族由同脚本 `generate --family skill-run` 产出到 `contracts/skill-run/v1.0.0/` 与 `v1.1.0/`，**不得**改写本目录 checksum（见 [[decisions/skill-platform-execution]]）。
 
+## External Consumer Boundary
+
+Work 是仓外合同 Consumer（消费者）；本仓负责 Backend、Agent 与版本化合同，不负责外部前端源码、构建或发布。
+
+外部前端提出的新字段或行为必须先进入合同修订与审查，Consumer 按批准版本适配，Backend 再从同一合同推导实现和符合性测试。禁止通过读取外部前端实现反向形成未版本化的 Backend 行为，已发布合同目录、tag target 与 checksum 继续保持不可变。
+
 ## OpenAPI Coverage
 
 合同 OpenAPI 子集覆盖 13 条路径；200 响应不得为 `schema: {}`。v1.0.2 另要求 `tools/list` annotations 不得仅是开放 object，清单见 [[nodeskclaw-backend/app/contracts/work_expert/constants.py#WORK_EXPERT_OPENAPI_PATHS]]。
