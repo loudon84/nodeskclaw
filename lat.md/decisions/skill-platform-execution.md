@@ -10,8 +10,8 @@ v1.6 保持既有 Production Owner 与信任边界，以独立 Roadmap Item 关�
 
 - Approved Architecture（已批准架构）：[AD-SKILL-AGENT-V16](../../docs_agent/architecture/AD-SKILL-AGENT-V16.md)。
 - Active Roadmap（活动路线图）：[ROADMAP-SKILL-AGENT-V16](../../docs_agent/roadmaps/ROADMAP-SKILL-AGENT-V16.md)。
-- Current Stage PRD（当前阶段需求）：[RM-04 Strict Readiness 与 Production Acceptance](../../docs_agent/prd-v1.6.3-strict-readiness-production-acceptance.md)，PRD 状态为 `APPROVED`（已批准）；Roadmap Item 仍为 `IN_PRD`，待 Implementation Commit 与 Verification Evidence。前序 RM-01–RM-03 已分别关闭 Catalog、语义事件与 Edge Bundle 合同。
-- Next Stage PRD（下一阶段需求）：[RM-05 Connector Runtime Execution Closure](../../docs_agent/prd-v1.6.4-connector-runtime-execution-closure.md)，状态为 `REVIEW_REQUIRED`（待审查）；其依赖 RM-03，可与仍在生产证据闭环中的 RM-04 并行推进。
+- Current Stage PRD（当前阶段需求）：[RM-05 Connector Runtime Execution Closure](../../docs_agent/prd-v1.6.4-connector-runtime-execution-closure.md)，PRD 状态为 `APPROVED`（已批准）；Roadmap Item 待 Implementation Commit 与 Verification Evidence 更新为 `DONE`。前序 RM-01–RM-03 已分别关闭 Catalog、语义事件与 Edge Bundle 合同。
+- Parallel Stage PRD（并行阶段需求）：[RM-04 Strict Readiness 与 Production Acceptance](../../docs_agent/prd-v1.6.3-strict-readiness-production-acceptance.md)，状态为 `APPROVED`（已批准）；其生产验收证据闭环独立于 RM-05。
 - RM-01：[Catalog 与 Run Control](../../docs_agent/prd-v1.6.0-skill-catalog-and-run-control.md)（`APPROVED`）。
 - RM-02：[Semantic Run Events](../../docs_agent/prd-v1.6.1-semantic-run-events.md)（`APPROVED`）。
 - RM-03：[Edge Published Bundle Lifecycle](../../docs_agent/prd-v1.6.2-edge-published-bundle-lifecycle.md)（`APPROVED`）。
@@ -35,7 +35,7 @@ Architecture Closure 与 Acceptance Hardening (v1.5) 确立了 Run 生产执行�
 - **Installation Desired/Actual Reconcile & Edge Side Effects**：Backend 维护 Desired 状态与单调代次 `desired_generation`，在 Desired 中钉住 Published Bundle 描述符并通过 Internal Edge 授权下载字节流；Edge 节点通过 [[nodeskclaw-agent/app/services/edge_skill_installer.py#EdgeSkillInstaller]] 在本地隔离目录完成暂存、校验、原子激活与卸载后，向 [[nodeskclaw-backend/app/api/internal_edge.py#report_installation_actual]] 上报 `actual_status`；仅同代 `ready` / `uninstalled` / `removed` 对齐 `actual_generation`，同代 `error` / `failed` 不对齐以便重试；严格校验 `edge_node_id` 归属并拒绝过期代次上报，Backend 不执行生产安装文件副作用。
 - **Persistent StoragePort & Trace Invariants**：工件存储收敛至 StoragePort（[[nodeskclaw-agent/app/services/storage_port.py#S3StorageDriver]] 走 httpx + SigV4 真实 S3 兼容后端；[[nodeskclaw-agent/app/services/storage_port.py#StoragePort#probe_isolation]] 供 readiness 探针），生产环境禁用 `/tmp` 临时路径，按 SHA256 与 `idempotency_key` 幂等防冲突持久化；`request_trace_id` 贯穿 Snapshot、Event、EdgeJob 与 Artifact。
 - **Edge On-demand Request Fact & Single Consumer**：Backend 唯一持久化 [[nodeskclaw-backend/app/models/connector/edge_artifact_on_demand_request.py#EdgeArtifactOnDemandRequest]] 请求事实，通过 `/internal/edge/artifacts/on-demand-requests` 供 Edge 出站拉取履约；在工件成功持久化后由 [[nodeskclaw-backend/app/services/connector/edge_node_service.py#EdgeNodeService#consume_on_demand_request]] 实施原子单次消费与代次校验。
-- **Security & SSRF Gates**：Connector 固定配置优先于动态参数，REST/MCP 严格拦截 169.254.169.254 及 link-local / internal 目标，DB 严格限制 SELECT/WITH 只读查询。
+- **Connector Runtime Closure（RM-05）**：Connector 规范快照冻结可执行 Binding 描述符；Mapper 只创建 Agent Run，Worker 是 Direct/Hybrid EdgeJob 的唯一派发 Owner，并将每个 Edge Binding 变为可直接执行的 Connector route。SecretRef 仅以 opaque ID 穿越 Snapshot 并在 Adapter 调用时解析；REST/MCP 对 DNS、IP 与重定向逐跳复核，连接固定到验证 IP 同时保留 Host/SNI，中心拒私网、Edge 只匹配从 Config 冻结的 host/CIDR/port allowlist、元数据永久拒绝；DB 只允许单条无写关键字查询且只读事务建立失败即拒绝执行；`cancel_event` 可中断 Adapter I/O 并阻止竞态 `run.completed`，Run cancel 将已派发 EdgeJob 标记为 cancel requested，Worker 在创建前后重查 Run 并对取消窗口中新建的同组织 Job 立即补写该标记。服务端 metadata 派生审批，客户端不可降低要求。
 - **Zero-DDL Startup & Alembic Migrations**：Agent 移除服务启动直接 DDL，全量 DDL 纳入 Alembic 迁移链管理；生产环境独立运行 `/health/live`（存活）与 `/health/ready`（就绪）探针，深度探测唯一 Alembic head、StoragePort `probe_isolation`、Worker 首次成功 loop 与 Edge heartbeat 新鲜度，并返回稳定 readiness `codes`。
 - **Identity Rotation**：Agent 内部鉴权支持 `SKILL_AGENT_INTERNAL_TOKEN_PREVIOUS` 双密钥平滑轮换，暴露 `/health` 与 `/metrics` 探针。
 

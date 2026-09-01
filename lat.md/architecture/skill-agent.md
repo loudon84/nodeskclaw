@@ -75,10 +75,13 @@ Hermes Skill 执行适配与短期凭证租约已经实现，正式验收仍由�
 
 ## Connector Center Execution
 
-Connector 的中心执行路由和主要安全门禁已经实现。
+Connector Runtime 以冻结的规范路由快照、Agent 唯一派发和运行时最小权限门禁执行 REST、MCP 与数据库工具。
 
-- **已实现**：[[nodeskclaw-agent/app/services/connector_router.py#execute_connector_run]] 只使用 Backend Snapshot 中的固定 Connector 配置，拒绝业务参数覆盖 URL、认证头或数据库连接串。
-- **已实现**：REST/MCP 请求阻断云元数据、link-local 和受限内部地址；数据库连接器只接受 `SELECT` 与 `WITH` 开头的只读查询。
+- **已实现**：[[nodeskclaw-backend/app/services/hermes_skill/runtime_skill_run_service.py#RuntimeSkillRunService#_resolve_placement]] 冻结每个 Release Binding 的实例、类型、配置、SecretRef、placement 与 Edge 节点描述符；[[nodeskclaw-agent/app/services/worker.py#RunWorker#_execute]] 只把 `runtime_policy` 作为 Adapter 的规范 flat route。
+- **已实现**：[[nodeskclaw-backend/app/services/hermes_skill/mcp_tool_mapper.py#McpToolMapper#_call_connector_tool]] 仅创建 Agent Run；Direct Edge 与 Hybrid Edge 均由 Worker 以 `(run_id, attempt_id, generation, step_id)` 幂等键单次入队，中心端不会直接执行 Edge Connector。
+- **已实现**：[[nodeskclaw-agent/app/services/connector_router.py#execute_connector_run]] 只使用冻结 Connector 配置，拒绝业务参数覆盖 URL、认证头或数据库连接串；SecretRef 保持 opaque，[[nodeskclaw-agent/app/services/secret_store.py#SecretStore]] 仅在 Adapter 调用点 fail-closed 解析。
+- **已实现**：REST/MCP 对每个请求和重定向目标执行 DNS/IP 复核，并将连接固定到已验证 IP（保留原 Host/SNI）；中心端拒绝私网，Edge 必须匹配从 Connector Config 冻结的 host/CIDR/port allowlist，云元数据目标永久拒绝。数据库只接受单条无写关键字的 `SELECT`/`WITH`，在只读事务与 statement timeout 建立成功后才执行；`cancel_event` 会取消进行中的 HTTP/MCP/DB I/O，竞态完成不得再写出 `run.completed`，Worker 在 EdgeJob 创建前后同步重查 Run；若取消先于新 Job 的批量标记，Worker 用内部同组织接口立即补写该 Job 的取消标记。
+- **已实现**：服务端 Tool metadata 派生 `requires_approval`，客户端只能加严不能降级；该值写入 Agent Run/outbox 并在执行前作为审批门禁。
 
 ## Edge Worker And Spooling
 
