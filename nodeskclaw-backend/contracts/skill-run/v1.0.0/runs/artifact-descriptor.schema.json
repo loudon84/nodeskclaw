@@ -1,4 +1,5 @@
 {
+  "additionalProperties": false,
   "properties": {
     "artifact_id": {
       "title": "Artifact Id",
@@ -21,46 +22,20 @@
       "title": "Content Type"
     },
     "size_bytes": {
-      "anyOf": [
-        {
-          "type": "integer"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Size Bytes"
-    },
-    "download_url": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Download Url"
+      "title": "Size Bytes",
+      "type": "integer"
     },
     "checksum_sha256": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Checksum Sha256"
+      "title": "Checksum Sha256",
+      "type": "string"
     }
   },
   "required": [
     "artifact_id",
-    "name"
+    "name",
+    "size_bytes",
+    "checksum_sha256"
   ],
-  "title": "ArtifactDescriptor",
+  "title": "PublicArtifactDescriptor",
   "type": "object"
 }

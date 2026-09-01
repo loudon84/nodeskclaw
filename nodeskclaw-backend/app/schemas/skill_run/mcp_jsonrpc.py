@@ -1,6 +1,6 @@
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class SkillToolAnnotations(BaseModel):
@@ -137,6 +137,100 @@ class SkillToolDescriptorV11(BaseModel):
 
 class ToolsListResultV11(BaseModel):
     tools: list[SkillToolDescriptorV11] = Field(default_factory=list)
+
+
+class PublicContractModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class PublicSkillToolAnnotations(PublicContractModel):
+    category: str | None = None
+    riskLevel: Literal["low", "medium", "high", "critical"] = "low"
+    requiresApproval: bool = False
+    streaming: bool = True
+    artifacts: bool = True
+    version: str | None = None
+
+
+class PublicSkillToolDescriptor(PublicContractModel):
+    name: str
+    title: str
+    description: str
+    inputSchema: dict[str, Any]
+    version: str
+    category: str | None = None
+    capabilityKind: Literal["skill"]
+    interactionMode: Literal["chat", "form"]
+    promptField: str | None = None
+    supportsAttachments: bool = False
+    annotations: PublicSkillToolAnnotations
+
+
+class PublicToolsListResult(PublicContractModel):
+    tools: list[PublicSkillToolDescriptor] = Field(default_factory=list)
+
+
+class PublicMcpTextContent(PublicContractModel):
+    type: Literal["text"]
+    text: str
+
+
+class PublicSkillRunAccepted(PublicContractModel):
+    committed: Literal[True]
+    run_id: str
+    status: RunStatus
+    tool_name: str
+    event_stream: str
+    result_url: str
+    artifact_url: str
+    execution_mode: Literal["async_event"]
+
+
+class PublicToolsCallAccepted(PublicContractModel):
+    content: list[PublicMcpTextContent] = Field(default_factory=list)
+    structuredContent: PublicSkillRunAccepted
+    isError: Literal[False]
+
+
+class PublicRunView(PublicContractModel):
+    run_id: str
+    tool_name: str
+    status: RunStatus
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+class PublicRunResult(PublicContractModel):
+    run_id: str
+    status: RunStatus
+    text: str | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+
+
+class PublicArtifactDescriptor(PublicContractModel):
+    artifact_id: str
+    name: str
+    content_type: str | None = None
+    size_bytes: int
+    checksum_sha256: str
+
+
+class PublicArtifactList(PublicContractModel):
+    run_id: str
+    items: list[PublicArtifactDescriptor] = Field(default_factory=list)
+
+
+class PublicArtifactDownloadResponse(PublicContractModel):
+    content_type: str
+    content_disposition: str
+    content_length: int
+    checksum_sha256: str
+
+
+class UnsupportedCapabilities(PublicContractModel):
+    approval: Literal["unsupported"]
+    attachments: Literal["unsupported"]
 
 
 class SkillRunAcceptedStructuredContentV11(BaseModel):

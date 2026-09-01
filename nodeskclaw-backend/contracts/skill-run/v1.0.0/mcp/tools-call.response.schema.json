@@ -1,9 +1,30 @@
 {
   "$defs": {
-    "SkillRunAcceptedStructuredContent": {
+    "PublicMcpTextContent": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "text",
+          "title": "Type",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "text"
+      ],
+      "title": "PublicMcpTextContent",
+      "type": "object"
+    },
+    "PublicSkillRunAccepted": {
+      "additionalProperties": false,
       "properties": {
         "committed": {
-          "default": true,
+          "const": true,
           "title": "Committed",
           "type": "boolean"
         },
@@ -12,20 +33,25 @@
           "type": "string"
         },
         "status": {
+          "enum": [
+            "CREATED",
+            "QUEUED",
+            "PREPARING",
+            "RUNNING",
+            "WAITING_APPROVAL",
+            "RESUMING",
+            "CANCELLING",
+            "COMPLETED",
+            "FAILED",
+            "CANCELLED",
+            "TIMED_OUT"
+          ],
           "title": "Status",
           "type": "string"
         },
         "tool_name": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Tool Name"
+          "title": "Tool Name",
+          "type": "string"
         },
         "event_stream": {
           "title": "Event Stream",
@@ -36,85 +62,51 @@
           "type": "string"
         },
         "artifact_url": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Artifact Url"
+          "title": "Artifact Url",
+          "type": "string"
         },
         "execution_mode": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": "async_event",
-          "title": "Execution Mode"
-        },
-        "message": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Message"
-        },
-        "request_trace_id": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Request Trace Id"
+          "const": "async_event",
+          "title": "Execution Mode",
+          "type": "string"
         }
       },
       "required": [
+        "committed",
         "run_id",
         "status",
+        "tool_name",
         "event_stream",
-        "result_url"
+        "result_url",
+        "artifact_url",
+        "execution_mode"
       ],
-      "title": "SkillRunAcceptedStructuredContent",
+      "title": "PublicSkillRunAccepted",
       "type": "object"
     }
   },
+  "additionalProperties": false,
   "properties": {
     "content": {
       "items": {
-        "additionalProperties": true,
-        "type": "object"
+        "$ref": "#/$defs/PublicMcpTextContent"
       },
       "title": "Content",
       "type": "array"
     },
     "structuredContent": {
-      "$ref": "#/$defs/SkillRunAcceptedStructuredContent"
+      "$ref": "#/$defs/PublicSkillRunAccepted"
     },
     "isError": {
-      "default": false,
+      "const": false,
       "title": "Iserror",
       "type": "boolean"
     }
   },
   "required": [
-    "structuredContent"
+    "structuredContent",
+    "isError"
   ],
-  "title": "ToolsCallAcceptedResult",
+  "title": "PublicToolsCallAccepted",
   "type": "object"
 }

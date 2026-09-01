@@ -101,11 +101,10 @@ class RuntimeSkillRunService:
         )
 
         task_service = TaskService(self.db)
-        if request.idempotency_key and request.catalog_slug:
+        if request.idempotency_key:
             existing = await task_service.find_idempotent_task(
                 request.org_id,
                 request.user_id,
-                request.catalog_slug,
                 request.tool_name,
                 request.idempotency_key,
             )
