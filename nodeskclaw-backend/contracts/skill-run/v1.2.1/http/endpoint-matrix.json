@@ -1,0 +1,94 @@
+{
+  "authentication": "Authorization: Bearer <access-token>",
+  "sseReplay": {
+    "header": "Last-Event-ID",
+    "eventIdentity": "event_id",
+    "cache": "no-store"
+  },
+  "idempotency": {
+    "header": "X-Idempotency-Key",
+    "scope": "authenticated org_id + user_id + tool_name",
+    "ttlSeconds": 86400,
+    "conflict": {
+      "status": 409,
+      "errorCode": "IDEMPOTENCY_CONFLICT"
+    },
+    "replay": {
+      "status": 200,
+      "returns": "original accepted run_id"
+    }
+  },
+  "endpoints": [
+    {
+      "method": "POST",
+      "path": "/api/v1/mcp",
+      "operation": "tools/list",
+      "success": [
+        200
+      ],
+      "retry": "safe"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/mcp",
+      "operation": "tools/call",
+      "success": [
+        200
+      ],
+      "retry": "same-idempotency-key"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/runs/{run_id}",
+      "success": [
+        200
+      ],
+      "retry": "safe",
+      "cache": "no-store"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/runs/{run_id}/result",
+      "success": [
+        200
+      ],
+      "retry": "safe",
+      "cache": "no-store"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/runs/{run_id}/artifacts",
+      "success": [
+        200
+      ],
+      "retry": "safe",
+      "cache": "no-store"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/runs/{run_id}/artifacts/{artifact_id}/download",
+      "success": [
+        200
+      ],
+      "retry": "safe",
+      "cache": "no-store"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/runs/{run_id}/events",
+      "success": [
+        200
+      ],
+      "retry": "Last-Event-ID"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/runs/{run_id}/cancel",
+      "success": [
+        200,
+        409
+      ],
+      "retry": "safe"
+    }
+  ]
+}

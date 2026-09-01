@@ -1,0 +1,132 @@
+{
+  "$defs": {
+    "SkillRunAcceptedStructuredContentV11": {
+      "properties": {
+        "committed": {
+          "default": true,
+          "title": "Committed",
+          "type": "boolean"
+        },
+        "run_id": {
+          "title": "Run Id",
+          "type": "string"
+        },
+        "status": {
+          "title": "Status",
+          "type": "string"
+        },
+        "tool_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tool Name"
+        },
+        "event_stream": {
+          "title": "Event Stream",
+          "type": "string"
+        },
+        "result_url": {
+          "title": "Result Url",
+          "type": "string"
+        },
+        "artifact_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Artifact Url"
+        },
+        "execution_mode": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": "async_event",
+          "title": "Execution Mode"
+        },
+        "message": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Message"
+        },
+        "request_trace_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Request Trace Id"
+        },
+        "contract_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Contract Version"
+        }
+      },
+      "required": [
+        "run_id",
+        "status",
+        "event_stream",
+        "result_url"
+      ],
+      "title": "SkillRunAcceptedStructuredContentV11",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "content": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Content",
+      "type": "array"
+    },
+    "structuredContent": {
+      "$ref": "#/$defs/SkillRunAcceptedStructuredContentV11"
+    },
+    "isError": {
+      "default": false,
+      "title": "Iserror",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "structuredContent"
+  ],
+  "title": "ToolsCallAcceptedResultV11",
+  "type": "object"
+}

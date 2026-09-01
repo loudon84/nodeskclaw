@@ -205,6 +205,128 @@ def _write_json(path: Path, payload: dict) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+SKILL_RUN_PUBLIC_ARTIFACT_PATTERNS = (
+    "RELEASE.md",
+    "events/*.schema.json",
+    "mcp/*.schema.json",
+    "runs/*.schema.json",
+    "http/*.json",
+    "capabilities/*.json",
+    "fixtures/*",
+)
+
+SKILL_RUN_INTERNAL_RELATIVE_PREFIXES = (
+    "edge/",
+    "installations/",
+)
+SKILL_RUN_INTERNAL_RELATIVE_FILES = frozenset({"runs/execution-snapshot.schema.json"})
+
+
+def _normalize_lf(text: str) -> str:
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def _write_text_lf(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(_normalize_lf(text).encode("utf-8"))
+
+
+def _write_json_lf(path: Path, payload: Any) -> None:
+    _write_text_lf(path, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+
+
+def _skill_run_generated_at() -> str:
+    import os
+
+    epoch = os.environ.get("SOURCE_DATE_EPOCH")
+    if epoch:
+        return datetime.fromtimestamp(int(epoch), tz=timezone.utc).isoformat()
+    override = os.environ.get("CONTRACT_GENERATED_AT")
+    if override:
+        return override
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _is_frozen_skill_run_version(version: str) -> bool:
+    root = SKILL_RUN_CONTRACTS_HOME / f"v{version}"
+    return root.exists() and (root / "SHA256SUMS").exists()
+
+
+def _parse_sha256sums(checksum_path: Path) -> dict[str, str]:
+    return _parse_sha256sums_from_text(checksum_path.read_text(encoding="utf-8"))
+
+
+def _parse_sha256sums_from_text(text: str) -> dict[str, str]:
+    listed: dict[str, str] = {}
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        digest, relative = line.split("  ", 1)
+        listed[relative] = digest
+    return listed
+
+
+def _bundle_files_excluding_checksum(root: Path) -> set[str]:
+    excluded = {"SHA256SUMS", "consumer-lock.json"}
+    return {
+        path.relative_to(root).as_posix()
+        for path in root.rglob("*")
+        if path.is_file() and path.name not in excluded
+    }
+
+
+def _validate_skill_run_public_boundary(root: Path) -> None:
+    for relative in _bundle_files_excluding_checksum(root):
+        if relative in SKILL_RUN_INTERNAL_RELATIVE_FILES:
+            raise SystemExit(f"Internal Southbound artifact in Public bundle: {relative}")
+        if any(relative.startswith(prefix) for prefix in SKILL_RUN_INTERNAL_RELATIVE_PREFIXES):
+            raise SystemExit(f"Internal Southbound artifact in Public bundle: {relative}")
+
+
+def _validate_skill_run_checksums_exact(root: Path) -> None:
+    checksum_path = root / "SHA256SUMS"
+    if not checksum_path.exists():
+        raise SystemExit(f"SHA256SUMS missing: {root}")
+    raw_bytes = checksum_path.read_bytes()
+    if b"\r" in raw_bytes:
+        raise SystemExit(f"SHA256SUMS must be LF-only: {checksum_path}")
+    raw = raw_bytes.decode("utf-8")
+    listed = _parse_sha256sums_from_text(raw)
+    if "manifest.json" not in listed:
+        raise SystemExit("SHA256SUMS must include manifest.json")
+    if "SHA256SUMS" in listed or "consumer-lock.json" in listed:
+        raise SystemExit("SHA256SUMS must not list itself or consumer-lock.json")
+    actual = _bundle_files_excluding_checksum(root)
+    if set(listed) != actual:
+        missing = sorted(actual - set(listed))
+        extra = sorted(set(listed) - actual)
+        details: list[str] = []
+        if missing:
+            details.append(f"missing from SHA256SUMS: {missing}")
+        if extra:
+            details.append(f"extra in SHA256SUMS: {extra}")
+        raise SystemExit("SHA256SUMS closure mismatch: " + "; ".join(details))
+    for relative, digest in listed.items():
+        path = root / relative
+        if not path.is_file():
+            raise SystemExit(f"SHA256SUMS lists missing file: {relative}")
+        actual_digest = _sha256_file(path)
+        if actual_digest != digest:
+            raise SystemExit(f"SHA256 mismatch for {relative}")
+    manifest = _read_manifest(root)
+    artifacts = manifest.get("artifacts") or {}
+    for relative, digest in artifacts.items():
+        if relative == "manifest.json":
+            continue
+        path = root / relative
+        if not path.is_file():
+            raise SystemExit(f"manifest.artifacts lists missing file: {relative}")
+        if _sha256_file(path) != digest:
+            raise SystemExit(f"manifest hash mismatch for {relative}")
+        if listed.get(relative) != digest:
+            raise SystemExit(f"SHA256SUMS/manifest disagree on {relative}")
+
+
 def _artifact_files(root: Path) -> list[Path]:
     patterns = [
         "openapi.yaml",
@@ -221,6 +343,13 @@ def _artifact_files(root: Path) -> list[Path]:
     ]
     files: list[Path] = []
     for pattern in patterns:
+        files.extend(sorted(root.glob(pattern)))
+    return [path for path in files if path.is_file()]
+
+
+def _public_artifact_files(root: Path) -> list[Path]:
+    files: list[Path] = []
+    for pattern in SKILL_RUN_PUBLIC_ARTIFACT_PATTERNS:
         files.extend(sorted(root.glob(pattern)))
     return [path for path in files if path.is_file()]
 
@@ -776,7 +905,7 @@ def _validate_skill_run_fixtures(root: Path) -> None:
         jsonschema.validate(payload, schema)
 
 
-def _validate_skill_run_release(manifest: dict[str, Any]) -> None:
+def _validate_skill_run_release(manifest: dict[str, Any], *, version: str) -> None:
     implementation_commit = str(manifest.get("backendCommit") or "")
     tag_name = str(manifest.get("tagName") or "")
     if not implementation_commit or not tag_name:
@@ -807,37 +936,70 @@ def _validate_skill_run_release(manifest: dict[str, Any]) -> None:
         capture_output=True,
         text=True,
     )
-    if peeled_tag.returncode != 0 or peeled_tag.stdout.strip() != _git_head():
-        raise SystemExit(f"skill-run contract tag '{tag_name}' must point at the release commit")
+    if peeled_tag.returncode != 0:
+        raise SystemExit(f"skill-run contract tag '{tag_name}' could not be resolved")
+
+    peeled_commit = peeled_tag.stdout.strip()
+    if version == "1.2.1":
+        release_commit = str(manifest.get("releaseCommit") or peeled_commit)
+        if peeled_commit != release_commit:
+            raise SystemExit(
+                f"skill-run contract tag '{tag_name}' must point at releaseCommit {release_commit}"
+            )
+        contract_prefix = "nodeskclaw-backend/contracts/skill-run/v1.2.1/"
+    else:
+        if peeled_commit != _git_head():
+            raise SystemExit(f"skill-run contract tag '{tag_name}' must point at the release commit")
+        contract_prefix = "nodeskclaw-backend/contracts/skill-run/v1.0.0/"
 
     release_diff = subprocess.run(
-        ["git", "diff", "--name-only", f"{implementation_commit}..HEAD"],
+        ["git", "diff", "--name-only", f"{implementation_commit}..{peeled_commit}"],
         cwd=repository,
         capture_output=True,
         text=True,
         check=True,
     )
-    contract_prefix = "nodeskclaw-backend/contracts/skill-run/v1.0.0/"
     changed_paths = [path for path in release_diff.stdout.splitlines() if path]
     if not changed_paths or any(not path.startswith(contract_prefix) for path in changed_paths):
-        raise SystemExit("skill-run release commit may only contain the immutable v1.0.0 contract artifacts")
+        raise SystemExit(f"skill-run release commit may only contain immutable {version} contract artifacts")
 
 
-def _check_skill_run_contracts(release: bool = False) -> None:
-    skill_run_root = SKILL_RUN_CONTRACTS_HOME / "v1.0.0"
+def _check_skill_run_contracts(release: bool = False, version: str = "1.0.0") -> None:
+    skill_run_root = SKILL_RUN_CONTRACTS_HOME / f"v{version}"
     if not skill_run_root.exists():
         raise SystemExit(f"Skill-run contract directory missing: {skill_run_root}")
-    _validate_checksums(skill_run_root)
-    _validate_skill_run_fixtures(skill_run_root)
+    if version == "1.2.1":
+        _validate_skill_run_checksums_exact(skill_run_root)
+        _validate_skill_run_public_boundary(skill_run_root)
+        _validate_skill_run_fixtures(skill_run_root)
+        _validate_skill_run_v12_event_fixtures(skill_run_root)
+        _validate_skill_run_v12_negative_fixtures(skill_run_root)
+        _validate_skill_run_v11_negative_fixtures(skill_run_root)
+    else:
+        _validate_checksums(skill_run_root)
+        _validate_skill_run_fixtures(skill_run_root)
+        if version == "1.1.0":
+            _validate_skill_run_v11_negative_fixtures(skill_run_root)
+        if version == "1.2.0":
+            _validate_skill_run_v12_event_fixtures(skill_run_root)
+            _validate_skill_run_v12_negative_fixtures(skill_run_root)
+            _validate_skill_run_v11_negative_fixtures(skill_run_root)
     if release:
-        _validate_skill_run_release(_read_manifest(skill_run_root))
-    print("SKILL-RUN-CONTRACT check passed")
+        _validate_skill_run_release(_read_manifest(skill_run_root), version=version)
+    print(f"SKILL-RUN-CONTRACT v{version} check passed")
 
 
-def check_contracts(release: bool = False, family: str = "all") -> None:
+def check_contracts(release: bool = False, family: str = "all", skill_run_version: str | None = None) -> None:
     sys.path.insert(0, str(BACKEND_ROOT))
     if family == "skill-run":
-        _check_skill_run_contracts(release=release)
+        versions = [skill_run_version] if skill_run_version else ["1.0.0", "1.1.0", "1.2.0", "1.2.1"]
+        for version in versions:
+            root = SKILL_RUN_CONTRACTS_HOME / f"v{version}"
+            if not root.exists():
+                if skill_run_version:
+                    raise SystemExit(f"Skill-run contract directory missing: {root}")
+                continue
+            _check_skill_run_contracts(release=release, version=version)
         return
 
     root = contract_root()
@@ -876,26 +1038,11 @@ def check_contracts(release: bool = False, family: str = "all") -> None:
 
     print("WORK-EXPERT-CONTRACT check passed")
 
-    _check_skill_run_contracts(release=release)
-
-    skill_run_v11_root = SKILL_RUN_CONTRACTS_HOME / "v1.1.0"
-    if skill_run_v11_root.exists():
-        _validate_checksums(skill_run_v11_root)
-        _validate_skill_run_fixtures(skill_run_v11_root)
-        _validate_skill_run_v11_negative_fixtures(skill_run_v11_root)
-        manifest_v11 = _read_manifest(skill_run_v11_root)
-        if release and manifest_v11.get("backendCommit") != _git_head():
-            raise SystemExit("skill-run v1.1.0 manifest.backendCommit does not match current HEAD in release mode")
-
-    skill_run_v12_root = SKILL_RUN_CONTRACTS_HOME / "v1.2.0"
-    if skill_run_v12_root.exists():
-        _validate_checksums(skill_run_v12_root)
-        _validate_skill_run_fixtures(skill_run_v12_root)
-        _validate_skill_run_v12_event_fixtures(skill_run_v12_root)
-        _validate_skill_run_v12_negative_fixtures(skill_run_v12_root)
-        manifest_v12 = _read_manifest(skill_run_v12_root)
-        if release and manifest_v12.get("backendCommit") != _git_head():
-            raise SystemExit("skill-run v1.2.0 manifest.backendCommit does not match current HEAD in release mode")
+    for version in ("1.0.0", "1.1.0", "1.2.0", "1.2.1"):
+        root = SKILL_RUN_CONTRACTS_HOME / f"v{version}"
+        if not root.exists():
+            continue
+        _check_skill_run_contracts(release=False, version=version)
 
     print("SKILL-RUN-CONTRACT check passed")
 
@@ -993,6 +1140,11 @@ def _validate_skill_run_v11_negative_fixtures(root: Path) -> None:
 
 
 def _generate_skill_run_v10_public_contract() -> None:
+    from app.schemas.skill_run.constants import SKILL_RUN_CONTRACT_VERSION
+
+    if _is_frozen_skill_run_version(SKILL_RUN_CONTRACT_VERSION):
+        print(f"Kept frozen {SKILL_RUN_CONTRACT_NAME} at {SKILL_RUN_CONTRACTS_HOME / f'v{SKILL_RUN_CONTRACT_VERSION}'}")
+        return
     from app.schemas.skill_run.mcp_jsonrpc import (
         PublicArtifactDescriptor,
         PublicArtifactDownloadResponse,
@@ -1172,6 +1324,352 @@ def _generate_skill_run_v10_public_contract() -> None:
     )
 
 
+def _finalize_skill_run_v121_bundle(root: Path, *, backend_commit: str, release_commit: str | None) -> None:
+    from app.schemas.skill_run.constants import (
+        SKILL_RUN_CAPABILITIES,
+        SKILL_RUN_CONTRACT_NAME,
+        SKILL_RUN_CONTRACT_VERSION_V121,
+        SKILL_RUN_TAG_NAME_V121,
+    )
+
+    payload_hashes = {
+        str(path.relative_to(root)).replace("\\", "/"): _sha256_file(path)
+        for path in _public_artifact_files(root)
+    }
+    manifest = {
+        "contractName": SKILL_RUN_CONTRACT_NAME,
+        "contractVersion": SKILL_RUN_CONTRACT_VERSION_V121,
+        "bundleFormatVersion": "1",
+        "provider": "nodeskclaw-backend",
+        "consumer": "external-agent-clients",
+        "primaryConsumer": "smc-copilot/apps/work",
+        "backendCommit": backend_commit,
+        "releaseCommit": release_commit or backend_commit,
+        "tagName": SKILL_RUN_TAG_NAME_V121,
+        "generatedAt": _skill_run_generated_at(),
+        "compatibility": {
+            "supersedesForWork": ["1.0.0", "1.1.0", "1.2.0"],
+            "wireBreaking": False,
+        },
+        "artifacts": payload_hashes,
+        "capabilities": {
+            **SKILL_RUN_CAPABILITIES,
+            "catalogV11": True,
+            "semanticRunEvents": True,
+            "approvalDecision": "unsupported",
+            "approval": "unsupported",
+            "attachments": "unsupported",
+        },
+    }
+    _write_json_lf(root / "manifest.json", manifest)
+
+    bundle_hashes = {
+        str(path.relative_to(root)).replace("\\", "/"): _sha256_file(path)
+        for path in _public_artifact_files(root)
+    }
+    bundle_hashes["manifest.json"] = _sha256_file(root / "manifest.json")
+    checksum_lines = [f"{digest}  {relative}" for relative, digest in sorted(bundle_hashes.items())]
+    _write_text_lf(root / "SHA256SUMS", "\n".join(checksum_lines) + "\n")
+
+    _validate_skill_run_checksums_exact(root)
+    _validate_skill_run_public_boundary(root)
+    _validate_skill_run_fixtures(root)
+    _validate_skill_run_v12_event_fixtures(root)
+    _validate_skill_run_v12_negative_fixtures(root)
+    _validate_skill_run_v11_negative_fixtures(root)
+
+
+def _generate_skill_run_v121_public_contract() -> None:
+    from app.schemas.skill_run.constants import (
+        SKILL_RUN_CONTRACT_NAME,
+        SKILL_RUN_CONTRACT_VERSION_V121,
+    )
+    from app.schemas.skill_run.mcp_jsonrpc import (
+        PublicArtifactDescriptor,
+        PublicArtifactDownloadResponse,
+        PublicArtifactList,
+        PublicRunResult,
+        PublicRunView,
+        RUN_EVENT_V12_MODELS,
+        SkillToolAnnotationsV11,
+        ToolsCallAcceptedResultV11,
+        ToolsListResultV11,
+        UnsupportedCapabilities,
+    )
+    from app.schemas.work_expert.mcp_jsonrpc import JsonRpcErrorResponse, JsonRpcRequest
+
+    root = SKILL_RUN_CONTRACTS_HOME / f"v{SKILL_RUN_CONTRACT_VERSION_V121}"
+    for directory in ("mcp", "runs", "events", "http", "capabilities", "fixtures"):
+        (root / directory).mkdir(parents=True, exist_ok=True)
+
+    for relative in (
+        "edge/lease-renew.schema.json",
+        "edge/artifact-upload.schema.json",
+        "installations/actual-report.schema.json",
+        "installations/installation.schema.json",
+        "runs/run.schema.json",
+        "runs/execution-snapshot.schema.json",
+        "fixtures/desired-installation.json",
+        "fixtures/edge-artifact-upload.json",
+        "fixtures/edge-lease-renew.json",
+    ):
+        (root / relative).unlink(missing_ok=True)
+
+    models = {
+        "mcp/tools-list.request.schema.json": JsonRpcRequest,
+        "mcp/tools-list.response.schema.json": ToolsListResultV11,
+        "mcp/skill-tool-annotations.schema.json": SkillToolAnnotationsV11,
+        "mcp/tools-call.request.schema.json": JsonRpcRequest,
+        "mcp/tools-call.response.schema.json": ToolsCallAcceptedResultV11,
+        "mcp/json-rpc-error.schema.json": JsonRpcErrorResponse,
+        "runs/public-run.schema.json": PublicRunView,
+        "runs/result.schema.json": PublicRunResult,
+        "runs/artifact-descriptor.schema.json": PublicArtifactDescriptor,
+        "runs/artifact-list.schema.json": PublicArtifactList,
+        "runs/artifact-download.response.schema.json": PublicArtifactDownloadResponse,
+        "capabilities/unsupported.schema.json": UnsupportedCapabilities,
+    }
+    for relative, model in models.items():
+        _write_json_lf(root / relative, _model_schema(model))
+
+    _write_json_lf(root / "events" / "run-event.schema.json", _run_event_v12_union_schema(RUN_EVENT_V12_MODELS))
+
+    _write_json_lf(
+        root / "http/endpoint-matrix.json",
+        {
+            "authentication": "Authorization: Bearer <access-token>",
+            "sseReplay": {"header": "Last-Event-ID", "eventIdentity": "event_id", "cache": "no-store"},
+            "idempotency": {
+                "header": "X-Idempotency-Key",
+                "scope": "authenticated org_id + user_id + tool_name",
+                "ttlSeconds": 86400,
+                "conflict": {"status": 409, "errorCode": "IDEMPOTENCY_CONFLICT"},
+                "replay": {"status": 200, "returns": "original accepted run_id"},
+            },
+            "endpoints": [
+                {"method": "POST", "path": "/api/v1/mcp", "operation": "tools/list", "success": [200], "retry": "safe"},
+                {"method": "POST", "path": "/api/v1/mcp", "operation": "tools/call", "success": [200], "retry": "same-idempotency-key"},
+                {"method": "GET", "path": "/api/v1/runs/{run_id}", "success": [200], "retry": "safe", "cache": "no-store"},
+                {"method": "GET", "path": "/api/v1/runs/{run_id}/result", "success": [200], "retry": "safe", "cache": "no-store"},
+                {"method": "GET", "path": "/api/v1/runs/{run_id}/artifacts", "success": [200], "retry": "safe", "cache": "no-store"},
+                {"method": "GET", "path": "/api/v1/runs/{run_id}/artifacts/{artifact_id}/download", "success": [200], "retry": "safe", "cache": "no-store"},
+                {"method": "GET", "path": "/api/v1/runs/{run_id}/events", "success": [200], "retry": "Last-Event-ID"},
+                {"method": "POST", "path": "/api/v1/runs/{run_id}/cancel", "success": [200, 409], "retry": "safe"},
+            ],
+        },
+    )
+
+    fixtures = {
+        "skill-tools-list.json": {
+            "tools": [
+                {
+                    "name": "writer.article",
+                    "title": "Writer",
+                    "description": "Generate an article",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {"prompt": {"type": "string"}},
+                        "required": ["prompt"],
+                    },
+                    "version": "1.2.1",
+                    "category": "writing",
+                    "capabilityKind": "skill",
+                    "interactionMode": "chat",
+                    "promptField": "prompt",
+                    "supportsAttachments": False,
+                    "skillReleaseId": "rel-12345",
+                    "skillReleaseDigest": "digest-abcdef",
+                    "annotations": {
+                        "category": "writing",
+                        "riskLevel": "low",
+                        "requiresApproval": False,
+                        "approvalMode": "none",
+                        "streaming": True,
+                        "artifacts": True,
+                        "version": "1.2.1",
+                    },
+                }
+            ]
+        },
+        "tools-call-accepted.json": {
+            "content": [{"type": "text", "text": "accepted"}],
+            "structuredContent": {
+                "committed": True,
+                "run_id": "run-1",
+                "status": "QUEUED",
+                "tool_name": "writer.article",
+                "event_stream": "/api/v1/runs/run-1/events",
+                "result_url": "/api/v1/runs/run-1/result",
+                "artifact_url": "/api/v1/runs/run-1/artifacts",
+                "execution_mode": "async_event",
+                "contract_version": "1.2.1",
+            },
+            "isError": False,
+        },
+        "run-cancelled.json": {
+            "run_id": "run-1",
+            "tool_name": "writer.article",
+            "status": "CANCELLED",
+            "created_at": "2026-08-31T00:00:00Z",
+            "updated_at": "2026-08-31T00:01:00Z",
+        },
+        "run-timeout.json": {
+            "run_id": "run-1",
+            "status": "TIMED_OUT",
+            "text": None,
+            "error_code": "RUN_TIMED_OUT",
+            "error_message": "Run timed out",
+        },
+        "artifact-with-checksum.json": {
+            "run_id": "run-1",
+            "items": [
+                {
+                    "artifact_id": "artifact-1",
+                    "name": "result.txt",
+                    "content_type": "text/plain",
+                    "size_bytes": 12,
+                    "checksum_sha256": "4f85f7e7d5d1b8c7a898d0e51fc5de49536c870353302dacfe7d8e6c03e8ad7a",
+                }
+            ],
+        },
+        "sse-resume-duplicate.json": {
+            "last_event_id": "evt-1",
+            "events": [
+                {
+                    "event_id": "evt-1",
+                    "run_id": "run-1",
+                    "event_type": "run.progress",
+                    "event_seq": 1,
+                    "timestamp": "2026-08-31T00:00:00Z",
+                    "payload": {"phase": "RUNNING"},
+                },
+                {
+                    "event_id": "evt-2",
+                    "run_id": "run-1",
+                    "event_type": "run.completed",
+                    "event_seq": 2,
+                    "timestamp": "2026-08-31T00:00:01Z",
+                    "payload": {"phase": "COMPLETED"},
+                },
+            ],
+        },
+        "auth-tenant-denial.json": {
+            "status": 403,
+            "error_code": "RUN_FORBIDDEN",
+            "message_key": "errors.run.forbidden",
+        },
+        "idempotency-replay.json": {
+            "key": "request-1",
+            "first": {"status": 200, "run_id": "run-1"},
+            "replay": {"status": 200, "run_id": "run-1"},
+            "conflict": {"status": 409, "error_code": "IDEMPOTENCY_CONFLICT"},
+        },
+        "unsupported-capabilities.json": {"approval": "unsupported", "attachments": "unsupported"},
+        "run-event-assistant-message.json": {
+            "event_id": "evt-1",
+            "run_id": "run-1",
+            "event_type": "assistant.message",
+            "event_seq": 2,
+            "source": "agent",
+            "source_event_id": "hermes:run-1:att-1:assistant:1",
+            "timestamp": "2026-08-31T00:00:00Z",
+            "payload": {"text": "hello"},
+        },
+        "run-event-tool-call.json": {
+            "event_id": "evt-2",
+            "run_id": "run-1",
+            "event_type": "tool.call",
+            "event_seq": 3,
+            "source": "agent",
+            "source_event_id": "hermes:run-1:att-1:tool:call-1:1",
+            "timestamp": "2026-08-31T00:00:01Z",
+            "payload": {"tool_name": "search", "call_id": "call-1", "status": "started"},
+        },
+        "run-event-artifact-persisted.json": {
+            "event_id": "evt-3",
+            "run_id": "run-1",
+            "event_type": "artifact.persisted",
+            "event_seq": 4,
+            "source": "agent",
+            "source_event_id": "artifact:art-1:persisted",
+            "timestamp": "2026-08-31T00:00:02Z",
+            "payload": {
+                "artifact_id": "art-1",
+                "name": "out.txt",
+                "content_type": "text/plain",
+                "size": 12,
+                "checksum_sha256": "abc123",
+            },
+        },
+        "run-event-reasoning-summary.json": {
+            "event_id": "evt-4",
+            "run_id": "run-1",
+            "event_type": "reasoning.summary",
+            "event_seq": 5,
+            "source": "agent",
+            "source_event_id": "hermes:run-1:att-1:reasoning:1",
+            "timestamp": "2026-08-31T00:00:03Z",
+            "payload": {"summary": "checked docs"},
+        },
+        "run-event-clarify-requested.json": {
+            "event_id": "evt-5",
+            "run_id": "run-1",
+            "event_type": "clarify.requested",
+            "event_seq": 6,
+            "source": "agent",
+            "source_event_id": "hermes:run-1:att-1:clarify:1",
+            "timestamp": "2026-08-31T00:00:04Z",
+            "payload": {"question": "which file?", "options": ["a", "b"]},
+        },
+        "run-event-approval-requested.json": {
+            "event_id": "evt-6",
+            "run_id": "run-1",
+            "event_type": "approval.requested",
+            "event_seq": 7,
+            "source": "agent",
+            "source_event_id": "hermes:run-1:att-1:approval:1",
+            "timestamp": "2026-08-31T00:00:05Z",
+            "payload": {"approval_id": "appr-1", "summary": "delete file"},
+        },
+        "run-event-control-progress.json": {
+            "event_id": "evt-0",
+            "run_id": "run-1",
+            "event_type": "run.progress",
+            "event_seq": 1,
+            "source": "agent",
+            "source_event_id": None,
+            "timestamp": "2026-08-31T00:00:00Z",
+            "payload": {"stage": "preparing", "message": "preparing hermes"},
+        },
+        "run-event-control-created.json": {
+            "event_id": "evt-created",
+            "run_id": "run-1",
+            "event_type": "run.created",
+            "event_seq": 0,
+            "source": "agent",
+            "source_event_id": None,
+            "timestamp": "2026-08-31T00:00:00Z",
+            "payload": {},
+        },
+    }
+    for name, payload in fixtures.items():
+        _write_json_lf(root / "fixtures" / name, payload)
+
+    _write_text_lf(
+        root / "RELEASE.md",
+        f"# {SKILL_RUN_CONTRACT_NAME} v{SKILL_RUN_CONTRACT_VERSION_V121}\n\n"
+        "Cumulative Public Skill Run contract for external Work consumers.\n"
+        "Includes v1.0 Public Run/Result/Artifact, v1.1 Catalog descriptors, and v1.2 semantic events.\n",
+    )
+
+    import os
+
+    backend_commit = os.environ.get("CONTRACT_BACKEND_COMMIT") or _git_head()
+    release_commit = os.environ.get("CONTRACT_RELEASE_COMMIT")
+    _finalize_skill_run_v121_bundle(root, backend_commit=backend_commit, release_commit=release_commit)
+    print(f"Generated {SKILL_RUN_CONTRACT_NAME} at {root} (backendCommit={backend_commit})")
+
+
 def generate_skill_run_contracts(version: str | None = None) -> None:
     from app.api.internal_edge import (
         EdgeActualReportBody,
@@ -1185,6 +1683,7 @@ def generate_skill_run_contracts(version: str | None = None) -> None:
         SKILL_RUN_CONTRACT_VERSION,
         SKILL_RUN_CONTRACT_VERSION_V11,
         SKILL_RUN_CONTRACT_VERSION_V12,
+        SKILL_RUN_CONTRACT_VERSION_V121,
         SKILL_RUN_TAG_NAME,
     )
     from app.schemas.skill_run.mcp_jsonrpc import (
@@ -1202,6 +1701,10 @@ def generate_skill_run_contracts(version: str | None = None) -> None:
         ToolsListResultV11,
     )
     from app.schemas.work_expert.mcp_jsonrpc import JsonRpcErrorResponse, JsonRpcRequest
+
+    if version == SKILL_RUN_CONTRACT_VERSION_V121:
+        _generate_skill_run_v121_public_contract()
+        return
 
     _generate_skill_run_v10_public_contract()
     if version == SKILL_RUN_CONTRACT_VERSION:
@@ -1517,6 +2020,9 @@ def generate_skill_run_contracts(version: str | None = None) -> None:
 
     # Generate v1.2.0 semantic event contract
     root_v12 = SKILL_RUN_CONTRACTS_HOME / f"v{SKILL_RUN_CONTRACT_VERSION_V12}"
+    if _is_frozen_skill_run_version(SKILL_RUN_CONTRACT_VERSION_V12):
+        print(f"Kept frozen {SKILL_RUN_CONTRACT_NAME} at {root_v12}")
+        return
     root_v12.mkdir(parents=True, exist_ok=True)
     (root_v12 / "mcp").mkdir(exist_ok=True)
     (root_v12 / "events").mkdir(exist_ok=True)
@@ -1718,12 +2224,17 @@ def main() -> None:
     )
     generate_parser.add_argument(
         "--version",
-        choices=("1.0.0", "1.1.0", "1.2.0"),
+        choices=("1.0.0", "1.1.0", "1.2.0", "1.2.1"),
         help="Generate only the requested skill-run contract version",
     )
     check_parser = sub.add_parser("check", help="Validate committed contract artifacts")
     check_parser.add_argument("--release", action="store_true")
     check_parser.add_argument("--family", choices=("work-expert", "skill-run", "all"), default="all")
+    check_parser.add_argument(
+        "--version",
+        choices=("1.0.0", "1.1.0", "1.2.0", "1.2.1"),
+        help="Validate only the requested skill-run contract version",
+    )
     args = parser.parse_args()
 
     sys.path.insert(0, str(BACKEND_ROOT))
@@ -1733,7 +2244,11 @@ def main() -> None:
         if args.family in ("skill-run", "all"):
             generate_skill_run_contracts(version=args.version)
     else:
-        check_contracts(release=args.release, family=args.family)
+        check_contracts(
+            release=args.release,
+            family=args.family,
+            skill_run_version=getattr(args, "version", None),
+        )
 
 
 if __name__ == "__main__":

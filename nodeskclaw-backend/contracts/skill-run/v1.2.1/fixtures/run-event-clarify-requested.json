@@ -1,0 +1,16 @@
+{
+  "event_id": "evt-5",
+  "run_id": "run-1",
+  "event_type": "clarify.requested",
+  "event_seq": 6,
+  "source": "agent",
+  "source_event_id": "hermes:run-1:att-1:clarify:1",
+  "timestamp": "2026-08-31T00:00:04Z",
+  "payload": {
+    "question": "which file?",
+    "options": [
+      "a",
+      "b"
+    ]
+  }
+}
