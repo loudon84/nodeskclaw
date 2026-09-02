@@ -97,6 +97,7 @@ async def _ensure_run_session(
                 FROM "{SCHEMA}".run_sessions
                 WHERE id = :id
                 LIMIT 1
+                FOR UPDATE
                 """
             ),
             {"id": run_session_id},
@@ -119,7 +120,8 @@ async def _ensure_run_session(
             if exp <= now:
                 raise ValueError("run session unrecoverable: expired")
         current_version = int(sess_row.get("context_version") or 0)
-        if context_version is not None and context_version > current_version:
+        if context_version is not None:
+            next_version = current_version + 1
             await db.execute(
                 text(
                     f"""
@@ -132,11 +134,11 @@ async def _ensure_run_session(
                     "id": run_session_id,
                     "org_id": org_id,
                     "user_id": user_id,
-                    "context_version": int(context_version),
+                    "context_version": next_version,
                     "now": now,
                 },
             )
-            return int(context_version)
+            return next_version
         return current_version
 
     await db.execute(
@@ -153,11 +155,57 @@ async def _ensure_run_session(
             "id": run_session_id,
             "org_id": org_id,
             "user_id": user_id,
-            "context_version": int(context_version or 0),
+            "context_version": 1 if context_version is not None else 0,
             "now": now,
         },
     )
-    return int(context_version or 0)
+    return 1 if context_version is not None else 0
+
+
+async def revalidate_run_session(
+    db: AsyncSession,
+    *,
+    run_session_id: str | None,
+    org_id: str,
+    user_id: str,
+    context_version: int | None,
+    allow_missing: bool = False,
+) -> None:
+    if not run_session_id:
+        return
+
+    sess_row = (
+        await db.execute(
+            text(
+                f"""
+                SELECT id, org_id, user_id, context_version, deleted_at, expires_at
+                FROM "{SCHEMA}".run_sessions
+                WHERE id = :id
+                LIMIT 1
+                """
+            ),
+            {"id": run_session_id},
+        )
+    ).mappings().first()
+    if not sess_row:
+        if allow_missing:
+            return
+        raise ValueError("run session unrecoverable: missing")
+    if sess_row["org_id"] != org_id:
+        raise ValueError("cross-org run session access rejected")
+    if sess_row["user_id"] != user_id:
+        raise ValueError("run session subject mismatch rejected")
+    if sess_row.get("deleted_at") is not None:
+        raise ValueError("run session unrecoverable: soft deleted")
+    expires_at = sess_row.get("expires_at")
+    if expires_at is not None:
+        exp = expires_at
+        if exp.tzinfo is None:
+            exp = exp.replace(tzinfo=timezone.utc)
+        if exp <= _utcnow():
+            raise ValueError("run session unrecoverable: expired")
+    if context_version is not None and int(sess_row.get("context_version") or 0) != int(context_version):
+        raise ValueError("run session context version mismatch")
 
 
 async def create_run(
@@ -170,16 +218,16 @@ async def create_run(
     if not request.run_id:
         raise ValueError("run_id is required")
 
+    snapshot = build_snapshot(request, org_id=org_id, user_id=user_id)
     if request.run_session_id:
-        await _ensure_run_session(
+        await revalidate_run_session(
             db,
             run_session_id=request.run_session_id,
             org_id=org_id,
             user_id=user_id,
-            context_version=request.context_version,
+            context_version=None,
+            allow_missing=True,
         )
-
-    snapshot = build_snapshot(request, org_id=org_id, user_id=user_id)
     cmd_body = {
         "tool_name": request.tool_name,
         "skill_id": request.skill_id,
@@ -231,6 +279,30 @@ async def create_run(
             org_id=existing.get("org_id") or org_id,
             run_session_id=existing.get("run_session_id") or request.run_session_id,
         )
+
+    if request.context_version is not None and not request.execution_context:
+        raise ValueError("execution context is required when context version is set")
+
+    snapshot_request = request
+    if request.run_session_id:
+        session_context_version = await _ensure_run_session(
+            db,
+            run_session_id=request.run_session_id,
+            org_id=org_id,
+            user_id=user_id,
+            context_version=request.context_version,
+        )
+        if request.context_version is not None:
+            execution_context = dict(request.execution_context or {})
+            execution_context["context_version"] = session_context_version
+            snapshot_request = request.model_copy(
+                update={
+                    "context_version": session_context_version,
+                    "execution_context": execution_context,
+                }
+            )
+
+    snapshot = build_snapshot(snapshot_request, org_id=org_id, user_id=user_id)
 
     status = "WAITING_APPROVAL" if request.requires_approval else "QUEUED"
     try:

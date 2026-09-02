@@ -59,7 +59,7 @@ RM-06 在 Agent Run Owner 上扩展 Formal Run Session、Snapshot 内授权 Cont
 - **已实现**：[[nodeskclaw-agent/app/services/run_service.py#create_run]] 与 [[nodeskclaw-agent/app/services/run_service.py#_ensure_run_session]] 校验 `run_sessions` 的 `org_id`+`user_id`、软删除与过期；不可恢复 Session 拒绝且不 INSERT `runs`；可恢复 Session 单调递增 `context_version`。
 - **已实现**：[[nodeskclaw-agent/app/services/run_service.py#build_snapshot]] 持久化 opaque `execution_context` 与 `context_version`；不含知识正文、附件字节或内部路径。
 - **已实现**：[[nodeskclaw-agent/app/services/run_service.py#append_event]] 与 [[nodeskclaw-agent/app/api/internal_runs.py#ingest_internal_events]] 在终态 Run 上拒绝 `context_stale` 事件；[[nodeskclaw-agent/app/services/run_service.py#record_event_rejection]] 审计拒绝原因。
-- **已实现**：[[nodeskclaw-agent/app/services/context_revalidate.py#revalidate_execution_context]] 在 [[nodeskclaw-agent/app/services/worker.py#RunWorker#_execute]] 调用 `execute_engine` 与 Hybrid EdgeJob enqueue 前，以及 [[nodeskclaw-agent/app/services/edge_worker.py#EdgeWorker#_execute_job]] 执行前，经 Backend Internal Edge 复核；失败 fail-closed，不写引擎副作用。
+- **已实现**：[[nodeskclaw-agent/app/services/context_revalidate.py#revalidate_execution_context]] 在 [[nodeskclaw-agent/app/services/worker.py#RunWorker#_execute]] 调用 `execute_engine` 与 Hybrid EdgeJob enqueue 前，以及 [[nodeskclaw-agent/app/services/edge_worker.py#EdgeWorker#_execute_job]] 执行前复核；Central 直接校验 Session，Edge 由 Backend Internal Edge 代理回 Central Agent 校验 Session 并复核来源授权；缺描述、撤权或版本不一致 fail-closed，不写引擎副作用。
 
 ## Installation Generation Closed Loop
 

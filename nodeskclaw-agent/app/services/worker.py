@@ -416,6 +416,7 @@ class RunWorker:
                     generation=generation,
                     org_id=org_id,
                     user_id=user_id,
+                    session_db=db,
                 )
 
                 step_plan = build_hybrid_step_plan(snapshot)
@@ -622,6 +623,7 @@ class RunWorker:
                         generation=generation,
                         org_id=org_id,
                         user_id=user_id,
+                        session_db=db,
                     )
                     edge_steps = [s for s in step_plan if s.get("role") == "edge"]
                     dispatched_jobs = []
