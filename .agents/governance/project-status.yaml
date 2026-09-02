@@ -1,0 +1,13 @@
+report_version: '2'
+project_id: PROJECT-NODESKCLAW
+repository_id: REPO-NODESKCLAW
+kit_version: 1.2.1
+kit:
+  version: 1.2.1
+  tag: DEV-governance-kit-v1.2.1
+  commit: 16e33a69619d57b9ce83880f45a1726515bf80c2
+  manifest_sha256: 4c3308f364ccc1630a20edbecbab2bd804b51ce28ca2fe5a58374db28b9311ed
+governance_policy: REPOSITORY-GOVERNANCE-V1
+central_commit: 16e33a69619d57b9ce83880f45a1726515bf80c2
+enforcement: true
+reported_at: null

@@ -1,0 +1,42 @@
+work_package_id: WP-SKILL-FIRST-NODESKCLAW
+feature_id: FEAT-SKILL-FIRST-001
+repository_id: REPO-NODESKCLAW
+role: provider
+status: IMPLEMENTING
+owner: TEAM-AGENT-PLATFORM
+outcome: '提供稳定、不可变、可离线验证的 Public Skill Run Contract，并由 Backend/Agent 实现 Catalog、Run、Event、Result、Artifact
+  行为。
+
+  '
+global_change_ids:
+- XR-C01
+- XR-C02
+- XR-C03
+- XR-C04
+contract_inputs: []
+contract_outputs:
+- contract_id: SKILL-RUN-CONTRACT
+  version: 1.2.1
+  target_state: RELEASED
+dependencies: []
+local_delivery:
+  roadmap: docs_agent/roadmaps/ROADMAP-SKILL-AGENT-V16.md
+  prd: null
+  plan: null
+acceptance:
+- Provider contract immutable release exists
+- Provider conformance passes
+- Public DTO contains no internal runtime credential or route
+evidence_required:
+- implementation_commit
+- verification_evidence
+- release_evidence
+- contract_conformance
+evidence:
+  release:
+    tag: skill-run-contract-v1.2.1
+    commit: 10d38f2c97739c4a55df893d1dc954fc8896f1a7
+  implementation_commit: 10d38f2c97739c4a55df893d1dc954fc8896f1a7
+  verification_evidence: contract-release-and-provider-conformance
+source_revision: SKILL-FIRST-PRD@4.0.1
+sync_state: MISSING_RECEIPT

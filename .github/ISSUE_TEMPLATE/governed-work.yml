@@ -1,0 +1,22 @@
+name: Governed Work Item
+description: Feature/task linked to central governance
+labels: ["gov:type:task"]
+body:
+  - type: input
+    id: feature
+    attributes:
+      label: Feature ID
+    validations:
+      required: true
+  - type: input
+    id: work_package
+    attributes:
+      label: Work Package ID
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Outcome
+    validations:
+      required: true
