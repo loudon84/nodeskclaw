@@ -10,11 +10,13 @@ v1.6 保持既有 Production Owner 与信任边界，以独立 Roadmap Item 关�
 
 - Approved Architecture（已批准架构）：[AD-SKILL-AGENT-V16](../../docs_agent/architecture/AD-SKILL-AGENT-V16.md)。
 - Active Roadmap（活动路线图）：[ROADMAP-SKILL-AGENT-V16](../../docs_agent/roadmaps/ROADMAP-SKILL-AGENT-V16.md)。
-- Current Stage PRD（当前阶段需求）：[RM-05 Connector Runtime Execution Closure](../../docs_agent/prd-v1.6.4-connector-runtime-execution-closure.md)，PRD 状态为 `APPROVED`（已批准）；Roadmap Item 待 Implementation Commit 与 Verification Evidence 更新为 `DONE`。前序 RM-01–RM-03 已分别关闭 Catalog、语义事件与 Edge Bundle 合同。
-- Parallel Stage PRD（并行阶段需求）：[RM-04 Strict Readiness 与 Production Acceptance](../../docs_agent/prd-v1.6.3-strict-readiness-production-acceptance.md)，状态为 `APPROVED`（已批准）；其生产验收证据闭环独立于 RM-05。
-- RM-01：[Catalog 与 Run Control](../../docs_agent/prd-v1.6.0-skill-catalog-and-run-control.md)（`APPROVED`）。
-- RM-02：[Semantic Run Events](../../docs_agent/prd-v1.6.1-semantic-run-events.md)（`APPROVED`）。
-- RM-03：[Edge Published Bundle Lifecycle](../../docs_agent/prd-v1.6.2-edge-published-bundle-lifecycle.md)（`APPROVED`）。
+- Current Stage PRD（当前阶段需求）：[RM-04 Strict Readiness 与 Production Acceptance](../../docs_agent/prd-v1.6.3-strict-readiness-production-acceptance.md)，PRD 状态为 `APPROVED`（已批准）；Roadmap Item 为 `IN_PRD`，生产验收证据闭环独立于执行面 Item。
+- RM-01：[Catalog 与 Run Control](../../docs_agent/prd-v1.6.0-skill-catalog-and-run-control.md)（Roadmap `DONE`）。
+- RM-02：[Semantic Run Events](../../docs_agent/prd-v1.6.1-semantic-run-events.md)（Roadmap `DONE`）。
+- RM-03：[Edge Published Bundle Lifecycle](../../docs_agent/prd-v1.6.2-edge-published-bundle-lifecycle.md)（Roadmap `DONE`）。
+- RM-05：[Connector Runtime Execution Closure](../../docs_agent/prd-v1.6.4-connector-runtime-execution-closure.md)（Roadmap `DONE`；implementation `3611f371`，证据 `docs_agent/evidence/rm05-verification.md`）。
+- RM-06：[Session 与授权执行上下文](../../docs_agent/prd-v1.6.7-session-context-authorized-execution.md)（Roadmap `DONE`；证据 `docs_agent/evidence/rm06-verification.md`）。
+- RM-11：[累积 Public v1.2.1 合同导出](../../docs_agent/prd-v1.6.6-cumulative-public-consumer-contract.md)（Roadmap `DONE`；tag `skill-run-contract-v1.2.1`；证据 `docs_agent/evidence/rm11-verification.md`）。
 
 ## Contract-First External Work Boundary
 
