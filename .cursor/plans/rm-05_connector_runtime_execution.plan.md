@@ -1,8 +1,8 @@
 ---
 plan_contract: smc.plan.v3.2
 commit_policy: post_review
-source_revision: AD-SKILL-AGENT-V16@1.1.0/RM-05
-grounded_commit: 8ed46fc35e766898a0ffaa45624ebc7caa596123
+source_revision: AD-SKILL-AGENT-V16@1.3.0/RM-05
+grounded_commit: 640e504e403554c972e2ae1fc30fe45cac5e6fa0
 grounding_source: committed_baseline
 working_tree_fingerprint: clean
 ---
@@ -95,7 +95,7 @@ sequenceDiagram
 | DOD-01 | DOD | C01 至 C10 均有正向、拒绝、取消和幂等验证；至少覆盖 Direct Central REST/MCP/DB、Direct Edge Connector 和 Skill-bound Hybrid Connector 三类调用。 | EVIDENCE | C01<br>C02<br>C03<br>C04<br>C05<br>C06<br>C07<br>C08<br>C09<br>C10 | T1<br>T2<br>T3 | V01<br>V02<br>V03<br>V04 | INTEGRATION | yes |
 | DOD-02 | DOD | AgentEnginePort、Central Worker 与 Edge Worker 只消费一个规范 Route Snapshot 语义；旧的多层解释和 Mapper 平行 EdgeJob 派发已移除，未新增第二执行 Owner。 | SCOPE | C01<br>C02<br>C03 | T2<br>T3 | V03<br>V05 | DIFF_SCOPE | yes |
 | DOD-03 | DOD | 审批、SecretRef、网络 Trust Policy 和 DB read-only 门禁均在外部副作用前 fail-closed；验证输出不含明文 Secret。 | SECURITY | C04<br>C05<br>C06<br>C07 | T1<br>T2<br>T3 | V01<br>V02<br>V03 | INTEGRATION | yes |
-| DOD-04 | DOD | Skill Run v1.0/v1.1/v1.2 目录、Tag 与 checksum 不变；如需表达新的公共字段，必须返回 Architecture/Roadmap 创建独立合同 Item，不能在 RM-05 原地扩展。 | CONTRACT | C10 | - | V04 | CONTRACT_RELEASE | yes |
+| DOD-04 | DOD | 面向 smc-copilot 的当前可交付 `SKILL-RUN-CONTRACT v1.2.1` 必须通过生成、完整性与 release（发布）校验。历史 v1.0/v1.1/v1.2 发布物不由 RM-05 原地改写，但其既有校验和不作为本阶段阻断门禁；如需表达新的公共字段，必须返回 Architecture/Roadmap 创建独立合同 Item，不能在 RM-05 原地扩展。 | CONTRACT | C10 | - | V04 | CONTRACT_RELEASE | yes |
 | DOD-05 | DOD | Review（审查）与 Verification（验证）均 PASS，真实 implementation commit（实施提交）和证据写入 Roadmap 后，RM-05 才可进入 `DONE`。 | EVIDENCE | - | - | V01<br>V02<br>V03<br>V04<br>V05 | CONTRACT_RELEASE | yes |
 | DOD-06 | DOD | Connector Runtime 的 Backend/Agent Owner、Snapshot、审批、SecretRef、网络和取消边界同步到 `lat.md`，且 `lat check` 通过。 | EVIDENCE | C02<br>C03<br>C04<br>C05<br>C06<br>C08 | T3 | V05 | DOCUMENT_SEMANTIC | yes |
 
@@ -124,7 +124,7 @@ sequenceDiagram
 | V01 | INTEGRATION | `cd nodeskclaw-backend; uv run pytest tests/connector/test_connector_service.py -q --junitxml=../artifacts/rm05/v01-backend-secretref.xml` then `cd nodeskclaw-agent; uv run pytest tests/test_run_service.py -q --junitxml=../artifacts/rm05/v01-agent-sanitize.xml` | opaque `connector_secret_ref_id` survives snapshot sanitize; plaintext Authorization/Token/Password/API Key/URL userinfo rejected on create/update | redact of real secrets still occurs; prepare_snapshot does not persist plaintext into events | `artifacts/rm05/v01-secretref.txt` | local pytest | yes |
 | V02 | INTEGRATION | `cd nodeskclaw-agent; uv run pytest tests/test_connector_router.py tests/test_hermes_engine.py -q --junitxml=../artifacts/rm05/v02-port-adapter.xml` | `execute_engine(engine=connector, ...)` reaches Adapter without TypeError; progress/terminal events emitted; DNS/private/allowlist/DB readonly/cancel negatives fail-closed | direct-only Adapter tests insufficient alone; metadata/link-local/unauthorized loopback rejected; cancel stops IO | `artifacts/rm05/v02-port-adapter.txt` | local pytest | yes |
 | V03 | INTEGRATION | `cd nodeskclaw-backend; uv run pytest tests/hermes_skill/test_mcp_tool_mapper_runtime_skill.py tests/hermes_skill/test_mcp_tools_list.py -q --junitxml=../artifacts/rm05/v03-backend-dispatch.xml` then `cd nodeskclaw-agent; uv run pytest tests/test_worker.py -q --junitxml=../artifacts/rm05/v03-worker.xml` | Mapper creates Run/freeze only; no parallel EdgeJob; Direct Edge enqueues once; hybrid bindings frozen; approval cannot be lowered | route override rejected; cross-org/soft-deleted/inactive fail-closed; client `requires_approval=false` ignored when server requires true | `artifacts/rm05/v03-dispatch-approval.txt` | local pytest | yes |
-| V04 | CONTRACT_RELEASE | `cd nodeskclaw-backend; uv run python scripts/contracts.py check` | Skill Run v1.0/v1.1/v1.2 checksum/manifest pass unchanged | altered checksum or in-place contract rewrite fails | `artifacts/rm05/v04-contracts.txt` | local Python | yes |
+| V04 | CONTRACT_RELEASE | `cd nodeskclaw-backend; uv run python scripts/contracts.py check --family skill-run --version 1.2.1 --release` | 当前可交付 v1.2.1 的生成物、manifest、SHA256SUMS 与 release tag 校验通过 | 缺失或篡改 v1.2.1 manifest/schema/fixture 必须失败；历史 v1.0/v1.1/v1.2 不作为本阶段阻断门禁 | `artifacts/rm05/v04-contracts.txt` | local Python | yes |
 | V05 | DOCUMENT | `lat check` | Connector Runtime Owner/Snapshot/approval/SecretRef/network/cancel boundaries documented | dangling refs or stale dual-dispatch wording fail | `artifacts/rm05/v05-lat-check.txt` | local lat | yes |
 
 ## Immediate Read
@@ -174,7 +174,7 @@ sequenceDiagram
 | C07 | `nodeskclaw-agent/app/services/connector_router.py#execute_connector_run` | PROD | MODIFY | Agent Connector Adapter | T2 | provable readonly txn; reject write CTE/multi-statement; honor limits | Read-only DB Execution | no |
 | C08 | `nodeskclaw-agent/app/services/connector_router.py#execute_connector_run` | PROD | MODIFY | Agent Connector Adapter | T2 | honor `cancel_event`; stop cancellable IO | Cancellation-safe Result | no |
 | C09 | `nodeskclaw-backend/app/services/hermes_skill/mcp_tool_mapper.py#McpToolMapper#list_tools` | PROD | KEEP | Backend MCP Gateway | - | org isolation, soft-delete, public/active, route override reject unchanged | Connector Domain/Catalog | no |
-| C10 | `nodeskclaw-backend/contracts/skill-run/` | PROD | KEEP | Backend Contract Package | - | v1.0/v1.1/v1.2 checksums unchanged | Published Skill Run contract | no |
+| C10 | `nodeskclaw-backend/contracts/skill-run/v1.2.1/` | PROD | KEEP | Backend Contract Package | - | 当前可交付 v1.2.1 通过 release 校验；本阶段不改写历史发布物 | Published Skill Run contract | no |
 | C02 | `lat.md/architecture/skill-agent.md` | DOC | MODIFY | lat.md | T3 | document canonical snapshot + single dispatch | DOD-06 | no |
 | C02 | `lat.md/decisions/skill-platform-execution.md` | DOC | MODIFY | lat.md | T3 | document approval/SecretRef/network/cancel boundaries | DOD-06 | no |
 | C02 | `lat.md/architecture/architecture.md` | DOC | MODIFY | lat.md | T3 | link Connector Runtime closure | DOD-06 | no |
@@ -316,12 +316,12 @@ cd nodeskclaw-agent; uv run pytest tests/test_run_service.py -q --junitxml=../ar
 cd nodeskclaw-agent; uv run pytest tests/test_connector_router.py tests/test_hermes_engine.py -q --junitxml=../artifacts/rm05/v02-port-adapter.xml
 cd nodeskclaw-backend; uv run pytest tests/hermes_skill/test_mcp_tool_mapper_runtime_skill.py tests/hermes_skill/test_mcp_tools_list.py -q --junitxml=../artifacts/rm05/v03-backend-dispatch.xml
 cd nodeskclaw-agent; uv run pytest tests/test_worker.py -q --junitxml=../artifacts/rm05/v03-worker.xml
-cd nodeskclaw-backend; uv run python scripts/contracts.py check
+cd nodeskclaw-backend; uv run python scripts/contracts.py check --family skill-run --version 1.2.1 --release
 lat check
 ```
 
 - AC mapping: V01->AC-09/10；V02->AC-01/11/12/13/14/15；V03->AC-02..08/16；V04->AC-16/DOD-04；V05->DOD-02/06
-- Expected: Port 真实进入 Adapter；单次 Edge 派发；审批不可降级；合同 checksum 不变；无明文泄漏
+- Expected: Port 真实进入 Adapter；单次 Edge 派发；审批不可降级；当前可交付 v1.2.1 release 校验通过；无明文泄漏
 - Negative/regression: route override、跨组织/软删除、私网无 allowlist、写 CTE、取消后迟到 completed、Mapper 平行 EdgeJob 不复现
 
 ## Completion Gate

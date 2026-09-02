@@ -5,7 +5,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.services.worker import RunWorker, build_hybrid_step_plan, needs_edge_jobs
+from app.services.worker import (
+    RunWorker,
+    build_edge_step_snapshot,
+    build_hybrid_step_plan,
+    needs_edge_jobs,
+)
 
 
 def test_build_hybrid_step_plan_structure():
@@ -53,6 +58,43 @@ def test_needs_edge_jobs():
         )
         is True
     )
+
+
+def test_central_connector_is_not_planned_as_edge_work():
+    plan = build_hybrid_step_plan(
+        {"placement": {"role": "central", "engine": "connector"}, "runtime_policy": {}}
+    )
+
+    assert plan == [
+        {"step_id": "central", "step": "central", "role": "central", "engine": "connector", "required": True, "dependencies": []}
+    ]
+
+
+def test_edge_binding_snapshot_is_executable_connector_route():
+    snapshot = {
+        "placement": {"role": "hybrid", "engine": "hybrid"},
+        "runtime_policy": {"connector_bindings": [{"id": "binding-1", "placement": "edge"}]},
+    }
+    edge_snapshot = build_edge_step_snapshot(
+        snapshot,
+        {
+            "binding": {
+                "id": "binding-1",
+                "placement": "edge",
+                "connector_kind": "rest",
+                "connector_config": {"url": "https://edge.example.com"},
+                "connector_secret_ref_id": "secret-1",
+                "network_policy": {"allowlist": ["edge.example.com:443"]},
+                "edge_node_id": "node-1",
+            }
+        },
+    )
+
+    assert edge_snapshot["placement"] == {"role": "edge", "engine": "connector", "edge_node_id": "node-1"}
+    assert edge_snapshot["runtime_policy"]["connector_kind"] == "rest"
+    assert edge_snapshot["runtime_policy"]["connector_config"] == {"url": "https://edge.example.com"}
+    assert edge_snapshot["runtime_policy"]["connector_secret_ref_id"] == "secret-1"
+    assert edge_snapshot["runtime_policy"]["network_policy"] == {"allowlist": ["edge.example.com:443"]}
 
 
 @pytest.mark.asyncio
@@ -152,6 +194,143 @@ async def test_worker_execute_hybrid_sets_waiting_edge_and_enqueues_edge_job():
 async def test_hybrid_waits_for_edge_steps():
     # Alias / regression check for hybrid non-terminal before edge steps
     await test_worker_execute_hybrid_sets_waiting_edge_and_enqueues_edge_job()
+
+
+@pytest.mark.asyncio
+async def test_worker_direct_edge_connector_enqueues_without_local_execution():
+    worker = RunWorker()
+    claimed = {
+        "id": "run-edge-1",
+        "org_id": "org-1",
+        "tool_name": "edge_lookup",
+        "arguments": {"q": "hello"},
+        "snapshot": {
+            "org_id": "org-1",
+            "placement": {"role": "edge", "engine": "connector", "edge_node_id": "node-1"},
+            "runtime_policy": {"connector_kind": "rest", "connector_config": {"url": "https://example.com"}},
+        },
+        "attempt_id": "attempt-1",
+        "generation": 1,
+    }
+    mock_db = AsyncMock()
+    mock_db.commit = AsyncMock()
+    mock_db.rollback = AsyncMock()
+    response = MagicMock()
+    response.raise_for_status = MagicMock()
+    response.json.return_value = {"data": {"job_id": "edge-job-1", "status": "PENDING"}}
+    client = AsyncMock()
+    client.__aenter__.return_value = client
+    client.__aexit__.return_value = None
+    client.post = AsyncMock(return_value=response)
+
+    with patch("app.services.worker.SessionLocal", return_value=mock_db), \
+         patch("app.services.worker.execute_engine") as execute_engine_mock, \
+         patch("app.services.worker.httpx.AsyncClient", return_value=client), \
+         patch("app.services.worker.run_service.set_status", new=AsyncMock()), \
+         patch("app.services.worker.run_service.append_event", new=AsyncMock()), \
+         patch("app.services.worker.run_service.get_run", return_value=None), \
+         patch("app.services.worker.run_service.update_step_state", new=AsyncMock()), \
+         patch("app.services.worker.run_service.persist_step_plan", new=AsyncMock(return_value=[])):
+        await worker._execute(claimed)
+
+    execute_engine_mock.assert_not_called()
+    assert client.post.await_count == 1
+    payload = client.post.await_args.kwargs["json"]
+    assert payload["step_id"] == "edge_connector"
+    assert payload["edge_node_id"] == "node-1"
+
+
+@pytest.mark.asyncio
+async def test_worker_cancels_edge_job_created_after_run_cancellation():
+    worker = RunWorker()
+    claimed = {
+        "id": "run-edge-cancel-1",
+        "org_id": "org-1",
+        "tool_name": "edge_lookup",
+        "arguments": {},
+        "snapshot": {
+            "org_id": "org-1",
+            "placement": {"role": "edge", "engine": "connector", "edge_node_id": "node-1"},
+            "runtime_policy": {"connector_kind": "rest", "connector_config": {"url": "https://example.com"}},
+        },
+        "attempt_id": "attempt-1",
+        "generation": 1,
+    }
+    db = AsyncMock()
+    db.commit = AsyncMock()
+    db.rollback = AsyncMock()
+    enqueue_response = MagicMock()
+    enqueue_response.raise_for_status = MagicMock()
+    enqueue_response.json.return_value = {"data": {"job_id": "edge-job-late", "status": "queued"}}
+    cancel_response = MagicMock()
+    cancel_response.raise_for_status = MagicMock()
+    client = AsyncMock()
+    client.__aenter__.return_value = client
+    client.__aexit__.return_value = None
+    client.post = AsyncMock(side_effect=[enqueue_response, cancel_response])
+
+    with patch("app.services.worker.SessionLocal", return_value=db), \
+         patch("app.services.worker.httpx.AsyncClient", return_value=client), \
+         patch("app.services.worker.run_service.set_status", new=AsyncMock()), \
+         patch("app.services.worker.run_service.append_event", new=AsyncMock()), \
+         patch("app.services.worker.run_service.persist_step_plan", new=AsyncMock(return_value=[])), \
+         patch("app.services.worker.run_service.update_step_state", new=AsyncMock()), \
+         patch("app.services.worker.run_service.aggregate_run_terminal", new=AsyncMock()), \
+             patch(
+                 "app.services.worker.run_service.get_run",
+             side_effect=[None, None, MagicMock(status="CANCELLING")],
+             ):
+        await worker._execute(claimed)
+
+    assert client.post.await_count == 2
+    assert client.post.await_args_list[1].args[0].endswith("/api/v1/internal/edge/jobs/edge-job-late/cancel/agent")
+
+
+@pytest.mark.asyncio
+async def test_worker_persists_cancelled_when_adapter_raises_cancelled_error():
+    worker = RunWorker()
+    claimed = {
+        "id": "run-cancel-1",
+        "org_id": "org-1",
+        "tool_name": "central_tool",
+        "arguments": {},
+        "snapshot": {"org_id": "org-1", "placement": {"role": "central", "engine": "connector"}, "runtime_policy": {}},
+        "attempt_id": "attempt-1",
+        "generation": 1,
+    }
+    db = AsyncMock()
+    db.commit = AsyncMock()
+    db.rollback = AsyncMock()
+    cancelled_steps = []
+    events = []
+    aggregate_calls = []
+
+    async def cancelled_engine(*_args, **_kwargs):
+        raise asyncio.CancelledError
+        yield
+
+    async def update_step(_db, _run_id, step_id, state, **_kwargs):
+        cancelled_steps.append((step_id, state))
+
+    async def append_event(_db, _run_id, event_type, _payload, **_kwargs):
+        events.append(event_type)
+
+    async def aggregate(*_args, **_kwargs):
+        aggregate_calls.append(True)
+
+    with patch("app.services.worker.SessionLocal", return_value=db), \
+         patch("app.services.worker.execute_engine", side_effect=cancelled_engine), \
+         patch("app.services.worker.run_service.set_status", new=AsyncMock()), \
+         patch("app.services.worker.run_service.persist_step_plan", new=AsyncMock(return_value=[])), \
+         patch("app.services.worker.run_service.update_step_state", side_effect=update_step), \
+         patch("app.services.worker.run_service.append_event", side_effect=append_event), \
+         patch("app.services.worker.run_service.aggregate_run_terminal", side_effect=aggregate), \
+         patch("app.services.worker.run_service.get_run", return_value=None):
+        await worker._execute(claimed)
+
+    assert ("central", "CANCELLED") in cancelled_steps
+    assert "run.cancelled" in events
+    assert aggregate_calls
 
 
 @pytest.mark.asyncio

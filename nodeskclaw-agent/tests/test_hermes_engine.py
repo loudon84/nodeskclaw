@@ -187,6 +187,41 @@ async def test_execute_engine_dispatches_hermes_and_connector_fail_closed():
 
 
 @pytest.mark.asyncio
+async def test_execute_engine_dispatches_connector_with_canonical_route_snapshot():
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from app.services.engine_port import execute_engine
+
+    response = MagicMock()
+    response.url = "https://example.com/api"
+    response.raise_for_status = MagicMock()
+    response.json.return_value = {"ok": True}
+    client = AsyncMock()
+    client.__aenter__.return_value = client
+    client.__aexit__.return_value = None
+    client.request = AsyncMock(return_value=response)
+
+    with patch("app.services.connector_router.httpx.AsyncClient", return_value=client):
+        events = [
+            event
+            async for event in execute_engine(
+                engine="connector",
+                tool_name="crm_lookup",
+                arguments={"body": {"name": "Acme"}},
+                route_snapshot={
+                    "connector_kind": "rest",
+                    "connector_config": {"url": "https://example.com/api", "method": "POST"},
+                },
+                org_id="org-1",
+                run_id="run-1",
+                attempt_id="attempt-1",
+            )
+        ]
+
+    assert events[-1]["event_type"] == "run.completed"
+
+
+@pytest.mark.asyncio
 async def test_execute_hermes_maps_structured_semantic_fields_only():
     from unittest.mock import AsyncMock, MagicMock, patch
 

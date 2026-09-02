@@ -11,4 +11,4 @@
 - [[task]] — AutoTask 独立服务、打包约束与后继作业
 - [[runtime]] — 计算 Provider、实例生命周期、Channel 与外部运行时
 
-Skill Run 执行平面（`nodeskclaw-agent`）的架构与设计决策详见 [[skill-agent]] 与 [[decisions/skill-platform-execution]]。
+Skill Run 执行平面（`nodeskclaw-agent`）的架构与设计决策详见 [[skill-agent]] 与 [[decisions/skill-platform-execution]]；Connector Runtime 的冻结快照、单次 Edge 派发、SecretRef 与网络/数据库/取消门禁由该执行平面统一拥有。

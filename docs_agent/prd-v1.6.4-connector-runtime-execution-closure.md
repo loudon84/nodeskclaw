@@ -4,9 +4,9 @@ version: 1.6.4
 status: APPROVED
 target_branch: main
 review_verdict: PASS
-approved_at: 2026-09-01T09:48:05+08:00
-source_revision: AD-SKILL-AGENT-V16@1.1.0/RM-05
-grounded_commit: 8ed46fc35e766898a0ffaa45624ebc7caa596123
+approved_at: 2026-09-01T17:00:00+08:00
+source_revision: AD-SKILL-AGENT-V16@1.3.0/RM-05
+grounded_commit: 640e504e403554c972e2ae1fc30fe45cac5e6fa0
 ---
 
 # DeskClaw 团队版 Connector Runtime Execution Closure PRD v1.6.4
@@ -122,7 +122,7 @@ DB Connector 只接受一个只读查询，拒绝多语句、写 CTE、DDL/DML�
 - **DOD-01**：C01 至 C10 均有正向、拒绝、取消和幂等验证；至少覆盖 Direct Central REST/MCP/DB、Direct Edge Connector 和 Skill-bound Hybrid Connector 三类调用。
 - **DOD-02**：AgentEnginePort、Central Worker 与 Edge Worker 只消费一个规范 Route Snapshot 语义；旧的多层解释和 Mapper 平行 EdgeJob 派发已移除，未新增第二执行 Owner。
 - **DOD-03**：审批、SecretRef、网络 Trust Policy 和 DB read-only 门禁均在外部副作用前 fail-closed；验证输出不含明文 Secret。
-- **DOD-04**：Skill Run v1.0/v1.1/v1.2 目录、Tag 与 checksum 不变；如需表达新的公共字段，必须返回 Architecture/Roadmap 创建独立合同 Item，不能在 RM-05 原地扩展。
+- **DOD-04**：面向 smc-copilot 的当前可交付 `SKILL-RUN-CONTRACT v1.2.1` 必须通过生成、完整性与 release（发布）校验。历史 v1.0/v1.1/v1.2 发布物不由 RM-05 原地改写，但其既有校验和不作为本阶段阻断门禁；如需表达新的公共字段，必须返回 Architecture/Roadmap 创建独立合同 Item，不能在 RM-05 原地扩展。
 - **DOD-05**：Review（审查）与 Verification（验证）均 PASS，真实 implementation commit（实施提交）和证据写入 Roadmap 后，RM-05 才可进入 `DONE`。
 - **DOD-06**：Connector Runtime 的 Backend/Agent Owner、Snapshot、审批、SecretRef、网络和取消边界同步到 `lat.md`，且 `lat check` 通过。
 

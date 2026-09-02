@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -39,6 +39,38 @@ async def test_authenticate_edge_rejects_forged_token():
 
     with pytest.raises(ForbiddenError):
         await internal_edge._authenticate_edge(db, token="bad-token", node_id="n1")
+
+
+@pytest.mark.asyncio
+async def test_agent_can_cancel_its_own_org_edge_job():
+    from app.api.internal_edge import request_agent_edge_job_cancel
+    from app.models.connector.edge_job import EdgeJob
+
+    db = AsyncMock()
+    job = EdgeJob(
+        id="job-1",
+        org_id="org-1",
+        edge_node_id="node-1",
+        run_id="run-1",
+        tool_name="tool",
+        status="queued",
+    )
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = job
+    db.execute = AsyncMock(return_value=result)
+
+    with patch("app.api.internal_edge.settings.SKILL_AGENT_INTERNAL_TOKEN", "agent-token"), \
+         patch("app.api.internal_edge.settings.SKILL_AGENT_INTERNAL_TOKEN_PREVIOUS", None):
+        response = await request_agent_edge_job_cancel(
+            job_id="job-1",
+            db=db,
+            x_skill_agent_token="agent-token",
+            x_exec_org_id="org-1",
+        )
+
+    assert response["data"]["cancel_requested"] is True
+    assert job.cancel_requested_at is not None
+    db.commit.assert_awaited_once()
 
 
 @pytest.mark.asyncio

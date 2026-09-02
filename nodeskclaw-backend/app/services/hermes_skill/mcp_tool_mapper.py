@@ -6,7 +6,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import NotFoundError, BadRequestError, ForbiddenError
 from app.models.base import not_deleted
-from app.models.connector.edge_job import EdgeJob, EdgeJobStatus
 from app.models.connector.edge_node import EdgeNode
 from app.models.connector.instance import ConnectorInstance, ConnectorPlacement
 from app.models.connector.tool import ConnectorTool
@@ -265,6 +264,19 @@ class McpToolMapper:
         instance = bundle["instance"]
         definition = bundle["definition"]
         connector_tool = bundle["tool"]
+        connector_metadata = dict(connector_tool.extra_metadata or {})
+        connector_annotations = dict(connector_metadata.get("annotations") or {})
+        connector_config = dict(instance.config or {})
+        network_policy = dict(connector_config.get("network_policy") or {})
+        server_requires_approval = bool(
+            connector_annotations.get("requiresApproval")
+            or connector_metadata.get("requires_approval")
+            or connector_metadata.get("requiresApproval")
+        )
+        effective_client_context = dict(client_context or {})
+        effective_client_context["requires_approval"] = bool(
+            effective_client_context.get("requires_approval") or server_requires_approval
+        )
         if instance.placement != ConnectorPlacement.CENTRAL.value:
             if instance.placement == ConnectorPlacement.EDGE.value:
                 if not instance.edge_node_id:
@@ -299,7 +311,7 @@ class McpToolMapper:
             hermes_agent_instance_id="connector-central",
             agent_id=None,
             arguments=arguments,
-            client_context=client_context or {},
+            client_context=effective_client_context,
             output_policy={"artifact_mode": "pull_only"},
             task_source="org_mcp",
             skill_id=tool_name,
@@ -316,8 +328,9 @@ class McpToolMapper:
                 "connector_tool_name": connector_tool.tool_name,
                 "connector_title": connector_tool.title,
                 "connector_description": connector_tool.description,
-                "connector_config": dict(instance.config or {}),
+                "connector_config": connector_config,
                 "connector_secret_ref_id": instance.secret_ref_id,
+                "network_policy": network_policy,
                 "connector_binding_refs": [connector_tool.id],
                 "knowledge_refs": [],
                 "placement": instance.placement,
@@ -331,22 +344,6 @@ class McpToolMapper:
             },
         )
         result = await RuntimeSkillRunService(self.db).start(request)
-        if instance.placement == ConnectorPlacement.EDGE.value and instance.edge_node_id:
-            run_id = str(result.structured_content.get("run_id") or result.task.id)
-            job = EdgeJob(
-                org_id=org_id,
-                edge_node_id=instance.edge_node_id,
-                run_id=run_id,
-                tool_name=tool_name,
-                status=EdgeJobStatus.QUEUED.value,
-                arguments=arguments,
-                snapshot={
-                    "runtime_policy": dict(request.extra_route_snapshot),
-                    "placement": {"role": "edge", "engine": "connector"},
-                },
-            )
-            self.db.add(job)
-            await self.db.flush()
         return result.structured_content
 
     async def _skill_to_tool_dict(

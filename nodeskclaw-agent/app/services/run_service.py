@@ -21,7 +21,10 @@ def _sanitize_sensitive_keys(data: Any) -> Any:
     if isinstance(data, dict):
         sanitized = {}
         for k, v in data.items():
-            if any(s in k.lower() for s in ("token", "secret", "password", "api_key", "authorization", "auth_token")):
+            normalized_key = k.lower()
+            if normalized_key == "secret_ref_id" or normalized_key.endswith("_secret_ref_id"):
+                sanitized[k] = _sanitize_sensitive_keys(v)
+            elif any(s in normalized_key for s in ("token", "secret", "password", "api_key", "authorization", "auth_token")):
                 sanitized[k] = "[REDACTED]"
             else:
                 sanitized[k] = _sanitize_sensitive_keys(v)

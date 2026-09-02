@@ -614,6 +614,22 @@ def test_build_snapshot_sanitizes_sensitive_tokens():
     assert snap["runtime_policy"]["gateway_url"] == "https://api.example.com"
 
 
+def test_build_snapshot_preserves_opaque_connector_secret_ref_id():
+    req = CreateRunRequest(
+        run_id="run-1",
+        tool_name="test_tool",
+        route_snapshot={
+            "connector_secret_ref_id": "secret-ref-1",
+            "authorization": "plaintext-token",
+        },
+    )
+
+    snap = run_service.build_snapshot(req, org_id="org-1", user_id="user-1")
+
+    assert snap["runtime_policy"]["connector_secret_ref_id"] == "secret-ref-1"
+    assert snap["runtime_policy"]["authorization"] == "[REDACTED]"
+
+
 @pytest.mark.asyncio
 async def test_approve_run_requires_approval_id():
     db = AsyncMock()
