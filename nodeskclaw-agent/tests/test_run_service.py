@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -581,6 +582,87 @@ async def test_create_run_session_soft_deleted_rejected():
     req = CreateRunRequest(run_id="run-1", tool_name="test_tool", run_session_id="sess-1")
     with pytest.raises(ValueError, match="run session unrecoverable: soft deleted"):
         await run_service.create_run(db, req, org_id="org-1", user_id="user-1")
+
+
+@pytest.mark.asyncio
+async def test_ensure_run_session_allocates_monotonic_context_version():
+    db = AsyncMock()
+    select_result = MagicMock()
+    select_result.mappings.return_value.first.return_value = {
+        "id": "sess-1",
+        "org_id": "org-1",
+        "user_id": "user-1",
+        "context_version": 7,
+        "deleted_at": None,
+        "expires_at": None,
+    }
+    db.execute = AsyncMock(side_effect=[select_result, MagicMock()])
+
+    version = await run_service._ensure_run_session(
+        db,
+        run_session_id="sess-1",
+        org_id="org-1",
+        user_id="user-1",
+        context_version=3,
+    )
+
+    assert version == 8
+    assert db.execute.await_args_list[1].args[1]["context_version"] == 8
+
+
+@pytest.mark.asyncio
+async def test_revalidate_run_session_rejects_context_version_mismatch():
+    db = AsyncMock()
+    select_result = MagicMock()
+    select_result.mappings.return_value.first.return_value = {
+        "id": "sess-1",
+        "org_id": "org-1",
+        "user_id": "user-1",
+        "context_version": 8,
+        "deleted_at": None,
+        "expires_at": None,
+    }
+    db.execute = AsyncMock(return_value=select_result)
+
+    with pytest.raises(ValueError, match="run session context version mismatch"):
+        await run_service.revalidate_run_session(
+            db,
+            run_session_id="sess-1",
+            org_id="org-1",
+            user_id="user-1",
+            context_version=7,
+        )
+
+
+@pytest.mark.asyncio
+async def test_create_run_binds_snapshot_context_version_to_session_version():
+    db = AsyncMock()
+    missing = MagicMock()
+    missing.mappings.return_value.first.return_value = None
+    session = MagicMock()
+    session.mappings.return_value.first.return_value = {
+        "id": "sess-1",
+        "org_id": "org-1",
+        "user_id": "user-1",
+        "context_version": 7,
+        "deleted_at": None,
+        "expires_at": None,
+    }
+    db.execute = AsyncMock(side_effect=[missing, missing, session, MagicMock(), MagicMock()])
+    request = CreateRunRequest(
+        run_id="run-1",
+        tool_name="test_tool",
+        run_session_id="sess-1",
+        context_version=999,
+        execution_context={"context_version": 999, "descriptors": []},
+    )
+
+    with patch("app.services.run_service.append_event", new=AsyncMock()):
+        await run_service.create_run(db, request, org_id="org-1", user_id="user-1")
+
+    inserted_snapshot = json.loads(db.execute.await_args_list[4].args[1]["snapshot"])
+    assert inserted_snapshot["context_version"] == 8
+    assert inserted_snapshot["execution_context"]["context_version"] == 8
 
 
 def test_build_snapshot_persists_execution_context_and_version():

@@ -61,6 +61,33 @@ async def get_internal_run(
     return run
 
 
+@router.post("/runs/{run_id}/session/revalidate", dependencies=[Depends(require_internal_token)])
+async def revalidate_internal_run_session(
+    run_id: str,
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    x_exec_org_id: str = Header(alias="X-Exec-Org-Id"),
+    x_exec_user_id: str = Header(alias="X-Exec-User-Id"),
+):
+    run = await run_service.get_run(db, run_id, org_id=x_exec_org_id)
+    if not run or run.user_id != x_exec_user_id:
+        raise HTTPException(status_code=403, detail="run execution context rejected")
+    context_version = body.get("context_version")
+    if context_version is not None and not isinstance(context_version, int):
+        raise HTTPException(status_code=400, detail="context version invalid")
+    try:
+        await run_service.revalidate_run_session(
+            db,
+            run_session_id=run.run_session_id,
+            org_id=x_exec_org_id,
+            user_id=x_exec_user_id,
+            context_version=context_version,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail="run session revalidation denied") from exc
+    return {"ok": True}
+
+
 @router.get("/runs/{run_id}/events", response_model=EventsResponse, dependencies=[Depends(require_internal_token)])
 async def get_internal_events(
     run_id: str,

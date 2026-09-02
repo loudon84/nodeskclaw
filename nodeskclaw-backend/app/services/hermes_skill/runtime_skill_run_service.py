@@ -476,12 +476,14 @@ class RuntimeSkillRunService:
 
     async def _resolve_member_id(self, org_id: str, user_id: str) -> str:
         from app.models.org_membership import OrgMembership
+        from app.models.user import User
 
         result = await self.db.execute(
-            select(OrgMembership.id).where(
+            select(OrgMembership.id).join(User, User.id == OrgMembership.user_id).where(
                 not_deleted(OrgMembership),
                 OrgMembership.org_id == org_id,
                 OrgMembership.user_id == user_id,
+                User.is_active.is_(True),
             )
         )
         member_id = result.scalar_one_or_none()
@@ -567,7 +569,7 @@ class RuntimeSkillRunService:
         from app.services import workspace_member_service as wm_service
 
         user = await self.db.get(User, user_id)
-        if user is None:
+        if user is None or not user.is_active:
             raise ForbiddenError("用户不存在", "errors.auth.user_not_found")
         await wm_service.check_workspace_access(workspace_id, user, "send_chat", self.db)
         auth_version = hashlib.sha256(f"{workspace_id}:{org_id}:{user_id}".encode()).hexdigest()[:16]
@@ -590,7 +592,7 @@ class RuntimeSkillRunService:
         from app.services import workspace_member_service as wm_service
 
         user = await self.db.get(User, user_id)
-        if user is None:
+        if user is None or not user.is_active:
             raise ForbiddenError("用户不存在", "errors.auth.user_not_found")
         await wm_service.check_workspace_access(workspace_id, user, "send_chat", self.db)
 
@@ -636,6 +638,7 @@ class RuntimeSkillRunService:
         client_context = dict(request.client_context or {})
         self._reject_client_context_injection(client_context)
 
+        member_id = await self._resolve_member_id(request.org_id, request.user_id)
         knowledge_refs = list(release_meta.get("knowledge_refs") or [])
         client_knowledge = client_context.get("knowledge_refs")
         if isinstance(client_knowledge, list) and set(client_knowledge) - set(knowledge_refs):
@@ -646,7 +649,6 @@ class RuntimeSkillRunService:
 
         descriptors: list[dict[str, Any]] = []
         if knowledge_refs:
-            member_id = await self._resolve_member_id(request.org_id, request.user_id)
             proofs = await self._fetch_knowledge_proofs(request.org_id, member_id, knowledge_refs)
             for ref in knowledge_refs:
                 proof = proofs.get(ref)
@@ -717,10 +719,10 @@ class RuntimeSkillRunService:
                 "上下文版本不一致",
                 "errors.run.context_version_mismatch",
             )
+        member_id = await self._resolve_member_id(org_id, user_id)
         descriptors = list(execution_context.get("descriptors") or [])
         knowledge_refs = [d["stable_id"] for d in descriptors if d.get("type") == "knowledge"]
         if knowledge_refs:
-            member_id = await self._resolve_member_id(org_id, user_id)
             proofs = await self._fetch_knowledge_proofs(org_id, member_id, knowledge_refs)
             for ref in knowledge_refs:
                 proof = proofs.get(ref)
@@ -739,7 +741,16 @@ class RuntimeSkillRunService:
 
         workspace_ids = [d["stable_id"] for d in descriptors if d.get("type") == "workspace"]
         for workspace_id in workspace_ids:
-            await self._assert_workspace_proof(workspace_id, org_id, user_id)
+            proof = await self._assert_workspace_proof(workspace_id, org_id, user_id)
+            descriptor = next(
+                d for d in descriptors
+                if d.get("type") == "workspace" and d.get("stable_id") == workspace_id
+            )
+            if descriptor.get("auth_version") != proof.get("auth_version"):
+                raise ForbiddenError(
+                    "Workspace 授权版本不一致",
+                    "errors.run.context_version_mismatch",
+                )
 
         attachment_refs = [d["stable_id"] for d in descriptors if d.get("type") == "attachment"]
         if attachment_refs:
@@ -749,7 +760,16 @@ class RuntimeSkillRunService:
                     "附件上下文缺少 workspace",
                     "errors.run.attachment_workspace_required",
                 )
-            await self._assert_attachment_proofs(workspace_id, org_id, user_id, attachment_refs)
+            proofs = await self._assert_attachment_proofs(workspace_id, org_id, user_id, attachment_refs)
+            proof_versions = {proof["stable_id"]: proof.get("auth_version") for proof in proofs}
+            for descriptor in descriptors:
+                if descriptor.get("type") != "attachment":
+                    continue
+                if proof_versions.get(descriptor.get("stable_id")) != descriptor.get("auth_version"):
+                    raise ForbiddenError(
+                        "附件授权版本不一致",
+                        "errors.run.context_version_mismatch",
+                    )
 
     @staticmethod
     def _build_route_snapshot(request: StartRuntimeSkillRunRequest) -> dict[str, Any]:

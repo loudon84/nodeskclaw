@@ -871,6 +871,7 @@ class RevalidateExecutionContextBody(BaseModel):
     execution_context: dict = Field(default_factory=dict)
     attempt_id: str | None = None
     generation: int | None = None
+    run_session_id: str | None = None
 
 
 def _authenticate_internal_skill_agent(
@@ -886,6 +887,31 @@ def _authenticate_internal_skill_agent(
         raise ForbiddenError("Internal skill agent token 无效", "errors.auth.invalid_token")
 
 
+async def _revalidate_agent_run_session(
+    *,
+    run_id: str,
+    org_id: str,
+    user_id: str,
+    context_version: int,
+) -> None:
+    if not settings.SKILL_AGENT_ENABLED or not settings.SKILL_AGENT_BASE_URL:
+        raise ForbiddenError("Agent Session 服务不可达", "errors.run.context_revalidation_denied")
+    url = f"{settings.SKILL_AGENT_BASE_URL.rstrip('/')}/internal/v1/runs/{run_id}/session/revalidate"
+    headers = {
+        "X-Skill-Agent-Token": settings.SKILL_AGENT_INTERNAL_TOKEN,
+        "X-Exec-Org-Id": org_id,
+        "X-Exec-User-Id": user_id,
+        "Content-Type": "application/json",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=3.0)) as client:
+            response = await client.post(url, headers=headers, json={"context_version": context_version})
+    except httpx.HTTPError as exc:
+        raise ForbiddenError("Agent Session 服务不可达", "errors.run.context_revalidation_denied") from exc
+    if response.status_code != 200:
+        raise ForbiddenError("Run Session 已失效", "errors.run.context_revalidation_denied")
+
+
 @router.post("/skill-run/revalidate")
 async def revalidate_skill_run_execution_context(
     body: RevalidateExecutionContextBody,
@@ -896,6 +922,13 @@ async def revalidate_skill_run_execution_context(
     _authenticate_internal_skill_agent(x_skill_agent_token)
     if not x_exec_org_id:
         raise ForbiddenError("缺少 X-Exec-Org-Id header", "errors.auth.missing_org_header")
+    if body.run_session_id:
+        await _revalidate_agent_run_session(
+            run_id=body.run_id,
+            org_id=x_exec_org_id,
+            user_id=body.user_id,
+            context_version=body.context_version,
+        )
     service = RuntimeSkillRunService(db)
     await service.revalidate_execution_context(
         org_id=x_exec_org_id,
