@@ -1,8 +1,8 @@
 # Architecture Review
 
-**Artifact:** `docs_agent/architecture/AD-SKILL-AGENT-V16.md`  
-**Mode:** initial  
-**Version:** 1.4.0  
+**Artifact:** `docs_agent/architecture/AD-SKILL-AGENT-V16.md`
+**Mode:** initial
+**Version:** 1.4.0
 **Verdict:** PASS
 
 ## Evidence Reuse
