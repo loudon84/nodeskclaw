@@ -93,3 +93,13 @@ Approved PRD：[RM-06 Session 与授权执行上下文](../../docs_agent/prd-v1.
 - **Runtime Auth Gate**：Backend [[nodeskclaw-backend/app/services/hermes_skill/runtime_skill_run_service.py#RuntimeSkillRunService#start]] 经 [[nodeskclaw-backend/app/services/hermes_skill/runtime_skill_run_service.py#RuntimeSkillRunService#_build_authorized_execution_context]] 入队前消费 Workspace/Attachment 证明与 Knowledge [[nodeskclaw-knowledge/app/api/v2/skill_run_auth.py#issue_skill_run_auth_proofs]]；[[nodeskclaw-backend/app/services/hermes_skill/mcp_tool_mapper.py#McpToolMapper#call_tool]] 转发 opaque ref；Descriptor 只写入 Agent Snapshot/Outbox，Backend 不持久化第二份 Context Store。
 - **Execute-Time Revalidate**：Agent [[nodeskclaw-agent/app/services/context_revalidate.py#revalidate_execution_context]] 在引擎副作用前调用 [[nodeskclaw-backend/app/api/internal_edge.py#revalidate_skill_run_execution_context]]（内部复用 [[nodeskclaw-backend/app/services/hermes_skill/runtime_skill_run_service.py#RuntimeSkillRunService#revalidate_execution_context]]）；撤权/超时/版本不一致 fail-closed。
 - **Public Contract KEEP**：`contracts/skill-run/v1.0.0`–`v1.2.1` 的 `session_id`/`knowledge_refs`/`attachment_refs` 字符串形态不变。
+
+## Runtime Delegation Entry (v1.6)
+
+v1.4.0 将 Hermes Runtime 内部委派冻结为 RM-08 的 Internal Contract 边界，同时保持 Backend、Agent 与现有 Hybrid 编排的唯一 Owner。
+
+- **Topology Owner**：Backend 的 Published SkillRelease/Policy 冻结 `single_agent` 或 `runtime_delegated` 与版本化 Runtime Capability reference；客户端不能覆盖这些字段，Public `SKILL-RUN-CONTRACT v1.2.1` 不包含它们。
+- **Snapshot Owner**：Backend 冻结 Route/Context 输入，Agent 的 [[nodeskclaw-agent/app/services/run_service.py#build_snapshot]] 构建并持久化最终 ExecutionSnapshot；Backend 不建立第二 Snapshot Store。
+- **Runtime Boundary**：[[nodeskclaw-agent/app/services/engine_port.py#execute_engine]] 继续仅选择 Hermes/Connector Adapter。Hermes Runtime 仅在 `runtime_delegated` 下内部编排；Capability 缺失或不匹配必须失败关闭，不能回退到 `gateway_sequential`。
+- **Hybrid Orthogonality**：Delegation Topology 不等于 `placement`。[[nodeskclaw-agent/app/services/worker.py#build_hybrid_step_plan]] 继续拥有 Central/Edge/Hybrid Step Plan；一个 Public Parent Run 仍只有一个 Attempt 谱系、Event SoT、Artifact namespace 和终态裁决者。
+- **Legacy Boundary**：ExpertTeam `gateway_sequential` 仅保留兼容、缺陷和安全修复；Platform Multi-Agent、Team Run、Child Run 或成员级公开生命周期必须由新的 Architecture Decision 决定。

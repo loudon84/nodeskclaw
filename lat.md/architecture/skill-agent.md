@@ -82,6 +82,15 @@ Hermes Skill 执行适配与短期凭证租约已经实现，正式验收仍由�
 - **已实现**：语义事件与控制事件共享 `append_event` 序列；Worker 语义路径只落事件不迁终态；`artifact.persisted` 仅在 CAS `PERSISTED` 后由 Agent 发出。
 - **已实现**：Snapshot 不保存 `gateway_token` 或 `env_file` 明文；[[nodeskclaw-agent/app/services/hermes_engine.py#fetch_credential_lease]] 在 Attempt 期间按组织、Run、Attempt 和目标获取短效凭证，失败时 fail-closed。
 
+## Runtime Delegation Boundary
+
+Runtime Delegation（运行时内部委派）是 v1.6 的目标合同边界，不创建第二 Run、第二事件源或平台级多智能体调度。
+
+- **目标状态**：[[nodeskclaw-backend/app/services/hermes_skill/runtime_skill_run_service.py#RuntimeSkillRunService]] 冻结已发布 SkillRelease 的 `delegation_topology` 与版本化 Runtime Capability reference（运行时能力引用）；客户端不得提交 Runtime、成员、Profile 或拓扑。
+- **目标状态**：[[nodeskclaw-agent/app/services/run_service.py#build_snapshot]] 继续作为最终 ExecutionSnapshot（执行快照）的持久化 Owner；[[nodeskclaw-agent/app/services/engine_port.py#execute_engine]] 只选择 Adapter，不能把 Topology 变为新的 Engine。
+- **目标状态**：`single_agent` 与 `runtime_delegated` 只描述 Hermes Runtime 内的委派策略；`placement` 继续描述 Central/Edge/Hybrid 资源放置，[[nodeskclaw-agent/app/services/worker.py#build_hybrid_step_plan]] 仍是 Hybrid Step Plan（混合步骤计划）的唯一 Owner。
+- **目标状态**：Capability 缺失或不匹配时失败关闭；Runtime 内部成员不成为 Public Run、Backend 业务对象或公开事件。Platform Multi-Agent、Team Run 与 Child Run 需要新的 Architecture Decision。
+
 ## Connector Center Execution
 
 Connector Runtime 以冻结的规范路由快照、Agent 唯一派发和运行时最小权限门禁执行 REST、MCP 与数据库工具。

@@ -1,21 +1,23 @@
 ---
 decision_id: AD-SKILL-AGENT-V16
-version: 1.3.0
+version: 1.4.0
 status: APPROVED
 target_branch: main
 review_verdict: PASS
-approved_at: 2026-09-01T13:18:01+08:00
-source_revision: user-input:2026-09-01/work-canonical-v1.2.1
-grounded_commit: 21bdc38afc44a780659f3d589daf37bdf6c47328
+approved_at: 2026-09-02T09:00:14.146325Z
+source_revision: user-input:2026-09-02/runtime-delegation-entry
+grounded_commit: 55618fa7bec55bfeb3d025ad2ff60b35795ab412
 ---
 
-# Architecture Decision: Skill Agent v1.6 客户端合同与生产闭环
+# Architecture Decision: Skill Agent v1.6 生产闭环、共享执行合同与 Runtime Delegation Entry
 
 ## Problem
 
 附件 PRD v1.6 同时包含公共 Catalog（目录）合同、Run Event（运行事件）语义、Edge Bundle（边缘技能包）安装和分布式生产验收四类结果。它延续了正确的 Backend（控制面）与 Agent（执行面）边界，但当前形态既不是一个可独立验收的 Stage PRD（阶段需求），也缺少可复用的源码证据和交付依赖。
 
 RM-01 至 RM-03 已完成后，仓库分析又确认 Connector Runtime（连接器运行时）、Session/Context（会话/上下文）、Edge Channel Security（边缘通道安全）、Shared Contract（共享合同）、外部 Work 消费合同和 Agent Observability（执行面可观测性）仍存在独立缺口。尤其需要冻结：本项目只负责 Backend/Agent 功能与供外部前端消费的统一合同，不负责外部 Work 前端源码；任何前端需求必须先形成版本化合同，再由本项目从批准合同反推 Backend 行为和验证。
+
+v1.4.0 进一步冻结 Runtime Delegation（运行时内部委派）边界：v1.6 支持由 Hermes Runtime（Hermes 运行时）在自身边界内处理委派入口，但不建设 Platform Multi-Agent Orchestrator（平台多智能体编排器）、Team Run（团队运行）、Child Run DAG（子运行有向无环图）或 Agent-to-Agent Message Bus（智能体间消息总线）。该边界防止历史 `ExpertTeam.gateway_sequential` 兼容链演变为第二条 Skill Agent 主线。
 
 ## Decision Drivers
 
@@ -26,6 +28,9 @@ RM-01 至 RM-03 已完成后，仓库分析又确认 Connector Runtime（连接�
 - `SOURCE_FACT`（来源事实）：v1.6 必须冻结已发布合同，新增能力通过新合同版本表达。
 - `REPO_FACT`（仓库事实）：Backend 已拥有员工 Catalog、公共 Run Proxy（运行代理）与发布投影；Agent 已拥有 Run、Attempt（执行尝试）、Event（事件）、Artifact（产物）和终态裁决。
 - `REPO_FACT`（仓库事实）：现有能力大多是可扩展的 `PARTIAL`（部分能力），无需新增 Control Plane（控制面）或第二执行 Owner（生产归属）。
+- `USER_CONSTRAINT`（用户约束）：当前阶段只提供 Runtime Delegation Entry（运行时委派入口），不实施完整 Platform Multi-Agent；Hermes 是 v1.6 主 Runtime（运行时）。
+- `USER_CONSTRAINT`（用户约束）：Runtime Delegation 不改变 Work 当前 `SKILL-RUN-CONTRACT v1.2.1`，客户端不感知 Runtime 私有成员、Profile（配置档案）或委派拓扑。
+- `ARCHITECTURE_INVARIANT`（架构不变量）：Delegation Topology（委派拓扑）不得取代或重命名 Central/Edge Placement（中心/边缘放置）及其 Hybrid Step Plan（混合步骤计划）。
 - 每个阶段必须有独立可观察结果、稳定边界和失败停止条件，才能形成一个 Roadmap Item（路线图项）对应一个 Stage PRD。
 
 ## Evidence Baseline
@@ -50,6 +55,11 @@ RM-01 至 RM-03 已完成后，仓库分析又确认 Connector Runtime（连接�
 | Agent 只有 Run 关联的 Session 表和 `knowledge_refs` 快照字段，没有独立 Session API 或集中 ContextBuilder | REPO_FACT | `nodeskclaw-agent/alembic/versions/0002_run_sessions.py`、`nodeskclaw-agent/app/services/run_service.py#build_snapshot`、`nodeskclaw-agent/app/api/internal_runs.py` at `8ed46fc3` |
 | Edge 已使用出站 HTTPS 与静态 Token，但未实现轮换身份、消息签名、Nonce 与序列重放防护 | REPO_FACT | `nodeskclaw-agent/app/services/edge_worker.py#EdgeWorker`、`nodeskclaw-backend/app/api/internal_edge.py#_authenticate_edge` at `8ed46fc3` |
 | Agent 只暴露按 Run 状态计数的基础 metrics，未形成执行面 OpenTelemetry 和目标运行指标 | REPO_FACT | `nodeskclaw-agent/app/main.py#metrics`、`nodeskclaw-agent/pyproject.toml` at `8ed46fc3` |
+| 统一 Engine Port（执行引擎端口）只分发 Hermes 与 Connector，未知 Engine 失败关闭 | REPO_FACT | `nodeskclaw-agent/app/services/engine_port.py#execute_engine` at `55618fa7` |
+| Backend 冻结 Agent 入队 Route（路由）与授权 Context（上下文），Agent 构建并持久化最终 ExecutionSnapshot（执行快照） | REPO_FACT | `nodeskclaw-backend/app/services/hermes_skill/runtime_skill_run_service.py#RuntimeSkillRunService#_enqueue_agent_run_outbox`、`nodeskclaw-agent/app/services/run_service.py#build_snapshot` at `55618fa7` |
+| 现有 Hybrid Placement（混合放置）由 Agent 建立并持久化 Central Hermes（中心 Hermes）与 Edge Connector（边缘连接器）步骤 | REPO_FACT | `nodeskclaw-agent/app/services/worker.py#build_hybrid_step_plan`、`#RunWorker#_execute` at `55618fa7` |
+| ExpertTeam 直接保存 `hermes_agent_id`，并已实现 `gateway_sequential` 编排 | REPO_FACT | `nodeskclaw-backend/app/models/expert_team.py#ExpertTeam`、`nodeskclaw-backend/app/services/expert_gateway/expert_team_orchestrator.py#ExpertTeamOrchestrator` at `55618fa7` |
+| 本修订只要求 Runtime Delegation Entry，不要求 Platform Multi-Agent 或 Public Contract v1.2.1 升级 | USER_CONSTRAINT | `user-input:2026-09-02/runtime-delegation-entry` |
 
 ## Current Capability
 
@@ -60,6 +70,8 @@ RM-01 至 RM-03 已完成后，仓库分析又确认 Connector Runtime（连接�
 后续能力仍复用现有 Owner：Backend Connector 域、Backend Contract Package、Agent Run/Edge/Storage Owner 均可扩展，不需要新增服务。外部 Work 只是合同 Consumer（消费者），不成为本仓库的 Production Owner，也不以其源码作为 Backend 的事实源。
 
 v1.2.0 定向校准曾把 tag `skill-run-contract-v1.0.0` 当作 Work P0 导出项。v1.3.0 纠正：v1.0.0 仍是冻结历史基线，但 **不是** Work canonical import。v1.1.0 / v1.2.0 是阶段增量且 v1.2.0 混有 Internal 文件，不能单独作为完整 Public Consumer Bundle。缺口改为由 RM-11 在既有 Contract Package Owner 下 **新增** 累积 Public 目录 `contracts/skill-run/v1.2.1/` 与 annotated tag `skill-run-contract-v1.2.1`（= v1.0 Public 面 + v1.1 Catalog + v1.2 Semantic Events + 打包完整性），不改写已冻结三版字节，不把 Internal Southbound 打进 Public 包。RM-09 不再发布第二份 Work canonical；它在 RM-08 之后只做 Backend 公共行为符合性及 v1.2.1 之后的批准增量。
+
+v1.4.0 复用既有 Backend 路由冻结、Agent Run/Attempt/Event/Artifact（运行/尝试/事件/产物）状态机、AgentEnginePort（Agent 引擎端口）和 Hermes Adapter（Hermes 适配器）。Backend 负责将已发布 SkillRelease（技能发布版本）、策略和 Runtime Capability（运行时能力）冻结为 Agent 输入；Agent 负责构建并持久化 ExecutionSnapshot，继续作为唯一 Run 终态和 Event SoT（事件事实源）Owner；Hermes Runtime 只拥有其内部委派的执行权。现有 Hybrid Placement 与 Step Plan 仍由 Agent Owner 管理，和 Hermes 的 delegation topology 是两个正交维度。
 
 ## Options Considered
 
@@ -74,10 +86,18 @@ v1.2.0 定向校准曾把 tag `skill-run-contract-v1.0.0` 当作 Work P0 导出�
 | G. 增加更早的 RM-11 P0 合同导出项，RM-09 保持依赖 RM-08 | 复用已 tag 的 v1.0.0 与既有 Contract Package | Owner 不变；P0 导出与 Skill-first 增量拆成两项 | Work 实际消费 v1.2.1 时，v1.0.0 导出成为无效出口 | v1.2.0 采用；v1.3.0 由 I 取代其 Work 出口 |
 | H. 不改依赖就把 RM-09 标 READY | 无 | 违反「依赖未 DONE 不得 READY」 | 伪造可实施入口 | 拒绝 |
 | I. 将 RM-11 改为发布累积 Public v1.2.1 作为 Work canonical；v1.0.0/v1.1.0/v1.2.0 冻结不删；RM-09 降为符合性且仍依赖 RM-08 | 复用既有 Contract Package 与生成链；新增版本而非改写旧目录 | Owner 不变；Work 出口与 RM-08 内部 Shared Contract 仍拆项 | RM-11 工作量从证据文件变为生成/发布；须防止 RM-09 再发第二份 canonical | 采用 |
+| J. 在 Agent 新建 Platform Multi-Agent Scheduler / Team Run / Child Run DAG | 表面直接支持多智能体 | 新增运行对象、状态机、调度与第二终态边界 | 会产生第二执行 Owner，且没有独立 v1.6 业务 Outcome | 拒绝 |
+| K. 把 `ExpertTeam.gateway_sequential` 升格为 Skill Agent 的 Runtime Delegation | 复用历史 Gateway 实现 | Backend 成为成员编排 Owner，Expert/Team 成为新运行时地址 | 与 SkillRelease→Snapshot→Agent 主链和 Runtime-neutral 公共合同冲突 | 拒绝 |
+| L. 将 Multi-Agent 建模为 `engine=multi_agent` | 新增 Engine 枚举 | 混淆 Adapter 选择与委派拓扑 | 破坏 AgentEnginePort 的现有语义，并与 Hybrid Placement 混淆 | 拒绝 |
+| M. 在 RM-08 Internal Contract 中冻结 Hermes `single_agent` / `runtime_delegated` Delegation Topology | 复用现有 Owner 和 EnginePort | Backend 冻结策略，Agent 持久化 Snapshot，Hermes Runtime 内部委派 | 需要版本化 Runtime Capability；不支持时必须失败关闭 | 采用 |
 
 ## Decision
 
-采用 Option B、Option E 与 Option I（方案 B/E/I）。v1.6 保持一个由独立 Stage PRD 组成的交付系列；v1.1.0 修订在 RM-01 至 RM-04 之后增加 RM-05 至 RM-10。v1.2.0 增加 RM-11 项。v1.3.0 不删除 RM-11，但把它的 Work 出口从「只读证明 v1.0.0」改为「生成并发布累积 Public `v1.2.1`」。RM-11 依赖已完成的 RM-01 与 RM-02（累积需要 Catalog 与语义事件合同事实），可与仍在验收中的 RM-04、RM-05 并行。历史 `v1.0.0` / `v1.1.0` / `v1.2.0` 目录与既有 tag 不可改写、不可删除。RM-09 仍依赖 RM-08 且保持 BACKLOG 直至 RM-08 DONE；它不再首次发布 Work canonical，只交付 Backend 对已发布 Public 合同的符合性以及经批准的后续增量。所有阶段保留 Backend=Control Plane（控制面）、Agent=Execution Plane（执行面）的既有架构，不新增第三个服务、第二个 Run 终态 Owner、第二合同生成链或仓内 Work 前端 Owner。 `contracts/skill-agent/` Internal 包若出现，归属 RM-08，不得进入 RM-11 的 Public Bundle。
+采用 Option B、Option E、Option I 与 Option M（方案 B/E/I/M）。v1.6 保持一个由独立 Stage PRD 组成的交付系列；v1.1.0 修订在 RM-01 至 RM-04 之后增加 RM-05 至 RM-10。v1.2.0 增加 RM-11 项。v1.3.0 不删除 RM-11，但把它的 Work 出口从「只读证明 v1.0.0」改为「生成并发布累积 Public `v1.2.1`」。RM-11 依赖已完成的 RM-01 与 RM-02（累积需要 Catalog 与语义事件合同事实），可与仍在验收中的 RM-04、RM-05 并行。历史 `v1.0.0` / `v1.1.0` / `v1.2.0` 目录与既有 tag 不可改写、不可删除。RM-09 仍依赖 RM-08 且保持 BACKLOG 直至 RM-08 DONE；它不再首次发布 Work canonical，只交付 Backend 对已发布 Public 合同的符合性以及经批准的后续增量。所有阶段保留 Backend=Control Plane（控制面）、Agent=Execution Plane（执行面）的既有架构，不新增第三个服务、第二个 Run 终态 Owner、第二合同生成链或仓内 Work 前端 Owner。 `contracts/skill-agent/` Internal 包若出现，归属 RM-08，不得进入 RM-11 的 Public Bundle。
+
+v1.4.0 在 RM-08 的 Internal Shared Agent Execution Contract（内部共享 Agent 执行合同）中新增 Delegation Topology（委派拓扑），仅允许 `single_agent` 和 `runtime_delegated`。它不是新的 Engine：Engine 继续表示 Hermes 或 Connector Adapter（连接器适配器），而 Delegation Topology 只描述 Hermes 是否可在自身 Runtime 边界内委派。Backend 由 Published SkillRelease、策略和版本化 Runtime Capability（运行时能力）冻结该选择；Agent 持久化它，并在 Capability 不存在或不匹配时失败关闭；Hermes Runtime 在 `runtime_delegated` 下执行内部委派。无论拓扑如何，公开面始终只有一个 Parent Run（父运行）、一个 Attempt lineage（尝试谱系）、一个 Event SoT、一个 Artifact namespace（产物命名空间）和一个终态裁决者。
+
+`delegation_topology` 与 `placement` 是正交字段：前者只约束 Hermes 内部委派，后者继续约束 Central/Edge/Hybrid 的资源放置和 Agent-owned Step Plan。现有 Hybrid 的中心 Hermes 与边缘 Connector 协同不属于 Platform Multi-Agent，且不得被转换为 Runtime Delegation 或 `engine=multi_agent`。`platform_multi_agent` 保留为未来概念，v1.6 请求它时必须以稳定错误 `EXECUTION_TOPOLOGY_NOT_SUPPORTED` 失败关闭，不得回退到 `gateway_sequential`。
 
 公共合同以新增版本表达；语义事件扩展现有 Agent Event SoT（事件事实源）；Edge Bundle 复用现有 SkillRelease（技能发布）、Desired/Actual Generation（期望/实际代次）和 Edge Worker；生产验收复用现有 Readiness、StoragePort、Harness 与 Postman/Newman（接口自动化工具）资产。
 
@@ -91,14 +111,19 @@ Edge 安装使用 Backend 授权解析的不可变 Bundle Descriptor（技能包
 
 后续目标继续沿用同一链路：Connector 调用必须经过统一 AgentEnginePort；Session 与 ContextBuilder 集中构建授权后的执行上下文；Edge 命令具备轮换身份和重放防护；Shared Contract 由 Backend 合同 Owner 生成可供外部 Consumer 使用的稳定制品；Agent 通过统一 Trace 与 Metrics 暴露执行可观测事实。
 
+Runtime Delegation Entry（运行时委派入口）位于 Backend 冻结的 Internal Contract 与 AgentEnginePort 之间。Published SkillRelease（已发布技能版本）可声明 `delegation_topology`，Backend 只把版本化 capability reference（能力引用）和策略写入 Agent 输入；Agent 不创建子 Run 或成员状态机，只将 Hermes 明确提供的结构化事实映射进既有事件流。Public `SKILL-RUN-CONTRACT v1.2.1` 不暴露 Runtime、Profile、成员或委派字段。
+
 ## Ownership & Boundaries
 
 | Capability | Production Owner | Boundary |
 |---|---|---|
 | Published SkillRelease 与 Catalog 元数据 | `nodeskclaw-backend` Hermes Skill 域 | 发布时冻结；员工端不得提供 Runtime Route（运行路由） |
+| Delegation Topology 策略与 Runtime Capability 引用 | `nodeskclaw-backend` Hermes Skill 域 | 由 Published SkillRelease 与服务端策略冻结；客户端不得提交或覆盖 topology、Runtime family（运行时族）或 capability reference |
 | Skill Run 公共合同与鉴权投影 | `nodeskclaw-backend` Skill Run API | 只代理 Agent 事实，不独立裁决 Agent-owned Run 终态 |
+| Agent 输入与持久化 ExecutionSnapshot | `nodeskclaw-agent` Run 域 | Backend 只提供已冻结 Route/Context/Policy；Agent 计算并持久化最终 Snapshot，不让 Backend 成为第二 Snapshot Store |
 | Run/Attempt/Event/Artifact 状态机 | `nodeskclaw-agent` | 唯一执行事实源和终态裁决者 |
 | Hermes 结构化事件规范化 | `nodeskclaw-agent` Hermes Adapter | 只从结构化上游事实生成语义事件，不解析自然语言猜测 |
+| Hermes Runtime 内部 Delegation | Hermes Runtime（外部运行时） | 仅在 `runtime_delegated` 下执行；不创建 Public Child Run、Backend 成员对象或第二 Run 终态 Owner；Capability 不匹配必须失败关闭 |
 | Installation Desired 状态与 Bundle 授权解析 | `nodeskclaw-backend` Installation 域 | 保存不可变引用与代次，不执行 Edge 文件副作用 |
 | Edge Bundle 下载、校验、激活与卸载 | `nodeskclaw-agent` Edge Worker | 仅出站访问 Backend；成功副作用后才上报同代 Actual |
 | Artifact 字节与描述符 | `nodeskclaw-agent` StoragePort | 仅 `PERSISTED`（已持久化）状态可对员工端投影 |
@@ -112,6 +137,7 @@ Edge 安装使用 Backend 授权解析的不可变 Bundle Descriptor（技能包
 | P0 Work-importable Consumer Contract Bundle | `nodeskclaw-backend` Skill Run Contract Package | 历史 tag `skill-run-contract-v1.0.0` 冻结只读，不再作为 Work canonical；RM-11 新增 `v1.2.1/` 与 tag `skill-run-contract-v1.2.1` 为唯一当前 Work 导出物；禁止改写已冻结三版；Work 导入与 IPC 测试不是本仓 DONE |
 | 外部 Work 后续合同增量与 Backend 符合性 | `nodeskclaw-backend` Skill Run Contract Package | RM-09 在 RM-08 之后做公共 API 符合性及 v1.2.1 之后的批准增量；不得再发布第二份 Work canonical；外部 Work 是仓外 Consumer |
 | Agent 执行 Trace 与 Metrics | `nodeskclaw-agent` | Agent 输出 Run/Attempt/Edge/Connector/Artifact 执行事实；Backend 只做公共投影或平台聚合 |
+| Legacy ExpertTeam 编排 | `nodeskclaw-backend` Expert Gateway | `gateway_sequential` 仅为兼容、缺陷与安全修复；不得作为 RM-08 或未来 Skill Agent Multi-Agent 主线 |
 
 ## Dependencies & Cascading Effects
 
@@ -127,6 +153,11 @@ Edge 安装使用 Backend 授权解析的不可变 Bundle Descriptor（技能包
 10. RM-09 依赖 RM-08，只交付 Backend 对已发布 Public 合同的符合性与经批准的后续增量；外部前端适配、构建和发布由仓外项目自行治理。不得把 Work canonical 首次发布放进 RM-09。
 11. RM-10 复用前述稳定运行语义补齐可观测性，不得通过创建第二事件事实源实现 Trace 或 Metrics。
 12. RM-11 依赖已完成的 RM-01 与 RM-02；它生成并发布累积 Public `v1.2.1` 与 annotated tag，不改写 `v1.0.0`/`v1.1.0`/`v1.2.0` 字节，不把 Internal Southbound 打进 Public Bundle，也不把 Work 导入当作本仓完成条件。v1.2.1 之前的 KEEP-only 导出 PRD（`prd-v1.6.5-p0-consumer-contract-export.md`）作废，不得继续执行。
+13. RM-08 继续依赖 RM-06 与 RM-07：RM-06 提供稳定 Context Descriptor（上下文描述符），RM-07 冻结 Edge Envelope（边缘信封）字段；RM-08 在这两个字段集合稳定后才可进入 READY。
+14. Delegation Topology 与 Placement/Hybrid 必须在 Shared Contract 中分列建模。Agent 继续拥有 Hybrid Step Plan；Runtime Capability 只决定 Hermes 内部能否委派，不改变 Connector、Central 或 Edge 的 Owner。
+15. `runtime_delegated` 依赖 Hermes Runtime 提供版本化、可被 Agent 验证的 Capability Descriptor（能力描述符）。Descriptor 缺失、不匹配或 Runtime 不支持时，Agent 必须失败关闭并返回 `RUNTIME_CAPABILITY_UNAVAILABLE`，不得隐式降级到 `single_agent` 或 `gateway_sequential`。
+16. RM-08 只冻结 Internal Contract、生成链和失败关闭语义；它不交付 Platform Multi-Agent、Team Run、Child Run、成员级取消/审批/成本或公开成员事件。若出现这些产品需求，必须先新建 Architecture Decision。
+17. RM-10 复用 RM-08 冻结的命名关联 `run_id`、`attempt_id`、`session_id`、`skill_release_id`、`edge_node_id` 与 delegation topology；Trace 仍只关联既有 Event SoT。
 
 ## Risks & Kill Criteria
 
@@ -147,6 +178,11 @@ Edge 安装使用 Backend 授权解析的不可变 Bundle Descriptor（技能包
 | Public Bundle 混入 Internal Southbound | RM-11 的 `v1.2.1/` 禁止 `edge/**`、`installations/**`、`execution-snapshot`；Internal 归 RM-08 | Public SHA256SUMS 出现上述路径即阻断发布 |
 | Connector 私网访问通过关闭 SSRF 防护实现 | 使用显式 Trust Zone/Allowlist 与 Placement 策略，默认继续 fail-closed | 任意客户端参数可扩大网络目标或访问云元数据时阻断发布 |
 | Shared Contract 成为第二套手写 Schema | 复用现有 Backend Pydantic/OpenAPI/Fixture 生成链并校验兼容性 | Backend、Agent、Consumer 出现无法证明同源的平行手写字段定义时重新评估生成边界 |
+| Delegation Topology 被误作 Placement 或 Hybrid 编排 | 在 Internal Contract 中分列 `delegation_topology` 与 `placement`，Agent 保持 Step Plan Owner | Hybrid 被映射为 `runtime_delegated`、或出现 `engine=multi_agent/team/swarm` 时停止并修订 |
+| Backend 与 Agent 同时拥有 ExecutionSnapshot | Backend 只冻结输入，Agent 只持久化最终 Snapshot | Backend 开始持久化第二份可执行 Snapshot，或 Agent 接受客户端未冻结的拓扑时阻断 |
+| Hermes Capability 不可验证或 Runtime 不支持时静默降级 | 使用版本化 capability reference 并失败关闭 | 发现自动回退到 `single_agent`、`gateway_sequential` 或未声明的 Runtime 路径时阻断 |
+| Runtime 内部委派泄漏为 Public Team/Child Run | 一个 Parent Run、一个 Event SoT、一个 Artifact namespace | 新增 TeamRun/ChildRun 公共模型、成员级公开 SSE 或 Backend 成员调度时必须新 AD |
+| Legacy ExpertTeam 被扩展为新主线 | 标记为兼容路径，只允许缺陷/安全/迁移修复 | 新增 Parallel/Consensus/Swarm/Planner 模式或 Skill-first Work 依赖 ExpertTeam 时回退 |
 
 ## Rejected Alternatives
 
@@ -162,6 +198,10 @@ Edge 安装使用 Backend 授权解析的不可变 Bundle Descriptor（技能包
 | 将 RM-09 依赖从 RM-08 改为 RM-01 并提前 READY | 会在共享合同链完成前开放符合性 Item，并与 RM-11 的 Work 出口重叠 | 不重访；Work canonical 由 RM-11 的 v1.2.1 承担 |
 | 为 Work 导出改写 v1.0.0 或移动 `skill-run-contract-v1.0.0` | 违反冻结不变量；v1.0.0 仍是历史基线 | 不重访；canonical 只通过新版本 v1.2.1 |
 | 继续把 RM-11 做成 v1.0.0 KEEP-only 证据项 | Work 已改为消费 v1.2.1，该出口无效 | 仅当 Work 明确改回 pin v1.0.0 时重新评估 |
+| 新建 Platform Multi-Agent Service | 当前没有独立 v1.6 业务 Outcome，且会形成新 Run/状态机 Owner | 出现明确的平台级成员生命周期、跨 Runtime 调度或 Team Run 产品需求并新建 AD 后 |
+| 将 `ExpertTeam.gateway_sequential` 用作 `runtime_delegated` | Backend Gateway 与 Hermes Runtime 的编排 Owner 不同 | 不重访；仅整体 Expert Contract 重设计时评估迁移 |
+| 将 Delegation Topology 写入 Engine enum | Engine 是 Adapter，Topology 是 Runtime 内部委派策略 | 仅 AgentEnginePort 被整体替换时重新评估 |
+| 将 Hermes 私有委派字段加入 Public v1.2.1 | 会把 Runtime 实现锁入 Work Consumer Contract | 仅经 RM-09 后的新 Public Contract 版本批准时评估 |
 
 ## Roadmap Boundaries
 
@@ -174,7 +214,7 @@ Edge 安装使用 Backend 授权解析的不可变 Bundle Descriptor（技能包
 | RM-05：Connector Runtime 通过统一执行入口可靠完成 Central/Edge 调用 | RM-03 | REST/MCP/DB Connector 经 AgentEnginePort 执行；取消、SecretRef、审批和受控私网策略可验证，客户端不能覆盖路由 |
 | RM-06：Session 与 ContextBuilder 形成授权、可恢复的执行上下文 | RM-05 | Session 是正式运行对象；Knowledge/Workspace/Attachment 引用经 Backend 授权并在执行前复核，撤权 fail-closed |
 | RM-07：Edge Control Channel 具备身份轮换与命令完整性 | RM-05 | 出站通道验证身份、过期、Nonce、签名与序列；重放、错节点和过期命令无副作用 |
-| RM-08：中立 Shared Agent Contract 可由 Backend 单一生成链发布 | RM-06, RM-07 | Schema、OpenAPI、TypeScript 类型、Fixture 与兼容测试同源；旧合同不可改写 |
+| RM-08：中立 Shared Agent Execution Contract 可由 Backend 单一生成链发布，并冻结 Hermes `single_agent` / `runtime_delegated` Delegation Topology | RM-06, RM-07 | Schema、OpenAPI、TypeScript 类型、Fixture 与兼容测试同源；Backend 冻结策略/能力引用、Agent 持久化 Snapshot、Hermes Capability 缺失时失败关闭；Topology 与 Placement/Hybrid 分列；不实现 Platform Multi-Agent |
 | RM-09：Backend 对已发布 Public Consumer Contract 做符合性，并实现 v1.2.1 之后的批准增量 | RM-08 | 不首次发布 Work canonical；本仓只交付符合性证据与后续版本化合同；外部前端源码、构建和发布不在范围内 |
 | RM-10：Agent 执行面具备统一 Trace 与运行指标 | RM-05 | Run/Attempt/Session/Edge/Connector/Artifact 可关联；关键队列、时延、失败、租约与重放指标可观测且不形成第二事件 Owner |
 | RM-11：累积 Public Skill Run Consumer Contract v1.2.1 成为外部 Work 可离线导入的当前合同导出项 | RM-01, RM-02 | 生成并发布 `v1.2.1/` 与 tag `skill-run-contract-v1.2.1`；manifest 纳入 SHA256SUMS；Public/Internal 分离；不改写 v1.0.0/v1.1.0/v1.2.0；不含 Work 前端；Internal Agent 合同留给 RM-08 |
