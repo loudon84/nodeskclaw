@@ -25,6 +25,8 @@ from app.models.hermes_skill.skill import HermesSkill
 from app.schemas.hermes_skill.runtime_skill_run import (
     RuntimeSkillRunResult,
     StartRuntimeSkillRunRequest,
+    generate_request_trace_id,
+    normalize_request_trace_id,
 )
 from app.schemas.skill_run.constants import SKILL_RUN_CONTRACT_VERSION_V121
 from app.services.hermes_external.hermes_docker_binding_service import HermesDockerBindingService
@@ -88,6 +90,9 @@ class RuntimeSkillRunService:
         self.db = db
 
     async def start(self, request: StartRuntimeSkillRunRequest) -> RuntimeSkillRunResult:
+        request.request_trace_id = normalize_request_trace_id(request.request_trace_id)
+        if not request.request_trace_id:
+            request.request_trace_id = generate_request_trace_id()
         route_snapshot = self._build_route_snapshot(request)
         execution_contract = self._build_execution_contract(request.execution_mode)
         routing_metadata: dict[str, Any] = {

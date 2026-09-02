@@ -127,7 +127,8 @@ export interface EdgeNode {
 
 export interface EdgeNodeCreateResult {
   node: EdgeNode
-  token: string
+  bootstrap: string
+  expires_at: string
 }
 
 export interface ListResult<T> {
@@ -236,4 +237,24 @@ export async function listEdgeNodes(): Promise<ListResult<EdgeNode>> {
 export async function createEdgeNode(body: { name: string }): Promise<EdgeNodeCreateResult> {
   const { data } = await api.post('/hermes/edge-nodes', body)
   return unwrapEnvelope<EdgeNodeCreateResult>(data)
+}
+
+export async function disableEdgeNode(nodeId: string): Promise<EdgeNode> {
+  const { data } = await api.post(`/hermes/edge-nodes/${nodeId}/disable`)
+  return unwrapEnvelope<EdgeNode>(data)
+}
+
+export async function enableEdgeNode(nodeId: string): Promise<EdgeNode> {
+  const { data } = await api.post(`/hermes/edge-nodes/${nodeId}/enable`)
+  return unwrapEnvelope<EdgeNode>(data)
+}
+
+export async function rotateEdgeNode(nodeId: string): Promise<EdgeNode> {
+  const { data } = await api.post(`/hermes/edge-nodes/${nodeId}/rotate`)
+  return unwrapEnvelope<EdgeNode>(data)
+}
+
+export async function revokeEdgeNode(nodeId: string): Promise<EdgeNode> {
+  const { data } = await api.post(`/hermes/edge-nodes/${nodeId}/revoke`)
+  return unwrapEnvelope<EdgeNode>(data)
 }

@@ -23,6 +23,7 @@ Agent 从工作目录 `.env` 加载配置，字段以 [[nodeskclaw-agent/app/con
 - **凭证租约探针**：Central 就绪检查 Backend `GET /api/v1/health`（不是 `/api/health`）。
 - **就绪新鲜度**：`SKILL_AGENT_READINESS_STALE_SECONDS`（默认 120s）控制 Central `last_successful_loop_at` 与 Edge `last_heartbeat_at` 的过期阈值。
 - **未入 Settings**：HTTP 端口由 uvicorn `--port 4580` 指定；Edge Spool 与 Skill 安装目录仍硬编码为 `./data/edge_spool` 与 `./data/edge_skills`。
+- **Edge 身份**：`SKILL_AGENT_EDGE_TOKEN` 仅为一次性 bootstrap（引导材料），绑定后长期凭证落在 `SKILL_AGENT_SECRET_STORE/edge-identity.json`；生产 readiness 接受已绑定身份或未消费的 bootstrap+`SKILL_AGENT_EDGE_NODE_ID`。
 
 ## Role Modes
 
@@ -103,14 +104,31 @@ Connector Runtime 以冻结的规范路由快照、Agent 唯一派发和运行�
 
 ## Edge Worker And Spooling
 
-Edge 出站执行、租约续期与磁盘 Spool 已有实现，跨租约断网和 Artifact 传输仍处于部分完成状态。
+Edge 出站执行、租约续期与磁盘 Spool 已有实现；RM-07 将 Internal Edge 从长期 Token 升级为 Ed25519 请求证明与 Backend 签发命令封套。
 
 - **已实现**：Edge 主动向 Backend 心跳、认领 EdgeJob、续租并回传增量事件；收到 403 租约抢占响应后设置 `cancel_event` 中断本地执行。
+- **已实现**：[[nodeskclaw-agent/app/services/edge_control_channel.py#EdgeControlChannel]] 持久化 `edge-identity.json`（绑定后的 node/org/identity_version、issuer 公钥与 request seq）；出站请求携带 `X-Edge-Node-Id`、`X-Edge-Identity-Version`、`X-Edge-Timestamp`、`X-Edge-Nonce`、`X-Edge-Seq`、`X-Edge-Payload-Sha256`、`X-Edge-Signature`；入站命令经 issuer 公钥验签、TTL 与本地 consumed_commands 反重放后才解包业务 payload。
+- **已实现**：一次性 bootstrap（`SKILL_AGENT_EDGE_TOKEN`）仅用于 `POST /internal/edge/enroll`；[[nodeskclaw-agent/app/main.py#health_ready]] 生产门禁接受已绑定身份或未消费的 bootstrap+node_id，不再把 Token 当长期凭证。
+- **已实现**：[[nodeskclaw-agent/app/services/edge_worker.py#EdgeWorker#_request_headers]] 为 heartbeat/claim/events/artifact/install/on-demand 生成 Ed25519 请求头；`_claim_job`、`_reconcile_desired_installations` 与 on-demand 拉取只消费经验签的命令封套。
+- **已实现**：`GET /internal/edge/jobs/{id}/cancel` 返回签名的 `job.cancel.check` 封套；[[nodeskclaw-agent/app/services/edge_worker.py#EdgeWorker#_execute_job]] 验签通过后才 `cancel_event.set()`，未签名 payload 不得中断 Connector 执行。
+- **已实现**：Snapshot 含 `execution_context` 或 `context_version` 时，[[nodeskclaw-agent/app/services/edge_worker.py#EdgeWorker#_execute_job]] 在 `execute_engine` 前调用 [[nodeskclaw-agent/app/services/context_revalidate.py#revalidate_execution_context]]，拒绝则只发 `run.failed` 且不进入引擎。
+- **依赖**：Agent 使用 `cryptography` 提供 Ed25519 签名与验签（[[nodeskclaw-agent/app/services/edge_control_channel.py#EdgeControlChannel]]）。
 - **已实现**：Spool Envelope 保存 `job_id`、`delivery_generation`、`attempt_id`、`step_id`、`request_trace_id` 和 `idempotency_key`，单元测试覆盖落盘、排空和 403 丢弃旧代信封。
 - **已实现**：Desired Installation 调谐、Bundle 下载与本地安装闭环见 [[architecture/skill-agent#Installation Generation Closed Loop]]。
 - **已实现**：出站拉取并在授权下履约 on-demand Artifact；通过标准 `/artifacts` 路由中继。
 - **部分实现**：Harness 已定义 pause Edge 网络分区与恢复；跨租约 Spool 单次重放与旧代拒绝仍待 Docker 实跑证明。
 - **目标状态**：真实断网跨租约、Edge 重启和网络恢复证明事件只重放一次；on-demand Artifact 只能在有效 Backend 授权下履约并校验 SHA256。
+
+## Execution Observability Trace And Metrics
+
+RM-10 在 Agent 执行平面内提供 in-process Execution Trace 关联与低基数 Metrics，不引入 OTel/Prometheus，也不创建第二 Event Store。
+
+- **已实现**：[[nodeskclaw-agent/app/services/execution_observability.py#ExecutionTrace]] 与 [[nodeskclaw-agent/app/services/execution_observability.py#MetricsRegistry]] 为唯一 Trace/Metrics Owner；[[nodeskclaw-agent/app/services/run_service.py#create_run]] 经 [[nodeskclaw-agent/app/services/execution_observability.py#bind_from_snapshot]] 绑定 allowlisted 关联键（`run_id`、`attempt_id`、`session_id`、`skill_release_id`、`step_id`、`generation`、`delivery_generation`、`edge_node_id`、`request_trace_id`）。
+- **已实现**：[[nodeskclaw-agent/app/main.py#metrics]] 保留 JSON `runs_by_status` 并追加 documented `metrics` 对象（counter/histogram 定义、单位与有限标签）；DB 或 registry 导出失败 fail-open，不阻断执行。
+- **已实现**：[[nodeskclaw-backend/app/schemas/hermes_skill/runtime_skill_run.py#normalize_request_trace_id]] 与 [[nodeskclaw-backend/app/services/hermes_skill/runtime_skill_run_service.py#RuntimeSkillRunService#start]] 在入队前规范化 opaque `request_trace_id`（max 64、charset `[A-Za-z0-9_.:-]`）；缺失时生成 `req_` 前缀 id；无效降级为 `None` 后由 start 补齐，不阻断 enqueue。
+- **已实现**：[[nodeskclaw-agent/app/services/worker.py#RunWorker#_claim_one]]、[[nodeskclaw-agent/app/services/worker.py#RunWorker#_execute]]、[[nodeskclaw-agent/app/services/edge_worker.py#EdgeWorker#_execute_job]]、[[nodeskclaw-agent/app/services/connector_router.py#execute_connector_run]]、[[nodeskclaw-agent/app/services/engine_port.py#execute_engine]] 与 [[nodeskclaw-agent/app/services/run_service.py#store_artifact_bytes]] 插入 observe-only 钩子；观测异常 fail-open，不改变 Run/Event/Job/Artifact 业务状态。
+- **已实现**：Edge live 与 Spool 路径经 [[nodeskclaw-agent/app/services/edge_worker.py#EdgeWorker#_send_or_spool_event]] 传播同一 `request_trace_id`；指标标签禁止 UUID 与高基数 Run/Attempt/Session/Node id；Trace/日志/指标复用 [[nodeskclaw-agent/app/services/run_service.py#_sanitize_sensitive_keys]] 同类 redact 规则。
+- **目标状态**：不产生或推断 `delegation_topology`；Public Skill Run Contract v1.0.0–v1.2.1 不变。
 
 ## Artifact StoragePort And State Machine
 

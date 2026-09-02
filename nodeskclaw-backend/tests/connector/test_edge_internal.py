@@ -13,6 +13,10 @@ from app.models.connector.edge_node import EdgeNode
 from app.services.connector.edge_node_service import hash_edge_token
 
 
+def _mock_request() -> MagicMock:
+    return MagicMock()
+
+
 def test_is_edge_node_online_requires_recent_heartbeat():
     now = datetime.now(timezone.utc)
     node = EdgeNode(
@@ -31,14 +35,24 @@ def test_is_edge_node_online_requires_recent_heartbeat():
 @pytest.mark.asyncio
 async def test_authenticate_edge_rejects_forged_token():
     from app.api import internal_edge
+    from app.core.exceptions import ForbiddenError
+    from fastapi import Request
 
     db = AsyncMock()
-    result = MagicMock()
-    result.scalar_one_or_none.return_value = None
-    db.execute = AsyncMock(return_value=result)
-
-    with pytest.raises(ForbiddenError):
-        await internal_edge._authenticate_edge(db, token="bad-token", node_id="n1")
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": "/api/v1/internal/edge/jobs",
+        "headers": [(b"x-edge-node-id", b"n1")],
+    }
+    request = Request(scope)
+    with patch.object(
+        internal_edge.EdgeControlChannel,
+        "get_node_for_proof",
+        AsyncMock(side_effect=ForbiddenError("missing proof", "errors.connector.edge_request_proof_missing")),
+    ):
+        with pytest.raises(ForbiddenError):
+            await internal_edge._authenticate_edge(db, request)
 
 
 @pytest.mark.asyncio
@@ -88,6 +102,7 @@ async def test_post_edge_job_events_forwards_to_agent():
         edge_node_id="node-1",
         tool_name="test_tool",
         status=EdgeJobStatus.CLAIMED.value,
+        delivery_generation=1,
     )
 
     with patch("app.api.internal_edge._authenticate_edge", new=AsyncMock(return_value=node)), \
@@ -106,12 +121,15 @@ async def test_post_edge_job_events_forwards_to_agent():
         client.post = AsyncMock(return_value=mock_post_res)
         client_cls.return_value = client
 
-        body = EdgeJobEventsBody(events=[{"event_type": "run.started", "payload": {}}])
+        body = EdgeJobEventsBody(
+            events=[{"event_type": "run.started", "payload": {}}],
+            delivery_generation=1,
+        )
         res = await post_edge_job_events(
             job_id="job-1",
             body=body,
+            request=_mock_request(),
             db=db,
-            x_edge_token="edge-token",
         )
 
         assert res["code"] == 0
@@ -136,6 +154,7 @@ async def test_post_edge_job_events_fails_closed_on_relay_error():
         edge_node_id="node-1",
         tool_name="test_tool",
         status=EdgeJobStatus.CLAIMED.value,
+        delivery_generation=1,
     )
 
     with patch("app.api.internal_edge._authenticate_edge", new=AsyncMock(return_value=node)), \
@@ -151,13 +170,16 @@ async def test_post_edge_job_events_fails_closed_on_relay_error():
         client.post = AsyncMock(side_effect=Exception("network down"))
         client_cls.return_value = client
 
-        body = EdgeJobEventsBody(events=[{"event_type": "run.started", "payload": {}}])
+        body = EdgeJobEventsBody(
+            events=[{"event_type": "run.started", "payload": {}}],
+            delivery_generation=1,
+        )
         with pytest.raises(ForbiddenError):
             await post_edge_job_events(
                 job_id="job-1",
                 body=body,
+                request=_mock_request(),
                 db=db,
-                x_edge_token="edge-token",
             )
 
 
@@ -189,8 +211,8 @@ async def test_post_edge_job_events_rejects_stale_delivery_generation():
             await post_edge_job_events(
                 job_id="job-1",
                 body=body,
+                request=_mock_request(),
                 db=db,
-                x_edge_token="edge-token",
                 x_delivery_generation="1",
             )
 
@@ -208,7 +230,13 @@ def test_compute_reconciled_status():
     assert compute_reconciled_status(inst_edge_pending) == "pending_sync"
 
     # Edge - reconciled
-    inst_edge_reconciled = HermesSkillInstallation(target_kind="edge", status="installed", actual_status="installed")
+    inst_edge_reconciled = HermesSkillInstallation(
+        target_kind="edge",
+        status="installed",
+        actual_status="ready",
+        desired_generation=2,
+        actual_generation=2,
+    )
     assert compute_reconciled_status(inst_edge_reconciled) == "reconciled"
 
     # Edge - drifted

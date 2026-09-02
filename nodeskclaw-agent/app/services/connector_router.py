@@ -13,6 +13,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.services.secret_store import SecretStore
+from app.services.execution_observability import observe_stage, record_metric
 
 READ_ONLY_SQL_RE = re.compile(r"^\s*(SELECT|WITH)\b", re.IGNORECASE)
 WRITE_SQL_RE = re.compile(
@@ -196,6 +197,8 @@ async def execute_connector_run(
     connector_kind = route.get("connector_kind")
     connector_config = _apply_secret_to_config(route, dict(route.get("connector_config") or {}))
     edge_allowlist = _edge_allowlist(route)
+    observe_stage("connector", outcome="started", kind=str(connector_kind or "unknown"))
+    record_metric("connector_calls_total", labels={"kind": str(connector_kind or "unknown"), "outcome": "started"})
     yield {"event_type": "run.progress", "payload": {"stage": "connector", "message": f"calling {connector_kind} connector"}}
 
     if connector_kind == "rest":

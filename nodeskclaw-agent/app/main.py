@@ -12,10 +12,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.internal_runs import router as internal_runs_router
 from app.config import alembic_version_relation, settings
 from app.db import SessionLocal, get_db
+from app.services.edge_control_channel import EdgeControlChannel
 from app.services.edge_worker import EdgeWorker
 from app.services.readiness import expected_alembic_heads
 from app.services.storage_port import StorageProbeError, get_storage_driver
-from app.services.worker import RunWorker
+from app.services.execution_observability import get_registry
 
 logger = logging.getLogger(__name__)
 
@@ -160,16 +161,29 @@ async def health_ready(response: Response) -> dict[str, Any]:
             )
 
         if is_edge:
-            if not settings.SKILL_AGENT_EDGE_TOKEN:
+            identity = EdgeControlChannel(settings.SKILL_AGENT_SECRET_STORE).load()
+            has_bound_identity = bool(
+                identity
+                and identity.identity_version > 0
+                and identity.issuer_key_id
+                and identity.node_id
+            )
+            has_bootstrap_enrollment = bool(
+                settings.SKILL_AGENT_EDGE_TOKEN and settings.SKILL_AGENT_EDGE_NODE_ID
+            )
+            if not has_bound_identity and not has_bootstrap_enrollment:
                 _append_failure(
                     checks,
                     reasons,
                     codes,
                     "config_security",
-                    "config.security.missing_edge_token",
-                    "missing edge token",
+                    "config.security.missing_edge_identity",
+                    "missing bound edge identity or bootstrap enrollment material",
                 )
-            if not settings.SKILL_AGENT_EDGE_NODE_ID:
+            effective_node_id = (
+                identity.node_id if identity and identity.node_id else settings.SKILL_AGENT_EDGE_NODE_ID
+            )
+            if not effective_node_id:
                 _append_failure(
                     checks,
                     reasons,
@@ -369,8 +383,14 @@ async def metrics(db: AsyncSession = Depends(get_db)):
             counts[row["status"]] = row["count"]
     except Exception:
         logger.exception("metrics query failed")
+    metrics_payload: dict[str, Any] = {"definitions": {}, "counters": [], "histograms": []}
+    try:
+        metrics_payload = get_registry().snapshot()
+    except Exception:
+        logger.exception("metrics registry snapshot failed")
     return {
         "service": "nodeskclaw-agent",
         "role": settings.SKILL_AGENT_ROLE,
         "runs_by_status": counts,
+        "metrics": metrics_payload,
     }

@@ -225,6 +225,7 @@ async def test_worker_direct_edge_connector_enqueues_without_local_execution():
 
     with patch("app.services.worker.SessionLocal", return_value=mock_db), \
          patch("app.services.worker.execute_engine") as execute_engine_mock, \
+         patch("app.services.worker.revalidate_execution_context", new=AsyncMock()), \
          patch("app.services.worker.httpx.AsyncClient", return_value=client), \
          patch("app.services.worker.run_service.set_status", new=AsyncMock()), \
          patch("app.services.worker.run_service.append_event", new=AsyncMock()), \
@@ -270,6 +271,7 @@ async def test_worker_cancels_edge_job_created_after_run_cancellation():
     client.post = AsyncMock(side_effect=[enqueue_response, cancel_response])
 
     with patch("app.services.worker.SessionLocal", return_value=db), \
+         patch("app.services.worker.revalidate_execution_context", new=AsyncMock()), \
          patch("app.services.worker.httpx.AsyncClient", return_value=client), \
          patch("app.services.worker.run_service.set_status", new=AsyncMock()), \
          patch("app.services.worker.run_service.append_event", new=AsyncMock()), \
@@ -320,6 +322,7 @@ async def test_worker_persists_cancelled_when_adapter_raises_cancelled_error():
 
     with patch("app.services.worker.SessionLocal", return_value=db), \
          patch("app.services.worker.execute_engine", side_effect=cancelled_engine), \
+         patch("app.services.worker.revalidate_execution_context", new=AsyncMock()), \
          patch("app.services.worker.run_service.set_status", new=AsyncMock()), \
          patch("app.services.worker.run_service.persist_step_plan", new=AsyncMock(return_value=[])), \
          patch("app.services.worker.run_service.update_step_state", side_effect=update_step), \

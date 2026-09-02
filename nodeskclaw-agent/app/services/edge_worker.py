@@ -13,8 +13,16 @@ from typing import Any
 import httpx
 
 from app.config import settings
+from app.services.edge_control_channel import EdgeControlChannel
+from app.services.context_revalidate import ContextRevalidationError, revalidate_execution_context
 from app.services.edge_skill_installer import EdgeSkillInstaller
 from app.services.engine_port import execute_engine
+from app.services.execution_observability import (
+    bind_from_snapshot,
+    normalize_request_trace_id,
+    observe_stage,
+    record_metric,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -30,13 +38,53 @@ class EdgeWorker:
         self._spool_dir = Path("./data/edge_spool")
         self._spool_dir.mkdir(parents=True, exist_ok=True)
         self._installer = EdgeSkillInstaller()
+        self._channel = EdgeControlChannel(settings.SKILL_AGENT_SECRET_STORE)
         self.last_heartbeat_at: datetime | None = None
 
     def stop(self) -> None:
         self._running = False
 
-    def _headers(self) -> dict[str, str]:
-        return {"X-Edge-Token": self._token}
+    def _request_headers(
+        self,
+        *,
+        method: str,
+        path: str,
+        json_body: dict[str, Any] | None = None,
+    ) -> dict[str, str]:
+        payload: Any = b""
+        if json_body is not None:
+            payload = json.dumps(json_body, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        state = self._channel.load()
+        if not state or state.identity_version <= 0 or not state.issuer_key_id:
+            raise RuntimeError("edge identity not bound")
+        headers, _updated = self._channel.sign_request_headers(
+            state,
+            method=method,
+            path=path,
+            payload=payload,
+        )
+        return headers
+
+    async def _ensure_enrolled(self, client: httpx.AsyncClient) -> None:
+        state = self._channel.load()
+        if not state and self._token and self._node_id:
+            state = self._channel.ensure_bootstrap_identity(
+                node_id=self._node_id,
+                org_id="",
+                bootstrap=self._token,
+            )
+        if not state or state.identity_version > 0 or not state.bootstrap:
+            return
+        url = f"{self._base_url}/api/v1/internal/edge/enroll"
+        body = {"node_id": state.node_id, "public_key": state.public_key}
+        response = await client.post(
+            url,
+            headers={"X-Edge-Bootstrap": state.bootstrap},
+            json=body,
+        )
+        response.raise_for_status()
+        data = response.json().get("data") or {}
+        self._channel.apply_bind_response(state, data)
 
     async def start(self) -> None:
         self._running = True
@@ -50,6 +98,7 @@ class EdgeWorker:
             self._base_url,
         )
         async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0)) as client:
+            await self._ensure_enrolled(client)
             while self._running:
                 try:
                     await self._heartbeat(client)
@@ -58,6 +107,7 @@ class EdgeWorker:
                     await self._flush_spool(client)
                     job = await self._claim_job(client)
                     if job:
+                        record_metric("edge_jobs_claimed_total", labels={"outcome": "ok"})
                         await self._execute_job(client, job)
                     else:
                         await asyncio.sleep(settings.SKILL_AGENT_EDGE_POLL_SECONDS)
@@ -86,7 +136,15 @@ class EdgeWorker:
                 "error_code": error_code,
             },
         }
-        rep_res = await client.post(report_url, headers=self._headers(), json=report_body)
+        rep_res = await client.post(
+            report_url,
+            headers=self._request_headers(
+                method="POST",
+                path="/api/v1/internal/edge/installations/actual",
+                json_body=report_body,
+            ),
+            json=report_body,
+        )
         rep_res.raise_for_status()
 
     async def _download_installation_bundle(
@@ -100,7 +158,13 @@ class EdgeWorker:
             f"{self._base_url}/api/v1/internal/edge/installations/"
             f"{installation_id}/bundle?generation={generation}"
         )
-        response = await client.get(url, headers=self._headers())
+        response = await client.get(
+            url,
+            headers=self._request_headers(
+                method="GET",
+                path=f"/api/v1/internal/edge/installations/{installation_id}/bundle",
+            ),
+        )
         response.raise_for_status()
         return response.content
 
@@ -108,11 +172,24 @@ class EdgeWorker:
         """Fetch desired installations for this node, reconcile state with real installer and report actual status."""
         try:
             url = f"{self._base_url}/api/v1/internal/edge/installations/desired"
-            response = await client.get(url, headers=self._headers())
+            response = await client.get(
+                url,
+                headers=self._request_headers(
+                    method="GET",
+                    path="/api/v1/internal/edge/installations/desired",
+                ),
+            )
             if response.status_code != 200:
                 return
             data = response.json().get("data") or {}
-            items = data.get("items") or []
+            state = self._channel.load()
+            raw_items = data.get("items") or []
+            items: list[dict[str, Any]] = []
+            if state:
+                for wrapped in raw_items:
+                    payload = self._channel.unwrap_or_none(state, wrapped)
+                    if payload:
+                        items.append(payload)
 
             local_state_file = self._spool_dir / "edge_installations.json"
             local_state: dict[str, Any] = {}
@@ -141,7 +218,15 @@ class EdgeWorker:
                         "generation": desired_gen,
                         "meta": {"reconciled_by": "edge_worker", "node_id": self._node_id, "action": "uninstalled"},
                     }
-                    rep_res = await client.post(report_url, headers=self._headers(), json=report_body)
+                    rep_res = await client.post(
+                        report_url,
+                        headers=self._request_headers(
+                            method="POST",
+                            path="/api/v1/internal/edge/installations/actual",
+                            json_body=report_body,
+                        ),
+                        json=report_body,
+                    )
                     rep_res.raise_for_status()
                 elif desired_gen != actual_gen:
                     bundle = inst.get("bundle")
@@ -207,7 +292,15 @@ class EdgeWorker:
                                 "sha256": bundle_sha256,
                             },
                         }
-                        rep_res = await client.post(report_url, headers=self._headers(), json=report_body)
+                        rep_res = await client.post(
+                            report_url,
+                            headers=self._request_headers(
+                                method="POST",
+                                path="/api/v1/internal/edge/installations/actual",
+                                json_body=report_body,
+                            ),
+                            json=report_body,
+                        )
                         rep_res.raise_for_status()
                     except Exception as exc:
                         logger.warning("installation reconcile failed for %s: %s", inst_id, exc)
@@ -224,11 +317,24 @@ class EdgeWorker:
         """Poll Central for on-demand artifact requests and fulfill them via outbound upload."""
         try:
             url = f"{self._base_url}/api/v1/internal/edge/artifacts/on-demand-requests"
-            response = await client.get(url, headers=self._headers())
+            response = await client.get(
+                url,
+                headers=self._request_headers(
+                    method="GET",
+                    path="/api/v1/internal/edge/artifacts/on-demand-requests",
+                ),
+            )
             if response.status_code != 200:
                 return
             data = response.json().get("data") or {}
-            items = data.get("items") or []
+            state = self._channel.load()
+            raw_items = data.get("items") or []
+            items: list[dict[str, Any]] = []
+            if state:
+                for wrapped in raw_items:
+                    payload = self._channel.unwrap_or_none(state, wrapped)
+                    if payload:
+                        items.append(payload)
             for req in items:
                 req_name = req.get("name")
                 job_id = req.get("job_id")
@@ -265,19 +371,34 @@ class EdgeWorker:
             "node_id": self._node_id,
             "status_meta": {"role": "edge"},
         }
-        response = await client.post(url, headers=self._headers(), json=body)
+        response = await client.post(
+            url,
+            headers=self._request_headers(
+                method="POST",
+                path="/api/v1/internal/edge/heartbeat",
+                json_body=body,
+            ),
+            json=body,
+        )
         response.raise_for_status()
         self.last_heartbeat_at = datetime.now(timezone.utc)
 
     async def _claim_job(self, client: httpx.AsyncClient) -> dict[str, Any] | None:
         url = f"{self._base_url}/api/v1/internal/edge/jobs"
-        response = await client.get(url, headers=self._headers())
+        response = await client.get(
+            url,
+            headers=self._request_headers(method="GET", path="/api/v1/internal/edge/jobs"),
+        )
         if response.status_code == 204:
             return None
         response.raise_for_status()
         if not response.content:
             return None
         data = response.json()
+        state = self._channel.load()
+        if state and isinstance(data, dict) and "envelope" in data:
+            job = self._channel.verify_command_envelope(state, data)
+            return job if isinstance(job, dict) and job.get("id") else None
         if data is None:
             return None
         if isinstance(data, dict):
@@ -303,10 +424,12 @@ class EdgeWorker:
                     try:
                         await self._post_events(client, job_id, events, delivery_generation=delivery_generation)
                         spool_file.unlink(missing_ok=True)
+                        record_metric("spool_replay_total", labels={"outcome": "ok"})
                     except httpx.HTTPStatusError as err:
                         if err.response.status_code == 403:
                             logger.warning("Spool event rejected with 403 (preempted) for job %s, discarding", job_id)
                             spool_file.unlink(missing_ok=True)
+                            record_metric("spool_replay_total", labels={"outcome": "discarded"})
                         else:
                             raise
             except Exception:
@@ -347,12 +470,17 @@ class EdgeWorker:
         delivery_generation: int = 1,
     ) -> None:
         url = f"{self._base_url}/api/v1/internal/edge/jobs/{job_id}/events"
-        headers = dict(self._headers())
+        body = {"events": events, "delivery_generation": delivery_generation}
+        headers = self._request_headers(
+            method="POST",
+            path=f"/api/v1/internal/edge/jobs/{job_id}/events",
+            json_body=body,
+        )
         headers["X-Delivery-Generation"] = str(delivery_generation)
         response = await client.post(
             url,
             headers=headers,
-            json={"events": events, "delivery_generation": delivery_generation},
+            json=body,
         )
         response.raise_for_status()
 
@@ -410,8 +538,6 @@ class EdgeWorker:
         url = f"{self._base_url}/api/v1/internal/edge/jobs/{job_id}/artifacts/upload"
         checksum = hashlib.sha256(content_bytes).hexdigest()
         b64_content = base64.b64encode(content_bytes).decode("ascii")
-        headers = dict(self._headers())
-        headers["X-Delivery-Generation"] = str(delivery_generation)
         body = {
             "artifact_id": artifact_id,
             "name": name,
@@ -426,6 +552,12 @@ class EdgeWorker:
             "upload_mode": upload_mode,
             "idempotency_key": idempotency_key,
         }
+        headers = self._request_headers(
+            method="POST",
+            path=f"/api/v1/internal/edge/jobs/{job_id}/artifacts/upload",
+            json_body=body,
+        )
+        headers["X-Delivery-Generation"] = str(delivery_generation)
         res = await client.post(url, headers=headers, json=body)
         res.raise_for_status()
 
@@ -440,11 +572,15 @@ class EdgeWorker:
     ) -> bytes:
         """Pull central artifact on demand with SHA256 integrity verification."""
         url = f"{self._base_url}/api/v1/internal/edge/jobs/{job_id}/artifacts/request"
-        headers = dict(self._headers())
-        headers["X-Delivery-Generation"] = str(delivery_generation)
         body: dict[str, Any] = {"name": name}
         if artifact_id:
             body["artifact_id"] = artifact_id
+        headers = self._request_headers(
+            method="POST",
+            path=f"/api/v1/internal/edge/jobs/{job_id}/artifacts/request",
+            json_body=body,
+        )
+        headers["X-Delivery-Generation"] = str(delivery_generation)
         res = await client.post(url, headers=headers, json=body)
         res.raise_for_status()
         data = res.json().get("data") or {}
@@ -465,20 +601,37 @@ class EdgeWorker:
         attempt_id = job.get("attempt_id")
         step_id = job.get("step_id")
         delivery_generation = int(job.get("delivery_generation") or job.get("generation") or 1)
+        request_trace_id = normalize_request_trace_id(job.get("request_trace_id"))
+        if not request_trace_id:
+            request_trace_id = normalize_request_trace_id(snapshot.get("request_trace_id"))
+        bind_from_snapshot(
+            snapshot,
+            run_id=str(job.get("run_id") or job_id),
+            attempt_id=attempt_id,
+            step_id=step_id,
+            delivery_generation=delivery_generation,
+            edge_node_id=self._node_id,
+        )
+        observe_stage("edge_execute", outcome="started", engine="connector")
 
         stop_renew = asyncio.Event()
         cancel_event = asyncio.Event()
 
         async def _renew_loop():
             renew_url = f"{self._base_url}/api/v1/internal/edge/jobs/{job_id}/lease/renew"
-            headers = dict(self._headers())
-            headers["X-Delivery-Generation"] = str(delivery_generation)
+            renew_body = {"delivery_generation": delivery_generation}
             while not stop_renew.is_set():
                 try:
                     await asyncio.sleep(20.0)
                     if stop_renew.is_set():
                         break
-                    res = await client.post(renew_url, headers=headers, json={"delivery_generation": delivery_generation})
+                    headers = self._request_headers(
+                        method="POST",
+                        path=f"/api/v1/internal/edge/jobs/{job_id}/lease/renew",
+                        json_body=renew_body,
+                    )
+                    headers["X-Delivery-Generation"] = str(delivery_generation)
+                    res = await client.post(renew_url, headers=headers, json=renew_body)
                     if res.status_code == 403:
                         logger.warning("edge job lease preempted job_id=%s generation=%s", job_id, delivery_generation)
                         cancel_event.set()
@@ -495,10 +648,22 @@ class EdgeWorker:
                     await asyncio.sleep(2.0)
                     if stop_renew.is_set():
                         break
-                    res = await client.get(cancel_url, headers=self._headers())
+                    res = await client.get(
+                        cancel_url,
+                        headers=self._request_headers(
+                            method="GET",
+                            path=f"/api/v1/internal/edge/jobs/{job_id}/cancel",
+                        ),
+                    )
                     if res.status_code == 200:
-                        data = res.json().get("data") or {}
-                        if data.get("cancelled") or data.get("cancel_requested"):
+                        wrapped = res.json().get("data") or {}
+                        state = self._channel.load()
+                        payload = (
+                            self._channel.verify_command_envelope(state, wrapped)
+                            if state
+                            else None
+                        )
+                        if payload and (payload.get("cancelled") or payload.get("cancel_requested")):
                             cancel_event.set()
                             break
                 except asyncio.CancelledError:
@@ -534,6 +699,39 @@ class EdgeWorker:
                         logger.warning("edge failed to fetch required artifact '%s': %s", art_name, req_exc)
                         raise RuntimeError(f"Edge missing required artifact '{art_name}': {req_exc}")
 
+            try:
+                execution_context = prepared.get("execution_context")
+                context_version = prepared.get("context_version")
+                if execution_context is not None or context_version is not None:
+                    await revalidate_execution_context(
+                        snapshot=prepared,
+                        run_id=str(job.get("run_id") or job_id),
+                        attempt_id=attempt_id,
+                        generation=delivery_generation,
+                        org_id=str(prepared.get("org_id") or ""),
+                        user_id=str(prepared.get("user_id") or ""),
+                    )
+            except ContextRevalidationError as exc:
+                logger.warning("context revalidation denied job_id=%s: %s", job_id, exc)
+                await self._send_or_spool_event(
+                    client,
+                    job_id,
+                    {
+                        "event_type": "run.failed",
+                        "payload": {"error": "context revalidation denied", "reason": "context_revalidation_denied"},
+                        "source": "edge",
+                        "source_event_id": f"{job_id}:run.failed:{int(asyncio.get_event_loop().time() * 1000)}",
+                        "delivery_generation": delivery_generation,
+                        "attempt_id": attempt_id,
+                        "step_id": step_id,
+                    },
+                    delivery_generation=delivery_generation,
+                    attempt_id=attempt_id,
+                    step_id=step_id,
+                    request_trace_id=request_trace_id,
+                )
+                return
+
             async for event in execute_engine(
                 engine=engine_name,
                 tool_name=tool_name,
@@ -554,6 +752,8 @@ class EdgeWorker:
                     "attempt_id": attempt_id,
                     "step_id": step_id,
                 }
+                if request_trace_id:
+                    safe_event["request_trace_id"] = request_trace_id
                 await self._send_or_spool_event(
                     client,
                     job_id,
@@ -561,6 +761,7 @@ class EdgeWorker:
                     delivery_generation=delivery_generation,
                     attempt_id=attempt_id,
                     step_id=step_id,
+                    request_trace_id=request_trace_id,
                 )
 
                 # If artifact produced on edge or on run completion, upload artifact
@@ -596,6 +797,7 @@ class EdgeWorker:
                 delivery_generation=delivery_generation,
                 attempt_id=attempt_id,
                 step_id=step_id,
+                request_trace_id=request_trace_id,
             )
         except Exception as exc:
             logger.exception("edge job failed job_id=%s", job_id)
@@ -615,6 +817,7 @@ class EdgeWorker:
                 delivery_generation=delivery_generation,
                 attempt_id=attempt_id,
                 step_id=step_id,
+                request_trace_id=request_trace_id,
             )
         finally:
             stop_renew.set()

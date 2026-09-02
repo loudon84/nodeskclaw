@@ -1,4 +1,8 @@
 import pytest
+from app.schemas.hermes_skill.runtime_skill_run import (
+    generate_request_trace_id,
+    normalize_request_trace_id,
+)
 from app.services.mcp_skill_gateway.handler import (
     _generate_request_trace_id,
     _build_request_snapshot,
@@ -14,6 +18,19 @@ def test_generate_request_trace_id_prefix():
 def test_generate_request_trace_id_unique():
     ids = {_generate_request_trace_id() for _ in range(100)}
     assert len(ids) == 100
+
+
+def test_runtime_generate_request_trace_id_prefix():
+    trace_id = generate_request_trace_id()
+    assert trace_id.startswith("req_")
+    assert len(trace_id) <= 64
+
+
+def test_normalize_request_trace_id_rejects_invalid():
+    assert normalize_request_trace_id("valid-trace_1.2:3") == "valid-trace_1.2:3"
+    assert normalize_request_trace_id("x" * 65) is None
+    assert normalize_request_trace_id("bad id") is None
+    assert normalize_request_trace_id("bad$id") is None
 
 
 def test_build_request_snapshot_basic():

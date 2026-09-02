@@ -13,6 +13,10 @@ from app.models.connector.edge_node import EdgeNode, EdgeNodeStatus
 from app.models.hermes_skill.skill_installation import HermesSkillInstallation
 
 
+def _mock_request() -> MagicMock:
+    return MagicMock()
+
+
 @pytest.mark.asyncio
 async def test_report_installation_actual_success():
     db = AsyncMock()
@@ -41,7 +45,7 @@ async def test_report_installation_actual_success():
     )
 
     with patch("app.api.internal_edge._authenticate_edge", AsyncMock(return_value=node)):
-        res = await report_installation_actual(body, db, x_edge_token="tok")
+        res = await report_installation_actual(body, _mock_request(), db)
 
     assert res["code"] == 0
     assert res["data"]["actual_status"] == "ready"
@@ -75,7 +79,7 @@ async def test_report_installation_actual_rejects_node_mismatch():
 
     with patch("app.api.internal_edge._authenticate_edge", AsyncMock(return_value=node)):
         with pytest.raises(ForbiddenError, match="edge_org_mismatch"):
-            await report_installation_actual(body, db, x_edge_token="tok")
+            await report_installation_actual(body, _mock_request(), db)
 
 
 @pytest.mark.asyncio
@@ -106,7 +110,7 @@ async def test_report_installation_actual_generation_fencing():
     )
     with patch("app.api.internal_edge._authenticate_edge", AsyncMock(return_value=node)):
         with pytest.raises(ForbiddenError, match="stale_actual_generation"):
-            await report_installation_actual(stale_body, db, x_edge_token="tok")
+            await report_installation_actual(stale_body, _mock_request(), db)
 
     # 2. Future actual generation (4 > 3) rejected
     from app.core.exceptions import BadRequestError
@@ -117,7 +121,7 @@ async def test_report_installation_actual_generation_fencing():
     )
     with patch("app.api.internal_edge._authenticate_edge", AsyncMock(return_value=node)):
         with pytest.raises(BadRequestError, match="future_generation"):
-            await report_installation_actual(future_body, db, x_edge_token="tok")
+            await report_installation_actual(future_body, _mock_request(), db)
 
     # 3. Matching actual generation (3 == 3) accepted
     valid_body = EdgeActualReportBody(
@@ -126,7 +130,7 @@ async def test_report_installation_actual_generation_fencing():
         generation=3,
     )
     with patch("app.api.internal_edge._authenticate_edge", AsyncMock(return_value=node)):
-        res = await report_installation_actual(valid_body, db, x_edge_token="tok")
+        res = await report_installation_actual(valid_body, _mock_request(), db)
     assert res["code"] == 0
     assert installation.actual_generation == 3
     assert installation.actual_status == "ready"
@@ -159,7 +163,7 @@ async def test_report_installation_actual_error_does_not_align_generation():
         meta={"error_code": "errors.skill.install_failed"},
     )
     with patch("app.api.internal_edge._authenticate_edge", AsyncMock(return_value=node)):
-        res = await report_installation_actual(body, db, x_edge_token="tok")
+        res = await report_installation_actual(body, _mock_request(), db)
     assert res["code"] == 0
     assert installation.actual_generation == 1
     assert installation.actual_status == "error"
@@ -189,7 +193,7 @@ async def test_report_installation_actual_rejects_unknown_status():
 
     with patch("app.api.internal_edge._authenticate_edge", AsyncMock(return_value=node)):
         with pytest.raises(BadRequestError, match="Actual status"):
-            await report_installation_actual(body, db, x_edge_token="tok")
+            await report_installation_actual(body, _mock_request(), db)
 
     assert installation.actual_generation == 1
 
@@ -217,7 +221,7 @@ async def test_report_installation_actual_rejects_non_edge_target():
 
     with patch("app.api.internal_edge._authenticate_edge", AsyncMock(return_value=node)):
         with pytest.raises(ForbiddenError, match="Edge Installation"):
-            await report_installation_actual(body, db, x_edge_token="tok")
+            await report_installation_actual(body, _mock_request(), db)
 
     assert installation.actual_generation == 1
 
@@ -246,7 +250,7 @@ async def test_report_installation_actual_rejects_uninstalled_for_active_desired
 
     with patch("app.api.internal_edge._authenticate_edge", AsyncMock(return_value=node)):
         with pytest.raises(BadRequestError, match="Actual status"):
-            await report_installation_actual(body, db, x_edge_token="tok")
+            await report_installation_actual(body, _mock_request(), db)
 
     assert installation.actual_generation == 1
 

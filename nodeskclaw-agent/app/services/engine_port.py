@@ -5,6 +5,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from app.services.connector_router import execute_connector_run
+from app.services.execution_observability import observe_stage
 from app.services.hermes_engine import execute_hermes_run
 
 
@@ -24,6 +25,7 @@ async def execute_engine(
     Dispatches directly to adapter engines and fails-closed on unknown engine.
     """
     engine_type = (engine or "").lower().strip()
+    observe_stage("engine_dispatch", outcome="started", engine=engine_type or "unknown")
     if engine_type == "hermes":
         async for event in execute_hermes_run(
             tool_name=tool_name,

@@ -109,6 +109,64 @@ async def test_start_delegates_to_skill_agent_and_returns_run_id():
     assert payload["execution_context"]["descriptors"][0]["stable_id"] == "kb://doc-1"
     assert "credential_lease" not in payload["route_snapshot"]
     assert "token" not in str(payload["route_snapshot"].get("credential_lease_ref") or {})
+    assert payload["request_trace_id"].startswith("req_")
+
+
+@pytest.mark.asyncio
+async def test_start_strips_invalid_trace_before_enqueue():
+    db = AsyncMock()
+    db.add = MagicMock()
+    task = MagicMock()
+    task.id = "run-abc"
+    task.task_no = "TASK-0001"
+    task.status = MagicMock(value="queued")
+    task.event_url = "/api/v1/hermes/tasks/run-abc/events"
+    task.artifact_url = "/api/v1/hermes/tasks/run-abc/artifacts"
+    task.server_artifacts = []
+    task.output_policy = {}
+
+    with patch(
+        "app.services.hermes_skill.runtime_skill_run_service.settings"
+    ) as mock_settings, patch(
+        "app.services.hermes_skill.runtime_skill_run_service.TaskService"
+    ) as task_cls, patch(
+        "app.services.hermes_skill.runtime_skill_run_service.TaskEventTokenService"
+    ) as token_cls, patch.object(
+        RuntimeSkillRunService,
+        "_resolve_release_meta",
+        new=AsyncMock(return_value=_release_meta()),
+    ), patch.object(
+        RuntimeSkillRunService,
+        "_build_authorized_execution_context",
+        new=AsyncMock(return_value={"context_version": 42, "descriptors": []}),
+    ), patch.object(
+        RuntimeSkillRunService,
+        "_enrich_route_snapshot",
+        new=AsyncMock(side_effect=lambda request, route: {**route, "gateway_url": "http://gw"}),
+    ):
+        mock_settings.SKILL_AGENT_ENABLED = True
+        mock_settings.HERMES_TASK_DEFAULT_TIMEOUT_SECONDS = 900
+        mock_settings.MCP_TASK_SSE_TOKEN_TTL_SECONDS = 900
+        mock_settings.EXPERT_EVENT_TOKEN_TTL_SECONDS = 900
+
+        task_svc = AsyncMock()
+        task_svc.find_idempotent_task = AsyncMock(return_value=None)
+        task_svc.create_task = AsyncMock(return_value=task)
+        task_cls.return_value = task_svc
+
+        token_svc = AsyncMock()
+        token_svc.create_token = AsyncMock(
+            return_value={"event_url": "/api/v1/hermes/tasks/run-abc/events?token=abc"}
+        )
+        token_cls.return_value = token_svc
+
+        invalid_trace = "x" * 80
+        await RuntimeSkillRunService(db).start(_request(request_trace_id=invalid_trace))
+
+    added_outbox = db.add.call_args[0][0]
+    payload = added_outbox.payload
+    assert payload["request_trace_id"].startswith("req_")
+    assert len(payload["request_trace_id"]) <= 64
 
 
 @pytest.mark.asyncio

@@ -11,7 +11,7 @@ from app.models.connector.edge_node import EdgeNode
 from app.models.hermes_skill.skill_release import SkillReleaseStatus
 from app.schemas.connector import EdgeNodeRead, SecretRefRead
 from app.services.connector.connector_service import ConnectorService
-from app.services.connector.edge_node_service import EdgeNodeService, hash_edge_token
+from app.services.connector.edge_node_service import EdgeNodeService, hash_edge_bootstrap, hash_edge_token
 
 
 @pytest.mark.asyncio
@@ -220,10 +220,11 @@ async def test_register_edge_node_returns_plain_token_once():
     db.add = MagicMock()
     db.flush = AsyncMock()
 
-    node, token = await service.register(org_id="org-1", name="edge-1", operator_user_id="user-1")
-    assert token
-    assert node.token_hash == hash_edge_token(token)
-    assert node.token_hash != token
+    node, bootstrap, expires_at = await service.register(org_id="org-1", name="edge-1", operator_user_id="user-1")
+    assert bootstrap
+    assert expires_at
+    assert node.token_hash == hash_edge_bootstrap(bootstrap)
+    assert node.token_hash != bootstrap
 
 
 @pytest.mark.asyncio

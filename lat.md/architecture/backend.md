@@ -20,9 +20,19 @@
 
 业务按域拆分 service，Runtime 与 K8s 为专项子树。
 
-高频域：`auth_service`、`deploy_service`、`gene_service`、`collaboration_service`、`cluster_service`、`hermes_*`、`connector/`（[[nodeskclaw-backend/app/services/connector/connector_service.py#ConnectorService]]、[[nodeskclaw-backend/app/services/connector/edge_node_service.py#EdgeNodeService]]，拥有 [[nodeskclaw-backend/app/models/connector/edge_artifact_on_demand_request.py#EdgeArtifactOnDemandRequest]] 请求事实）、`mcp_skill_gateway/`、`runtime/`、`k8s/`；Skill Run 投影路由 `app/api/runs.py`（执行在 `nodeskclaw-agent`）；Edge 边缘通道（Installation Desired/Actual、Bundle 钉包与授权下载、On-Demand 工件拉取与工件中继）路由 `app/api/internal_edge.py`。
+高频域：`auth_service`、`deploy_service`、`gene_service`、`collaboration_service`、`cluster_service`、`hermes_*`、`connector/`（[[nodeskclaw-backend/app/services/connector/connector_service.py#ConnectorService]]、[[nodeskclaw-backend/app/services/connector/edge_node_service.py#EdgeNodeService]]，拥有 [[nodeskclaw-backend/app/models/connector/edge_artifact_on_demand_request.py#EdgeArtifactOnDemandRequest]] 请求事实）、`mcp_skill_gateway/`、`runtime/`、`k8s/`；Skill Run 投影路由 `app/api/runs.py`（执行在 `nodeskclaw-agent`）；Edge 边缘通道（Installation Desired/Actual、Bundle 钉包与授权下载、On-Demand 工件拉取与工件中继）路由 `app/api/internal_edge.py`，RM-07 起 Internal Edge 出站鉴权为 Ed25519 请求证明（[[nodeskclaw-backend/app/services/connector/edge_control_channel.py#EdgeControlChannel]]）与 append-only [[nodeskclaw-backend/app/models/connector/edge_control_nonce.py#EdgeControlNonce]] 反重放，下行 job/install/on-demand/cancel 响应包在 Backend 签名的命令封套内。
 
 修改 API 的默认触及链：`api` → `schemas` → `services` →（可选）`models` + Alembic + tests。
+
+## Edge Control Channel
+
+RM-07 将 Internal Edge 从长期静态 Token 升级为 Ed25519 双向证明：出站请求签名、入站命令封套与 append-only Nonce（随机数）反重放。
+
+- **已实现**：[[nodeskclaw-backend/app/models/connector/edge_node.py#EdgeNode]] 扩展 `identity_version`、公钥、bootstrap 过期、`request_seq` 与轮换窗口；[[nodeskclaw-backend/app/models/connector/edge_control_nonce.py#EdgeControlNonce]] 为 append-only（无 `deleted_at`），全表唯一 `(node_id, identity_version, nonce)`。
+- **已实现**：[[nodeskclaw-backend/app/services/connector/edge_node_service.py#EdgeNodeService]] 负责 register（返回一次性 `bootstrap` + `expires_at`）、bind、disable/enable、rotate/revoke，并通过 [[nodeskclaw-backend/app/models/operation_audit_log.py#OperationAuditLog]] 留下无秘密审计事实；bind/rotate 响应必须携带 `issuer_key_id`、`issuer_public_key` 及可选 previous issuer 窗口。
+- **已实现**：[[nodeskclaw-backend/app/api/internal_edge.py#_authenticate_edge]] 在任一读取/写入前验证请求证明；`POST /internal/edge/enroll` 消费 bootstrap，`POST /internal/edge/rotate` 由当前身份发起轮换。
+- **已实现**：[[nodeskclaw-backend/app/services/connector/edge_control_channel.py#EdgeControlChannel]] 签发命令封套，覆盖 `job.claim`、`install.desired`、`artifact.on_demand`、`job.cancel.check`；issuer 配置见 [[nodeskclaw-backend/app/core/config.py#Settings]] 的 `EDGE_CONTROL_*`。
+- **不变**：Delivery Generation / Run Generation 栅栏、Public Skill Run 合同与 RM-06 授权复核入口 [[nodeskclaw-backend/app/api/internal_edge.py#revalidate_skill_run_execution_context]] 保持独立；长期 `X-Edge-Token` 鉴权已移除。
 
 ## Hermes And MCP
 

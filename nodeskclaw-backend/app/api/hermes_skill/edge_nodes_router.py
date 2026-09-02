@@ -1,3 +1,5 @@
+"""Edge node identity lifecycle routes."""
+
 from typing import Any
 
 from fastapi import APIRouter, Depends
@@ -39,7 +41,7 @@ async def register_edge_node(
 ):
     user, org = user_org
     await PermissionChecker.require_permission(db, user.id, org.id, "skill:manage")
-    node, token = await EdgeNodeService(db).register(
+    node, bootstrap, expires_at = await EdgeNodeService(db).register(
         org_id=org.id,
         name=body.name,
         operator_user_id=user.id,
@@ -47,6 +49,59 @@ async def register_edge_node(
     await db.commit()
     result = EdgeNodeCreateResult(
         node=EdgeNodeRead.model_validate(node),
-        token=token,
+        bootstrap=bootstrap,
+        expires_at=expires_at,
     )
     return _ok(result.model_dump())
+
+
+@router.post("/edge-nodes/{node_id}/disable")
+async def disable_edge_node(
+    node_id: str,
+    user_org=Depends(require_org_member),
+    db: AsyncSession = Depends(get_db),
+):
+    user, org = user_org
+    await PermissionChecker.require_permission(db, user.id, org.id, "skill:manage")
+    node = await EdgeNodeService(db).disable_node(org.id, node_id, user.id)
+    await db.commit()
+    return _ok(EdgeNodeRead.model_validate(node).model_dump())
+
+
+@router.post("/edge-nodes/{node_id}/enable")
+async def enable_edge_node(
+    node_id: str,
+    user_org=Depends(require_org_member),
+    db: AsyncSession = Depends(get_db),
+):
+    user, org = user_org
+    await PermissionChecker.require_permission(db, user.id, org.id, "skill:manage")
+    node = await EdgeNodeService(db).enable_node(org.id, node_id, user.id)
+    await db.commit()
+    return _ok(EdgeNodeRead.model_validate(node).model_dump())
+
+
+@router.post("/edge-nodes/{node_id}/rotate")
+async def rotate_edge_node(
+    node_id: str,
+    user_org=Depends(require_org_member),
+    db: AsyncSession = Depends(get_db),
+):
+    user, org = user_org
+    await PermissionChecker.require_permission(db, user.id, org.id, "skill:manage")
+    node = await EdgeNodeService(db).start_rotation(org.id, node_id, user.id)
+    await db.commit()
+    return _ok(EdgeNodeRead.model_validate(node).model_dump())
+
+
+@router.post("/edge-nodes/{node_id}/revoke")
+async def revoke_edge_node(
+    node_id: str,
+    user_org=Depends(require_org_member),
+    db: AsyncSession = Depends(get_db),
+):
+    user, org = user_org
+    await PermissionChecker.require_permission(db, user.id, org.id, "skill:manage")
+    node = await EdgeNodeService(db).revoke_node(org.id, node_id, user.id)
+    await db.commit()
+    return _ok(EdgeNodeRead.model_validate(node).model_dump())

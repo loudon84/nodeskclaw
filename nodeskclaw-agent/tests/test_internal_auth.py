@@ -342,6 +342,8 @@ def test_health_and_metrics_endpoints(monkeypatch, tmp_path):
         assert m_resp.status_code == 200
         m_data = m_resp.json()
         assert "runs_by_status" in m_data
+        assert "metrics" in m_data
+        assert "definitions" in m_data["metrics"]
         assert m_data["runs_by_status"].get("COMPLETED") == 5
 
 

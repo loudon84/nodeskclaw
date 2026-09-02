@@ -10,7 +10,7 @@
 
 Hermes Skills 运营页负责工作副本与 **SkillRelease** 发布/废弃（员工 MCP 只见 published）；注册到组织 MCP 只写工作副本 + draft，不自动 published（见 [[decisions/skill-platform-execution]]）。
 
-Hermes Connectors（`/hermes/connectors`）与 Edge 节点（`/hermes/edge-nodes`）运营页管理 Connector 定义/实例/公开 Tool、SecretRef 元数据与 Edge 登记；Portal 不收集密钥明文。API 封装见 [[nodeskclaw-portal/src/api/hermes/connectors.ts]]。
+Hermes Connectors（`/hermes/connectors`）与 Edge 节点（`/hermes/edge-nodes`）运营页管理 Connector 定义/实例/公开 Tool、SecretRef 元数据与 Edge 登记；Edge 登记返回一次性 bootstrap（含过期时间）并支持 disable/enable/rotate/revoke 生命周期操作，绑定在 Edge Agent 本地完成。Portal 不收集密钥明文。页面 `nodeskclaw-portal/src/views/hermes/EdgeNodesView.vue`，API [[nodeskclaw-portal/src/api/hermes/connectors.ts#createEdgeNode]]（含 disable/enable/rotate/revoke）。
 
 Hermes Installations（`/hermes/installations`）页选择 remote / edge 安装目标（edge 需选定节点），并展示边缘回报的 `actual_status` 漂移状态。
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -22,6 +23,7 @@ from app.schemas import is_semantic_event_type
 from app.services import run_service
 from app.services.context_revalidate import ContextRevalidationError, revalidate_execution_context
 from app.services.engine_port import execute_engine
+from app.services.execution_observability import bind_from_snapshot, observe_stage, record_metric
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +70,9 @@ def build_hybrid_step_plan(snapshot: dict[str, Any] | None) -> list[dict[str, An
                     "dependencies": [central_step_id],
                     "binding": b,
                 })
-    elif placement.get("role") == "edge" or placement.get("engine") == "connector":
+    elif placement.get("role") == "edge" or (
+        placement.get("engine") == "connector" and placement.get("role") != "central"
+    ):
         steps.append({
             "step_id": "edge_connector",
             "step": "edge_connector",
@@ -105,6 +109,25 @@ def needs_edge_jobs(snapshot: dict[str, Any] | None) -> bool:
         if isinstance(binding, dict) and binding.get("placement") == "edge":
             return True
     return False
+
+
+def build_edge_step_snapshot(snapshot: dict[str, Any] | None, edge_step: dict[str, Any]) -> dict[str, Any]:
+    binding = edge_step.get("binding") or {}
+    edge_node_id = binding.get("edge_node_id") or binding.get("node_id")
+    prepared = {
+        "placement": {"role": "edge", "engine": "connector", "edge_node_id": edge_node_id},
+        "runtime_policy": {
+            "connector_kind": binding.get("connector_kind"),
+            "connector_config": dict(binding.get("connector_config") or {}),
+            "connector_secret_ref_id": binding.get("connector_secret_ref_id"),
+            "network_policy": dict(binding.get("network_policy") or {}),
+        },
+    }
+    if snapshot:
+        for key in ("org_id", "user_id", "request_trace_id", "run_session_id", "execution_context", "context_version"):
+            if key in snapshot:
+                prepared[key] = snapshot[key]
+    return prepared
 
 
 class RunWorker:
@@ -206,6 +229,8 @@ class RunWorker:
                     await run_service.aggregate_run_terminal(db, wr["id"], org_id=wr["org_id"])
                 except Exception:
                     logger.debug("recovering WAITING_EDGE / CANCELLING run %s failed", wr["id"], exc_info=True)
+            if rows:
+                observe_stage("recover", outcome="ok", role="central")
             await db.commit()
 
     async def _claim_one(self) -> dict | None:
@@ -290,6 +315,17 @@ class RunWorker:
                 },
             )
             await db.commit()
+            snapshot = row["snapshot"] or {}
+            placement = snapshot.get("placement") or {}
+            role = str(placement.get("role") or "central")
+            bind_from_snapshot(
+                snapshot,
+                run_id=row["id"],
+                attempt_id=attempt_id,
+                generation=attempt_no,
+            )
+            record_metric("runs_claimed_total", labels={"role": role, "outcome": "ok"})
+            observe_stage("claim", outcome="ok", role=role)
             return {
                 "id": row["id"],
                 "org_id": row.get("org_id"),
@@ -325,6 +361,7 @@ class RunWorker:
                 params,
             )
             if res.rowcount == 0:
+                record_metric("lease_renew_total", labels={"outcome": "fenced"})
                 return False
             await db.execute(
                 text(
@@ -337,6 +374,7 @@ class RunWorker:
                 {"attempt_id": attempt_id, "lease_until": lease_until},
             )
             await db.commit()
+            record_metric("lease_renew_total", labels={"outcome": "ok"})
             return True
 
     async def _execute(self, claimed: dict) -> None:
@@ -380,6 +418,21 @@ class RunWorker:
 
         cancel_task = asyncio.create_task(_cancel_check_loop())
         renew_task = asyncio.create_task(_renew_loop())
+
+        snapshot = claimed["snapshot"] or {}
+        placement = snapshot.get("placement") or {}
+        engine_name = str(placement.get("engine") or "hermes")
+        if engine_name == "hybrid":
+            engine_name = "hermes"
+        bind_from_snapshot(
+            snapshot,
+            run_id=run_id,
+            attempt_id=attempt_id,
+            generation=generation,
+        )
+        observe_stage("execute", outcome="started", engine=engine_name)
+        execute_started = time.monotonic()
+        execute_outcome = "ok"
 
         async with SessionLocal() as db:
             try:
@@ -683,6 +736,7 @@ class RunWorker:
                     )
                     await db.commit()
             except ContextRevalidationError as exc:
+                execute_outcome = "error"
                 logger.warning("context revalidation denied run_id=%s: %s", run_id, exc)
                 await db.rollback()
                 async with SessionLocal() as err_db:
@@ -712,6 +766,7 @@ class RunWorker:
                         await err_db.rollback()
                         logger.exception("failed to persist context revalidation failure run_id=%s", run_id)
             except Exception as exc:
+                execute_outcome = "error"
                 logger.exception("run execute failed run_id=%s", run_id)
                 await db.rollback()
                 async with SessionLocal() as err_db:
@@ -739,6 +794,12 @@ class RunWorker:
                         await err_db.rollback()
                         logger.exception("failed to persist run failure run_id=%s", run_id)
             finally:
+                record_metric(
+                    "run_execute_seconds",
+                    labels={"engine": engine_name, "outcome": execute_outcome},
+                    observe_seconds=time.monotonic() - execute_started,
+                )
+                observe_stage("execute", outcome=execute_outcome, engine=engine_name)
                 stop_renew.set()
                 renew_task.cancel()
                 cancel_task.cancel()

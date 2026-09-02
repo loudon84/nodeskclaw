@@ -6,7 +6,7 @@ import hmac
 from datetime import datetime, timedelta, timezone
 
 import httpx
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -20,6 +20,7 @@ from app.models.connector.edge_artifact_on_demand_request import EdgeArtifactOnD
 from app.models.connector.edge_job import EdgeJob, EdgeJobStatus
 from app.models.connector.edge_node import EdgeNode, EdgeNodeStatus
 from app.models.hermes_skill.skill_installation import HermesSkillInstallation
+from app.services.connector.edge_control_channel import EdgeControlChannel, canonical_payload_sha256
 from app.services.connector.edge_node_service import EdgeNodeService, hash_edge_token
 from app.services.hermes_skill.runtime_skill_run_service import RuntimeSkillRunService, strip_internal_route_secrets
 from app.services.hermes_skill.skill_release_service import (
@@ -81,28 +82,62 @@ class IssueOnDemandRequestBody(BaseModel):
 
 
 
+class EdgeEnrollBody(BaseModel):
+    node_id: str
+    public_key: str
+
+
+class EdgeRotateBody(BaseModel):
+    new_public_key: str
+
+
 async def _authenticate_edge(
     db: AsyncSession,
+    request: Request,
     *,
-    token: str | None,
     node_id: str | None = None,
 ) -> EdgeNode:
-    if not token:
-        raise ForbiddenError("Edge token 无效", "errors.connector.edge_token_invalid")
-    token_hash = hash_edge_token(token)
-    query = select(EdgeNode).where(
-        not_deleted(EdgeNode),
-        EdgeNode.token_hash == token_hash,
+    channel = EdgeControlChannel(db)
+    header_node_id = request.headers.get("X-Edge-Node-Id")
+    resolved_node_id = node_id or header_node_id
+    if not resolved_node_id:
+        raise ForbiddenError("缺少 Edge 节点 ID", "errors.connector.edge_node_id_required")
+    node = await channel.get_node_for_proof(resolved_node_id)
+    if node.org_id and header_node_id and header_node_id != node.id:
+        raise ForbiddenError("伪造 org/node 被拒绝", "errors.connector.edge_org_mismatch")
+    if node_id and node_id != node.id:
+        raise ForbiddenError("伪造 org/node 被拒绝", "errors.connector.edge_org_mismatch")
+    if not node.public_key:
+        raise ForbiddenError("Edge 节点尚未绑定身份", "errors.connector.edge_identity_not_bound")
+    payload_sha256 = request.headers.get("X-Edge-Payload-Sha256") or canonical_payload_sha256(b"")
+    await channel.verify_request_proof(
+        node,
+        method=request.method,
+        path=request.url.path,
+        payload_sha256=payload_sha256,
+        timestamp_raw=request.headers.get("X-Edge-Timestamp"),
+        nonce=request.headers.get("X-Edge-Nonce"),
+        seq_raw=request.headers.get("X-Edge-Seq"),
+        identity_version_raw=request.headers.get("X-Edge-Identity-Version"),
+        signature_b64=request.headers.get("X-Edge-Signature"),
     )
-    if node_id:
-        query = query.where(EdgeNode.id == node_id)
-    result = await db.execute(query.limit(1))
-    node = result.scalar_one_or_none()
-    if not node:
-        raise ForbiddenError("Edge token 无效", "errors.connector.edge_token_invalid")
-    if node.status == EdgeNodeStatus.DISABLED.value:
-        raise ForbiddenError("Edge 节点已禁用", "errors.connector.edge_node_disabled")
     return node
+
+
+def _sign_command(
+    db: AsyncSession,
+    *,
+    org_id: str,
+    node_id: str,
+    purpose: str,
+    payload: dict,
+) -> dict:
+    return EdgeControlChannel(db).sign_command_envelope(
+        org_id=org_id,
+        node_id=node_id,
+        purpose=purpose,
+        payload=payload,
+    )
 
 
 ACTUAL_ALIGN_STATUSES = frozenset({"ready", "uninstalled", "removed"})
@@ -175,13 +210,55 @@ def _read_pinned_bundle(inst: HermesSkillInstallation) -> dict | None:
     }
 
 
+@router.post("/enroll")
+async def enroll_edge_node(
+    body: EdgeEnrollBody,
+    db: AsyncSession = Depends(get_db),
+    x_edge_bootstrap: str | None = Header(default=None, alias="X-Edge-Bootstrap"),
+):
+    if not x_edge_bootstrap:
+        raise ForbiddenError("缺少引导材料", "errors.connector.edge_bootstrap_missing")
+    result = await db.execute(
+        select(EdgeNode).where(not_deleted(EdgeNode), EdgeNode.id == body.node_id)
+    )
+    node = result.scalar_one_or_none()
+    if not node:
+        raise NotFoundError("Edge 节点不存在", "errors.connector.edge_node_not_found")
+    service = EdgeNodeService(db)
+    data = await service.bind_identity(
+        org_id=node.org_id,
+        node_id=body.node_id,
+        bootstrap=x_edge_bootstrap,
+        public_key=body.public_key,
+    )
+    await db.commit()
+    return {"code": 0, "data": data}
+
+
+@router.post("/rotate")
+async def rotate_edge_identity(
+    body: EdgeRotateBody,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    node = await _authenticate_edge(db, request)
+    service = EdgeNodeService(db)
+    data = await service.complete_rotation(
+        org_id=node.org_id,
+        node_id=node.id,
+        new_public_key=body.new_public_key,
+    )
+    await db.commit()
+    return {"code": 0, "data": data}
+
+
 @router.post("/heartbeat")
 async def edge_heartbeat(
     body: EdgeHeartbeatBody,
+    request: Request,
     db: AsyncSession = Depends(get_db),
-    x_edge_token: str | None = Header(default=None, alias="X-Edge-Token"),
 ):
-    node = await _authenticate_edge(db, token=x_edge_token, node_id=body.node_id)
+    node = await _authenticate_edge(db, request, node_id=body.node_id)
     if node.org_id and body.node_id != node.id:
         raise ForbiddenError("伪造 org/node 被拒绝", "errors.connector.edge_org_mismatch")
     now = datetime.now(timezone.utc)
@@ -195,10 +272,10 @@ async def edge_heartbeat(
 
 @router.get("/jobs")
 async def claim_edge_job(
+    request: Request,
     db: AsyncSession = Depends(get_db),
-    x_edge_token: str | None = Header(default=None, alias="X-Edge-Token"),
 ):
-    node = await _authenticate_edge(db, token=x_edge_token)
+    node = await _authenticate_edge(db, request)
     result = await db.execute(
         select(EdgeJob)
         .where(
@@ -241,18 +318,24 @@ async def claim_edge_job(
         "snapshot": strip_internal_route_secrets(job.snapshot or {}),
         "lease_until": job.lease_until.isoformat() if job.lease_until else None,
     }
-    return payload
+    return _sign_command(
+        db,
+        org_id=node.org_id,
+        node_id=node.id,
+        purpose="job.claim",
+        payload=payload,
+    )
 
 
 @router.post("/jobs/{job_id}/lease/renew")
 async def renew_edge_job_lease(
     job_id: str,
+    request: Request,
     body: EdgeLeaseRenewBody | None = None,
     db: AsyncSession = Depends(get_db),
-    x_edge_token: str | None = Header(default=None, alias="X-Edge-Token"),
     x_delivery_generation: str | None = Header(default=None, alias="X-Delivery-Generation"),
 ):
-    node = await _authenticate_edge(db, token=x_edge_token)
+    node = await _authenticate_edge(db, request)
     result = await db.execute(
         select(EdgeJob).where(
             not_deleted(EdgeJob),
@@ -296,10 +379,10 @@ async def renew_edge_job_lease(
 @router.get("/jobs/{job_id}/cancel")
 async def check_edge_job_cancel(
     job_id: str,
+    request: Request,
     db: AsyncSession = Depends(get_db),
-    x_edge_token: str | None = Header(default=None, alias="X-Edge-Token"),
 ):
-    node = await _authenticate_edge(db, token=x_edge_token)
+    node = await _authenticate_edge(db, request)
     result = await db.execute(
         select(EdgeJob).where(
             not_deleted(EdgeJob),
@@ -312,16 +395,24 @@ async def check_edge_job_cancel(
     if not job:
         raise NotFoundError("Edge job 不存在", "errors.connector.edge_job_not_found")
     is_cancelled = bool(job.cancel_requested_at or job.status in (EdgeJobStatus.FAILED.value, "cancelled"))
-    return {"code": 0, "data": {"job_id": job.id, "cancel_requested": is_cancelled}}
+    payload = {"job_id": job.id, "cancel_requested": is_cancelled, "cancelled": is_cancelled}
+    wrapped = _sign_command(
+        db,
+        org_id=node.org_id,
+        node_id=node.id,
+        purpose="job.cancel.check",
+        payload=payload,
+    )
+    return {"code": 0, "data": wrapped}
 
 
 @router.post("/jobs/{job_id}/cancel")
 async def request_edge_job_cancel(
     job_id: str,
+    request: Request,
     db: AsyncSession = Depends(get_db),
-    x_edge_token: str | None = Header(default=None, alias="X-Edge-Token"),
 ):
-    node = await _authenticate_edge(db, token=x_edge_token)
+    node = await _authenticate_edge(db, request)
     result = await db.execute(
         select(EdgeJob).where(
             not_deleted(EdgeJob),
@@ -386,11 +477,11 @@ async def request_agent_edge_job_cancel(
 async def post_edge_job_events(
     job_id: str,
     body: EdgeJobEventsBody,
+    request: Request,
     db: AsyncSession = Depends(get_db),
-    x_edge_token: str | None = Header(default=None, alias="X-Edge-Token"),
     x_delivery_generation: str | None = Header(default=None, alias="X-Delivery-Generation"),
 ):
-    node = await _authenticate_edge(db, token=x_edge_token)
+    node = await _authenticate_edge(db, request)
     result = await db.execute(
         select(EdgeJob).where(
             not_deleted(EdgeJob),
@@ -474,11 +565,11 @@ async def post_edge_job_events(
 async def upload_edge_job_artifact(
     job_id: str,
     body: EdgeArtifactUploadBody,
+    request: Request,
     db: AsyncSession = Depends(get_db),
-    x_edge_token: str | None = Header(default=None, alias="X-Edge-Token"),
     x_delivery_generation: str | None = Header(default=None, alias="X-Delivery-Generation"),
 ):
-    node = await _authenticate_edge(db, token=x_edge_token)
+    node = await _authenticate_edge(db, request)
     result = await db.execute(
         select(EdgeJob).where(
             not_deleted(EdgeJob),
@@ -587,34 +678,43 @@ async def upload_edge_job_artifact(
 
 @router.get("/artifacts/on-demand-requests")
 async def pull_edge_artifact_on_demand_requests(
+    request: Request,
     db: AsyncSession = Depends(get_db),
-    x_edge_token: str | None = Header(default=None, alias="X-Edge-Token"),
 ):
-    node = await _authenticate_edge(db, token=x_edge_token)
+    node = await _authenticate_edge(db, request)
     edge_service = EdgeNodeService(db)
     items = await edge_service.pull_on_demand_requests(org_id=node.org_id, edge_node_id=node.id)
     await db.commit()
+    wrapped_items = []
+    for item in items:
+        payload = {
+            "id": item.id,
+            "org_id": item.org_id,
+            "edge_node_id": item.edge_node_id,
+            "job_id": item.job_id,
+            "run_id": item.run_id,
+            "attempt_id": item.attempt_id,
+            "step_id": item.step_id,
+            "run_generation": item.run_generation,
+            "delivery_generation": item.delivery_generation,
+            "artifact_id": item.artifact_id,
+            "name": item.name,
+            "status": item.status,
+            "expires_at": item.expires_at.isoformat() if item.expires_at else None,
+        }
+        wrapped_items.append(
+            _sign_command(
+                db,
+                org_id=node.org_id,
+                node_id=node.id,
+                purpose="artifact.on_demand",
+                payload=payload,
+            )
+        )
     return {
         "code": 0,
         "data": {
-            "items": [
-                {
-                    "id": item.id,
-                    "org_id": item.org_id,
-                    "edge_node_id": item.edge_node_id,
-                    "job_id": item.job_id,
-                    "run_id": item.run_id,
-                    "attempt_id": item.attempt_id,
-                    "step_id": item.step_id,
-                    "run_generation": item.run_generation,
-                    "delivery_generation": item.delivery_generation,
-                    "artifact_id": item.artifact_id,
-                    "name": item.name,
-                    "status": item.status,
-                    "expires_at": item.expires_at.isoformat() if item.expires_at else None,
-                }
-                for item in items
-            ]
+            "items": wrapped_items,
         },
     }
 
@@ -623,10 +723,10 @@ async def pull_edge_artifact_on_demand_requests(
 async def create_edge_job_artifact_on_demand_request(
     job_id: str,
     body: IssueOnDemandRequestBody,
+    request: Request,
     db: AsyncSession = Depends(get_db),
-    x_edge_token: str | None = Header(default=None, alias="X-Edge-Token"),
 ):
-    node = await _authenticate_edge(db, token=x_edge_token)
+    node = await _authenticate_edge(db, request)
     result = await db.execute(
         select(EdgeJob).where(
             not_deleted(EdgeJob),
@@ -670,11 +770,11 @@ async def create_edge_job_artifact_on_demand_request(
 async def request_edge_job_artifact(
     job_id: str,
     body: EdgeArtifactRequestBody,
+    request: Request,
     db: AsyncSession = Depends(get_db),
-    x_edge_token: str | None = Header(default=None, alias="X-Edge-Token"),
     x_delivery_generation: str | None = Header(default=None, alias="X-Delivery-Generation"),
 ):
-    node = await _authenticate_edge(db, token=x_edge_token)
+    node = await _authenticate_edge(db, request)
     result = await db.execute(
         select(EdgeJob).where(
             not_deleted(EdgeJob),
@@ -762,10 +862,10 @@ async def request_edge_job_artifact(
 
 @router.get("/installations/desired")
 async def get_desired_installations(
+    request: Request,
     db: AsyncSession = Depends(get_db),
-    x_edge_token: str | None = Header(default=None, alias="X-Edge-Token"),
 ):
-    node = await _authenticate_edge(db, token=x_edge_token)
+    node = await _authenticate_edge(db, request)
     result = await db.execute(
         select(HermesSkillInstallation).where(
             not_deleted(HermesSkillInstallation),
@@ -788,7 +888,15 @@ async def get_desired_installations(
         }
         if bundle:
             item["bundle"] = bundle
-        items.append(item)
+        items.append(
+            _sign_command(
+                db,
+                org_id=node.org_id,
+                node_id=node.id,
+                purpose="install.desired",
+                payload=item,
+            )
+        )
     await db.commit()
     return {"code": 0, "data": {"items": items, "node_id": node.id}}
 
@@ -796,11 +904,11 @@ async def get_desired_installations(
 @router.get("/installations/{installation_id}/bundle")
 async def download_installation_bundle(
     installation_id: str,
-    generation: int = Query(..., ge=1),
+    request: Request,
     db: AsyncSession = Depends(get_db),
-    x_edge_token: str | None = Header(default=None, alias="X-Edge-Token"),
+    generation: int = Query(..., ge=1),
 ):
-    node = await _authenticate_edge(db, token=x_edge_token)
+    node = await _authenticate_edge(db, request)
     result = await db.execute(
         select(HermesSkillInstallation).where(
             not_deleted(HermesSkillInstallation),
@@ -850,10 +958,10 @@ class EdgeActualReportBody(BaseModel):
 @router.post("/installations/actual")
 async def report_installation_actual(
     body: EdgeActualReportBody,
+    request: Request,
     db: AsyncSession = Depends(get_db),
-    x_edge_token: str | None = Header(default=None, alias="X-Edge-Token"),
 ):
-    node = await _authenticate_edge(db, token=x_edge_token)
+    node = await _authenticate_edge(db, request)
     result = await db.execute(
         select(HermesSkillInstallation).where(
             not_deleted(HermesSkillInstallation),

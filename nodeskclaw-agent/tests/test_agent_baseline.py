@@ -115,21 +115,21 @@ def test_health_ready_fails_on_insecure_defaults_in_production(monkeypatch):
         assert "ephemeral artifact directory configured in production" in data["reasons"]
 
 
-def test_health_ready_fails_on_edge_insecure_config(monkeypatch):
+def test_health_ready_fails_on_edge_insecure_config(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "SKILL_AGENT_INSECURE_MODE", False)
     monkeypatch.setattr(settings, "SKILL_AGENT_INTERNAL_TOKEN", "valid-secure-token-123")
-    monkeypatch.setattr(settings, "SKILL_AGENT_ARTIFACT_DIR", "./var/artifacts")
+    monkeypatch.setattr(settings, "SKILL_AGENT_ARTIFACT_DIR", str(tmp_path))
     monkeypatch.setattr(settings, "SKILL_AGENT_ROLE", "edge")
     monkeypatch.setattr(settings, "SKILL_AGENT_EDGE_TOKEN", "")
     monkeypatch.setattr(settings, "SKILL_AGENT_EDGE_NODE_ID", "")
+    monkeypatch.setattr(settings, "SKILL_AGENT_SECRET_STORE", str(tmp_path))
     monkeypatch.setattr(settings, "SKILL_AGENT_CENTRAL_BASE_URL", "http://central:4510")
 
     for client in _test_client(monkeypatch):
         resp = client.get("/health/ready")
         assert resp.status_code == 503
         data = resp.json()
-        assert "missing edge token" in data["reasons"]
-        assert "missing edge node id" in data["reasons"]
+        assert "missing bound edge identity or bootstrap enrollment material" in data["reasons"]
         assert "insecure edge central base url (must be https://)" in data["reasons"]
 
 

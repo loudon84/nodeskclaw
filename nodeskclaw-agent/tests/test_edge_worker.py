@@ -1,10 +1,60 @@
 from __future__ import annotations
 
+import base64
+import json
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, PublicFormat, NoEncryption
 
+from app.services.edge_control_channel import EdgeControlChannel, EdgeIdentityState
 from app.services.edge_worker import EdgeWorker
+
+
+def _b64_private(key: Ed25519PrivateKey) -> str:
+    return base64.b64encode(
+        key.private_bytes(Encoding.Raw, PrivateFormat.Raw, NoEncryption())
+    ).decode("ascii")
+
+
+def _b64_public(key: Ed25519PrivateKey) -> str:
+    return base64.b64encode(key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)).decode("ascii")
+
+
+def _install_bound_edge_identity(monkeypatch, store_dir: Path, *, node_id: str = "node-1") -> None:
+    node_key = Ed25519PrivateKey.generate()
+    issuer_key = Ed25519PrivateKey.generate()
+    channel = EdgeControlChannel(store_dir)
+    state = EdgeIdentityState(
+        node_id=node_id,
+        org_id="org-1",
+        identity_version=1,
+        private_key=_b64_private(node_key),
+        public_key=_b64_public(node_key),
+        issuer_key_id="issuer-1",
+        issuer_public_key=_b64_public(issuer_key),
+        previous_issuer_key_id=None,
+        previous_issuer_public_key=None,
+        issuer_rotation_expires_at=None,
+        request_seq=0,
+        consumed_commands={},
+    )
+    channel.save(state)
+    monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_SECRET_STORE", str(store_dir))
+    monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_EDGE_NODE_ID", node_id)
+
+
+def _allow_plain_installation_unwrap(worker: EdgeWorker) -> None:
+    original = worker._channel.unwrap_or_none
+
+    def unwrap(state, wrapped):
+        if isinstance(wrapped, dict) and "envelope" not in wrapped:
+            return wrapped
+        return original(state, wrapped)
+
+    worker._channel.unwrap_or_none = unwrap  # type: ignore[method-assign]
 
 
 def test_edge_worker_prepared_snapshot_keeps_connector_secret_reference_opaque(tmp_path, monkeypatch):
@@ -28,10 +78,9 @@ def test_edge_worker_prepared_snapshot_keeps_connector_secret_reference_opaque(t
 
 
 @pytest.mark.asyncio
-async def test_edge_worker_heartbeat_then_jobs_poll(monkeypatch):
+async def test_edge_worker_heartbeat_then_jobs_poll(tmp_path, monkeypatch):
     monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_CENTRAL_BASE_URL", "http://central.test")
-    monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_EDGE_TOKEN", "edge-token")
-    monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_EDGE_NODE_ID", "node-1")
+    _install_bound_edge_identity(monkeypatch, tmp_path)
     monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_EDGE_POLL_SECONDS", 0.01)
 
     heartbeat_response = MagicMock()
@@ -61,20 +110,53 @@ async def test_edge_worker_heartbeat_then_jobs_poll(monkeypatch):
     client.post.assert_awaited()
     heartbeat_call = client.post.await_args
     assert heartbeat_call.args[0] == "http://central.test/api/v1/internal/edge/heartbeat"
-    assert heartbeat_call.kwargs["headers"]["X-Edge-Token"] == "edge-token"
+    assert heartbeat_call.kwargs["headers"]["X-Edge-Node-Id"] == "node-1"
+    assert heartbeat_call.kwargs["headers"]["X-Edge-Signature"]
     assert heartbeat_call.kwargs["json"]["node_id"] == "node-1"
 
     client.get.assert_awaited()
     jobs_call = client.get.await_args
     assert jobs_call.args[0] == "http://central.test/api/v1/internal/edge/jobs"
-    assert jobs_call.kwargs["headers"]["X-Edge-Token"] == "edge-token"
+    assert jobs_call.kwargs["headers"]["X-Edge-Signature"]
+
+
+@pytest.mark.asyncio
+async def test_execute_job_propagates_request_trace_id_on_spool(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_CENTRAL_BASE_URL", "http://central.test")
+    _install_bound_edge_identity(monkeypatch, tmp_path)
+
+    worker = EdgeWorker()
+    worker._spool_dir = tmp_path
+
+    async def mock_execute(*args, **kwargs):
+        yield {"event_type": "run.completed", "payload": {"result": "ok"}}
+
+    monkeypatch.setattr("app.services.edge_worker.execute_engine", mock_execute)
+
+    client = AsyncMock()
+    client.post = AsyncMock(side_effect=Exception("network error"))
+    client.get = AsyncMock(side_effect=Exception("network error"))
+
+    job = {
+        "id": "job-trace",
+        "tool_name": "test",
+        "arguments": {},
+        "snapshot": {"request_trace_id": "trace-live"},
+        "request_trace_id": "trace-live",
+        "delivery_generation": 2,
+    }
+    await worker._execute_job(client, job)
+
+    spool_files = list(tmp_path.glob("spool_*.json"))
+    assert spool_files
+    content = json.loads(spool_files[0].read_text(encoding="utf-8"))
+    assert content["request_trace_id"] == "trace-live"
 
 
 @pytest.mark.asyncio
 async def test_edge_worker_incremental_events_and_spool(tmp_path, monkeypatch):
     monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_CENTRAL_BASE_URL", "http://central.test")
-    monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_EDGE_TOKEN", "edge-token")
-    monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_EDGE_NODE_ID", "node-1")
+    _install_bound_edge_identity(monkeypatch, tmp_path)
 
     worker = EdgeWorker()
     worker._spool_dir = tmp_path
@@ -85,7 +167,6 @@ async def test_edge_worker_incremental_events_and_spool(tmp_path, monkeypatch):
         yield {"event_type": "run.completed", "payload": {"result": "ok"}}
 
     monkeypatch.setattr("app.services.edge_worker.execute_engine", mock_execute)
-    monkeypatch.setattr("app.services.edge_worker.revalidate_execution_context", AsyncMock())
 
     # 1. Post succeeds
     client = AsyncMock()
@@ -113,7 +194,7 @@ async def test_edge_worker_incremental_events_and_spool(tmp_path, monkeypatch):
     client_fail.get = AsyncMock(side_effect=Exception("network error"))
     await worker._execute_job(client_fail, job)
 
-    spool_files = list(tmp_path.glob("*.json"))
+    spool_files = list(tmp_path.glob("spool_*.json"))
     assert len(spool_files) >= 2
     # Check spool envelope fields
     import json
@@ -125,11 +206,12 @@ async def test_edge_worker_incremental_events_and_spool(tmp_path, monkeypatch):
     client_recover = AsyncMock()
     client_recover.post = AsyncMock(return_value=mock_resp)
     await worker._flush_spool(client_recover)
-    assert len(list(tmp_path.glob("*.json"))) == 0
+    assert len(list(tmp_path.glob("spool_*.json"))) == 0
 
 
 @pytest.mark.asyncio
-async def test_edge_worker_executes_frozen_connector_binding_snapshot(monkeypatch):
+async def test_edge_worker_executes_frozen_connector_binding_snapshot(tmp_path, monkeypatch):
+    _install_bound_edge_identity(monkeypatch, tmp_path)
     worker = EdgeWorker()
     seen: dict[str, object] = {}
 
@@ -170,12 +252,12 @@ async def test_edge_worker_executes_frozen_connector_binding_snapshot(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_edge_worker_reconcile_desired_installations(monkeypatch):
+async def test_edge_worker_reconcile_desired_installations(tmp_path, monkeypatch):
     monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_CENTRAL_BASE_URL", "http://central.test")
-    monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_EDGE_TOKEN", "edge-token")
-    monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_EDGE_NODE_ID", "node-1")
+    _install_bound_edge_identity(monkeypatch, tmp_path)
 
     worker = EdgeWorker()
+    _allow_plain_installation_unwrap(worker)
 
     desired_response = MagicMock()
     desired_response.status_code = 200
@@ -219,13 +301,13 @@ async def test_edge_worker_reconcile_desired_installations(monkeypatch):
 @pytest.mark.asyncio
 async def test_edge_worker_uninstall_removes_current_bundle(tmp_path, monkeypatch):
     monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_CENTRAL_BASE_URL", "http://central.test")
-    monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_EDGE_TOKEN", "edge-token")
-    monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_EDGE_NODE_ID", "node-1")
+    _install_bound_edge_identity(monkeypatch, tmp_path)
 
     worker = EdgeWorker()
     worker._spool_dir = tmp_path
     worker._installer = MagicMock()
     worker._installer.uninstall.return_value = True
+    _allow_plain_installation_unwrap(worker)
     desired_response = MagicMock(status_code=200)
     desired_response.json.return_value = {
         "data": {
@@ -255,12 +337,12 @@ async def test_edge_worker_uninstall_removes_current_bundle(tmp_path, monkeypatc
 @pytest.mark.asyncio
 async def test_edge_worker_rejects_incomplete_bundle_descriptor(tmp_path, monkeypatch):
     monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_CENTRAL_BASE_URL", "http://central.test")
-    monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_EDGE_TOKEN", "edge-token")
-    monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_EDGE_NODE_ID", "node-1")
+    _install_bound_edge_identity(monkeypatch, tmp_path)
 
     worker = EdgeWorker()
     worker._spool_dir = tmp_path
     worker._installer = MagicMock()
+    _allow_plain_installation_unwrap(worker)
     desired_response = MagicMock(status_code=200)
     desired_response.json.return_value = {
         "data": {
@@ -299,6 +381,7 @@ async def test_edge_spool_envelope_completeness_and_drain(tmp_path, monkeypatch)
 
     import httpx
 
+    _install_bound_edge_identity(monkeypatch, tmp_path)
     worker = EdgeWorker()
     worker._spool_dir = tmp_path
 
@@ -334,10 +417,9 @@ async def test_edge_spool_envelope_completeness_and_drain(tmp_path, monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_edge_lease_preempted_stops_job(monkeypatch):
+async def test_edge_lease_preempted_stops_job(tmp_path, monkeypatch):
     monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_CENTRAL_BASE_URL", "http://central.test")
-    monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_EDGE_TOKEN", "edge-token")
-    monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_EDGE_NODE_ID", "node-1")
+    _install_bound_edge_identity(monkeypatch, tmp_path)
 
     worker = EdgeWorker()
 
@@ -350,7 +432,6 @@ async def test_edge_lease_preempted_stops_job(monkeypatch):
         yield {"event_type": "run.progress", "payload": {}}
 
     monkeypatch.setattr("app.services.edge_worker.execute_engine", mock_execute)
-    monkeypatch.setattr("app.services.edge_worker.revalidate_execution_context", AsyncMock())
 
     client = AsyncMock()
     mock_resp = MagicMock(status_code=200, raise_for_status=MagicMock())
@@ -400,14 +481,14 @@ async def test_edge_worker_reconcile_with_real_installer(tmp_path, monkeypatch):
     import zipfile
 
     monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_CENTRAL_BASE_URL", "http://central.test")
-    monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_EDGE_TOKEN", "edge-token")
-    monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_EDGE_NODE_ID", "node-1")
+    _install_bound_edge_identity(monkeypatch, tmp_path)
 
     worker = EdgeWorker()
     worker._spool_dir = tmp_path
     from app.services.edge_skill_installer import EdgeSkillInstaller
 
     worker._installer = EdgeSkillInstaller(base_dir=tmp_path / "skills")
+    _allow_plain_installation_unwrap(worker)
 
     zip_buf = io.BytesIO()
     with zipfile.ZipFile(zip_buf, "w") as zf:
@@ -467,11 +548,11 @@ async def test_edge_worker_reconcile_with_real_installer(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_edge_worker_pull_and_fulfill_on_demand_requests(tmp_path, monkeypatch):
     monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_CENTRAL_BASE_URL", "http://central.test")
-    monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_EDGE_TOKEN", "edge-token")
-    monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_EDGE_NODE_ID", "node-1")
+    _install_bound_edge_identity(monkeypatch, tmp_path)
 
     worker = EdgeWorker()
     worker._spool_dir = tmp_path
+    _allow_plain_installation_unwrap(worker)
 
     # Place a local file in spool dir
     local_file = tmp_path / "agent_log.txt"
@@ -512,10 +593,9 @@ async def test_edge_worker_pull_and_fulfill_on_demand_requests(tmp_path, monkeyp
 
 
 @pytest.mark.asyncio
-async def test_edge_worker_skips_execute_engine_when_context_revalidate_denied(monkeypatch):
+async def test_edge_worker_skips_execute_engine_when_context_revalidate_denied(tmp_path, monkeypatch):
     monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_CENTRAL_BASE_URL", "http://central.test")
-    monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_EDGE_TOKEN", "edge-token")
-    monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_EDGE_NODE_ID", "node-1")
+    _install_bound_edge_identity(monkeypatch, tmp_path)
 
     worker = EdgeWorker()
     engine_called = {"value": False}

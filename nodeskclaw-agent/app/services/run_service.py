@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.schemas import ArtifactDescriptor, CreateRunRequest, CreateRunResponse, RunEventView, RunView
+from app.services.execution_observability import bind_from_snapshot, normalize_request_trace_id, observe_stage, record_metric
 
 SCHEMA = settings.SKILL_AGENT_SCHEMA
 
@@ -64,7 +65,7 @@ def build_snapshot(request: CreateRunRequest, *, org_id: str, user_id: str) -> d
         "user_id": user_id,
         "output_policy": dict(request.output_policy or {}),
         "client_context": _sanitize_sensitive_keys(dict(request.client_context or {})),
-        "request_trace_id": request.request_trace_id,
+        "request_trace_id": normalize_request_trace_id(request.request_trace_id),
         "run_session_id": request.run_session_id,
     }
     if request.execution_context is not None:
@@ -272,6 +273,7 @@ async def create_run(
         if ex_digest and ex_digest != command_digest:
             raise RuntimeError("idempotency conflict: payload digest mismatch")
         ex_snapshot = existing.get("snapshot") or {}
+        bind_from_snapshot(ex_snapshot, run_id=existing["id"])
         return CreateRunResponse(
             run_id=existing["id"],
             status=existing["status"],
@@ -303,6 +305,7 @@ async def create_run(
             )
 
     snapshot = build_snapshot(snapshot_request, org_id=org_id, user_id=user_id)
+    bind_from_snapshot(snapshot, run_id=request.run_id)
 
     status = "WAITING_APPROVAL" if request.requires_approval else "QUEUED"
     try:
@@ -1357,6 +1360,7 @@ async def store_artifact_bytes(
         attempt_id=attempt_id,
         generation=generation,
     )
+    record_metric("artifact_stage_total", labels={"stage": "store", "outcome": "ok"})
     if persisted:
         await append_event(
             db,
