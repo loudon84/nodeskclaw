@@ -16,6 +16,7 @@ v1.6 保持既有 Production Owner 与信任边界，以独立 Roadmap Item 关�
 - RM-03：[Edge Published Bundle Lifecycle](../../docs_agent/prd-v1.6.2-edge-published-bundle-lifecycle.md)（Roadmap `DONE`）。
 - RM-05：[Connector Runtime Execution Closure](../../docs_agent/prd-v1.6.4-connector-runtime-execution-closure.md)（Roadmap `DONE`；implementation `3611f371`，证据 `docs_agent/evidence/rm05-verification.md`）。
 - RM-06：[Session 与授权执行上下文](../../docs_agent/prd-v1.6.7-session-context-authorized-execution.md)（Roadmap `DONE`；证据 `docs_agent/evidence/rm06-verification.md`）。
+- RM-07：[Edge Control Channel 安全闭环](../../docs_agent/prd-v1.6.8-edge-control-channel-security-closure.md)（`APPROVED`；Roadmap `IN_PRD`）。Backend Edge 域拥有登记、身份生命周期、请求验证、命令签发与审计；Agent Edge Worker 拥有本地证明、命令验签与反重放消费。Delivery Generation 继续只作投递栅栏，Internal Edge 命令封套不进入 Public Consumer Contract。
 - RM-11：[累积 Public v1.2.1 合同导出](../../docs_agent/prd-v1.6.6-cumulative-public-consumer-contract.md)（Roadmap `DONE`；tag `skill-run-contract-v1.2.1`；证据 `docs_agent/evidence/rm11-verification.md`）。
 
 ## Contract-First External Work Boundary

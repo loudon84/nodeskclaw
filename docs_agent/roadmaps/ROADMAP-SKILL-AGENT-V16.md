@@ -4,7 +4,7 @@ version: 1.4.0
 status: ACTIVE
 architecture_decision: docs_agent/architecture/AD-SKILL-AGENT-V16.md
 source_revision: AD-SKILL-AGENT-V16@1.4.0
-updated_at: 2026-09-02T10:10:34.000000Z
+updated_at: 2026-09-02T17:36:19.000000+08:00
 ---
 
 # Roadmap: Skill Agent v1.6 客户端合同与生产闭环
@@ -33,7 +33,7 @@ updated_at: 2026-09-02T10:10:34.000000Z
 | RM-04 | Strict Readiness（严格就绪）与分布式 Production Acceptance（生产验收）形成可复现证据 | RM-03 | IN_PRD | 双 Central、单 Edge、真实 PostgreSQL、共享 S3/MinIO（对象存储）、故障注入、Secret 扫描、合同检查和 Newman（接口自动化）两连跑全部通过 | docs_agent/prd-v1.6.3-strict-readiness-production-acceptance.md | - | - | - |
 | RM-05 | Connector Runtime（连接器运行时）通过统一执行入口可靠完成 Central/Edge（中心/边缘）调用 | RM-03 | DONE | REST/MCP/DB Connector 经 AgentEnginePort（执行引擎端口）执行；取消、SecretRef（秘密引用）、审批和受控私网策略可验证；客户端不能覆盖物理路由、目标或凭证 | docs_agent/prd-v1.6.4-connector-runtime-execution-closure.md | .cursor/plans/rm-05_connector_runtime_execution.plan.md | 3611f37147fff25000317cbf1653fb12fb0b4b1b | docs_agent/evidence/rm05-verification.md |
 | RM-06 | Session（运行会话）与 ContextBuilder（上下文构建器）形成授权、可恢复的执行上下文 | RM-05 | DONE | Session 成为正式运行对象；Knowledge/Workspace/Attachment（知识/工作区/附件）引用经 Backend 授权并在执行前复核，撤权时 fail-closed（失败关闭） | docs_agent/prd-v1.6.7-session-context-authorized-execution.md | .cursor/plans/rm-06_session-context-authorized-execution.plan.md | d8fee3604be77d4ca330133c36012c721d638621 | docs_agent/evidence/rm06-verification.md |
-| RM-07 | Edge Control Channel（边缘控制通道）具备身份轮换与命令完整性 | RM-05 | BACKLOG | 出站通道验证身份、过期、Nonce（随机数）、签名与序列；重放、错节点和过期命令无副作用 | - | - | - | - |
+| RM-07 | Edge Control Channel（边缘控制通道）具备身份轮换与命令完整性 | RM-05 | IN_PRD | 出站通道验证身份、过期、Nonce（随机数）、签名与序列；重放、错节点和过期命令无副作用 | docs_agent/prd-v1.6.8-edge-control-channel-security-closure.md | - | - | - |
 | RM-08 | 中立 Shared Agent Execution Contract（共享 Agent 执行合同）可由 Backend 单一生成链发布，并冻结 Hermes（运行时）`single_agent` / `runtime_delegated` Delegation Topology（委派拓扑） | RM-06, RM-07 | BACKLOG | Schema、OpenAPI、TypeScript 类型、Fixture（固定样例）与兼容测试同源；Backend 冻结策略与 capability reference（能力引用），Agent 持久化 ExecutionSnapshot（执行快照），Runtime Capability（运行时能力）缺失时失败关闭；Topology 与 Central/Edge/Hybrid Placement（中心/边缘/混合放置）分列；不实现 Platform Multi-Agent（平台多智能体） | - | - | - | - |
 | RM-09 | Backend 对已发布 Public Consumer Contract 做符合性，并实现 v1.2.1 之后的批准增量；外部前端只作为仓外 Consumer | RM-08 | BACKLOG | 不首次发布 Work canonical；本仓只交付符合性证据与后续版本化合同；外部前端源码、构建和发布不在范围内 | - | - | - | - |
 | RM-10 | Agent 执行面具备统一 Trace（链路追踪）与运行指标 | RM-05 | BACKLOG | Run/Attempt/Session/Edge/Connector/Artifact 可关联；队列、时延、失败、租约和重放指标可观测，且不形成第二事件事实源 | - | - | - | - |
