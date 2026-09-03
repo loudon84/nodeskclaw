@@ -1,311 +1,232 @@
 #!/usr/bin/env python3
-"""Create an SMC Plan v3.2 seed from an APPROVED PRD.
-
-This script is intentionally conservative: it creates stable Change IDs and the
-required plan structure, but leaves implementation-grounding placeholders for
-the agent to resolve. A seed is NOT executable until smc-plan-validator passes.
-"""
-
+"""Create a non-executable smc.plan.v3.3 seed from an APPROVED Stage PRD."""
 from __future__ import annotations
 
 import argparse
+import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
-ACTIONS = {"KEEP", "MODIFY", "ADD", "REPLACE", "REMOVE"}
-PLACEHOLDER = "<GROUND>"
-REQUIREMENT_SECTIONS = (("Acceptance Criteria", "AC"), ("Definition of Done", "DOD"))
+ACTIONS={"KEEP","MODIFY","ADD","REPLACE","REMOVE"}
 
 
-def parse_frontmatter(text: str) -> dict[str, str]:
-    lines = text.splitlines()
-    if not lines or lines[0].strip() != "---":
-        raise ValueError("PRD frontmatter missing")
-    try:
-        end = next(i for i, line in enumerate(lines[1:], 1) if line.strip() == "---")
-    except StopIteration as exc:
-        raise ValueError("PRD frontmatter is not closed") from exc
-    out: dict[str, str] = {}
+def fm(text:str)->dict[str,str]:
+    lines=text.splitlines()
+    if not lines or lines[0].strip()!="---": raise ValueError("PRD_FRONTMATTER_MISSING")
+    try:end=next(i for i,x in enumerate(lines[1:],1) if x.strip()=="---")
+    except StopIteration:raise ValueError("PRD_FRONTMATTER_UNCLOSED")
+    out={}
     for line in lines[1:end]:
-        if ":" not in line:
-            continue
-        key, value = line.split(":", 1)
-        out[key.strip()] = value.strip().strip('"\'')
+        if line and not line[0].isspace() and ":" in line:
+            k,v=line.split(":",1);out[k.strip()]=v.strip().strip('"\'')
     return out
 
 
-def section(text: str, heading: str) -> str | None:
-    match = re.search(
-        rf"^##\s+{re.escape(heading)}\s*$\n?(.*?)(?=^##\s+|\Z)",
-        text,
-        flags=re.MULTILINE | re.DOTALL,
-    )
-    return match.group(1).strip() if match else None
+def section(text:str,heading:str)->str|None:
+    m=re.search(rf"^##\s+{re.escape(heading)}\s*$\n?(.*?)(?=^##\s+|\Z)",text,re.M|re.S)
+    return m.group(1).strip() if m else None
 
 
-def cells(line: str) -> list[str]:
-    return [c.strip() for c in line.strip().strip("|").split("|")]
+def cells(line:str)->list[str]:return [x.strip() for x in line.strip().strip("|").split("|")]
+
+def table(body:str)->list[dict[str,str]]:
+    lines=[x.strip() for x in body.splitlines() if x.strip().startswith("|")]
+    for i in range(len(lines)-1):
+        h,s=cells(lines[i]),cells(lines[i+1])
+        if len(h)==len(s) and all(re.fullmatch(r":?-{3,}:?",x.replace(" ","")) for x in s):
+            rows=[]
+            for raw in lines[i+2:]:
+                v=cells(raw)
+                if len(v)!=len(h):break
+                rows.append(dict(zip(h,v)))
+            return rows
+    return []
 
 
-def parse_first_table(body: str) -> tuple[list[str], list[dict[str, str]]]:
-    lines = [line.strip() for line in body.splitlines() if line.strip().startswith("|")]
-    for idx in range(len(lines) - 1):
-        header = cells(lines[idx])
-        sep = cells(lines[idx + 1])
-        if len(header) != len(sep):
-            continue
-        if not all(re.fullmatch(r":?-{3,}:?", c.replace(" ", "")) for c in sep):
-            continue
-        rows: list[dict[str, str]] = []
-        for raw in lines[idx + 2 :]:
-            vals = cells(raw)
-            if len(vals) != len(header):
-                break
-            rows.append(dict(zip(header, vals)))
-        return header, rows
-    return [], []
+def clean(v:str)->str:return re.sub(r"[`*_]","",v).strip()
 
-
-def clean_md(value: str) -> str:
-    return re.sub(r"[`*_]", "", value).strip()
-
-
-def find_action(row: dict[str, str]) -> str | None:
-    for key, value in row.items():
-        cleaned = clean_md(value).upper()
-        if cleaned in ACTIONS:
-            return cleaned
-        if "action" in key.lower() or "classification" in key.lower():
-            for action in ACTIONS:
-                if re.search(rf"\b{action}\b", cleaned):
-                    return action
-    for value in row.values():
-        cleaned = clean_md(value).upper()
-        for action in ACTIONS:
-            if re.search(rf"\b{action}\b", cleaned):
-                return action
+def action(row:dict[str,str])->str|None:
+    for v in row.values():
+        c=clean(v).upper()
+        for a in ACTIONS:
+            if c==a or re.search(rf"\b{a}\b",c):return a
     return None
 
+def cid(row:dict[str,str],fallback:int)->str:
+    for k,v in row.items():
+        if k.lower().strip() in {"change id","id","change_id"} and re.fullmatch(r"C\d{2,}(?:\.\d+)?",clean(v).upper()):return clean(v).upper()
+    return f"C{fallback:02d}"
 
-def find_existing_id(row: dict[str, str]) -> str | None:
-    for key, value in row.items():
-        if key.strip().lower() in {"change id", "id", "change_id"}:
-            candidate = clean_md(value).upper()
-            if re.fullmatch(r"C\d{2,}(?:\.\d+)?", candidate):
-                return candidate
-    return None
+def capability(row:dict[str,str],act:str)->str:
+    for token in ("capability","feature","item","scope","change","target"):
+        for k,v in row.items():
+            if token in k.lower() and clean(v) and clean(v).upper()!=act:return clean(v)
+    return next((clean(v) for v in row.values() if clean(v) and clean(v).upper()!=act),"<PRD CAPABILITY>")
 
-
-def find_capability(row: dict[str, str], action: str) -> str:
-    preferred = ("capability", "feature", "item", "scope", "change", "target")
-    for token in preferred:
-        for key, value in row.items():
-            if token in key.lower() and clean_md(value).upper() != action:
-                if clean_md(value):
-                    return clean_md(value)
-    for value in row.values():
-        cleaned = clean_md(value)
-        if cleaned and cleaned.upper() != action and not re.fullmatch(r"C\d+", cleaned.upper()):
-            return cleaned
-    return "<PRD CAPABILITY>"
-
-
-def extract_changes(prd_text: str) -> list[tuple[str, str, str]]:
-    body = section(prd_text, "Change Classification")
-    if not body:
-        raise ValueError("PRD missing Change Classification section")
-    _, rows = parse_first_table(body)
-    if not rows:
-        raise ValueError("PRD Change Classification must contain a markdown table")
-
-    changes: list[tuple[str, str, str]] = []
-    next_id = 1
-    used: set[str] = set()
+def changes(text:str)->list[tuple[str,str,str]]:
+    body=section(text,"Change Classification")
+    if not body:raise ValueError("PRD_CHANGE_CLASSIFICATION_MISSING")
+    rows=table(body);out=[];n=1;used=set()
     for row in rows:
-        action = find_action(row)
-        if not action or action == "KEEP":
-            continue
-        cid = find_existing_id(row)
-        if cid is None or cid in used:
-            while f"C{next_id:02d}" in used:
-                next_id += 1
-            cid = f"C{next_id:02d}"
-            next_id += 1
-        used.add(cid)
-        changes.append((cid, action, find_capability(row, action)))
-    if not changes:
-        raise ValueError("PRD has no non-KEEP changes to plan")
-    return changes
+        a=action(row)
+        if not a or a=="KEEP":continue
+        c=cid(row,n)
+        while c in used:c=f"C{n:02d}";n+=1
+        used.add(c);out.append((c,a,capability(row,a)));n+=1
+    if not out:raise ValueError("PRD_HAS_NO_NON_KEEP_CHANGE")
+    return out
 
+EXPLICIT=r"^\s*[-*]\s+\*\*([A-Za-z]+-\d+)(?:\s*/\s*[^*：:]+)?\*\*\s*[：:]\s*(.+?)\s*$"
+def requirements(text:str)->list[tuple[str,str,str]]:
+    out=[]
+    for heading,prefix in (("Acceptance Criteria","AC"),("Definition of Done","DOD")):
+        body=section(text,heading)
+        if not body:raise ValueError(f"PRD_{prefix}_MISSING")
+        explicit=[(m.group(1).upper(),re.sub(r"\s+"," ",clean(m.group(2)))) for m in re.finditer(EXPLICIT,body,re.M)]
+        if explicit:out.extend((rid,prefix,ob) for rid,ob in explicit);continue
+        items=[re.sub(r"\s+"," ",clean(m.group(1))) for m in re.finditer(r"^\s*\d+[.)]\s+(.+?)\s*$",body,re.M)]
+        if not items:raise ValueError(f"PRD_{prefix}_UNPARSEABLE")
+        out.extend((f"{prefix}-{i:02d}",prefix,ob) for i,ob in enumerate(items,1))
+    return out
 
-def extract_requirements(prd_text: str) -> list[tuple[str, str, str]]:
-    """Return stable requirement ids from the approved PRD's numbered AC and DoD lists."""
-    requirements: list[tuple[str, str, str]] = []
-    for heading, source in REQUIREMENT_SECTIONS:
-        body = section(prd_text, heading)
-        if not body:
-            raise ValueError(f"PRD missing {heading}")
-        items = [
-            re.sub(r"\s+", " ", clean_md(match.group(1))).strip()
-            for match in re.finditer(r"^\s*\d+[.)]\s+(.+?)\s*$", body, flags=re.MULTILINE)
-        ]
-        if not items:
-            raise ValueError(f"PRD {heading} must contain numbered requirements")
-        requirements.extend(
-            (f"{source}-{idx:02d}", source, item)
-            for idx, item in enumerate(items, 1)
-        )
-    return requirements
+def rel(frm:Path,to:Path)->str:return os.path.relpath(to.resolve(),frm.parent.resolve()).replace("\\","/")
+def slug(s:str)->str:return (re.sub(r"[^A-Za-z0-9]+","-",s).strip("-").lower()[:48] or "todo")
 
+def render(prd:Path,out:Path,meta:dict[str,str],pid:str,chs,reqs)->str:
+    title=meta.get("work_item_id") or pid
+    source=meta.get("source_revision") or f"{title}@{meta.get('version','unknown')}"
+    grounded=meta.get("grounded_commit") or "<GROUND>"
+    cursor="\n".join([f"  - id: t{i}-{slug(cap)}\n    status: pending" for i,(_,_,cap) in enumerate(chs,1)])
+    matrix=[];decisions=[];ledger=[];todos=[]
+    for i,(c,a,cap) in enumerate(chs,1):
+        t=f"T{i}";matrix.append(f"| {c} | `<GROUND>` | PROD | {a} | <GROUND> | {t} | <TARGET> | {cap} | no |")
+        decisions.append(f"| {c} | <DECIDE> | <GROUND> | <DECIDE> |")
+        ledger.append(f"| {t} | {c} | `<GROUND>` | - | - | no |")
+        todos.append(f"## Todo {t} — {cap}\n\n**Owns Changes**\n- {c}\n\n**Goal**\n<DECIDE>\n\n**Immediate anchors**\n- `<GROUND>`\n\n**Changes**\n- <DECIDE>\n\n**Stop conditions**\n- [ ] <VERIFY>\n\n**Triggered reads**\n- None unless a listed trigger becomes true")
+    coverage=[f"| {rid} | {src} | {ob} | <CLASSIFY> | - | - | <VERIFY> | <EVIDENCE_CLASS> | yes |" for rid,src,ob in reqs]
+    return f'''---
+name: {title}
+overview: SMC governed implementation plan for {title}
+todos:
+{cursor}
+isProject: false
+plan_contract: smc.plan.v3.3
+plan_id: {pid}
+commit_policy: post_review
+source_revision: {source}
+grounded_commit: {grounded}
+grounding_source: committed_baseline
+working_tree_fingerprint: clean
+---
 
-def validate_prd_state(prd: Path, text: str) -> dict[str, str]:
-    fm = parse_frontmatter(text)
-    if fm.get("status") != "APPROVED":
-        raise ValueError("PRD_NOT_APPROVED")
-    if fm.get("review_verdict") != "PASS":
-        raise ValueError("PRD_REVIEW_NOT_PASS")
-    if not fm.get("approved_at"):
-        raise ValueError("PRD_APPROVED_AT_MISSING")
-    if prd.name.endswith("-DRAFT.md"):
-        raise ValueError("PRD_APPROVED_FILENAME_HAS_DRAFT")
-    return fm
+# {title} Implementation Plan
 
+## Approved PRD
 
-def relative_link(from_path: Path, to_path: Path) -> str:
+[Approved PRD]({rel(out,prd)})
+
+## Scope
+
+- In: <DECIDE>
+- Out: <DECIDE>
+- Production Owner inherited from PRD: <GROUND>
+
+## Grounding Evidence Ledger
+
+| Change ID | Target | Baseline State | Symbol / Entry Resolution | Caller / Callee Evidence | Existing Reuse Search | Result |
+|---|---|---|---|---|---|---|
+| <DECIDE> | `<GROUND>` | <GROUND> | <GROUND> | <GROUND> | <GROUND> | <GROUND> |
+
+## Requirement Coverage Ledger
+
+| Requirement | Source | Obligation | Classification | Change IDs | Todo | Verification IDs | Evidence Class | Blocking |
+|---|---|---|---|---|---|---|---|---|
+{chr(10).join(coverage)}
+
+## Lifecycle Closure Matrix
+
+| Journey | Requirements | Trigger | Nonterminal State | Success Writer | Failure / Cancel Writer | Evidence IDs |
+|---|---|---|---|---|---|---|
+| <DECIDE> | <DECIDE> | <DECIDE> | <DECIDE> | <DECIDE> | <DECIDE> | <VERIFY> |
+
+## Contract / Data Flow Closure Matrix
+
+| Flow | Requirements | Producer | Transport / Schema | Consumer | Required Fields | Validation Owner | Failure Mapping | Retry / Idempotency Identity | Evidence IDs |
+|---|---|---|---|---|---|---|---|---|---|
+| <DECIDE> | <DECIDE> | <GROUND> | <GROUND> | <GROUND> | <GROUND> | <GROUND> | <GROUND> | <GROUND> | <VERIFY> |
+
+## Verification Ledger
+
+| Verification ID | Level | Entry Point / Command | Oracle | Negative / Regression | Evidence Policy | Environment | Blocking |
+|---|---|---|---|---|---|---|---|
+| V01 | <VERIFY_LEVEL> | <VERIFY> | <VERIFY> | <VERIFY> | LOCAL_TRANSIENT | <ENVIRONMENT> | yes |
+
+## Immediate Read
+
+- `<GROUND>`
+
+## Triggered Read
+
+- If <trigger>: `<GROUND>`
+- Otherwise: do not read
+
+## Change Matrix
+
+| Change ID | File / Symbol | Kind | Action | Existing Owner | Todo Owner | Target State | PRD Capability | New File? |
+|---|---|---|---|---|---|---|---|---|
+{chr(10).join(matrix)}
+
+## Implementation Decisions
+
+| Change ID | Strategy | Root-Cause / Reuse Evidence | Why This Is Minimum |
+|---|---|---|---|
+{chr(10).join(decisions)}
+
+## Write Ownership Ledger
+
+| Todo | Owns Changes | Writes | Reads | Depends On | Parallel Safe |
+|---|---|---|---|---|---|
+{chr(10).join(ledger)}
+
+## Integration Hotspots
+
+None
+
+## Generated Outputs Ledger
+
+None
+
+{chr(10).join(x+chr(10) for x in todos)}
+## Verification
+
+Run all blocking Verification Ledger entries through `smc-plan-delivery/scripts/evidence.py`.
+
+## Completion Gate
+
+| Exit State | Allowed When | Blocking Evidence |
+|---|---|---|
+| IMPLEMENTED_AND_PROVEN | all Cursor todos completed; completion audit FRESH PASS; implementation review FRESH PASS; all blocking Verification FRESH PASS; durable Evidence Manifest FRESH | V01 via SMC evidence ledger + durable Evidence Manifest |
+| IMPLEMENTED_NOT_PROVEN | implementation exists but proof is pending/stale | pending/stale gate IDs |
+| BLOCKED | environment/dependency prevents proof | blocker record |
+| RETURN_PRD | approved owner/boundary conflicts | PRD revision request |
+'''
+
+def main()->int:
+    ap=argparse.ArgumentParser();ap.add_argument("prd",type=Path);ap.add_argument("output",type=Path);ap.add_argument("--plan-id",required=True)
+    a=ap.parse_args();prd=a.prd.resolve();out=a.output.resolve()
+    if not prd.is_file():print(f"PRD_NOT_FOUND: {prd}",file=sys.stderr);return 2
+    if out.exists():print(f"PLAN_ALREADY_EXISTS: {out}",file=sys.stderr);return 2
+    text=prd.read_text(encoding="utf-8")
     try:
-        return str(to_path.resolve().relative_to(from_path.parent.resolve())).replace("\\", "/")
-    except ValueError:
-        import os
-        return os.path.relpath(to_path.resolve(), from_path.parent.resolve()).replace("\\", "/")
-
-
-def render(
-    prd: Path,
-    out: Path,
-    fm: dict[str, str],
-    changes: list[tuple[str, str, str]],
-    requirements: list[tuple[str, str, str]],
-) -> str:
-    title = fm.get("work_item_id") or prd.stem
-    prd_link = relative_link(out, prd)
-
-    matrix_rows: list[str] = []
-    decision_rows: list[str] = []
-    ledger_rows: list[str] = []
-    todo_blocks: list[str] = []
-    requirement_rows: list[str] = []
-
-    for idx, (cid, action, capability) in enumerate(changes, 1):
-        tid = f"T{idx}"
-        matrix_rows.append(
-            f"| {cid} | `{PLACEHOLDER}` | PROD | {action} | {PLACEHOLDER} | {tid} | <TARGET> | {capability} | no |"
-        )
-        decision_rows.append(
-            f"| {cid} | <DECIDE> | {PLACEHOLDER} | <DECIDE> |"
-        )
-        ledger_rows.append(
-            f"| {tid} | {cid} | `{PLACEHOLDER}` | - | - | no |"
-        )
-        todo_blocks.append(
-            f"## Todo {tid} — {capability}\n\n"
-            f"**Owns Changes**\n- {cid}\n\n"
-            "**Goal**\n\n<DECIDE>\n\n"
-            f"**Immediate anchors**\n- `{PLACEHOLDER}`\n\n"
-            "**Changes**\n- <DECIDE>\n\n"
-            "**Stop conditions**\n- [ ] <VERIFY>\n\n"
-            "**Triggered reads**\n- None unless a listed trigger becomes true\n"
-        )
-
-    for requirement_id, source, obligation in requirements:
-        requirement_rows.append(
-            f"| {requirement_id} | {source} | {obligation} | <CLASSIFY> | - | - | <VERIFY> | <EVIDENCE_CLASS> | yes |"
-        )
-
-    source_revision = fm.get("source_revision") or f"{fm.get('work_item_id', prd.stem)}@{fm.get('version', 'unknown')}"
-    grounded_commit = fm.get("grounded_commit") or "<GROUND>"
-    return (
-        "---\n"
-        "plan_contract: smc.plan.v3.2\n"
-        "commit_policy: post_review\n"
-        f"source_revision: {source_revision}\n"
-        f"grounded_commit: {grounded_commit}\n"
-        "---\n\n"
-        f"# {title} Implementation Plan\n\n"
-        f"## Approved PRD\n\n[Approved PRD]({prd_link})\n\n"
-        "## Scope\n\n- In: <DECIDE>\n- Out: <DECIDE>\n- Production Owner inherited from PRD: <GROUND>\n\n"
-        "## Requirement Coverage Ledger\n\n"
-        "| Requirement | Source | Obligation | Classification | Change IDs | Todo | Verification IDs | Evidence Class | Blocking |\n"
-        "|---|---|---|---|---|---|---|---|---|\n"
-        + "\n".join(requirement_rows)
-        + "\n\n## Lifecycle Closure Matrix\n\n"
-        "Use `None` only when the PRD has no state/concurrency lifecycle requirements.\n\n"
-        "| Journey | Requirements | Trigger | Nonterminal State | Success Writer | Failure / Cancel Writer | Evidence IDs |\n"
-        "|---|---|---|---|---|---|---|\n"
-        "| <DECIDE> | <DECIDE> | <DECIDE> | <DECIDE> | <DECIDE> | <DECIDE> | <VERIFY> |\n\n"
-        "## Verification Ledger\n\n"
-        "| Verification ID | Level | Entry Point / Command | Oracle | Negative / Regression | Evidence Output | Environment | Blocking |\n"
-        "|---|---|---|---|---|---|---|---|\n"
-        "| V01 | <VERIFY_LEVEL> | <VERIFY> | <VERIFY> | <VERIFY> | <VERIFY> | <ENVIRONMENT> | yes |\n\n"
-        "## Immediate Read\n\n- `<GROUND>`\n\n"
-        "## Triggered Read\n\n- If <trigger>: `<GROUND>`\n- Otherwise: do not read\n\n"
-        "## Change Matrix\n\n"
-        "| Change ID | File / Symbol | Kind | Action | Existing Owner | Todo Owner | Target State | PRD Capability | New File? |\n"
-        "|---|---|---|---|---|---|---|---|---|\n"
-        + "\n".join(matrix_rows)
-        + "\n\n## Implementation Decisions\n\n"
-        + "| Change ID | Strategy | Root-Cause / Reuse Evidence | Why This Is Minimum |\n"
-        + "|---|---|---|---|\n"
-        + "\n".join(decision_rows)
-        + "\n\n## Write Ownership Ledger\n\n"
-        + "| Todo | Owns Changes | Writes | Reads | Depends On | Parallel Safe |\n"
-        + "|---|---|---|---|---|---|\n"
-        + "\n".join(ledger_rows)
-        + "\n\n## Integration Hotspots\n\nNone\n\n"
-        + "\n\n".join(todo_blocks)
-        + "\n\n## Verification\n\nUse the Verification Ledger as the only evidence SOT; this section orders the final commands.\n\n```bash\n<VERIFY>\n```\n\n"
-        "## Completion Gate\n\n"
-        "| Exit State | Allowed When | Blocking Evidence |\n"
-        "|---|---|---|\n"
-        "| IMPLEMENTED_AND_PROVEN | <VERIFY> | <VERIFY> |\n"
-        "| IMPLEMENTED_NOT_PROVEN | <VERIFY> | <VERIFY> |\n"
-        "| BLOCKED | <VERIFY> | <VERIFY> |\n"
-        "| RETURN_PRD | <VERIFY> | <VERIFY> |\n"
-    )
-
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("prd", type=Path)
-    parser.add_argument("output", type=Path)
-    parser.add_argument("--force", action="store_true", help="overwrite output if it exists")
-    args = parser.parse_args()
-
-    prd = args.prd.resolve()
-    out = args.output.resolve()
-    if not prd.is_file():
-        print(f"PRD_NOT_FOUND: {prd}", file=sys.stderr)
-        return 2
-    if out.exists() and not args.force:
-        print(f"PLAN_ALREADY_EXISTS: {out}; use --force to overwrite", file=sys.stderr)
-        return 2
-
-    text = prd.read_text(encoding="utf-8")
-    try:
-        fm = validate_prd_state(prd, text)
-        changes = extract_changes(text)
-        requirements = extract_requirements(text)
-    except ValueError as exc:
-        print(str(exc), file=sys.stderr)
-        return 1
-
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(render(prd, out, fm, changes, requirements), encoding="utf-8")
-    print(f"Plan seed created: {out}")
-    print(f"Non-KEEP changes: {len(changes)}")
-    print(f"Requirements: {len(requirements)}")
-    print("Seed contains grounding placeholders and MUST pass smc-plan-validator before execution.")
+        meta=fm(text)
+        if meta.get("status")!="APPROVED":raise ValueError("PRD_NOT_APPROVED")
+        if meta.get("review_verdict")!="PASS":raise ValueError("PRD_REVIEW_NOT_PASS")
+        if not meta.get("approved_at"):raise ValueError("PRD_APPROVED_AT_MISSING")
+        chs=changes(text);reqs=requirements(text)
+    except ValueError as e:print(str(e),file=sys.stderr);return 1
+    out.parent.mkdir(parents=True,exist_ok=True);out.write_text(render(prd,out,meta,a.plan_id,chs,reqs),encoding="utf-8")
+    print(f"Plan v3.3 seed created: {out}\nPlan ID: {a.plan_id}\nTodos: {len(chs)}\nRequirements: {len(reqs)}\nSeed is NOT executable until grounding placeholders are resolved and validators pass.")
     return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+if __name__=="__main__":raise SystemExit(main())

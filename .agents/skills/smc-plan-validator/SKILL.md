@@ -1,320 +1,128 @@
 ---
 name: smc-plan-validator
-description: 对 SMC Plan v3.2 做低成本、确定性、可阻断的静态校验；验证 APPROVED PRD 的 AC/DoD 覆盖、生命周期闭环、阻断验证证据，以及 Change/Decision/Todo 所有权、依赖、DAG 和 Ponytail 最小实现。PASS 后 Plan 才能进入 Execute。
-version: 1.2.0
+description: 对 SMC Plan 做确定性静态 Gate。v3.3 在保留 v3.2 AC/DoD、Lifecycle、Change/Decision/Single Writer/DAG/Ponytail 校验基础上，新增 canonical plan_id、Cursor todos 映射和 Evidence Policy；PASS 只表示 Plan Static Valid，后续统一交给 smc-plan-delivery。
+version: 1.3.0
 disable-model-invocation: true
 ---
 
-# SMC Plan Validator
+# SMC Plan Validator v1.3
 
-## 目标
+## Role
 
-本 Skill 是：
+Validator 只证明 Plan contract 可静态成立，不证明 implementation 已完成。
 
 ```text
-APPROVED PRD
-  ↓
-smc-plan-from-approved-prd-ponytail
-  ↓
-SMC Plan v3.2
-  ↓
-smc-plan-validator
-  ↓
-PASS -> Execute
-FAIL -> Fix Plan / return upstream
+PASS = PLAN_STATIC_VALID
+PASS != IMPLEMENTATION_COMPLETE
+PASS != IMPLEMENTED_AND_PROVEN
 ```
 
-它解决旧 validator 未覆盖的问题：
-
-- 多个 Todo 修改同一 `path#symbol`；
-- 同一 Change 被多个 Todo 拆开重复实现；
-- shared foundation 没有依赖关系；
-- Todo read/write hazard 被误标为可并行；
-- dependency cycle；
-- `MINIMAL_NEW` / 新文件 / 新依赖没有 Ponytail 证据；
-- Todo 写入目标不在 Change Matrix；
-- Plan seed 占位符未完成就进入 Execute。
-- AC / Definition of Done 在 PRD → Plan 转换中丢失；
-- 有状态行为没有 success、failure / cancel 的唯一 writer 闭环；
-- 需求只映射到本地 stop condition，没有阻断的可留存验证证据。
-
-## 职责边界
-
-Validator 只做**可确定性判断**。
-
-它不做：
-
-- PRD Architecture Review；
-- 全仓源码扫描；
-- 重新选择 Production Owner；
-- 重新发明 Plan；
-- 自动修改 APPROVED PRD；
-- 通过模型主观判断“代码够不够优雅”。
-
-如果错误需要改变上游架构，返回上游；不要绕过错误码。
-
-## 必读 references
-
-1. [`references/validator-contract.md`](references/validator-contract.md)
-2. [`references/error-catalog.md`](references/error-catalog.md)
-3. [`references/plan-schema-v3.md`](references/plan-schema-v3.md)
-
-需要理解失败案例时读取：
-
-4. [`references/validation-examples.md`](references/validation-examples.md)
-
-## 使用
+## v3.3 Usage
 
 ```bash
-python .agents/skills/smc-plan-validator/scripts/validate_plan.py \
+python .agents/skills/smc-plan-validator/scripts/validate_plan_v33.py \
   .cursor/plans/<feature>.plan.md
 ```
 
-机器可读输出：
+JSON：
 
 ```bash
-python .agents/skills/smc-plan-validator/scripts/validate_plan.py \
-  .cursor/plans/<feature>.plan.md \
-  --json
+python .agents/skills/smc-plan-validator/scripts/validate_plan_v33.py \
+  .cursor/plans/<feature>.plan.md --json
 ```
 
-成功：
+v3.3 wrapper 先执行新增 Gate，再复用既有 `validate_plan.py` 的 v3.2 深度静态校验，从而不削弱已有：
+
+- APPROVED PRD；
+- Required Sections；
+- Change Matrix；
+- Ponytail Implementation Decision；
+- New File / Dependency justification；
+- Write Ownership；
+- Change ↔ Todo ↔ Ledger；
+- Dependency DAG；
+- Read/Write ordering；
+- Parallel Safety；
+- Requirement / Lifecycle / Blocking Verification closure。
+
+## New v3.3 Gates
+
+### V0.1 — Contract / Plan ID
+
+要求：
+
+```yaml
+plan_contract: smc.plan.v3.3
+plan_id: <non-empty>
+commit_policy: post_review
+```
+
+`plan_id` 在 `.cursor/plans/*.plan.md` 中唯一。
+
+### V0.2 — Single Canonical Plan
+
+拒绝：
 
 ```text
-Plan validation passed
+PLAN_ID_DUPLICATE
+PLAN_SEMANTIC_DUPLICATE
 ```
 
-失败：退出码 `1`，每行一个稳定 error code。
+不得保留 metadata Plan 与 SMC Plan 两份 canonical candidates。
 
-## Validation Gates
+### V0.3 — Cursor Todo Contract
 
-### V1 — Approved PRD
+每个 `## Todo TN` 映射恰好一个 `todos[].id=tN-*`。
 
-验证：
-
-- `## Approved PRD` link 可解析；
-- PRD `status=APPROVED`；
-- `review_verdict=PASS`；
-- `approved_at` 非空；
-- 文件名不是 `-DRAFT.md`。
-
-若项目存在：
+拒绝：
 
 ```text
-tools/agent-skills/validate_prd.py
+PLAN_CURSOR_TODO_MISSING
+PLAN_CURSOR_TODO_DUPLICATE
+PLAN_CURSOR_TODO_ORPHAN
+PLAN_CURSOR_TODO_STATE_INVALID
 ```
 
-Validator 会额外调用它执行项目级 PRD 结构校验。
+### V10.1 — Evidence Policy
 
-### V2 — Plan Schema
-
-必须存在且非空：
-
-- Approved PRD
-- Scope
-- Immediate Read
-- Triggered Read
-- Change Matrix
-- Implementation Decisions
-- Write Ownership Ledger
-- Integration Hotspots
-- Requirement Coverage Ledger
-- Lifecycle Closure Matrix
-- Verification Ledger
-- Verification
-- Completion Gate
-
-最终 Plan 关键表格与 Todo 不允许保留：
+Verification Ledger v3.3 使用：
 
 ```text
-<GROUND> <DECIDE> <VERIFY> <TBD> <TODO> TBD TODO ???
+Evidence Policy
 ```
 
-### V3 — Change Matrix
-
-检查：
-
-- required columns；
-- Change ID 格式；
-- Kind / Action / New File? 合法；
-- 非 KEEP 有 Todo Owner；
-- KEEP 不得进入 implementation owner；
-- 同一 Change ID 不得出现多个 Todo Owner；
-- REPLACE 必须有 REMOVE；
-- 每个非 KEEP Matrix target 必须归属于 owner Todo 的 Writes。
-
-### V4 — Ponytail Implementation Decision
-
-每个非 KEEP Change ID 必须有一条：
-
-```markdown
-| Change ID | Strategy | Root-Cause / Reuse Evidence | Why This Is Minimum |
-```
-
-检查：
-
-- Strategy 合法；
-- evidence 非空；
-- minimum reason 非空；
-- `NEW_DEPENDENCY` 必须有 New Dependency Justification；
-- `New File?=yes` 必须有 New File Justification。
-
-Validator 不判断 evidence 的工程真实性；真实性由 Plan grounding / Review 负责。这里防止完全没有证据的“随手新增”。
-
-### V5 — Write Ownership
-
-核心错误：
+合法：
 
 ```text
-PLAN_WRITE_CONFLICT
+LOCAL_TRANSIENT
+LOCAL_DURABLE
+CI_ARTIFACT
+EXTERNAL_ARTIFACT
+REPO_SUMMARY
 ```
 
-判定：
+Static validator 不检查 evidence 是否已经运行；freshness 是 `smc-plan-delivery` 的 runtime Gate。
 
-- 两个 Todo exact 写同一 `path#symbol`；或
-- 任一 Todo 对某文件声明 file-level write，另一 Todo 又写同文件；或
-- `Integration Hotspots` 声明 file-level owner，但其它 Todo 写该文件。
+## Legacy v3.2
 
-修复方式只能是：
-
-- merge；
-- hoist shared foundation；
-- single hotspot owner；
-- 重新切 Change/Todo。
-
-不能只改表格文字隐藏冲突。
-
-### V6 — Change ↔ Todo ↔ Ledger
-
-检查：
-
-- 每个 owner Todo 在 Ledger 存在；
-- Ledger Todo 都有 Todo section；
-- `Owns Changes` 与 Matrix Todo Owner 一致；
-- Todo section 的 `**Owns Changes**` 与 Ledger 一致；
-- Todo Writes 都能映射到该 Todo 的 Change Matrix；
-- Matrix 的每个非 KEEP target 都出现在 owner Todo Writes。
-
-### V7 — Dependency DAG
-
-检查：
-
-- Depends On 只引用存在 Todo；
-- 不自依赖；
-- 无 cycle。
-
-### V8 — Read/Write Ordering
-
-若：
-
-```text
-T1 writes X
-T2 reads X
-```
-
-T1/T2 必须存在明确依赖路径，防止 T2 在旧实现与新实现之间出现不确定顺序。
-
-无排序关系：
-
-```text
-PLAN_READ_AFTER_WRITE_WITHOUT_DEPENDENCY
-```
-
-### V9 — Parallel Safety
-
-`Parallel Safe=yes` 时必须：
-
-- 无依赖入边/出边；
-- 无 write/write hazard；
-- 无 write/read hazard；
-- 不与其它 Todo 写同一个 physical file。
-
-该字段是保守优化提示，不是必须标 yes。
-
-### V10 — Requirement, Lifecycle And Evidence Closure
-
-解析链接的 APPROVED PRD 的编号 AC / DoD，并检查：
-
-- 每个 requirement 恰好一行 Requirement Coverage Ledger，且 obligation 与 PRD 原文一致；
-- requirement 映射的 Change/Todo 存在；
-- requirement 至少引用一个 `Blocking=yes` 的 Verification ID；
-- Verification Ledger 有可运行入口、oracle、negative/regression、evidence output 与 environment；
-- PRD 含 State and Concurrency Invariants 或 requirement 分类为 `LIFECYCLE` 时，Lifecycle Closure Matrix 不得为空；每条 `LIFECYCLE` requirement 都须有 success / failure-cancel writer 和阻断证据；
-- Completion Gate 恰好声明四个标准 exit state，且 `IMPLEMENTED_AND_PROVEN` 明确列出全部 requirement 的阻断 Verification ID。
-
-该 Gate 验证合同和映射，不扫描源码或伪造运行证据；执行阶段仍须实际运行 Verification 并保留 evidence output。
-
-## FAIL 后如何路由
-
-### 只修 Plan
-
-以下错误通常只修 Plan：
-
-- schema 缺失；
-- placeholder；
-- Decision/evidence 缺失；
-- Todo/Ledger 映射错误；
-- New File/Dependency justification 缺失。
-
-### 返回 Plan slicing
-
-以下错误应回 `smc-plan-from-approved-prd-ponytail` ownership gate：
-
-- `PLAN_WRITE_CONFLICT`
-- `PLAN_CHANGE_MULTIPLE_TODO_OWNERS`
-- `PLAN_READ_AFTER_WRITE_WITHOUT_DEPENDENCY`
-- `PLAN_DEPENDENCY_CYCLE`
-- `PLAN_INTEGRATION_HOTSPOT_CONFLICT`
-
-### 返回 PRD
-
-如果真实原因是：
-
-- APPROVED Owner 已不成立；
-- Capability/Boundary 需要改变；
-- 当前源码变化使批准架构不可实施；
-
-则返回：
-
-```text
-PRD_STALE_OR_CONFLICTING
-```
-
-Validator 不替 Plan 静默改架构。
-
-## 迁移旧 validator
-
-本 Skill 的：
-
-```text
-scripts/validate_plan.py
-```
-
-应成为 Plan v3.2 的 canonical validator。
-
-如果旧 CI / command 仍固定调用：
-
-```text
-tools/agent-skills/validate_plan.py
-```
-
-保留薄 wrapper 即可，不要保留第二套规则实现。参考：
-
-[`references/validator-contract.md`](references/validator-contract.md)
-
-## Self Test
+正在执行中的 v3.2 Plan 可继续使用原：
 
 ```bash
-python .agents/skills/smc-plan-validator/scripts/test_validate_plan.py
+python .agents/skills/smc-plan-validator/scripts/validate_plan.py <plan>
+```
+
+新 Plan 禁止继续创建 v3.2。
+
+需要进入新 Delivery Pipeline 时，先迁移：
+
+```bash
+python .agents/skills/smc-plan-delivery/scripts/migrate_legacy_plan.py <plan> --in-place
 ```
 
 ## Exit
 
-只有：
+PASS 后不直接提示 `Execute`，而是：
 
 ```text
-exit code = 0
-Plan validation passed
+PLAN_STATIC_VALID -> smc-plan-delivery next gate
 ```
-
-才能进入 Execute。

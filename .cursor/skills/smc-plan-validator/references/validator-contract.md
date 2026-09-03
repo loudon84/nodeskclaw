@@ -29,7 +29,7 @@ Validator 再扫描源码会：
 - 让同一个 Plan 在不同运行中产生不同 verdict；
 - 混淆 Plan 与 Review 的职责。
 
-因此 Validator 只证明“Plan 自身是否自洽、可执行、无确定性冲突”，以及 PRD 的编号 AC/DoD 是否完整映射到阻断验证。
+因此 Validator 只证明“Plan 自身是否自洽、可执行、无确定性冲突”，以及 PRD 的 AC/DoD（有序列表或显式编号 bullet）是否完整映射到阻断验证。
 
 它不执行验证命令，也不把声明的 evidence output 伪装成真实证据；这仍是 Execute/Verification 的职责。
 

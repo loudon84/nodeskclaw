@@ -1,33 +1,27 @@
 ---
 name: using-superpowers
-description: 统一 Skill 路由器。对 SMC governed work 优先读取 Artifact 状态并按 Architecture -> Roadmap -> PRD -> Plan -> Execute -> Review -> Verification -> Commit -> Roadmap Update 路由，禁止被 generic planning 绕过。
-version: 4.0.0
+description: SMC governed work 统一 Artifact Router。按 Architecture -> Roadmap -> Stage PRD -> APPROVED PRD -> Canonical Plan -> smc-plan-delivery 路由；禁止 generic planning 绕过治理，Plan 后不再要求用户手工串执行/审查/验证/提交。
+version: 4.1.0
 ---
 
-# Using Superpowers — SMC Artifact Router
+# Using Superpowers — SMC Artifact Router v4.1
 
 <SUBAGENT-STOP>
-如果当前实例是被分派的子智能体，只执行父任务给定的 Skill/Artifact，不重新做全局路由。
+若当前实例是被分派的子智能体，只执行父任务给定的 Skill/Artifact，不重新做全局路由。
 </SUBAGENT-STOP>
 
-## First Rule
+## Governed Work
 
-先判断任务是不是 **SMC governed work**。
+以下任一成立即进入 SMC governed routing：
 
-以下任一成立即进入 governed routing：
-
-- 用户明确提到 Architecture Decision / Roadmap / Stage PRD / SMC Plan；
+- Architecture Decision / Roadmap / Stage PRD / SMC Plan；
 - 当前目录已有被引用的 SMC governed artifact；
-- 用户要求继续上一阶段治理流程；
-- 工作会改变 Production Owner、关键 contract/trust boundary 或需要分阶段交付。
+- 用户要求继续上一治理阶段；
+- 工作改变 Production Owner、关键 contract/trust boundary 或需要分阶段交付。
 
-Governed routing 读取 [`references/artifact-state-routing.md`](references/artifact-state-routing.md)。
+读取 [`references/artifact-state-routing.md`](references/artifact-state-routing.md)。
 
-## Governed Routing Has Priority
-
-不要按“最像哪个技能”猜下一步。先根据**当前 artifact state**路由。
-
-核心顺序：
+## Canonical Flow
 
 ```text
 Proposal
@@ -36,65 +30,90 @@ Proposal
 -> smc-architecture-review
 -> APPROVED Architecture
 -> smc-roadmap
--> READY item
--> smc-prd-grounding/review/converge
+-> READY Roadmap Item
+-> smc-prd-grounding
+-> smc-prd-review
+-> smc-prd-converge
 -> APPROVED PRD
 -> smc-plan-from-approved-prd-ponytail
--> smc-plan-validator
--> conditional smc-plan-review
--> Execute(post_review)
--> Review
--> Verification
--> Commit Implementation
--> Roadmap Update + Roadmap Commit
--> Loop
+-> canonical smc.plan.v3.3
+-> smc-plan-delivery
+-> ROADMAP DONE
+-> next READY item
 ```
 
 ## Canonical Owners
 
-- Architecture decision owner: `smc-architecture-decision`
-- Architecture review owner: `smc-architecture-review`
-- Delivery state owner: `smc-roadmap`
-- Stage PRD grounding/review/converge: existing SMC PRD skills
-- Plan creation owner: **only** `smc-plan-from-approved-prd-ponytail`
-- Plan structural gate: `smc-plan-validator`
-- Plan semantic review: `smc-plan-review` **only when risk policy requires it**
-- Execution: `executing-plans` or `subagent-driven-development`
+- Architecture Decision: `smc-architecture-decision`
+- Architecture Review: `smc-architecture-review`
+- Delivery state SOT: `smc-roadmap`
+- Stage PRD grounding/review/converge: `smc-prd-grounding` / `smc-prd-review` / `smc-prd-converge`
+- Plan author: **only** `smc-plan-from-approved-prd-ponytail`
+- Plan static gate: `smc-plan-validator`
+- Plan semantic gate: `smc-plan-review`
+- Plan post-creation orchestrator: **only** `smc-plan-delivery`
+- Implementation engines: `executing-plans` / `subagent-driven-development`，只由 delivery orchestrator 选择
+- Implementation review provider: `code-review-and-quality`
+- Verification truthfulness policy: `verification-before-completion`
 
-## Deprecated Routes
+## Plan Delivery Rule
 
-Governed flow must never call:
-
-- `writing-plans`;
-- legacy `smc-plan-from-approved-prd`;
-- `.cursor/rules/plan-codegen-minimal.mdc`.
-
-## Execution Commit Policy
-
-凡执行任何 `.plan.md` Todo，一律：
+一旦 canonical Plan 已存在，正常用户入口不再是：
 
 ```text
-commit_policy = post_review
+validator
+-> review
+-> executing-plans
+-> verification
+-> commit
 ```
 
-不限于有 `Write Ownership Ledger` 的 SMC v3 Plan。frontmatter 缺 `commit_policy` 时同样推断为 `post_review`。
-
-The order is:
+而是：
 
 ```text
-Execute -> Review -> Verification -> Commit Implementation
+smc-plan-delivery <PLAN_PATH>
 ```
 
-No Todo implementation commit is allowed before review when executing a Plan.
+`post_review` 是 commit policy，不是执行 Skill。真正的 workflow owner 是 `smc-plan-delivery`。
+
+## Commit Policy
+
+执行任何 `.plan.md` Todo 都推断：
+
+```text
+commit_policy=post_review
+```
+
+允许 implementation commit 的唯一顺序：
+
+```text
+Execute
+-> Plan Completion Audit
+-> Implementation Review
+-> Verification
+-> Evidence Freshness Gate
+-> Commit Implementation
+```
+
+随后独立：
+
+```text
+Roadmap Update
+-> Roadmap Commit
+```
+
+## Deprecated / Forbidden Routes
+
+Governed flow 不得调用：
+
+- `writing-plans`；
+- legacy `smc-plan-from-approved-prd`；
+- `.cursor/rules/plan-codegen-minimal.mdc`；
+- `workflow-runner` 作为 SMC Plan delivery engine；
+- 双 `.plan.md` canonical copies；
+- Todo completion commit；
+- stale Review/Verification evidence。
 
 ## Non-Governed Work
 
-For non-governed work（非 Plan Todo、非未 APPROVED 治理 artifact）, use the applicable process skill first (debugging, brainstorming, TDD, review), then implementation skill. Do not invent a generic planning stage merely because `writing-plans` used to exist.
-
-## Skill Consistency
-
-When a referenced Skill no longer exists, treat that as repository governance drift, not permission to silently substitute. Run:
-
-```bash
-python tools/agent-skills/validate_agent_skills.py
-```
+非 Plan Todo、非治理 artifact 的临时任务继续使用适用的 debugging/brainstorming/TDD/review skill，不凭空创建 SMC artifact。

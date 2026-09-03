@@ -1,43 +1,39 @@
 ---
 name: smc-roadmap
-description: 管理 APPROVED Architecture 下的持久 Delivery SOT。支持 create/check/next/update；一个 Roadmap Item 一个 Stage PRD，DONE 必须有真实 implementation commit + verification evidence。
-version: 1.0.0
+description: 管理 APPROVED Architecture 下的持久 Delivery SOT。支持 create/check/next/update；一个 Roadmap Item 一个 Stage PRD，DONE 必须有真实 implementation commit + 可解析 verification evidence reference。与 smc-plan-delivery 对接。
+version: 1.1.0
 disable-model-invocation: true
 ---
 
-# SMC Roadmap
+# SMC Roadmap v1.1
 
 ## Role
 
-Roadmap 是 Delivery 状态事实源，不是实现 Todo 列表。它只保存 stage outcome、依赖、状态和交付证据；exact file/symbol/Todo 属于 Plan。
+Roadmap 是 Delivery 状态事实源，不是 implementation Todo 列表。exact file/symbol/Todo 属于 Plan。
 
 读取 [`references/roadmap-contract.md`](references/roadmap-contract.md)。
 
 ## Modes
 
-### `create`
+### create
 
-输入必须是 APPROVED Architecture Decision。
+输入 APPROVED Architecture Decision，创建 item DAG：
 
-把 `Roadmap Boundaries` 转成 item DAG：
-
-- `RM-01`, `RM-02`...
-- Outcome
-- Depends On
-- Exit Criteria
-- initial status `BACKLOG` 或满足依赖时 `READY`
-
-不要创建 Stage PRD 内容。
-
-### `check`
-
-执行：
-
-```bash
-python .agents/skills/smc-roadmap/scripts/validate_roadmap.py <roadmap>
+```text
+RM-01, RM-02...
+Outcome
+Depends On
+Exit Criteria
+Status
 ```
 
-### `next`
+### check
+
+```bash
+python .agents/skills/smc-roadmap/scripts/validate_roadmap_v11.py <roadmap>
+```
+
+### next
 
 ```bash
 python .agents/skills/smc-roadmap/scripts/roadmap_next.py <roadmap>
@@ -45,17 +41,18 @@ python .agents/skills/smc-roadmap/scripts/roadmap_next.py <roadmap>
 
 只选择验证通过的第一个 READY item。
 
-### `update`
+### update
 
-实施完成后，必须先有：
+Roadmap Item 到 DONE 前必须已经由 `smc-plan-delivery` 证明：
 
 1. APPROVED Stage PRD；
-2. validated Plan；
-3. Review PASS；
-4. Verification PASS evidence；
-5. real implementation commit SHA。
+2. canonical validated Plan；
+3. Plan Completion Audit FRESH PASS；
+4. Implementation Review FRESH PASS；
+5. 所有 blocking Verification FRESH PASS；
+6. real implementation commit SHA。
 
-再更新该 item 为 DONE。
+更新：
 
 ```bash
 python .agents/skills/smc-roadmap/scripts/roadmap_update.py <roadmap> RM-01 \
@@ -63,32 +60,47 @@ python .agents/skills/smc-roadmap/scripts/roadmap_update.py <roadmap> RM-01 \
   --prd docs_agent/...md \
   --plan .cursor/plans/...plan.md \
   --implementation-commit <sha> \
-  --verification <evidence-path-or-id>
+  --verification "smc-evidence:<plan_id>@<working-tree-fingerprint>"
 ```
 
-更新 Roadmap 后再创建**独立 Roadmap status commit**。
+`Verification Evidence` 可以是逻辑 evidence reference，不要求 raw XML/TXT 在 Git 中存在。
+
+## Evidence Reference
+
+v1.1 推荐：
+
+```text
+smc-evidence:<plan_id>@sha256:<fingerprint>
+```
+
+其含义是：Roadmap 指向与 implementation commit 前 ready content 对应的一组 FRESH PASS blocking evidence；v1.1 validator 会从该 implementation commit 读取 `docs_agent/evidence/<plan_id>-evidence.json` 并校验 Plan ID、fingerprint、Completion Audit、Implementation Review 与 blocking Verification 摘要。
+
+若组织使用 CI/Artifact Store，也可保存：
+
+```text
+ci-artifact:<id-or-url>
+external-artifact:<id-or-url>
+```
+
+但必须能追溯到同一 Plan / implementation content。
 
 ## Artifact Commit Gate
 
-- `create` / `check` / `next`：只写/读 Roadmap 文件，**禁止立刻 commit**。
-- 首次将 Roadmap 入库：仅当 Architecture 已 `APPROVED` 且 roadmap validate 通过后，允许一次**独立 docs commit**。
-- item 到 `DONE` 后：再创建**独立 Roadmap status commit**；不得与 implementation commit 合并。
+- create/check/next：Roadmap docs 自身按既有独立 docs commit policy；
+- implementation commit 不得包含 Roadmap DONE 更新；
+- Roadmap DONE validate PASS 后创建独立 Roadmap status commit。
 
 ## Status
 
-`BACKLOG | READY | IN_PRD | PLANNED | IMPLEMENTING | REVIEW | BLOCKED | DONE | SUPERSEDED`
+```text
+BACKLOG | READY | IN_PRD | PLANNED | IMPLEMENTING | REVIEW | BLOCKED | DONE | SUPERSEDED
+```
 
-## Frozen Delivery Invariant
+## Frozen Invariant
 
 ```text
 one Roadmap Item -> one Stage PRD
-DONE -> real implementation commit + verification evidence
-
-`real implementation commit` 由 validator 使用 `git cat-file -e <sha>^{commit}` 验证 Git 对象真实存在；只写一个 SHA 形状的字符串不能进入 DONE。
+DONE -> real implementation commit + verification evidence reference
 ```
 
-Roadmap 不保存“本次 Roadmap status commit SHA”，否则会形成自引用递归。
-
-## Loop
-
-DONE -> check -> next READY -> Stage PRD -> ...
+Roadmap 不保存自身 status commit SHA，避免自引用。

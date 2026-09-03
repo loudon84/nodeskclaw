@@ -7,6 +7,7 @@ The canonical runtime dependencies are only:
 - APPROVED Stage PRD;
 - `smc-plan-from-approved-prd-ponytail`;
 - `smc-plan-validator`;
+- conditional `smc-plan-review` after risk assessment;
 - shared SMC architecture/evidence contracts.
 
 `.cursor/rules/plan-codegen-minimal.mdc`, `writing-plans`, and legacy `smc-plan-from-approved-prd` are migration sources only and must not remain active planning owners.

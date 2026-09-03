@@ -92,3 +92,10 @@ scripts/git_stats/commit_counts.png
 scripts/git_stats/code_breakdown.png
 scripts/git_stats/total_lines.png
 artifacts/
+.smc/
+
+# SMC governed delivery local state/evidence
+.smc/evidence/
+.smc/reviews/
+.smc/runs/
+.smc/skill-upgrade-backups/
