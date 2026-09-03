@@ -19,7 +19,7 @@ v1.6 保持既有 Production Owner 与信任边界，以独立 Roadmap Item 关�
 - RM-07：[Edge Control Channel 安全闭环](../../docs_agent/prd-v1.6.8-edge-control-channel-security-closure.md)（`APPROVED`；Roadmap `IN_PRD`）。Backend Edge 域拥有登记、身份生命周期、请求验证、命令签发与审计；Agent Edge Worker 拥有本地证明、命令验签与反重放消费。Delivery Generation 继续只作投递栅栏，Internal Edge 命令封套不进入 Public Consumer Contract。
 - RM-10：[Agent 执行 Trace 与运行指标](../../docs_agent/prd-v1.6.9-agent-observability-trace-and-metrics.md)（`APPROVED`；Roadmap `IN_PRD`）。Agent 为 Trace/Metrics 唯一执行事实 Owner；Backend 只做 `request_trace_id` 规范化与 opaque 传递；见 [[architecture/skill-agent#Execution Observability Trace And Metrics]]。
 - RM-11：[累积 Public v1.2.1 合同导出](../../docs_agent/prd-v1.6.6-cumulative-public-consumer-contract.md)（Roadmap `DONE`；tag `skill-run-contract-v1.2.1`；证据 `docs_agent/evidence/rm11-verification.md`）。
-- RM-12：[冻结 v1.2.1 员工 Public 面符合性](../../docs_agent/prd-v1.6.10-skill-run-v121-public-conformance.md)（`APPROVED`；Roadmap `IN_PRD`）。Canonical Plan：`.cursor/plans/rm-12_v121_public_conformance.plan.md`（`plan_id: RM-12`，`commit_policy: post_review`）。依赖已完成的 RM-06 与 RM-11。不得并入 RM-04 / RM-09；不得改写冻结合同。用户草稿 `docs_agent/prd-hotfix-skill-run-v1.2.1-postman-ready.md` 不是 Stage PRD。RM-09 仍 `BACKLOG`，等待 RM-08 `DONE` 后承接 v1.2.1 **之后**的批准增量。下游只走 `smc-plan-delivery`。
+- RM-12：[冻结 v1.2.1 员工 Public 面符合性](../../docs_agent/prd-v1.6.10-skill-run-v121-public-conformance.md)（`APPROVED`；Roadmap `DONE`）。Canonical Plan：`.cursor/plans/rm-12_v121_public_conformance.plan.md`（`plan_id: RM-12`，`commit_policy: post_review`）。依赖已完成的 RM-06 与 RM-11。不得并入 RM-04 / RM-09；不得改写冻结合同。用户草稿 `docs_agent/prd-hotfix-skill-run-v1.2.1-postman-ready.md` 不是 Stage PRD。RM-09 仍 `BACKLOG`，等待 RM-08 `DONE` 后承接 v1.2.1 **之后**的批准增量。下游只走 `smc-plan-delivery`。
 
 ## Contract-First External Work Boundary
 
