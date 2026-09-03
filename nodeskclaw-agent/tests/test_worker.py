@@ -464,3 +464,64 @@ async def test_worker_skips_execute_engine_when_context_revalidate_denied():
     assert engine_called["value"] is False
     assert "FAILED" in set_status_calls
 
+
+@pytest.mark.asyncio
+# @lat: [[architecture/skill-agent#Role Modes#Claim Attempt Bind Types]]
+async def test_claim_one_insert_does_not_reuse_bind_for_generation():
+    """attempt_no is Integer, generation is BigInteger. Reusing one named bind
+    makes asyncpg compile both columns as $3 and raise AmbiguousParameterError."""
+    from sqlalchemy.dialects.postgresql import asyncpg as pg_asyncpg
+
+    worker = RunWorker()
+    execute_calls: list[tuple] = []
+
+    class _SelectResult:
+        def mappings(self):
+            mock = MagicMock()
+            mock.first.return_value = {
+                "id": "run-claim-1",
+                "org_id": "org-1",
+                "tool_name": "demo_tool",
+                "arguments": {},
+                "snapshot": {},
+                "status": "QUEUED",
+            }
+            return mock
+
+        def scalar_one(self):
+            return 0
+
+    async def fake_execute(stmt, params=None):
+        execute_calls.append((stmt, params))
+        return _SelectResult()
+
+    mock_db = AsyncMock()
+    mock_db.execute = fake_execute
+    mock_db.commit = AsyncMock()
+    mock_db.__aenter__.return_value = mock_db
+    mock_db.__aexit__.return_value = False
+
+    with patch("app.services.worker.SessionLocal", return_value=mock_db):
+        claimed = await worker._claim_one()
+
+    assert claimed is not None
+    assert claimed["generation"] == 1
+
+    insert_stmt, insert_params = next(
+        (stmt, params)
+        for stmt, params in execute_calls
+        if "INSERT INTO" in str(stmt) and "run_attempts" in str(stmt)
+    )
+    compiled = str(insert_stmt.compile(dialect=pg_asyncpg.dialect()))
+    values_clause = compiled.split("VALUES", 1)[1]
+    placeholders = [p.strip() for p in values_clause.strip().strip("()").split(",")]
+    attempt_no_ph = placeholders[2]
+    generation_ph = placeholders[3]
+    assert attempt_no_ph != generation_ph, (
+        f"attempt_no and generation must use distinct binds, got {compiled}"
+    )
+    assert insert_params is not None
+    assert "attempt_no" in insert_params
+    assert "generation" in insert_params
+    assert insert_params["attempt_no"] == insert_params["generation"] == 1
+

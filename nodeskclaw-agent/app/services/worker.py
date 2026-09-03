@@ -233,6 +233,7 @@ class RunWorker:
                 observe_stage("recover", outcome="ok", role="central")
             await db.commit()
 
+    # @lat: [[architecture/skill-agent#Role Modes#Claim Attempt Bind Types]]
     async def _claim_one(self) -> dict | None:
         lease_until = datetime.now(timezone.utc) + timedelta(seconds=settings.SKILL_AGENT_LEASE_SECONDS)
         attempt_id = str(uuid.uuid4())
@@ -280,7 +281,7 @@ class RunWorker:
                     INSERT INTO "{SCHEMA}".run_attempts (
                         id, run_id, attempt_no, generation, worker_id, status, lease_until, started_at, heartbeat_at
                     ) VALUES (
-                        :id, :run_id, :attempt_no, :attempt_no, :worker_id, 'PREPARING', :lease_until, NOW(), NOW()
+                        :id, :run_id, :attempt_no, :generation, :worker_id, 'PREPARING', :lease_until, NOW(), NOW()
                     )
                     """
                 ),
@@ -288,6 +289,7 @@ class RunWorker:
                     "id": attempt_id,
                     "run_id": row["id"],
                     "attempt_no": attempt_no,
+                    "generation": attempt_no,
                     "worker_id": self._worker_id,
                     "lease_until": lease_until,
                 },
@@ -299,7 +301,7 @@ class RunWorker:
                     UPDATE "{SCHEMA}".runs
                     SET status = 'PREPARING',
                         attempt_id = :attempt_id,
-                        generation = :attempt_no,
+                        generation = :generation,
                         worker_id = :worker_id,
                         lease_until = :lease_until,
                         updated_at = NOW()
@@ -309,7 +311,7 @@ class RunWorker:
                 {
                     "id": row["id"],
                     "attempt_id": attempt_id,
-                    "attempt_no": attempt_no,
+                    "generation": attempt_no,
                     "worker_id": self._worker_id,
                     "lease_until": lease_until,
                 },

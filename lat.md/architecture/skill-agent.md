@@ -39,6 +39,12 @@ Agent 的 Central（中心执行）与 Edge（边缘执行）角色已经落地�
 
 Central 且 Worker 开启时，进程 lifespan 必须能构造 `RunWorker` 并挂到 `app.state.worker`，否则服务无法完成启动。
 
+### Claim Attempt Bind Types
+
+`run_attempts.attempt_no` 是 Integer，`generation` 是 BigInteger。认领 INSERT 必须使用不同的 named bind，否则 asyncpg 会把两列编译成同一个 `$n` 并抛出 `AmbiguousParameterError`。
+
+[[nodeskclaw-agent/app/services/worker.py#RunWorker#_claim_one]] 写入 attempt 时 `attempt_no` 与 `generation` 数值可以相同，但绑定名必须分开（`:attempt_no` / `:generation`）。`runs.generation` 的 UPDATE 同样使用独立 `:generation` bind。
+
 ## Hybrid Orchestration And Terminal Aggregator
 
 Hybrid 编排的持久化 Step 与唯一终态聚合器已经落地，跨 Edge 与 required Artifact 的生产链路仍缺正式证明。
