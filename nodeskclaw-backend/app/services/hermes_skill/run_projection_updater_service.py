@@ -127,6 +127,7 @@ class RunProjectionUpdaterService:
             return False
 
 
+# @lat: [[architecture/backend#C2 Projection Sync]]
 class RunProjectionWorker:
     def __init__(self):
         self._running = False
@@ -146,7 +147,6 @@ class RunProjectionWorker:
 
     async def _run_once(self):
         async with async_session_factory() as db:
-            # Poll non-terminal tasks to sync projection
             stmt = (
                 select(HermesTask)
                 .where(
@@ -155,10 +155,12 @@ class RunProjectionWorker:
                 .limit(settings.SKILL_RUN_PROJECTION_BATCH_SIZE)
             )
             res = await db.execute(stmt)
-            tasks = res.scalars().all()
-            if not tasks:
-                return
+            task_refs = [(t.id, t.org_id, t.user_id) for t in res.scalars().all()]
 
-            service = RunProjectionUpdaterService(db)
-            for t in tasks:
-                await service.sync_task_projection(t.id, t.org_id, t.user_id)
+        if not task_refs:
+            return
+
+        for task_id, org_id, user_id in task_refs:
+            async with async_session_factory() as db:
+                service = RunProjectionUpdaterService(db)
+                await service.sync_task_projection(task_id, org_id, user_id)

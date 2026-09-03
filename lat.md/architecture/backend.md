@@ -50,7 +50,17 @@ Hermes Skill、任务产物、Agent 绑定与 MCP Skill Gateway 是独立能力�
 
 MCP 对外 JSON-RPC 2.0；应用错误以 HTTP 200 + `error.data.errorCode` 返回（Expert MCP 冻结行为）。
 
-P0 实现锚点：Expert 网关 [[nodeskclaw-backend/app/services/expert_gateway/expert_mcp_gateway_service.py#ExpertMcpGatewayService]]、MCP token 校验 [[nodeskclaw-backend/app/services/expert_gateway/expert_mcp_auth_guard.py#ExpertMcpAuthGuard]]、任务域投影 [[nodeskclaw-backend/app/services/hermes_skill/task_service.py#TaskService]]、SkillRelease [[nodeskclaw-backend/app/services/hermes_skill/skill_release_service.py#SkillReleaseService]]、Backend Worker（仅 drain `routing_metadata.execution_owner == "backend"` 的任务，无标记或 agent-owned 一律跳过）[[nodeskclaw-backend/app/services/hermes_skill/hermes_task_worker.py#HermesTaskWorker]]、Agent Worker [[nodeskclaw-agent/app/services/worker.py#RunWorker]]。Schema 事实源：`app/schemas/work_expert/`、`app/schemas/skill_run/`、`app/schemas/hermes_skill/sse_events.py`、`task_result_contract.py`。
+P0 实现锚点：Expert 网关 [[nodeskclaw-backend/app/services/expert_gateway/expert_mcp_gateway_service.py#ExpertMcpGatewayService]]、MCP token 校验 [[nodeskclaw-backend/app/services/expert_gateway/expert_mcp_auth_guard.py#ExpertMcpAuthGuard]]、任务域投影 [[nodeskclaw-backend/app/services/hermes_skill/task_service.py#TaskService]]、SkillRelease [[nodeskclaw-backend/app/services/hermes_skill/skill_release_service.py#SkillReleaseService]]、C2 投影轮询 [[nodeskclaw-backend/app/services/hermes_skill/run_projection_updater_service.py#RunProjectionWorker]]、Backend Worker（仅 drain `routing_metadata.execution_owner == "backend"` 的任务，无标记或 agent-owned 一律跳过）[[nodeskclaw-backend/app/services/hermes_skill/hermes_task_worker.py#HermesTaskWorker]]、Agent Worker [[nodeskclaw-agent/app/services/worker.py#RunWorker]]。Schema 事实源：`app/schemas/work_expert/`、`app/schemas/skill_run/`、`app/schemas/hermes_skill/sse_events.py`、`task_result_contract.py`。
+
+## C2 Projection Sync
+
+Backend 把 Agent Run 事实增量写入 HermesTask。轮询 worker 先抽出主键再按条打开 session，禁止在 commit 或 rollback 后再访问同一批 ORM 属性。
+
+Agent 是 Event / Result / Artifact 事实源；[[nodeskclaw-backend/app/services/hermes_skill/run_projection_updater_service.py#RunProjectionUpdaterService]] 按 `after_seq` 单调映射状态、事件、结果与工件。[[nodeskclaw-backend/app/services/hermes_skill/run_projection_updater_service.py#RunProjectionWorker]] 对齐 Outbox worker：批查询只收集 `(id, org_id, user_id)`，每条任务独立 session。SQLAlchemy asyncio 对 expired 属性的隐式刷新会触发 MissingGreenlet，中断整批投影。决策见 [[decisions/skill-platform-execution]]。
+
+### Session Isolation After Commit
+
+同一批非终态任务中，前一条投影 sync 的 commit 或 rollback 不得让后续任务因 expired ORM 隐式刷新而失败。
 
 ## Startup
 

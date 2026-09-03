@@ -78,6 +78,7 @@ Skill Platform Slice A/B 后：新生产 Skill Run 由 [[nodeskclaw-backend/app/
 | tools/call → RuntimeSkillRun | [[nodeskclaw-backend/app/services/expert_gateway/expert_run_service.py#ExpertRunService]] |
 | Cancel-safe / preparing·finalizing / result_content 写入（旧/非 agent-owned） | [[nodeskclaw-backend/app/services/hermes_skill/hermes_task_worker.py#HermesTaskWorker]] |
 | 新生产 Run 执行 / Event SoT | [[nodeskclaw-agent/app/services/worker.py#RunWorker]]（见 [[decisions/skill-platform-execution]]） |
+| agent-owned C2 投影同步 | [[nodeskclaw-backend/app/services/hermes_skill/run_projection_updater_service.py#RunProjectionWorker]]（见 [[architecture/backend#C2 Projection Sync]]） |
 | result 查询分离 | [[nodeskclaw-backend/app/services/hermes_skill/task_result_service.py#TaskResultService]] |
 | contractVersion / capabilities | [[nodeskclaw-backend/app/services/expert_gateway/expert_health_service.py]]、`GET /api/v1/system/info` |
 

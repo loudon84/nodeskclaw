@@ -7,8 +7,13 @@ import httpx
 from httpx import ASGITransport
 from pydantic import BaseModel, Field
 
+from sqlalchemy.exc import MissingGreenlet
+
 from app.models.hermes_skill.hermes_task import HermesTask, TaskStatus
-from app.services.hermes_skill.run_projection_updater_service import RunProjectionUpdaterService
+from app.services.hermes_skill.run_projection_updater_service import (
+    RunProjectionUpdaterService,
+    RunProjectionWorker,
+)
 
 
 class ArtifactDescriptor(BaseModel):
@@ -242,3 +247,67 @@ async def test_sync_task_projection_handles_timed_out(monkeypatch):
     assert mock_task.status == TaskStatus.FAILED
     assert mock_task.error_code == "errors.skill_run.timed_out"
     assert "timed out" in mock_task.error_message
+
+
+class _ExpireAfterFirstReadTask:
+    def __init__(self, task_id: str, org_id: str, user_id: str):
+        self._id = task_id
+        self._org_id = org_id
+        self._user_id = user_id
+        self.expired = False
+
+    def _read(self, value: str) -> str:
+        if self.expired:
+            raise MissingGreenlet(
+                "greenlet_spawn has not been called; can't call await_only() here. "
+                "Was IO attempted in an unexpected place?"
+            )
+        return value
+
+    @property
+    def id(self) -> str:
+        return self._read(self._id)
+
+    @property
+    def org_id(self) -> str:
+        return self._read(self._org_id)
+
+    @property
+    def user_id(self) -> str:
+        return self._read(self._user_id)
+
+
+@pytest.mark.asyncio
+# @lat: [[architecture/backend#C2 Projection Sync#Session Isolation After Commit]]
+async def test_run_once_does_not_touch_expired_orm_after_first_sync(monkeypatch):
+    task_a = _ExpireAfterFirstReadTask("task-a", "org-1", "user-1")
+    task_b = _ExpireAfterFirstReadTask("task-b", "org-1", "user-2")
+
+    mock_db = AsyncMock()
+    mock_res = MagicMock()
+    mock_res.scalars.return_value.all.return_value = [task_a, task_b]
+    mock_db.execute.return_value = mock_res
+    mock_db.__aenter__.return_value = mock_db
+    mock_db.__aexit__.return_value = False
+
+    synced: list[tuple[str, str, str | None]] = []
+
+    async def fake_sync(self, task_id, org_id, user_id=None):
+        task_a.expired = True
+        task_b.expired = True
+        synced.append((task_id, org_id, user_id))
+        return True
+
+    monkeypatch.setattr(
+        "app.services.hermes_skill.run_projection_updater_service.async_session_factory",
+        lambda: mock_db,
+    )
+    monkeypatch.setattr(RunProjectionUpdaterService, "sync_task_projection", fake_sync)
+
+    await RunProjectionWorker()._run_once()
+
+    assert synced == [
+        ("task-a", "org-1", "user-1"),
+        ("task-b", "org-1", "user-2"),
+    ]
+
