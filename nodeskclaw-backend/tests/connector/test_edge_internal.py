@@ -13,6 +13,13 @@ from app.models.connector.edge_node import EdgeNode
 from app.services.connector.edge_node_service import hash_edge_token
 
 
+def _asgi_receive(body: bytes = b""):
+    async def receive():
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    return receive
+
+
 def _mock_request() -> MagicMock:
     return MagicMock()
 
@@ -43,9 +50,10 @@ async def test_authenticate_edge_rejects_forged_token():
         "type": "http",
         "method": "GET",
         "path": "/api/v1/internal/edge/jobs",
+        "query_string": b"",
         "headers": [(b"x-edge-node-id", b"n1")],
     }
-    request = Request(scope)
+    request = Request(scope, _asgi_receive())
     with patch.object(
         internal_edge.EdgeControlChannel,
         "get_node_for_proof",

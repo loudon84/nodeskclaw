@@ -20,7 +20,7 @@ from app.models.connector.edge_artifact_on_demand_request import EdgeArtifactOnD
 from app.models.connector.edge_job import EdgeJob, EdgeJobStatus
 from app.models.connector.edge_node import EdgeNode, EdgeNodeStatus
 from app.models.hermes_skill.skill_installation import HermesSkillInstallation
-from app.services.connector.edge_control_channel import EdgeControlChannel, canonical_payload_sha256
+from app.services.connector.edge_control_channel import EdgeControlChannel, bind_request_digest
 from app.services.connector.edge_node_service import EdgeNodeService, hash_edge_token
 from app.services.hermes_skill.runtime_skill_run_service import RuntimeSkillRunService, strip_internal_route_secrets
 from app.services.hermes_skill.skill_release_service import (
@@ -109,7 +109,15 @@ async def _authenticate_edge(
         raise ForbiddenError("伪造 org/node 被拒绝", "errors.connector.edge_org_mismatch")
     if not node.public_key:
         raise ForbiddenError("Edge 节点尚未绑定身份", "errors.connector.edge_identity_not_bound")
-    payload_sha256 = request.headers.get("X-Edge-Payload-Sha256") or canonical_payload_sha256(b"")
+    body = await request.body()
+    payload_sha256 = bind_request_digest(body=body, query=request.url.query or "")
+    claimed = request.headers.get("X-Edge-Payload-Sha256")
+    claimed_norm = (claimed or "").strip().lower()
+    digest_norm = payload_sha256.lower()
+    if claimed_norm and (
+        len(claimed_norm) != len(digest_norm) or not hmac.compare_digest(claimed_norm, digest_norm)
+    ):
+        raise ForbiddenError("Edge 请求载荷摘要不匹配", "errors.connector.edge_payload_digest_mismatch")
     await channel.verify_request_proof(
         node,
         method=request.method,

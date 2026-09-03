@@ -8,6 +8,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from urllib.parse import parse_qsl, urlencode
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
@@ -18,6 +19,10 @@ from app.core.config import settings
 from app.core.exceptions import ForbiddenError
 from app.models.connector.edge_control_nonce import EdgeControlNonce
 from app.models.connector.edge_node import EdgeNode
+
+COMMAND_PURPOSES = frozenset(
+    {"job.claim", "install.desired", "artifact.on_demand", "job.cancel.check"}
+)
 
 
 def canonical_payload_sha256(payload: Any) -> str:
@@ -30,6 +35,28 @@ def canonical_payload_sha256(payload: Any) -> str:
     else:
         raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(raw).hexdigest()
+
+
+def canonical_query(query: str) -> str:
+    if not query:
+        return ""
+    pairs = parse_qsl(query, keep_blank_values=True)
+    return urlencode(sorted(pairs), doseq=True)
+
+
+def bind_request_digest(*, body: bytes | None = None, query: str = "") -> str:
+    raw = body or b""
+    if raw:
+        try:
+            body_digest = canonical_payload_sha256(json.loads(raw))
+        except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
+            body_digest = canonical_payload_sha256(raw)
+    else:
+        body_digest = canonical_payload_sha256(b"")
+    canon_q = canonical_query(query)
+    if not canon_q:
+        return body_digest
+    return canonical_payload_sha256({"query": canon_q, "body_sha256": body_digest})
 
 
 def _b64_public_key(key: Ed25519PublicKey) -> str:
@@ -253,6 +280,8 @@ class EdgeControlChannel:
         payload: dict[str, Any],
         command_seq: int | None = None,
     ) -> dict[str, Any]:
+        if purpose not in COMMAND_PURPOSES:
+            raise ValueError("unknown command purpose")
         bundle = self.issuer_bundle()
         private_key = _load_private_key(settings.EDGE_CONTROL_ISSUER_PRIVATE_KEY)
         now = datetime.now(timezone.utc)

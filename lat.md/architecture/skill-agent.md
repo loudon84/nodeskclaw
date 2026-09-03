@@ -23,7 +23,7 @@ Agent 从工作目录 `.env` 加载配置，字段以 [[nodeskclaw-agent/app/con
 - **凭证租约探针**：Central 就绪检查 Backend `GET /api/v1/health`（不是 `/api/health`）。
 - **就绪新鲜度**：`SKILL_AGENT_READINESS_STALE_SECONDS`（默认 120s）控制 Central `last_successful_loop_at` 与 Edge `last_heartbeat_at` 的过期阈值。
 - **未入 Settings**：HTTP 端口由 uvicorn `--port 4580` 指定；Edge Spool 与 Skill 安装目录仍硬编码为 `./data/edge_spool` 与 `./data/edge_skills`。
-- **Edge 身份**：`SKILL_AGENT_EDGE_TOKEN` 仅为一次性 bootstrap（引导材料），绑定后长期凭证落在 `SKILL_AGENT_SECRET_STORE/edge-identity.json`；生产 readiness 接受已绑定身份或未消费的 bootstrap+`SKILL_AGENT_EDGE_NODE_ID`。
+- **Edge 身份**：`SKILL_AGENT_EDGE_TOKEN` 仅为一次性 bootstrap（引导材料）；公钥与消费账本落在 `SKILL_AGENT_SECRET_STORE/edge-identity.json`，私钥/bootstrap 经同目录 `edge-identity.key` 包装密钥加密，不明文落盘。生产 readiness 接受已绑定身份或未消费的 bootstrap+`SKILL_AGENT_EDGE_NODE_ID`。
 
 ## Role Modes
 
@@ -104,15 +104,15 @@ Connector Runtime 以冻结的规范路由快照、Agent 唯一派发和运行�
 
 ## Edge Worker And Spooling
 
-Edge 出站执行、租约续期与磁盘 Spool 已有实现；RM-07 将 Internal Edge 从长期 Token 升级为 Ed25519 请求证明与 Backend 签发命令封套。
+Edge 出站执行、租约续期与磁盘 Spool 已有实现；RM-07 用 `bind_request_digest` 与 `edge-identity.key`，校验 `COMMAND_PURPOSES`/nonce/`command_seq`，裸 Job 不执行。
 
 - **已实现**：Edge 主动向 Backend 心跳、认领 EdgeJob、续租并回传增量事件；收到 403 租约抢占响应后设置 `cancel_event` 中断本地执行。
-- **已实现**：[[nodeskclaw-agent/app/services/edge_control_channel.py#EdgeControlChannel]] 持久化 `edge-identity.json`（绑定后的 node/org/identity_version、issuer 公钥与 request seq）；出站请求携带 `X-Edge-Node-Id`、`X-Edge-Identity-Version`、`X-Edge-Timestamp`、`X-Edge-Nonce`、`X-Edge-Seq`、`X-Edge-Payload-Sha256`、`X-Edge-Signature`；入站命令经 issuer 公钥验签、TTL 与本地 consumed_commands 反重放后才解包业务 payload。
+- **已实现**：[[nodeskclaw-agent/app/services/edge_control_channel.py#EdgeControlChannel]] 将公钥与 consume ledger 写入 `edge-identity.json`，私钥/bootstrap 经同目录 `edge-identity.key` 包装进 `secrets_blob`；加载到仍含明文私钥/bootstrap 的旧文件会立即再加密写回。出站证明经 [[nodeskclaw-agent/app/services/edge_control_channel.py#bind_request_digest]] 绑定真实 Body 与 Query；入站命令由 [[nodeskclaw-agent/app/services/edge_control_channel.py#EdgeControlChannel#verify_command_envelope]] 校验 [[nodeskclaw-agent/app/services/edge_control_channel.py#COMMAND_PURPOSES]]、nonce、全局单调 `command_seq` 与 issuer 签名，同一 `command_id` 重放为幂等空操作，再解包业务 payload。
 - **已实现**：一次性 bootstrap（`SKILL_AGENT_EDGE_TOKEN`）仅用于 `POST /internal/edge/enroll`；[[nodeskclaw-agent/app/main.py#health_ready]] 生产门禁接受已绑定身份或未消费的 bootstrap+node_id，不再把 Token 当长期凭证。
-- **已实现**：[[nodeskclaw-agent/app/services/edge_worker.py#EdgeWorker#_request_headers]] 为 heartbeat/claim/events/artifact/install/on-demand 生成 Ed25519 请求头；`_claim_job`、`_reconcile_desired_installations` 与 on-demand 拉取只消费经验签的命令封套。
+- **已实现**：[[nodeskclaw-agent/app/services/edge_worker.py#EdgeWorker#_request_headers]] 为 heartbeat/claim/events/artifact/install/on-demand 生成 Ed25519 请求头（含 bundle `generation` Query）；`_claim_job`、`_reconcile_desired_installations` 与 on-demand 拉取只消费对应 `purpose` 的签名封套，裸 Job JSON 不执行。
 - **已实现**：`GET /internal/edge/jobs/{id}/cancel` 返回签名的 `job.cancel.check` 封套；[[nodeskclaw-agent/app/services/edge_worker.py#EdgeWorker#_execute_job]] 验签通过后才 `cancel_event.set()`，未签名 payload 不得中断 Connector 执行。
 - **已实现**：Snapshot 含 `execution_context` 或 `context_version` 时，[[nodeskclaw-agent/app/services/edge_worker.py#EdgeWorker#_execute_job]] 在 `execute_engine` 前调用 [[nodeskclaw-agent/app/services/context_revalidate.py#revalidate_execution_context]]，拒绝则只发 `run.failed` 且不进入引擎。
-- **依赖**：Agent 使用 `cryptography` 提供 Ed25519 签名与验签（[[nodeskclaw-agent/app/services/edge_control_channel.py#EdgeControlChannel]]）。
+- **依赖**：Agent 使用 `cryptography` 提供 Ed25519 签名/验签与 Fernet 本地包装（[[nodeskclaw-agent/app/services/edge_control_channel.py#EdgeControlChannel]]）。
 - **已实现**：Spool Envelope 保存 `job_id`、`delivery_generation`、`attempt_id`、`step_id`、`request_trace_id` 和 `idempotency_key`，单元测试覆盖落盘、排空和 403 丢弃旧代信封。
 - **已实现**：Desired Installation 调谐、Bundle 下载与本地安装闭环见 [[architecture/skill-agent#Installation Generation Closed Loop]]。
 - **已实现**：出站拉取并在授权下履约 on-demand Artifact；通过标准 `/artifacts` 路由中继。

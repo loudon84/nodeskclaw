@@ -50,6 +50,7 @@ class EdgeWorker:
         method: str,
         path: str,
         json_body: dict[str, Any] | None = None,
+        query: str = "",
     ) -> dict[str, str]:
         payload: Any = b""
         if json_body is not None:
@@ -62,6 +63,7 @@ class EdgeWorker:
             method=method,
             path=path,
             payload=payload,
+            query=query,
         )
         return headers
 
@@ -154,15 +156,17 @@ class EdgeWorker:
         installation_id: str,
         generation: int,
     ) -> bytes:
+        query = f"generation={generation}"
         url = (
             f"{self._base_url}/api/v1/internal/edge/installations/"
-            f"{installation_id}/bundle?generation={generation}"
+            f"{installation_id}/bundle?{query}"
         )
         response = await client.get(
             url,
             headers=self._request_headers(
                 method="GET",
                 path=f"/api/v1/internal/edge/installations/{installation_id}/bundle",
+                query=query,
             ),
         )
         response.raise_for_status()
@@ -187,7 +191,9 @@ class EdgeWorker:
             items: list[dict[str, Any]] = []
             if state:
                 for wrapped in raw_items:
-                    payload = self._channel.unwrap_or_none(state, wrapped)
+                    payload = self._channel.unwrap_or_none(
+                        state, wrapped, expected_purpose="install.desired"
+                    )
                     if payload:
                         items.append(payload)
 
@@ -332,7 +338,9 @@ class EdgeWorker:
             items: list[dict[str, Any]] = []
             if state:
                 for wrapped in raw_items:
-                    payload = self._channel.unwrap_or_none(state, wrapped)
+                    payload = self._channel.unwrap_or_none(
+                        state, wrapped, expected_purpose="artifact.on_demand"
+                    )
                     if payload:
                         items.append(payload)
             for req in items:
@@ -396,21 +404,10 @@ class EdgeWorker:
             return None
         data = response.json()
         state = self._channel.load()
-        if state and isinstance(data, dict) and "envelope" in data:
-            job = self._channel.verify_command_envelope(state, data)
-            return job if isinstance(job, dict) and job.get("id") else None
-        if data is None:
+        if not state or not isinstance(data, dict):
             return None
-        if isinstance(data, dict):
-            if data.get("job") is not None:
-                job = data["job"]
-                return job if isinstance(job, dict) and job.get("id") else None
-            if data.get("id"):
-                return data
-            return None
-        if isinstance(data, list) and data and isinstance(data[0], dict) and data[0].get("id"):
-            return data[0]
-        return None
+        job = self._channel.verify_command_envelope(state, data, expected_purpose="job.claim")
+        return job if isinstance(job, dict) and job.get("id") else None
 
     async def _flush_spool(self, client: httpx.AsyncClient) -> None:
         """Flush persisted spool files on disk if any previous network failures occurred."""
@@ -659,7 +656,9 @@ class EdgeWorker:
                         wrapped = res.json().get("data") or {}
                         state = self._channel.load()
                         payload = (
-                            self._channel.verify_command_envelope(state, wrapped)
+                            self._channel.verify_command_envelope(
+                                state, wrapped, expected_purpose="job.cancel.check"
+                            )
                             if state
                             else None
                         )

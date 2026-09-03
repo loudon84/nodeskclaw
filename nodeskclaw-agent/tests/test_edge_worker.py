@@ -49,10 +49,10 @@ def _install_bound_edge_identity(monkeypatch, store_dir: Path, *, node_id: str =
 def _allow_plain_installation_unwrap(worker: EdgeWorker) -> None:
     original = worker._channel.unwrap_or_none
 
-    def unwrap(state, wrapped):
+    def unwrap(state, wrapped, expected_purpose=None):
         if isinstance(wrapped, dict) and "envelope" not in wrapped:
             return wrapped
-        return original(state, wrapped)
+        return original(state, wrapped, expected_purpose=expected_purpose)
 
     worker._channel.unwrap_or_none = unwrap  # type: ignore[method-assign]
 
@@ -118,6 +118,25 @@ async def test_edge_worker_heartbeat_then_jobs_poll(tmp_path, monkeypatch):
     jobs_call = client.get.await_args
     assert jobs_call.args[0] == "http://central.test/api/v1/internal/edge/jobs"
     assert jobs_call.kwargs["headers"]["X-Edge-Signature"]
+
+
+@pytest.mark.asyncio
+async def test_claim_job_ignores_unsigned_payload(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_CENTRAL_BASE_URL", "http://central.test")
+    _install_bound_edge_identity(monkeypatch, tmp_path)
+
+    jobs_response = MagicMock()
+    jobs_response.status_code = 200
+    jobs_response.raise_for_status = MagicMock()
+    jobs_response.content = b'{"id":"job-unsigned"}'
+    jobs_response.json = MagicMock(return_value={"id": "job-unsigned", "tool_name": "connector"})
+
+    client = AsyncMock()
+    client.get = AsyncMock(return_value=jobs_response)
+
+    worker = EdgeWorker()
+    job = await worker._claim_job(client)
+    assert job is None
 
 
 @pytest.mark.asyncio

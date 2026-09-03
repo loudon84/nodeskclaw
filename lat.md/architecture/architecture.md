@@ -11,4 +11,4 @@
 - [[task]] — AutoTask 独立服务、打包约束与后继作业
 - [[runtime]] — 计算 Provider、实例生命周期、Channel 与外部运行时
 
-Skill Run 执行平面（`nodeskclaw-agent`）的架构与设计决策详见 [[skill-agent]] 与 [[decisions/skill-platform-execution]]；Connector Runtime 的冻结快照、单次 Edge 派发、SecretRef 与网络/数据库/取消门禁由该执行平面统一拥有；RM-07 Edge Control Channel 的双向证明与命令封套见 [[backend#Edge Control Channel]] 与 [[skill-agent#Edge Worker And Spooling]]；RM-10 Trace/Metrics 见 [[skill-agent#Execution Observability Trace And Metrics]]。
+Skill Run 执行平面（`nodeskclaw-agent`）的架构与设计决策详见 [[skill-agent]] 与 [[decisions/skill-platform-execution]]；Connector Runtime 的冻结快照、单次 Edge 派发、SecretRef 与网络/数据库/取消门禁由该执行平面统一拥有；RM-07 Edge Control Channel 的 Body/Query 摘要证明、命令封套与本地加密身份见 [[backend#Edge Control Channel]] 与 [[skill-agent#Edge Worker And Spooling]]；RM-10 Trace/Metrics 见 [[skill-agent#Execution Observability Trace And Metrics]]。
