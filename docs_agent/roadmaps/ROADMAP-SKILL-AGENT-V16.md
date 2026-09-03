@@ -4,7 +4,7 @@ version: 1.5.0
 status: ACTIVE
 architecture_decision: docs_agent/architecture/AD-SKILL-AGENT-V16.md
 source_revision: AD-SKILL-AGENT-V16@1.5.0
-updated_at: 2026-09-03T19:04:40+08:00
+updated_at: 2026-09-03T19:24:02+08:00
 feature_id: FEAT-SKILL-FIRST-001
 work_package_id: WP-SKILL-FIRST-NODESKCLAW
 ---
@@ -41,4 +41,4 @@ work_package_id: WP-SKILL-FIRST-NODESKCLAW
 | RM-09 | Backend 实现 v1.2.1 之后经批准的 Public 合同增量，并在 Shared Contract（共享合同）稳定后补齐依赖内部南向字段的剩余符合性；外部前端只作为仓外 Consumer | RM-08 | BACKLOG | 不首次发布 Work canonical；不改写 v1.2.1；不承担已发布 v1.2.1 员工公共面的实现 Hotfix；外部前端源码、构建和发布不在范围内 | - | - | - | - |
 | RM-10 | Agent 执行面具备统一 Trace（链路追踪）与运行指标 | RM-05 | IN_PRD | Run/Attempt/Session/Edge/Connector/Artifact 可关联；队列、时延、失败、租约和重放指标可观测，且不形成第二事件事实源 | docs_agent/prd-v1.6.9-agent-observability-trace-and-metrics.md | - | - | - |
 | RM-11 | 累积 Public Skill Run Consumer Contract v1.2.1 成为外部 Work 可离线导入的当前合同导出项 | RM-01, RM-02 | DONE | 生成并发布 `v1.2.1/` 与 tag `skill-run-contract-v1.2.1`；manifest 纳入 SHA256SUMS；Public 包不含 Internal Southbound；不改写 v1.0.0/v1.1.0/v1.2.0；不含 Work 前端；Internal Agent 合同留给 RM-08 | docs_agent/prd-v1.6.6-cumulative-public-consumer-contract.md | .cursor/plans/rm-11_v121_cumulative_public_contract.plan.md | 10d38f2c97739c4a55df893d1dc954fc8896f1a7 | docs_agent/evidence/rm11-verification.md |
-| RM-12 | 员工 Public Skill Run 面对冻结 `SKILL-RUN-CONTRACT v1.2.1` 可观察符合 | RM-06, RM-11 | READY | Catalog/`tools.call`/幂等/Public Run/SSE/Result/Artifact/Cancel 符合冻结 v1.2.1；`contracts/skill-run/v1.2.1/` 零修改；prompt-first 不因 Installation Workspace 进入 Workspace ACL；跨组织 Execution Workspace 失败关闭；Public 面无 HermesTask 身份泄漏；不发布新合同版本；仓外 Work 联调不是本仓 DONE | - | - | - | - |
+| RM-12 | 员工 Public Skill Run 面对冻结 `SKILL-RUN-CONTRACT v1.2.1` 可观察符合 | RM-06, RM-11 | IN_PRD | Catalog/`tools.call`/幂等/Public Run/SSE/Result/Artifact/Cancel 符合冻结 v1.2.1；`contracts/skill-run/v1.2.1/` 零修改；prompt-first 不因 Installation Workspace 进入 Workspace ACL；跨组织 Execution Workspace 失败关闭；Public 面无 HermesTask 身份泄漏；不发布新合同版本；仓外 Work 联调不是本仓 DONE | docs_agent/prd-v1.6.10-skill-run-v121-public-conformance.md | - | - | - |
