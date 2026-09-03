@@ -69,6 +69,7 @@ _ERROR_CODES: dict[str, int] = {
     GENEHUB_JOB_NOT_PENDING: -32077,
     GENEHUB_JOB_STATUS_UNAVAILABLE: -32076,
     GENEHUB_BUNDLE_PREVIEW_UNAVAILABLE: -32078,
+    IDEMPOTENCY_CONFLICT: -32080,
 }
 
 _DEFAULT_MESSAGES: dict[str, str] = {
@@ -105,6 +106,7 @@ _DEFAULT_MESSAGES: dict[str, str] = {
     GENEHUB_JOB_NOT_PENDING: "GeneHub install job is not pending",
     GENEHUB_JOB_STATUS_UNAVAILABLE: "GeneHub registration status unavailable",
     GENEHUB_BUNDLE_PREVIEW_UNAVAILABLE: "GeneHub bundle preview unavailable",
+    IDEMPOTENCY_CONFLICT: "Idempotency key conflict",
 }
 
 _MESSAGE_KEY_MAP: dict[str, str] = {

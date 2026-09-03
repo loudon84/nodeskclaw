@@ -95,6 +95,16 @@
         "const j = pm.response.json(); pm.expect(j.result).to.be.an('object');",
         "const sc = j.result.structuredContent; pm.expect(sc).to.be.an('object');",
         "['committed','run_id','status','event_stream','result_url','artifact_url','execution_mode'].forEach((k) => pm.expect(sc).to.have.property(k));",
+        "pm.expect(sc.status).to.eql('QUEUED');",
+        "pm.expect(sc.event_stream).to.match(new RegExp('^/api/v1/runs/' + sc.run_id + '/events$'));",
+        "pm.expect(sc.result_url).to.eql('/api/v1/runs/' + sc.run_id + '/result');",
+        "pm.expect(sc.artifact_url).to.eql('/api/v1/runs/' + sc.run_id + '/artifacts');",
+        "pm.expect(sc).to.not.have.property('task_no');",
+        "pm.expect(sc).to.not.have.property('installation_id');",
+        "pm.expect(sc).to.not.have.property('workspace_id');",
+        "pm.expect(sc).to.not.have.property('agent_id');",
+        "pm.expect(JSON.stringify(sc)).to.not.include('/hermes/tasks');",
+        "pm.expect(sc.event_stream).to.not.include('token=');",
         "pm.collectionVariables.set('consumer_run_id', sc.run_id);"
       ]}}]
     },

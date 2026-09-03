@@ -30,7 +30,10 @@ def load_legacy():
     path=HERE/"validate_plan.py"
     if not path.is_file():raise RuntimeError("PLAN_LEGACY_VALIDATOR_MISSING: expected smc-plan-validator/scripts/validate_plan.py from baseline package")
     spec=importlib.util.spec_from_file_location("smc_plan_validator_v32",path)
-    module=importlib.util.module_from_spec(spec);assert spec and spec.loader;spec.loader.exec_module(module);return module
+    module=importlib.util.module_from_spec(spec);assert spec and spec.loader
+    # dataclasses look up the defining module in sys.modules during class creation.
+    sys.modules[spec.name]=module
+    spec.loader.exec_module(module);return module
 
 
 def repo_root(plan:Path)->Path:

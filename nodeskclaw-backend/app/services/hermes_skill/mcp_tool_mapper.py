@@ -722,7 +722,10 @@ class McpToolMapper:
 
         fingerprint = (client_context or {}).get("request_fingerprint")
         idempotency_key = ExpertMcpAuthGuard.extract_idempotency_key(request_headers)
-        if fingerprint:
+        employee_runtime_start = (
+            skill.source_type == RUNTIME_SKILL_ROUTE_TYPE or settings.SKILL_AGENT_ENABLED
+        )
+        if fingerprint and not employee_runtime_start:
             existing = await McpTaskDedupService(self.db).find_dedupe_task(org_id, fingerprint)
             if existing:
                 from app.services.hermes_skill.skill_audit_logger import SkillAuditLogger
@@ -803,7 +806,7 @@ class McpToolMapper:
                 task_source="org_mcp",
                 skill_id=skill.skill_id,
                 installation_id=installation.id,
-                workspace_id=installation.workspace_id,
+                workspace_id=None,
                 request_trace_id=request_trace_id,
                 request_snapshot=request_snapshot,
                 route_diagnostics=route_diagnostics,
@@ -851,7 +854,7 @@ class McpToolMapper:
                 task_source="org_mcp",
                 skill_id=skill.skill_id,
                 installation_id=installation.id,
-                workspace_id=installation.workspace_id,
+                workspace_id=None,
                 request_trace_id=request_trace_id,
                 request_snapshot=request_snapshot,
                 route_diagnostics=route_diagnostics,
@@ -1107,6 +1110,12 @@ class McpToolMapper:
         deduped: bool,
     ) -> dict[str, Any]:
         payload = dict(structured_content)
+        if settings.SKILL_AGENT_ENABLED:
+            payload.setdefault("tool_name", tool_name)
+            payload["retryable"] = False
+            if deduped:
+                payload["deduped"] = True
+            return payload
         payload.update({
             "tool_name": tool_name,
             "agent_alias": agent_alias,
@@ -1134,16 +1143,43 @@ class McpToolMapper:
         user_id: str,
         deduped: bool,
     ) -> dict[str, Any]:
+        status = task.status.value
+        if settings.SKILL_AGENT_ENABLED:
+            if status in ("queued", "accepted"):
+                status = "QUEUED"
+            elif status == "waiting_approval":
+                status = "WAITING_APPROVAL"
+            payload: dict[str, Any] = {
+                "run_id": task.id,
+                "status": status,
+                "execution_mode": ASYNC_EVENT_MODE,
+                "tool_name": tool_name,
+                "event_stream": f"/api/v1/runs/{task.id}/events",
+                "result_url": f"/api/v1/runs/{task.id}/result",
+                "artifact_url": f"/api/v1/runs/{task.id}/artifacts",
+                "artifact_mode": output_policy.get("artifact_mode", "pull_only"),
+                "server_artifacts": task.server_artifacts or [],
+                "message": (
+                    "Run waiting approval"
+                    if status == "WAITING_APPROVAL"
+                    else "Run accepted"
+                ),
+                "retryable": False,
+                "committed": True,
+            }
+            if deduped:
+                payload["deduped"] = True
+            return payload
+
         token_data = await TaskEventTokenService(self.db).create_token(
             task.id,
             user_id,
             org_id,
             ttl_seconds=settings.MCP_TASK_SSE_TOKEN_TTL_SECONDS,
         )
-        status = task.status.value
         if status in ("queued", "accepted"):
             status = "running"
-        payload: dict[str, Any] = {
+        payload = {
             "tool_name": tool_name,
             "agent_alias": agent_alias,
             "agent_id": installation.agent_id,

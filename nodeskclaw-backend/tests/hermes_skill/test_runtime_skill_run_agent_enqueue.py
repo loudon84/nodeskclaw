@@ -264,3 +264,148 @@ async def test_expert_start_keeps_task_id_contract():
     assert result.structured_content["task_id"] == "run-abc"
     assert "/api/v1/hermes/tasks/run-abc/result" in result.structured_content["result_url"]
     db.add.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_idempotency_conflict_raises_conflict_error_not_cannot_enqueue():
+    from app.core.exceptions import ConflictError
+
+    db = AsyncMock()
+    existing = MagicMock()
+    existing.id = "run-existing"
+    existing.arguments = {"prompt": "original"}
+    existing.status = MagicMock(value="queued")
+    existing.event_url = "/api/v1/runs/run-existing/events"
+    existing.artifact_url = "/api/v1/runs/run-existing/artifacts"
+    existing.server_artifacts = []
+    existing.output_policy = {}
+
+    with patch("app.services.hermes_skill.runtime_skill_run_service.settings") as mock_settings, \
+         patch("app.services.hermes_skill.runtime_skill_run_service.TaskService") as task_cls:
+        mock_settings.SKILL_AGENT_ENABLED = True
+        task_svc = AsyncMock()
+        task_svc.find_idempotent_task = AsyncMock(return_value=existing)
+        task_cls.return_value = task_svc
+
+        with pytest.raises(ConflictError) as exc_info:
+            await RuntimeSkillRunService(db).start(
+                _request(idempotency_key="same-key", arguments={"prompt": "different"})
+            )
+
+    assert exc_info.value.message_key == "errors.run.idempotency_conflict"
+    task_svc.create_task.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_idempotency_integrity_error_replays_same_args():
+    from sqlalchemy.exc import IntegrityError
+
+    db = AsyncMock()
+    db.rollback = AsyncMock()
+    existing = MagicMock()
+    existing.id = "run-winner"
+    existing.arguments = {"prompt": "hi"}
+    existing.status = MagicMock(value="queued")
+    existing.event_url = "/api/v1/runs/run-winner/events"
+    existing.artifact_url = "/api/v1/runs/run-winner/artifacts"
+    existing.server_artifacts = []
+    existing.output_policy = {}
+    existing.task_no = "TASK-1"
+
+    with patch("app.services.hermes_skill.runtime_skill_run_service.settings") as mock_settings, \
+         patch("app.services.hermes_skill.runtime_skill_run_service.TaskService") as task_cls, \
+         patch("app.services.hermes_skill.runtime_skill_run_service.TaskEventTokenService") as token_cls, \
+         patch.object(RuntimeSkillRunService, "_resolve_release_meta", new=AsyncMock(return_value=_release_meta())), \
+         patch.object(RuntimeSkillRunService, "_build_authorized_execution_context", new=AsyncMock(return_value={"context_version": 1, "descriptors": []})), \
+         patch.object(RuntimeSkillRunService, "_enrich_route_snapshot", new=AsyncMock(side_effect=lambda request, route: dict(route))):
+        mock_settings.SKILL_AGENT_ENABLED = True
+        mock_settings.HERMES_TASK_DEFAULT_TIMEOUT_SECONDS = 900
+        mock_settings.MCP_TASK_SSE_TOKEN_TTL_SECONDS = 900
+        mock_settings.EXPERT_EVENT_TOKEN_TTL_SECONDS = 900
+
+        task_svc = AsyncMock()
+        task_svc.find_idempotent_task = AsyncMock(side_effect=[None, existing])
+        task_svc.create_task = AsyncMock(side_effect=IntegrityError("INSERT", {}, Exception("uq")))
+        task_cls.return_value = task_svc
+        token_cls.return_value.create_token = AsyncMock(return_value={"event_url": existing.event_url})
+
+        result = await RuntimeSkillRunService(db).start(_request(idempotency_key="race-key"))
+
+    assert result.task.id == "run-winner"
+    db.rollback.assert_awaited()
+    assert task_svc.find_idempotent_task.await_count == 2
+    db.add.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_idempotency_integrity_error_conflict_not_cannot_enqueue():
+    from app.core.exceptions import ConflictError
+    from sqlalchemy.exc import IntegrityError
+
+    db = AsyncMock()
+    db.rollback = AsyncMock()
+    existing = MagicMock()
+    existing.id = "run-winner"
+    existing.arguments = {"prompt": "original"}
+
+    with patch("app.services.hermes_skill.runtime_skill_run_service.settings") as mock_settings, \
+         patch("app.services.hermes_skill.runtime_skill_run_service.TaskService") as task_cls, \
+         patch.object(RuntimeSkillRunService, "_resolve_release_meta", new=AsyncMock(return_value=_release_meta())), \
+         patch.object(RuntimeSkillRunService, "_build_authorized_execution_context", new=AsyncMock(return_value={"context_version": 1, "descriptors": []})):
+        mock_settings.SKILL_AGENT_ENABLED = True
+        task_svc = AsyncMock()
+        task_svc.find_idempotent_task = AsyncMock(side_effect=[None, existing])
+        task_svc.create_task = AsyncMock(side_effect=IntegrityError("INSERT", {}, Exception("uq")))
+        task_cls.return_value = task_svc
+
+        with pytest.raises(ConflictError) as exc_info:
+            await RuntimeSkillRunService(db).start(
+                _request(idempotency_key="race-key", arguments={"prompt": "other"})
+            )
+
+    assert exc_info.value.message_key == "errors.run.idempotency_conflict"
+    db.rollback.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_find_idempotent_task_expires_key_after_ttl_without_soft_delete():
+    from datetime import datetime, timedelta, timezone
+
+    from app.services.hermes_skill.task_service import IDEMPOTENCY_TTL_SECONDS, TaskService
+
+    db = AsyncMock()
+    db.flush = AsyncMock()
+    expired = MagicMock()
+    expired.idempotency_key = "old-key"
+    expired.created_at = datetime.now(timezone.utc) - timedelta(seconds=IDEMPOTENCY_TTL_SECONDS + 1)
+    expired.deleted_at = None
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = expired
+    db.execute = AsyncMock(return_value=result)
+
+    found = await TaskService(db).find_idempotent_task("org-1", "user-1", "tool.a", "old-key")
+
+    assert found is None
+    assert expired.idempotency_key is None
+    assert expired.deleted_at is None
+    db.flush.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_find_idempotent_task_replays_within_ttl():
+    from datetime import datetime, timedelta, timezone
+
+    from app.services.hermes_skill.task_service import TaskService
+
+    db = AsyncMock()
+    live = MagicMock()
+    live.idempotency_key = "live-key"
+    live.created_at = datetime.now(timezone.utc) - timedelta(hours=1)
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = live
+    db.execute = AsyncMock(return_value=result)
+
+    found = await TaskService(db).find_idempotent_task("org-1", "user-1", "tool.a", "live-key")
+
+    assert found is live
+    assert live.idempotency_key == "live-key"

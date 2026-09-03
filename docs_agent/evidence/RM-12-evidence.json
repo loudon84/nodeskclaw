@@ -1,0 +1,122 @@
+{
+  "blocking_verifications": [
+    {
+      "command": "uv --directory nodeskclaw-backend run pytest tests/hermes_skill/test_mcp_tool_mapper_runtime_skill.py -q --tb=short",
+      "exit_code": 0,
+      "policy": "LOCAL_TRANSIENT",
+      "raw_log_ref": ".smc/evidence/RM-12/logs/20260903T123455.683184Z-V01.log",
+      "raw_log_sha256": "sha256:7b640e7ee901eb9f40065ba00d8c9816d4e1a5d78132aa4360b760c23c1973e2",
+      "result": "PASS",
+      "timestamp": "2026-09-03T12:34:55.683184Z",
+      "verification_id": "V01"
+    },
+    {
+      "command": "uv --directory nodeskclaw-backend run pytest tests/hermes_skill/test_runtime_skill_run_context.py tests/hermes_skill/test_runtime_skill_run_service.py -q --tb=short",
+      "exit_code": 0,
+      "policy": "LOCAL_TRANSIENT",
+      "raw_log_ref": ".smc/evidence/RM-12/logs/20260903T123505.812839Z-V02.log",
+      "raw_log_sha256": "sha256:6cb48ae68157264c28d714c6f0db7b548dbbaa014cef3f6129eaab096d1742ea",
+      "result": "PASS",
+      "timestamp": "2026-09-03T12:35:05.812839Z",
+      "verification_id": "V02"
+    },
+    {
+      "command": "uv --directory nodeskclaw-backend run pytest tests/hermes_skill/test_skill_installer_profile_path.py tests/hermes_skill/test_runtime_skill_registration.py tests/hermes_skill/test_skill_routing_service.py -k 'not worker' -q --tb=short",
+      "exit_code": 0,
+      "policy": "LOCAL_TRANSIENT",
+      "raw_log_ref": ".smc/evidence/RM-12/logs/20260903T123516.710576Z-V03.log",
+      "raw_log_sha256": "sha256:4189e458ac0b7e2ff665d5809ad2b538a2d17804b66fb3f07608c6c55c32e0e6",
+      "result": "PASS",
+      "timestamp": "2026-09-03T12:35:16.710576Z",
+      "verification_id": "V03"
+    },
+    {
+      "command": "uv --directory nodeskclaw-backend run pytest tests/hermes_skill/test_runtime_skill_run_agent_enqueue.py tests/hermes_skill/test_mcp_tools_call.py tests/mcp_skill_gateway/test_mcp_errors.py -q --tb=short",
+      "exit_code": 0,
+      "policy": "LOCAL_TRANSIENT",
+      "raw_log_ref": ".smc/evidence/RM-12/logs/20260903T123528.742512Z-V04.log",
+      "raw_log_sha256": "sha256:55f2c1e2f1bb0a310c5ea3679782ddb068e10179a23386b3726444e41eff8fd2",
+      "result": "PASS",
+      "timestamp": "2026-09-03T12:35:28.742512Z",
+      "verification_id": "V04"
+    },
+    {
+      "command": "uv --directory nodeskclaw-backend run pytest tests/hermes_skill/test_employee_runs_api.py -q --tb=short",
+      "exit_code": 0,
+      "policy": "LOCAL_TRANSIENT",
+      "raw_log_ref": ".smc/evidence/RM-12/logs/20260903T123541.305150Z-V05.log",
+      "raw_log_sha256": "sha256:422299ac8e1b8f8ac7ebea87e952259e4e6ca768fa52b275e36a01dece14d0ec",
+      "result": "PASS",
+      "timestamp": "2026-09-03T12:35:41.305150Z",
+      "verification_id": "V05"
+    },
+    {
+      "command": "git diff --stat 630da4e9c7a0d48910467fc2b375c65e95610f95 -- nodeskclaw-backend/contracts/skill-run/v1.2.1",
+      "exit_code": 0,
+      "policy": "LOCAL_TRANSIENT",
+      "raw_log_ref": ".smc/evidence/RM-12/logs/20260903T123555.723021Z-V06.log",
+      "raw_log_sha256": "sha256:c50f28083448a7b62d91100063199026390f1bec745bf4df003d13e9dfe85f9a",
+      "result": "PASS",
+      "timestamp": "2026-09-03T12:35:55.723021Z",
+      "verification_id": "V06"
+    },
+    {
+      "command": "lat.cmd check",
+      "exit_code": 0,
+      "policy": "LOCAL_TRANSIENT",
+      "raw_log_ref": ".smc/evidence/RM-12/logs/20260903T123601.143999Z-V07.log",
+      "raw_log_sha256": "sha256:7b260d66478c877b08c3cbc8b02355f2606c871a774c99b5be9b5fff9d276f07",
+      "result": "PASS",
+      "timestamp": "2026-09-03T12:36:01.143999Z",
+      "verification_id": "V07"
+    },
+    {
+      "command": "python -c 'import json,pathlib; p=pathlib.Path('\"'\"'tools/postman/nodeskclaw-skill-run-consumer-v1.2.1.postman_collection.json'\"'\"'); json.loads(p.read_text(encoding='\"'\"'utf-8'\"'\"')); t=p.read_text(encoding='\"'\"'utf-8'\"'\"'); assert '\"'\"'/api/v1/mcp'\"'\"' in t and '\"'\"'/api/v1/runs'\"'\"' in t and '\"'\"'IDEMPOTENCY_CONFLICT'\"'\"' in t'",
+      "exit_code": 0,
+      "policy": "LOCAL_TRANSIENT",
+      "raw_log_ref": ".smc/evidence/RM-12/logs/20260903T123610.536321Z-V08.log",
+      "raw_log_sha256": "sha256:0c6f90a28c28017186e662376f2a368777f403c4ac1f887c2c6bc80ed168443c",
+      "result": "PASS",
+      "timestamp": "2026-09-03T12:36:10.536321Z",
+      "verification_id": "V08"
+    },
+    {
+      "command": "rg RM-12 docs_agent/roadmaps/ROADMAP-SKILL-AGENT-V16.md",
+      "exit_code": 0,
+      "policy": "LOCAL_TRANSIENT",
+      "raw_log_ref": ".smc/evidence/RM-12/logs/20260903T123615.405741Z-V10.log",
+      "raw_log_sha256": "sha256:9c4a1e89712b755b362b69cd9bb97819d29d38daa568762d81c2bfc5d0f3b6ff",
+      "result": "PASS",
+      "timestamp": "2026-09-03T12:36:15.405741Z",
+      "verification_id": "V10"
+    }
+  ],
+  "completion_audit": {
+    "changed": 0,
+    "deferred": 0,
+    "done": 10,
+    "scope_drift": 0,
+    "timestamp": "2026-09-03T12:34:25.332495Z",
+    "total_items": 10,
+    "unverifiable": 0,
+    "verdict": "PASS"
+  },
+  "generated_at": "2026-09-03T12:37:20.112269Z",
+  "implementation_review": {
+    "reviewer": "code-review-and-quality",
+    "timestamp": "2026-09-03T12:34:25.874986Z",
+    "verdict": "PASS",
+    "wtree_fingerprint": "sha256:b2dd315b6586229c0bde4481b82d28b13a276779a8e15b1f025e099d4eb4a4ed"
+  },
+  "payload_sha256": "sha256:e3ec0c6a89617360bf328b82e74d5e8f6e45d290de5474de19feb3d34d222d91",
+  "plan": ".cursor/plans/rm-12_v121_public_conformance.plan.md",
+  "plan_id": "RM-12",
+  "plan_review": {
+    "plan_sha256": "sha256:93eb54c3882c1608bc0478a7f5b24914843f91a281994aac7d9c82b0aae820ed",
+    "reviewer": "smc-plan-review",
+    "timestamp": "2026-09-03T12:34:20.263669Z",
+    "verdict": "PASS"
+  },
+  "schema": "smc.evidence.manifest.v1",
+  "wtree_fingerprint": "sha256:b2dd315b6586229c0bde4481b82d28b13a276779a8e15b1f025e099d4eb4a4ed"
+}

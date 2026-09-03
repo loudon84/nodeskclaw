@@ -56,13 +56,17 @@ Collection 级 Auth 为 Bearer Token；每个请求额外带 `X-Org-Id`。
 
 ### SSE 语义事件
 
-合同 v1.2.1 fixture 含六类语义事件，但 Backend `_public_run_event` **当前只投影**：
+当 Agent 已持久对应结构化事件时，公共 SSE 投影以下已发布类型（payload 对齐冻结 `run-event.schema.json`）：
 
 - 控制事件（`run.*`）
 - `assistant.message`
+- `reasoning.summary`
+- `tool.call`
+- `clarify.requested`
+- `approval.requested`
 - `artifact.persisted`
 
-`reasoning.summary`、`tool.call`、`clarify.requested`、`approval.requested` **暂未出现在公共 SSE**。消费端请按当前实际透传断言，完整语义事件另行立项。
+未知内部事件类型会被丢弃，不会虚构。流响应声明 `Cache-Control: no-store`；可用 `Last-Event-ID` 续播。
 
 ### Approval / Resume
 

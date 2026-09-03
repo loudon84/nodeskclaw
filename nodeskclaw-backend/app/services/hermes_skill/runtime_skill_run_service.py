@@ -10,6 +10,7 @@ from typing import Any
 
 import httpx
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -168,6 +169,30 @@ class RuntimeSkillRunService:
             )
         except BadRequestError:
             raise
+        except ConflictError:
+            raise
+        except IntegrityError as exc:
+            if not request.idempotency_key:
+                raise BadRequestError(str(exc), "errors.hermes.cannot_enqueue") from exc
+            await self.db.rollback()
+            existing = await task_service.find_idempotent_task(
+                request.org_id,
+                request.user_id,
+                request.tool_name,
+                request.idempotency_key,
+            )
+            if existing is None:
+                raise BadRequestError(str(exc), "errors.hermes.cannot_enqueue") from exc
+            stored_args = existing.arguments if isinstance(existing.arguments, dict) else {}
+            requested_args = request.arguments if isinstance(request.arguments, dict) else {}
+            if json.dumps(stored_args, sort_keys=True, default=str) != json.dumps(
+                requested_args, sort_keys=True, default=str
+            ):
+                raise ConflictError(
+                    "幂等键与请求参数冲突",
+                    "errors.run.idempotency_conflict",
+                ) from exc
+            return await self._build_result_for_existing_task(request, existing)
         except Exception as exc:
             raise BadRequestError(str(exc), "errors.hermes.cannot_enqueue") from exc
 
@@ -599,12 +624,29 @@ class RuntimeSkillRunService:
         org_id: str,
         user_id: str,
     ) -> dict[str, Any]:
+        from app.models.base import not_deleted
         from app.models.user import User
+        from app.models.workspace import Workspace
         from app.services import workspace_member_service as wm_service
+        from sqlalchemy import select
 
         user = await self.db.get(User, user_id)
         if user is None or not user.is_active:
             raise ForbiddenError("用户不存在", "errors.auth.user_not_found")
+
+        workspace = (
+            await self.db.execute(
+                select(Workspace).where(
+                    Workspace.id == workspace_id,
+                    not_deleted(Workspace),
+                )
+            )
+        ).scalar_one_or_none()
+        if workspace is None:
+            raise ForbiddenError("Execution Workspace 不可用", "errors.run.workspace_proof_denied")
+        if workspace.org_id != org_id:
+            raise ForbiddenError("Execution Workspace 不属于当前组织", "errors.run.workspace_org_mismatch")
+
         await wm_service.check_workspace_access(workspace_id, user, "send_chat", self.db)
         auth_version = hashlib.sha256(f"{workspace_id}:{org_id}:{user_id}".encode()).hexdigest()[:16]
         return {
@@ -844,24 +886,20 @@ class RuntimeSkillRunService:
         contract_version: str | None = None,
     ) -> dict[str, Any]:
         status = task.status.value if hasattr(task.status, "value") else str(task.status)
-        if status in ("queued", "accepted"):
-            status = "running"
-        if status == "waiting_approval":
-            status = "WAITING_APPROVAL"
-
         artifact_mode = output_policy.get("artifact_mode", "pull_only")
         employee_contract = request.task_source != "expert_mcp" and settings.SKILL_AGENT_ENABLED
 
         if employee_contract:
-            run_event_stream = f"/api/v1/runs/{task.id}/events"
-            if "token=" in event_sse_url:
-                run_event_stream = f"{run_event_stream}?{event_sse_url.split('?', 1)[-1]}"
+            if status in ("queued", "accepted"):
+                status = "QUEUED"
+            elif status == "waiting_approval":
+                status = "WAITING_APPROVAL"
             content: dict[str, Any] = {
                 "run_id": task.id,
-                "status": status.upper() if status in ("running", "queued") else status,
+                "status": status,
                 "execution_mode": request.execution_mode,
                 "tool_name": request.tool_name,
-                "event_stream": run_event_stream,
+                "event_stream": f"/api/v1/runs/{task.id}/events",
                 "result_url": f"/api/v1/runs/{task.id}/result",
                 "artifact_url": f"/api/v1/runs/{task.id}/artifacts",
                 "artifact_mode": artifact_mode,
@@ -888,6 +926,11 @@ class RuntimeSkillRunService:
             if request.request_trace_id:
                 content["request_trace_id"] = request.request_trace_id
             return content
+
+        if status in ("queued", "accepted"):
+            status = "running"
+        if status == "waiting_approval":
+            status = "WAITING_APPROVAL"
 
         content = {
             "task_id": task.id,

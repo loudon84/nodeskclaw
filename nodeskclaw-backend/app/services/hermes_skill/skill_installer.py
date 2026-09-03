@@ -20,6 +20,33 @@ from app.services.hermes_skill.path_guard import PathGuard
 logger = logging.getLogger(__name__)
 
 
+async def assert_installation_workspace_ref(
+    db: AsyncSession,
+    workspace_id: str | None,
+    org_id: str,
+) -> None:
+    """Reject non-empty installation.workspace_id that is missing, deleted, or cross-org."""
+    if not workspace_id:
+        return
+
+    from app.models.workspace import Workspace
+
+    result = await db.execute(
+        select(Workspace).where(
+            Workspace.id == workspace_id,
+            not_deleted(Workspace),
+        )
+    )
+    workspace = result.scalar_one_or_none()
+    if workspace is None:
+        raise NotFoundError("办公室不存在", "errors.workspace.not_found")
+    if workspace.org_id != org_id:
+        raise BadRequestError(
+            "办公室不属于当前组织",
+            "errors.skill.installation_workspace_invalid",
+        )
+
+
 class SkillInstaller:
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -55,6 +82,8 @@ class SkillInstaller:
                 f"install_mode={mode} 不在 allowed_modes={allowed_modes} 中",
                 "errors.skill.install_mode_not_allowed",
             )
+
+        await assert_installation_workspace_ref(self.db, workspace_id, org_id)
 
         # Desired-only installation record in DB
         installation = HermesSkillInstallation(

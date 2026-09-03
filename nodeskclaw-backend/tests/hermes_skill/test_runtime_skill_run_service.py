@@ -191,7 +191,8 @@ async def test_start_builds_hermes_api_server_route_and_contract():
 
     content = result.structured_content
     assert content["run_id"] == "task-1"
-    assert content["event_stream"].endswith("token=sse_test")
+    assert content["event_stream"] == "/api/v1/runs/task-1/events"
+    assert "token=" not in content["event_stream"]
     assert content["result_url"] == "/api/v1/runs/task-1/result"
     assert content["committed"] is True
     assert "taskId" not in content

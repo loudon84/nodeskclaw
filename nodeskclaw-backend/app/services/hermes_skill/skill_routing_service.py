@@ -76,7 +76,14 @@ class SkillRoutingService:
         if routing and not allow_explicit_routing:
             routing = {}
 
-        return self._select_installation(skill, installations, routing, user_workspace_id)
+        live_workspace_ids = await self._live_installation_workspace_ids(org_id, installations)
+        return self._select_installation(
+            skill,
+            installations,
+            routing,
+            user_workspace_id,
+            live_workspace_ids,
+        )
 
     async def get_exposed_skill(self, tool_name: str, org_id: str) -> HermesSkill | None:
         return await self._get_skill_by_tool_name(tool_name, org_id)
@@ -218,13 +225,49 @@ class SkillRoutingService:
                 filtered.append(inst)
         return filtered
 
+    async def _live_installation_workspace_ids(
+        self,
+        org_id: str,
+        installations: list[HermesSkillInstallation],
+    ) -> set[str]:
+        candidates = {i.workspace_id for i in installations if i.workspace_id}
+        if not candidates:
+            return set()
+
+        from app.models.workspace import Workspace
+
+        result = await self.db.execute(
+            select(Workspace.id).where(
+                not_deleted(Workspace),
+                Workspace.org_id == org_id,
+                Workspace.id.in_(candidates),
+            )
+        )
+        return {row[0] for row in result.all()}
+
+    @staticmethod
+    def _effective_installation_workspace_id(
+        installation: HermesSkillInstallation,
+        live_workspace_ids: set[str],
+    ) -> str:
+        workspace_id = installation.workspace_id or ""
+        if workspace_id and workspace_id in live_workspace_ids:
+            return workspace_id
+        return ""
+
     def _select_installation(
         self,
         skill: HermesSkill,
         installations: list[HermesSkillInstallation],
         routing: dict,
         user_workspace_id: str | None,
+        live_workspace_ids: set[str] | None = None,
     ) -> RoutingResult:
+        live_workspace_ids = live_workspace_ids or set()
+
+        def inst_ws(installation: HermesSkillInstallation) -> str:
+            return self._effective_installation_workspace_id(installation, live_workspace_ids)
+
         if len(installations) == 1 and not routing and not user_workspace_id:
             inst = installations[0]
             return self._result(skill, inst, ROUTING_REASON_SINGLE)
@@ -238,7 +281,7 @@ class SkillRoutingService:
                 i for i in installations
                 if i.agent_id == agent_id
                 and (i.profile_id or "") == profile_id
-                and (i.workspace_id or "") == workspace_id
+                and inst_ws(i) == workspace_id
             ]
             if len(matches) == 1:
                 return self._result(skill, matches[0], ROUTING_REASON_EXPLICIT_FULL)
@@ -257,7 +300,7 @@ class SkillRoutingService:
             if profile_id:
                 matches = [i for i in matches if (i.profile_id or "") == profile_id]
             if workspace_id:
-                matches = [i for i in matches if (i.workspace_id or "") == workspace_id]
+                matches = [i for i in matches if inst_ws(i) == workspace_id]
             if len(matches) == 1:
                 return self._result(skill, matches[0], ROUTING_REASON_EXPLICIT_AGENT)
             if len(matches) > 1:
@@ -271,7 +314,7 @@ class SkillRoutingService:
             )
 
         if workspace_id:
-            matches = [i for i in installations if (i.workspace_id or "") == workspace_id]
+            matches = [i for i in installations if inst_ws(i) == workspace_id]
             if len(matches) == 1:
                 return self._result(skill, matches[0], ROUTING_REASON_WORKSPACE)
             if len(matches) > 1:
@@ -310,7 +353,7 @@ class SkillRoutingService:
                 )
 
         if workspace_id:
-            ws_matches = [i for i in installations if (i.workspace_id or "") == workspace_id]
+            ws_matches = [i for i in installations if inst_ws(i) == workspace_id]
             if len(ws_matches) == 1:
                 return self._result(skill, ws_matches[0], ROUTING_REASON_WORKSPACE)
 

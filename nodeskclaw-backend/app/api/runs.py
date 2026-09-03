@@ -94,6 +94,9 @@ def _public_artifact_descriptor(data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+_TOOL_CALL_STATUSES = frozenset({"started", "completed", "failed"})
+
+
 def _public_run_event(data: dict[str, Any], run_id: str) -> dict[str, Any] | None:
     event_type = str(data.get("event_type") or "")
     event_seq = int(data.get("event_seq") or 0)
@@ -121,6 +124,41 @@ def _public_run_event(data: dict[str, Any], run_id: str) -> dict[str, Any] | Non
     if event_type == "assistant.message" and isinstance(payload.get("text"), str):
         event["payload"] = {"text": payload["text"]}
         return event
+    if event_type == "reasoning.summary" and isinstance(payload.get("summary"), str):
+        event["payload"] = {"summary": payload["summary"]}
+        return event
+    if event_type == "tool.call":
+        tool_name = payload.get("tool_name")
+        call_id = payload.get("call_id")
+        status = payload.get("status")
+        if (
+            isinstance(tool_name, str)
+            and tool_name
+            and isinstance(call_id, str)
+            and call_id
+            and status in _TOOL_CALL_STATUSES
+        ):
+            event["payload"] = {
+                "tool_name": tool_name,
+                "call_id": call_id,
+                "status": status,
+            }
+            return event
+        return None
+    if event_type == "clarify.requested" and isinstance(payload.get("question"), str):
+        projected: dict[str, Any] = {"question": payload["question"]}
+        options = payload.get("options")
+        if options is None or isinstance(options, list):
+            projected["options"] = options
+        event["payload"] = projected
+        return event
+    if event_type == "approval.requested":
+        approval_id = payload.get("approval_id")
+        summary = payload.get("summary")
+        if isinstance(approval_id, str) and approval_id and isinstance(summary, str):
+            event["payload"] = {"approval_id": approval_id, "summary": summary}
+            return event
+        return None
     if event_type == "artifact.persisted":
         event["payload"] = _public_artifact_descriptor(payload)
         return event
@@ -250,23 +288,20 @@ async def get_run(
     outbox = await _get_outbox_entry(db, run_id, org.id)
     if _is_outbox_undelivered(outbox):
         derived_status = "DISPATCH_PENDING" if outbox.status == RunDispatchStatus.PENDING.value else "DISPATCH_FAILED"
-        return {
-            "code": 0,
-            "data": _public_run_view(
-                {
-                    "run_id": task.id,
-                    "tool_name": task.tool_name,
-                    "status": derived_status,
-                    "created_at": task.created_at.isoformat() if task.created_at else None,
-                    "updated_at": task.updated_at.isoformat() if task.updated_at else None,
-                }
-            ),
-        }
+        return _public_run_view(
+            {
+                "run_id": task.id,
+                "tool_name": task.tool_name,
+                "status": derived_status,
+                "created_at": task.created_at.isoformat() if task.created_at else None,
+                "updated_at": task.updated_at.isoformat() if task.updated_at else None,
+            }
+        )
 
     data = await _agent_get(f"/internal/v1/runs/{run_id}", org_id=org.id, user_id=user.id)
     if str(data.get("org_id") or "") != org.id or str(data.get("run_id") or "") != run_id:
         raise ForbiddenError("无权访问该 Run", "errors.run.forbidden")
-    return {"code": 0, "data": _public_run_view(data)}
+    return _public_run_view(data)
 
 
 @router.get("/{run_id}/result")
@@ -279,12 +314,12 @@ async def get_run_result(
     task = await _authorize_run(db, user.id, org.id, run_id)
     outbox = await _get_outbox_entry(db, run_id, org.id)
     if _is_outbox_undelivered(outbox):
-        return {"code": 0, "data": _public_run_result({"status": "QUEUED"}, run_id)}
+        return _public_run_result({"status": "QUEUED"}, run_id)
 
     data = await _agent_get(f"/internal/v1/runs/{run_id}/result", org_id=org.id, user_id=user.id)
     if str(data.get("org_id") or "") != org.id or str(data.get("run_id") or "") != run_id:
         raise ForbiddenError("无权访问该 Run", "errors.run.forbidden")
-    return {"code": 0, "data": _public_run_result(data, run_id)}
+    return _public_run_result(data, run_id)
 
 
 @router.get("/{run_id}/artifacts")
@@ -297,17 +332,14 @@ async def get_run_artifacts(
     task = await _authorize_run(db, user.id, org.id, run_id)
     outbox = await _get_outbox_entry(db, run_id, org.id)
     if _is_outbox_undelivered(outbox):
-        return {"code": 0, "data": {"run_id": run_id, "items": []}}
+        return {"run_id": run_id, "items": []}
 
     data = await _agent_get(f"/internal/v1/runs/{run_id}/artifacts", org_id=org.id, user_id=user.id)
     if str(data.get("org_id") or "") != org.id or str(data.get("run_id") or "") != run_id:
         raise ForbiddenError("无权访问该 Run", "errors.run.forbidden")
     return {
-        "code": 0,
-        "data": {
-            "run_id": run_id,
-            "items": [_public_artifact_descriptor(item) for item in data.get("items") or []],
-        },
+        "run_id": run_id,
+        "items": [_public_artifact_descriptor(item) for item in data.get("items") or []],
     }
 
 
@@ -345,14 +377,18 @@ async def download_run_artifact(
         encoded_name = quote(raw_name)
         content_disposition = f'attachment; filename="{safe_ascii}"; filename*=UTF-8\'\'{encoded_name}'
 
+        public_headers = {
+            "Content-Disposition": content_disposition,
+            "Content-Length": str(len(response.content)),
+            "X-Checksum-SHA256": str(target_art.get("checksum_sha256") or target_art.get("sha256") or ""),
+            "Cache-Control": "no-store",
+        }
         return Response(
             content=response.content,
-            media_type=response.headers.get("content-type") or target_art.get("content_type") or "application/octet-stream",
-            headers={
-                "Content-Disposition": content_disposition,
-                "Content-Length": str(len(response.content)),
-                "X-Checksum-SHA256": str(target_art.get("checksum_sha256") or target_art.get("sha256") or ""),
-            },
+            media_type=target_art.get("content_type")
+            or response.headers.get("content-type")
+            or "application/octet-stream",
+            headers=public_headers,
         )
 
 
@@ -370,16 +406,13 @@ async def cancel_run(
             outbox.status = RunDispatchStatus.CANCELLED.value
         task.status = "cancelled"
         await db.commit()
-        return {
-            "code": 0,
-            "data": _public_run_view({
-                "run_id": run_id,
-                "tool_name": task.tool_name,
-                "status": "CANCELLED",
-                "created_at": task.created_at.isoformat() if task.created_at else None,
-                "updated_at": task.updated_at.isoformat() if task.updated_at else None,
-            }),
-        }
+        return _public_run_view({
+            "run_id": run_id,
+            "tool_name": task.tool_name,
+            "status": "CANCELLED",
+            "created_at": task.created_at.isoformat() if task.created_at else None,
+            "updated_at": task.updated_at.isoformat() if task.updated_at else None,
+        })
 
     data = await _agent_post(f"/internal/v1/runs/{run_id}/cancel", org_id=org.id, user_id=user.id)
     if str(data.get("org_id") or "") != org.id or str(data.get("run_id") or "") != run_id:
@@ -401,7 +434,7 @@ async def cancel_run(
         .values(cancel_requested_at=datetime.now(timezone.utc))
     )
     await db.commit()
-    return {"code": 0, "data": _public_run_view(data)}
+    return _public_run_view(data)
 
 
 @router.post("/{run_id}/resume")
@@ -546,4 +579,8 @@ async def stream_run_events(
         finally:
             pg_notify_service.unsubscribe(channel, _on_notify)
 
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-store"},
+    )

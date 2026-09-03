@@ -29,6 +29,84 @@ def _request(**kwargs):
 
 
 @pytest.mark.asyncio
+async def test_build_context_prompt_first_has_no_workspace_descriptor():
+    db = AsyncMock()
+    service = RuntimeSkillRunService(db)
+    with patch.object(
+        RuntimeSkillRunService,
+        "_resolve_member_id",
+        new=AsyncMock(return_value="member-1"),
+    ), patch.object(
+        RuntimeSkillRunService,
+        "_assert_workspace_proof",
+        new=AsyncMock(),
+    ) as proof:
+        ctx = await service._build_authorized_execution_context(
+            _request(workspace_id=None),
+            {"knowledge_refs": [], "connector_binding_refs": []},
+        )
+    proof.assert_not_awaited()
+    assert all(d.get("type") != "workspace" for d in ctx.get("descriptors") or [])
+
+
+@pytest.mark.asyncio
+async def test_assert_workspace_proof_rejects_cross_org():
+    db = AsyncMock()
+    service = RuntimeSkillRunService(db)
+    user = MagicMock(is_active=True)
+    workspace = MagicMock(org_id="org-other", id="ws-1")
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = workspace
+    db.get = AsyncMock(return_value=user)
+    db.execute = AsyncMock(return_value=result)
+
+    with patch(
+        "app.services.workspace_member_service.check_workspace_access",
+        new=AsyncMock(),
+    ) as acl:
+        with pytest.raises(ForbiddenError) as exc:
+            await service._assert_workspace_proof("ws-1", "org-1", "user-1")
+    assert exc.value.message_key == "errors.run.workspace_org_mismatch"
+    acl.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_assert_workspace_proof_rejects_missing_or_deleted():
+    db = AsyncMock()
+    service = RuntimeSkillRunService(db)
+    user = MagicMock(is_active=True)
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = None
+    db.get = AsyncMock(return_value=user)
+    db.execute = AsyncMock(return_value=result)
+
+    with pytest.raises(ForbiddenError) as exc:
+        await service._assert_workspace_proof("ws-missing", "org-1", "user-1")
+    assert exc.value.message_key == "errors.run.workspace_proof_denied"
+
+
+@pytest.mark.asyncio
+async def test_assert_workspace_proof_calls_acl_for_same_org():
+    db = AsyncMock()
+    service = RuntimeSkillRunService(db)
+    user = MagicMock(is_active=True)
+    workspace = MagicMock(org_id="org-1", id="ws-1")
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = workspace
+    db.get = AsyncMock(return_value=user)
+    db.execute = AsyncMock(return_value=result)
+
+    with patch(
+        "app.services.workspace_member_service.check_workspace_access",
+        new=AsyncMock(return_value=None),
+    ) as acl:
+        proof = await service._assert_workspace_proof("ws-1", "org-1", "user-1")
+    acl.assert_awaited_once()
+    assert proof["type"] == "workspace"
+    assert proof["stable_id"] == "ws-1"
+
+
+@pytest.mark.asyncio
 async def test_start_rejects_client_context_injection():
     db = AsyncMock()
     service = RuntimeSkillRunService(db)

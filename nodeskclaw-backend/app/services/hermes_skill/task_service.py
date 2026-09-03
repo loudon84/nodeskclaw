@@ -16,6 +16,8 @@ from app.services.hermes_skill.hermes_queue_policy_service import HermesQueuePol
 
 logger = logging.getLogger(__name__)
 
+IDEMPOTENCY_TTL_SECONDS = 86400
+
 
 class TaskService:
     def __init__(self, db: AsyncSession):
@@ -271,7 +273,19 @@ class TaskService:
                 HermesTask.idempotency_key == idempotency_key,
             ).limit(1)
         )
-        return result.scalar_one_or_none()
+        task = result.scalar_one_or_none()
+        if task is None:
+            return None
+        created_at = task.created_at
+        if created_at is not None:
+            if created_at.tzinfo is None:
+                created_at = created_at.replace(tzinfo=timezone.utc)
+            age_seconds = (datetime.now(timezone.utc) - created_at).total_seconds()
+            if age_seconds > IDEMPOTENCY_TTL_SECONDS:
+                task.idempotency_key = None
+                await self.db.flush()
+                return None
+        return task
 
     async def update_status(
         self,

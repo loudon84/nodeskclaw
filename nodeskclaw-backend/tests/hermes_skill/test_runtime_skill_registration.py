@@ -405,3 +405,111 @@ async def test_worker_does_not_fallback_when_instance_mismatch():
     mock_execute.assert_not_called()
     task_service.mark_failed.assert_awaited_once()
     assert task_service.mark_failed.await_args.kwargs["error_code"] == "hermes_instance_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_upsert_installation_rejects_other_org_workspace():
+    db = AsyncMock()
+    service = RuntimeSkillRegistrationService(db)
+
+    with patch(
+        "app.services.hermes_skill.runtime_skill_registration_service.assert_installation_workspace_ref",
+        AsyncMock(
+            side_effect=BadRequestError(
+                "办公室不属于当前组织",
+                "errors.skill.installation_workspace_invalid",
+            )
+        ),
+    ):
+        with pytest.raises(BadRequestError) as exc_info:
+            await service._upsert_installation(
+                org_id="org-1",
+                skill_id="tool-1",
+                instance_id="inst-1",
+                profile_id="default",
+                workspace_id="ws-other-org",
+                route_config={},
+                operator_user_id="user-1",
+            )
+    assert exc_info.value.message_key == "errors.skill.installation_workspace_invalid"
+    db.add.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_upsert_installation_rejects_missing_workspace():
+    db = AsyncMock()
+    service = RuntimeSkillRegistrationService(db)
+
+    with patch(
+        "app.services.hermes_skill.runtime_skill_registration_service.assert_installation_workspace_ref",
+        AsyncMock(side_effect=NotFoundError("办公室不存在", "errors.workspace.not_found")),
+    ):
+        with pytest.raises(NotFoundError) as exc_info:
+            await service._upsert_installation(
+                org_id="org-1",
+                skill_id="tool-1",
+                instance_id="inst-1",
+                profile_id="default",
+                workspace_id="ws-missing",
+                route_config={},
+                operator_user_id="user-1",
+            )
+    assert exc_info.value.message_key == "errors.workspace.not_found"
+
+
+@pytest.mark.asyncio
+async def test_upsert_installation_accepts_same_org_workspace_on_create():
+    db = AsyncMock()
+    service = RuntimeSkillRegistrationService(db)
+    query_result = MagicMock()
+    query_result.scalar_one_or_none.return_value = None
+    db.execute = AsyncMock(return_value=query_result)
+
+    with patch(
+        "app.services.hermes_skill.runtime_skill_registration_service.assert_installation_workspace_ref",
+        AsyncMock(),
+    ) as mock_assert:
+        created, installation = await service._upsert_installation(
+            org_id="org-1",
+            skill_id="tool-1",
+            instance_id="inst-1",
+            profile_id="default",
+            workspace_id="ws-1",
+            route_config={"route_type": "hermes_api_server"},
+            operator_user_id="user-1",
+        )
+
+    mock_assert.assert_awaited_once_with(db, "ws-1", "org-1")
+    assert created is True
+    assert installation.workspace_id == "ws-1"
+    db.add.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_upsert_installation_validates_workspace_on_update():
+    db = AsyncMock()
+    service = RuntimeSkillRegistrationService(db)
+    existing = MagicMock()
+    existing.workspace_id = "ws-old"
+    query_result = MagicMock()
+    query_result.scalar_one_or_none.return_value = existing
+    db.execute = AsyncMock(return_value=query_result)
+
+    with patch(
+        "app.services.hermes_skill.runtime_skill_registration_service.assert_installation_workspace_ref",
+        AsyncMock(),
+    ) as mock_assert:
+        created, installation = await service._upsert_installation(
+            org_id="org-1",
+            skill_id="tool-1",
+            instance_id="inst-1",
+            profile_id="default",
+            workspace_id="ws-new",
+            route_config={"route_type": "hermes_api_server"},
+            operator_user_id="user-1",
+        )
+
+    mock_assert.assert_awaited_once_with(db, "ws-new", "org-1")
+    assert created is False
+    assert installation is existing
+    assert existing.workspace_id == "ws-new"

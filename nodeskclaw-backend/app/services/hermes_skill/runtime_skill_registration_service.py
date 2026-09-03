@@ -27,6 +27,7 @@ from app.services.hermes_external.hermes_docker_binding_service import HermesDoc
 from app.services.hermes_external.hermes_env_parser import parse_env_file
 from app.services.hermes_external.hermes_runtime_skill_executor import DEFAULT_INPUT_SCHEMA
 from app.services.hermes_skill.hermes_skill_authorization_service import HermesSkillAuthorizationService
+from app.services.hermes_skill.skill_installer import assert_installation_workspace_ref
 from app.services.hermes_skill.skill_release_service import SkillReleaseService
 
 logger = logging.getLogger(__name__)
@@ -315,6 +316,7 @@ class RuntimeSkillRegistrationService:
         route_config: dict,
         operator_user_id: str,
     ) -> tuple[bool, HermesSkillInstallation]:
+        await assert_installation_workspace_ref(self.db, workspace_id, org_id)
         result = await self.db.execute(
             select(HermesSkillInstallation).where(
                 not_deleted(HermesSkillInstallation),
