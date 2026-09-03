@@ -195,6 +195,25 @@ def test_insecure_mode_allows_ephemeral_storage_with_audit_warning(monkeypatch):
         assert resp.json()["status"] == "ok"
 
 
+# @lat: [[architecture/skill-agent#Role Modes#Central Lifespan Constructs RunWorker]]
+def test_central_lifespan_constructs_run_worker(monkeypatch):
+    monkeypatch.setattr(settings, "SKILL_AGENT_WORKER_ENABLED", True)
+    monkeypatch.setattr(settings, "SKILL_AGENT_ROLE", "central")
+    import app.main as main_module
+    from app.services.worker import RunWorker as RealRunWorker
+
+    assert getattr(main_module, "RunWorker", None) is RealRunWorker
+
+    mock_worker = MagicMock()
+    mock_worker.start = AsyncMock()
+    mock_worker.stop = MagicMock()
+    monkeypatch.setattr(main_module, "RunWorker", lambda: mock_worker)
+
+    with TestClient(main_module.app) as client:
+        assert client.app.state.worker is mock_worker
+        mock_worker.start.assert_called()
+
+
 def test_health_ready_worker_freshness_check(monkeypatch, tmp_path):
     import app.main as main_module
     from datetime import datetime, timedelta, timezone

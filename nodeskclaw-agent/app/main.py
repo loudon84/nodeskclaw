@@ -17,10 +17,12 @@ from app.services.edge_worker import EdgeWorker
 from app.services.readiness import expected_alembic_heads
 from app.services.storage_port import StorageProbeError, get_storage_driver
 from app.services.execution_observability import get_registry
+from app.services.worker import RunWorker
 
 logger = logging.getLogger(__name__)
 
 
+# @lat: [[architecture/skill-agent#Role Modes]]
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     worker_task = None

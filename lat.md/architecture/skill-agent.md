@@ -30,9 +30,14 @@ Agent 从工作目录 `.env` 加载配置，字段以 [[nodeskclaw-agent/app/con
 Agent 的 Central（中心执行）与 Edge（边缘执行）角色已经落地；Compose 验收拓扑已定义，实跑证据仍待 Docker 环境。
 
 - **已实现**：`SKILL_AGENT_ROLE` 选择 Central 或 Edge；Central 由 [[nodeskclaw-agent/app/services/worker.py#RunWorker]] 认领 Run，并通过 [[nodeskclaw-agent/app/services/engine_port.py#execute_engine]] 分发执行。
+- **已实现**：[[nodeskclaw-agent/app/main.py#lifespan]] 在 `SKILL_AGENT_WORKER_ENABLED` 时按角色构造 Worker：Central 必须导入并实例化 [[nodeskclaw-agent/app/services/worker.py#RunWorker]]，Edge 实例化 [[nodeskclaw-agent/app/services/edge_worker.py#EdgeWorker]]。缺导入会使 uvicorn 在 application startup 以 `NameError` 退出，4580 无法 listen。健康探针测试关闭 Worker 不能替代此启动回归。
 - **已实现**：Edge 由 [[nodeskclaw-agent/app/services/edge_worker.py#EdgeWorker]] 出站访问 Backend，轮询心跳、EdgeJob 和 Desired Installation，无需开放生产入站控制端口。
 - **已实现**：[[nodeskclaw-agent/app/main.py#health_ready]] 比对唯一 Alembic head（[[nodeskclaw-agent/app/services/readiness.py#expected_alembic_heads]]）；Central 执行 StoragePort `probe_isolation`，Edge 只检查 Artifact 目录可达；Central 要求首次成功 Worker loop，Edge 要求首次成功 heartbeat；缺失或过期返回 503 与稳定 `codes`。
 - **部分实现**：`docker-compose.acceptance.yml` 已定义双 Central、单 Edge、PostgreSQL、MinIO 与 Hermes test endpoint；完整实跑指纹与 Newman 证据仍待 Docker 环境执行。
+
+### Central Lifespan Constructs RunWorker
+
+Central 且 Worker 开启时，进程 lifespan 必须能构造 `RunWorker` 并挂到 `app.state.worker`，否则服务无法完成启动。
 
 ## Hybrid Orchestration And Terminal Aggregator
 
