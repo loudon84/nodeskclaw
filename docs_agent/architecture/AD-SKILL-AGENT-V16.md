@@ -9,6 +9,11 @@ source_revision: user-input:2026-09-03/v121-postman-ready-hotfix
 grounded_commit: 3d5a056c7335d389e760cd2622bb7ffe3c06aa4d
 feature_id: FEAT-SKILL-FIRST-001
 work_package_id: WP-SKILL-FIRST-NODESKCLAW
+addenda:
+  - addendum_id: AD-SKILL-AGENT-V16-A1
+    version: 1.6.0
+    status: PROPOSED
+    document: docs_agent/architecture/AD-SKILL-AGENT-V16-v1.6.0-hermes-runtime-native-run.md
 ---
 
 # Architecture Decision: Skill Agent v1.6 生产闭环、共享执行合同、Runtime Delegation Entry 与 v1.2.1 Public Conformance Hotfix
@@ -269,3 +274,22 @@ Prompt-first 员工 Skill 在没有受信任 Execution Workspace 时，`executio
 | RM-10：Agent 执行面具备统一 Trace 与运行指标 | RM-05 | Run/Attempt/Session/Edge/Connector/Artifact 可关联；关键队列、时延、失败、租约与重放指标可观测且不形成第二事件 Owner |
 | RM-11：累积 Public Skill Run Consumer Contract v1.2.1 成为外部 Work 可离线导入的当前合同导出项 | RM-01, RM-02 | 生成并发布 `v1.2.1/` 与 tag `skill-run-contract-v1.2.1`；manifest 纳入 SHA256SUMS；Public/Internal 分离；不改写 v1.0.0/v1.1.0/v1.2.0；不含 Work 前端；Internal Agent 合同留给 RM-08 |
 | RM-12：员工 Public Skill Run 面对冻结 `SKILL-RUN-CONTRACT v1.2.1` 可观察符合 | RM-06, RM-11 | Catalog/`tools.call`/幂等/Public Run/SSE/Result/Artifact/Cancel 符合冻结 v1.2.1；`contracts/skill-run/v1.2.1/` 零修改；prompt-first 不因 Installation Workspace 进入 Workspace ACL；跨组织 Execution Workspace 失败关闭；Public 面无 HermesTask 身份泄漏；不发布新合同版本；仓外 Work 联调不是本仓 DONE |
+
+## Architecture Addenda
+
+本 AD 主体保持 `1.5.0` / `APPROVED`。后续针对局部实现偏差的架构纠偏以**增补文档（Addendum）**形式发布，各自携带独立 `status`，不改写本文已批准字节。上表 RM-01 至 RM-12 的边界与出口信号不受增补文档影响，除增补文档显式声明的重定义项外。
+
+| Addendum | Version | Status | Scope | Document |
+|---|---|---|---|---|
+| AD-SKILL-AGENT-V16-A1：Hermes Runtime Native Run Integration | 1.6.0 | PROPOSED | 纠正两项实现偏差。（一）Hermes 南向执行协议：Hermes 是 Agent Runtime 而非 OpenAI Model Provider，生产 Skill Run 必须走 Native Run API（`/v1/capabilities`、`/v1/runs`、`/events`、`/approval`、`/stop`），冻结 Runtime 版本地板 `v2026.8.31`、Transport Delta Coalescing、Runtime Binding、Recovery 与错误分类。（二）员工公共面与执行平面：公共信封与 `auth_type` 无关、Catalog 宣告等于实际可达能力、HermesTask 平面降级为纯内部投影并收敛为单一执行平面、Conformance Gate 覆盖 `user_jwt` 员工路径 | [AD-SKILL-AGENT-V16-v1.6.0-hermes-runtime-native-run.md](AD-SKILL-AGENT-V16-v1.6.0-hermes-runtime-native-run.md) |
+
+### A1 对本文的重定义项
+
+Addendum A1 在获批后重定义以下四处，其余章节不变：
+
+- **Minimality 条款升级**：本文 Decision Drivers 中「不新增 Control Plane、不新增 Idempotency Service、不新增 Event Store」只约束增量，未约束存量，导致既有 HermesTask 平面（`HermesTask.status` + `HermesTaskEvent` 独立 `event_seq`）作为第二状态源与第二事件存储合法存续并持续暴露于公共面。A1 第 30.3 节将该条款升级为**单一执行平面**：Agent 是唯一执行平面，HermesTask 平面降级为纯内部投影，禁止出现在任何公共信封、公共 SSE 与公共 REST 响应中。
+- **RM-02 出口信号**：A1 判定 RM-02 的 Hermes Provider Conformance 证明不足。已交付的 Event SoT、`event_seq`、Fencing、语义 Schema 与 Public 合同全部保留且不回滚，但 Provider Conformance 出口失效，RM-02 状态回退为 `BACKLOG`，退出条件改由 A1 第 25 节的 Conformance Gate 定义。
+- **RM-12 出口信号**：A1 依据 `apps/work` 员工端 live 报告判定 RM-12 的员工公共面符合性证明不足——本文 Decision Drivers 已列出的三项漂移（Public Run 仍输出 Portal 信封、SSE 未投影冻结合同全部语义事件、幂等未承载冻结合同语义）在真实 `user_jwt` 路径上仍然成立。已交付的 Catalog、prompt-first 绑定、Workspace ACL 边界与跨组织 fail-closed 保留且不回滚，但公共面符合性出口失效，RM-12 状态回退为 `BACKLOG`，退出条件改由 A1 第 30 节四条不变量与第 25 节 PC-10 至 PC-14 定义。HermesTask 平面降级属于 RM-12 重定义后的范围，不新增 Roadmap Item。
+- **RM-10 范围补充**：Observability Stage PRD 必须纳入 A1 第 21 节的 Runtime correlation 字段（`runtime_type`、`runtime_version`、`runtime_run_id`、`runtime_session_id`、`runtime_idempotency_key`、`tool_call_id`、`correlation_confidence`），并覆盖投影落后 / 投影失败的指标与告警（第 30.3 节禁止静默），且不得因此创建第二事件事实源。
+
+A1 因南向纠偏新增的交付范围由 RM-13 至 RM-16 承载，不并入 RM-01 至 RM-12 任一项；A1 第 30 节的员工公共面纠偏归入重定义后的 RM-12，不新增 Item。
