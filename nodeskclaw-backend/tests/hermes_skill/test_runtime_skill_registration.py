@@ -91,13 +91,296 @@ async def test_register_runtime_skill_creates_skill_installation_grant():
     assert result.status == "created"
     assert result.tool_name == "hermes_common_writer__customer-profiling"
     assert result.hermes_instance_name == "common-writer"
+    assert result.workspace_id is None
+    assert result.profile_id == "default"
     mock_upsert_skill.assert_awaited_once()
     mock_upsert_installation.assert_awaited_once()
     mock_upsert_grant.assert_awaited_once()
+    assert mock_upsert_installation.await_args.kwargs["workspace_id"] is None
+    assert mock_upsert_grant.await_args.kwargs["workspace_id"] is None
     route_config = mock_upsert_installation.await_args.kwargs["route_config"]
     assert route_config["route_type"] == "hermes_api_server"
     assert route_config["force_instance"] is True
     assert route_config["hermes_agent_instance_id"] == "hermes-rec-1"
+    assert route_config["workspace_id"] is None
+    assert route_config["profile_id"] == "default"
+
+
+@pytest.mark.asyncio
+async def test_register_runtime_skill_without_workspace():
+    db = AsyncMock()
+    service = RuntimeSkillRegistrationService(db)
+
+    with patch(
+        "app.services.hermes_skill.runtime_skill_registration_service.HermesDockerBindingService",
+    ) as mock_binding_cls, patch.object(
+        instance_skill_service,
+        "list_instance_skills",
+        AsyncMock(return_value=_skill_list()),
+    ), patch.object(
+        service,
+        "_get_skill_by_skill_id",
+        AsyncMock(return_value=None),
+    ), patch.object(
+        service,
+        "_upsert_skill",
+        AsyncMock(return_value=MagicMock(id="skill-db-1")),
+    ), patch.object(
+        service,
+        "_upsert_installation",
+        AsyncMock(return_value=(True, MagicMock(id="inst-db-1"))),
+    ) as mock_upsert_installation, patch.object(
+        service,
+        "_upsert_grant",
+        AsyncMock(return_value=(True, MagicMock())),
+    ) as mock_upsert_grant, patch(
+        "app.services.hermes_skill.runtime_skill_registration_service.hooks.emit",
+        AsyncMock(),
+    ), patch(
+        "app.services.hermes_skill.runtime_skill_registration_service.SkillReleaseService",
+    ) as mock_release_cls, patch(
+        "app.services.hermes_skill.runtime_skill_registration_service.parse_env_file",
+    ) as mock_parse_env:
+        mock_binding_cls.return_value.get_by_profile = AsyncMock(return_value=_binding_record())
+        mock_parse_env.return_value = MagicMock(api_server_model_name="common-writer")
+        mock_release_cls.return_value.ensure_draft_on_register = AsyncMock()
+
+        result = await service.register_to_org_mcp(
+            org_id="org-1",
+            operator_user_id="user-1",
+            agent_profile="common-writer",
+            runtime_skill_id="customer-profiling",
+            request=RuntimeSkillRegisterRequest(profile_id="default"),
+        )
+
+    assert result.workspace_id is None
+    assert result.profile_id == "default"
+    assert mock_upsert_installation.await_args.kwargs["workspace_id"] is None
+    assert mock_upsert_grant.await_args.kwargs["workspace_id"] is None
+    assert mock_upsert_installation.await_args.kwargs["route_config"]["workspace_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_register_runtime_skill_workspace_null():
+    db = AsyncMock()
+    service = RuntimeSkillRegistrationService(db)
+
+    with patch(
+        "app.services.hermes_skill.runtime_skill_registration_service.HermesDockerBindingService",
+    ) as mock_binding_cls, patch.object(
+        instance_skill_service,
+        "list_instance_skills",
+        AsyncMock(return_value=_skill_list()),
+    ), patch.object(
+        service,
+        "_get_skill_by_skill_id",
+        AsyncMock(return_value=None),
+    ), patch.object(
+        service,
+        "_upsert_skill",
+        AsyncMock(return_value=MagicMock(id="skill-db-1")),
+    ), patch.object(
+        service,
+        "_upsert_installation",
+        AsyncMock(return_value=(True, MagicMock(id="inst-db-1"))),
+    ) as mock_upsert_installation, patch.object(
+        service,
+        "_upsert_grant",
+        AsyncMock(return_value=(True, MagicMock())),
+    ) as mock_upsert_grant, patch(
+        "app.services.hermes_skill.runtime_skill_registration_service.hooks.emit",
+        AsyncMock(),
+    ), patch(
+        "app.services.hermes_skill.runtime_skill_registration_service.SkillReleaseService",
+    ) as mock_release_cls, patch(
+        "app.services.hermes_skill.runtime_skill_registration_service.parse_env_file",
+    ) as mock_parse_env:
+        mock_binding_cls.return_value.get_by_profile = AsyncMock(return_value=_binding_record())
+        mock_parse_env.return_value = MagicMock(api_server_model_name="common-writer")
+        mock_release_cls.return_value.ensure_draft_on_register = AsyncMock()
+
+        result = await service.register_to_org_mcp(
+            org_id="org-1",
+            operator_user_id="user-1",
+            agent_profile="common-writer",
+            runtime_skill_id="customer-profiling",
+            request=RuntimeSkillRegisterRequest(workspace_id=None),
+        )
+
+    assert result.workspace_id is None
+    assert mock_upsert_installation.await_args.kwargs["workspace_id"] is None
+    assert mock_upsert_grant.await_args.kwargs["workspace_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_register_runtime_skill_empty_workspace_normalized():
+    db = AsyncMock()
+    service = RuntimeSkillRegistrationService(db)
+
+    with patch(
+        "app.services.hermes_skill.runtime_skill_registration_service.HermesDockerBindingService",
+    ) as mock_binding_cls, patch.object(
+        instance_skill_service,
+        "list_instance_skills",
+        AsyncMock(return_value=_skill_list()),
+    ), patch.object(
+        service,
+        "_get_skill_by_skill_id",
+        AsyncMock(return_value=None),
+    ), patch.object(
+        service,
+        "_upsert_skill",
+        AsyncMock(return_value=MagicMock(id="skill-db-1")),
+    ), patch.object(
+        service,
+        "_upsert_installation",
+        AsyncMock(return_value=(True, MagicMock(id="inst-db-1"))),
+    ) as mock_upsert_installation, patch.object(
+        service,
+        "_upsert_grant",
+        AsyncMock(return_value=(True, MagicMock())),
+    ) as mock_upsert_grant, patch(
+        "app.services.hermes_skill.runtime_skill_registration_service.hooks.emit",
+        AsyncMock(),
+    ), patch(
+        "app.services.hermes_skill.runtime_skill_registration_service.SkillReleaseService",
+    ) as mock_release_cls, patch(
+        "app.services.hermes_skill.runtime_skill_registration_service.parse_env_file",
+    ) as mock_parse_env:
+        mock_binding_cls.return_value.get_by_profile = AsyncMock(return_value=_binding_record())
+        mock_parse_env.return_value = MagicMock(api_server_model_name="common-writer")
+        mock_release_cls.return_value.ensure_draft_on_register = AsyncMock()
+
+        result = await service.register_to_org_mcp(
+            org_id="org-1",
+            operator_user_id="user-1",
+            agent_profile="common-writer",
+            runtime_skill_id="customer-profiling",
+            request=RuntimeSkillRegisterRequest(workspace_id="  "),
+        )
+
+    assert result.workspace_id is None
+    assert mock_upsert_installation.await_args.kwargs["workspace_id"] is None
+    assert mock_upsert_grant.await_args.kwargs["workspace_id"] is None
+    assert mock_upsert_installation.await_args.kwargs["route_config"]["workspace_id"] is None
+
+
+@pytest.mark.asyncio
+# @lat: [[decisions/skill-platform-execution#Enqueue Path#Runtime Skill Workspace Scope]]
+async def test_register_runtime_skill_default_workspace_rejected():
+    db = AsyncMock()
+    service = RuntimeSkillRegistrationService(db)
+
+    with pytest.raises(BadRequestError) as exc_info:
+        await service.register_to_org_mcp(
+            org_id="org-1",
+            operator_user_id="user-1",
+            agent_profile="common-writer",
+            runtime_skill_id="customer-profiling",
+            request=RuntimeSkillRegisterRequest(workspace_id="default"),
+        )
+    assert exc_info.value.message_key == "errors.skill.workspace_scope_invalid"
+
+
+@pytest.mark.asyncio
+async def test_register_runtime_skill_existing_workspace():
+    db = AsyncMock()
+    service = RuntimeSkillRegistrationService(db)
+
+    with patch(
+        "app.services.hermes_skill.runtime_skill_registration_service.HermesDockerBindingService",
+    ) as mock_binding_cls, patch.object(
+        instance_skill_service,
+        "list_instance_skills",
+        AsyncMock(return_value=_skill_list()),
+    ), patch.object(
+        service,
+        "_get_skill_by_skill_id",
+        AsyncMock(return_value=None),
+    ), patch.object(
+        service,
+        "_upsert_skill",
+        AsyncMock(return_value=MagicMock(id="skill-db-1")),
+    ), patch.object(
+        service,
+        "_upsert_installation",
+        AsyncMock(return_value=(True, MagicMock(id="inst-db-1"))),
+    ) as mock_upsert_installation, patch.object(
+        service,
+        "_upsert_grant",
+        AsyncMock(return_value=(True, MagicMock())),
+    ) as mock_upsert_grant, patch(
+        "app.services.hermes_skill.runtime_skill_registration_service.hooks.emit",
+        AsyncMock(),
+    ), patch(
+        "app.services.hermes_skill.runtime_skill_registration_service.SkillReleaseService",
+    ) as mock_release_cls, patch(
+        "app.services.hermes_skill.runtime_skill_registration_service.parse_env_file",
+    ) as mock_parse_env:
+        mock_binding_cls.return_value.get_by_profile = AsyncMock(return_value=_binding_record())
+        mock_parse_env.return_value = MagicMock(api_server_model_name="common-writer")
+        mock_release_cls.return_value.ensure_draft_on_register = AsyncMock()
+
+        result = await service.register_to_org_mcp(
+            org_id="org-1",
+            operator_user_id="user-1",
+            agent_profile="common-writer",
+            runtime_skill_id="customer-profiling",
+            request=RuntimeSkillRegisterRequest(workspace_id="ws-1"),
+        )
+
+    assert result.workspace_id == "ws-1"
+    assert result.profile_id == "default"
+    assert mock_upsert_installation.await_args.kwargs["workspace_id"] == "ws-1"
+    assert mock_upsert_grant.await_args.kwargs["workspace_id"] == "ws-1"
+    assert mock_upsert_installation.await_args.kwargs["route_config"]["workspace_id"] == "ws-1"
+
+
+@pytest.mark.asyncio
+async def test_register_runtime_skill_cross_org_workspace_rejected():
+    db = AsyncMock()
+    service = RuntimeSkillRegistrationService(db)
+
+    with patch(
+        "app.services.hermes_skill.runtime_skill_registration_service.HermesDockerBindingService",
+    ) as mock_binding_cls, patch.object(
+        instance_skill_service,
+        "list_instance_skills",
+        AsyncMock(return_value=_skill_list()),
+    ), patch.object(
+        service,
+        "_get_skill_by_skill_id",
+        AsyncMock(return_value=None),
+    ), patch.object(
+        service,
+        "_upsert_skill",
+        AsyncMock(return_value=MagicMock(id="skill-db-1")),
+    ), patch.object(
+        service,
+        "_upsert_installation",
+        AsyncMock(
+            side_effect=BadRequestError(
+                "办公室不属于当前组织",
+                "errors.skill.installation_workspace_invalid",
+            )
+        ),
+    ), patch(
+        "app.services.hermes_skill.runtime_skill_registration_service.hooks.emit",
+        AsyncMock(),
+    ), patch(
+        "app.services.hermes_skill.runtime_skill_registration_service.parse_env_file",
+    ) as mock_parse_env:
+        mock_binding_cls.return_value.get_by_profile = AsyncMock(return_value=_binding_record())
+        mock_parse_env.return_value = MagicMock(api_server_model_name="common-writer")
+        with pytest.raises(BadRequestError) as exc_info:
+            await service.register_to_org_mcp(
+                org_id="org-1",
+                operator_user_id="user-1",
+                agent_profile="common-writer",
+                runtime_skill_id="customer-profiling",
+                request=RuntimeSkillRegisterRequest(workspace_id="ws-other-org"),
+            )
+    assert exc_info.value.message_key == "errors.skill.installation_workspace_invalid"
 
 
 @pytest.mark.asyncio
@@ -405,6 +688,34 @@ async def test_worker_does_not_fallback_when_instance_mismatch():
     mock_execute.assert_not_called()
     task_service.mark_failed.assert_awaited_once()
     assert task_service.mark_failed.await_args.kwargs["error_code"] == "hermes_instance_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_upsert_installation_accepts_null_workspace_on_create():
+    db = AsyncMock()
+    service = RuntimeSkillRegistrationService(db)
+    query_result = MagicMock()
+    query_result.scalar_one_or_none.return_value = None
+    db.execute = AsyncMock(return_value=query_result)
+
+    with patch(
+        "app.services.hermes_skill.runtime_skill_registration_service.assert_installation_workspace_ref",
+        AsyncMock(),
+    ) as mock_assert:
+        created, installation = await service._upsert_installation(
+            org_id="org-1",
+            skill_id="tool-1",
+            instance_id="inst-1",
+            profile_id="default",
+            workspace_id=None,
+            route_config={"route_type": "hermes_api_server", "workspace_id": None},
+            operator_user_id="user-1",
+        )
+
+    mock_assert.assert_awaited_once_with(db, None, "org-1")
+    assert created is True
+    assert installation.workspace_id is None
+    db.add.assert_called_once()
 
 
 @pytest.mark.asyncio

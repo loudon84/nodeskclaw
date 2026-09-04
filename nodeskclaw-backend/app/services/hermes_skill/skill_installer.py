@@ -20,6 +20,7 @@ from app.services.hermes_skill.path_guard import PathGuard
 logger = logging.getLogger(__name__)
 
 
+# @lat: [[domain/core-concepts#Skill Installation]]
 async def assert_installation_workspace_ref(
     db: AsyncSession,
     workspace_id: str | None,

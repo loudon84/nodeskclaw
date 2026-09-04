@@ -74,6 +74,12 @@ Architecture Closure 与 Acceptance Hardening (v1.5) 确立了 Run 生产执行�
 
 在 `SKILL_AGENT_ENABLED` 时调 Agent `POST /internal/v1/runs`，再写 HermesTask 投影并标记 `execution_owner=agent`；关闭时回退 `execution_owner=backend`（仅过渡）。[[nodeskclaw-backend/app/services/hermes_skill/hermes_task_worker.py#HermesTaskWorker]] 跳过 agent-owned 任务。高风险 Run 可停在 `WAITING_APPROVAL`，批准前不进引擎。`register-to-org-mcp` 只建 draft Release，不自动 published。
 
+### Runtime Skill Workspace Scope
+
+组织公共 Runtime Skill 用 `workspace_id=null`（或缺省 / 空串）表示全局范围；真实 ID 走实体校验；`"default"` 为非法 Sentinel。
+
+契约层：[[nodeskclaw-backend/app/schemas/hermes_skill/runtime_skill_registration.py#RuntimeSkillRegisterRequest]] 与 [[nodeskclaw-backend/app/schemas/hermes_skill/runtime_skill_registration.py#RuntimeSkillRegisterResponse]] 的 `workspace_id` 均为 `str | None`（默认 `None`）；`profile_id` 仍默认 `"default"`。注册入口 [[nodeskclaw-backend/app/services/hermes_skill/runtime_skill_registration_service.py#RuntimeSkillRegistrationService#register_to_org_mcp]] 经 [[nodeskclaw-backend/app/services/hermes_skill/runtime_skill_registration_service.py#_normalize_workspace_id]] 规范化后，把同一值写入 Installation、Grant 与 `routing_metadata.workspace_id`；`"default"` 返回 `errors.skill.workspace_scope_invalid`（禁止静默映射为 `null`）。领域语义见 [[domain/core-concepts#Skill Installation]]；Portal 发送语义见 [[architecture/portal#Page Domains]]。回归：`tests/hermes_skill/test_runtime_skill_registration.py`（缺省 / null / 空串 / default 拒绝 / 真实 workspace / 跨组织）。
+
 ## Publish Gate
 
 运营在 Portal Hermes Skills 创建/发布/废弃 Release；员工可见性由 published 决定，与 `is_active` 开关正交。

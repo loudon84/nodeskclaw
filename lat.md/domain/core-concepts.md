@@ -70,6 +70,8 @@ Skill 安装定义了 Skill 在组织内特定执行目标上的部署绑定，�
 
 安装实体通过 [[nodeskclaw-backend/app/models/hermes_skill/skill_installation.py#HermesSkillInstallation]] 记录 Desired 期望配置（`desired_generation`）与边缘节点回报的 `actual_status` 与 `actual_generation` 状态；Backend 在 [[nodeskclaw-backend/app/services/hermes_skill/skill_release_service.py#SkillReleaseService#publish]] 时冻结 Published Bundle（opaque `bundle_ref` + 包 SHA-256，与 content digest 分开），在 Desired 中按代钉住最小描述符并经 Internal Edge 授权下载；Edge 节点由 [[nodeskclaw-agent/app/services/edge_skill_installer.py#EdgeSkillInstaller]] 在本地隔离目录下载、暂存、校验并原子激活真实技能包，卸载时只删除托管根内目录；同代失败不对齐代次以便重试。
 
+`workspace_id` 为可选作用域：`NULL` 表示组织全局（不绑定具体办公室）；真实 Workspace ID 须经 [[nodeskclaw-backend/app/services/hermes_skill/skill_installer.py#assert_installation_workspace_ref]] 校验存在且属于当前组织。`"default"` 不是合法 Workspace Sentinel——Runtime 注册入口由 [[nodeskclaw-backend/app/services/hermes_skill/runtime_skill_registration_service.py#_normalize_workspace_id]] 显式拒绝（见 [[decisions/skill-platform-execution#Enqueue Path#Runtime Skill Workspace Scope]]）。`profile_id="default"` 仍是合法 Hermes Profile，与 Workspace Scope 无关。
+
 ## Connector Center
 
 Connector Center 是连接企业外部 API、MCP 服务与数据库的连接器中枢，实现凭证隔离与安全调用。

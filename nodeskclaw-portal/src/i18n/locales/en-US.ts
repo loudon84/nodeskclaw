@@ -2002,6 +2002,9 @@ const enUS = {
     runtime: {
       unsupported_capability: "This runtime does not support {capability}",
     },
+    skill: {
+      workspace_scope_invalid: "workspace_id must not be default; use null for organization-global skills",
+    },
     mcp: {
       access_denied: "Access denied to instance MCP capabilities",
       upstream_unavailable: "Upstream MCP Server unavailable",
@@ -3045,6 +3048,9 @@ const enUS = {
           runtimeSkill: "Runtime skill: {name}",
           hermesInstance: "Hermes instance",
           toolName: "Org tool name",
+          scope: "Authorization scope",
+          scopeOrg: "Entire organization",
+          runtime: "Runtime",
           profileWorkspace: "Profile / Workspace",
           executionMode: "Execution mode",
           asyncQueue: "Async queue",

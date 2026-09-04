@@ -333,7 +333,7 @@ export interface RuntimeSkillRegisterGrant {
 
 export interface RuntimeSkillRegisterRequest {
   profile_id?: string
-  workspace_id?: string
+  workspace_id?: string | null
   tool_name?: string | null
   is_mcp_exposed?: boolean
   default_execution_mode?: 'async'
@@ -350,7 +350,7 @@ export interface RuntimeSkillRegisterResponse {
   hermes_agent_instance_id: string
   agent_profile: string
   profile_id: string
-  workspace_id: string
+  workspace_id: string | null
   installation_id: string
   is_mcp_exposed: boolean
   grant_created: boolean

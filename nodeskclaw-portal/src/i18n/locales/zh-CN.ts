@@ -2002,6 +2002,9 @@ const zhCN = {
     runtime: {
       unsupported_capability: "当前运行时不支持 {capability} 能力",
     },
+    skill: {
+      workspace_scope_invalid: "workspace_id 不允许使用 default；组织全局 Skill 请使用 null",
+    },
     mcp: {
       access_denied: "无权访问该实例的 MCP 能力",
       upstream_unavailable: "上游 MCP Server 不可达",
@@ -3045,6 +3048,9 @@ const zhCN = {
           runtimeSkill: "Runtime Skill：{name}",
           hermesInstance: "Hermes 实例",
           toolName: "组织级 Tool Name",
+          scope: "授权范围",
+          scopeOrg: "整个组织",
+          runtime: "Runtime",
           profileWorkspace: "Profile / Workspace",
           executionMode: "执行模式",
           asyncQueue: "异步队列",
