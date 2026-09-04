@@ -1,0 +1,334 @@
+{
+  "info": {
+    "_postman_id": "a1b2c3d4-skill-run-consumer-v121",
+    "name": "DeskClaw 团队版 Skill Run Consumer v1.2.1",
+    "description": "外部 Work / 消费端唯一公共联调包。只覆盖 Backend JWT 鉴权面：POST /api/v1/mcp 与 GET|POST /api/v1/runs/*。禁止直连 Agent 或 Internal Edge。合同锚点：nodeskclaw-backend/contracts/skill-run/v1.2.1/。前置：先用 nodeskclaw-agent-full-flow 的 04-09 准备已 published 且已 central 安装的 Skill（consumer_tool_name 默认 postman_agent_debug）。已知限制：Backend SSE 当前仅投影 run.* 控制事件、assistant.message、artifact.persisted；reasoning.summary / tool.call / clarify.requested / approval.requested 暂未对外。90 目录为未冻结能力，合同 manifest 标 approval=unsupported。",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{backend_access_token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "if (!pm.collectionVariables.get('idempotency_key')) {",
+          "  pm.collectionVariables.set('idempotency_key', 'consumer-' + pm.variables.replaceIn('{{$guid}}'));",
+          "}"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {"key": "backend_base_url", "value": "http://127.0.0.1:4510"},
+    {"key": "backend_access_token", "value": "REPLACE_WITH_BACKEND_JWT", "type": "string"},
+    {"key": "org_id", "value": "REPLACE_WITH_ORG_ID"},
+    {"key": "user_id", "value": "REPLACE_WITH_USER_ID"},
+    {"key": "other_org_id", "value": "REPLACE_WITH_OTHER_ORG_ID"},
+    {"key": "consumer_tool_name", "value": "postman_agent_debug"},
+    {"key": "idempotency_key", "value": ""},
+    {"key": "consumer_run_id", "value": ""},
+    {"key": "consumer_artifact_id", "value": ""},
+    {"key": "last_event_id", "value": "0"},
+    {"key": "approval_id", "value": "approval-consumer-debug"}
+  ],
+  "item": [
+    {
+      "name": "00 - Backend Health",
+      "request": {
+        "auth": {"type": "noauth"},
+        "method": "GET",
+        "header": [],
+        "url": "{{backend_base_url}}/api/v1/health"
+      },
+      "event": [{"listen": "test", "script": {"type": "text/javascript", "exec": ["pm.test('Backend health is 200', () => pm.response.to.have.status(200));"]}}]
+    },
+    {
+      "name": "01 - MCP Tools List",
+      "request": {
+        "method": "POST",
+        "header": [
+          {"key": "Content-Type", "value": "application/json"},
+          {"key": "X-Org-Id", "value": "{{org_id}}"}
+        ],
+        "body": {"mode": "raw", "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"list-1\",\n  \"method\": \"tools/list\",\n  \"params\": {}\n}"},
+        "url": "{{backend_base_url}}/api/v1/mcp"
+      },
+      "event": [{"listen": "test", "script": {"type": "text/javascript", "exec": [
+        "pm.test('tools/list is 200 JSON-RPC', () => pm.response.to.have.status(200));",
+        "const j = pm.response.json(); pm.expect(j.jsonrpc).to.eql('2.0'); pm.expect(j.result.tools).to.be.an('array');",
+        "const raw = JSON.stringify(j); pm.expect(raw).to.not.include('gateway_token'); pm.expect(raw).to.not.include('env_file');",
+        "const toolName = pm.collectionVariables.get('consumer_tool_name');",
+        "const tool = j.result.tools.find((t) => t.name === toolName);",
+        "if (tool) {",
+        "  pm.expect(tool.capabilityKind).to.be.a('string');",
+        "  pm.expect(tool.interactionMode).to.be.a('string');",
+        "  pm.expect(tool.supportsAttachments).to.be.a('boolean');",
+        "  pm.expect(tool.annotations.approvalMode).to.be.a('string');",
+        "  if (tool.interactionMode === 'chat') pm.expect(tool.promptField).to.be.a('string');",
+        "}"
+      ]}}]
+    },
+    {
+      "name": "02 - MCP Tools Call",
+      "request": {
+        "method": "POST",
+        "header": [
+          {"key": "Content-Type", "value": "application/json"},
+          {"key": "X-Org-Id", "value": "{{org_id}}"},
+          {"key": "X-Idempotency-Key", "value": "{{idempotency_key}}"}
+        ],
+        "body": {"mode": "raw", "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"call-1\",\n  \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"{{consumer_tool_name}}\",\n    \"arguments\": {\"message\": \"consumer manual debug\"}\n  }\n}"},
+        "url": "{{backend_base_url}}/api/v1/mcp"
+      },
+      "event": [{"listen": "test", "script": {"type": "text/javascript", "exec": [
+        "pm.test('tools/call accepted', () => pm.response.to.have.status(200));",
+        "const j = pm.response.json(); pm.expect(j.result).to.be.an('object');",
+        "const sc = j.result.structuredContent; pm.expect(sc).to.be.an('object');",
+        "['committed','run_id','status','event_stream','result_url','artifact_url','execution_mode'].forEach((k) => pm.expect(sc).to.have.property(k));",
+        "pm.expect(sc.status).to.eql('QUEUED');",
+        "pm.expect(sc.event_stream).to.match(new RegExp('^/api/v1/runs/' + sc.run_id + '/events$'));",
+        "pm.expect(sc.result_url).to.eql('/api/v1/runs/' + sc.run_id + '/result');",
+        "pm.expect(sc.artifact_url).to.eql('/api/v1/runs/' + sc.run_id + '/artifacts');",
+        "pm.expect(sc).to.not.have.property('task_no');",
+        "pm.expect(sc).to.not.have.property('installation_id');",
+        "pm.expect(sc).to.not.have.property('workspace_id');",
+        "pm.expect(sc).to.not.have.property('agent_id');",
+        "pm.expect(JSON.stringify(sc)).to.not.include('/hermes/tasks');",
+        "pm.expect(sc.event_stream).to.not.include('token=');",
+        "pm.collectionVariables.set('consumer_run_id', sc.run_id);"
+      ]}}]
+    },
+    {
+      "name": "02b - MCP Tools Call Idempotent Replay",
+      "request": {
+        "method": "POST",
+        "header": [
+          {"key": "Content-Type", "value": "application/json"},
+          {"key": "X-Org-Id", "value": "{{org_id}}"},
+          {"key": "X-Idempotency-Key", "value": "{{idempotency_key}}"}
+        ],
+        "body": {"mode": "raw", "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"call-replay\",\n  \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"{{consumer_tool_name}}\",\n    \"arguments\": {\"message\": \"consumer manual debug\"}\n  }\n}"},
+        "url": "{{backend_base_url}}/api/v1/mcp"
+      },
+      "event": [{"listen": "test", "script": {"type": "text/javascript", "exec": [
+        "pm.test('Idempotent replay returns same run_id', () => pm.response.to.have.status(200));",
+        "const sc = pm.response.json().result.structuredContent;",
+        "pm.expect(sc.run_id).to.eql(pm.collectionVariables.get('consumer_run_id'));"
+      ]}}]
+    },
+    {
+      "name": "02c - MCP Tools Call Idempotency Conflict",
+      "request": {
+        "method": "POST",
+        "header": [
+          {"key": "Content-Type", "value": "application/json"},
+          {"key": "X-Org-Id", "value": "{{org_id}}"},
+          {"key": "X-Idempotency-Key", "value": "{{idempotency_key}}"}
+        ],
+        "body": {"mode": "raw", "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"call-conflict\",\n  \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"{{consumer_tool_name}}\",\n    \"arguments\": {\"message\": \"different payload\"}\n  }\n}"},
+        "url": "{{backend_base_url}}/api/v1/mcp"
+      },
+      "event": [{"listen": "test", "script": {"type": "text/javascript", "exec": [
+        "pm.test('Idempotency conflict returns IDEMPOTENCY_CONFLICT', () => {",
+        "  const j = pm.response.json();",
+        "  const code = j.error && j.error.data && j.error.data.errorCode;",
+        "  pm.expect(code).to.eql('IDEMPOTENCY_CONFLICT');",
+        "});"
+      ]}}]
+    },
+    {
+      "name": "03 - Get Run Projection",
+      "request": {
+        "method": "GET",
+        "header": [{"key": "X-Org-Id", "value": "{{org_id}}"}],
+        "url": "{{backend_base_url}}/api/v1/runs/{{consumer_run_id}}"
+      },
+      "event": [{"listen": "test", "script": {"type": "text/javascript", "exec": [
+        "pm.test('Run projection is 200', () => pm.response.to.have.status(200));",
+        "const d = pm.response.json().data;",
+        "['run_id','tool_name','status','created_at','updated_at'].forEach((k) => pm.expect(d).to.have.property(k));",
+        "pm.expect(d.run_id).to.eql(pm.collectionVariables.get('consumer_run_id'));",
+        "const raw = JSON.stringify(d); pm.expect(raw).to.not.include('gateway_token'); pm.expect(raw).to.not.include('org_id');"
+      ]}}]
+    },
+    {
+      "name": "04 - Get Run Result",
+      "request": {
+        "method": "GET",
+        "header": [{"key": "X-Org-Id", "value": "{{org_id}}"}],
+        "url": "{{backend_base_url}}/api/v1/runs/{{consumer_run_id}}/result"
+      },
+      "event": [{"listen": "test", "script": {"type": "text/javascript", "exec": [
+        "pm.test('Run result is 200', () => pm.response.to.have.status(200));",
+        "const d = pm.response.json().data; pm.expect(d.run_id).to.eql(pm.collectionVariables.get('consumer_run_id')); pm.expect(d).to.have.property('status');"
+      ]}}]
+    },
+    {
+      "name": "05 - Stream Run Events",
+      "request": {
+        "method": "GET",
+        "header": [
+          {"key": "X-Org-Id", "value": "{{org_id}}"},
+          {"key": "Accept", "value": "text/event-stream"},
+          {"key": "Last-Event-ID", "value": "{{last_event_id}}"}
+        ],
+        "url": "{{backend_base_url}}/api/v1/runs/{{consumer_run_id}}/events"
+      },
+      "event": [{"listen": "test", "script": {"type": "text/javascript", "exec": [
+        "pm.test('Events stream responds 200', () => pm.response.to.have.status(200));",
+        "const body = pm.response.text();",
+        "if (body && body.indexOf('data:') !== -1) {",
+        "  const chunks = body.split('\\n').filter((line) => line.startsWith('data:'));",
+        "  chunks.slice(0, 3).forEach((line) => {",
+        "    const evt = JSON.parse(line.replace(/^data:\\s*/, ''));",
+        "    pm.expect(evt.event_id).to.match(new RegExp('^' + pm.collectionVariables.get('consumer_run_id') + ':\\\\d+$'));",
+        "    pm.expect(['run.created','run.progress','run.completed','run.failed','run.cancelled','run.timed_out','assistant.message','artifact.persisted']).to.include(evt.event_type);",
+        "    pm.collectionVariables.set('last_event_id', evt.event_id);",
+        "  });",
+        "}"
+      ]}}]
+    },
+    {
+      "name": "06 - List Run Artifacts",
+      "request": {
+        "method": "GET",
+        "header": [{"key": "X-Org-Id", "value": "{{org_id}}"}],
+        "url": "{{backend_base_url}}/api/v1/runs/{{consumer_run_id}}/artifacts"
+      },
+      "event": [{"listen": "test", "script": {"type": "text/javascript", "exec": [
+        "pm.test('Artifact list is 200', () => pm.response.to.have.status(200));",
+        "const items = pm.response.json().data.items || [];",
+        "if (items.length > 0) {",
+        "  const art = items[0];",
+        "  ['artifact_id','name','content_type','size_bytes','checksum_sha256'].forEach((k) => pm.expect(art).to.have.property(k));",
+        "  pm.collectionVariables.set('consumer_artifact_id', art.artifact_id);",
+        "}"
+      ]}}]
+    },
+    {
+      "name": "07 - Download Run Artifact",
+      "request": {
+        "method": "GET",
+        "header": [{"key": "X-Org-Id", "value": "{{org_id}}"}],
+        "url": "{{backend_base_url}}/api/v1/runs/{{consumer_run_id}}/artifacts/{{consumer_artifact_id}}/download"
+      },
+      "event": [{"listen": "test", "script": {"type": "text/javascript", "exec": [
+        "if (!pm.collectionVariables.get('consumer_artifact_id')) {",
+        "  pm.test('Skip download when no artifact', () => pm.expect(true).to.eql(true));",
+        "} else {",
+        "  pm.test('Artifact download is 200', () => pm.response.to.have.status(200));",
+        "  pm.expect(pm.response.headers.get('X-Checksum-SHA256')).to.be.a('string');",
+        "}"
+      ]}}]
+    },
+    {
+      "name": "08 - Cancel Run",
+      "request": {
+        "method": "POST",
+        "header": [
+          {"key": "Content-Type", "value": "application/json"},
+          {"key": "X-Org-Id", "value": "{{org_id}}"}
+        ],
+        "body": {"mode": "raw", "raw": "{}"},
+        "url": "{{backend_base_url}}/api/v1/runs/{{consumer_run_id}}/cancel"
+      },
+      "event": [{"listen": "test", "script": {"type": "text/javascript", "exec": [
+        "pm.test('Cancel run is 200 or 409', () => pm.expect(pm.response.code).to.be.oneOf([200, 409]));"
+      ]}}]
+    },
+    {
+      "name": "08b - Cancel Run Idempotently",
+      "request": {
+        "method": "POST",
+        "header": [
+          {"key": "Content-Type", "value": "application/json"},
+          {"key": "X-Org-Id", "value": "{{org_id}}"}
+        ],
+        "body": {"mode": "raw", "raw": "{}"},
+        "url": "{{backend_base_url}}/api/v1/runs/{{consumer_run_id}}/cancel"
+      },
+      "event": [{"listen": "test", "script": {"type": "text/javascript", "exec": [
+        "pm.test('Repeat cancel is 200 or 409', () => pm.expect(pm.response.code).to.be.oneOf([200, 409]));"
+      ]}}]
+    },
+    {
+      "name": "09 - Reject Missing JWT",
+      "request": {
+        "auth": {"type": "noauth"},
+        "method": "GET",
+        "header": [{"key": "X-Org-Id", "value": "{{org_id}}"}],
+        "url": "{{backend_base_url}}/api/v1/runs/{{consumer_run_id}}"
+      },
+      "event": [{"listen": "test", "script": {"type": "text/javascript", "exec": [
+        "pm.test('Missing JWT is 401', () => pm.response.to.have.status(401));"
+      ]}}]
+    },
+    {
+      "name": "10 - Reject Cross-Org Run Read",
+      "request": {
+        "method": "GET",
+        "header": [{"key": "X-Org-Id", "value": "{{other_org_id}}"}],
+        "url": "{{backend_base_url}}/api/v1/runs/{{consumer_run_id}}"
+      },
+      "event": [{"listen": "test", "script": {"type": "text/javascript", "exec": [
+        "pm.test('Cross-org run read is 404', () => pm.response.to.have.status(404));"
+      ]}}]
+    },
+    {
+      "name": "11 - Reject Unknown Tool Call",
+      "request": {
+        "method": "POST",
+        "header": [
+          {"key": "Content-Type", "value": "application/json"},
+          {"key": "X-Org-Id", "value": "{{org_id}}"}
+        ],
+        "body": {"mode": "raw", "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"call-missing\",\n  \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"postman_unpublished_tool_xyz\",\n    \"arguments\": {}\n  }\n}"},
+        "url": "{{backend_base_url}}/api/v1/mcp"
+      },
+      "event": [{"listen": "test", "script": {"type": "text/javascript", "exec": [
+        "pm.test('Unknown tool returns JSON-RPC error', () => pm.response.to.have.status(200));",
+        "pm.expect(pm.response.json().error).to.be.an('object');"
+      ]}}]
+    },
+    {
+      "name": "90 - Resume Run (Unfrozen Capability)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {"key": "Content-Type", "value": "application/json"},
+          {"key": "X-Org-Id", "value": "{{org_id}}"}
+        ],
+        "body": {"mode": "raw", "raw": "{\"evidence\": {\"source\": \"postman-consumer\"}}"},
+        "url": "{{backend_base_url}}/api/v1/runs/{{consumer_run_id}}/resume"
+      },
+      "event": [{"listen": "test", "script": {"type": "text/javascript", "exec": [
+        "pm.test('Resume endpoint reachable (non-contract)', () => pm.expect(pm.response.code).to.be.oneOf([200, 400, 403, 404]));"
+      ]}}]
+    },
+    {
+      "name": "91 - Approve Run (Unfrozen Capability)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {"key": "Content-Type", "value": "application/json"},
+          {"key": "X-Org-Id", "value": "{{org_id}}"}
+        ],
+        "body": {"mode": "raw", "raw": "{\"evidence\": {\"source\": \"postman-consumer\", \"decision\": \"approved\"}}"},
+        "url": "{{backend_base_url}}/api/v1/runs/{{consumer_run_id}}/approvals/{{approval_id}}"
+      },
+      "event": [{"listen": "test", "script": {"type": "text/javascript", "exec": [
+        "pm.test('Approve endpoint reachable (non-contract)', () => pm.expect(pm.response.code).to.be.oneOf([200, 400, 403, 404]));"
+      ]}}]
+    }
+  ]
+}

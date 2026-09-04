@@ -8,9 +8,9 @@
 
 页面按域分目录：实例、工作区、组织设置、Gene、Auth、黑板、Hermes 等。
 
-Hermes Skills 运营页负责工作副本与 **SkillRelease** 发布/废弃（员工 MCP 只见 published）；注册到组织 MCP 只写工作副本 + draft，不自动 published（见 [[decisions/skill-platform-execution]]）。
+Hermes Skills 运营页负责工作副本与 **SkillRelease** 发布/废弃（员工 MCP 只见 published）；注册到组织 MCP 只写工作副本 + draft，不自动 published（见 [[decisions/skill-platform-execution]]）。组织公共注册弹窗（`nodeskclaw-portal/src/views/hermes/RuntimeSkillRegisterToMcpDialog.vue`）经 [[nodeskclaw-portal/src/api/hermes/agentProfiles.ts#registerRuntimeSkillToOrgMcp]] 发送 `workspace_id=null`，并展示「整个组织」授权范围与 Runtime=`{agent}/{profile}`，不再使用 Workspace=`default` 哨兵（契约见 [[decisions/skill-platform-execution#Enqueue Path#Runtime Skill Workspace Scope]]）。
 
-Hermes Connectors（`/hermes/connectors`）与 Edge 节点（`/hermes/edge-nodes`）运营页管理 Connector 定义/实例/公开 Tool、SecretRef 元数据与 Edge 登记；Portal 不收集密钥明文。API 封装见 [[nodeskclaw-portal/src/api/hermes/connectors.ts]]。
+Hermes Connectors（`/hermes/connectors`）与 Edge 节点（`/hermes/edge-nodes`）运营页管理 Connector 定义/实例/公开 Tool、SecretRef 元数据与 Edge 登记；Edge 登记返回一次性 bootstrap（含过期时间）并支持 disable/enable/rotate/revoke 生命周期操作，绑定在 Edge Agent 本地完成。Portal 不收集密钥明文。页面 `nodeskclaw-portal/src/views/hermes/EdgeNodesView.vue`，API [[nodeskclaw-portal/src/api/hermes/connectors.ts#createEdgeNode]]（含 disable/enable/rotate/revoke）。
 
 Hermes Installations（`/hermes/installations`）页选择 remote / edge 安装目标（edge 需选定节点），并展示边缘回报的 `actual_status` 漂移状态。
 
@@ -26,7 +26,7 @@ Hermes Installations（`/hermes/installations`）页选择 remote / edge 安装�
 
 用户可见文案必须走 i18n；禁止新增硬编码中文 UI（专有名词除外）。
 
-message_key 小写点分层（如 `errors.auth.token_invalid`），插值用命名参数。图标统一 `lucide-vue-next`，禁止 emoji。空状态与错误必须可操作引导。
+message_key 小写点分层（如 `errors.auth.token_invalid`），插值用命名参数。图标统一 `lucide-vue-next`，禁止 emoji。空状态与错误必须可操作引导。Runtime Skill 注册拒绝 Workspace Sentinel 时后端返回 `errors.skill.workspace_scope_invalid`，Portal 须有对应词条（见 [[decisions/error-contract]] 与 [[decisions/skill-platform-execution#Enqueue Path#Runtime Skill Workspace Scope]]）。
 
 ## Visualization
 

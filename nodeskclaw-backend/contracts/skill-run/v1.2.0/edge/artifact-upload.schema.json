@@ -1,0 +1,129 @@
+{
+  "properties": {
+    "artifact_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Artifact Id"
+    },
+    "name": {
+      "title": "Name",
+      "type": "string"
+    },
+    "content_type": {
+      "default": "application/octet-stream",
+      "title": "Content Type",
+      "type": "string"
+    },
+    "content_base64": {
+      "title": "Content Base64",
+      "type": "string"
+    },
+    "checksum_sha256": {
+      "title": "Checksum Sha256",
+      "type": "string"
+    },
+    "delivery_generation": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Delivery Generation"
+    },
+    "attempt_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Attempt Id"
+    },
+    "step_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Step Id"
+    },
+    "run_generation": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Run Generation"
+    },
+    "size": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Size"
+    },
+    "upload_mode": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": "eager",
+      "title": "Upload Mode"
+    },
+    "idempotency_key": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Idempotency Key"
+    },
+    "storage_state": {
+      "default": "persisted",
+      "title": "Storage State",
+      "type": "string"
+    }
+  },
+  "required": [
+    "name",
+    "content_base64",
+    "checksum_sha256"
+  ],
+  "title": "EdgeArtifactUploadBody",
+  "type": "object"
+}

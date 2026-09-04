@@ -1,9 +1,11 @@
 import asyncio
 import logging
+import uuid
 from typing import Any
 
 import httpx
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -66,39 +68,53 @@ class RunProjectionUpdaterService:
                     task.error_code = task.error_code or "errors.skill_run.timed_out"
                     task.error_message = task.error_message or "Run execution timed out"
 
-                # 3. Apply events monotonically
+                # 3. Apply events with local monotonic seq (Agent seq stored in payload)
                 for ev in sorted(events_data, key=lambda x: x.get("event_seq", 0)):
-                    seq = ev.get("event_seq", 0)
-                    if seq <= curr_cursor:
+                    agent_seq = ev.get("event_seq", 0)
+                    if agent_seq <= curr_cursor:
                         continue
-                    
+
                     ev_type_str = ev.get("event_type", "")
-                    payload = ev.get("payload") or {}
+                    raw_payload = ev.get("payload") or {}
 
-                    # Map event_type to EventType
-                    mapped_type = None
-                    if ev_type_str == "run.started":
-                        mapped_type = EventType.TASK_STARTED
-                    elif ev_type_str == "run.completed":
-                        mapped_type = EventType.TASK_COMPLETED
-                    elif ev_type_str == "run.failed":
-                        mapped_type = EventType.TASK_FAILED
-                    elif ev_type_str == "run.cancelled":
-                        mapped_type = EventType.TASK_CANCELLED
-                    elif ev_type_str == "run.cancelling":
-                        mapped_type = EventType.TASK_CANCEL_REQUESTED
-                    else:
-                        mapped_type = EventType.HERMES_RUN_DELTA
+                    mapped_type = self._map_event_type(ev_type_str)
 
+                    merged_payload = {
+                        "source": "agent",
+                        "hermes_event_seq": agent_seq,
+                        "payload": raw_payload,
+                    }
+
+                    local_seq = await self._next_local_seq(task_id)
                     task_event = HermesTaskEvent(
+                        id=str(uuid.uuid4()),
                         org_id=org_id,
                         task_id=task_id,
                         event_type=mapped_type,
-                        event_seq=seq,
-                        payload=payload,
+                        event_seq=local_seq,
+                        payload=merged_payload,
                     )
-                    self.db.add(task_event)
-                    curr_cursor = seq
+                    try:
+                        self.db.add(task_event)
+                        await self.db.flush()
+                    except IntegrityError:
+                        await self.db.rollback()
+                        logger.warning(
+                            "projection event_seq conflict task=%s agent_seq=%s local_seq=%s, retrying",
+                            task_id, agent_seq, local_seq,
+                        )
+                        local_seq = await self._next_local_seq(task_id)
+                        task_event = HermesTaskEvent(
+                            id=str(uuid.uuid4()),
+                            org_id=org_id,
+                            task_id=task_id,
+                            event_type=mapped_type,
+                            event_seq=local_seq,
+                            payload=merged_payload,
+                        )
+                        self.db.add(task_event)
+                        await self.db.flush()
+                    curr_cursor = agent_seq
 
                 task.projection_cursor = curr_cursor
 
@@ -126,7 +142,28 @@ class RunProjectionUpdaterService:
             await self.db.rollback()
             return False
 
+    async def _next_local_seq(self, task_id: str) -> int:
+        max_seq_result = await self.db.execute(
+            select(HermesTaskEvent.event_seq)
+            .where(HermesTaskEvent.task_id == task_id)
+            .order_by(HermesTaskEvent.event_seq.desc())
+            .limit(1)
+        )
+        return (max_seq_result.scalar_one_or_none() or 0) + 1
 
+    @staticmethod
+    def _map_event_type(ev_type_str: str) -> EventType:
+        mapping = {
+            "run.started": EventType.TASK_STARTED,
+            "run.completed": EventType.TASK_COMPLETED,
+            "run.failed": EventType.TASK_FAILED,
+            "run.cancelled": EventType.TASK_CANCELLED,
+            "run.cancelling": EventType.TASK_CANCEL_REQUESTED,
+        }
+        return mapping.get(ev_type_str, EventType.HERMES_RUN_DELTA)
+
+
+# @lat: [[architecture/backend#C2 Projection Sync]]
 class RunProjectionWorker:
     def __init__(self):
         self._running = False
@@ -146,7 +183,6 @@ class RunProjectionWorker:
 
     async def _run_once(self):
         async with async_session_factory() as db:
-            # Poll non-terminal tasks to sync projection
             stmt = (
                 select(HermesTask)
                 .where(
@@ -155,10 +191,12 @@ class RunProjectionWorker:
                 .limit(settings.SKILL_RUN_PROJECTION_BATCH_SIZE)
             )
             res = await db.execute(stmt)
-            tasks = res.scalars().all()
-            if not tasks:
-                return
+            task_refs = [(t.id, t.org_id, t.user_id) for t in res.scalars().all()]
 
-            service = RunProjectionUpdaterService(db)
-            for t in tasks:
-                await service.sync_task_projection(t.id, t.org_id, t.user_id)
+        if not task_refs:
+            return
+
+        for task_id, org_id, user_id in task_refs:
+            async with async_session_factory() as db:
+                service = RunProjectionUpdaterService(db)
+                await service.sync_task_projection(task_id, org_id, user_id)

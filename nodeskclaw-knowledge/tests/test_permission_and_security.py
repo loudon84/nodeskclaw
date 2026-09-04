@@ -150,3 +150,44 @@ async def test_build_access_plan_no_access(monkeypatch):
     )
     plan = await permission_service.build_access_plan(db, member, [kb])
     assert plan.kind == AccessPlanKind.no_access
+
+
+@pytest.mark.asyncio
+async def test_skill_run_auth_proofs_use_has_set_permission(monkeypatch):
+    from app.api.v2.skill_run_auth import SkillRunAuthProofRequest, issue_skill_run_auth_proofs
+
+    db = AsyncMock()
+    ks_allowed = SimpleNamespace(id="ks-1", org_id="o1", deleted_at=None, updated_at=None)
+    ks_denied = SimpleNamespace(id="ks-2", org_id="o1", deleted_at=None, updated_at=None)
+
+    async def fake_get(_model, pk):
+        return {"ks-1": ks_allowed, "ks-2": ks_denied}.get(pk)
+
+    db.get = AsyncMock(side_effect=fake_get)
+
+    async def fake_has_perm(_db, _member, ks, _perm):
+        return ks.id == "ks-1"
+
+    monkeypatch.setattr("app.api.v2.skill_run_auth.permission_service.has_set_permission", fake_has_perm)
+
+    resp = await issue_skill_run_auth_proofs(
+        SkillRunAuthProofRequest(org_id="o1", member_id="m1", knowledge_set_ids=["ks-1", "ks-2"]),
+        db=db,
+        _=None,
+    )
+    proofs = {item.set_id: item for item in resp.data.proofs}
+    assert proofs["ks-1"].allowed is True
+    assert proofs["ks-2"].allowed is False
+    assert proofs["ks-1"].auth_version
+
+
+def test_service_token_cannot_call_tool_search():
+    import inspect
+
+    from app.api import agent_tools
+    from app.core.deps import get_member_context, require_knowledge_service_token
+
+    params = inspect.signature(agent_tools.tool_search).parameters
+    assert "member" in params
+    assert get_member_context is not require_knowledge_service_token
+

@@ -1,9 +1,10 @@
 """Database session + auth dependencies."""
 
+import hmac
 from collections.abc import AsyncGenerator
 from time import monotonic
 
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, HTTPException, Request, Header, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -95,3 +96,36 @@ async def get_member_context(
     if ttl > 0:
         _context_cache[cache_key] = (monotonic() + ttl, principal)
     return principal
+
+
+async def require_knowledge_service_token(
+    authorization: str | None = Header(default=None),
+) -> None:
+    if not settings.KNOWLEDGE_SERVICE_TOKEN:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "error_code": 50300,
+                "message_key": "errors.knowledge.service_token_unconfigured",
+                "message": "Knowledge 服务令牌未配置",
+            },
+        )
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "error_code": 40100,
+                "message_key": "errors.auth.credentials_missing",
+                "message": "未提供认证信息",
+            },
+        )
+    token = authorization.split(" ", 1)[1].strip()
+    if not hmac.compare_digest(token, settings.KNOWLEDGE_SERVICE_TOKEN):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error_code": 40300,
+                "message_key": "errors.auth.invalid_token",
+                "message": "服务令牌无效",
+            },
+        )

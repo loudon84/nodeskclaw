@@ -1,7 +1,7 @@
 import enum
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, Text, text
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -56,6 +56,9 @@ class HermesSkillRelease(BaseModel):
     version: Mapped[str] = mapped_column(String(32), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default=SkillReleaseStatus.DRAFT.value)
     digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    bundle_ref: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    bundle_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    bundle_size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     title: Mapped[str | None] = mapped_column(String(255), nullable=True)
     description: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     category: Mapped[str | None] = mapped_column(String(64), nullable=True)

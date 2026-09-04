@@ -68,7 +68,8 @@ class EdgeNodeRead(BaseModel):
 
 class EdgeNodeCreateResult(BaseModel):
     node: EdgeNodeRead
-    token: str
+    bootstrap: str
+    expires_at: datetime
 
 
 class ConnectorInstanceCreate(BaseModel):

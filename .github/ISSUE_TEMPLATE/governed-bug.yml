@@ -1,0 +1,29 @@
+name: Governed Bug
+description: Bug linked to a central Feature / Repo Work Package
+title: "[BUG] "
+labels: ["gov:type:bug"]
+body:
+  - type: input
+    id: feature
+    attributes:
+      label: Feature ID
+      placeholder: FEAT-...
+    validations:
+      required: true
+  - type: input
+    id: work_package
+    attributes:
+      label: Work Package ID
+      placeholder: WP-...
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Reproduction / Evidence

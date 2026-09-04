@@ -1,0 +1,18 @@
+{
+  "properties": {
+    "delivery_generation": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Delivery Generation"
+    }
+  },
+  "title": "EdgeLeaseRenewBody",
+  "type": "object"
+}

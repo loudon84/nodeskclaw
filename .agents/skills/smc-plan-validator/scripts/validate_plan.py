@@ -287,20 +287,35 @@ def parse_frontmatter(text: str) -> dict[str, str]:
     return fields
 
 
+EXPLICIT_ID_BULLET = r"^\s*[-*]\s+\*\*([A-Za-z]+-\d+)(?:\s*/\s*[^*：:]+)?\*\*\s*[：:]\s*(.+?)\s*$"
+
+
 def extract_prd_requirements(prd_text: str, errors: list[ValidationError]) -> dict[str, str]:
-    """Read the numbered AC and DoD obligations that a governed plan must cover."""
+    """Read the AC and DoD obligations that a governed plan must cover.
+
+    Supports numbered items (positional ids) and explicit-id bullets
+    such as ``- **AC-01 / C01**：obligation``.
+    """
     requirements: dict[str, str] = {}
     for heading, prefix in (("Acceptance Criteria", "AC"), ("Definition of Done", "DOD")):
         body = section(prd_text, heading)
         if not body:
             add(errors, "PLAN_PRD_REQUIREMENTS_UNPARSEABLE", f"missing {heading}")
             continue
+        explicit = [
+            (match.group(1).upper(), normalize_requirement(match.group(2)))
+            for match in re.finditer(EXPLICIT_ID_BULLET, body, re.MULTILINE)
+        ]
+        if explicit:
+            for req_id, obligation in explicit:
+                requirements[req_id] = obligation
+            continue
         items = [
             normalize_requirement(match.group(1))
             for match in re.finditer(r"^\s*\d+[.)]\s+(.+?)\s*$", body, re.MULTILINE)
         ]
         if not items:
-            add(errors, "PLAN_PRD_REQUIREMENTS_UNPARSEABLE", f"{heading} has no numbered requirements")
+            add(errors, "PLAN_PRD_REQUIREMENTS_UNPARSEABLE", f"{heading} has no numbered or explicit-id requirements")
             continue
         for index, obligation in enumerate(items, 1):
             requirements[f"{prefix}-{index:02d}"] = obligation

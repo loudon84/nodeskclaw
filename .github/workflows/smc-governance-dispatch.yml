@@ -1,0 +1,32 @@
+name: SMC Governance Dispatch
+on:
+  push:
+    paths:
+      - '.agents/governance/receipts/**'
+      - '.agents/governance/project-status.yaml'
+  workflow_dispatch:
+
+jobs:
+  notify-central:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Notify central governance
+        env:
+          CENTRAL_DISPATCH_TOKEN: ${{ secrets.SMC_GOVERNANCE_DISPATCH_TOKEN }}
+        shell: bash
+        run: |
+          if [ -z "$CENTRAL_DISPATCH_TOKEN" ]; then
+            echo "SMC_GOVERNANCE_DISPATCH_TOKEN not configured"
+            exit 1
+          fi
+          repo_id=$(python - <<'PY'
+          import yaml
+          print(yaml.safe_load(open('.agents/governance/binding.yaml',encoding='utf-8'))['repository_id'])
+          PY
+          )
+          curl --fail-with-body -sS -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${CENTRAL_DISPATCH_TOKEN}" \
+            https://api.github.com/repos/loudon84/smc-delivery-governance/dispatches \
+            -d "{\"event_type\":\"smc-governance-sync\",\"client_payload\":{\"repository_id\":\"${repo_id}\",\"reason\":\"receipt_updated\"}}"

@@ -18,7 +18,10 @@ from app.schemas.hermes_skill.skill_installation import (
     RoutingTestRequest,
 )
 from app.services.hermes_external.hermes_bound_agent_scope_service import HermesBoundAgentScopeService
-from app.services.hermes_skill.skill_installer import SkillInstaller
+from app.services.hermes_skill.skill_installer import (
+    SkillInstaller,
+    assert_installation_workspace_ref,
+)
 from app.services.hermes_skill.permission_checker import PermissionChecker
 from app.services.hermes_skill.skill_routing_service import SkillRoutingService
 
@@ -118,6 +121,7 @@ async def create_installation(
     user, org = user_org
     if user:
         await PermissionChecker.require_permission(db, user.id, org.id, "skill:install")
+    await assert_installation_workspace_ref(db, body.workspace_id, org.id)
     if body.target_kind == "edge":
         # Edge installation: record desired configuration on control plane without local filesystem side effects
         installation = HermesSkillInstallation(
@@ -178,8 +182,18 @@ async def sync_installation(
     user, org = user_org
     if user:
         await PermissionChecker.require_permission(db, user.id, org.id, "skill:install")
-    installer = SkillInstaller(db)
-    installation = await installer.sync_installation(installation_id, org.id)
+
+    installation = await db.get(HermesSkillInstallation, installation_id)
+    if not installation or installation.deleted_at is not None or installation.org_id != org.id:
+        raise NotFoundError("安装记录不存在", "errors.skill.installation_not_found")
+
+    if getattr(installation, "target_kind", "remote") == "edge":
+        installation.desired_generation = (getattr(installation, "desired_generation", 1) or 1) + 1
+        installation.status = "installed"
+        await db.flush()
+    else:
+        installer = SkillInstaller(db)
+        installation = await installer.sync_installation(installation_id, org.id)
     await db.commit()
     return _ok(InstallationRead.model_validate(installation).model_dump())
 
@@ -206,6 +220,7 @@ async def update_installation_routing(
     if not installation:
         raise NotFoundError("安装记录不存在", "errors.skill.installation_not_found")
 
+    changed = False
     if body.is_default is True:
         others = await db.execute(
             select(HermesSkillInstallation).where(
@@ -218,14 +233,21 @@ async def update_installation_routing(
         for other in others.scalars().all():
             other.is_default = False
 
-    if body.is_default is not None:
+    if body.is_default is not None and installation.is_default != body.is_default:
         installation.is_default = body.is_default
-    if body.priority is not None:
+        changed = True
+    if body.priority is not None and installation.priority != body.priority:
         installation.priority = body.priority
-    if body.routing_scope is not None:
+        changed = True
+    if body.routing_scope is not None and installation.routing_scope != body.routing_scope:
         installation.routing_scope = body.routing_scope
-    if body.routing_metadata is not None:
+        changed = True
+    if body.routing_metadata is not None and installation.routing_metadata != body.routing_metadata:
         installation.routing_metadata = body.routing_metadata
+        changed = True
+
+    if changed and getattr(installation, "target_kind", "remote") == "edge":
+        installation.desired_generation = (getattr(installation, "desired_generation", 1) or 1) + 1
 
     await db.commit()
     await db.refresh(installation)

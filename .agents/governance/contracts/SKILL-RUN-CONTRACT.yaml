@@ -1,0 +1,22 @@
+contract_id: SKILL-RUN-CONTRACT
+name: Skill Run Public Consumer Contract
+scope: public-northbound
+provider_repository: REPO-NODESKCLAW
+primary_consumers: [REPO-SMC-COPILOT]
+releases:
+  - version: 1.2.1
+    state: CONFORMANCE_PASS
+    tag: skill-run-contract-v1.2.1
+    peeled_commit: 10d38f2c97739c4a55df893d1dc954fc8896f1a7
+consumers:
+  REPO-SMC-COPILOT:
+    pinned_version: 1.2.1
+current_release:
+  version: 1.2.1
+  state: CONFORMANCE_PASS
+  tag: skill-run-contract-v1.2.1
+  peeled_commit: 10d38f2c97739c4a55df893d1dc954fc8896f1a7
+compatibility:
+  semver: true
+  immutable_releases: true
+  consumer_lock_required: true

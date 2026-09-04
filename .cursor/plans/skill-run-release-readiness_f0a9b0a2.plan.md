@@ -4,37 +4,37 @@ overview: 按 APPROVED PRD v1.3 把 Skill Run 执行平面收敛为可发布的�
 todos:
   - id: s1-mutation-gate
     content: Slice 1：Execution Mutation Gate 原子化全写路径（Todo 1）
-    status: pending
+    status: completed
   - id: s1-cancel-approval
     content: Slice 1：Cancel/Resume/Approval 状态机分离（Todo 2）
-    status: pending
+    status: completed
   - id: s1-outbox-lease
     content: Slice 1：Outbox Lease Generation 门禁与授权重放（Todo 3）
-    status: pending
+    status: completed
   - id: s2-hybrid-plan
     content: Slice 2：Hybrid Step Plan 持久化与幂等 EdgeJob Transport（Todo 4）
-    status: pending
+    status: completed
   - id: s2-edge-envelope
     content: Slice 2：Edge Delivery Envelope 强制与跨 Pod 接管（Todo 5）
-    status: pending
+    status: completed
   - id: s3-credential-context
     content: Slice 3：Credential fail-closed 与 Run Context 使用前复核（Todo 6）
-    status: pending
+    status: completed
   - id: s3-connector
     content: Slice 3：Connector 固定路由与网络/数据库门禁（Todo 7）
-    status: pending
+    status: completed
   - id: s3-installation
     content: Slice 3：Installation Desired/Actual Reconcile（Todo 8）
-    status: pending
+    status: completed
   - id: s4-alembic
     content: Slice 4：Agent Alembic 迁移链与零 DDL 启动（Todo 9）
-    status: pending
+    status: completed
   - id: s4-ops
     content: Slice 4：Artifact 持久化、探针、指标、审计与 Token 门禁（Todo 10）
-    status: pending
+    status: completed
   - id: s5-contract
     content: Slice 5：合同发布、CI 门禁、发布证据与 lat.md 同步（Todo 11）
-    status: pending
+    status: completed
 isProject: false
 ---
 

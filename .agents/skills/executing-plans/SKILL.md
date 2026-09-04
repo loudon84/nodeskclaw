@@ -1,82 +1,119 @@
 ---
 name: executing-plans
-description: 执行书面计划。SMC governed Plan 强制 post_review commit：Todo 实施期间不提交，全部计划内实现完成后先 Review、再 Verification、最后 Commit Implementation。
-version: 4.0.0
+description: Plan implementation engine。SMC governed Plan 由 smc-plan-delivery 调用；本 Skill 只按 Write Ownership/Depends On 实施 Todo、执行 focused checks、更新 canonical Cursor todo status，不负责 Final Review/Verification/Commit/Roadmap。
+version: 4.1.0
 ---
 
-# Executing Plans
+# Executing Plans v4.1
 
 ## Mode Detection
 
-如果当前工作是执行任何 `.plan.md` Todo，则按 `post_review` 处理：
+执行任何 `.plan.md` Todo 都按 governed `post_review` 处理；frontmatter 缺 `commit_policy` 时也推断为 `post_review`。
 
-- frontmatter 明确 `commit_policy: post_review`；或
-- frontmatter **缺** `commit_policy` —— **一律推断为 `post_review`**，不得掉进立刻提交；或
-- 含 `## Write Ownership Ledger` / `## Integration Hotspots`；或
-- Approved PRD 为 SMC APPROVED artifact。
+非 Plan 临时任务才是 generic mode。
 
-以上任一成立即为 `governed`（Plan 执行）。
+## Governed Role
 
-否则为 `generic`（非 Plan 的临时任务）。
+在 SMC governed flow 中，本 Skill 是 **implementation engine**，上层唯一 orchestrator 是：
 
-## Governed Execution Contract
+```text
+smc-plan-delivery
+```
 
-### Step 1 — Preconditions
+本 Skill 不再拥有：
 
-1. 若 Plan 声称 SMC v3 / 引用 APPROVED PRD：Plan 已通过 `smc-plan-validator`。
-2. 如果 `smc-plan-review` 风险判定为 REQUIRED，必须已有 PASS。
-3. 当前不在 main/master，除非用户明确授权。
-4. 工作树基线清楚；记录已有用户改动，禁止吞掉。
+- Final Plan Completion Audit；
+- Final Implementation Review；
+- Final Verification；
+- implementation commit；
+- Roadmap update。
 
-### Step 2 — Execute Todo by Ownership
+这些必须返回 `smc-plan-delivery` 继续完成。
+
+## Preconditions
+
+上游必须已经满足：
+
+```text
+PLAN_STATIC_VALID
+PLAN_REVIEW_CLEARED
+```
+
+且提供唯一：
+
+```text
+PLAN_PATH=<canonical .plan.md>
+```
+
+禁止重新搜索另一个 Plan。
+
+## Todo Execution
 
 对每个 Todo：
 
-1. 只读取其 Immediate anchors + Ledger Reads（若有 Ledger）；
-2. 只写 Ledger 中属于当前 Todo 的 Writes（若有 Ledger）；
-3. 严格遵守 Depends On；
-4. 运行当前 Todo focused check；
-5. Stop conditions 成立即停止；
-6. **不 commit**；
-7. 不提前实施后续 Todo。
+1. 按 Write Ownership Ledger 与 Depends On 选择可执行 Todo；
+2. 先将 canonical Cursor todo status 更新为 `in_progress`：
 
-发现需要写另一个 Todo 的 symbol：停止，返回 Plan 修订；禁止“顺手改一下”。
+```bash
+python .agents/skills/smc-plan-delivery/scripts/plan_state.py \
+  set "$PLAN_PATH" T1 in_progress
+```
 
-### Step 3 — Review Before Commit
+3. 只读取 Immediate anchors + Ledger Reads + 被真实 trigger 的 Triggered Reads；
+4. 只写当前 Todo 的 Ledger Writes；
+5. 不实现 Plan 外 cleanup/refactor；
+6. 执行 Todo focused check；
+7. 对当前 Todo 做局部 spec compliance check；
+8. 若通过，将同一 canonical Plan status 更新为 `completed`；
+9. 若环境/依赖阻断，更新为 `blocked` 并返回 orchestrator；
+10. **不 commit**。
 
-所有 Todo 形成完整 working diff 后：
+## Ownership Violation
 
-1. Spec/Plan compliance review；
-2. code quality review；
-3. 修复后重新 review；
-4. Review PASS 才进入 Verification。
+如果实现需要写另一个 Todo 的 production `path#symbol`：
 
-### Step 4 — Verification
+```text
+PLAN_WRITE_SCOPE_VIOLATION
+```
 
-使用 `verification-before-completion` 或项目等价门禁执行 Plan 的最终 Verification。
+停止当前 Todo，返回 Plan REVISE；不得“顺手修改”。
 
-只有可重复证据 PASS 才允许 commit。
+## Focused Check Semantics
 
-### Step 5 — Commit Implementation
+Todo focused check 只证明局部实现可继续，不替代 final Verification evidence。
 
-Review PASS + Verification PASS 后创建 implementation commit。
+不得把：
 
-该 commit SHA 是 Roadmap DONE evidence 的 implementation commit。
+```text
+unit check passed
+```
 
-不要在同一 commit 内同时修改 Roadmap 状态；Roadmap update 是下一步独立 commit。
+报告成：
+
+```text
+IMPLEMENTED_AND_PROVEN
+```
+
+## Completion
+
+所有 Cursor todos completed 后，本 Skill 只返回：
+
+```text
+IMPLEMENTATION_ENGINE_COMPLETE
+```
+
+然后控制权交回：
+
+```text
+smc-plan-delivery
+  -> Plan Completion Audit
+  -> Implementation Review
+  -> Verification
+  -> Evidence Freshness
+  -> post_review Commit
+  -> Roadmap Update
+```
 
 ## Generic Mode
 
-**仅**非 Plan 的临时任务可以遵循项目自己的默认 commit cadence。
-
-执行任何 `.plan.md` Todo **不是** Generic Mode，即使缺 `commit_policy`、即使没有 Write Ownership Ledger。
-
-## Forbidden in Governed Mode
-
-- Todo 完成即 commit；
-- review 前 commit；
-- verification 前 commit；
-- 修改其它 Todo WRITE_OWNER；
-- validator FAIL 仍执行（对声称 SMC v3 的 Plan）；
-- 把 Plan 之外的重构混进 implementation commit；
-- implementation commit 与 Roadmap status commit 合并。
+非 `.plan.md` 临时任务可以遵循项目自己的 commit cadence；不得把 Generic Mode 规则反向应用到 governed Plan。

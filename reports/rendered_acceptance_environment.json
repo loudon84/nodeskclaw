@@ -1,0 +1,75 @@
+{
+  "id": "e4b9c1d0-1234-5678-9abc-nodeskclaw001",
+  "name": "NoDeskClaw Agent Acceptance Environment Template",
+  "values": [
+    {
+      "key": "AGENT_BASE_URL",
+      "value": "http://127.0.0.1:4520",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "BACKEND_BASE_URL",
+      "value": "http://127.0.0.1:4510",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "INTERNAL_TOKEN",
+      "value": "postman-acceptance-agent-token-secure-32b",
+      "type": "secret",
+      "enabled": true
+    },
+    {
+      "key": "EDGE_TOKEN",
+      "value": "acceptance-edge-token-secure-32b",
+      "type": "secret",
+      "enabled": true
+    },
+    {
+      "key": "ORG_ID",
+      "value": "org-test-acceptance",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "USER_ID",
+      "value": "user-test-acceptance",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "NODE_ID",
+      "value": "acceptance-edge-node-01",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "RUN_ID",
+      "value": "",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "JOB_ID",
+      "value": "",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "INSTALLATION_ID",
+      "value": "",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "ARTIFACT_ID",
+      "value": "",
+      "type": "default",
+      "enabled": true
+    }
+  ],
+  "_postman_variable_scope": "environment",
+  "_postman_exported_at": "2026-08-29T00:00:00.000Z",
+  "_postman_exported_using": "Postman/11.0.0"
+}

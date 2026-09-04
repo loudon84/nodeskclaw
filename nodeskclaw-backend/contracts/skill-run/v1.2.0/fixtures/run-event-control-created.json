@@ -1,0 +1,10 @@
+{
+  "event_id": "evt-created",
+  "run_id": "run-1",
+  "event_type": "run.created",
+  "event_seq": 0,
+  "source": "agent",
+  "source_event_id": null,
+  "timestamp": "2026-08-31T00:00:00Z",
+  "payload": {}
+}

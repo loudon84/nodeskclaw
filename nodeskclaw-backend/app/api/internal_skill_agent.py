@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import hmac
-from datetime import datetime, timedelta, timezone
-from typing import Any
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
@@ -12,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.deps import get_db
-from app.core.security import create_access_token
 from app.models.base import not_deleted
 from app.models.hermes_skill.hermes_agent_instance import HermesAgentInstance
 from app.services.hermes_external.hermes_docker_binding_service import HermesDockerBindingService
@@ -38,6 +35,24 @@ def _verify_internal_token(x_skill_agent_token: str | None = Header(default=None
         )
 
 
+# @lat: [[architecture/skill-agent#Hermes Engine Adapter#Credential Lease API Server Key]]
+def _load_hermes_api_server_credential(
+    env_file: str | None,
+    agent_profile: str | None,
+) -> tuple[str, str | None] | None:
+    if not env_file:
+        return None
+    try:
+        env = parse_env_file(Path(env_file), require_gateway_port=False)
+    except Exception:
+        return None
+    api_server_key = (env.raw.get("API_SERVER_KEY") or "").strip()
+    if not api_server_key:
+        return None
+    model_name = (env.api_server_model_name or agent_profile or "").strip() or None
+    return api_server_key, model_name
+
+
 class MintCredentialRequest(BaseModel):
     run_id: str
     attempt_id: str
@@ -59,6 +74,7 @@ class MintCredentialResponse(BaseModel):
     response_model=MintCredentialResponse,
     dependencies=[Depends(_verify_internal_token)],
 )
+# @lat: [[architecture/skill-agent#Hermes Engine Adapter#Credential Lease API Server Key]]
 async def mint_credential_lease(
     body: MintCredentialRequest,
     db: AsyncSession = Depends(get_db),
@@ -89,31 +105,17 @@ async def mint_credential_lease(
     if not record:
         raise HTTPException(status_code=404, detail="hermes agent instance not found")
 
+    credential = _load_hermes_api_server_credential(record.env_file, body.agent_profile)
+    if credential is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="hermes API_SERVER_KEY unavailable",
+        )
+    token, model_name = credential
     gateway_url = str(record.gateway_url).rstrip("/") if record.gateway_url else None
-    model_name = None
-    if record.env_file:
-        try:
-            env = parse_env_file(Path(record.env_file), require_gateway_port=False)
-            model_name = (env.api_server_model_name or body.agent_profile or "").strip() or None
-        except Exception:
-            pass
-
     ttl_secs = settings.SKILL_AGENT_CREDENTIAL_LEASE_TTL_SECONDS
-    token_lease = create_access_token(
-        subject=f"hermes-lease:{record.id}",
-        extra_claims={
-            "org_id": x_exec_org_id,
-            "run_id": body.run_id.strip(),
-            "attempt_id": body.attempt_id.strip(),
-            "instance_id": record.id,
-            "target": (body.target or record.id).strip(),
-            "scope": body.scope,
-        },
-        expires_delta=timedelta(seconds=ttl_secs),
-    )
-
     return MintCredentialResponse(
-        token=token_lease,
+        token=token,
         expires_in=ttl_secs,
         gateway_url=gateway_url,
         model=model_name,

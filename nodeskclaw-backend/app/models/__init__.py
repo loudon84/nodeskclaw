@@ -114,6 +114,7 @@ from app.models.connector import (  # noqa: F401
     ConnectorDefinition,
     ConnectorInstance,
     ConnectorTool,
+    EdgeArtifactOnDemandRequest,
     EdgeJob,
     EdgeNode,
     SecretRef,

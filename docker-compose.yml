@@ -84,7 +84,7 @@ services:
       # 若管理远端 K8s 集群上的 AI 员工，必须改为 K8s Pod 可达的外部地址
       AGENT_API_BASE_URL: ${AGENT_API_BASE_URL:-http://localhost:4510/api/v1}
       AGENT_FILE_DOWNLOAD_BASE_URL: ${AGENT_FILE_DOWNLOAD_BASE_URL:-}
-      SKILL_AGENT_BASE_URL: ${SKILL_AGENT_BASE_URL:-http://nodeskclaw-agent:4520}
+      SKILL_AGENT_BASE_URL: ${SKILL_AGENT_BASE_URL:-http://nodeskclaw-agent:4580}
       SKILL_AGENT_INTERNAL_TOKEN: ${SKILL_AGENT_INTERNAL_TOKEN:-change-me-skill-agent-token}
       SKILL_AGENT_ENABLED: ${SKILL_AGENT_ENABLED:-true}
       UPLOAD_STORAGE_BACKEND: ${UPLOAD_STORAGE_BACKEND:-auto}
@@ -124,7 +124,7 @@ services:
       SKILL_AGENT_ROLE: ${SKILL_AGENT_ROLE:-central}
       TZ: ${TZ:-Asia/Shanghai}
     ports:
-      - "${SKILL_AGENT_PORT:-4520}:4520"
+      - "${SKILL_AGENT_PORT:-4580}:4580"
     restart: unless-stopped
 
   llm-proxy:

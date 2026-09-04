@@ -15,6 +15,7 @@ from app.api.v2.quality import router as quality_router
 from app.api.v2.query_intelligence import router as query_intelligence_router
 from app.api.v2.retrieval import router as retrieval_router
 from app.api.v2.runtime_admin import kb_runtime_router, router as runtime_admin_router
+from app.api.v2.skill_run_auth import router as skill_run_auth_router
 from app.api.v2.translations import router as translations_router
 from app.mcp_server import router as mcp_router
 
@@ -31,5 +32,6 @@ router.include_router(evidence_router)
 router.include_router(translations_router)
 router.include_router(runtime_admin_router)
 router.include_router(kb_runtime_router)
+router.include_router(skill_run_auth_router)
 router.include_router(agent_tools_router)
 router.include_router(mcp_router)

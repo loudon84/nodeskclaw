@@ -6,7 +6,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import NotFoundError, BadRequestError, ForbiddenError
 from app.models.base import not_deleted
-from app.models.connector.edge_job import EdgeJob, EdgeJobStatus
 from app.models.connector.edge_node import EdgeNode
 from app.models.connector.instance import ConnectorInstance, ConnectorPlacement
 from app.models.connector.tool import ConnectorTool
@@ -33,6 +32,8 @@ from app.services.mcp_skill_gateway.mcp_execution_mode import (
 from app.services.mcp_skill_gateway.mcp_task_dedup_service import McpTaskDedupService
 from app.services.mcp_skill_gateway.mcp_task_wait_service import McpTaskWaitService
 from app.services.mcp_skill_gateway.output_policy_service import OutputPolicyService
+from app.services.expert_gateway.expert_mcp_auth_guard import ExpertMcpAuthGuard
+from app.services.hermes_external.hermes_docker_binding_service import HermesDockerBindingService
 from app.core.config import settings
 from app.services.hermes_skill.task_event_token_service import TaskEventTokenService
 
@@ -40,6 +41,17 @@ logger = logging.getLogger(__name__)
 
 RUNTIME_SKILL_ROUTE_TYPE = "hermes_api_server"
 RUNTIME_SKILL_FORBIDDEN_ARGUMENT_KEYS = ("_routing", "_execution", "route_config")
+
+
+def _runtime_session_and_attachment_refs(client_context: dict | None) -> tuple[str | None, list[str]]:
+    ctx = dict(client_context or {})
+    session_id = ctx.get("session_id") or ctx.get("run_session_id")
+    attachment_refs = list(ctx.get("attachment_refs") or [])
+    if isinstance(session_id, str):
+        session_id = session_id.strip() or None
+    else:
+        session_id = None
+    return session_id, attachment_refs
 
 
 class McpToolMapper:
@@ -190,6 +202,17 @@ class McpToolMapper:
             if category and tool_category != category:
                 continue
             placement = instance.placement or ConnectorPlacement.CENTRAL.value
+            raw_ann = meta.get("annotations") if isinstance(meta.get("annotations"), dict) else {}
+            requires_approval = bool(
+                raw_ann.get("requiresApproval", meta.get("requires_approval") or meta.get("requiresApproval", False))
+            )
+            annotations = {
+                "riskLevel": raw_ann.get("riskLevel") or meta.get("riskLevel") or "low",
+                "requiresApproval": requires_approval,
+                "approvalMode": raw_ann.get("approvalMode") or meta.get("approval_mode") or ("server" if requires_approval else "none"),
+                "streaming": bool(raw_ann.get("streaming", meta.get("streaming", False))),
+                "artifacts": bool(raw_ann.get("artifacts", meta.get("artifacts", False))),
+            }
             tools.append(
                 {
                     "name": connector_tool.tool_name,
@@ -198,8 +221,12 @@ class McpToolMapper:
                     "inputSchema": connector_tool.input_schema or {},
                     "version": meta.get("version"),
                     "category": tool_category,
-                    "approvalMode": "server" if bool(meta.get("requires_approval")) else "none",
-                    "requiresApproval": bool(meta.get("requires_approval")),
+                    "capabilityKind": "connector",
+                    "interactionMode": meta.get("interactionMode") or "form",
+                    "supportsAttachments": bool(meta.get("supportsAttachments", False)),
+                    "annotations": annotations,
+                    "approvalMode": annotations["approvalMode"],
+                    "requiresApproval": requires_approval,
                     "authorized": True,
                     "grantStatus": "active",
                     "kind": "connector",
@@ -237,6 +264,19 @@ class McpToolMapper:
         instance = bundle["instance"]
         definition = bundle["definition"]
         connector_tool = bundle["tool"]
+        connector_metadata = dict(connector_tool.extra_metadata or {})
+        connector_annotations = dict(connector_metadata.get("annotations") or {})
+        connector_config = dict(instance.config or {})
+        network_policy = dict(connector_config.get("network_policy") or {})
+        server_requires_approval = bool(
+            connector_annotations.get("requiresApproval")
+            or connector_metadata.get("requires_approval")
+            or connector_metadata.get("requiresApproval")
+        )
+        effective_client_context = dict(client_context or {})
+        effective_client_context["requires_approval"] = bool(
+            effective_client_context.get("requires_approval") or server_requires_approval
+        )
         if instance.placement != ConnectorPlacement.CENTRAL.value:
             if instance.placement == ConnectorPlacement.EDGE.value:
                 if not instance.edge_node_id:
@@ -271,7 +311,7 @@ class McpToolMapper:
             hermes_agent_instance_id="connector-central",
             agent_id=None,
             arguments=arguments,
-            client_context=client_context or {},
+            client_context=effective_client_context,
             output_policy={"artifact_mode": "pull_only"},
             task_source="org_mcp",
             skill_id=tool_name,
@@ -288,8 +328,9 @@ class McpToolMapper:
                 "connector_tool_name": connector_tool.tool_name,
                 "connector_title": connector_tool.title,
                 "connector_description": connector_tool.description,
-                "connector_config": dict(instance.config or {}),
+                "connector_config": connector_config,
                 "connector_secret_ref_id": instance.secret_ref_id,
+                "network_policy": network_policy,
                 "connector_binding_refs": [connector_tool.id],
                 "knowledge_refs": [],
                 "placement": instance.placement,
@@ -303,22 +344,6 @@ class McpToolMapper:
             },
         )
         result = await RuntimeSkillRunService(self.db).start(request)
-        if instance.placement == ConnectorPlacement.EDGE.value and instance.edge_node_id:
-            run_id = str(result.structured_content.get("run_id") or result.task.id)
-            job = EdgeJob(
-                org_id=org_id,
-                edge_node_id=instance.edge_node_id,
-                run_id=run_id,
-                tool_name=tool_name,
-                status=EdgeJobStatus.QUEUED.value,
-                arguments=arguments,
-                snapshot={
-                    "runtime_policy": dict(request.extra_route_snapshot),
-                    "placement": {"role": "edge", "engine": "connector"},
-                },
-            )
-            self.db.add(job)
-            await self.db.flush()
         return result.structured_content
 
     async def _skill_to_tool_dict(
@@ -327,9 +352,8 @@ class McpToolMapper:
         org_id: str,
         user_id: str,
     ) -> dict[str, Any]:
-        extra = skill.extra_metadata or {}
         published = await SkillReleaseService(self.db).get_published_by_skill_db_id(skill.id)
-        release_extra = (published.extra_metadata if published else None) or extra
+        release_extra = dict(published.extra_metadata or {}) if published else {}
         installation = None
         inst_result = await self.db.execute(
             select(HermesSkillInstallation).where(
@@ -349,21 +373,53 @@ class McpToolMapper:
             if not authorized:
                 grant_status = "denied"
 
+        input_schema = (published.input_schema if published else skill.input_schema) or {}
+        explicit_mode = release_extra.get("interactionMode")
+        if explicit_mode in ("chat", "form"):
+            interaction_mode = explicit_mode
+            prompt_field = release_extra.get("promptField")
+        else:
+            props = input_schema.get("properties") if isinstance(input_schema, dict) else None
+            if isinstance(props, dict) and isinstance(props.get("prompt"), dict) and props.get("prompt", {}).get("type") == "string":
+                interaction_mode = "chat"
+                prompt_field = "prompt"
+            else:
+                interaction_mode = "form"
+                prompt_field = None
+
+        supports_attachments = bool(release_extra.get("supportsAttachments", False))
+
+        raw_ann = release_extra.get("annotations") if isinstance(release_extra.get("annotations"), dict) else {}
         requires_approval = bool(
-            release_extra.get("requires_approval") or release_extra.get("requiresApproval")
+            raw_ann.get("requiresApproval", release_extra.get("requires_approval") or release_extra.get("requiresApproval", False))
         )
+        annotations = {
+            "riskLevel": raw_ann.get("riskLevel") or release_extra.get("riskLevel") or "low",
+            "requiresApproval": requires_approval,
+            "approvalMode": raw_ann.get("approvalMode") or release_extra.get("approval_mode") or ("server" if requires_approval else "none"),
+            "streaming": bool(raw_ann.get("streaming", release_extra.get("streaming", False))),
+            "artifacts": bool(raw_ann.get("artifacts", release_extra.get("artifacts", False))),
+        }
+
         tool: dict[str, Any] = {
             "name": skill.tool_name,
             "title": (published.title if published else None) or skill.title or skill.name,
             "description": (published.description if published else None) or skill.description or "",
-            "inputSchema": (published.input_schema if published else None) or skill.input_schema or {},
+            "inputSchema": input_schema,
             "version": published.version if published else skill.version,
             "category": (published.category if published else None) or skill.category,
-            "approvalMode": "server" if requires_approval else "none",
+            "capabilityKind": "skill",
+            "interactionMode": interaction_mode,
+            "supportsAttachments": supports_attachments,
+            "annotations": annotations,
+            "approvalMode": annotations["approvalMode"],
             "requiresApproval": requires_approval,
             "authorized": authorized,
             "grantStatus": grant_status,
         }
+        if prompt_field and interaction_mode == "chat":
+            tool["promptField"] = prompt_field
+
         if published:
             tool["skillReleaseId"] = published.id
             tool["skillReleaseDigest"] = published.digest
@@ -420,8 +476,6 @@ class McpToolMapper:
         route_meta: dict[str, Any],
         profile_name: str | None,
     ) -> dict[str, bool]:
-        from app.services.hermes_external.hermes_docker_binding_service import HermesDockerBindingService
-
         profile = profile_name or route_meta.get("agent_profile")
         instance_id = route_meta.get("hermes_agent_instance_id")
         if not profile:
@@ -456,6 +510,7 @@ class McpToolMapper:
         auth_ctx: Any = None,
         request_trace_id: str | None = None,
         request_snapshot: dict | None = None,
+        request_headers: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         if user_id:
             await PermissionChecker.require_permission(self.db, user_id, org_id, "skill:view")
@@ -666,7 +721,11 @@ class McpToolMapper:
             )
 
         fingerprint = (client_context or {}).get("request_fingerprint")
-        if fingerprint:
+        idempotency_key = ExpertMcpAuthGuard.extract_idempotency_key(request_headers)
+        employee_runtime_start = (
+            skill.source_type == RUNTIME_SKILL_ROUTE_TYPE or settings.SKILL_AGENT_ENABLED
+        )
+        if fingerprint and not employee_runtime_start:
             existing = await McpTaskDedupService(self.db).find_dedupe_task(org_id, fingerprint)
             if existing:
                 from app.services.hermes_skill.skill_audit_logger import SkillAuditLogger
@@ -732,6 +791,7 @@ class McpToolMapper:
             release_extra = (published.extra_metadata if published else None) or (skill.extra_metadata or {})
             if release_extra.get("requires_approval") or release_extra.get("requiresApproval"):
                 client_ctx["requires_approval"] = True
+            session_id, attachment_refs = _runtime_session_and_attachment_refs(client_context)
             run_request = StartRuntimeSkillRunRequest(
                 org_id=org_id,
                 user_id=user_id or "",
@@ -746,7 +806,7 @@ class McpToolMapper:
                 task_source="org_mcp",
                 skill_id=skill.skill_id,
                 installation_id=installation.id,
-                workspace_id=installation.workspace_id,
+                workspace_id=None,
                 request_trace_id=request_trace_id,
                 request_snapshot=request_snapshot,
                 route_diagnostics=route_diagnostics,
@@ -759,6 +819,9 @@ class McpToolMapper:
                     "workspace_id": installation.workspace_id,
                     "routing_reason": routing_result.reason,
                 },
+                idempotency_key=idempotency_key,
+                session_id=session_id,
+                attachment_refs=attachment_refs,
             )
             logger.info(
                 "mcp.tools_call.delegated_to_runtime_skill_run trace_id=%s tool=%s "
@@ -776,6 +839,7 @@ class McpToolMapper:
             release_extra = (published.extra_metadata if published else None) or (skill.extra_metadata or {})
             if release_extra.get("requires_approval") or release_extra.get("requiresApproval"):
                 client_ctx["requires_approval"] = True
+            session_id, attachment_refs = _runtime_session_and_attachment_refs(client_context)
             run_request = StartRuntimeSkillRunRequest(
                 org_id=org_id,
                 user_id=user_id or "",
@@ -790,7 +854,7 @@ class McpToolMapper:
                 task_source="org_mcp",
                 skill_id=skill.skill_id,
                 installation_id=installation.id,
-                workspace_id=installation.workspace_id,
+                workspace_id=None,
                 request_trace_id=request_trace_id,
                 request_snapshot=request_snapshot,
                 route_diagnostics=route_diagnostics,
@@ -803,6 +867,9 @@ class McpToolMapper:
                     "workspace_id": installation.workspace_id,
                     "routing_reason": routing_result.reason,
                 },
+                idempotency_key=idempotency_key,
+                session_id=session_id,
+                attachment_refs=attachment_refs,
             )
             runtime_run_result = await RuntimeSkillRunService(self.db).start(run_request)
             task = runtime_run_result.task
@@ -1043,6 +1110,12 @@ class McpToolMapper:
         deduped: bool,
     ) -> dict[str, Any]:
         payload = dict(structured_content)
+        if settings.SKILL_AGENT_ENABLED:
+            payload.setdefault("tool_name", tool_name)
+            payload["retryable"] = False
+            if deduped:
+                payload["deduped"] = True
+            return payload
         payload.update({
             "tool_name": tool_name,
             "agent_alias": agent_alias,
@@ -1070,16 +1143,43 @@ class McpToolMapper:
         user_id: str,
         deduped: bool,
     ) -> dict[str, Any]:
+        status = task.status.value
+        if settings.SKILL_AGENT_ENABLED:
+            if status in ("queued", "accepted"):
+                status = "QUEUED"
+            elif status == "waiting_approval":
+                status = "WAITING_APPROVAL"
+            payload: dict[str, Any] = {
+                "run_id": task.id,
+                "status": status,
+                "execution_mode": ASYNC_EVENT_MODE,
+                "tool_name": tool_name,
+                "event_stream": f"/api/v1/runs/{task.id}/events",
+                "result_url": f"/api/v1/runs/{task.id}/result",
+                "artifact_url": f"/api/v1/runs/{task.id}/artifacts",
+                "artifact_mode": output_policy.get("artifact_mode", "pull_only"),
+                "server_artifacts": task.server_artifacts or [],
+                "message": (
+                    "Run waiting approval"
+                    if status == "WAITING_APPROVAL"
+                    else "Run accepted"
+                ),
+                "retryable": False,
+                "committed": True,
+            }
+            if deduped:
+                payload["deduped"] = True
+            return payload
+
         token_data = await TaskEventTokenService(self.db).create_token(
             task.id,
             user_id,
             org_id,
             ttl_seconds=settings.MCP_TASK_SSE_TOKEN_TTL_SECONDS,
         )
-        status = task.status.value
         if status in ("queued", "accepted"):
             status = "running"
-        payload: dict[str, Any] = {
+        payload = {
             "tool_name": tool_name,
             "agent_alias": agent_alias,
             "agent_id": installation.agent_id,

@@ -1,5 +1,5 @@
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -17,6 +17,117 @@ def _task():
         status=TaskStatus.QUEUED,
         server_artifacts=[],
     )
+
+
+@pytest.mark.asyncio
+async def test_resolve_placement_freezes_executable_connector_bindings():
+    db = AsyncMock()
+    rows = [
+        {
+            "binding_id": "binding-edge",
+            "connector_instance_id": "instance-edge",
+            "connector_kind": "rest",
+            "connector_config": {"url": "https://edge.example.com", "network_policy": {"allowlist": ["edge.example.com:443"]}},
+            "connector_secret_ref_id": "secret-edge",
+            "placement": "edge",
+            "edge_node_id": "node-1",
+        },
+        {
+            "binding_id": "binding-central",
+            "connector_instance_id": "instance-central",
+            "connector_kind": "db",
+            "connector_config": {"db_url": "postgresql://analytics"},
+            "connector_secret_ref_id": None,
+            "placement": "central",
+            "edge_node_id": None,
+        },
+    ]
+    result = MagicMock()
+    result.mappings.return_value.all.return_value = rows
+    db.execute = AsyncMock(return_value=result)
+
+    placement = await RuntimeSkillRunService(db)._resolve_placement(
+        org_id="org-1",
+        requirements={"connector_binding_ids": ["binding-edge", "binding-central"]},
+    )
+
+    assert placement["role"] == "hybrid"
+    assert placement["engine"] == "hybrid"
+    assert placement["connector_bindings"][0]["network_policy"] == {"allowlist": ["edge.example.com:443"]}
+    assert placement["connector_bindings"][1]["network_policy"] == {}
+
+
+@pytest.mark.asyncio
+async def test_connector_route_skips_hermes_gateway_enrichment():
+    db = AsyncMock()
+    service = RuntimeSkillRunService(db)
+
+    route = await service._enrich_route_snapshot(
+        SimpleNamespace(catalog_kind="connector", hermes_agent_instance_id="connector-central", agent_profile="connector", org_id="org-1", runtime_skill_id="tool-1"),
+        {"route_type": "connector", "connector_kind": "rest"},
+    )
+
+    assert route == {"route_type": "connector", "connector_kind": "rest"}
+    db.execute.assert_not_awaited()
+
+
+
+@pytest.mark.asyncio
+async def test_start_generates_trace_when_missing():
+    db = AsyncMock()
+    db.add = MagicMock()
+    task = _task()
+    request = StartRuntimeSkillRunRequest(
+        org_id="org-1",
+        user_id="user-1",
+        tool_name="writer_article_generate",
+        runtime_skill_id="writer",
+        agent_profile="writer",
+        hermes_agent_instance_id="inst-1",
+        agent_id="agent-1",
+        arguments={"prompt": "hi"},
+        client_context={},
+        output_policy={"artifact_mode": "pull_only"},
+        task_source="expert",
+        skill_id="skill-1",
+        entrypoint="expert_gateway",
+    )
+
+    with patch(
+        "app.services.hermes_skill.runtime_skill_run_service.settings"
+    ) as mock_settings, patch(
+        "app.services.hermes_skill.runtime_skill_run_service.TaskService"
+    ) as task_cls, patch(
+        "app.services.hermes_skill.runtime_skill_run_service.TaskEventTokenService"
+    ) as token_cls, patch.object(
+        RuntimeSkillRunService,
+        "_resolve_release_meta",
+        new=AsyncMock(return_value={"skill_version": "1.0.0", "placement": {"role": "central", "engine": "hermes"}}),
+    ), patch.object(
+        RuntimeSkillRunService,
+        "_build_authorized_execution_context",
+        new=AsyncMock(return_value=None),
+    ), patch.object(
+        RuntimeSkillRunService,
+        "_enrich_route_snapshot",
+        new=AsyncMock(side_effect=lambda _request, route: route),
+    ):
+        mock_settings.SKILL_AGENT_ENABLED = True
+        mock_settings.HERMES_TASK_DEFAULT_TIMEOUT_SECONDS = 900
+        mock_settings.MCP_TASK_SSE_TOKEN_TTL_SECONDS = 900
+        mock_settings.EXPERT_EVENT_TOKEN_TTL_SECONDS = 900
+        task_svc = AsyncMock()
+        task_svc.find_idempotent_task = AsyncMock(return_value=None)
+        task_svc.create_task = AsyncMock(return_value=task)
+        task_cls.return_value = task_svc
+        token_svc = AsyncMock()
+        token_svc.create_token = AsyncMock(return_value={"event_url": "/events?token=abc"})
+        token_cls.return_value = token_svc
+
+        await RuntimeSkillRunService(db).start(request)
+
+    assert request.request_trace_id.startswith("req_")
+    assert len(request.request_trace_id) <= 64
 
 
 @pytest.mark.asyncio
@@ -51,6 +162,10 @@ async def test_start_builds_hermes_api_server_route_and_contract():
         AsyncMock(return_value={"skill_version": "1.0.0", "snapshot_hash": "hash-1"}),
     ), patch.object(
         RuntimeSkillRunService,
+        "_build_authorized_execution_context",
+        AsyncMock(return_value={"context_version": 1, "descriptors": []}),
+    ), patch.object(
+        RuntimeSkillRunService,
         "_enrich_route_snapshot",
         AsyncMock(return_value={"gateway_url": "http://example.com"}),
     ):
@@ -76,7 +191,8 @@ async def test_start_builds_hermes_api_server_route_and_contract():
 
     content = result.structured_content
     assert content["run_id"] == "task-1"
-    assert content["event_stream"].endswith("token=sse_test")
+    assert content["event_stream"] == "/api/v1/runs/task-1/events"
+    assert "token=" not in content["event_stream"]
     assert content["result_url"] == "/api/v1/runs/task-1/result"
     assert content["committed"] is True
     assert "taskId" not in content
@@ -116,6 +232,10 @@ async def test_start_expert_mcp_includes_catalog_fields():
         RuntimeSkillRunService,
         "_resolve_release_meta",
         AsyncMock(return_value={"skill_version": "1.0.0", "snapshot_hash": "hash-1"}),
+    ), patch.object(
+        RuntimeSkillRunService,
+        "_build_authorized_execution_context",
+        AsyncMock(return_value={"context_version": 1, "descriptors": []}),
     ), patch.object(
         RuntimeSkillRunService,
         "_enrich_route_snapshot",

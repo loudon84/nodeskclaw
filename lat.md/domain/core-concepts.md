@@ -68,11 +68,13 @@ OpenClaw 写入 `.openclaw/skills/`；Hermes 走对应 adapter。学习回调需
 
 Skill 安装定义了 Skill 在组织内特定执行目标上的部署绑定，支持云端 Remote 与私网 Edge 两种部署形态。
 
-安装实体通过 [[nodeskclaw-backend/app/models/hermes_skill/skill_installation.py#HermesSkillInstallation]] 记录 Desired 期望配置（`target_kind` 为 remote 或 edge，以及关联的 `edge_node_id`）与边缘节点回报的 `actual_status` 真实状态，并通过 `reconciled_status` 计算对齐状态（`reconciled` / `pending_sync` / `drifted`）。
+安装实体通过 [[nodeskclaw-backend/app/models/hermes_skill/skill_installation.py#HermesSkillInstallation]] 记录 Desired 期望配置（`desired_generation`）与边缘节点回报的 `actual_status` 与 `actual_generation` 状态；Backend 在 [[nodeskclaw-backend/app/services/hermes_skill/skill_release_service.py#SkillReleaseService#publish]] 时冻结 Published Bundle（opaque `bundle_ref` + 包 SHA-256，与 content digest 分开），在 Desired 中按代钉住最小描述符并经 Internal Edge 授权下载；Edge 节点由 [[nodeskclaw-agent/app/services/edge_skill_installer.py#EdgeSkillInstaller]] 在本地隔离目录下载、暂存、校验并原子激活真实技能包，卸载时只删除托管根内目录；同代失败不对齐代次以便重试。
+
+`workspace_id` 为可选作用域：`NULL` 表示组织全局（不绑定具体办公室）；真实 Workspace ID 须经 [[nodeskclaw-backend/app/services/hermes_skill/skill_installer.py#assert_installation_workspace_ref]] 校验存在且属于当前组织。`"default"` 不是合法 Workspace Sentinel——Runtime 注册入口由 [[nodeskclaw-backend/app/services/hermes_skill/runtime_skill_registration_service.py#_normalize_workspace_id]] 显式拒绝（见 [[decisions/skill-platform-execution#Enqueue Path#Runtime Skill Workspace Scope]]）。`profile_id="default"` 仍是合法 Hermes Profile，与 Workspace Scope 无关。
 
 ## Connector Center
 
 Connector Center 是连接企业外部 API、MCP 服务与数据库的连接器中枢，实现凭证隔离与安全调用。
 
-核心模型包括 [[nodeskclaw-backend/app/models/connector/definition.py#ConnectorDefinition]]、[[nodeskclaw-backend/app/models/connector/instance.py#ConnectorInstance]]、[[nodeskclaw-backend/app/models/connector/tool.py#ConnectorTool]] 与 [[nodeskclaw-backend/app/models/connector/edge_node.py#EdgeNode]]；[[nodeskclaw-backend/app/models/connector/binding.py#SkillConnectorBinding]] 把已发布 SkillRelease 绑定到 Connector Instance，[[nodeskclaw-backend/app/models/connector/secret_ref.py#SecretRef]] 只保存密钥引用元数据，明文密钥不入库，经 Edge SecretStore 隔离管理。
+核心模型包括 [[nodeskclaw-backend/app/models/connector/definition.py#ConnectorDefinition]]、[[nodeskclaw-backend/app/models/connector/instance.py#ConnectorInstance]]、[[nodeskclaw-backend/app/models/connector/tool.py#ConnectorTool]]、[[nodeskclaw-backend/app/models/connector/edge_node.py#EdgeNode]]（RM-07 起通过一次性 bootstrap enroll 绑定 Ed25519 身份，运营者可 disable/rotate/revoke；节点私钥由 Agent 本地加密存放，不进 Backend 库、不明文落盘）与 [[nodeskclaw-backend/app/models/connector/edge_artifact_on_demand_request.py#EdgeArtifactOnDemandRequest]]（管理边缘工件按需出站拉取与单次原子履约）；[[nodeskclaw-backend/app/models/connector/binding.py#SkillConnectorBinding]] 把已发布 SkillRelease 绑定到 Connector Instance，[[nodeskclaw-backend/app/models/connector/secret_ref.py#SecretRef]] 只保存密钥引用元数据，明文密钥不入库，经 Edge SecretStore 隔离管理。
 

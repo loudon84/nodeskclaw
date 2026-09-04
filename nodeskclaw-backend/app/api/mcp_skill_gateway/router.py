@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query, Request
+from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -35,8 +36,10 @@ from app.services.mcp_skill_gateway.constants import (
     MCP_PROTOCOL_VERSION,
     MCP_SERVER_NAME,
 )
+from app.services.mcp_skill_gateway.errors import IDEMPOTENCY_CONFLICT
 from app.services.mcp_skill_gateway.handler import dispatch
 from app.services.mcp_skill_gateway.mcp_tool_registry import count_tools_by_permission
+
 router = APIRouter()
 
 
@@ -390,7 +393,8 @@ async def mcp_jsonrpc(
     db: AsyncSession = Depends(get_db),
 ):
     authorization = request.headers.get("authorization")
-    return await dispatch(body, authorization, db, request_headers=dict(request.headers))
+    result = await dispatch(body, authorization, db, request_headers=dict(request.headers))
+    return _mcp_response_with_idempotency_status(result)
 
 
 @router.post("/hermes/mcp", tags=["MCP Skill Gateway"])
@@ -400,4 +404,16 @@ async def hermes_mcp_jsonrpc(
     db: AsyncSession = Depends(get_db),
 ):
     authorization = request.headers.get("authorization")
-    return await dispatch(body, authorization, db, request_headers=dict(request.headers))
+    result = await dispatch(body, authorization, db, request_headers=dict(request.headers))
+    return _mcp_response_with_idempotency_status(result)
+
+
+def _mcp_response_with_idempotency_status(result):
+    if (
+        isinstance(result, dict)
+        and isinstance(result.get("error"), dict)
+        and isinstance(result["error"].get("data"), dict)
+        and result["error"]["data"].get("errorCode") == IDEMPOTENCY_CONFLICT
+    ):
+        return JSONResponse(status_code=409, content=result)
+    return result

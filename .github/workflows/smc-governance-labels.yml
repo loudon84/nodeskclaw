@@ -1,0 +1,46 @@
+name: SMC Governance Labels
+on:
+  issues:
+    types: [opened, edited]
+  pull_request:
+    types: [opened, edited, synchronize]
+
+permissions:
+  issues: write
+  pull-requests: write
+
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Extract governance IDs and apply labels
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "issues" ]; then
+            body=$(cat <<'EOF'
+${{ github.event.issue.body }}
+EOF
+)
+            number=${{ github.event.issue.number }}
+          else
+            body=$(cat <<'EOF'
+${{ github.event.pull_request.body }}
+EOF
+)
+            number=${{ github.event.pull_request.number }}
+          fi
+          feature=$(printf '%s\n' "$body" | grep -Eo 'FEAT-[A-Z0-9-]+' | head -1 || true)
+          wp=$(printf '%s\n' "$body" | grep -Eo 'WP-[A-Z0-9-]+' | head -1 || true)
+          for label in "gov:feature:$feature" "gov:wp:$wp"; do
+            case "$label" in
+              *:) continue ;;
+            esac
+            gh label create "$label" --repo "${{ github.repository }}" --color BFDADC --force >/dev/null 2>&1 || true
+            if [ "${{ github.event_name }}" = "issues" ]; then
+              gh issue edit "$number" --repo "${{ github.repository }}" --add-label "$label"
+            else
+              gh pr edit "$number" --repo "${{ github.repository }}" --add-label "$label"
+            fi
+          done

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+// @lat: [[architecture/portal#Page Domains]]
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ChevronDown, Loader2, X } from 'lucide-vue-next'
@@ -59,7 +60,7 @@ async function submit() {
   try {
     const result = await registerRuntimeSkillToOrgMcp(props.agentProfileName, props.skill.slug, {
       profile_id: props.profile,
-      workspace_id: 'default',
+      workspace_id: null,
       is_mcp_exposed: true,
       default_execution_mode: 'async',
       timeout_seconds: timeoutSeconds.value,
@@ -118,8 +119,12 @@ async function submit() {
           <span class="font-mono text-xs break-all text-right">{{ previewToolName }}</span>
         </div>
         <div class="flex justify-between gap-4">
-          <span class="text-muted-foreground">{{ t('hermes.profiles.skills.orgMcpRegister.profileWorkspace') }}</span>
-          <span>{{ profile }} / default</span>
+          <span class="text-muted-foreground">{{ t('hermes.profiles.skills.orgMcpRegister.scope') }}</span>
+          <span>{{ t('hermes.profiles.skills.orgMcpRegister.scopeOrg') }}</span>
+        </div>
+        <div class="flex justify-between gap-4">
+          <span class="text-muted-foreground">{{ t('hermes.profiles.skills.orgMcpRegister.runtime') }}</span>
+          <span>{{ agentProfileName }} / {{ profile }}</span>
         </div>
         <div class="flex justify-between gap-4">
           <span class="text-muted-foreground">{{ t('hermes.profiles.skills.orgMcpRegister.executionMode') }}</span>

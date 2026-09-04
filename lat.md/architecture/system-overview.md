@@ -10,7 +10,7 @@ NoDeskClaw 由 Portal、Backend、Skill Agent、LLM Proxy、Knowledge、Task、�
 
 1. **Portal / Admin REST**：`/api/v1` 与 `/api/v1/admin` → Backend 业务服务。
 2. **LLM 调用**：实例 / Agent → LLM Proxy → Provider（额度先检后转）。
-3. **MCP / Expert / Skill Run**：JSON-RPC MCP Gateway（组织 MCP + Expert MCP）；员工 Catalog 只列 published SkillRelease，执行经 [[decisions/skill-platform-execution|Skill Platform]] 入队 `nodeskclaw-agent`；apps/work Expert 消费面仍冻结 [[decisions/work-expert-contract|WORK-EXPERT-CONTRACT v1.0.2]]，员工新合同为 `contracts/skill-run/v1.0.0`。
+3. **MCP / Expert / Skill Run**：JSON-RPC MCP Gateway（组织 MCP + Expert MCP）；员工 Catalog 只列 published SkillRelease，执行经 [[decisions/skill-platform-execution|Skill Platform]] 入队 `nodeskclaw-agent`；apps/work Expert 消费面仍冻结 [[decisions/work-expert-contract|WORK-EXPERT-CONTRACT v1.0.2]]，员工合同为 `contracts/skill-run/v1.0.0`、`v1.1.0` 与 `v1.2.0`（语义 Run Event）。
 4. **Knowledge / RAG**：Desktop / Agent → Knowledge（ACL + Adapter）→ RAGFlow；禁止直连 RAGFlow。
 5. **AutoTask**：Portal / Worker / MCP → `nodeskclaw-task`（`/api/v1/autotask`）→ 自有 PostgreSQL 与 RPA Engine；后继作业与模板生命周期见 [[task]]、[[autotask-objects]]。
 
@@ -35,7 +35,7 @@ Portal 页面不得散落 axios；LLM Proxy 不得承载 Portal UI 逻辑。
 
 权威数据在火山云 RDS PostgreSQL；启动走 Alembic `upgrade head`，禁止依赖 `create_all` 作为生产建表路径。Skill Agent 在同一库使用独立 schema `agent` 存放 Run / Event SoT（见 [[decisions/skill-platform-execution]]）。
 
-软删除与 Partial Unique Index 是全库不变量（[[decisions/soft-delete]]）。对象存储经 `storage_service`（S3 + 本地双后端）服务共享文件与产物。AutoTask 自有库含 `task_successor_jobs` 与 `rpa_runs.output`（迁移 `7c1f4d8e2a90`，见 [[task#Schema Migration Successor]]）。
+软删除与 Partial Unique Index 是全库不变量（[[decisions/soft-delete]]）。Backend 共享文件经 `storage_service`（S3 + 本地双后端）；Skill Agent 工件经独立 [[nodeskclaw-agent/app/services/storage_port.py#StoragePort]]（local 或真实 S3 兼容后端，验收拓扑用 MinIO），不复用 Backend `storage_service`。AutoTask 自有库含 `task_successor_jobs` 与 `rpa_runs.output`（迁移 `7c1f4d8e2a90`，见 [[task#Schema Migration Successor]]）。
 
 ## Security Boundaries
 

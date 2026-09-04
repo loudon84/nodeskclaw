@@ -1,0 +1,2 @@
+﻿Scanned 1 .conf, 1 .css, 1 .Dockerfile, 1 .env, 3 .example, 1 .html, 4 .ini, 2 .js, 225 .json, 4 .lock, 3 .mako, 25 .md, 9 .mjs, 1 .mts, 3 .ndjson, 9 .png, 1 .ps1, 1582 .py, 1 .security, 17 .sh, 1 .sql, 1 .template, 6 .toml, 123 .ts, 5 .txt, 236 .vue, 14 .xml, 15 .yaml, 4 .yml, 17 (no ext) in 3.1s
+All checks passed

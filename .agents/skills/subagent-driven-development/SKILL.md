@@ -1,70 +1,139 @@
 ---
 name: subagent-driven-development
-description: 用独立子智能体执行计划。SMC governed Plan 使用 deferred/post_review commit：实现者不得提交；每 Todo 先规格审查和质量审查，最终 Verification PASS 后由控制者创建 implementation commit。
-version: 4.0.0
+description: Fresh-context multi-agent Plan implementation engine。SMC governed Plan 由 smc-plan-delivery 调用；每 Todo 使用独立 implementer + spec/code-quality 局部检查，控制者更新 canonical Cursor todo status，但 Final Completion Audit/Review/Verification/Commit/Roadmap 仍由 smc-plan-delivery 负责。
+version: 4.1.0
 ---
 
-# Subagent Driven Development
+# Subagent Driven Development v4.1
 
 ## Core Principle
 
-Fresh implementer per Todo + spec review + code quality review，且 governed flow **commit after review/verification**。
+```text
+fresh implementer per Todo
++ bounded write ownership
++ focused check
++ local spec review
++ local code-quality review
++ no Todo commit
+```
 
-## Governed Preconditions
+本 Skill 是 `smc-plan-delivery` 可选 implementation engine，不是后半程 orchestrator。
 
-- Plan 已通过 `smc-plan-validator`；
-- Plan ownership ledger 是 write-set SOT；
-- conditional `smc-plan-review` 已按风险策略处理；
-- `commit_policy=post_review`。
+## Preconditions
 
-## Per Todo
+必须由上层提供唯一：
 
-控制者只给实现子智能体：
+```text
+PLAN_PATH=<canonical Plan>
+```
 
-- Todo 完整文本；
+且：
+
+```text
+PLAN_STATIC_VALID
+PLAN_REVIEW_CLEARED
+commit_policy=post_review
+```
+
+Write Ownership Ledger 是 write-set SOT。
+
+## Dispatch Contract
+
+每个 implementer 只接收：
+
+- canonical Plan 路径；
+- 当前 Todo 完整文本；
 - Owns Changes；
 - Writes / Reads / Depends On；
 - Immediate anchors；
+- Triggered reads rule；
 - Stop conditions；
-- 必要 repo conventions。
+- 必要 project conventions。
 
-实现者：
+不要把整个历史对话塞给 implementer；fresh context 是降低确认偏差的手段。
 
-1. 实现；
-2. focused test；
-3. 自审；
-4. 返回 `DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED`；
-5. **不得 git commit**。
+## Todo Lifecycle
 
-然后：
+控制者先执行：
 
-1. spec reviewer 检查是否严格满足 Plan/PRD 且没有 scope expansion；
-2. 实现者修复；
-3. code quality reviewer 检查正确性、重复实现、Ponytail minimality regression；
-4. 实现者修复；
-5. 通过后才把 Todo 标记 complete。
+```bash
+python .agents/skills/smc-plan-delivery/scripts/plan_state.py \
+  set "$PLAN_PATH" T1 in_progress
+```
+
+Implementer：
+
+1. 只实现当前 Todo；
+2. 不写其它 Todo ownership target；
+3. 运行 focused check；
+4. 自审；
+5. 返回：
+
+```text
+DONE
+DONE_WITH_CONCERNS
+NEEDS_CONTEXT
+BLOCKED
+```
+
+控制者随后安排 fresh/local reviewers：
+
+1. spec reviewer：Plan/PRD compliance + no scope expansion；
+2. implementer 修复；
+3. code-quality reviewer：correctness / duplication / minimality / maintainability；
+4. implementer 修复；
+5. focused check 重跑。
+
+局部 review PASS 后，**由控制者**更新 canonical Plan：
+
+```bash
+python .agents/skills/smc-plan-delivery/scripts/plan_state.py \
+  set "$PLAN_PATH" T1 completed
+```
+
+子智能体不得自己编辑第二份 status document。
 
 ## Ownership Guard
 
-子智能体发现需要写其它 Todo 的 Write target 时，返回：
+需要写另一 Todo target 时：
 
 ```text
 PLAN_WRITE_OWNERSHIP_CONFLICT
 ```
 
-不得自行扩展 write set。
+返回 controller；不得扩展 write set。
 
-## Final Gate
+## No Commit
 
-所有 Todo review PASS 后：
+Implementer、spec reviewer、quality reviewer 都不得创建 Git commit。
 
-1. final integration review；
-2. final Verification；
-3. 控制者创建一个 implementation commit；
-4. 把 SHA 交给 `smc-roadmap update`。
+即使 Todo 局部 review/test PASS，也只表示该 Todo implementation slice 完成。
+
+## Engine Exit
+
+所有 canonical Cursor todos completed 后，仅返回：
+
+```text
+IMPLEMENTATION_ENGINE_COMPLETE
+```
+
+然后由 `smc-plan-delivery` 强制执行：
+
+```text
+Plan Completion Audit (fresh context)
+-> Implementation Review (whole diff)
+-> Final Verification
+-> Evidence Freshness Gate
+-> post_review Commit
+-> Roadmap Update
+```
+
+## Parallelism
+
+只有 Plan Validator 已证明 `Parallel Safe=yes` 且无依赖/hazard 的 Todo 才能并发。
+
+并发 implementer 仍不可共享 write target；controller 必须在更新 Plan status 时串行化 metadata mutation。
 
 ## Generic Mode
 
-非 Plan 的临时任务可保留项目默认 commit cadence。
-
-执行任何 `.plan.md` Todo **不得** per-todo commit；缺 `commit_policy` 一律推断为 `post_review`，由控制者在 Review + Verification PASS 后创建 implementation commit。
+非 Plan 临时任务可遵循项目默认开发模式；不得把 generic commit cadence 带入 governed Plan。

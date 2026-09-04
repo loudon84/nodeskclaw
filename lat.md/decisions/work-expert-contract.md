@@ -53,7 +53,13 @@ Cancel-safe：RUNNING 取消后 Worker 不得 `mark_completed`。Retry 复制 ro
 
 `scripts/contracts.py generate` / `check` 校验 OpenAPI、非空 200 schema、fixtures、SHA256SUMS、冻结 v1.0.0/v1.0.1 checksum；quality-gate 在 pytest 后执行 check。v1.0.2 补齐 MCP `tools/list` Catalog/Skill `annotations` 合同。
 
-员工 Skill-first 合同族由同脚本 `generate --family skill-run` 产出到 `contracts/skill-run/v1.0.0/`，**不得**改写本目录 checksum（见 [[decisions/skill-platform-execution]]）。
+员工 Skill-first 合同族由同脚本 `generate --family skill-run` 产出到 `contracts/skill-run/v1.0.0/` 与 `v1.1.0/`，**不得**改写本目录 checksum（见 [[decisions/skill-platform-execution]]）。
+
+## External Consumer Boundary
+
+Work 是仓外合同 Consumer（消费者）；本仓负责 Backend、Agent 与版本化合同，不负责外部前端源码、构建或发布。
+
+外部前端提出的新字段或行为必须先进入合同修订与审查，Consumer 按批准版本适配，Backend 再从同一合同推导实现和符合性测试。禁止通过读取外部前端实现反向形成未版本化的 Backend 行为，已发布合同目录、tag target 与 checksum 继续保持不可变。
 
 ## OpenAPI Coverage
 
@@ -72,6 +78,7 @@ Skill Platform Slice A/B 后：新生产 Skill Run 由 [[nodeskclaw-backend/app/
 | tools/call → RuntimeSkillRun | [[nodeskclaw-backend/app/services/expert_gateway/expert_run_service.py#ExpertRunService]] |
 | Cancel-safe / preparing·finalizing / result_content 写入（旧/非 agent-owned） | [[nodeskclaw-backend/app/services/hermes_skill/hermes_task_worker.py#HermesTaskWorker]] |
 | 新生产 Run 执行 / Event SoT | [[nodeskclaw-agent/app/services/worker.py#RunWorker]]（见 [[decisions/skill-platform-execution]]） |
+| agent-owned C2 投影同步 | [[nodeskclaw-backend/app/services/hermes_skill/run_projection_updater_service.py#RunProjectionWorker]]（见 [[architecture/backend#C2 Projection Sync]]） |
 | result 查询分离 | [[nodeskclaw-backend/app/services/hermes_skill/task_result_service.py#TaskResultService]] |
 | contractVersion / capabilities | [[nodeskclaw-backend/app/services/expert_gateway/expert_health_service.py]]、`GET /api/v1/system/info` |
 
@@ -88,6 +95,16 @@ Expert Skill v1 目标架构采用 Skill-first 调用、不可变 Revision、服
 正式方案见 `docs/_expert/prd-v1.0.md`。Expert 仅保留 Persona 与 Skill Collection；MCP、Work API 和 Legacy Expert 入口统一转换为调用命令。核心保存客户端无关的运行事件，再投影为 Task、Work Chat、Resource 与 Audit。
 
 冻结的 v1.0.2 合同保持不可变；新事件、Clarify Resume、Skill Revision 与 Work Skill Catalog 应进入后续兼容合同版本。实施前 `runtimeProgress: false` 与 `loadGate: unmet` 仍是当前事实，不得因目标方案而改写健康能力。
+
+## Skill Run Public Contract V1
+
+Skill Run v1.0.0 为 apps/work 提供独立的公开消费者合同，冻结 MCP、Run、Result、Artifact、SSE 和幂等 HTTP 语义，不允许向消费者泄露组织、用户、快照、凭据或内部路由。
+
+发布产物位于 `nodeskclaw-backend/contracts/skill-run/v1.0.0/`。`manifest.json` 记录实现提交，`SHA256SUMS` 覆盖所有消费者产物；发布提交只能改写该目录，并由 `skill-run-contract-v1.0.0` annotated tag 指向。Consumer 必须锁定 tag、peeled commit 和 SHA256SUMS。
+
+P0 Catalog 仅接受 `capabilityKind: skill`。Approval 与 Attachment 明示为 unsupported，调用端须 fail-closed；`WAITING_APPROVAL` 仅可读取状态。`X-Idempotency-Key` 的作用域是已认证的 org、user、tool，TTL 24 小时，冲突返回 409，同键重放返回原 Run；[[nodeskclaw-backend/app/services/hermes_skill/runtime_skill_run_service.py#RuntimeSkillRunService#start]] 与 [[nodeskclaw-backend/app/services/hermes_skill/task_service.py#TaskService#find_idempotent_task]] 必须使用该相同键，数据库唯一索引由 `alembic/versions/e9802bb694b2_统一_skill_run_幂等键.py` 保证。
+
+公开 Run 投影由 [[nodeskclaw-backend/app/api/runs.py#_public_run_view]]、[[nodeskclaw-backend/app/api/runs.py#_public_run_result]] 和 [[nodeskclaw-backend/app/api/runs.py#_public_artifact_descriptor]] 限定字段。[[nodeskclaw-backend/app/api/runs.py#_public_run_event]] 将 Agent 事件映射为有稳定 `run_id:event_seq` identity 的受限 union；未知事件不得透传。[[nodeskclaw-backend/scripts/contracts.py#_validate_skill_run_release]] 验证 tagged release 的提交边界。
 
 ## Related
 

@@ -7,8 +7,13 @@ import httpx
 from httpx import ASGITransport
 from pydantic import BaseModel, Field
 
+from sqlalchemy.exc import MissingGreenlet
+
 from app.models.hermes_skill.hermes_task import HermesTask, TaskStatus
-from app.services.hermes_skill.run_projection_updater_service import RunProjectionUpdaterService
+from app.services.hermes_skill.run_projection_updater_service import (
+    RunProjectionUpdaterService,
+    RunProjectionWorker,
+)
 
 
 class ArtifactDescriptor(BaseModel):
@@ -65,9 +70,30 @@ class RunView(BaseModel):
     updated_at: str
 
 
+def _make_db_mock(task, local_max_seq=1):
+    """Build an AsyncMock db that returns *task* on the first execute (task lookup)
+    and increments a local seq counter for subsequent _next_local_seq calls."""
+    db = AsyncMock()
+    call_count = {"n": 0}
+
+    async def _execute_side_effect(stmt, *a, **kw):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            res = MagicMock()
+            res.scalar_one_or_none.return_value = task
+            return res
+        res = MagicMock()
+        nonlocal local_max_seq
+        res.scalar_one_or_none.return_value = local_max_seq
+        local_max_seq += 1
+        return res
+
+    db.execute.side_effect = _execute_side_effect
+    return db
+
+
 @pytest.mark.asyncio
 async def test_sync_task_projection_updates_events_and_cursor(monkeypatch):
-    db = AsyncMock()
     mock_task = HermesTask(
         id="task-1",
         org_id="org-1",
@@ -75,9 +101,7 @@ async def test_sync_task_projection_updates_events_and_cursor(monkeypatch):
         status=TaskStatus.RUNNING,
         projection_cursor=1,
     )
-    mock_res = MagicMock()
-    mock_res.scalar_one_or_none.return_value = mock_task
-    db.execute.return_value = mock_res
+    db = _make_db_mock(mock_task, local_max_seq=1)
 
     service = RunProjectionUpdaterService(db)
 
@@ -185,13 +209,17 @@ async def test_sync_task_projection_updates_events_and_cursor(monkeypatch):
     assert mock_task.result_content == "output text"
     assert mock_task.result_summary == "done"
     assert mock_task.server_artifacts == [artifacts_items[0].model_dump()]
-    assert db.add.call_count == 2  # events with seq 2 and 3 added (seq 1 was <= cursor 1)
+
+    added_events = [call.args[0] for call in db.add.call_args_list if hasattr(call.args[0], "event_type")]
+    assert len(added_events) == 2
+    for ev in added_events:
+        assert ev.payload.get("source") == "agent"
+        assert ev.payload.get("hermes_event_seq") is not None
     assert db.commit.called
 
 
 @pytest.mark.asyncio
 async def test_sync_task_projection_handles_timed_out(monkeypatch):
-    db = AsyncMock()
     mock_task = HermesTask(
         id="task-2",
         org_id="org-1",
@@ -199,9 +227,7 @@ async def test_sync_task_projection_handles_timed_out(monkeypatch):
         status=TaskStatus.RUNNING,
         projection_cursor=0,
     )
-    mock_res = MagicMock()
-    mock_res.scalar_one_or_none.return_value = mock_task
-    db.execute.return_value = mock_res
+    db = _make_db_mock(mock_task, local_max_seq=0)
 
     service = RunProjectionUpdaterService(db)
 
@@ -242,3 +268,126 @@ async def test_sync_task_projection_handles_timed_out(monkeypatch):
     assert mock_task.status == TaskStatus.FAILED
     assert mock_task.error_code == "errors.skill_run.timed_out"
     assert "timed out" in mock_task.error_message
+
+
+@pytest.mark.asyncio
+async def test_sync_projection_no_duplicate_seq_when_agent_seq_overlaps(monkeypatch):
+    """Agent returns event_seq=1 which already exists locally (task_service wrote seq 0,1).
+    The updater must use local monotonic seq, not agent seq, so no UniqueViolation."""
+    mock_task = HermesTask(
+        id="task-dup",
+        org_id="org-1",
+        user_id="user-1",
+        status=TaskStatus.QUEUED,
+        projection_cursor=0,
+    )
+    db = _make_db_mock(mock_task, local_max_seq=1)
+
+    service = RunProjectionUpdaterService(db)
+
+    mock_agent_app = FastAPI()
+
+    @mock_agent_app.get("/internal/v1/runs/{run_id}", response_model=RunView)
+    async def get_run_route(run_id: str, x_exec_org_id: str = Header(alias="X-Exec-Org-Id")):
+        return RunView(
+            run_id=run_id, org_id="org-1", user_id="user-1",
+            tool_name="t", status="RUNNING", snapshot={},
+            created_at="2026-08-27T00:00:00Z", updated_at="2026-08-27T00:00:00Z",
+        )
+
+    @mock_agent_app.get("/internal/v1/runs/{run_id}/events", response_model=EventsResponse)
+    async def get_events_route(run_id: str, after_seq: int = 0, x_exec_org_id: str = Header(alias="X-Exec-Org-Id")):
+        items = [
+            RunEventView(event_id="e1", run_id=run_id, event_type="run.started",
+                         event_seq=1, timestamp="2026-08-27T00:00:00Z", payload={}),
+            RunEventView(event_id="e2", run_id=run_id, event_type="custom.delta",
+                         event_seq=2, timestamp="2026-08-27T00:00:01Z", payload={"x": 1}),
+        ]
+        return EventsResponse(org_id="org-1", run_id=run_id,
+                              items=[e for e in items if e.event_seq > after_seq])
+
+    real_transport = ASGITransport(app=mock_agent_app)
+    orig_async_client = httpx.AsyncClient
+
+    def _custom_client(*args, **kwargs):
+        kwargs["transport"] = real_transport
+        kwargs["base_url"] = "http://testserver"
+        return orig_async_client(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", _custom_client)
+
+    ok = await service.sync_task_projection("task-dup", "org-1", "user-1")
+    assert ok is True
+    assert mock_task.projection_cursor == 2
+
+    added_events = [c.args[0] for c in db.add.call_args_list if hasattr(c.args[0], "event_seq")]
+    assert len(added_events) == 2
+    local_seqs = [e.event_seq for e in added_events]
+    assert local_seqs[0] == 2
+    assert local_seqs[1] == 3
+    for ev in added_events:
+        assert ev.payload["source"] == "agent"
+
+
+class _ExpireAfterFirstReadTask:
+    def __init__(self, task_id: str, org_id: str, user_id: str):
+        self._id = task_id
+        self._org_id = org_id
+        self._user_id = user_id
+        self.expired = False
+
+    def _read(self, value: str) -> str:
+        if self.expired:
+            raise MissingGreenlet(
+                "greenlet_spawn has not been called; can't call await_only() here. "
+                "Was IO attempted in an unexpected place?"
+            )
+        return value
+
+    @property
+    def id(self) -> str:
+        return self._read(self._id)
+
+    @property
+    def org_id(self) -> str:
+        return self._read(self._org_id)
+
+    @property
+    def user_id(self) -> str:
+        return self._read(self._user_id)
+
+
+@pytest.mark.asyncio
+# @lat: [[architecture/backend#C2 Projection Sync#Session Isolation After Commit]]
+async def test_run_once_does_not_touch_expired_orm_after_first_sync(monkeypatch):
+    task_a = _ExpireAfterFirstReadTask("task-a", "org-1", "user-1")
+    task_b = _ExpireAfterFirstReadTask("task-b", "org-1", "user-2")
+
+    mock_db = AsyncMock()
+    mock_res = MagicMock()
+    mock_res.scalars.return_value.all.return_value = [task_a, task_b]
+    mock_db.execute.return_value = mock_res
+    mock_db.__aenter__.return_value = mock_db
+    mock_db.__aexit__.return_value = False
+
+    synced: list[tuple[str, str, str | None]] = []
+
+    async def fake_sync(self, task_id, org_id, user_id=None):
+        task_a.expired = True
+        task_b.expired = True
+        synced.append((task_id, org_id, user_id))
+        return True
+
+    monkeypatch.setattr(
+        "app.services.hermes_skill.run_projection_updater_service.async_session_factory",
+        lambda: mock_db,
+    )
+    monkeypatch.setattr(RunProjectionUpdaterService, "sync_task_projection", fake_sync)
+
+    await RunProjectionWorker()._run_once()
+
+    assert synced == [
+        ("task-a", "org-1", "user-1"),
+        ("task-b", "org-1", "user-2"),
+    ]
+

@@ -1,0 +1,14 @@
+binding_version: '2'
+central_repository: loudon84/smc-delivery-governance
+kit:
+  version: 1.2.1
+  tag: DEV-governance-kit-v1.2.1
+  commit: 16e33a69619d57b9ce83880f45a1726515bf80c2
+  manifest_sha256: 4c3308f364ccc1630a20edbecbab2bd804b51ce28ca2fe5a58374db28b9311ed
+project_id: PROJECT-NODESKCLAW
+repository_id: REPO-NODESKCLAW
+governance_policy: REPOSITORY-GOVERNANCE-V1
+features:
+- feature_id: FEAT-SKILL-FIRST-001
+  work_package_id: WP-SKILL-FIRST-NODESKCLAW
+  source_revision: SKILL-FIRST-PRD@4.0.1

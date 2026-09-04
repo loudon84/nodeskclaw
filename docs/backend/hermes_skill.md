@@ -199,13 +199,14 @@ Portal 一键注册
 
 | 字段 | 说明 |
 |------|------|
-| `profile_id` / `workspace_id` | 安装与授权作用域，默认 `default` |
+| `profile_id` | Hermes Profile，默认 `default`（合法 Profile 名，不是 Workspace） |
+| `workspace_id` | 安装与授权作用域；`null` / 缺省 / 空串 = 组织全局；真实 Workspace ID = 绑定该办公室；**禁止** `"default"`（非法 Sentinel，返回 `errors.skill.workspace_scope_invalid`） |
 | `is_mcp_exposed` | 是否出现在组织级 MCP `tools/list` |
 | `default_execution_mode` | 默认 `async` |
 | `timeout_seconds` | API_SERVER 调用超时 |
 | `grant` | 可选；默认向组织授予 `list` + `invoke` |
 
-**响应要点**：`skill_id`、`tool_name`、`installation_id`、`hermes_agent_instance_id`、`status`（`created` / `updated`）。
+**响应要点**：`skill_id`、`tool_name`、`installation_id`、`hermes_agent_instance_id`、`workspace_id`（可为 `null`）、`status`（`created` / `updated`）。
 
 ### 注册写入的数据
 
@@ -237,7 +238,7 @@ Portal 一键注册
   "agent_profile": "common-writer",
   "runtime_skill_id": "customer-profiling",
   "profile_id": "default",
-  "workspace_id": "default",
+  "workspace_id": null,
   "api_server_model_name": "common-writer",
   "default_execution_mode": "async",
   "timeout_seconds": 1800

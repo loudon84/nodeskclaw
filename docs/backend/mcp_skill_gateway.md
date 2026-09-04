@@ -234,7 +234,7 @@ hermes_task_worker
   "agent_profile": "common-writer",
   "runtime_skill_id": "customer-profiling",
   "profile_id": "default",
-  "workspace_id": "default",
+  "workspace_id": null,
   "api_server_model_name": "common-writer",
   "default_execution_mode": "async",
   "timeout_seconds": 1800
