@@ -456,11 +456,17 @@ class McpToolMapper:
             route_meta,
             runtime_profile,
         )
+        output_policy = OutputPolicyService.resolve(
+            skill=skill,
+            installation=installation,
+            tool_name=skill.tool_name or "",
+        )
+        default_mode = resolve_mcp_execution_mode(None, skill, output_policy)
         return {
             "sourceType": RUNTIME_SKILL_ROUTE_TYPE,
             "serverManagedRoute": True,
-            "executionModes": [ASYNC_EVENT_MODE],
-            "defaultExecutionMode": ASYNC_EVENT_MODE,
+            "executionModes": [default_mode],
+            "defaultExecutionMode": default_mode,
             "sseTimelineEnabled": True,
             "artifactMode": "pull_only",
             "resultMode": "pull_on_complete",
@@ -962,6 +968,17 @@ class McpToolMapper:
                 existing_task=task,
             )
 
+        if settings.SKILL_AGENT_ENABLED and runtime_run_result is not None:
+            await self.db.commit()
+            return self._merge_org_mcp_async_payload(
+                runtime_run_result.structured_content,
+                tool_name=tool_name,
+                agent_alias=agent_alias,
+                installation=installation,
+                routing_result=routing_result,
+                deduped=False,
+            )
+
         if execution_mode == ASYNC_EVENT_MODE:
             await self.db.commit()
             if runtime_run_result is not None:
@@ -1099,6 +1116,20 @@ class McpToolMapper:
             deduped=deduped,
         )
 
+    _EMPLOYEE_PUBLIC_FORBIDDEN_KEYS = (
+        "task_id",
+        "task_no",
+        "agent_alias",
+        "agent_id",
+        "profile_id",
+        "workspace_id",
+        "installation_id",
+        "routing_reason",
+        "event_token_url",
+        "wait_strategy",
+        "event_url",
+    )
+
     @staticmethod
     def _merge_org_mcp_async_payload(
         structured_content: dict[str, Any],
@@ -1113,6 +1144,8 @@ class McpToolMapper:
         if settings.SKILL_AGENT_ENABLED:
             payload.setdefault("tool_name", tool_name)
             payload["retryable"] = False
+            for key in McpToolMapper._EMPLOYEE_PUBLIC_FORBIDDEN_KEYS:
+                payload.pop(key, None)
             if deduped:
                 payload["deduped"] = True
             return payload

@@ -24,6 +24,11 @@ class RunProjectionUpdaterService:
         res = await self.db.execute(stmt)
         task = res.scalar_one_or_none()
         if not task:
+            logger.error(
+                "skill_run.projection_sync_failed task_id=%s org_id=%s error_code=PROJECTION_SYNC_FAILED reason=task_not_found",
+                task_id,
+                org_id,
+            )
             return False
 
         agent_base = settings.SKILL_AGENT_BASE_URL.rstrip("/")
@@ -38,6 +43,11 @@ class RunProjectionUpdaterService:
                 # 1. Fetch Run details
                 resp_run = await client.get(f"/internal/v1/runs/{task_id}")
                 if resp_run.status_code == 404:
+                    logger.error(
+                        "skill_run.projection_sync_failed task_id=%s org_id=%s error_code=PROJECTION_SYNC_FAILED reason=agent_run_not_found",
+                        task_id,
+                        org_id,
+                    )
                     return False
                 resp_run.raise_for_status()
                 run_data = resp_run.json()
@@ -138,7 +148,11 @@ class RunProjectionUpdaterService:
                 await self.db.commit()
                 return True
         except Exception:
-            logger.exception("Failed to sync projection for task_id=%s", task_id)
+            logger.exception(
+                "skill_run.projection_sync_failed task_id=%s org_id=%s error_code=PROJECTION_SYNC_FAILED reason=exception",
+                task_id,
+                org_id,
+            )
             await self.db.rollback()
             return False
 
@@ -159,6 +173,7 @@ class RunProjectionUpdaterService:
             "run.failed": EventType.TASK_FAILED,
             "run.cancelled": EventType.TASK_CANCELLED,
             "run.cancelling": EventType.TASK_CANCEL_REQUESTED,
+            "run.timed_out": EventType.TASK_TIMEOUT,
         }
         return mapping.get(ev_type_str, EventType.HERMES_RUN_DELTA)
 

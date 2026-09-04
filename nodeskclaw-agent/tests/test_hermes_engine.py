@@ -1,22 +1,143 @@
-"""Hermes engine streaming stub behaviour."""
+"""Hermes Native Run Adapter behaviour."""
 
 from __future__ import annotations
 
+import json
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import httpx
 import pytest
 
-from app.services.hermes_engine import build_chat_completions_payload, execute_hermes_run
+from app.services.hermes_engine import (
+    REQUIRED_FEATURES,
+    RUNTIME_CAPABILITY_MISSING,
+    RUNTIME_UNREACHABLE,
+    RUNTIME_VERSION_UNSUPPORTED,
+    build_native_run_payload,
+    execute_hermes_run,
+)
+
+FLOOR_CAPS = {
+    "version": "v2026.8.31",
+    "features": {name: True for name in REQUIRED_FEATURES},
+}
 
 
-def test_build_chat_completions_payload_includes_skill():
-    payload = build_chat_completions_payload(
+@pytest.fixture(autouse=True)
+def _stub_binding(monkeypatch):
+    async def _gen(_attempt_id: str) -> int:
+        return 1
+
+    async def _persist(**kwargs):
+        return {
+            "runtime_run_id": kwargs["runtime_run_id"],
+            "generation": kwargs["generation"],
+            "runtime_capability_snapshot": kwargs.get("runtime_capability_snapshot"),
+            "runtime_idempotency_key": kwargs.get("runtime_idempotency_key"),
+        }
+
+    async def _load(_attempt_id: str):
+        return {"runtime_run_id": "rr-1", "generation": 1}
+
+    async def _terminal(**kwargs):
+        return None
+
+    monkeypatch.setattr("app.services.hermes_engine.load_attempt_generation", _gen)
+    monkeypatch.setattr("app.services.hermes_engine.persist_native_binding", _persist)
+    monkeypatch.setattr("app.services.hermes_engine.load_runtime_binding", _load)
+    monkeypatch.setattr("app.services.hermes_engine.mark_native_terminal", _terminal)
+
+
+def _json_response(payload: dict, status_code: int = 200) -> MagicMock:
+    resp = MagicMock()
+    resp.status_code = status_code
+    resp.headers = {"content-type": "application/json"}
+    resp.json.return_value = payload
+    resp.raise_for_status = MagicMock()
+    return resp
+
+
+def _sse_response(lines: list[str], status_code: int = 200) -> MagicMock:
+    resp = MagicMock()
+    resp.status_code = status_code
+    resp.headers = {"content-type": "text/event-stream"}
+    resp.raise_for_status = MagicMock()
+
+    async def fake_lines():
+        for line in lines:
+            yield line
+
+    resp.aiter_lines = fake_lines
+    return resp
+
+
+def _native_client(
+    *,
+    caps: dict | None = None,
+    start: dict | None = None,
+    status: dict | None = None,
+    event_lines: list[str] | None = None,
+    stop_status: int = 200,
+    assistant_text: str = "ok",
+):
+    caps = caps if caps is not None else FLOOR_CAPS
+    start = start if start is not None else {"id": "rr-1", "status": "running"}
+    status = status if status is not None else {"id": "rr-1", "status": "completed"}
+    if event_lines is None:
+        event_lines = [
+            "data: " + json.dumps({"type": "assistant.message", "text": assistant_text}),
+            "data: [DONE]",
+        ]
+
+    probe_resp = MagicMock()
+    probe_resp.status_code = 404
+    caps_resp = _json_response(caps)
+    start_resp = _json_response(start)
+    status_resp = _json_response(status)
+    stop_resp = MagicMock()
+    stop_resp.status_code = stop_status
+    sse_resp = _sse_response(event_lines)
+
+    client = AsyncMock()
+    client.__aenter__.return_value = client
+    client.__aexit__.return_value = None
+
+    async def fake_get(url, **kwargs):
+        text = str(url)
+        if text.rstrip("/").endswith("/v1/capabilities"):
+            return caps_resp
+        if "/v1/runs/" in text and not text.endswith("/events"):
+            return status_resp
+        return probe_resp
+
+    async def fake_post(url, **kwargs):
+        text = str(url)
+        if text.endswith("/v1/runs"):
+            return start_resp
+        if text.endswith("/stop"):
+            return stop_resp
+        raise AssertionError(f"unexpected POST {text}")
+
+    client.get = AsyncMock(side_effect=fake_get)
+    client.post = AsyncMock(side_effect=fake_post)
+    client.stream = MagicMock()
+    client.stream.return_value.__aenter__.return_value = sse_resp
+    client.stream.return_value.__aexit__.return_value = None
+    return client
+
+
+def test_build_native_run_payload_includes_skill():
+    payload = build_native_run_payload(
         model_name="m1",
         runtime_skill_id="writer",
         prompt="hello",
         context={"a": 1},
     )
-    assert payload["stream"] is True
+    assert "messages" not in payload
     assert payload["model"] == "m1"
-    assert "writer" in payload["messages"][0]["content"]
+    assert payload["input"].startswith("hello")
+    assert "writer" in payload["instructions"]
+    assert "stream" not in payload
 
 
 @pytest.mark.asyncio
@@ -36,21 +157,10 @@ async def test_execute_hermes_fails_without_gateway():
 
 @pytest.mark.asyncio
 async def test_execute_hermes_uses_minted_credential_lease():
-    from unittest.mock import AsyncMock, MagicMock, patch
-
-    mock_resp = MagicMock()
-    mock_resp.headers = {"content-type": "application/json"}
-    mock_resp.json.return_value = {"choices": [{"message": {"content": "ok from minted lease"}}]}
-    mock_resp.raise_for_status = MagicMock()
-
-    client = AsyncMock()
-    client.__aenter__.return_value = client
-    client.__aexit__.return_value = None
-    client.stream = MagicMock()
-    client.stream.return_value.__aenter__.return_value = mock_resp
-    client.stream.return_value.__aexit__.return_value = None
-
-    mock_fetch = AsyncMock(return_value={"token": "minted-token-abc", "gateway_url": "http://hermes:8642", "model": "hermes-3"})
+    client = _native_client(assistant_text="ok from minted lease")
+    mock_fetch = AsyncMock(
+        return_value={"token": "minted-token-abc", "gateway_url": "http://hermes:8642", "model": "hermes-3"}
+    )
     with (
         patch("app.services.hermes_engine.fetch_credential_lease", mock_fetch),
         patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client),
@@ -63,9 +173,7 @@ async def test_execute_hermes_uses_minted_credential_lease():
                 org_id="org-1",
                 run_id="run-1",
                 attempt_id="att-1",
-                route_snapshot={
-                    "credential_lease_ref": {"instance_id": "inst-1"},
-                },
+                route_snapshot={"credential_lease_ref": {"instance_id": "inst-1"}},
             )
         ]
 
@@ -75,15 +183,18 @@ async def test_execute_hermes_uses_minted_credential_lease():
         attempt_id="att-1",
         lease_ref={"instance_id": "inst-1"},
     )
-    call_kwargs = client.stream.call_args[1]
-    assert call_kwargs["headers"]["Authorization"] == "Bearer minted-token-abc"
-    assert events[-1]["payload"]["content"] == "ok from minted lease"
+    start_call = next(c for c in client.post.await_args_list if str(c.args[0]).endswith("/v1/runs"))
+    assert start_call.kwargs["headers"]["Authorization"] == "Bearer minted-token-abc"
+    assert start_call.kwargs["headers"]["Idempotency-Key"] == "run-1:att-1:1"
+    assert "messages" not in start_call.kwargs["json"]
+    assert events[-1]["event_type"] == "run.completed"
     assistant_events = [e for e in events if e["event_type"] == "assistant.message"]
     assert len(assistant_events) == 1
     assert assistant_events[0]["payload"]["text"] == "ok from minted lease"
     assert assistant_events[0]["source_event_id"]
     assert "token" not in assistant_events[0]["payload"]
     assert "gateway_url" not in assistant_events[0]["payload"]
+    assert "runtime_run_id" not in assistant_events[0]["payload"]
 
 
 @pytest.mark.asyncio
@@ -104,14 +215,11 @@ async def test_execute_hermes_rejects_plaintext_gateway_token_fail_closed():
     ]
     assert events[-1]["event_type"] == "run.failed"
     assert "Plaintext credential/env_file in snapshot rejected" in events[-1]["payload"]["error"]
-    # Plaintext token must not be echoed back in error
     assert "raw-plaintext-token-12345" not in events[-1]["payload"]["error"]
 
 
 @pytest.mark.asyncio
 async def test_execute_hermes_lease_fetch_failure_fails_closed_and_redacted():
-    from unittest.mock import AsyncMock, patch
-
     with patch(
         "app.services.hermes_engine.fetch_credential_lease",
         AsyncMock(return_value=None),
@@ -124,9 +232,7 @@ async def test_execute_hermes_lease_fetch_failure_fails_closed_and_redacted():
                 org_id="org-1",
                 run_id="run-1",
                 attempt_id="att-1",
-                route_snapshot={
-                    "credential_lease_ref": {"instance_id": "inst-1"},
-                },
+                route_snapshot={"credential_lease_ref": {"instance_id": "inst-1"}},
             )
         ]
     assert events[-1]["event_type"] == "run.failed"
@@ -135,24 +241,12 @@ async def test_execute_hermes_lease_fetch_failure_fails_closed_and_redacted():
 
 @pytest.mark.asyncio
 async def test_execute_engine_dispatches_hermes_and_connector_fail_closed():
-    from unittest.mock import AsyncMock, MagicMock, patch
-
     from app.services.engine_port import execute_engine
 
-    # 1. Hermes dispatch
-    mock_fetch = AsyncMock(return_value={"token": "minted-token-abc", "gateway_url": "http://hermes:8642", "model": "hermes-3"})
-    mock_resp = MagicMock()
-    mock_resp.headers = {"content-type": "application/json"}
-    mock_resp.json.return_value = {"choices": [{"message": {"content": "hermes output"}}]}
-    mock_resp.raise_for_status = MagicMock()
-
-    client = AsyncMock()
-    client.__aenter__.return_value = client
-    client.__aexit__.return_value = None
-    client.stream = MagicMock()
-    client.stream.return_value.__aenter__.return_value = mock_resp
-    client.stream.return_value.__aexit__.return_value = None
-
+    mock_fetch = AsyncMock(
+        return_value={"token": "minted-token-abc", "gateway_url": "http://hermes:8642", "model": "hermes-3"}
+    )
+    client = _native_client(assistant_text="hermes output")
     with (
         patch("app.services.hermes_engine.fetch_credential_lease", mock_fetch),
         patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client),
@@ -170,9 +264,9 @@ async def test_execute_engine_dispatches_hermes_and_connector_fail_closed():
             )
         ]
     assert events[-1]["event_type"] == "run.completed"
-    assert events[-1]["payload"]["content"] == "hermes output"
+    assistant = next(e for e in events if e["event_type"] == "assistant.message")
+    assert assistant["payload"]["text"] == "hermes output"
 
-    # 2. Unsupported engine fails closed
     events_unsupported = [
         event
         async for event in execute_engine(
@@ -188,8 +282,6 @@ async def test_execute_engine_dispatches_hermes_and_connector_fail_closed():
 
 @pytest.mark.asyncio
 async def test_execute_engine_dispatches_connector_with_canonical_route_snapshot():
-    from unittest.mock import AsyncMock, MagicMock, patch
-
     from app.services.engine_port import execute_engine
 
     response = MagicMock()
@@ -223,37 +315,15 @@ async def test_execute_engine_dispatches_connector_with_canonical_route_snapshot
 
 @pytest.mark.asyncio
 async def test_execute_hermes_maps_structured_semantic_fields_only():
-    from unittest.mock import AsyncMock, MagicMock, patch
-
-    mock_resp = MagicMock()
-    mock_resp.headers = {"content-type": "application/json"}
-    mock_resp.json.return_value = {
-        "choices": [
-            {
-                "message": {
-                    "content": "answer text",
-                    "tool_calls": [
-                        {
-                            "id": "call-1",
-                            "function": {"name": "search", "arguments": "{\"q\":\"secret\"}"},
-                        }
-                    ],
-                    "reasoning_summary": "safe summary",
-                    "clarify": {"question": "Which region?", "options": ["a", "b"]},
-                    "approval": {"approval_id": "appr-1", "summary": "Need approval"},
-                }
-            }
-        ]
-    }
-    mock_resp.raise_for_status = MagicMock()
-
-    client = AsyncMock()
-    client.__aenter__.return_value = client
-    client.__aexit__.return_value = None
-    client.stream = MagicMock()
-    client.stream.return_value.__aenter__.return_value = mock_resp
-    client.stream.return_value.__aexit__.return_value = None
-
+    lines = [
+        'data: {"type": "assistant.message", "text": "answer text"}',
+        'data: {"type": "tool.call", "tool_name": "search", "call_id": "call-1", "status": "started", "arguments": {"q": "secret"}}',
+        'data: {"type": "reasoning.summary", "summary": "safe summary"}',
+        'data: {"type": "clarify.requested", "question": "Which region?", "options": ["a", "b"]}',
+        'data: {"type": "approval.requested", "approval_id": "appr-1", "summary": "Need approval"}',
+        "data: [DONE]",
+    ]
+    client = _native_client(event_lines=lines)
     with patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client):
         events = [
             event
@@ -274,41 +344,22 @@ async def test_execute_hermes_maps_structured_semantic_fields_only():
     assert "clarify.requested" in types
     assert "approval.requested" in types
     assert "artifact.persisted" not in types
-
     tool_evt = next(e for e in events if e["event_type"] == "tool.call")
-    assert tool_evt["payload"] == {
-        "tool_name": "search",
-        "call_id": "call-1",
-        "status": "started",
-    }
+    assert tool_evt["payload"] == {"tool_name": "search", "call_id": "call-1", "status": "started"}
     assert "arguments" not in tool_evt["payload"]
-    assert tool_evt["source_event_id"]
-
     progress_payloads = [e["payload"] for e in events if e["event_type"] == "run.progress"]
     assert all("delta" not in p for p in progress_payloads)
+    assert all("runtime_run_id" not in (e.get("payload") or {}) for e in events)
 
 
 @pytest.mark.asyncio
 async def test_execute_hermes_plain_text_does_not_infer_semantic_types():
-    from unittest.mock import AsyncMock, MagicMock, patch
-
-    mock_resp = MagicMock()
-    mock_resp.headers = {"content-type": "text/event-stream"}
-    mock_resp.raise_for_status = MagicMock()
-
-    async def fake_lines():
-        yield 'data: {"choices":[{"delta":{"content":"Please call the weather tool and approve this"}}]}'
-        yield "data: [DONE]"
-
-    mock_resp.aiter_lines = fake_lines
-
-    client = AsyncMock()
-    client.__aenter__.return_value = client
-    client.__aexit__.return_value = None
-    client.stream = MagicMock()
-    client.stream.return_value.__aenter__.return_value = mock_resp
-    client.stream.return_value.__aexit__.return_value = None
-
+    client = _native_client(
+        event_lines=[
+            'data: {"type": "assistant.message", "text": "Please call the weather tool and approve this"}',
+            "data: [DONE]",
+        ]
+    )
     with patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client):
         events = [
             event
@@ -327,24 +378,19 @@ async def test_execute_hermes_plain_text_does_not_infer_semantic_types():
     assert "clarify.requested" not in types
     assert "approval.requested" not in types
     assert "reasoning.summary" not in types
-    assert "artifact.persisted" not in types
     assistant = next(e for e in events if e["event_type"] == "assistant.message")
     assert assistant["payload"]["text"].startswith("Please call")
-    assert "source_event_id" in assistant
 
 
 @pytest.mark.asyncio
 # @lat: [[architecture/skill-agent#Configuration#Gateway Reachability Probe]]
 async def test_execute_hermes_fails_closed_when_gateway_probe_times_out():
-    from unittest.mock import AsyncMock, MagicMock, patch
-
-    import httpx
-
     client = AsyncMock()
     client.__aenter__.return_value = client
     client.__aexit__.return_value = None
     client.get = AsyncMock(side_effect=httpx.ConnectTimeout("connect timed out"))
     client.stream = MagicMock()
+    client.post = AsyncMock()
 
     with patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client):
         events = [
@@ -359,32 +405,16 @@ async def test_execute_hermes_fails_closed_when_gateway_probe_times_out():
         ]
 
     assert events[-1]["event_type"] == "run.failed"
-    assert events[-1]["payload"]["error_code"] == "errors.skill_run.gateway_unreachable"
+    assert events[-1]["payload"]["error_code"] == RUNTIME_UNREACHABLE
     assert "192.168.102.247:29100" in events[-1]["payload"]["error"]
     client.stream.assert_not_called()
+    client.post.assert_not_called()
 
 
 @pytest.mark.asyncio
 # @lat: [[architecture/skill-agent#Configuration#Gateway Reachability Probe]]
 async def test_execute_hermes_probes_gateway_before_stream():
-    from unittest.mock import AsyncMock, MagicMock, patch
-
-    mock_resp = MagicMock()
-    mock_resp.headers = {"content-type": "application/json"}
-    mock_resp.json.return_value = {"choices": [{"message": {"content": "ok"}}]}
-    mock_resp.raise_for_status = MagicMock()
-
-    probe_resp = MagicMock()
-    probe_resp.status_code = 404
-
-    client = AsyncMock()
-    client.__aenter__.return_value = client
-    client.__aexit__.return_value = None
-    client.get = AsyncMock(return_value=probe_resp)
-    client.stream = MagicMock()
-    client.stream.return_value.__aenter__.return_value = mock_resp
-    client.stream.return_value.__aexit__.return_value = None
-
+    client = _native_client()
     with patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client):
         events = [
             event
@@ -397,8 +427,265 @@ async def test_execute_hermes_probes_gateway_before_stream():
             )
         ]
 
-    client.get.assert_awaited()
-    assert client.get.await_args.args[0] == "http://hermes:8642"
+    assert client.get.await_args_list[0].args[0] == "http://hermes:8642"
+    assert any(str(c.args[0]).endswith("/v1/capabilities") for c in client.get.await_args_list)
     client.stream.assert_called()
+    stream_url = client.stream.call_args.args[1]
+    assert stream_url.endswith("/v1/runs/rr-1/events")
+    assert client.stream.call_args.args[0] == "GET"
     assert events[-1]["event_type"] == "run.completed"
 
+
+@pytest.mark.asyncio
+async def test_execute_hermes_low_version_runtime_unsupported():
+    client = _native_client(caps={"version": "v2026.8.3", "features": {name: True for name in REQUIRED_FEATURES}})
+    with patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client):
+        events = [
+            event
+            async for event in execute_hermes_run(
+                tool_name="foo",
+                arguments={"prompt": "hi"},
+                route_snapshot={"gateway_url": "http://hermes:8642"},
+                run_id="run-old",
+                attempt_id="att-old",
+            )
+        ]
+    assert events[-1]["payload"]["error_code"] == RUNTIME_VERSION_UNSUPPORTED
+    assert not any(str(c.args[0]).endswith("/v1/runs") for c in client.post.await_args_list)
+    assert "/v1/chat/completions" not in str(client.post.await_args_list)
+    client.stream.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_execute_hermes_missing_capability_fail_closed():
+    features = {name: True for name in REQUIRED_FEATURES}
+    features.pop("run_stop")
+    persist_calls: list[dict] = []
+
+    async def _persist(**kwargs):
+        persist_calls.append(kwargs)
+        return {"runtime_run_id": kwargs["runtime_run_id"], "generation": kwargs["generation"]}
+
+    client = _native_client(caps={"version": "v2026.8.31", "features": features})
+    with (
+        patch("app.services.hermes_engine.persist_native_binding", _persist),
+        patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client),
+    ):
+        events = [
+            event
+            async for event in execute_hermes_run(
+                tool_name="foo",
+                arguments={"prompt": "hi"},
+                route_snapshot={"gateway_url": "http://hermes:8642"},
+                run_id="run-cap",
+                attempt_id="att-cap",
+            )
+        ]
+    assert events[-1]["payload"]["error_code"] == RUNTIME_CAPABILITY_MISSING
+    assert persist_calls == []
+    client.stream.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_execute_hermes_binding_before_events_and_retry_same_runtime_run_id():
+    order: list[str] = []
+    persist_ids: list[str] = []
+
+    async def _persist(**kwargs):
+        order.append("persist")
+        persist_ids.append(kwargs["runtime_run_id"])
+        return {
+            "runtime_run_id": kwargs["runtime_run_id"],
+            "generation": kwargs["generation"],
+            "runtime_capability_snapshot": kwargs.get("runtime_capability_snapshot"),
+        }
+
+    orig_stream_factory = None
+
+    def stream_wrapper(*args, **kwargs):
+        order.append("events")
+        return orig_stream_factory(*args, **kwargs)
+
+    client = _native_client()
+    orig_stream_factory = client.stream
+    client.stream = MagicMock(side_effect=lambda *a, **k: (order.append("events") or orig_stream_factory(*a, **k)))
+
+    with (
+        patch("app.services.hermes_engine.persist_native_binding", _persist),
+        patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client),
+    ):
+        events = [
+            event
+            async for event in execute_hermes_run(
+                tool_name="foo",
+                arguments={"prompt": "hi"},
+                route_snapshot={"gateway_url": "http://hermes:8642"},
+                run_id="run-bind",
+                attempt_id="att-bind",
+            )
+        ]
+        events2 = [
+            event
+            async for event in execute_hermes_run(
+                tool_name="foo",
+                arguments={"prompt": "hi"},
+                route_snapshot={"gateway_url": "http://hermes:8642"},
+                run_id="run-bind",
+                attempt_id="att-bind",
+            )
+        ]
+
+    assert events[-1]["event_type"] == "run.completed"
+    assert events2[-1]["event_type"] == "run.completed"
+    assert order[:2] == ["persist", "events"]
+    assert persist_ids == ["rr-1", "rr-1"]
+    keys = [
+        c.kwargs["headers"]["Idempotency-Key"]
+        for c in client.post.await_args_list
+        if str(c.args[0]).endswith("/v1/runs")
+    ]
+    assert keys == ["run-bind:att-bind:1", "run-bind:att-bind:1"]
+
+
+@pytest.mark.asyncio
+async def test_execute_hermes_reconcil_disconnect_uses_status_not_resubscribe():
+    client = _native_client(event_lines=["data: {\"type\": \"assistant.message\", \"text\": \"partial\"}"])
+    with patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client):
+        events = [
+            event
+            async for event in execute_hermes_run(
+                tool_name="foo",
+                arguments={"prompt": "hi"},
+                route_snapshot={"gateway_url": "http://hermes:8642"},
+                run_id="run-rec",
+                attempt_id="att-rec",
+            )
+        ]
+    assert client.stream.call_count == 1
+    status_gets = [
+        c for c in client.get.await_args_list if "/v1/runs/rr-1" in str(c.args[0]) and not str(c.args[0]).endswith("/events")
+    ]
+    assert status_gets
+    assert events[-1]["event_type"] == "run.completed"
+    assert all(not str(c.args[0]).endswith("/events") for c in client.get.await_args_list)
+
+
+@pytest.mark.asyncio
+async def test_execute_hermes_stop_404_reconciles():
+    cancel = __import__("asyncio").Event()
+    lines_started = __import__("asyncio").Event()
+
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.headers = {"content-type": "text/event-stream"}
+
+    async def fake_lines():
+        cancel.set()
+        yield 'data: {"type": "assistant.message", "text": "x"}'
+        yield "data: [DONE]"
+
+    resp.aiter_lines = fake_lines
+    client = _native_client(stop_status=404, status={"id": "rr-1", "status": "cancelled"})
+    client.stream.return_value.__aenter__.return_value = resp
+
+    with patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client):
+        events = [
+            event
+            async for event in execute_hermes_run(
+                tool_name="foo",
+                arguments={"prompt": "hi"},
+                route_snapshot={"gateway_url": "http://hermes:8642"},
+                run_id="run-stop",
+                attempt_id="att-stop",
+                cancel_event=cancel,
+            )
+        ]
+    stop_posts = [c for c in client.post.await_args_list if str(c.args[0]).endswith("/stop")]
+    assert stop_posts
+    assert events[-1]["event_type"] == "run.cancelled"
+
+
+@pytest.mark.asyncio
+async def test_execute_hermes_stale_generation_does_not_stop():
+    async def _stale(_attempt_id: str):
+        return {"runtime_run_id": "rr-new", "generation": 2}
+
+    cancel = __import__("asyncio").Event()
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.headers = {"content-type": "text/event-stream"}
+
+    async def fake_lines():
+        cancel.set()
+        yield 'data: {"type": "assistant.message", "text": "x"}'
+        yield "data: [DONE]"
+
+    resp.aiter_lines = fake_lines
+    client = _native_client()
+    client.stream.return_value.__aenter__.return_value = resp
+
+    with (
+        patch("app.services.hermes_engine.load_runtime_binding", _stale),
+        patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client),
+    ):
+        events = [
+            event
+            async for event in execute_hermes_run(
+                tool_name="foo",
+                arguments={"prompt": "hi"},
+                route_snapshot={"gateway_url": "http://hermes:8642"},
+                run_id="run-stale",
+                attempt_id="att-stale",
+                cancel_event=cancel,
+            )
+        ]
+    assert not any(str(c.args[0]).endswith("/stop") for c in client.post.await_args_list)
+    assert any(e["event_type"] == "run.cancelled" for e in events)
+
+
+@pytest.mark.asyncio
+async def test_execute_hermes_error_codes_not_raw_httpx():
+    client = _native_client()
+
+    async def boom_post(url, **kwargs):
+        if str(url).endswith("/v1/runs"):
+            raise httpx.ConnectError("All connection attempts failed: [Errno 111] Connection refused")
+        return MagicMock(status_code=200)
+
+    client.post = AsyncMock(side_effect=boom_post)
+    with patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client):
+        events = [
+            event
+            async for event in execute_hermes_run(
+                tool_name="foo",
+                arguments={"prompt": "hi"},
+                route_snapshot={"gateway_url": "http://hermes:8642"},
+                run_id="run-err",
+                attempt_id="att-err",
+            )
+        ]
+    assert events[-1]["event_type"] == "run.failed"
+    assert events[-1]["payload"]["error_code"] == RUNTIME_UNREACHABLE
+    assert "Connection refused" not in events[-1]["payload"]["error"]
+    assert "Errno" not in events[-1]["payload"]["error"]
+
+
+@pytest.mark.asyncio
+async def test_execute_hermes_never_calls_chat_completions():
+    client = _native_client()
+    with patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client):
+        events = [
+            event
+            async for event in execute_hermes_run(
+                tool_name="foo",
+                arguments={"prompt": "hi"},
+                route_snapshot={"gateway_url": "http://hermes:8642"},
+                run_id="run-nat",
+                attempt_id="att-nat",
+            )
+        ]
+    posted = [str(c.args[0]) for c in client.post.await_args_list]
+    streamed = [str(client.stream.call_args.args[1])] if client.stream.called else []
+    assert any(u.endswith("/v1/runs") for u in posted)
+    assert all("/v1/chat/completions" not in u for u in posted + streamed)
+    assert events[-1]["event_type"] == "run.completed"

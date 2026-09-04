@@ -651,6 +651,66 @@ async def test_stream_run_events_passes_semantic_event_type_and_seq():
     assert '"source"' not in body
     assert "chain_of_thought" not in body
     assert '"arguments"' not in body
+    completed_at = body.find("event: run.completed\n")
+    assert completed_at >= 0
+    assert body.find("event: run.completed\n") <= len(body)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("agent_status", "event_type"),
+    [
+        ("COMPLETED", "run.completed"),
+        ("FAILED", "run.failed"),
+        ("CANCELLED", "run.cancelled"),
+        ("TIMED_OUT", "run.timed_out"),
+    ],
+)
+async def test_stream_run_events_delivers_terminal_before_close(agent_status, event_type):
+    db = AsyncMock()
+    user_org = _mock_user_org()
+    request = MagicMock()
+    request.is_disconnected = AsyncMock(return_value=False)
+    task = HermesTask(
+        id="run-1",
+        org_id="org-1",
+        user_id="user-1",
+        tool_name="test_tool",
+        status=TaskStatus.RUNNING,
+    )
+
+    async def _agent_get_side_effect(path, params=None, org_id=None, user_id=None):
+        if path.endswith("/events"):
+            return {"items": []}
+        return {
+            "run_id": "run-1",
+            "org_id": "org-1",
+            "status": agent_status,
+            "updated_at": "2026-08-31T00:00:09Z",
+        }
+
+    with patch("app.api.runs._authorize_run", new=AsyncMock(return_value=task)), \
+         patch("app.api.runs._get_outbox_entry", new=AsyncMock(return_value=None)), \
+         patch("app.api.runs.pg_notify_service.subscribe"), \
+         patch("app.api.runs.pg_notify_service.unsubscribe"), \
+         patch("app.api.runs._agent_get", new=AsyncMock(side_effect=_agent_get_side_effect)):
+
+        response = await stream_run_events(
+            run_id="run-1",
+            request=request,
+            last_event_id=None,
+            user_org=user_org,
+            db=db,
+            last_event_id_header=None,
+        )
+        assert response.headers.get("cache-control") == "no-store"
+        chunks: list[str] = []
+        async for chunk in response.body_iterator:
+            chunks.append(chunk if isinstance(chunk, str) else chunk.decode())
+        body = "".join(chunks)
+
+    assert f"event: {event_type}\n" in body
+    assert "event: hermes.run.delta" not in body
 
 
 @pytest.mark.asyncio

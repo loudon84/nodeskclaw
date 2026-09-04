@@ -46,6 +46,22 @@ _PUBLIC_RUN_STATUSES = frozenset(
 )
 
 
+_PUBLIC_TERMINAL_EVENT_TYPES = frozenset(
+    {
+        "run.completed",
+        "run.failed",
+        "run.cancelled",
+        "run.timed_out",
+    }
+)
+_AGENT_STATUS_TO_TERMINAL_EVENT = {
+    "COMPLETED": "run.completed",
+    "FAILED": "run.failed",
+    "CANCELLED": "run.cancelled",
+    "TIMED_OUT": "run.timed_out",
+}
+
+
 def _public_run_status(value: Any, fallback: str = "FAILED") -> str:
     normalized = str(value or "").upper()
     if normalized == "DISPATCH_PENDING":
@@ -562,14 +578,25 @@ async def stream_run_events(
                         continue
                     data = json.dumps(public_event, ensure_ascii=False)
                     yield f"id: {public_event['event_id']}\nevent: {public_event['event_type']}\ndata: {data}\n\n"
-                    if public_event["event_type"] in ("run.completed", "run.failed", "run.cancelled", "run.timed_out"):
+                    if public_event["event_type"] in _PUBLIC_TERMINAL_EVENT_TYPES:
                         return
                 current = await _agent_get(
                     f"/internal/v1/runs/{run_id}",
                     org_id=org.id,
                     user_id=user.id,
                 )
-                if current.get("status") in ("COMPLETED", "FAILED", "CANCELLED", "TIMED_OUT") and not items:
+                terminal_event_type = _AGENT_STATUS_TO_TERMINAL_EVENT.get(str(current.get("status") or ""))
+                if terminal_event_type:
+                    synthetic = {
+                        "event_type": terminal_event_type,
+                        "event_seq": cursor + 1,
+                        "timestamp": current.get("updated_at"),
+                        "payload": {"phase": str(current.get("status") or "")},
+                    }
+                    public_event = _public_run_event(synthetic, run_id)
+                    if public_event is not None:
+                        data = json.dumps(public_event, ensure_ascii=False)
+                        yield f"id: {public_event['event_id']}\nevent: {public_event['event_type']}\ndata: {data}\n\n"
                     return
                 wake.clear()
                 try:

@@ -20,6 +20,24 @@ logger = logging.getLogger(__name__)
 
 TERMINAL = {"COMPLETED", "FAILED", "CANCELLED", "TIMED_OUT"}
 
+RUNTIME_BINDING_PUBLIC_OMIT_KEYS = frozenset(
+    {
+        "runtime_run_id",
+        "runtime_session_id",
+        "runtime_idempotency_key",
+        "runtime_capability_snapshot",
+        "runtime_bound_at",
+        "runtime_terminal_at",
+        "runtime_type",
+        "runtime_version",
+        "runtime_profile",
+    }
+)
+
+
+def _omit_runtime_binding_keys(payload: dict[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in payload.items() if k not in RUNTIME_BINDING_PUBLIC_OMIT_KEYS}
+
 
 def _sanitize_sensitive_keys(data: Any) -> Any:
     if isinstance(data, dict):
@@ -435,7 +453,7 @@ async def append_event(
     request_trace_id: str | None = None,
     context_version: int | None = None,
 ) -> RunEventView:
-    payload = dict(payload or {})
+    payload = _omit_runtime_binding_keys(dict(payload or {}))
     if context_version is not None and "context_version" not in payload:
         payload["context_version"] = context_version
     now = _utcnow()
@@ -1498,3 +1516,137 @@ async def get_artifact_bytes(db: AsyncSession, run_id: str, artifact_id: str) ->
         if path.is_file():
             return dict(row), path.read_bytes()
         return None
+
+
+_RUNTIME_BINDING_COLUMNS = (
+    "runtime_type, runtime_version, runtime_run_id, runtime_session_id, "
+    "runtime_profile, runtime_capability_snapshot, runtime_idempotency_key, "
+    "runtime_bound_at, runtime_terminal_at, generation"
+)
+
+
+def _runtime_binding_from_row(row: Any) -> dict[str, Any]:
+    snapshot = row.get("runtime_capability_snapshot")
+    if snapshot is not None and not isinstance(snapshot, dict):
+        snapshot = dict(snapshot) if snapshot else None
+    return {
+        "runtime_type": row.get("runtime_type"),
+        "runtime_version": row.get("runtime_version"),
+        "runtime_run_id": row.get("runtime_run_id"),
+        "runtime_session_id": row.get("runtime_session_id"),
+        "runtime_profile": row.get("runtime_profile"),
+        "runtime_capability_snapshot": snapshot,
+        "runtime_idempotency_key": row.get("runtime_idempotency_key"),
+        "runtime_bound_at": row.get("runtime_bound_at"),
+        "runtime_terminal_at": row.get("runtime_terminal_at"),
+        "generation": int(row.get("generation") or 0),
+    }
+
+
+async def get_runtime_binding(db: AsyncSession, attempt_id: str) -> dict[str, Any] | None:
+    row = (
+        await db.execute(
+            text(
+                f"""
+                SELECT {_RUNTIME_BINDING_COLUMNS}
+                FROM "{SCHEMA}".run_attempts
+                WHERE id = :attempt_id
+                LIMIT 1
+                """
+            ),
+            {"attempt_id": attempt_id},
+        )
+    ).mappings().first()
+    if not row:
+        return None
+    return _runtime_binding_from_row(row)
+
+
+async def persist_runtime_binding(
+    db: AsyncSession,
+    *,
+    attempt_id: str,
+    generation: int,
+    runtime_run_id: str,
+    runtime_type: str = "hermes",
+    runtime_version: str | None = None,
+    runtime_session_id: str | None = None,
+    runtime_profile: str | None = None,
+    runtime_capability_snapshot: dict[str, Any] | None = None,
+    runtime_idempotency_key: str | None = None,
+) -> dict[str, Any] | None:
+    existing = await get_runtime_binding(db, attempt_id)
+    if existing is None:
+        return None
+    if int(existing["generation"]) != int(generation):
+        return None
+    bound_id = existing.get("runtime_run_id")
+    if bound_id and bound_id != runtime_run_id:
+        return existing
+
+    now = _utcnow()
+    bound_at = existing.get("runtime_bound_at") or now
+    snapshot = runtime_capability_snapshot
+    if snapshot is None:
+        snapshot = existing.get("runtime_capability_snapshot")
+    res = await db.execute(
+        text(
+            f"""
+            UPDATE "{SCHEMA}".run_attempts
+            SET runtime_type = :runtime_type,
+                runtime_version = :runtime_version,
+                runtime_run_id = :runtime_run_id,
+                runtime_session_id = :runtime_session_id,
+                runtime_profile = :runtime_profile,
+                runtime_capability_snapshot = CAST(:runtime_capability_snapshot AS jsonb),
+                runtime_idempotency_key = :runtime_idempotency_key,
+                runtime_bound_at = :runtime_bound_at,
+                updated_at = :now
+            WHERE id = :attempt_id
+              AND generation = :generation
+              AND (runtime_run_id IS NULL OR runtime_run_id = :runtime_run_id)
+            """
+        ),
+        {
+            "attempt_id": attempt_id,
+            "generation": int(generation),
+            "runtime_type": runtime_type,
+            "runtime_version": runtime_version,
+            "runtime_run_id": runtime_run_id,
+            "runtime_session_id": runtime_session_id,
+            "runtime_profile": runtime_profile,
+            "runtime_capability_snapshot": json.dumps(snapshot) if snapshot is not None else None,
+            "runtime_idempotency_key": runtime_idempotency_key or existing.get("runtime_idempotency_key"),
+            "runtime_bound_at": bound_at,
+            "now": now,
+        },
+    )
+    rowcount = getattr(res, "rowcount", 0)
+    if isinstance(rowcount, int) and rowcount <= 0:
+        return existing if bound_id else None
+    refreshed = await get_runtime_binding(db, attempt_id)
+    return refreshed
+
+
+async def mark_runtime_terminal(
+    db: AsyncSession,
+    *,
+    attempt_id: str,
+    generation: int,
+) -> bool:
+    now = _utcnow()
+    res = await db.execute(
+        text(
+            f"""
+            UPDATE "{SCHEMA}".run_attempts
+            SET runtime_terminal_at = :now,
+                updated_at = :now
+            WHERE id = :attempt_id
+              AND generation = :generation
+              AND runtime_run_id IS NOT NULL
+            """
+        ),
+        {"attempt_id": attempt_id, "generation": int(generation), "now": now},
+    )
+    rowcount = getattr(res, "rowcount", 0)
+    return isinstance(rowcount, int) and rowcount > 0
