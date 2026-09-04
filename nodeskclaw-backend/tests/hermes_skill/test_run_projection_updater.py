@@ -391,3 +391,24 @@ async def test_run_once_does_not_touch_expired_orm_after_first_sync(monkeypatch)
         ("task-b", "org-1", "user-2"),
     ]
 
+
+def test_map_event_type_run_timed_out():
+    from app.models.hermes_skill.hermes_task import EventType
+
+    mapped = RunProjectionUpdaterService._map_event_type("run.timed_out")
+    assert mapped == EventType.TASK_TIMEOUT
+    assert mapped != EventType.HERMES_RUN_DELTA
+
+
+@pytest.mark.asyncio
+async def test_sync_task_projection_missing_task_logs_error_code(caplog):
+    db = AsyncMock()
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = None
+    db.execute = AsyncMock(return_value=result)
+    service = RunProjectionUpdaterService(db)
+    with caplog.at_level("ERROR"):
+        ok = await service.sync_task_projection("missing-task", "org-1", "user-1")
+    assert ok is False
+    assert "error_code=PROJECTION_SYNC_FAILED" in caplog.text
+

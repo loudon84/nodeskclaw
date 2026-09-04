@@ -32,12 +32,11 @@ def resolve_mcp_execution_mode(
     wait_override: bool | None = None,
 ) -> str:
     is_runtime_skill = skill.source_type == "hermes_api_server"
-    is_desktop_token = bool(auth_ctx and auth_ctx.auth_type == "mcp_client_token")
 
     if wait_override is True:
         return WAIT_MODE
     if wait_override is False:
-        if is_runtime_skill and is_desktop_token:
+        if is_runtime_skill:
             return ASYNC_EVENT_MODE
         return QUEUED_MODE
 
@@ -49,19 +48,12 @@ def resolve_mcp_execution_mode(
 
     default_mode = _normalized_default_mode()
     if default_mode == ASYNC_EVENT_MODE:
-        if auth_ctx and auth_ctx.auth_type == "mcp_client_token":
-            return ASYNC_EVENT_MODE
-        if auth_ctx and auth_ctx.auth_type == "user_jwt":
-            return QUEUED_MODE
         return ASYNC_EVENT_MODE
 
     if default_mode == WAIT_MODE:
         if not settings.MCP_TASK_WAIT_ENABLED:
             return QUEUED_MODE
         return _resolve_legacy_wait(auth_ctx)
-
-    if is_runtime_skill and is_desktop_token and settings.MCP_TASK_SSE_ENABLED:
-        return ASYNC_EVENT_MODE
 
     return QUEUED_MODE
 
