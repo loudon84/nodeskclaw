@@ -184,11 +184,13 @@ def validate_manifest_bytes(data: bytes, pid: str, expected_fp: str, expected_pl
         manifest = json.loads(data.decode("utf-8"))
     except Exception as exc:
         return [f"ROADMAP_EVIDENCE_MANIFEST_INVALID_JSON: {exc}"]
-    if manifest.get("schema") != "smc.evidence.manifest.v1":
+    schema = manifest.get("schema")
+    if schema not in {"smc.evidence.manifest.v1", "smc.evidence.manifest.v2"}:
         errors.append("ROADMAP_EVIDENCE_MANIFEST_SCHEMA_INVALID")
     if manifest.get("plan_id") != pid:
         errors.append(f"ROADMAP_EVIDENCE_MANIFEST_PLAN_ID_MISMATCH: expected={pid} actual={manifest.get('plan_id')}")
-    if manifest.get("wtree_fingerprint") != expected_fp:
+    manifest_fp = manifest.get("scope_fingerprint") if schema == "smc.evidence.manifest.v2" else manifest.get("wtree_fingerprint")
+    if manifest_fp != expected_fp:
         errors.append("ROADMAP_EVIDENCE_MANIFEST_FINGERPRINT_MISMATCH")
     if str(manifest.get("plan", "")).replace("\\", "/") != expected_plan:
         errors.append(f"ROADMAP_EVIDENCE_MANIFEST_PLAN_PATH_MISMATCH: expected={expected_plan} actual={manifest.get('plan')}")
@@ -198,7 +200,8 @@ def validate_manifest_bytes(data: bytes, pid: str, expected_fp: str, expected_pl
     if stored != payload_sha256(check):
         errors.append("ROADMAP_EVIDENCE_MANIFEST_DIGEST_INVALID")
     impl = manifest.get("implementation_review") or {}
-    if impl.get("verdict") != "PASS" or impl.get("wtree_fingerprint") != expected_fp:
+    impl_fp = impl.get("scope_fingerprint") if schema == "smc.evidence.manifest.v2" else impl.get("wtree_fingerprint")
+    if impl.get("verdict") != "PASS" or impl_fp != expected_fp:
         errors.append("ROADMAP_EVIDENCE_MANIFEST_IMPLEMENTATION_REVIEW_INVALID")
     audit = manifest.get("completion_audit") or {}
     if audit.get("verdict") != "PASS":

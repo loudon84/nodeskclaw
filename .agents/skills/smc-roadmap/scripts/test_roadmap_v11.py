@@ -82,6 +82,23 @@ class RoadmapV11Test(unittest.TestCase):
         errors = vr.validate(self.roadmap)
         self.assertTrue(any("EVIDENCE_REF_SCHEME_REQUIRED" in x for x in errors), errors)
 
+    def test_v12_accepts_scope_fingerprint_manifest_v2(self):
+        manifest = self.root / "docs_agent/evidence/RM-01-evidence.json"
+        payload = json.loads(manifest.read_text(encoding="utf-8"))
+        payload["schema"] = "smc.evidence.manifest.v2"
+        payload["scope_fingerprint"] = payload.pop("wtree_fingerprint")
+        payload["ambient_fingerprint"] = "sha256:" + "e" * 64
+        payload["workspace_base_commit"] = self.commit
+        payload["implementation_review"]["scope_fingerprint"] = payload["implementation_review"].pop("wtree_fingerprint")
+        payload.pop("payload_sha256", None)
+        payload["payload_sha256"] = digest(payload)
+        manifest.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(self.root), "add", str(manifest.relative_to(self.root))], check=True)
+        subprocess.run(["git", "-C", str(self.root), "commit", "-qm", "manifest v2"], check=True)
+        self.commit = subprocess.check_output(["git", "-C", str(self.root), "rev-parse", "HEAD"], text=True).strip()
+        self.write_roadmap(self.fp)
+        self.assertEqual([], vr.validate(self.roadmap))
+
 
 if __name__ == "__main__":
     unittest.main()

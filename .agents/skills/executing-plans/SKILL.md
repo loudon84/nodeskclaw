@@ -1,10 +1,10 @@
 ---
 name: executing-plans
 description: Plan implementation engine。SMC governed Plan 由 smc-plan-delivery 调用；本 Skill 只按 Write Ownership/Depends On 实施 Todo、执行 focused checks、更新 canonical Cursor todo status，不负责 Final Review/Verification/Commit/Roadmap。
-version: 4.1.0
+version: 4.2.0
 ---
 
-# Executing Plans v4.1
+# Executing Plans v4.2
 
 ## Mode Detection
 
@@ -117,3 +117,16 @@ smc-plan-delivery
 ## Generic Mode
 
 非 `.plan.md` 临时任务可以遵循项目自己的 commit cadence；不得把 Generic Mode 规则反向应用到 governed Plan。
+
+
+## GES 4.2 Plan-Scoped Execution
+
+When invoked by `smc-plan-delivery`:
+
+- write only paths owned by the active Plan/Todo;
+- never require repository-wide clean worktree;
+- call `workspace.py assert-stable` at Todo boundaries;
+- append execution progress/error/local-check events through `execution_context.py`;
+- never mutate unrelated ambient dirty;
+- never modify governance tooling unless that path is explicitly in the Plan Change Matrix;
+- do not commit.

@@ -1,11 +1,11 @@
 ---
 name: smc-roadmap
 description: 管理 APPROVED Architecture 下的持久 Delivery SOT。支持 create/check/next/update；一个 Roadmap Item 一个 Stage PRD，DONE 必须有真实 implementation commit + 可解析 verification evidence reference。与 smc-plan-delivery 对接。
-version: 1.1.0
+version: 1.2.0
 disable-model-invocation: true
 ---
 
-# SMC Roadmap v1.1
+# SMC Roadmap v1.2
 
 ## Role
 
@@ -104,3 +104,8 @@ DONE -> real implementation commit + verification evidence reference
 ```
 
 Roadmap 不保存自身 status commit SHA，避免自引用。
+
+
+## v1.2 Evidence Compatibility
+
+Roadmap `smc-evidence:<plan-id>@sha256:<fingerprint>` accepts legacy manifest v1 working-tree fingerprint and GES 4.2 manifest v2 Plan-scope fingerprint. New v4.2 deliveries MUST use scope fingerprint.

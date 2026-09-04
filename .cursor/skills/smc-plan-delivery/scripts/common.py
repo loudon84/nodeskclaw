@@ -204,18 +204,22 @@ def plan_id(path: Path) -> str:
 
 
 def semantic_plan_sha256(path: Path) -> str:
-    """Hash Plan semantics while normalizing Cursor runtime todo status only."""
+    """Hash Plan semantics while excluding derived/runtime Cursor todo fields.
+
+    `status` is runtime state and is normalized. `content` is a deterministic UI
+    projection of the Markdown Todo specification and is removed entirely so a
+    v3.3 -> v3.4 content backfill does not create semantic drift by itself.
+    """
     text = path.read_text(encoding="utf-8")
     lines = text.splitlines()
     end = frontmatter_end_index(lines)
     if end > 0:
         in_todos = False
-        todos_indent = None
+        drop: set[int] = set()
         for i in range(1, end):
             line = lines[i]
             if re.match(r"^todos\s*:\s*$", line):
                 in_todos = True
-                todos_indent = 0
                 continue
             if in_todos:
                 if line and not line[0].isspace() and re.match(r"^[A-Za-z0-9_.-]+\s*:", line):
@@ -223,6 +227,10 @@ def semantic_plan_sha256(path: Path) -> str:
                 elif re.match(r"^\s+status\s*:\s*.*$", line):
                     indent = re.match(r"^(\s*)", line).group(1)
                     lines[i] = f"{indent}status: <runtime>"
+                elif re.match(r"^\s+content\s*:\s*.*$", line):
+                    drop.add(i)
+        if drop:
+            lines = [line for i, line in enumerate(lines) if i not in drop]
     normalized = "\n".join(lines).rstrip() + "\n"
     return "sha256:" + hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 

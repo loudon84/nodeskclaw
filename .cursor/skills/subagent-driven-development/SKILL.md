@@ -1,10 +1,10 @@
 ---
 name: subagent-driven-development
 description: Fresh-context multi-agent Plan implementation engine。SMC governed Plan 由 smc-plan-delivery 调用；每 Todo 使用独立 implementer + spec/code-quality 局部检查，控制者更新 canonical Cursor todo status，但 Final Completion Audit/Review/Verification/Commit/Roadmap 仍由 smc-plan-delivery 负责。
-version: 4.1.0
+version: 4.2.0
 ---
 
-# Subagent Driven Development v4.1
+# Subagent Driven Development v4.2
 
 ## Core Principle
 
@@ -137,3 +137,8 @@ Plan Completion Audit (fresh context)
 ## Generic Mode
 
 非 Plan 临时任务可遵循项目默认开发模式；不得把 generic commit cadence 带入 governed Plan。
+
+
+## GES 4.2 Worker Ledger Contract
+
+Each worker owns only its assigned implementation slice and appends its own `.smc/runs/<plan-id>/ledger-<agent>.jsonl` events via `execution_context.py`. Workers MUST NOT rewrite canonical Plan specification or Cursor todo `content/status`; the controller alone advances todo runtime status after worker result review. Unrelated ambient dirty is read-only and must remain unchanged.

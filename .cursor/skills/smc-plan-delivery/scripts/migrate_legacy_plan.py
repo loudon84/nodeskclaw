@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 from common import atomic_write, frontmatter_end_index, parse_top_level_frontmatter, plan_id_from_text, set_top_level_frontmatter
+from plan_state import sync_content
 
 
 def slug(text: str) -> str:
@@ -26,8 +27,7 @@ def add_cursor_metadata(text: str, path: Path) -> str:
     if not existing:
         inserts.append("todos:")
         for tid, title in headings:
-            n = int(tid[1:])
-            inserts += [f"  - id: t{n}-{slug(title)}", "    status: pending"]
+            n = int(tid[1:]); inserts += [f"  - id: t{n}-{slug(title)}", "    status: pending"]
     if "isProject" not in fm: inserts.append("isProject: false")
     lines[end:end] = inserts
     return "\n".join(lines).rstrip() + "\n"
@@ -48,16 +48,21 @@ def migrate_verification(text: str) -> str:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(); ap.add_argument("plan", type=Path); ap.add_argument("--in-place", action="store_true"); ap.add_argument("--output", type=Path)
-    args = ap.parse_args(); path = args.plan.resolve()
+    ap=argparse.ArgumentParser(); ap.add_argument("plan", type=Path); ap.add_argument("--in-place", action="store_true"); ap.add_argument("--output", type=Path)
+    args=ap.parse_args(); path=args.plan.resolve()
     if not path.is_file(): print(f"PLAN_NOT_FOUND: {path}", file=sys.stderr); return 2
-    text = path.read_text(encoding="utf-8"); fm = parse_top_level_frontmatter(text)
-    if fm.get("plan_contract") == "smc.plan.v3.3": print("PLAN_ALREADY_V33"); return 0
-    pid = plan_id_from_text(path, text)
-    text = set_top_level_frontmatter(text, {"plan_contract": "smc.plan.v3.3", "plan_id": pid, "commit_policy": "post_review"})
-    text = add_cursor_metadata(text, path); text = migrate_verification(text)
-    out = path if args.in_place else (args.output.resolve() if args.output else path.with_suffix(path.suffix + ".v33"))
-    atomic_write(out, text); print(f"Migrated Plan v3.3: {out}"); return 0
+    text=path.read_text(encoding="utf-8"); fm=parse_top_level_frontmatter(text); current=fm.get("plan_contract", "")
+    if current == "smc.plan.v3.4": print("PLAN_ALREADY_V34"); return 0
+    if current not in {"smc.plan.v3.2", "smc.plan.v3.3", ""}:
+        print(f"PLAN_MIGRATION_UNSUPPORTED_CONTRACT: {current}", file=sys.stderr); return 1
+    pid=plan_id_from_text(path,text)
+    text=set_top_level_frontmatter(text,{"plan_contract":"smc.plan.v3.4","plan_id":pid,"commit_policy":"post_review"})
+    text=add_cursor_metadata(text,path)
+    if "Evidence Output" in text: text=migrate_verification(text)
+    out=path if args.in_place else (args.output.resolve() if args.output else path.with_suffix(path.suffix+".v34"))
+    atomic_write(out,text)
+    changed=sync_content(out)
+    print(f"Migrated Plan v3.4: {out}\nPlan ID: {pid}\nCursor content projections updated: {changed}\nRuntime Todo statuses preserved.")
+    return 0
 
-
-if __name__ == "__main__": raise SystemExit(main())
+if __name__=="__main__":raise SystemExit(main())

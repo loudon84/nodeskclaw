@@ -3,9 +3,10 @@ name: <PLAN_NAME>
 overview: <PLAN_OVERVIEW>
 todos:
   - id: t1-<stable-slug>
+    content: "T1 — <observable slice> [C01]"
     status: pending
 isProject: false
-plan_contract: smc.plan.v3.3
+plan_contract: smc.plan.v3.4
 plan_id: <PLAN_ID>
 commit_policy: post_review
 source_revision: <SOURCE_REVISION>

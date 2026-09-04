@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Create a non-executable smc.plan.v3.3 seed from an APPROVED Stage PRD."""
+"""Create a non-executable smc.plan.v3.4 seed from an APPROVED Stage PRD."""
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import subprocess
@@ -98,7 +99,12 @@ def render(prd:Path,out:Path,meta:dict[str,str],pid:str,chs,reqs)->str:
     title=meta.get("work_item_id") or pid
     source=meta.get("source_revision") or f"{title}@{meta.get('version','unknown')}"
     grounded=meta.get("grounded_commit") or "<GROUND>"
-    cursor="\n".join([f"  - id: t{i}-{slug(cap)}\n    status: pending" for i,(_,_,cap) in enumerate(chs,1)])
+    cursor="\n".join([
+        f"  - id: t{i}-{slug(cap)}\n"
+        f"    content: {json.dumps(f'T{i} — {cap} [{c}]', ensure_ascii=False)}\n"
+        f"    status: pending"
+        for i,(c,_,cap) in enumerate(chs,1)
+    ])
     matrix=[];decisions=[];ledger=[];todos=[]
     for i,(c,a,cap) in enumerate(chs,1):
         t=f"T{i}";matrix.append(f"| {c} | `<GROUND>` | PROD | {a} | <GROUND> | {t} | <TARGET> | {cap} | no |")
@@ -112,7 +118,7 @@ overview: SMC governed implementation plan for {title}
 todos:
 {cursor}
 isProject: false
-plan_contract: smc.plan.v3.3
+plan_contract: smc.plan.v3.4
 plan_id: {pid}
 commit_policy: post_review
 source_revision: {source}
@@ -227,6 +233,6 @@ def main()->int:
         chs=changes(text);reqs=requirements(text)
     except ValueError as e:print(str(e),file=sys.stderr);return 1
     out.parent.mkdir(parents=True,exist_ok=True);out.write_text(render(prd,out,meta,a.plan_id,chs,reqs),encoding="utf-8")
-    print(f"Plan v3.3 seed created: {out}\nPlan ID: {a.plan_id}\nTodos: {len(chs)}\nRequirements: {len(reqs)}\nSeed is NOT executable until grounding placeholders are resolved and validators pass.")
+    print(f"Plan v3.4 seed created: {out}\nPlan ID: {a.plan_id}\nTodos: {len(chs)}\nRequirements: {len(reqs)}\nSeed is NOT executable until grounding placeholders are resolved and validators pass.")
     return 0
 if __name__=="__main__":raise SystemExit(main())

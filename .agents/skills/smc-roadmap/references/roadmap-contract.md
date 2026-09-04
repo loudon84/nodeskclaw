@@ -1,4 +1,4 @@
-# SMC Roadmap Contract v1.1
+# SMC Roadmap Contract v1.2
 
 ## Frontmatter
 
@@ -50,3 +50,8 @@ Alternative durable forms may be project-defined CI/artifact-store IDs/URLs, pro
 ## Prohibited Content
 
 Roadmap does not carry exact code file/symbol, hook, mock, internal API sequence, Todo ownership, or raw test logs.
+
+
+## Evidence Fingerprint v1.2
+
+New GES 4.2 delivery references use `smc-evidence:<plan-id>@sha256:<scope-fingerprint>`. Validator remains backward compatible with Evidence Manifest v1 `wtree_fingerprint`.

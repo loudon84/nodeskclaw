@@ -1,10 +1,10 @@
 ---
 name: using-superpowers
 description: SMC governed work 统一 Artifact Router。按 Architecture -> Roadmap -> Stage PRD -> APPROVED PRD -> Canonical Plan -> smc-plan-delivery 路由；禁止 generic planning 绕过治理，Plan 后不再要求用户手工串执行/审查/验证/提交。
-version: 4.1.0
+version: 4.2.0
 ---
 
-# Using Superpowers — SMC Artifact Router v4.1
+# Using Superpowers — SMC Artifact Router v4.2
 
 <SUBAGENT-STOP>
 若当前实例是被分派的子智能体，只执行父任务给定的 Skill/Artifact，不重新做全局路由。
@@ -36,7 +36,7 @@ Proposal
 -> smc-prd-converge
 -> APPROVED PRD
 -> smc-plan-from-approved-prd-ponytail
--> canonical smc.plan.v3.3
+-> canonical smc.plan.v3.4
 -> smc-plan-delivery
 -> ROADMAP DONE
 -> next READY item
@@ -117,3 +117,8 @@ Governed flow 不得调用：
 ## Non-Governed Work
 
 非 Plan Todo、非治理 artifact 的临时任务继续使用适用的 debugging/brainstorming/TDD/review skill，不凭空创建 SMC artifact。
+
+
+## GES 4.2 Routing
+
+New canonical Plans are `smc.plan.v3.4`. After Plan creation, execution context/workspace ownership belongs exclusively to `smc-plan-delivery`; do not insert a second planning/runtime-memory Skill as another SOT.

@@ -1,35 +1,25 @@
-# SMC Delivery Recovery Contract v1.0
+# SMC Delivery Recovery Contract v2
 
-## Goal
+Resume 不依赖 conversation transcript。
 
-A delivery run may be interrupted without creating intermediate Git commits.
+顺序：
 
-## Durable Local State
+1. explicit Plan binding；
+2. workspace baseline/status；
+3. execution resume capsule + ledger；
+4. delivery state；
+5. readiness fresh recomputation。
 
-`.smc/runs/<plan-id>.json` contains:
+`.smc/runs/<plan_id>/resume.json` 是 compact orientation，不是 Plan SOT。
 
-- canonical plan path
-- current logical state
-- base commit
-- last known fingerprint
-- timestamps
-- blocker details
-- implementation commit when created
-- Roadmap completion reference when created
+重新进入时从第一个未满足或 STALE Gate 恢复，不无条件从头执行。
 
-This state is not proof by itself. Review/audit/evidence ledgers remain the proof records.
+## Staleness
 
-## Recovery Algorithm
+- Plan semantic hash 改变 -> Plan Review stale；
+- Plan scope fingerprint 改变 -> Completion Audit / Implementation Review / Verification / Manifest stale；
+- ambient fingerprint/state 改变 -> delivery blocked/stale；
+- new non-Plan dirty -> scope drift；
+- governance tooling mutation outside Plan -> tooling mutation blocked。
 
-1. Resolve canonical Plan by `plan_id`.
-2. Re-run static Plan validation.
-3. Compare current Plan sha/fingerprint with stored records.
-4. Mark stale downstream records logically; never edit historical JSONL lines.
-5. Resume from the first missing/stale gate.
-
-## Prohibited Recovery
-
-- creating WIP commits to save context;
-- force-resetting the user's working tree;
-- silently accepting stale test/review evidence;
-- selecting a different duplicate Plan path.
+不得通过 refresh workspace baseline 隐藏已经发生的 implementation/ambient drift。

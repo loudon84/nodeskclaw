@@ -1,39 +1,18 @@
-# SMC Review Contract v1.0
+# SMC Review Contract v2
 
-## Two Review Tiers
+## Plan Review
 
-### Plan Semantic Review
+Plan semantic review 绑定 `semantic_plan_sha256`。Cursor runtime `status` 与已验证的 deterministic `content` projection 不属于独立 Plan semantics；Markdown Todo/body/ledgers 改变会使 review STALE。
 
-Subject: canonical Plan content.
+## Implementation Review
 
-Freshness key: `plan_sha256`.
-
-Router output is separate from actual verdict:
-
-- `NOT_REQUIRED`: no additional semantic reviewer required by policy; the router must still create a content-bound clearance record (`verdict=PASS`, `reviewer=smc-plan-review-router`, `note=NOT_REQUIRED`).
-- `REQUIRED`: invoke real Plan reviewer.
-- actual verdict: `PASS | REVISE | RETURN_PRD`.
-
-`REQUIRED` is never treated as PASS. Delivery requires a current `FRESH_PASS` plan-review record in both branches.
-
-### Implementation Review
-
-Subject: implementation diff/content.
-
-Freshness key: working-tree fingerprint.
-
-Verdicts:
-
-- `PASS`
-- `REVISE`
-- `BLOCKED`
-
-If code changes after PASS, the record is stale.
-
-## Local Review Ledger
+Implementation Review 只审当前 Plan-owned implementation delta，并绑定：
 
 ```text
-.smc/reviews/<plan-id>.jsonl
+scope_fingerprint
+ambient_fingerprint
 ```
 
-Records are append-only and gitignored.
+Current scope code 改变、ambient drift 或 non-Plan scope drift 都使 review STALE/BLOCKED。
+
+Router `REQUIRED` 永远不是 PASS；`NOT_REQUIRED` 也必须写 content-bound Plan clearance record。

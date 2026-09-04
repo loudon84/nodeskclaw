@@ -1,13 +1,13 @@
-# SMC Cursor Plan Contract v3.3
+# SMC Cursor Plan Contract v3.4
 
 ## Purpose
 
-Plan v3.3 is the implementation contract between an APPROVED PRD and `smc-plan-delivery`.
+Plan v3.4 is the implementation contract between an APPROVED PRD and `smc-plan-delivery`.
 
-It preserves v3.2 governance and adds:
+It preserves v3.3 governance and adds:
 
 - single canonical Plan identity (`plan_id`);
-- Cursor-native todo metadata in the same file;
+- Cursor-native todo metadata in the same file, including deterministic `content` display projection;
 - deterministic Todo ID mapping;
 - evidence policy instead of mandatory repository raw evidence paths;
 - delivery semantics that distinguish Todo completion from proof completion.
@@ -20,10 +20,11 @@ name: <Cursor display name>
 overview: <short Cursor overview>
 todos:
   - id: t1-<stable-slug>
+    content: "T1 — <observable slice> [C01]"
     status: pending
 isProject: false
 
-plan_contract: smc.plan.v3.3
+plan_contract: smc.plan.v3.4
 plan_id: <stable-id>
 commit_policy: post_review
 source_revision: <prd-work-item@version>
@@ -39,13 +40,38 @@ working_tree_fingerprint: clean
 
 ### SMC fields
 
-- `plan_contract`: new Plans MUST be `smc.plan.v3.3`.
+- `plan_contract`: new Plans MUST be `smc.plan.v3.4`.
 - `plan_id`: stable and unique across `.cursor/plans/*.plan.md`.
 - `commit_policy`: exactly `post_review`.
 - `source_revision`: Approved PRD source identity.
 - `grounded_commit`: source grounding baseline.
 - `grounding_source`: `committed_baseline` or explicitly authorized `working_tree`.
 - `working_tree_fingerprint`: grounding evidence, not delivery evidence.
+
+## Cursor Todo Projection Contract
+
+Each Cursor todo has three governed interoperability fields:
+
+```text
+id      = machine identity and Tn mapping
+content = Cursor UI projection derived from Markdown Todo heading + Owns Changes
+status  = runtime state owned by delivery
+```
+
+`content` is **not** a second specification SOT. It MUST be the deterministic projection:
+
+```text
+Tn — <Markdown Todo heading> [C01, C02]
+```
+
+The Markdown Todo body remains authoritative. `content` is excluded from semantic Plan hashing only because the validator proves it matches that authoritative body.
+
+Ownership:
+
+- Plan Author owns `id` and `content`;
+- Delivery Runtime owns `status`;
+- Delivery MUST NOT rewrite `content`;
+- unknown Cursor item fields are preserved.
 
 ## Cursor Todo Contract
 
@@ -63,6 +89,8 @@ blocked
 Rules:
 
 - every Markdown Todo has exactly one Cursor todo;
+- every v3.4 Cursor todo has non-empty `content`;
+- `content` exactly matches the deterministic Markdown Todo projection;
 - no orphan Cursor todo;
 - no duplicate `tN-*` mapping;
 - generation starts at `pending`;
@@ -121,7 +149,7 @@ Required for cross-owner/process/network/persistence/queue/generator flows.
 
 Use `None` only when no such flow exists.
 
-## Verification Ledger v3.3
+## Verification Ledger v3.4
 
 ```markdown
 | Verification ID | Level | Entry Point / Command | Oracle | Negative / Regression | Evidence Policy | Environment | Blocking |
@@ -210,7 +238,7 @@ Core invariant: one production `path#symbol` has one Todo WRITE_OWNER.
 
 Writes/Reads/Depends On remain SOT in Write Ownership Ledger, not repeated in every Todo.
 
-## Completion Gate v3.3
+## Completion Gate v3.4
 
 ```markdown
 | Exit State | Allowed When | Blocking Evidence |

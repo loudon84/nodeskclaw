@@ -1,17 +1,17 @@
 ---
 name: smc-plan-from-approved-prd-ponytail
-description: 将 APPROVED SMC PRD 转换为唯一 canonical Cursor Plan；保留 Ponytail minimality、Change ID、single writer、lifecycle/data-flow closure，并生成 smc.plan.v3.3 的 Cursor todo metadata 与 Evidence Policy。支持 CREATE/REVISE/AUDIT_SKILL/DIAGNOSE_PLAN。
-version: 3.4.0
+description: 将 APPROVED SMC PRD 转换为唯一 canonical Cursor Plan；保留 Ponytail minimality、Change ID、single writer、lifecycle/data-flow closure，并生成 smc.plan.v3.4 的 Cursor todo metadata 与 Evidence Policy。支持 CREATE/REVISE/AUDIT_SKILL/DIAGNOSE_PLAN。
+version: 3.5.0
 disable-model-invocation: true
 ---
 
-# SMC Plan From Approved PRD — Ponytail v3.4
+# SMC Plan From Approved PRD — Ponytail v3.5
 
 ## Purpose
 
 把 **APPROVED PRD** 转换为一个且仅一个可执行 canonical Cursor `.plan.md`。
 
-v3.4 不改变既有 Ponytail 核心：
+v3.5 不改变既有 Ponytail 核心：
 
 - 先理解真实调用流，再选最小正确实现；
 - Change ID 稳定；
@@ -21,12 +21,13 @@ v3.4 不改变既有 Ponytail 核心：
 - lifecycle / contract / data-flow closure；
 - `commit_policy: post_review`。
 
-v3.4 新增四个交付合同：
+v3.5 在既有四个交付合同上增加 Cursor Projection Contract：
 
 1. **Single Plan Identity**：同一 `plan_id` 只有一个 `.plan.md`；
 2. **Cursor Todo Runtime State**：同一 Plan 的 `todos[].status` 是 Todo 动态状态 SOT；
 3. **Evidence Policy**：Plan 声明证据策略，不再默认要求 Git 中保存 raw XML/TXT；
-4. **Delivery Handoff**：Plan 完成后统一交给 `smc-plan-delivery`。
+4. **Delivery Handoff**：Plan 完成后统一交给 `smc-plan-delivery`；
+5. **Cursor Todo Projection**：每个 todo 必须包含 `id + content + status`；`content` 是 Markdown Todo heading + Change IDs 的确定性显示投影，不是第二份 specification SOT。
 
 ## Required References
 
@@ -115,7 +116,7 @@ python tools/agent-skills/validate_prd.py <prd> --require-approved --require-evi
 新 Plan 必须有稳定：
 
 ```yaml
-plan_contract: smc.plan.v3.3
+plan_contract: smc.plan.v3.4
 plan_id: <stable-roadmap-or-work-item-id>
 commit_policy: post_review
 ```
@@ -223,7 +224,7 @@ C01 C02 ...
 
 解决，不能只改表格文字隐藏冲突。
 
-## Gate 5 — Cursor Todo Mapping
+## Gate 5 — Cursor Todo Mapping + Display Projection
 
 每个 Markdown：
 
@@ -236,10 +237,33 @@ C01 C02 ...
 ```yaml
 todos:
   - id: t1-<stable-slug>
+    content: "T1 — <observable slice> [C01]"
     status: pending
 ```
 
 映射规则：Cursor id 的 `tN-` prefix 对应 `TN`。
+
+`content` contract：
+
+```text
+id      = machine identity
+content = deterministic Cursor UI projection
+status  = delivery runtime state
+```
+
+Projection 固定为：
+
+```text
+Tn — <Markdown Todo heading> [C01, C02]
+```
+
+Plan Author owns `id/content`；Delivery 只能更新 `status`。REVISE 修改 Todo heading 或 `Owns Changes` 后必须执行：
+
+```bash
+python .agents/skills/smc-plan-delivery/scripts/plan_state.py sync-content <plan>
+```
+
+Validator 必须拒绝 missing/empty/drifted content。
 
 合法 status：
 
@@ -251,7 +275,7 @@ pending | in_progress | completed | blocked
 
 Markdown Todo 是稳定 specification；动态 status 只写 Cursor metadata。
 
-## Gate 6 — Verification Ledger v3.3
+## Gate 6 — Verification Ledger v3.4
 
 使用：
 
@@ -316,7 +340,7 @@ seed 仍包含 grounding placeholders，不能直接 Execute。
 
 REVISE **禁止 whole-file seed overwrite**。
 
-如果需要将 legacy Plan 升级 v3.3：
+如果需要将 legacy Plan 升级 v3.4：
 
 ```bash
 python .agents/skills/smc-plan-delivery/scripts/migrate_legacy_plan.py \
@@ -330,7 +354,7 @@ python .agents/skills/smc-plan-delivery/scripts/migrate_legacy_plan.py \
 Plan 完成后：
 
 ```bash
-python .agents/skills/smc-plan-validator/scripts/validate_plan_v33.py <plan>
+python .agents/skills/smc-plan-validator/scripts/validate_plan_v34.py <plan>
 ```
 
 若 generation integrity script 存在，也必须 PASS。

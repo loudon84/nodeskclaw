@@ -1,72 +1,80 @@
 ---
 name: smc-plan-delivery
-description: SMC Plan 后半程唯一交付编排器。对 canonical Plan 执行 Static Gate -> Semantic Gate -> Execution -> Plan Completion Audit -> Implementation Review -> Verification -> Evidence Freshness -> post_review Commit -> Roadmap Update；支持中断恢复，禁止 Todo 阶段提前 commit。
-version: 1.0.1
+description: SMC canonical Plan 后半程唯一交付编排器。v1.1 增加 Plan-Scoped Delivery Workspace 与 Persistent Execution Context；执行 Static -> Semantic -> Scoped Execution -> Completion Audit -> Implementation Review -> Verification -> Evidence Freshness -> post_review scoped Commit -> Roadmap Update。
+version: 1.1.0
 ---
 
-# SMC Plan Delivery v1.0
+# SMC Plan Delivery v1.1
 
 ## Role
 
-本 Skill 是 **SMC governed engineering 的 Plan Delivery Orchestrator**。
+本 Skill 是 SMC governed engineering 的 **唯一 Plan Delivery Orchestrator**。
 
-它不是新的 production runtime owner，也不重复实现 Plan、Review、Verification、Roadmap 的业务规则；它负责把既有专业 Skill 与确定性脚本按同一状态机串成一条可恢复、可审计的交付流水线。
+v1.1 新增两个 runtime responsibility，但不改变业务规则 owner：
 
-用户在已有 canonical `.cursor/plans/*.plan.md` 后要求“执行这个 Plan / 完成 Plan / 一键交付 / delivery”时，优先使用本 Skill，而不是让用户手工串联多个 Skill。
+1. **Plan-Scoped Delivery Workspace Controller**：把 Plan identity、允许写集、audit/review/verification/commit scope 对齐到同一个 canonical Plan；
+2. **Persistent Execution Context Controller**：以 `.smc/runs/<plan_id>/` 中的 resume capsule、per-agent ledger、error ledger 保存长任务运行状态，支持 context reset / compaction / session resume。
 
-唯一后半程入口：
+它仍然不替代 Plan Author、Plan Review、Implementation Review、Verification、Roadmap Skill。
+
+唯一入口：
 
 ```text
-Canonical Plan
-  -> smc-plan-delivery
+Canonical Plan -> smc-plan-delivery
 ```
 
 ## Frozen Invariants
-
-以下规则不可被本 Skill 降级：
 
 1. `commit_policy: post_review`；
 2. Plan Static PASS != implementation complete；
 3. Todo `completed` != `IMPLEMENTED_AND_PROVEN`；
 4. 一个 production `path#symbol` 只有一个 Todo WRITE_OWNER；
-5. Implementation Review 与 Verification 必须绑定实际 working-tree content；
-6. working-tree content 变化后，旧 Review / Verification 自动 `STALE`；
-7. 所有 blocking Verification 必须 `FRESH + PASS`，并生成 durable compact Evidence Manifest 后才能 commit；
-8. raw logs 默认保留 `.smc/`/CI；`docs_agent/evidence/<plan_id>-evidence.json` 是可提交的长期审计摘要；
-9. implementation commit 与 Roadmap status commit 分离；
-10. Roadmap `DONE` 必须引用真实 implementation commit；
-11. 不允许通过复制第二份 `.plan.md` 解决 Cursor UI metadata 与 SMC Plan body 的兼容问题。
+5. explicit `PLAN_PATH` / `plan_id` 是 **binding，不是 hint**；解析失败不得 fallback 到其它 Plan；
+6. Plan author owns Cursor todo `id/content`；Delivery runtime 只拥有 `status`；
+7. Implementation Review / Verification / Completion Audit 必须绑定当前 **Plan scope fingerprint**；
+8. delivery 启动前的 unrelated dirty 允许作为 `AMBIENT_PREEXISTING` 保留，但必须全程 byte/state stable；
+9. Plan target write set 若启动前已有 dirty，返回 `DELIVERY_TARGET_CONFLICT`；不得自动 stash/覆盖；
+10. delivery 期间新产生的非 Plan scope 修改返回 `DELIVERY_SCOPE_DRIFT`；治理工具突变返回 `DELIVERY_TOOLING_MUTATION`；
+11. 所有 blocking Verification 必须 FRESH + PASS，并生成 durable Evidence Manifest 后才能 commit；
+12. implementation commit 只能包含 Plan-owned implementation delta + canonical Plan + durable Evidence Manifest；
+13. implementation commit 与 Roadmap status commit 分离；Roadmap DONE 必须引用真实 implementation commit；
+14. execution continuation gate 只决定“Agent 是否继续工作”，绝不替代 SMC Completion Gate；
+15. 不允许复制第二份 `.plan.md` 解决 Cursor metadata/UI 兼容问题。
 
 ## Required References
 
 开始前读取：
 
 1. [`references/delivery-state-machine.md`](references/delivery-state-machine.md)
-2. [`references/evidence-contract.md`](references/evidence-contract.md)
-3. [`references/review-contract.md`](references/review-contract.md)
-4. [`references/completion-audit-contract.md`](references/completion-audit-contract.md)
-5. [`references/recovery-contract.md`](references/recovery-contract.md)
+2. [`references/workspace-contract.md`](references/workspace-contract.md)
+3. [`references/execution-context-contract.md`](references/execution-context-contract.md)
+4. [`references/evidence-contract.md`](references/evidence-contract.md)
+5. [`references/review-contract.md`](references/review-contract.md)
+6. [`references/completion-audit-contract.md`](references/completion-audit-contract.md)
+7. [`references/recovery-contract.md`](references/recovery-contract.md)
 
-## Inputs
+# Input Binding
 
-必须明确一个 canonical Plan 路径：
+必须明确一个 canonical Plan：
 
 ```text
 PLAN_PATH=.cursor/plans/<feature>.plan.md
 ```
 
-若用户只提供 `plan_id`，先执行：
+若只有 `plan_id`：
 
 ```bash
-python .agents/skills/smc-plan-delivery/scripts/resolve_plan.py \
-  --plan-id <PLAN_ID>
+python .agents/skills/smc-plan-delivery/scripts/resolve_plan.py --plan-id <PLAN_ID>
 ```
 
-若找到 0 个：`PLAN_NOT_FOUND`。
+规则：
 
-若找到 >1 个：`PLAN_ID_DUPLICATE`，停止；不得猜一个继续执行。
+- 0 个 -> `PLAN_NOT_FOUND`；
+- >1 个 -> `PLAN_ID_DUPLICATE`；
+- 用户显式给出的路径不存在/不合法 -> 停止；
+- **不得**因为 selector 失败去选 newest Plan / other Plan。
 
-## State Machine
+# State Machine
 
 ```text
 PLAN_CREATED
@@ -82,7 +90,7 @@ PLAN_CREATED
   -> ROADMAP_DONE
 ```
 
-异常状态：
+异常状态保持：
 
 ```text
 PLAN_REVISE_REQUIRED
@@ -94,595 +102,425 @@ VERIFICATION_BLOCKED
 ROADMAP_UPDATE_BLOCKED
 ```
 
-状态由：
-
-```bash
-python .agents/skills/smc-plan-delivery/scripts/delivery_state.py ...
-```
-
-保存到 `.smc/runs/<plan_id>.json`。状态文件只用于恢复与审计，不是产品运行时数据。
-
----
-
-# Phase 0 — Preflight / Canonical Plan Identity
+# Phase 0 — Plan Identity / Run Preflight
 
 ## 0.1 Resolve exactly one Plan
 
 ```bash
-python .agents/skills/smc-plan-delivery/scripts/resolve_plan.py \
-  --plan "$PLAN_PATH"
+python .agents/skills/smc-plan-delivery/scripts/resolve_plan.py --plan "$PLAN_PATH"
 ```
 
-必须满足：
-
-- `plan_contract: smc.plan.v3.3`，或明确的 legacy v3.2 兼容路径；
-- `plan_id` 唯一；
-- canonical Plan 同时承载 Cursor metadata 与 SMC body；
-- 不存在第二份相同 `plan_id` 或语义重复 Plan。
-
-新交付必须使用 v3.3。legacy v3.2 可先执行：
+新交付要求 `plan_contract: smc.plan.v3.4`。legacy v3.2/v3.3 必须先迁移：
 
 ```bash
-python .agents/skills/smc-plan-delivery/scripts/migrate_legacy_plan.py \
-  "$PLAN_PATH" --in-place
+python .agents/skills/smc-plan-delivery/scripts/migrate_legacy_plan.py "$PLAN_PATH" --in-place
 ```
 
-迁移只改 Plan contract / Cursor todo metadata / Verification evidence policy，不重新规划实现。
+迁移只允许升级 contract / Cursor projection / evidence policy；Todo runtime status 必须保留，不重规划 implementation。
 
-## 0.2 Initialize delivery run
+## 0.2 Initialize delivery state
 
 ```bash
-python .agents/skills/smc-plan-delivery/scripts/delivery_state.py \
-  init "$PLAN_PATH"
+python .agents/skills/smc-plan-delivery/scripts/delivery_state.py init "$PLAN_PATH"
 ```
 
-若已有 run，则进入 resume 逻辑，禁止无条件从头执行。
-
-## 0.3 Git baseline
-
-读取：
-
-```bash
-git status --porcelain
-git rev-parse HEAD
-```
-
-不要自动清理用户已有修改。若已有未归属于本 Plan 的脏改动会污染 diff/review/verification，返回：
-
-```text
-DELIVERY_WORKTREE_CONFLICT
-```
-
-由用户或父 orchestrator 明确隔离后再继续。
-
----
+此时只冻结 run identity / initial HEAD；**尚未建立 implementation workspace baseline**。已有 run 时进入 Resume，禁止无条件重新开始。
 
 # Phase 1 — Plan Static Gate
 
-对于 v3.3：
-
 ```bash
-python .agents/skills/smc-plan-validator/scripts/validate_plan_v33.py \
-  "$PLAN_PATH"
+python .agents/skills/smc-plan-validator/scripts/validate_plan_v34.py "$PLAN_PATH"
 ```
 
-同时运行 generation integrity gate（若存在）：
+必须同时验证：SMC structural contract、Cursor `id/content/status` projection、Todo mapping、Change/ownership/verification ledgers。若 generation integrity script 存在也必须 PASS。
 
-```bash
-python .agents/skills/smc-plan-from-approved-prd-ponytail/scripts/validate_generation_integrity.py \
-  "$PLAN_PATH"
-```
+治理工具自身 crash/runtime incompatibility：返回 `DELIVERY_TOOLING_BLOCKED`。当前 business Plan 禁止顺手修改 validator/Skill 再继续证明自己 PASS。
 
-只有全部 PASS 才进入：
-
-```text
-PLAN_STATIC_VALID
-```
-
-静态校验只证明 Plan contract 自洽，不得表述为“实施完成”。
-
----
+全部 PASS -> `PLAN_STATIC_VALID`。
 
 # Phase 2 — Plan Semantic Gate
 
-先运行现有 review router：
+保留 `smc-plan-review` router。`REQUIRED` 不是 PASS；`NOT_REQUIRED` 仍必须写 content-bound clearance record。真正 review 必须得到 `PASS | REVISE | RETURN_PRD`。
+
+Plan semantic hash：
+
+- 规范化 Cursor runtime `status`；
+- 规范化 Cursor display `content`，因为 validator 必须证明其为 Markdown Todo 的确定性 projection；
+- Markdown Todo/body/Change Matrix/Verification 等真实语义变化仍使 review `STALE`。
+
+## 2.5 Freeze Plan-scoped workspace only after semantic clearance
+
+在任何 implementation write **之前**：
 
 ```bash
-python .agents/skills/smc-plan-review/scripts/assess_plan_review.py \
-  "$PLAN_PATH"
+python .agents/skills/smc-plan-delivery/scripts/workspace.py init "$PLAN_PATH" --json
 ```
 
-必须区分：
+从 Change Matrix 建立 Plan write set，并分类：
 
 ```text
-NOT_REQUIRED       = router 判断无需额外 semantic review
-REQUIRED           = router 要求真正执行 semantic review
-PASS/REVISE/...    = actual review verdict
+PLAN_OWNED             当前 Plan / durable evidence / Plan write set
+AMBIENT_PREEXISTING    启动前已存在、与 Plan 无关，可保留但不可变化
+TARGET_CONFLICT        Plan 要写的 implementation path 已 dirty，硬阻断
+TOOLING_BLOCKED        非本 Plan 的 governance tooling 已 dirty，硬阻断
 ```
 
-`REQUIRED` **绝不是 PASS**。
+不再要求整个 worktree clean；禁止自动 stash/reset/clean 或删除其它任务文件。
 
-若 router 返回 `NOT_REQUIRED`，也必须写一条 content-bound clearance record：
+若 Semantic Gate 导致 Plan REVISE，必须在**尚无 implementation mutation**时重新完成 Static + Semantic 后再 `workspace.py init --refresh`；已经开始 implementation 后禁止用 refresh 掩盖 scope 漂移。
+
+## 2.6 Initialize persistent execution context
 
 ```bash
-python .agents/skills/smc-plan-delivery/scripts/review_record.py \
-  plan \
-  --plan "$PLAN_PATH" \
-  --verdict PASS \
-  --reviewer smc-plan-review-router \
-  --note NOT_REQUIRED
+python .agents/skills/smc-plan-delivery/scripts/execution_context.py refresh "$PLAN_PATH"
 ```
 
-若 REQUIRED：使用 `smc-plan-review` 执行实际 semantic review；必须得到：
+运行态文件：
 
 ```text
-PASS | REVISE | RETURN_PRD
+.smc/runs/<plan_id>/workspace-baseline.json
+.smc/runs/<plan_id>/resume.json
+.smc/runs/<plan_id>/ledger-<agent>.jsonl
+.smc/runs/<plan_id>/errors.jsonl
 ```
 
-并记录 Plan 内容 hash：
+它们是 working memory，不是新的 Plan SOT。完成后进入 `IMPLEMENTING`。
+
+# Phase 3 — Scoped Execution + Persistent Context
+
+默认 engine：`executing-plans`；满足原有并行安全条件时可使用 `subagent-driven-development`。
+
+## 3.1 Controller / worker ownership
+
+```text
+Controller:
+  owns canonical Plan runtime status
+  owns resume capsule
+
+Worker:
+  owns assigned implementation slice
+  appends own ledger
+  MUST NOT rewrite canonical Plan specification/content
+```
+
+启动 Todo：
 
 ```bash
-python .agents/skills/smc-plan-delivery/scripts/review_record.py \
-  plan \
-  --plan "$PLAN_PATH" \
-  --verdict PASS \
-  --reviewer smc-plan-review
+python .agents/skills/smc-plan-delivery/scripts/plan_state.py set "$PLAN_PATH" T1 in_progress
+python .agents/skills/smc-plan-delivery/scripts/execution_context.py event "$PLAN_PATH" \
+  --event TODO_STARTED --agent main --todo T1 --summary "start T1"
 ```
 
-只有 `review_record.py check --kind plan` 对当前 semantic Plan hash 返回 `FRESH_PASS`，才进入 `PLAN_REVIEW_CLEARED`。
-
-Plan 后续若被修改，Plan Review 自动视为 stale，需要重新经过本 Gate。
-
----
-
-# Phase 3 — Execution Engine
-
-本 Skill 负责选择 engine，但不复制 engine 的实现规则。
-
-## 3.1 Engine selection
-
-默认选择：
-
-```text
-executing-plans
-```
-
-满足以下条件可选择：
-
-```text
-subagent-driven-development
-```
-
-- Plan 有多个明确 Todo；
-- Write Ownership Ledger 已静态 PASS；
-- Todo 间不存在未排序 write/read hazard；
-- 当前宿主支持可靠 subagent；
-- 使用 fresh implementer 能明显降低上下文污染。
-
-无论哪种 engine：
-
-- engine 只负责 implementation；
-- engine 不得创建 Todo implementation commit；
-- engine 不得把自己的局部验证当作 Final Verification；
-- 每个 Todo 完成并通过其局部 spec/code check 后，只更新 canonical Plan 中对应 Cursor todo status。
-
-更新状态：
+完成局部实现/局部 check 后：
 
 ```bash
-python .agents/skills/smc-plan-delivery/scripts/plan_state.py \
-  set "$PLAN_PATH" T1 completed
+python .agents/skills/smc-plan-delivery/scripts/execution_context.py event "$PLAN_PATH" \
+  --event LOCAL_CHECK_PASS --agent main --todo T1 --summary "focused checks pass"
+python .agents/skills/smc-plan-delivery/scripts/plan_state.py set "$PLAN_PATH" T1 completed
+python .agents/skills/smc-plan-delivery/scripts/execution_context.py event "$PLAN_PATH" \
+  --event TODO_DONE --agent main --todo T1 --summary "T1 complete"
 ```
 
-合法动态状态：
+Worker 可记录：
 
 ```text
-pending | in_progress | completed | blocked
+TODO_STARTED
+DISCOVERY
+PROGRESS
+ERROR
+RETRY
+LOCAL_CHECK_PASS
+TODO_DONE
+BLOCKED
+NOTE
 ```
 
-Markdown `## Todo Tn` 是稳定 specification，不承担动态状态 SOT。
+Error ledger 对 normalized failure signature 计数。相同失败不得无限执行同一个 action；重复失败应改变策略，达到 bounded retry 后进入 BLOCKED / escalate。
 
-所有 Todo 完成后：
+## 3.2 Workspace guards during execution
 
-```text
-IMPLEMENTATION_COMPLETE
-```
-
-注意：这仍不等于 `IMPLEMENTED_AND_PROVEN`。
-
----
-
-# Phase 4 — Plan Completion Audit
-
-这是独立于 Implementer 的强制 Gate。
-
-## 4.1 Deterministic precheck
+每个 Todo boundary / resume 前：
 
 ```bash
-python .agents/skills/smc-plan-delivery/scripts/completion_audit.py \
-  precheck \
-  --plan "$PLAN_PATH" \
-  --base <delivery-base>
+python .agents/skills/smc-plan-delivery/scripts/workspace.py assert-stable "$PLAN_PATH"
 ```
 
-检查：
+- pre-existing ambient 原样存在 -> 允许；
+- ambient 被本 delivery/其它并发 session 改动 -> `DELIVERY_AMBIENT_MUTATED`；
+- 新增非 Plan scope dirty -> `DELIVERY_SCOPE_DRIFT`；
+- governance tooling 新增 mutation -> `DELIVERY_TOOLING_MUTATION`。
 
-- canonical Cursor todos 是否全部 completed；
-- Plan 中 Todo / Ledger 是否一致；
-- 当前 diff 是否为空；
-- diff 中是否出现明显超出 Change Matrix 的文件；
-- 当前 working-tree fingerprint。
+## 3.3 Long-running resume
 
-## 4.2 Fresh-context semantic audit
+每轮/compaction 后优先读取 compact capsule：
 
-使用 fresh reviewer context 读取：
+```bash
+python .agents/skills/smc-plan-delivery/scripts/execution_context.py show "$PLAN_PATH" --json
+```
+
+它回答：
+
+```text
+current delivery state
+active Todo
+next step
+completed/blocked Todos
+last event
+scope fingerprint
+ambient status
+```
+
+需要具体 implementation semantics 时再 progressive-read canonical Plan 相应 Todo；不要每轮重读整个 Plan。
+
+## 3.4 Execution continuation gate
+
+在 Agent 准备结束但仍有 active/pending Todo 时可运行：
+
+```bash
+python .agents/skills/smc-plan-delivery/scripts/execution_context.py gate "$PLAN_PATH" --cap 20
+```
+
+它有 progress/stall/cap guard，防止无限循环。注意：
+
+```text
+CONTINUE / ALLOW_STOP
+!=
+IMPLEMENTED_AND_PROVEN
+```
+
+这是 execution continuation oracle，不是交付证明。
+
+所有 Todo completed 后进入 `IMPLEMENTATION_COMPLETE`。
+
+# Phase 4 — Plan-Scoped Completion Audit
+
+Deterministic precheck：
+
+```bash
+python .agents/skills/smc-plan-delivery/scripts/completion_audit.py precheck \
+  --plan "$PLAN_PATH" --base <delivery-base> --json
+```
+
+v1.1 不再用整个 repository `git diff <base>` 判断本 Plan，而比较：
+
+```text
+workspace baseline planned file states
+        vs
+current planned file states
+```
+
+必须证明：
+
+- all canonical Cursor todos completed；
+- Plan write set 有真实 implementation delta；
+- unrelated ambient 未变化；
+- 无新 scope drift；
+- requested base 与 frozen delivery base 一致。
+
+Fresh-context semantic audit 只读取：
 
 ```text
 canonical Plan
-+ Approved PRD
-+ git diff <base> --
-+ Plan referenced implementation files
+Approved PRD
+Plan-owned implementation delta
+Plan referenced implementation files
 ```
 
-审计必须回答：
-
-```text
-每个 Todo 是否真实实现？
-每个 Change ID 是否落地？
-REPLACE 是否同时完成 REMOVE？
-AC/DoD 是否存在明显 implementation gap？
-是否出现 scope drift？
-是否存在无法从代码/diff 证明的条目？
-```
-
-审计输出结构：
-
-```json
-{
-  "total_items": 0,
-  "done": 0,
-  "changed": 0,
-  "deferred": 0,
-  "unverifiable": 0,
-  "scope_drift": 0,
-  "verdict": "PASS",
-  "summary": "..."
-}
-```
-
-将结果写入：
-
-```bash
-python .agents/skills/smc-plan-delivery/scripts/completion_audit.py \
-  record \
-  --plan "$PLAN_PATH" \
-  --result-json <audit-result.json>
-```
-
-只有：
+结果仍必须：
 
 ```text
 verdict=PASS
 deferred=0
 unverifiable=0
 scope_drift=0
-record fingerprint == current fingerprint
+done=total_items
 ```
 
-才进入 `COMPLETION_AUDIT_PASS`。
-
-如果宿主不支持 subagent，不允许伪装成 fresh context；应明确标记 audit executor 为 `INLINE_FALLBACK`，并仍执行完整 audit。高风险 Plan 可要求人工/第二模型复核。
-
----
+record 绑定 `scope_fingerprint + ambient_fingerprint`。
 
 # Phase 5 — Implementation Review
 
-使用现有：
+使用 `code-review-and-quality`，review 范围必须是 **本 Plan-owned implementation delta**。
 
-```text
-code-review-and-quality
-```
-
-review 范围必须是本 Plan 对应 implementation diff，不是重新做 Plan Review。
-
-至少覆盖：
-
-- correctness；
-- tests；
-- architecture / owner fit；
-- security boundary；
-- performance / concurrency；
-- scope drift；
-- unnecessary complexity。
-
-Review 完成后记录：
+记录：
 
 ```bash
-python .agents/skills/smc-plan-delivery/scripts/review_record.py \
-  implementation \
-  --plan "$PLAN_PATH" \
-  --verdict PASS \
-  --reviewer code-review-and-quality
+python .agents/skills/smc-plan-delivery/scripts/review_record.py implementation \
+  --plan "$PLAN_PATH" --verdict PASS --reviewer code-review-and-quality
 ```
 
-该记录自动绑定当前 working-tree fingerprint。
-
-若 Review 导致任何 code 修改：
+Implementation Review 绑定：
 
 ```text
-旧 implementation review = STALE
-旧 verification evidence = STALE
+scope_fingerprint
+ambient_fingerprint
 ```
 
-必须回到本 Phase 重新 review，然后再 Verification。
-
-只有 current fingerprint 上的 Review PASS 才进入：
-
-```text
-IMPLEMENTATION_REVIEW_PASS
-```
-
----
+Plan scope implementation content 改变 -> Review `STALE`。
+Ambient drift -> Review `STALE/BLOCKED`。
 
 # Phase 6 — Verification
 
-Plan v3.3 的 Verification Ledger 不再要求 Git 内物理 `Evidence Output` 文件，而声明：
+对每个 blocking Verification：
+
+```bash
+python .agents/skills/smc-plan-delivery/scripts/evidence.py run \
+  --plan "$PLAN_PATH" --verification V01 -- <exact command>
+```
+
+记录：
 
 ```text
+exact command
+exit code
+timestamp
+scope fingerprint
+ambient fingerprint
+raw local log
 Evidence Policy
 ```
 
-对每个 blocking Verification ID，使用：
-
-```bash
-python .agents/skills/smc-plan-delivery/scripts/evidence.py \
-  run \
-  --plan "$PLAN_PATH" \
-  --verification V01 \
-  -- <exact command from Verification Ledger>
-```
-
-wrapper 必须：
-
-- 透明传递 command exit code；
-- 记录 exact command；
-- 记录 timestamp；
-- 记录 working-tree fingerprint；
-- 保留 stdout/stderr local raw log；
-- 生成 append-only JSONL ledger record；
-- 不因为记录 evidence 自身改变 implementation fingerprint。
-
-默认本地位置：
+raw evidence 默认：
 
 ```text
 .smc/evidence/<plan_id>/ledger.jsonl
 .smc/evidence/<plan_id>/logs/*.log
 ```
 
-这些路径必须 gitignored。
+这些不进入 implementation commit。
 
-Verification command exit != 0：
-
-```text
-VERIFICATION_BLOCKED
-```
-
-不得 commit。
-
----
-
-# Phase 7 — Evidence Freshness + Durable Manifest Gate
-
-先确认 raw evidence freshness：
+# Phase 7 — Evidence Freshness + Durable Manifest
 
 ```bash
-python .agents/skills/smc-plan-delivery/scripts/evidence.py check \
-  --plan "$PLAN_PATH" --all-blocking
+python .agents/skills/smc-plan-delivery/scripts/evidence.py check --plan "$PLAN_PATH" --all-blocking
+python .agents/skills/smc-plan-delivery/scripts/evidence.py manifest --plan "$PLAN_PATH"
+python .agents/skills/smc-plan-delivery/scripts/validate_delivery_completion.py "$PLAN_PATH"
 ```
 
-然后生成**可提交的紧凑 Evidence Manifest**：
-
-```bash
-python .agents/skills/smc-plan-delivery/scripts/evidence.py manifest \
-  --plan "$PLAN_PATH"
-```
-
-默认输出：
+Manifest：
 
 ```text
 docs_agent/evidence/<plan_id>-evidence.json
 ```
 
-Manifest 只保存长期审计所需摘要：Plan ID、ready working-tree fingerprint、Plan/Implementation Review、Completion Audit、每个 blocking Verification 的 command/exit/timestamp/policy 以及 raw log SHA256。raw stdout/XML/JUnit 仍保留在 `.smc/evidence/`、CI 或外部 Artifact Store，不默认进入 Git。
-
-`docs_agent/evidence/` 被 working-tree fingerprint 排除，因此生成 Manifest **不会使刚获得的 Review/Verification 失效**。
-
-最后执行：
-
-```bash
-python .agents/skills/smc-plan-delivery/scripts/validate_delivery_completion.py \
-  "$PLAN_PATH"
-```
-
-该 Gate 必须同时证明：
+必须证明当前：
 
 ```text
-all Cursor todos completed
-completion audit PASS + FRESH
-implementation review PASS + FRESH
-all blocking Verification PASS + FRESH
-durable Evidence Manifest FRESH
-current working-tree fingerprint == all blocking evidence fingerprint == manifest fingerprint
+Plan semantic clearance FRESH
+Completion Audit FRESH PASS
+Implementation Review FRESH PASS
+all blocking Verification FRESH PASS
+scope fingerprint 一致
+ambient fingerprint 一致且 ambient stable
+no scope drift
 ```
 
-输出 `DELIVERY_READY_TO_COMMIT` 才允许进入 commit。代码在 Verification 后改变时旧 evidence/manifest 都必须变成 STALE。
+只有 `DELIVERY_READY_TO_COMMIT` 才可进入 Phase 8。
 
----
+# Phase 8 — Plan-Scoped post_review Implementation Commit
 
-# Phase 8 — post_review Implementation Commit
-
-这是整个 implementation 第一个允许的 commit 点。
-
-先冻结 ready fingerprint：
+先 capture：
 
 ```bash
-python .agents/skills/smc-plan-delivery/scripts/commit_guard.py \
-  capture "$PLAN_PATH"
+python .agents/skills/smc-plan-delivery/scripts/commit_guard.py capture "$PLAN_PATH"
 ```
 
-然后按项目 Git policy staging。**Evidence Manifest 必须与 implementation 一起进入本 implementation commit**；raw `.smc/evidence/` 不得 staging。再次执行 completion gate。
+allowed commit paths 由 guard 冻结，只允许：
 
-commit 后立即验证：
+```text
+Plan-owned changed implementation files
+canonical Plan
+Durable Evidence Manifest
+```
+
+**不得 `git add -A`。** 应显式 stage guard 允许路径。
+
+commit 后：
 
 ```bash
-python .agents/skills/smc-plan-delivery/scripts/commit_guard.py \
-  verify "$PLAN_PATH" --commit HEAD
+python .agents/skills/smc-plan-delivery/scripts/commit_guard.py verify "$PLAN_PATH" --commit HEAD
 ```
 
 必须证明：
 
-- commit 前已 `DELIVERY_READY_TO_COMMIT`；
-- committed content 与 ready fingerprint 对应；
-- commit 后没有本 Plan 未提交的 implementation diff。
+- committed paths 不超出 allowed set；
+- Plan-owned implementation delta 全部进入 commit；
+- Plan-owned paths 无 residual dirty；
+- pre-existing ambient 仍保持原 dirty/content state；
+- scope fingerprint 与 ready proof 相同。
 
-得到真实 commit 后必须登记：
-
-```bash
-python .agents/skills/smc-plan-delivery/scripts/delivery_state.py \
-  set-commit "$PLAN_PATH" --sha HEAD
-```
-
-只有 commit guard 已验证该 SHA，state 才能进入：
+因此 v1.1 允许：
 
 ```text
-IMPLEMENTATION_COMMITTED
+implementation commit 完成后
+其它任务启动前就存在的 unrelated dirty 仍留在 worktree
 ```
 
-禁止将 Roadmap DONE 更新混进本 implementation commit。
+这不再触发旧的 repository-wide `POST_COMMIT_WORKTREE_DIRTY`。
 
----
+验证后：
+
+```bash
+python .agents/skills/smc-plan-delivery/scripts/delivery_state.py set-commit "$PLAN_PATH" --sha HEAD
+```
 
 # Phase 9 — Roadmap Update
 
-从 Approved PRD / Plan 解析对应 Roadmap item。
+保持现有 Roadmap single-writer / separate status commit contract。
 
-Verification reference 使用逻辑 evidence ref；该 ref 必须能从 implementation commit 确定性解析到 `docs_agent/evidence/<plan_id>-evidence.json`，而不是依赖本机 `.smc/` raw log：
+Verification reference 绑定 durable manifest / scope fingerprint：
 
 ```text
-smc-evidence:<plan_id>@<working_tree_fingerprint>
+smc-evidence:<plan_id>@sha256:<scope-fingerprint>
 ```
 
-执行现有 Roadmap update：
+使用现有：
 
 ```bash
-python .agents/skills/smc-roadmap/scripts/roadmap_update.py \
-  <roadmap> <RM-ID> \
-  --status DONE \
-  --prd <approved-prd> \
-  --plan "$PLAN_PATH" \
-  --implementation-commit <sha> \
-  --verification "smc-evidence:<plan_id>@<fingerprint>"
-```
-
-然后：
-
-```bash
+python .agents/skills/smc-roadmap/scripts/roadmap_update.py ...
 python .agents/skills/smc-roadmap/scripts/validate_roadmap_v11.py <roadmap>
 ```
 
-v1.1 validator 会确认：implementation commit 中确实存在该 Plan 的 durable Evidence Manifest，且 Plan ID / fingerprint / blocking verification proof 一致。PASS 后创建独立：
-
-```text
-Roadmap status commit
-```
-
-Roadmap status commit 成功后记录：
-
-```bash
-python .agents/skills/smc-plan-delivery/scripts/delivery_state.py \
-  transition "$PLAN_PATH" --to ROADMAP_DONE
-```
-
-最终进入 `ROADMAP_DONE`。
-
----
+Roadmap `DONE` 必须引用真实 implementation commit。Roadmap status commit 与 implementation commit 分离。
 
 # Deterministic State Recording
 
-每完成一个 Gate，controller 必须记录状态；不能只在对话中声称“已进入下一阶段”：
-
-```bash
-python .agents/skills/smc-plan-delivery/scripts/delivery_state.py transition "$PLAN_PATH" --to PLAN_STATIC_VALID
-python .agents/skills/smc-plan-delivery/scripts/delivery_state.py transition "$PLAN_PATH" --to PLAN_REVIEW_CLEARED
-python .agents/skills/smc-plan-delivery/scripts/delivery_state.py transition "$PLAN_PATH" --to IMPLEMENTING
-python .agents/skills/smc-plan-delivery/scripts/delivery_state.py transition "$PLAN_PATH" --to IMPLEMENTATION_COMPLETE
-python .agents/skills/smc-plan-delivery/scripts/delivery_state.py transition "$PLAN_PATH" --to COMPLETION_AUDIT_PASS
-python .agents/skills/smc-plan-delivery/scripts/delivery_state.py transition "$PLAN_PATH" --to IMPLEMENTATION_REVIEW_PASS
-python .agents/skills/smc-plan-delivery/scripts/delivery_state.py transition "$PLAN_PATH" --to VERIFICATION_PASS
-python .agents/skills/smc-plan-delivery/scripts/delivery_state.py transition "$PLAN_PATH" --to IMPLEMENTED_AND_PROVEN
-```
-
-commit_guard verify 后记录真实 implementation commit；Roadmap DONE 后再记录最终状态。状态文件是恢复索引，不替代各 Gate 的事实证据。
-
----
+每个 Gate 后由 `delivery_state.py transition` 记录；对话中的文字声明不是状态事实。
 
 # Resume / Recovery
 
-每次重新调用本 Skill，先执行：
+重新调用时按此顺序：
 
 ```bash
-python .agents/skills/smc-plan-delivery/scripts/delivery_state.py \
-  inspect "$PLAN_PATH"
-
-python .agents/skills/smc-plan-delivery/scripts/readiness.py \
-  "$PLAN_PATH"
+python .agents/skills/smc-plan-delivery/scripts/resolve_plan.py --plan "$PLAN_PATH"
+python .agents/skills/smc-plan-delivery/scripts/workspace.py inspect "$PLAN_PATH" --json
+python .agents/skills/smc-plan-delivery/scripts/execution_context.py refresh "$PLAN_PATH" --json
+python .agents/skills/smc-plan-delivery/scripts/delivery_state.py inspect "$PLAN_PATH"
+python .agents/skills/smc-plan-delivery/scripts/readiness.py "$PLAN_PATH"
 ```
 
-`readiness.py` 是 gstack-style readiness dashboard 的 SMC 实现：它重新计算 Static、Semantic、Todo、Audit、Review 与 Verification freshness。然后从第一个未满足 Gate 恢复，不重复已经 `FRESH` 的昂贵步骤。
-
-但任何内容 fingerprint 变化都会使以下状态自动降级：
-
-```text
-COMPLETION_AUDIT_PASS -> stale
-IMPLEMENTATION_REVIEW_PASS -> stale
-VERIFICATION_PASS -> stale
-IMPLEMENTED_AND_PROVEN -> stale
-```
-
-详见 `references/recovery-contract.md`。
+从第一个未满足或 STALE Gate 恢复。禁止无条件重跑全部昂贵步骤。
 
 # Completion Report
 
-只有 Roadmap update 成功后才报告完整交付完成。
-
-固定输出：
+只有 Roadmap update 成功后才报告完整交付完成：
 
 ```text
 Plan: <path>
 Plan ID: <id>
 Static Gate: PASS
 Semantic Gate: PASS | NOT_REQUIRED
+Workspace: PLAN_SCOPED / AMBIENT_STABLE
 Todos: n/n completed
 Completion Audit: PASS
 Implementation Review: PASS
 Verification: n/n FRESH PASS
-Ready Fingerprint: <sha256>
+Ready Scope Fingerprint: <sha256>
 Implementation Commit: <sha>
 Roadmap Item: <id> DONE
 Roadmap Commit: <sha>
 ```
 
-如果只完成到某一中间阶段，必须按真实状态报告，不使用“done / complete / shipped”泛化描述。
-
 # Explicit Non-Goals
 
-本 Skill 不负责：
-
-- 创建 Architecture Decision；
-- 创建 Stage PRD；
-- 重新 Grounding APPROVED PRD；
-- 生成第二份 Plan；
-- 替代 `smc-plan-validator`；
-- 替代 `code-review-and-quality` 的语义审查；
-- 替代真实 test runner；
-- 自动 push / merge / deploy；
-- 引入第二个 production runtime owner。
+本 Skill 不负责：创建 Architecture/PRD；静默改变 APPROVED boundary；生成第二份 Plan；替代 semantic review；伪造 verification；自动 push/merge/deploy；自动清理 unrelated dirty；在 business Plan 内自修 governance tooling。

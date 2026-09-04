@@ -1,15 +1,13 @@
 ---
 name: smc-plan-validator
-description: 对 SMC Plan 做确定性静态 Gate。v3.3 在保留 v3.2 AC/DoD、Lifecycle、Change/Decision/Single Writer/DAG/Ponytail 校验基础上，新增 canonical plan_id、Cursor todos 映射和 Evidence Policy；PASS 只表示 Plan Static Valid，后续统一交给 smc-plan-delivery。
-version: 1.3.0
+description: 对 SMC Plan 做确定性静态 Gate。v1.4 新增 smc.plan.v3.4 Cursor Projection Contract（todos id/content/status）并保留 v3.3/v3.2 兼容；PASS 只表示 PLAN_STATIC_VALID。
+version: 1.4.0
 disable-model-invocation: true
 ---
 
-# SMC Plan Validator v1.3
+# SMC Plan Validator v1.4
 
 ## Role
-
-Validator 只证明 Plan contract 可静态成立，不证明 implementation 已完成。
 
 ```text
 PASS = PLAN_STATIC_VALID
@@ -17,112 +15,77 @@ PASS != IMPLEMENTATION_COMPLETE
 PASS != IMPLEMENTED_AND_PROVEN
 ```
 
-## v3.3 Usage
+## Current v3.4 Usage
 
 ```bash
-python .agents/skills/smc-plan-validator/scripts/validate_plan_v33.py \
-  .cursor/plans/<feature>.plan.md
+python .agents/skills/smc-plan-validator/scripts/validate_plan_v34.py .cursor/plans/<feature>.plan.md
 ```
 
-JSON：
+v3.4 复用 v3.3/v3.2 既有深度静态 Gate，并新增 Cursor interoperability projection。
 
-```bash
-python .agents/skills/smc-plan-validator/scripts/validate_plan_v33.py \
-  .cursor/plans/<feature>.plan.md --json
-```
+## v3.4 Cursor Projection Gates
 
-v3.3 wrapper 先执行新增 Gate，再复用既有 `validate_plan.py` 的 v3.2 深度静态校验，从而不削弱已有：
-
-- APPROVED PRD；
-- Required Sections；
-- Change Matrix；
-- Ponytail Implementation Decision；
-- New File / Dependency justification；
-- Write Ownership；
-- Change ↔ Todo ↔ Ledger；
-- Dependency DAG；
-- Read/Write ordering；
-- Parallel Safety；
-- Requirement / Lifecycle / Blocking Verification closure。
-
-## New v3.3 Gates
-
-### V0.1 — Contract / Plan ID
-
-要求：
+每个 Markdown `## Todo TN — <title>` 必须映射恰好一个 Cursor todo：
 
 ```yaml
-plan_contract: smc.plan.v3.3
-plan_id: <non-empty>
-commit_policy: post_review
+- id: tN-<slug>
+  content: "TN — <title> [C01, C02]"
+  status: pending|in_progress|completed|blocked
 ```
-
-`plan_id` 在 `.cursor/plans/*.plan.md` 中唯一。
-
-### V0.2 — Single Canonical Plan
 
 拒绝：
 
 ```text
-PLAN_ID_DUPLICATE
-PLAN_SEMANTIC_DUPLICATE
-```
-
-不得保留 metadata Plan 与 SMC Plan 两份 canonical candidates。
-
-### V0.3 — Cursor Todo Contract
-
-每个 `## Todo TN` 映射恰好一个 `todos[].id=tN-*`。
-
-拒绝：
-
-```text
+PLAN_CURSOR_TODO_CONTENT_MISSING
+PLAN_CURSOR_TODO_CONTENT_ID_MISMATCH
+PLAN_CURSOR_TODO_CONTENT_DRIFT
 PLAN_CURSOR_TODO_MISSING
 PLAN_CURSOR_TODO_DUPLICATE
 PLAN_CURSOR_TODO_ORPHAN
 PLAN_CURSOR_TODO_STATE_INVALID
 ```
 
-### V10.1 — Evidence Policy
+`content` 是 Markdown heading + `Owns Changes` 的 deterministic UI projection，不是第二份 specification SOT。
 
-Verification Ledger v3.3 使用：
+## Existing Gates Preserved
 
-```text
-Evidence Policy
-```
+- APPROVED PRD；
+- Required Sections；
+- Requirement/AC/DoD closure；
+- Change Matrix / Ponytail Decision；
+- New File / Dependency justification；
+- Write Ownership / single writer；
+- Change ↔ Todo ↔ Ledger；
+- Dependency DAG / read-write ordering / parallel safety；
+- Lifecycle / Contract / Data Flow closure；
+- Blocking Verification / Evidence Policy；
+- unique `plan_id` / single canonical Plan；
+- `commit_policy: post_review`。
 
-合法：
+## Compatibility
 
-```text
-LOCAL_TRANSIENT
-LOCAL_DURABLE
-CI_ARTIFACT
-EXTERNAL_ARTIFACT
-REPO_SUMMARY
-```
-
-Static validator 不检查 evidence 是否已经运行；freshness 是 `smc-plan-delivery` 的 runtime Gate。
-
-## Legacy v3.2
-
-正在执行中的 v3.2 Plan 可继续使用原：
+### v3.3
 
 ```bash
-python .agents/skills/smc-plan-validator/scripts/validate_plan.py <plan>
+python .../validate_plan_v33.py <plan>
 ```
 
-新 Plan 禁止继续创建 v3.2。
+v3.3 缺 `content` 时输出 `PLAN_CURSOR_TODO_CONTENT_LEGACY_WARNING`，不把历史 Plan 原地判 invalid。
 
-需要进入新 Delivery Pipeline 时，先迁移：
+### v3.2 / v3.3 -> v3.4
 
 ```bash
 python .agents/skills/smc-plan-delivery/scripts/migrate_legacy_plan.py <plan> --in-place
 ```
 
+迁移必须保留 Todo runtime status 和未知 Cursor fields。
+
+## Tooling Health
+
+`load_legacy()` 必须在 `exec_module()` 前注册 `sys.modules[spec.name]`，确保 Python 3.12 dataclass validator 可加载。Validator 自身 crash 属于 `DELIVERY_TOOLING_BLOCKED`，不能在 business Plan delivery 中现场自修后继续证明。
+
 ## Exit
 
-PASS 后不直接提示 `Execute`，而是：
-
 ```text
-PLAN_STATIC_VALID -> smc-plan-delivery next gate
+PLAN_STATIC_VALID -> smc-plan-delivery Semantic Gate
 ```

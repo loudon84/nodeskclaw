@@ -6,8 +6,8 @@ import json
 import sys
 from pathlib import Path
 
-from common import atomic_write, find_repo_root, git, plan_id, utc_now, repo_relative_path
-from working_tree_fingerprint import fingerprint
+from common import atomic_write, find_repo_root, git, plan_id, repo_relative_path, utc_now
+from workspace import inspect as workspace_inspect, load as workspace_load
 
 STATES = [
     "PLAN_CREATED",
@@ -34,20 +34,30 @@ BLOCKED = {
 
 
 def state_path(plan: Path) -> Path:
-    root = find_repo_root(plan)
-    return root / ".smc" / "runs" / f"{plan_id(plan)}.json"
+    return find_repo_root(plan) / ".smc" / "runs" / f"{plan_id(plan)}.json"
 
 
 def load(plan: Path) -> dict | None:
     path = state_path(plan)
     if not path.is_file():
         return None
-    return json.loads(path.read_text(encoding="utf-8"))
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError("DELIVERY_STATE_INVALID_JSON") from exc
+    if data.get("plan_id") != plan_id(plan):
+        raise ValueError("DELIVERY_STATE_PLAN_ID_MISMATCH")
+    return data
 
 
 def save(plan: Path, data: dict) -> None:
     data["updated_at"] = utc_now()
-    data["last_fingerprint"] = fingerprint(find_repo_root(plan))
+    # Workspace is created only after static + semantic gates. State creation must
+    # therefore remain valid before a workspace baseline exists.
+    if workspace_load(plan) is not None:
+        ws = workspace_inspect(plan, allow_head_change=data.get("state") in {"IMPLEMENTATION_COMMITTED", "ROADMAP_DONE"})
+        data["last_scope_fingerprint"] = ws["scope_fingerprint"]
+        data["last_ambient_fingerprint"] = ws["ambient_fingerprint"]
     atomic_write(state_path(plan), json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
 
 
@@ -58,7 +68,7 @@ def init(plan: Path) -> dict:
     root = find_repo_root(plan)
     head = git(root, "rev-parse", "HEAD").stdout.strip()
     data = {
-        "schema": "smc.delivery.run.v1",
+        "schema": "smc.delivery.run.v2",
         "plan_id": plan_id(plan),
         "plan": repo_relative_path(plan, root),
         "state": "PLAN_CREATED",
@@ -90,6 +100,9 @@ def transition(plan: Path, to: str, reason: str = "") -> dict:
             raise ValueError(f"DELIVERY_STATE_REGRESSION_FORBIDDEN: {effective}->{to}")
         if target_index > current_index + 1:
             raise ValueError(f"DELIVERY_STATE_SKIP_FORBIDDEN: {effective}->{to}")
+        # IMPLEMENTING is the first state that requires a frozen workspace.
+        if to == "IMPLEMENTING" and workspace_load(plan) is None:
+            raise ValueError("DELIVERY_WORKSPACE_BASELINE_MISSING: initialize workspace after semantic clearance")
         data["last_valid_state"] = to
 
     data["state"] = to
@@ -129,34 +142,19 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
     for name in ("init", "inspect"):
-        parser = sub.add_parser(name)
-        parser.add_argument("plan", type=Path)
-    parser = sub.add_parser("transition")
-    parser.add_argument("plan", type=Path)
-    parser.add_argument("--to", required=True)
-    parser.add_argument("--reason", default="")
-    parser = sub.add_parser("set-commit")
-    parser.add_argument("plan", type=Path)
-    parser.add_argument("--sha", required=True)
-    args = ap.parse_args()
-    plan = args.plan.resolve()
+        parser = sub.add_parser(name); parser.add_argument("plan", type=Path)
+    parser = sub.add_parser("transition"); parser.add_argument("plan", type=Path); parser.add_argument("--to", required=True); parser.add_argument("--reason", default="")
+    parser = sub.add_parser("set-commit"); parser.add_argument("plan", type=Path); parser.add_argument("--sha", required=True)
+    args = ap.parse_args(); plan = args.plan.resolve()
     if not plan.is_file():
-        print(f"PLAN_NOT_FOUND: {plan}", file=sys.stderr)
-        return 2
+        print(f"PLAN_NOT_FOUND: {plan}", file=sys.stderr); return 2
     try:
-        if args.cmd == "init":
-            data = init(plan)
-        elif args.cmd == "inspect":
-            data = init(plan)
-        elif args.cmd == "transition":
-            data = transition(plan, args.to, args.reason)
-        else:
-            data = set_commit(plan, args.sha)
+        if args.cmd in {"init", "inspect"}: data = init(plan)
+        elif args.cmd == "transition": data = transition(plan, args.to, args.reason)
+        else: data = set_commit(plan, args.sha)
     except (ValueError, RuntimeError, json.JSONDecodeError) as exc:
-        print(str(exc), file=sys.stderr)
-        return 1
-    print(json.dumps(data, ensure_ascii=False, indent=2))
-    return 0
+        print(str(exc), file=sys.stderr); return 1
+    print(json.dumps(data, ensure_ascii=False, indent=2)); return 0
 
 
 if __name__ == "__main__":

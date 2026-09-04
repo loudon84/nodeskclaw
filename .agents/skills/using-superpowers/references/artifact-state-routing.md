@@ -1,4 +1,4 @@
-# SMC Artifact State Routing v4.1
+# SMC Artifact State Routing v4.2
 
 | Current State | Next Owner | Hard Gate |
 |---|---|---|
@@ -10,7 +10,7 @@
 | PRD REVIEW_REQUIRED | smc-prd-review | six gates |
 | PRD Review REVISE | smc-prd-grounding revision | close OPEN findings |
 | PRD Review PASS | smc-prd-converge | APPROVED PRD |
-| APPROVED PRD, no Plan | smc-plan-from-approved-prd-ponytail | canonical v3.3 Plan |
+| APPROVED PRD, no Plan | smc-plan-from-approved-prd-ponytail | canonical v3.4 Plan |
 | canonical Plan exists | smc-plan-delivery | Static -> Semantic -> Execute -> Audit -> Review -> Verify -> Freshness -> Commit -> Roadmap |
 | Roadmap item DONE | smc-roadmap next | choose next READY |
 
