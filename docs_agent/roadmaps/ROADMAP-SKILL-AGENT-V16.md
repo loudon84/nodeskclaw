@@ -6,7 +6,7 @@ architecture_decision: docs_agent/architecture/AD-SKILL-AGENT-V16.md
 architecture_addenda:
   - docs_agent/architecture/AD-SKILL-AGENT-V16-v1.6.0-hermes-runtime-native-run.md
 source_revision: AD-SKILL-AGENT-V16-A1@1.6.0
-updated_at: 2026-09-04T07:41:00.000000Z
+updated_at: 2026-09-04T14:49:00.000000Z
 feature_id: FEAT-SKILL-FIRST-001
 work_package_id: WP-SKILL-FIRST-NODESKCLAW
 ---
@@ -33,7 +33,8 @@ Addendum（架构增补）：[AD-SKILL-AGENT-V16-A1 Hermes Runtime Native Run In
 - 员工公共面（RM-12）与 Hermes 南向（RM-13 至 RM-16）是两条可并行的线：RM-13 依赖 RM-11 的合同包基线，不依赖 RM-12。唯一耦合点是 A1 第 30.3 节单一平面收敛与 RM-14 的公共投影改动落在同一段代码，按 RM-14 的协同约束处理，禁止以「等对方先完成」互相阻塞。
 - 任何声称员工公共面符合冻结合同的 Item，出口证据必须记录所用 `auth_type`；未标注认证路径的证据视为不完整，fixture 通过不构成出口信号。
 - 生产 Skill Run 的 Hermes 南向执行面必须走 Native Run API；`/v1/chat/completions` 不再是正式 Event Source。Hermes Runtime 版本地板为 `v2026.8.31`，低于该版本必须在 Capability Probe 阶段失败关闭。
-- RM-02 状态由 `DONE` 回退为 `BACKLOG`：其 Provider Conformance 出口信号经真实运行判定不足。**已交付且被下游复用的 Event SoT、`event_seq`、Fencing、语义 Schema 与 Public 合同不回滚**，因此 RM-03 / RM-05 / RM-06 / RM-12 的既有 `DONE` 与其自身 Verification Evidence 继续有效——它们依赖的是 RM-02 保留的交付物，而非 RM-02 的 Conformance 出口。RM-02 的重新关闭改由 RM-16 的真实 Hermes Conformance 证据驱动。
+- `Depends On` 只表示执行 DAG，不表示证据再验证。RM-02 的执行前置是 RM-01（Catalog / Run Control）；RM-16 是 RM-02 Provider Conformance 的再验证来源，见 Revalidation Links，禁止写进 RM-02 的 Depends On。
+- RM-02 状态由 `DONE` 回退为 `BACKLOG`：其 Provider Conformance 出口信号经真实运行判定不足。**已交付且被下游复用的 Event SoT、`event_seq`、Fencing、语义 Schema 与 Public 合同不回滚**，因此 RM-03 / RM-05 / RM-06 / RM-12 的既有 `DONE` 与其自身 Verification Evidence 继续有效——它们依赖的是 RM-02 保留的交付物，而非 RM-02 的 Conformance 出口。RM-02 的重新关闭由 RM-16 的真实 Hermes Conformance 证据驱动（非 DAG）。
 - RM-13 至 RM-16 不得并入 RM-01 至 RM-12 任一项；四项各自保留独立可验收结果，不得为减少 Item 数量而合并。
 
 ## Roadmap Items
@@ -41,7 +42,7 @@ Addendum（架构增补）：[AD-SKILL-AGENT-V16-A1 Hermes Runtime Native Run In
 | Item ID | Outcome | Depends On | Status | Exit Criteria | PRD | Plan | Implementation Commit | Verification Evidence |
 |---|---|---|---|---|---|---|---|---|
 | RM-01 | Work（员工端）通过稳定 Catalog v1.1（目录合同）和 Run Control（运行控制）完成发现、调用、恢复与审批 | - | DONE | Resume/Approval 参数链正确；Catalog 能稳定区分能力类型与交互模式；Chat Skill（对话技能）发布门禁生效；v1.0 内容不变且 v1.1 合同校验通过 | docs_agent/prd-v1.6.0-skill-catalog-and-run-control.md | .cursor/plans/skill-catalog-and-run-control-v160.plan.md | 3a9b012ac19835223ce0676b8d94078832c2a982 | docs_agent/evidence/rm01-verification.md |
-| RM-02 | Agent 持久化可回放的结构化 Run Event（运行事件），且控制状态机无绕过 | RM-16 | BACKLOG | 事件仅由**真实 Hermes Runtime 结构化事实**生成；重复、迟到和旧代事件无副作用；Provider Conformance 按 A1 第 25 节 Conformance Gate 证明，禁止以 mock OpenAI 字段单独结项。历史交付物（Event SoT、`event_seq`、Fencing、语义 Schema、Public 合同）保留复用，不回滚 | docs_agent/prd-v1.6.1-semantic-run-events.md | .cursor/plans/rm-02_semantic_events_492df3f9.plan.md | e3744c4bd73479a32155dcd11d7f8b87c7cc6f2b（历史交付，Conformance 出口已失效） | docs_agent/evidence/rm02-verification.md（证据不足，待 RM-16 重证） |
+| RM-02 | Agent 持久化可回放的结构化 Run Event（运行事件），且控制状态机无绕过 | RM-01 | BACKLOG | 事件仅由**真实 Hermes Runtime 结构化事实**生成；重复、迟到和旧代事件无副作用；Provider Conformance 按 A1 第 25 节 Conformance Gate 证明，禁止以 mock OpenAI 字段单独结项。历史交付物（Event SoT、`event_seq`、Fencing、语义 Schema、Public 合同）保留复用，不回滚 | docs_agent/prd-v1.6.1-semantic-run-events.md | .cursor/plans/rm-02_semantic_events_492df3f9.plan.md | e3744c4bd73479a32155dcd11d7f8b87c7cc6f2b（历史交付，Conformance 出口已失效） | docs_agent/evidence/rm02-verification.md（证据不足，待 RM-16 重证） |
 | RM-03 | Edge（边缘节点）安装不可变 Published Bundle（已发布技能包），并安全完成升级与卸载 | RM-02 | DONE | 授权下载、大小/摘要、路径与符号链接防护、原子切换、失败回滚和同代 Actual（实际状态）全部通过验收 | docs_agent/prd-v1.6.2-edge-published-bundle-lifecycle.md | .cursor/plans/rm-03_bundle_lifecycle_1dec5e37.plan.md | d6e7cb8061be9d2febdb21560638cd8d378a4963 | docs_agent/evidence/rm03-verification.md |
 | RM-04 | Strict Readiness（严格就绪）与分布式 Production Acceptance（生产验收）形成可复现证据 | RM-03 | IN_PRD | 双 Central、单 Edge、真实 PostgreSQL、共享 S3/MinIO（对象存储）、故障注入、Secret 扫描、合同检查和 Newman（接口自动化）两连跑全部通过 | docs_agent/prd-v1.6.3-strict-readiness-production-acceptance.md | - | - | - |
 | RM-05 | Connector Runtime（连接器运行时）通过统一执行入口可靠完成 Central/Edge（中心/边缘）调用 | RM-03 | DONE | REST/MCP/DB Connector 经 AgentEnginePort（执行引擎端口）执行；取消、SecretRef（秘密引用）、审批和受控私网策略可验证；客户端不能覆盖物理路由、目标或凭证 | docs_agent/prd-v1.6.4-connector-runtime-execution-closure.md | .cursor/plans/rm-05_connector_runtime_execution.plan.md | 3611f37147fff25000317cbf1653fb12fb0b4b1b | docs_agent/evidence/rm05-verification.md |
@@ -56,3 +57,11 @@ Addendum（架构增补）：[AD-SKILL-AGENT-V16-A1 Hermes Runtime Native Run In
 | RM-14 | Runtime Semantic Event Fidelity：Runtime 事件经 Normalizer 与 Coalescer 成为低噪声可回放的 Agent Event SoT | RM-13 | BACKLOG | `message.delta` 经 `AssistantDeltaCoalescer` 合并且语义边界强制 flush，`event_seq` 顺序正确、文本无丢失重复；`tool.started/completed` 映射 `tool.call` 并按 A1 第 11.3 节双轨合成 `call_id`（并行段标记低置信度）；未配对 `started` 有收尾策略；`reasoning.available` 不映射且不产出 `reasoning.summary`；`subagent.*` / `approval.responded` / `run.steered` 仅进 Internal Trace 且敏感字段不外泄；进度事件收敛为 canonical `phase` 并双发 `stage` 兼容；**与 RM-12 的协同约束**：本项的公共投影改动与 RM-12 的 A1 第 30.3 节单一平面收敛落在同一段投影代码，两项先后完成者必须复跑对方的公共面断言（PC-13 与 PC-12），禁止各自改一半导致公共面出现混合平面 | - | - | - | - |
 | RM-15 | Approval & Runtime Control Closure：审批与取消形成同 Attempt、可 fencing 的双向闭环 | RM-14 | BACKLOG | `approval.request` → Public `approval.requested` → 决策 → `POST /v1/runs/{id}/approval` 全链路闭合；内部保留 `once`/`session`/`always`/`deny` 四档，Public 只暴露批准（`once`）与拒绝（`deny`），`session`/`always` 仅由服务端策略决定；审批按 `runtime_run_id` 寻址而非 `session_id`；Cancel 经 `/stop` 且覆盖 `404` 已终态 reconciliation 分支；恢复路径按 A1 第 18.1 节冻结（禁止重订阅 `/events`）；`interrupted` 与状态不可得判 FAILED 并要求用户以同一 `runtime_session_id` 主动重启，Agent 不自动续跑；旧 Attempt 控制命令被 fencing 拒绝 | - | - | - | - |
 | RM-16 | Hermes Provider Conformance & Recovery：真实 Runtime 全链路取得可复现实跑证据 | RM-15 | BACKLOG | PC-01 至 PC-09 全部在真实 Hermes API Server（`>= v2026.8.31`）上通过并留存证据；禁止以 mock OpenAI 字段替代；覆盖长中文输出 coalescing、真实 Tool、真实 Approval、Cancel、NodeSKClaw Worker 重启 fencing、Hermes Runtime 重启 `interrupted`、版本地板失败关闭、Runtime Delegation 单一 Public Run；同时承接 RM-02 重新定义后的 Provider Conformance 出口 | - | - | - | - |
+
+## Revalidation Links
+
+`Revalidated By` 不是执行 DAG，不参与 `Depends On` 环检测。
+
+| Item | Revalidated By | Meaning |
+|---|---|---|
+| RM-02 | RM-16 | RM-16 提供重新关闭 RM-02 Provider Conformance 的真实 Hermes 证据 |
