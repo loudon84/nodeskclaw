@@ -100,7 +100,13 @@ Hermes Skill 执行适配与短期凭证租约已经实现，正式验收仍由�
 
 - **已实现**：[[nodeskclaw-agent/app/services/hermes_engine.py#execute_hermes_run]] 仅将 Hermes 明确结构化字段映射为语义 Run Event（`assistant.message` / `reasoning.summary` / `tool.call` / `clarify.requested` / `approval.requested`），并设置稳定 `source_event_id`；纯 NL 不推断语义类型；阶段 progress 不含全文 delta。
 - **已实现**：语义事件与控制事件共享 `append_event` 序列；Worker 语义路径只落事件不迁终态；`artifact.persisted` 仅在 CAS `PERSISTED` 后由 Agent 发出。
-- **已实现**：Snapshot 不保存 `gateway_token` 或 `env_file` 明文；[[nodeskclaw-agent/app/services/hermes_engine.py#fetch_credential_lease]] 在 Attempt 期间按组织、Run、Attempt 和目标获取短效凭证，失败时 fail-closed。
+- **已实现**：Snapshot 不保存 `gateway_token` 或 `env_file` 明文；Attempt 时领取 Hermes `API_SERVER_KEY`（不是平台 JWT），见 [[architecture/skill-agent#Hermes Engine Adapter#Credential Lease API Server Key]]。
+
+### Credential Lease API Server Key
+
+Attempt 时 `mint_credential_lease` 从实例 `.env` 读取 `API_SERVER_KEY` 作为 Hermes Bearer；缺文件或 key 返回 503，禁止签发平台 JWT。
+
+[[nodeskclaw-backend/app/api/internal_skill_agent.py#_load_hermes_api_server_credential]] 解析 `API_SERVER_KEY` 与 `API_SERVER_MODEL_NAME`；[[nodeskclaw-backend/app/api/internal_skill_agent.py#mint_credential_lease]] 在 Attempt 时按 org / run / attempt 绑定后下发该 key。Agent [[nodeskclaw-agent/app/services/hermes_engine.py#fetch_credential_lease]] 失败则 fail-closed。回归：`tests/hermes_skill/test_internal_skill_agent.py`（有 key 返回 key、无 key / 无 env_file 503、不调用 `create_access_token`）。决策见 [[decisions/skill-platform-execution]]。
 
 ## Runtime Delegation Boundary
 
