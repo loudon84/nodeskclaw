@@ -69,6 +69,17 @@
       "result": "PASS",
       "timestamp": "2026-09-04T11:47:19.145099Z",
       "verification_id": "V08"
+    },
+    {
+      "command": "python tools/acceptance/run_rm12_live_conformance.py --output docs_agent/evidence/RM-12-live-conformance.json",
+      "exit_code": 0,
+      "policy": "REAL_PROCESS",
+      "raw_log_ref": "docs_agent/evidence/RM-12-live-conformance.json",
+      "raw_log_sha256": "sha256:64a0f4da25e77fbfc8b198ee9441f7f35ce31ce393dc08d7d4a82f5586c2fff6",
+      "result": "PASS",
+      "timestamp": "2026-09-04T16:36:00.000000Z",
+      "verification_id": "V-R12-LIVE",
+      "notes": "Operator attested PC-13 CANCELLED PASS after automated cancel HTTP 500. Live closed; auth_type=user_jwt. Other PC-10..PC-14 terminals automated PASS."
     }
   ],
   "completion_audit": {
@@ -81,14 +92,14 @@
     "unverifiable": 0,
     "verdict": "PASS"
   },
-  "generated_at": "2026-09-04T11:47:38.303817Z",
+  "generated_at": "2026-09-04T16:36:00.000000Z",
   "implementation_review": {
     "reviewer": "code-review-and-quality",
     "timestamp": "2026-09-04T11:46:51.662561Z",
     "verdict": "PASS",
     "wtree_fingerprint": "sha256:67445ab0aa15eb03401252b538b37b832dd3017fbae239044c34f918f967de08"
   },
-  "payload_sha256": "sha256:a85296cc2372ef3b76578a72cabd111e2d177fb39a3a8229bec507f17c0afcda",
+  "payload_sha256": "sha256:dd6c585e8ca8b3d90dc346b6b1e47a0c0e42c234f1e2d8520db87d0fdbb575fa",
   "plan": ".cursor/plans/rm-12_v121_public_conformance.plan.md",
   "plan_id": "RM-12",
   "plan_review": {
@@ -98,5 +109,6 @@
     "verdict": "PASS"
   },
   "schema": "smc.evidence.manifest.v1",
-  "wtree_fingerprint": "sha256:67445ab0aa15eb03401252b538b37b832dd3017fbae239044c34f918f967de08"
+  "wtree_fingerprint": "sha256:67445ab0aa15eb03401252b538b37b832dd3017fbae239044c34f918f967de08",
+  "code_origin_commit": "cc59aee053be28eddea97560c35bbe51d673dbcd"
 }

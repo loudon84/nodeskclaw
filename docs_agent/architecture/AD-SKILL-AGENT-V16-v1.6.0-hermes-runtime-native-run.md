@@ -1205,11 +1205,11 @@ Hermes Runtime 在 run 未落定时重启。验证 `GET /v1/runs/{id}` 返回 `i
 
 ### PC-10 Employee JWT Envelope Parity
 
-以员工 user JWT（`auth_type = user_jwt`）与 MCP client token（`auth_type = mcp_client_token`）分别对**同一 Skill、同一组织、同一参数**发起 `tools/call`。验证两者返回的 `structuredContent` 除 `run_id` 取值外**键集与取值语义完全一致**，均为 v1.2.1 形状（`run_id` + `/api/v1/runs/*` + `contract_version`），且均不含 HermesTask 平面字段。
+以真实员工 user JWT（`auth_type = user_jwt`）对目标 Skill 发起 `tools/call`。验证返回的 `structuredContent` 为冻结 v1.2.1 形状（`run_id` + `/api/v1/runs/*` + `contract_version`），且不含 HermesTask 平面字段。当前员工公共面只证明用户端路径；`mcp_client_token` 不是现行用户端功能（历史容器互调），不得作为本场景 live 前置，也不得通过更换另一个仅对该 Token 授权的 Skill 来绕过。
 
 ### PC-11 Catalog Reachability Parity
 
-对每一种支持的 `auth_type`，比对 `tools/list` 宣告的 `executionModes` / `defaultExecutionMode` 与该调用者实际 `tools/call` 解析出的执行模式。验证两者相等；任一不等即判本场景失败。
+对员工 `user_jwt`，比对 `tools/list` 宣告的 `executionModes` / `defaultExecutionMode` 与该调用者实际 `tools/call` 解析出的执行模式。验证两者相等；不等即判本场景失败。
 
 ### PC-12 Single Plane Isolation
 
@@ -1415,6 +1415,7 @@ auth_type == "user_jwt"          → queued       → HermesTask 信封（task_i
 - `auth_type` **允许**影响：身份解析、组织归属、授权判定、配额与限流、审计归因、可见 Skill 范围。
 - `auth_type` **禁止**影响：契约信封形状、字段键集、身份字段命名（`run_id`）、URL 路径族、执行模式选择、事件类型集合。
 - 任何调用者一旦通过鉴权与授权，必须获得同一份冻结公共契约。凭证类型差异只能表现为「是否有权调用」，不得表现为「拿到哪一种契约」。
+- 员工公共面 live 出口（PC-10 至 PC-14）只证明 `user_jwt`。`mcp_client_token` 不是当前用户端 Consumer，不得作为 live 第二调用方。
 - 执行模式若确需差异化，必须由 Skill Release 或组织策略等**服务端授权事实**决定，并在 Catalog 中如实宣告（第 30.2 节），不得由客户端凭证类型隐式决定。
 
 ## 30.2 Catalog Advertisement Must Equal Reachable Capability

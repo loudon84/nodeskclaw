@@ -13,7 +13,7 @@ work_package_id: WP-SKILL-FIRST-NODESKCLAW
 
 # DeskClaw 团队版 Skill Run v1.2.1 员工公共面符合性 PRD v1.7.0
 
-本文定义 RM-12：在不改写已发布 `SKILL-RUN-CONTRACT v1.2.1`（公共技能运行合同）的前提下，使真实员工 `user_jwt` 路径面对该冻结合同可观察符合，并与 `mcp_client_token` 在同一授权语义下返回相同公共契约。本文是对同文件 `1.6.10` APPROVED 文本的 A1 定向重校：历史 C01–C10 已交付能力列为 KEEP，不重新实现；Exit Criteria（退出条件）改由 A1 第 30 节四条不变量与 PC-10 至 PC-14 定义。
+本文定义 RM-12：在不改写已发布 `SKILL-RUN-CONTRACT v1.2.1`（公共技能运行合同）的前提下，使真实员工 `user_jwt` 路径面对该冻结合同可观察符合。当前员工公共面 Consumer 是用户端（Work / 用户 JWT）；`mcp_client_token` 属于已废弃的容器互调路径，不是 PC-10 至 PC-14 的 live 前置。本文是对同文件 `1.6.10` APPROVED 文本的 A1 定向重校：历史 C01–C10 已交付能力列为 KEEP，不重新实现；Exit Criteria（退出条件）改由 A1 第 30 节四条不变量与 PC-10 至 PC-14 定义。
 
 工程基线见 `reports/PRD-SKILL-AGENT-V16-RM12-RM14-engineering-closure-v1.0.md`。Architecture Source（架构来源）为 `AD-SKILL-AGENT-V16-A1@1.6.0`。Grounding 模式为 targeted re-ground：既有 PRD `source_revision` 从 `AD-SKILL-AGENT-V16@1.5.0/RM-12` 变为 A1，`evidence_freshness.py` 对 `1.6.10` 返回 `REGROUND_REQUIRED`。
 
@@ -29,7 +29,7 @@ work_package_id: WP-SKILL-FIRST-NODESKCLAW
 
 公共运行平面只允许 `Public Run ID -> Agent Run / Event SoT`。HermesTask 可暂时作为内部投影/兼容记录存在，但不得成为 Public identity、Public terminal owner、Public replay source，也不得通过公共 API/SSE 暴露内部路由语义。Agent 仍是 Run / Attempt / Event / Artifact / Terminal 的唯一 Production Owner。Backend 只做 Auth、Catalog、Public Run API、Public SSE Projection 与 Business Audit。
 
-本次改动无本仓库前端表现变化。Work 是仓外 Consumer；本仓只把 Backend 公共面做到 Live-Evidence-Ready。
+本次改动无本仓库前端表现变化。Work 是仓外 Consumer；本仓只把 Backend 公共面做到 Live-Evidence-Ready。员工 live 证据只使用 `user_jwt`。历史容器互调使用的 `mcp_client_token` 不是当前功能点，不得作为 PC-10 的第二调用方。
 
 ## Current Capability Inventory
 
@@ -57,7 +57,7 @@ work_package_id: WP-SKILL-FIRST-NODESKCLAW
 
 | Capability | Target State | Production Owner | Boundary |
 |---|---|---|---|
-| Credential-agnostic Accepted | 同 Skill、同组织、同参数下 `user_jwt` 与 `mcp_client_token` 返回冻结 v1.2.1 Accepted；至少含 `run_id`、合同 `/api/v1/runs/*` 链接与 `contract_version` | Backend MCP Gateway + Runtime Skill Run | `auth_type` 不得切换到 HermesTask 信封 |
+| Credential-agnostic Accepted | 员工 `user_jwt` 对 Runtime Skill 返回冻结 v1.2.1 Accepted；至少含 `run_id`、合同 `/api/v1/runs/*` 链接与 `contract_version`。live 不要求 `mcp_client_token` | Backend MCP Gateway + Runtime Skill Run | 员工路径不得因 `user_jwt` 切到 HermesTask 信封 |
 | Shared execution mode resolver | `tools/list` 与 `tools/call` 共用同一 resolver；`Catalog.executionModes` 等于该调用者实际可达集合；`defaultExecutionMode` 等于不显式覆盖时的真实模式 | Backend MCP Gateway | 禁止 Catalog 与 Call 分别硬编码 |
 | Single execution plane | 公共身份只有 `run_id`；公共 replay 只有 Agent Event SoT；公共终态只由 Agent terminal aggregator 裁决 | Backend Public Run API；HermesTask 为内部投影 | 禁止字段与 `/api/v1/hermes/tasks/` 不出现在公共 `tools/call`、Run REST、Result、Artifact、SSE |
 | Public SSE terminal delivery | `COMPLETED` / `FAILED` / `CANCELLED` / `TIMED_OUT` 均先投递合同终态事件再关闭 SSE | Backend Skill Run API | 禁止无终态事件直接关闭或长挂；禁止 `HermesTask.status` 覆盖 Agent terminal |
@@ -78,7 +78,7 @@ work_package_id: WP-SKILL-FIRST-NODESKCLAW
 | C08 | 已发布 Public 合同包 | KEEP | Backend Skill Run Contract Package | `contracts/skill-run/v1.2.1/` 与 tag `skill-run-contract-v1.2.1` 零修改 |
 | C09 | Workspace ACL、Agent Event SoT、Run 终态 | KEEP | Workspace 域 + Agent Run 域 | 不删除办公室模型；不新建 Event Store；Backend 不裁决 Agent-owned 终态 |
 | C10 | 员工 Catalog 合同形状 | KEEP | Backend MCP Gateway / Hermes Skill 域 | 不改 Catalog Schema；宣告集合由 C12 校正 |
-| C11 | Credential-agnostic Accepted Envelope | MODIFY | Backend MCP Gateway + Runtime Skill Run | `auth_type` 不再决定信封形状；`user_jwt` 与 `mcp_client_token` 除 `run_id` 取值外键集与语义一致 |
+| C11 | Credential-agnostic Accepted Envelope | MODIFY | Backend MCP Gateway + Runtime Skill Run | 员工 `user_jwt` 返回 v1.2.1 信封；resolver 不得因凭证类型把员工 Runtime Skill 切到 HermesTask。PC-10 live 只跑 `user_jwt` |
 | C12 | Shared execution mode resolver | MODIFY | Backend MCP Gateway | Catalog 宣告等于该调用者真实可达模式；`defaultExecutionMode` 属于该集合且等于默认实际模式 |
 | C13 | Single Plane Public Isolation | MODIFY | Backend MCP Gateway + Skill Run API + HermesTask 投影 | 公共面不出现禁用字段与 `/api/v1/hermes/tasks/`；HermesTask 仅为内部投影；投影失败可观察且不得让 Public Run 返回陈旧终态 |
 | C14 | Public Terminal Delivery | MODIFY | Backend Skill Run API | 四类终态均先投递合同终态事件再关闭 SSE；`TIMED_OUT` 不得当作普通 delta |
@@ -88,7 +88,7 @@ work_package_id: WP-SKILL-FIRST-NODESKCLAW
 
 ### Credential-Agnostic Public Envelope
 
-同一 Skill、同一组织、同一调用语义，不得因 `auth_type` 返回不同契约。`auth_type` 允许影响身份、组织、授权、配额、限流、审计与可见 Skill 范围。`auth_type` 禁止影响信封形状、字段键集、身份字段命名、URL 路径族、执行模式选择、事件类型集合。执行模式若确需差异化，必须由 Skill Release 或组织策略等服务端授权事实决定，并在 Catalog 中如实宣告，不得由客户端凭证类型隐式决定。
+同一 Skill、同一组织、同一调用语义下，员工 `user_jwt` 必须拿到冻结 v1.2.1 公共信封，不得因该凭证被分流到 HermesTask。PC-10 live 只证明用户端 `user_jwt`；`mcp_client_token` 不是当前员工功能点，不得作为 live 第二调用方。实现上 resolver 仍不得用凭证类型选择员工 Runtime Skill 的公共信封。
 
 员工 `tools/call` 在 Runtime Skill 已由 `RuntimeSkillRunService.start()` 建立 Agent Run 后，必须返回该 Run 的冻结 v1.2.1 Accepted，不得改走 `_build_task_response` 的 HermesTask 信封。幂等回放返回的公共身份仍是同一个 `run_id`。
 
@@ -119,9 +119,9 @@ A1 第 30.5 节两项不进入本项范围：Artifact 列表字段名以冻结�
 ## Acceptance Criteria
 
 - **AC-01 / C01–C04, C06–C10**：历史 KEEP 行为无回归：prompt-first 不因 Installation Workspace 失败；跨组织 Execution Workspace fail-closed；Public Run/Result/Artifact 成功体仍为冻结合同对象；v1.2.1 字节不变。
-- **AC-02 / C11**：同 Skill、同组织、同参数分别使用 `user_jwt` 与 `mcp_client_token` 调用 `tools/call`；除不同请求产生的 `run_id` 值外，公共键集与语义一致，均为 v1.2.1 形状，且均不含 HermesTask 平面字段（PC-10）。
+- **AC-02 / C11**：真实员工 `user_jwt` 对目标 Skill 调用 `tools/call`，返回冻结 v1.2.1 形状（`run_id` + `/api/v1/runs/*` + `contract_version`），且不含 HermesTask 平面字段（PC-10）。不得以 `mcp_client_token` 或更换另一 Skill 作为该场景的替代。
 - **AC-03 / C11/C13**：员工 accepted `structuredContent` 含 `run_id`、合同状态、`event_stream` / `result_url` / `artifact_url` 指向 `/api/v1/runs/{run_id}/...` 与 `contract_version`；幂等回放返回同一 `run_id`，不得回放出 `task_id`。
-- **AC-04 / C12**：逐 `auth_type` 验证 `executionModes` / `defaultExecutionMode` 与真实 call resolver 结果一致（PC-11）。
+- **AC-04 / C12**：对员工 `user_jwt` 验证 `executionModes` / `defaultExecutionMode` 与真实 call resolver 结果一致（PC-11）。
 - **AC-05 / C13**：对 accepted、Run、Result、Artifacts、SSE 全量扫描，不出现禁用字段及 `/api/v1/hermes/tasks/`（PC-12）。
 - **AC-06 / C13**：HermesTask 投影失败留下结构化错误或指标；Public GET Run / SSE 仍以 Agent 为准，不停留在陈旧 `HermesTask.status`。
 - **AC-07 / C14**：真实覆盖 `COMPLETED` / `FAILED` / `CANCELLED` / `TIMED_OUT` 四类终态；每种均先投递合同终态事件再关闭 SSE（PC-13）。

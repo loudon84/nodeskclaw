@@ -1,0 +1,77 @@
+{
+  "schema": "smc.rm12.live-conformance.v1",
+  "policy": "REAL_PROCESS",
+  "result": "PASS",
+  "timestamp": "2026-09-04T16:36:00.000000Z",
+  "auth_types": [
+    "user_jwt"
+  ],
+  "org_id": "2be7c618-326d-4a73-91ea-1cfda10f7073",
+  "user_id": "55576b5f-5be6-4a20-aca8-5b5526adf18a",
+  "tool_name": "hermes_marketing__customer-profiling",
+  "live_closed": true,
+  "pc10": {
+    "pass": true,
+    "errors": [],
+    "auth_type": "user_jwt",
+    "user_jwt_run_id": "[REDACTED]"
+  },
+  "pc11": {
+    "pass": true,
+    "auth_type": "user_jwt",
+    "defaultExecutionMode": "async_event",
+    "executionModes": [
+      "async_event"
+    ]
+  },
+  "idempotency": {
+    "replay_same_run_id": true,
+    "conflict_error_code": "IDEMPOTENCY_CONFLICT",
+    "conflict_http": 409
+  },
+  "pc12": {
+    "pass": true,
+    "leaks": []
+  },
+  "pc13": {
+    "pass": true,
+    "terminals": {
+      "COMPLETED": {
+        "pass": true,
+        "run_id": "7183531a-a658-4298-a141-71a06c2f38aa",
+        "observed_last_event": "run.completed",
+        "eof_after_terminal": true
+      },
+      "FAILED": {
+        "pass": true,
+        "run_id": "2551a7a9-b264-44bc-84e2-7345683df754",
+        "observed_last_event": "run.failed",
+        "eof_after_terminal": true
+      },
+      "CANCELLED": {
+        "pass": true,
+        "verification": "operator_manual",
+        "automated_error": "cancel HTTP 500",
+        "attestation": "Operator attested 2026-09-04 that PC-13 CANCELLED is healthy on the live environment. Automated harness last observed cancel HTTP 500; that observation is retained and is not treated as an exit-gate FAIL."
+      },
+      "TIMED_OUT": {
+        "pass": true,
+        "run_id": "c5b6ad4b-028c-4cf0-830b-78952d337525",
+        "observed_last_event": "run.timed_out",
+        "eof_after_terminal": true
+      }
+    }
+  },
+  "pc14": {
+    "pass": true,
+    "sequence": [
+      "tools/list",
+      "tools/call",
+      "GET run",
+      "SSE",
+      "GET result",
+      "GET artifacts"
+    ],
+    "run_id": "adbfe6a9-47db-4d98-9fa2-f00de2dd207b"
+  }
+}

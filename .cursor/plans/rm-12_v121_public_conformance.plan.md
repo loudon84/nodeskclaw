@@ -84,7 +84,7 @@ sequenceDiagram
 | Requirement | Source | Obligation | Classification | Change IDs | Todo | Verification IDs | Evidence Class | Blocking |
 |---|---|---|---|---|---|---|---|---|
 | AC-01 | AC | 历史 KEEP 行为无回归：prompt-first 不因 Installation Workspace 失败；跨组织 Execution Workspace fail-closed；Public Run/Result/Artifact 成功体仍为冻结合同对象；v1.2.1 字节不变。 | BEHAVIOR | C01; C02; C03; C04; C06; C07; C08; C09; C10 | - | V08 | INTEGRATION | yes |
-| AC-02 | AC | 同 Skill、同组织、同参数分别使用 `user_jwt` 与 `mcp_client_token` 调用 `tools/call`；除不同请求产生的 `run_id` 值外，公共键集与语义一致，均为 v1.2.1 形状，且均不含 HermesTask 平面字段（PC-10）。 | CONTRACT | C11 | T1 | V01; V06 | INTEGRATION | yes |
+| AC-02 | AC | 真实员工 `user_jwt` 对目标 Skill 调用 `tools/call`，返回冻结 v1.2.1 形状且不含 HermesTask 平面字段（PC-10）。不得以 `mcp_client_token` 或更换另一 Skill 替代。 | CONTRACT | C11 | T1 | V01; V06 | INTEGRATION | yes |
 | AC-03 | AC | 员工 accepted `structuredContent` 含 `run_id`、合同状态、`event_stream` / `result_url` / `artifact_url` 指向 `/api/v1/runs/{run_id}/...` 与 `contract_version`；幂等回放返回同一 `run_id`，不得回放出 `task_id`。 | LIFECYCLE | C11; C13 | T1 | V01; V06 | INTEGRATION | yes |
 | AC-04 | AC | 逐 `auth_type` 验证 `executionModes` / `defaultExecutionMode` 与真实 call resolver 结果一致（PC-11）。 | CONTRACT | C12 | T1 | V01; V06 | UNIT | yes |
 | AC-05 | AC | 对 accepted、Run、Result、Artifacts、SSE 全量扫描，不出现禁用字段及 `/api/v1/hermes/tasks/`（PC-12）。 | SECURITY | C13 | T1 | V03; V06 | INTEGRATION | yes |
@@ -209,7 +209,7 @@ None
 - C13
 
 **Goal**
-Employee Runtime `tools/list` and `tools/call` share one resolver, return the same v1.2.1 Accepted as `mcp_client_token`, and keep HermesTask off the public plane while projection failure stays observable.
+Employee Runtime `tools/list` and `tools/call` share one resolver, return frozen v1.2.1 Accepted on the employee `user_jwt` path, and keep HermesTask off the public plane while projection failure stays observable.
 
 **Immediate anchors**
 - `nodeskclaw-backend/app/services/mcp_skill_gateway/mcp_execution_mode.py#resolve_mcp_execution_mode`
@@ -222,7 +222,7 @@ Employee Runtime `tools/list` and `tools/call` share one resolver, return the sa
 - Employee merge path remains free of forbidden keys; map `run.timed_out`; log projection failure with a stable code. Do not delete `hermes_task_worker.py`.
 
 **Stop conditions**
-- [ ] `user_jwt` and `mcp_client_token` Accepted key sets match except `run_id` value
+- [ ] `user_jwt` Accepted is v1.2.1 (`run_id` + `/api/v1/runs/*`) and has no HermesTask fields
 - [ ] Catalog advertised modes equal call resolver
 - [ ] Public mapper payload has no `task_id` / `/api/v1/hermes/tasks/`
 - [ ] Projection failure is logged; GET Run still uses Agent

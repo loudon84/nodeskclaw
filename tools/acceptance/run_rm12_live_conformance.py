@@ -5,24 +5,13 @@ import argparse
 import json
 import os
 import sys
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
-
-ENVELOPE_IGNORE_KEYS = frozenset(
-    {
-        "run_id",
-        "created_at",
-        "updated_at",
-        "request_trace_id",
-        "timestamp",
-        "committed",
-        "tool_name",
-    }
-)
 
 FORBIDDEN_KEYS = frozenset(
     {
@@ -95,6 +84,29 @@ def timeout_seconds() -> int:
     if value <= 0:
         raise LiveBlocked("RM12_LIVE_CONFORMANCE_BLOCKED", "RM12_TIMEOUT_SECONDS must be > 0")
     return value
+
+
+# @lat: [[architecture/skill-agent#RM-12 Live Public Conformance]]
+def tool_arguments(*, variant: str = "") -> dict[str, Any]:
+    raw = os.getenv("RM12_TOOL_ARGUMENTS", "").strip()
+    if raw:
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise LiveBlocked("RM12_LIVE_CONFORMANCE_BLOCKED", "RM12_TOOL_ARGUMENTS must be JSON object") from exc
+        if not isinstance(parsed, dict):
+            raise LiveBlocked("RM12_LIVE_CONFORMANCE_BLOCKED", "RM12_TOOL_ARGUMENTS must be JSON object")
+        base = dict(parsed)
+    else:
+        base = {"prompt": "rm12-live-conformance"}
+    if not variant:
+        return base
+    mutated = dict(base)
+    for key in ("prompt", "message"):
+        if isinstance(mutated.get(key), str):
+            mutated[key] = f"{mutated[key]}-{variant}"
+            return mutated
+    raise LiveBlocked("RM12_LIVE_CONFORMANCE_BLOCKED", "RM12_TOOL_ARGUMENTS needs prompt or message to vary")
 
 
 def redact(value: Any, extra_secrets: tuple[str, ...] = ()) -> Any:
@@ -225,6 +237,35 @@ def public_cancel(base: str, token: str, org_id: str, run_id: str, timeout: int)
     return status
 
 
+def wait_until_agent_has_run(
+    agent_base: str,
+    token: str,
+    org_id: str,
+    run_id: str,
+    timeout: int,
+) -> None:
+    deadline = time.monotonic() + timeout
+    last_status = 0
+    while time.monotonic() < deadline:
+        status, _, _ = _http(
+            "GET",
+            f"{agent_base.rstrip('/')}/internal/v1/runs/{run_id}",
+            headers={
+                "X-Skill-Agent-Token": token,
+                "X-Exec-Org-Id": org_id,
+            },
+            timeout=min(10, max(1, timeout)),
+        )
+        if status == 200:
+            return
+        last_status = status
+        time.sleep(0.5)
+    raise LiveBlocked(
+        "RM12_LIVE_CONFORMANCE_BLOCKED",
+        f"agent run not dispatched HTTP {last_status}",
+    )
+
+
 def agent_ingest(
     agent_base: str,
     token: str,
@@ -340,18 +381,6 @@ def assert_envelope(structured: dict[str, Any], run_id: str) -> list[str]:
     return errors
 
 
-def public_shape(structured: dict[str, Any]) -> set[str]:
-    return {key for key in structured if key not in ENVELOPE_IGNORE_KEYS}
-
-
-def path_family(structured: dict[str, Any], run_id: str) -> dict[str, str]:
-    return {
-        "event_stream": structured.get("event_stream", "").replace(run_id, "{run_id}"),
-        "result_url": structured.get("result_url", "").replace(run_id, "{run_id}"),
-        "artifact_url": structured.get("artifact_url", "").replace(run_id, "{run_id}"),
-    }
-
-
 def find_tool(tools: list[Any], name: str) -> dict[str, Any] | None:
     for tool in tools:
         if isinstance(tool, dict) and tool.get("name") == name:
@@ -368,20 +397,19 @@ def preflight(backend: str, timeout: int) -> None:
 def run_live() -> dict[str, Any]:
     backend = require_env("RM12_BACKEND_BASE_URL")
     user_jwt = require_env("RM12_USER_JWT")
-    mcp_token = require_env("RM12_MCP_CLIENT_TOKEN")
     org_id = require_env("RM12_ORG_ID")
     user_id = require_env("RM12_USER_ID")
     tool_name = require_env("RM12_TOOL_NAME")
     agent_base = require_env("RM12_AGENT_BASE_URL")
     agent_token = require_env("SKILL_AGENT_INTERNAL_TOKEN")
     timeout = timeout_seconds()
-    secrets = (user_jwt, mcp_token, agent_token)
+    secrets = (user_jwt, agent_token)
     evidence: dict[str, Any] = {
         "schema": "smc.rm12.live-conformance.v1",
         "policy": "REAL_PROCESS",
         "result": "FAIL",
         "timestamp": utcnow(),
-        "auth_types": ["user_jwt", "mcp_client_token"],
+        "auth_types": ["user_jwt"],
         "org_id": org_id,
         "user_id": user_id,
         "tool_name": tool_name,
@@ -405,9 +433,8 @@ def run_live() -> dict[str, Any]:
     if not isinstance(modes, list) or default_mode not in modes:
         raise LiveBlocked("RM12_LIVE_CONFORMANCE_BLOCKED", "PC-11 catalog defaultExecutionMode not in executionModes")
 
-    call_args = {"message": "rm12-live-conformance"}
+    call_args = tool_arguments()
     jwt_idem = f"rm12-jwt-{uuid.uuid4()}"
-    mcp_idem = f"rm12-mcp-{uuid.uuid4()}"
     jwt_status, jwt_payload = mcp_call(
         backend,
         user_jwt,
@@ -417,43 +444,29 @@ def run_live() -> dict[str, Any]:
         timeout=timeout,
         idempotency_key=jwt_idem,
     )
-    mcp_status, mcp_payload = mcp_call(
-        backend,
-        mcp_token,
-        org_id,
-        "tools/call",
-        {"name": tool_name, "arguments": call_args},
-        timeout=timeout,
-        idempotency_key=mcp_idem,
-    )
-    if jwt_status != 200 or mcp_status != 200:
+    if jwt_status != 200:
         raise LiveBlocked(
             "RM12_LIVE_CONFORMANCE_BLOCKED",
-            f"tools/call HTTP jwt={jwt_status} mcp={mcp_status}",
+            f"tools/call HTTP jwt={jwt_status}",
         )
     jwt_env = envelope_from_mcp(jwt_payload)
-    mcp_env = envelope_from_mcp(mcp_payload)
     jwt_run = str(jwt_env.get("run_id") or "")
-    mcp_run = str(mcp_env.get("run_id") or "")
-    if not jwt_run or not mcp_run:
+    if not jwt_run:
         raise LiveBlocked("RM12_LIVE_CONFORMANCE_BLOCKED", "tools/call missing run_id")
-    pc10_errors = assert_envelope(jwt_env, jwt_run) + assert_envelope(mcp_env, mcp_run)
-    if public_shape(jwt_env) != public_shape(mcp_env):
-        pc10_errors.append("public key set mismatch")
-    if path_family(jwt_env, jwt_run) != path_family(mcp_env, mcp_run):
-        pc10_errors.append("path family mismatch")
-    if jwt_env.get("execution_mode") != default_mode or mcp_env.get("execution_mode") != default_mode:
+    pc10_errors = assert_envelope(jwt_env, jwt_run)
+    if jwt_env.get("execution_mode") != default_mode:
         pc10_errors.append("PC-11 execution_mode != defaultExecutionMode")
     if default_mode != "async_event":
         pc10_errors.append(f"default mode is {default_mode}, expected async_event")
     evidence["pc10"] = {
         "pass": not pc10_errors,
         "errors": pc10_errors,
+        "auth_type": "user_jwt",
         "user_jwt_run_id": jwt_run,
-        "mcp_client_token_run_id": mcp_run,
     }
     evidence["pc11"] = {
         "pass": default_mode in modes and jwt_env.get("execution_mode") == default_mode,
+        "auth_type": "user_jwt",
         "defaultExecutionMode": default_mode,
         "executionModes": modes,
     }
@@ -473,7 +486,7 @@ def run_live() -> dict[str, Any]:
         user_jwt,
         org_id,
         "tools/call",
-        {"name": tool_name, "arguments": {"message": "rm12-live-conflict"}},
+        {"name": tool_name, "arguments": tool_arguments(variant="conflict")},
         timeout=timeout,
         idempotency_key=jwt_idem,
     )
@@ -488,7 +501,7 @@ def run_live() -> dict[str, Any]:
         "conflict_http": conflict_status,
     }
 
-    surfaces: dict[str, Any] = {"tools_list": list_payload, "tools_call_user_jwt": jwt_payload, "tools_call_mcp": mcp_payload}
+    surfaces: dict[str, Any] = {"tools_list": list_payload, "tools_call_user_jwt": jwt_payload}
     for label, path in (
         ("get_run", f"/api/v1/runs/{jwt_run}"),
         ("get_result", f"/api/v1/runs/{jwt_run}/result"),
@@ -511,7 +524,7 @@ def run_live() -> dict[str, Any]:
             user_jwt,
             org_id,
             "tools/call",
-            {"name": tool_name, "arguments": {"message": f"rm12-live-{status_name.lower()}"}},
+            {"name": tool_name, "arguments": tool_arguments(variant=status_name.lower())},
             timeout=timeout,
             idempotency_key=f"rm12-{status_name.lower()}-{uuid.uuid4()}",
         )
@@ -521,6 +534,11 @@ def run_live() -> dict[str, Any]:
             continue
         term_env = envelope_from_mcp(term_payload)
         term_run = str(term_env.get("run_id") or "")
+        if not term_run:
+            terminals_ok = False
+            pc13[status_name] = {"pass": False, "error": "tools/call missing run_id"}
+            continue
+        wait_until_agent_has_run(agent_base, agent_token, org_id, term_run, timeout)
         if status_name == "CANCELLED":
             cancel_http = public_cancel(backend, user_jwt, org_id, term_run, timeout)
             if cancel_http >= 400:
