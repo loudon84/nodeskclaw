@@ -179,3 +179,11 @@ Agent 已具备严格就绪探针、真实 S3 StoragePort 探针隔离与可执�
 - **已实现**：[[tools/acceptance/check_postman_collection.py#check_collection]] 递归校验 `tests/postman/nodeskclaw_acceptance_closure.postman_collection.json`（Backend JWT 公共合同 + 内部 Edge/Bundle harness）；[[tools/acceptance/check_postman_collection.py#scan_acceptance_secrets]] 扫描 compose/env/scripts/reports 禁止仓库固定秘密；[[tools/acceptance/run_newman.py#generate_env_file]] 禁止默认 Token 回退并要求隔离 org 前缀，[[tools/acceptance/run_newman.py#construct_newman_command]] 组装两连跑命令。
 - **部分实现**：完整 Harness 实跑与 Newman 两连跑需 Docker 与运行时 JWT/Token 注入；本地无 Docker 时记 `BLOCKED`，不得假绿。
 - **目标状态**：真实 PostgreSQL、多 Pod、故障注入、Postman/Newman 真实环境两连跑、Secret 扫描和合同 release check 全部生成可复现证据后，才允许声明生产验收闭环。
+
+## Hermes Native Runtime And Employee Public Face
+
+生产 Skill Run 的 Hermes 南向必须走 Native Run API，员工公共信封必须与凭证类型无关。ChatCompletion token delta 不是 Event Source；HermesTask 只做内部投影。
+
+- **部分实现**：[[nodeskclaw-agent/app/services/hermes_engine.py#execute_hermes_run]] 仍调用 `/v1/chat/completions` 并把每个 `delta.content` 写成 durable `assistant.message`。[[nodeskclaw-backend/app/services/mcp_skill_gateway/mcp_execution_mode.py#resolve_mcp_execution_mode]] 在默认 `async_event` 下把 `user_jwt` 分流为 `queued`，[[nodeskclaw-backend/app/services/hermes_skill/mcp_tool_mapper.py#McpToolMapper#_build_task_response]] 再输出 HermesTask 信封。
+- **部分实现**：[[nodeskclaw-backend/app/services/hermes_external/hermes_api_server_client.py#HermesApiServerClient#get_capabilities]] 已存在但未进入 Agent Attempt 生产路径。[[nodeskclaw-agent/app/db_metadata.py#run_attempts]] 尚无 Runtime Binding 字段。
+- **目标状态**：RM-12 使 `user_jwt` 与 `mcp_client_token` 共用冻结 v1.2.1 公共面（`docs_agent/prd-v1.6.10-skill-run-v121-public-conformance.md`）；RM-13 建立 Native Bridge、Attempt Runtime Binding，并 REMOVE ChatCompletion Event Source（`docs_agent/prd-v1.6.11-hermes-native-runtime-bridge.md`）；RM-14 在该 Native Adapter 上 ADD Normalizer 与 Coalescer，不得恢复 ChatCompletion parser（`docs_agent/prd-v1.6.12-runtime-semantic-event-fidelity.md`）。Architecture Source 为 A1 `AD-SKILL-AGENT-V16-A1@1.6.0`。
