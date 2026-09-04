@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "a1b2c3d4-skill-run-consumer-v121",
     "name": "DeskClaw 团队版 Skill Run Consumer v1.2.1",
-    "description": "外部 Work / 消费端唯一公共联调包。只覆盖 Backend JWT 鉴权面：POST /api/v1/mcp 与 GET|POST /api/v1/runs/*。禁止直连 Agent 或 Internal Edge。合同锚点：nodeskclaw-backend/contracts/skill-run/v1.2.1/。前置：先用 nodeskclaw-agent-full-flow 的 04-09 准备已 published 且已 central 安装的 Skill（consumer_tool_name 默认 postman_agent_debug）。已知限制：Backend SSE 当前仅投影 run.* 控制事件、assistant.message、artifact.persisted；reasoning.summary / tool.call / clarify.requested / approval.requested 暂未对外。90 目录为未冻结能力，合同 manifest 标 approval=unsupported。",
+    "description": "外部 Work / 消费端唯一公共联调包。只覆盖 Backend JWT 鉴权面：POST /api/v1/mcp 与 GET|POST /api/v1/runs/*。禁止直连 Agent 或 Internal Edge。合同锚点：nodeskclaw-backend/contracts/skill-run/v1.2.1/。前置：先用 nodeskclaw-agent-full-flow 的 04-09 准备已 published 且已 central 安装的 Skill（consumer_tool_name 默认 postman_agent_debug）。Public SSE allowlist：run.created、run.progress、run.completed、run.failed、run.cancelled、run.timed_out、assistant.message、reasoning.summary、tool.call、clarify.requested、approval.requested、artifact.persisted。PC-12 递归禁止 task_id / task_no / agent_alias / agent_id / profile_id / workspace_id / installation_id / routing_reason / event_token_url / wait_strategy / gateway_token / env_file / runtime_run_id / runtime_session_id / /api/v1/hermes/tasks/ / token= / API_SERVER_KEY。90 目录为未冻结能力，合同 manifest 标 approval=unsupported。",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -23,6 +23,34 @@
         "exec": [
           "if (!pm.collectionVariables.get('idempotency_key')) {",
           "  pm.collectionVariables.set('idempotency_key', 'consumer-' + pm.variables.replaceIn('{{$guid}}'));",
+          "}"
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "const forbiddenKeys = ['task_id','task_no','agent_alias','agent_id','profile_id','workspace_id','installation_id','routing_reason','event_token_url','wait_strategy','gateway_token','env_file','runtime_run_id','runtime_session_id'];",
+          "const forbiddenSubs = ['/api/v1/hermes/tasks/','token=','API_SERVER_KEY'];",
+          "function scan(value) {",
+          "  if (Array.isArray(value)) { value.forEach(scan); return; }",
+          "  if (value && typeof value === 'object') {",
+          "    Object.keys(value).forEach((key) => {",
+          "      pm.expect(forbiddenKeys).to.not.include(key);",
+          "      scan(value[key]);",
+          "    });",
+          "    return;",
+          "  }",
+          "  if (typeof value === 'string') {",
+          "    forbiddenSubs.forEach((frag) => pm.expect(value).to.not.include(frag));",
+          "  }",
+          "}",
+          "const raw = pm.response.text() || '';",
+          "forbiddenSubs.forEach((frag) => pm.expect(raw).to.not.include(frag));",
+          "try { scan(pm.response.json()); } catch (e) {",
+          "  forbiddenKeys.forEach((key) => pm.expect(raw).to.not.match(new RegExp('\"' + key + '\"')));",
           "}"
         ]
       }
@@ -192,7 +220,7 @@
         "  chunks.slice(0, 3).forEach((line) => {",
         "    const evt = JSON.parse(line.replace(/^data:\\s*/, ''));",
         "    pm.expect(evt.event_id).to.match(new RegExp('^' + pm.collectionVariables.get('consumer_run_id') + ':\\\\d+$'));",
-        "    pm.expect(['run.created','run.progress','run.completed','run.failed','run.cancelled','run.timed_out','assistant.message','artifact.persisted']).to.include(evt.event_type);",
+        "    pm.expect(['run.created','run.progress','run.completed','run.failed','run.cancelled','run.timed_out','assistant.message','reasoning.summary','tool.call','clarify.requested','approval.requested','artifact.persisted']).to.include(evt.event_type);",
         "    pm.collectionVariables.set('last_event_id', evt.event_id);",
         "  });",
         "}"
