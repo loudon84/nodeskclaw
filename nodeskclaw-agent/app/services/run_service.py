@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -14,6 +15,8 @@ from app.schemas import ArtifactDescriptor, CreateRunRequest, CreateRunResponse,
 from app.services.execution_observability import bind_from_snapshot, normalize_request_trace_id, observe_stage, record_metric
 
 SCHEMA = settings.SKILL_AGENT_SCHEMA
+
+logger = logging.getLogger(__name__)
 
 TERMINAL = {"COMPLETED", "FAILED", "CANCELLED", "TIMED_OUT"}
 
@@ -1031,6 +1034,25 @@ async def record_event_rejection(
         pass
 
 
+# @lat: [[architecture/skill-agent#Configuration#Gateway Reachability Probe]]
+async def _append_terminal_event(
+    db: AsyncSession,
+    run_id: str,
+    event_type: str,
+    payload: dict[str, Any],
+    *,
+    org_id: str | None = None,
+) -> None:
+    try:
+        await append_event(db, run_id, event_type, payload, org_id=org_id)
+    except RuntimeError:
+        logger.warning(
+            "terminal %s event skipped after status CAS run_id=%s",
+            event_type,
+            run_id,
+        )
+
+
 async def aggregate_run_terminal(
     db: AsyncSession,
     run_id: str,
@@ -1070,7 +1092,9 @@ async def aggregate_run_terminal(
         if all_stopped:
             ok = await set_status(db, run_id, "CANCELLED", org_id=org_id, expected_status=["CANCELLING"])
             if ok:
-                await append_event(db, run_id, "run.cancelled", {"status": "CANCELLED"}, org_id=org_id)
+                await _append_terminal_event(
+                    db, run_id, "run.cancelled", {"status": "CANCELLED"}, org_id=org_id
+                )
             return await get_run(db, run_id, org_id=org_id)
         return run
 
@@ -1087,7 +1111,13 @@ async def aggregate_run_terminal(
             result={"error": first_err, "failed_step_id": failed_required[0].get("step_id")},
         )
         if ok:
-            await append_event(db, run_id, "run.failed", {"status": "FAILED", "error": first_err}, org_id=org_id)
+            await _append_terminal_event(
+                db,
+                run_id,
+                "run.failed",
+                {"status": "FAILED", "error": first_err},
+                org_id=org_id,
+            )
         return await get_run(db, run_id, org_id=org_id)
 
     # 3. Required steps success check
@@ -1129,7 +1159,7 @@ async def aggregate_run_terminal(
             result=combined_result,
         )
         if ok:
-            await append_event(db, run_id, "run.completed", combined_result, org_id=org_id)
+            await _append_terminal_event(db, run_id, "run.completed", combined_result, org_id=org_id)
             content = combined_result.get("content") or combined_result.get("summary") or json.dumps(combined_result)
             raw = content if isinstance(content, (bytes, bytearray)) else str(content).encode("utf-8")
             try:

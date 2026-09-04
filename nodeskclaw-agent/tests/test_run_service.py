@@ -941,6 +941,32 @@ async def test_aggregate_run_terminal_single_winner():
 
 
 @pytest.mark.asyncio
+# @lat: [[architecture/skill-agent#Configuration#Gateway Reachability Probe]]
+async def test_aggregate_keeps_failed_status_when_terminal_event_write_rejected():
+    db = AsyncMock()
+    dummy_run_running = MagicMock(status="RUNNING", run_id="r-fail", org_id="org-1")
+    dummy_run_failed = MagicMock(status="FAILED", run_id="r-fail", org_id="org-1")
+    steps_with_failure = [
+        {"step_id": "s1", "required": True, "status": "FAILED", "error_message": "gateway unreachable"},
+    ]
+    mock_steps_res = MagicMock()
+    mock_steps_res.mappings.return_value.all.return_value = steps_with_failure
+
+    with patch("app.services.run_service.get_run", side_effect=[dummy_run_running, dummy_run_failed]), \
+         patch("app.services.run_service.set_status", new=AsyncMock(return_value=True)) as mock_set_st, \
+         patch(
+             "app.services.run_service.append_event",
+             new=AsyncMock(side_effect=RuntimeError("stale attempt, invalid generation, or terminal run cannot write events")),
+         ):
+        db.execute = AsyncMock(return_value=mock_steps_res)
+        res = await run_service.aggregate_run_terminal(db, "r-fail", org_id="org-1")
+
+    assert res.status == "FAILED"
+    assert mock_set_st.await_count == 1
+    assert mock_set_st.await_args.args[2] == "FAILED"
+
+
+@pytest.mark.asyncio
 async def test_ingest_rejection_is_audited():
     db = AsyncMock()
     db.execute = AsyncMock(return_value=MagicMock())

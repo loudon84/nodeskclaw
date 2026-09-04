@@ -782,15 +782,21 @@ class RunWorker:
                             generation=generation,
                             result={"error": str(exc)[:500]},
                         )
-                        await run_service.append_event(
-                            err_db,
-                            run_id,
-                            "run.failed",
-                            {"error": str(exc)[:500]},
-                            org_id=org_id,
-                            attempt_id=attempt_id,
-                            generation=generation,
-                        )
+                        try:
+                            await run_service.append_event(
+                                err_db,
+                                run_id,
+                                "run.failed",
+                                {"error": str(exc)[:500]},
+                                org_id=org_id,
+                                attempt_id=attempt_id,
+                                generation=generation,
+                            )
+                        except RuntimeError:
+                            logger.warning(
+                                "run.failed event skipped after FAILED status run_id=%s",
+                                run_id,
+                            )
                         await err_db.commit()
                     except Exception:
                         await err_db.rollback()

@@ -332,3 +332,73 @@ async def test_execute_hermes_plain_text_does_not_infer_semantic_types():
     assert assistant["payload"]["text"].startswith("Please call")
     assert "source_event_id" in assistant
 
+
+@pytest.mark.asyncio
+# @lat: [[architecture/skill-agent#Configuration#Gateway Reachability Probe]]
+async def test_execute_hermes_fails_closed_when_gateway_probe_times_out():
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    import httpx
+
+    client = AsyncMock()
+    client.__aenter__.return_value = client
+    client.__aexit__.return_value = None
+    client.get = AsyncMock(side_effect=httpx.ConnectTimeout("connect timed out"))
+    client.stream = MagicMock()
+
+    with patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client):
+        events = [
+            event
+            async for event in execute_hermes_run(
+                tool_name="foo",
+                arguments={"prompt": "hi"},
+                route_snapshot={"gateway_url": "http://192.168.102.247:29100"},
+                run_id="run-gw-timeout",
+                attempt_id="att-gw-timeout",
+            )
+        ]
+
+    assert events[-1]["event_type"] == "run.failed"
+    assert events[-1]["payload"]["error_code"] == "errors.skill_run.gateway_unreachable"
+    assert "192.168.102.247:29100" in events[-1]["payload"]["error"]
+    client.stream.assert_not_called()
+
+
+@pytest.mark.asyncio
+# @lat: [[architecture/skill-agent#Configuration#Gateway Reachability Probe]]
+async def test_execute_hermes_probes_gateway_before_stream():
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    mock_resp = MagicMock()
+    mock_resp.headers = {"content-type": "application/json"}
+    mock_resp.json.return_value = {"choices": [{"message": {"content": "ok"}}]}
+    mock_resp.raise_for_status = MagicMock()
+
+    probe_resp = MagicMock()
+    probe_resp.status_code = 404
+
+    client = AsyncMock()
+    client.__aenter__.return_value = client
+    client.__aexit__.return_value = None
+    client.get = AsyncMock(return_value=probe_resp)
+    client.stream = MagicMock()
+    client.stream.return_value.__aenter__.return_value = mock_resp
+    client.stream.return_value.__aexit__.return_value = None
+
+    with patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client):
+        events = [
+            event
+            async for event in execute_hermes_run(
+                tool_name="foo",
+                arguments={"prompt": "hi"},
+                route_snapshot={"gateway_url": "http://hermes:8642"},
+                run_id="run-gw-ok",
+                attempt_id="att-gw-ok",
+            )
+        ]
+
+    client.get.assert_awaited()
+    assert client.get.await_args.args[0] == "http://hermes:8642"
+    client.stream.assert_called()
+    assert events[-1]["event_type"] == "run.completed"
+

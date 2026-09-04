@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     SKILL_AGENT_INTERNAL_TOKEN: str = "change-me-skill-agent-token"
     SKILL_AGENT_INTERNAL_TOKEN_PREVIOUS: str = ""
     SKILL_AGENT_WORKER_ENABLED: bool = True
-    SKILL_AGENT_WORKER_INTERVAL_SECONDS: float = 1.0
+    SKILL_AGENT_WORKER_INTERVAL_SECONDS: int = 3
     SKILL_AGENT_LEASE_SECONDS: int = 60
     SKILL_AGENT_SCHEMA: str = "agent"
     SKILL_AGENT_ARTIFACT_DIR: str = "./data/skill-agent-artifacts"
@@ -23,9 +23,10 @@ class Settings(BaseSettings):
     SKILL_AGENT_EDGE_NODE_ID: str = ""
     SKILL_AGENT_CENTRAL_BASE_URL: str = "http://localhost:4510"
     SKILL_AGENT_SECRET_STORE: str = "./.skill-agent-secrets"
-    SKILL_AGENT_EDGE_POLL_SECONDS: float = 2.0
+    SKILL_AGENT_EDGE_POLL_SECONDS: int = 2
     SKILL_AGENT_INSECURE_MODE: bool = False
     SKILL_AGENT_READINESS_STALE_SECONDS: int = 120
+    SKILL_AGENT_TIMEOUT_SECONDS: int = 30
 
 
 settings = Settings()

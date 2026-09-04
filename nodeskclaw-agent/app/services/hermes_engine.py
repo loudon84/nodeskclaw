@@ -10,6 +10,16 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
+GATEWAY_UNREACHABLE_ERROR_CODE = "errors.skill_run.gateway_unreachable"
+
+
+# @lat: [[architecture/skill-agent#Configuration#Gateway Reachability Probe]]
+async def probe_gateway_url(gateway_url: str, timeout_seconds: int) -> None:
+    timeout = httpx.Timeout(timeout_seconds, connect=timeout_seconds)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        await client.get(gateway_url)
+
+
 
 def build_chat_completions_payload(
     *,
@@ -242,6 +252,28 @@ async def execute_hermes_run(
         yield {
             "event_type": "run.failed",
             "payload": {"error": f"No Hermes gateway configured for {tool_name}"},
+        }
+        return
+
+    timeout_seconds = settings.SKILL_AGENT_TIMEOUT_SECONDS
+    try:
+        await probe_gateway_url(gateway_url, timeout_seconds)
+    except (httpx.TimeoutException, httpx.NetworkError, OSError) as exc:
+        logger.warning(
+            "hermes gateway unreachable tool=%s url=%s timeout=%ss err=%s",
+            tool_name,
+            gateway_url,
+            timeout_seconds,
+            type(exc).__name__,
+        )
+        yield {
+            "event_type": "run.failed",
+            "payload": {
+                "error": (
+                    f"Hermes runtime gateway unreachable within {timeout_seconds}s: {gateway_url}"
+                ),
+                "error_code": GATEWAY_UNREACHABLE_ERROR_CODE,
+            },
         }
         return
 

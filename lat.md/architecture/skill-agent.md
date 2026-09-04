@@ -24,6 +24,14 @@ Agent 从工作目录 `.env` 加载配置，字段以 [[nodeskclaw-agent/app/con
 - **就绪新鲜度**：`SKILL_AGENT_READINESS_STALE_SECONDS`（默认 120s）控制 Central `last_successful_loop_at` 与 Edge `last_heartbeat_at` 的过期阈值。
 - **未入 Settings**：HTTP 端口由 uvicorn `--port 4580` 指定；Edge Spool 与 Skill 安装目录仍硬编码为 `./data/edge_spool` 与 `./data/edge_skills`。
 - **Edge 身份**：`SKILL_AGENT_EDGE_TOKEN` 仅为一次性 bootstrap（引导材料）；公钥与消费账本落在 `SKILL_AGENT_SECRET_STORE/edge-identity.json`，私钥/bootstrap 经同目录 `edge-identity.key` 包装密钥加密，不明文落盘。生产 readiness 接受已绑定身份或未消费的 bootstrap+`SKILL_AGENT_EDGE_NODE_ID`。
+- **时长字段**：所有时长配置为 `int` 秒，字段名以 `_SECONDS` 结尾；禁止 `float`。
+- **Runtime Gateway 探测**：`SKILL_AGENT_TIMEOUT_SECONDS`（默认 30）限制 Hermes `gateway_url` 可达性探测；超时或网络错误 fail-closed，Run 标记 `FAILED`。
+
+### Gateway Reachability Probe
+
+Hermes 执行前必须探测 snapshot 或 lease 中的 `gateway_url`。超过 `SKILL_AGENT_TIMEOUT_SECONDS`（默认 30 秒）则网络异常退出并把 Run 标为 `FAILED`，避免租约过期后被重新认领。
+
+探测由 [[nodeskclaw-agent/app/services/hermes_engine.py#probe_gateway_url]] 对网关发 GET，超时取自 [[nodeskclaw-agent/app/config.py#Settings]] 的 `SKILL_AGENT_TIMEOUT_SECONDS`。[[nodeskclaw-agent/app/services/hermes_engine.py#execute_hermes_run]] 在探测失败时产出 `run.failed` 且 `error_code` 为 `errors.skill_run.gateway_unreachable`，不发起 `/v1/chat/completions`。[[nodeskclaw-agent/app/services/run_service.py#_append_terminal_event]] 在终态 CAS 成功后若事件写入被拒，仍保留 `FAILED`。[[nodeskclaw-agent/app/services/worker.py#RunWorker#_execute]] 的失败落盘同样先写 `FAILED`，事件写入失败不回滚状态。
 
 ## Role Modes
 
@@ -50,7 +58,7 @@ Central 且 Worker 开启时，进程 lifespan 必须能构造 `RunWorker` 并�
 Hybrid 编排的持久化 Step 与唯一终态聚合器已经落地，跨 Edge 与 required Artifact 的生产链路仍缺正式证明。
 
 - **已实现**：[[nodeskclaw-agent/app/services/run_service.py#persist_step_plan]] 将 Step Plan 持久化到 `run_steps`，保存 Owner、依赖、必选状态、required Artifact、代次和 EdgeJob 关联。
-- **已实现**：[[nodeskclaw-agent/app/services/run_service.py#aggregate_run_terminal]] 统一裁决 `COMPLETED`、`FAILED` 和 `CANCELLED`；[[nodeskclaw-agent/app/services/run_service.py#record_event_rejection]] 审计拒绝非法、过期或重复事件。
+- **已实现**：[[nodeskclaw-agent/app/services/run_service.py#aggregate_run_terminal]] 统一裁决 `COMPLETED`、`FAILED` 和 `CANCELLED`；终态事件经 [[nodeskclaw-agent/app/services/run_service.py#_append_terminal_event]] 写入，CAS 成功后事件被拒不回滚状态；[[nodeskclaw-agent/app/services/run_service.py#record_event_rejection]] 审计拒绝非法、过期或重复事件。
 - **部分实现**：required Artifact 的 `PERSISTED` 门禁已有状态机和单元测试，且 Edge Artifact 上传路由与 Backend Relay 合同已对齐；Compose Harness 已提供双 Central + MinIO 拓扑，但完整实跑证据仍待 Docker 环境执行。
 - **目标状态**：在真实 PostgreSQL、多 Worker 和 Edge 故障条件下证明终态只写入一次，旧 Attempt、旧 Run Generation 和旧 Delivery Generation 均不能推进终态。
 
@@ -59,7 +67,7 @@ Hybrid 编排的持久化 Step 与唯一终态聚合器已经落地，跨 Edge �
 Run 生命周期的幂等、CAS 状态迁移、Attempt 代次和取消审批分离已经实现，真实双 Worker 接管证据尚未形成。
 
 - **已实现**：[[nodeskclaw-agent/app/services/run_service.py#create_run]] 以幂等键和快照摘要收敛重复创建；认领时创建 Attempt 并递增 Generation。
-- **已实现**：[[nodeskclaw-agent/app/services/run_service.py#set_status]] 与 [[nodeskclaw-agent/app/services/run_service.py#append_event]] 校验 Run、组织、Attempt 和 Generation，并通过原子事件序列及 `source_event_id` 去重阻止迟到写入。
+- **已实现**：[[nodeskclaw-agent/app/services/run_service.py#set_status]] 与 [[nodeskclaw-agent/app/services/run_service.py#append_event]] 校验 Run、组织、Attempt 和 Generation，并通过原子事件序列及 `source_event_id` 去重阻止迟到写入。终态 Run 拒绝新事件，因此聚合器与 Worker 失败落盘必须先 CAS 到 `FAILED`，事件写入失败不得把状态打回可认领。
 - **已实现**：取消经过 `CANCELLING` 中间态；Resume 不处理 `WAITING_APPROVAL`；[[nodeskclaw-agent/app/services/run_service.py#approve_run]] 独立保存审批决定和证据。
 - **部分实现**：租约续期、过期恢复和 Fencing 已有实现与 Mock 测试；Harness 已定义 kill Central A 故障注入，但尚未取得真实 PostgreSQL 上双 Central 崩溃接管与迟到写入的实跑证据。
 - **目标状态**：故障报告证明最多一个有效 Attempt、终态不回退、旧代事件和 Artifact 无副作用地被拒绝。
