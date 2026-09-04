@@ -1,160 +1,175 @@
 ---
 work_item_id: RM-12
-version: 1.6.10
+version: 1.7.0
 status: APPROVED
 target_branch: main
 review_verdict: PASS
-approved_at: 2026-09-03T19:24:02+08:00
-source_revision: AD-SKILL-AGENT-V16@1.5.0/RM-12
-grounded_commit: 630da4e9c7a0d48910467fc2b375c65e95610f95
+approved_at: 2026-09-04T18:50:00+08:00
+source_revision: AD-SKILL-AGENT-V16-A1@1.6.0/RM-12
+grounded_commit: 81babaebae7c7a1400db5be6139633af47bf5161
 feature_id: FEAT-SKILL-FIRST-001
 work_package_id: WP-SKILL-FIRST-NODESKCLAW
 ---
 
-# DeskClaw 团队版 Skill Run v1.2.1 员工公共面符合性 PRD v1.6.10
+# DeskClaw 团队版 Skill Run v1.2.1 员工公共面符合性 PRD v1.7.0
 
-本文定义 RM-12：在不改写已发布 `SKILL-RUN-CONTRACT v1.2.1` 的前提下，使员工 Public Skill Run（公共技能运行）面对该冻结合同可观察符合。本文件取代用户草稿 `docs_agent/prd-hotfix-skill-run-v1.2.1-postman-ready.md` 作为 Stage PRD（阶段需求）；该草稿只是 `user-input:2026-09-03/v121-postman-ready-hotfix`，不是交付事实源。
+本文定义 RM-12：在不改写已发布 `SKILL-RUN-CONTRACT v1.2.1`（公共技能运行合同）的前提下，使真实员工 `user_jwt` 路径面对该冻结合同可观察符合，并与 `mcp_client_token` 在同一授权语义下返回相同公共契约。本文是对同文件 `1.6.10` APPROVED 文本的 A1 定向重校：历史 C01–C10 已交付能力列为 KEEP，不重新实现；Exit Criteria（退出条件）改由 A1 第 30 节四条不变量与 PC-10 至 PC-14 定义。
+
+工程基线见 `reports/PRD-SKILL-AGENT-V16-RM12-RM14-engineering-closure-v1.0.md`。Architecture Source（架构来源）为 `AD-SKILL-AGENT-V16-A1@1.6.0`。Grounding 模式为 targeted re-ground：既有 PRD `source_revision` 从 `AD-SKILL-AGENT-V16@1.5.0/RM-12` 变为 A1，`evidence_freshness.py` 对 `1.6.10` 返回 `REGROUND_REQUIRED`。
 
 ## Scope
 
-本阶段只修正员工经 Backend MCP Gateway（MCP 网关）与 `/api/v1/runs/*` 可见的实现漂移：Installation Routing（安装路由）不得变成 Execution Authorization（执行授权）；幂等（Idempotency）必须满足冻结合同的 scope/TTL/冲突；Public Run/Result/Artifact/Cancel 与 SSE（服务端推送）必须输出冻结合同对象与已发布语义事件。工作包 `WP-SKILL-FIRST-NODESKCLAW` 的本地验收「Provider conformance passes」由本项承担。
+本阶段只修正员工经 Backend MCP Gateway（MCP 网关）与 `/api/v1/runs/*` 可见的实现漂移，使公共信封、Catalog 宣告、执行平面与终态投递符合冻结 v1.2.1。不发布新合同版本，不把仓外 Work（工作端）前端源码、构建或发布当作本仓 DONE，不并入 RM-04 / RM-09 / RM-13 / RM-14 / RM-15，不提前开放 Approval Decision / Cancel 全闭环。exact file、SQL、新表名与 Todo 归属 Plan。
 
-本阶段不发布新合同版本，不把仓外 Work（工作端）联调、前端构建或 IPC 导入当作本仓 DONE，不并入 RM-04 分布式生产验收，不提前开放 RM-09，不等待 RM-08 Shared Agent Contract（共享 Agent 执行合同）。exact file、SQL、新表名与 Todo 归属 Plan。
+本项与 RM-13 并行；不阻塞 Native Runtime Bridge。若本项与 RM-14 修改同一 Public Projection（公共投影）区域，先完成者必须复跑对方的 PC-12 与 PC-13。
 
 ## Product Boundary
 
-员工只访问 Backend。`org_id` 是租户安全边界。`installation.workspace_id` 只回答 Skill 在哪里执行，不得写入 Execution Authorization Context。`StartRuntimeSkillRunRequest.workspace_id` 与入队后的 `execution.workspace_id` 只允许来自受信任 Execution Context（执行上下文）；Runtime Skill Run 是该字段的唯一写入者。Prompt-first 员工 Skill 在没有受信任 Execution Workspace（执行工作区）时不得进入 Workspace ACL（访问控制）。显式 Execution Workspace 必须与认证 `org_id` 同组织，跨组织失败关闭。
+员工只访问 Backend。`org_id` 是租户安全边界。`auth_type`（凭证类型）可以影响身份解析、授权、配额、限流、审计和 Skill 可见范围；禁止影响 accepted envelope（接受信封）形状、`run_id` 身份命名、URL path family、Public event type set、执行模式的隐式选择。
 
-员工 `tools/call` 接受对象与 `/api/v1/runs/*` 成功体必须符合冻结 v1.2.1，不得套 Portal `{code,data}` 信封，不得泄漏 HermesTask 公共身份、`/api/v1/hermes/tasks/*` URL、Installation 路由字段或内部凭证。Workspace ACL、Agent Event SoT（事件事实源）与 Run 终态 Owner 保持不变。幂等仍由 Backend Runtime Skill Run 拥有；禁止新建 Idempotency Service。
+公共运行平面只允许 `Public Run ID -> Agent Run / Event SoT`。HermesTask 可暂时作为内部投影/兼容记录存在，但不得成为 Public identity、Public terminal owner、Public replay source，也不得通过公共 API/SSE 暴露内部路由语义。Agent 仍是 Run / Attempt / Event / Artifact / Terminal 的唯一 Production Owner。Backend 只做 Auth、Catalog、Public Run API、Public SSE Projection 与 Business Audit。
+
+本次改动无本仓库前端表现变化。Work 是仓外 Consumer；本仓只把 Backend 公共面做到 Live-Evidence-Ready。
 
 ## Current Capability Inventory
 
-当前能力以 `630da4e9c7a0d48910467fc2b375c65e95610f95` 为准。该提交相对 Architecture `grounded_commit` `3d5a056c` 只含文档；`nodeskclaw-backend` / `nodeskclaw-agent` / `tools/acceptance` 无代码 diff。Grounding 模式为 `discover`。未提交工作树与用户草稿不计入本清单。
+当前能力以 `81babaebae7c7a1400db5be6139633af47bf5161` 为准。Grounding 模式为 targeted re-ground。未提交工作树与工程总控草稿不计入本清单。历史 `1.6.10` 在 `630da4e9` 上判定为 PARTIAL 的 C01–C06 多数已由历史 implementation commit `24fa48db` 落地，HEAD 抽查确认 KEEP；A1 第 30 节新缺口在 HEAD 仍成立。
 
 | Capability | Current State | Production Owner | Evidence | Grounding Result |
 |---|---|---|---|---|
-| 员工 MCP Catalog `tools/list` | EXISTS | Backend MCP Gateway / Hermes Skill 域 | RM-01 DONE；v1.2.1 `mcp/tools-list.response.schema.json` | KEEP 已发布 Catalog 投影；本项不改 Catalog 合同 |
-| 员工 MCP `tools/call` 入队 | PARTIAL | Backend MCP Gateway + Runtime Skill Run | 员工路径把 `installation.workspace_id` 写入 `StartRuntimeSkillRunRequest.workspace_id`；接受对象再合并 Installation 身份 | MODIFY：停止 Installation→Execution 拷贝；接受对象去掉 Hermes/Installation 泄漏 |
-| Runtime 授权执行上下文 | PARTIAL | Backend Runtime Skill Run 域 | 请求只要带 `workspace_id` 就走 Workspace 证明；证明不校验 `workspace.org_id == request.org_id` | MODIFY：仅受信任 Execution Workspace 才证明；跨组织失败关闭 |
-| Workspace ACL | EXISTS | Backend Workspace 域 | 办公室不存在返回 `errors.workspace.not_found` / 「办公室不存在」 | KEEP ACL Owner；C01 停止错误进入，不删除办公室模型 |
-| Installation `workspace_id` 引用 | PARTIAL | Backend Installation 域 | 可空 `String(36)`，无对 `workspaces.id` 的引用完整性 | MODIFY：有值时必须指向同组织未删除 Workspace；不得升格为 Execution Workspace |
-| 员工幂等 | PARTIAL | Backend Runtime Skill Run 域 | `HermesTask.idempotency_key` 与唯一索引 scope=`org+user+tool`；无 86400 TTL；参数冲突可 409；并发插入被映射为入队失败 | MODIFY 同一 Owner。HermesTask 行生命周期无法单独表达 TTL；若不能在不破坏任务保留的前提下过期键，只允许在同一 Owner 内扩展预留存储，禁止新服务 |
-| Public Run/Result/Artifact/Cancel 投影 | PARTIAL | Backend Skill Run API | `_public_run_view` 等内层已接近合同对象，但成功响应套 `{code,data}` | MODIFY：合同列出的员工端点成功体改为冻结合同对象 |
-| Public SSE 投影 | PARTIAL | Backend Skill Run API | 只放行 `run.*`、`assistant.message`、`artifact.persisted`；丢弃 `reasoning.summary`、`tool.call`、`clarify.requested`、`approval.requested`；未声明 `Cache-Control: no-store` | MODIFY：投影全部已发布 Public 语义类型；未知内部事件丢弃；禁止自然语言猜测 |
-| Agent Event SoT 与终态 | EXISTS | Agent Run 域 | RM-02/RM-06；Backend 只投影 | KEEP；不把执行事实迁回 Backend |
-| 冻结 v1.2.1 Public 合同包 | EXISTS | Backend Skill Run Contract Package | `contracts/skill-run/v1.2.1/`；tag `skill-run-contract-v1.2.1`；RM-11 DONE | KEEP 字节与 tag；禁止改 Schema/Fixture/SHA256SUMS |
-| 员工消费端验收资产 | PARTIAL | Repository Acceptance Assets | `tools/postman/` 已有 v1.2.1 consumer collection，指南已记录 SSE 缺口 | MODIFY 仅作为本仓符合性证据载体，不构成 RM-04 分布式验收 |
+| Installation 与 Execution Workspace 解耦 | EXISTS | Backend MCP Gateway + Runtime Skill Run | `mcp_tool_mapper.py#McpToolMapper` 员工 Runtime 请求写 `workspace_id=None` | KEEP 历史 C01；不回滚 |
+| Execution Workspace 租户证明 | EXISTS | Backend Runtime Skill Run 域 | 历史 RM-12 交付；跨组织 fail-closed 保留 | KEEP 历史 C02 |
+| Installation Workspace 引用完整性 | EXISTS | Backend Installation 域 | 历史 RM-12 交付 | KEEP 历史 C03 |
+| 员工幂等 scope/TTL/409 | EXISTS | Backend Runtime Skill Run 域 | A1 第 30.5 节核对：重放同一身份符合冻结语义；偏差只在身份字段名 | KEEP 历史 C04；身份字段归 C11/C13 |
+| Public SSE 语义类型投影 | PARTIAL | Backend Skill Run API | `_public_run_event` 已放行 `run.*` / `assistant.message` / `reasoning.summary` / `tool.call` / `clarify.requested` / `approval.requested` / `artifact.persisted`，并声明 `Cache-Control: no-store`；终态在 `items` 为空时直接关闭流 | KEEP 已发布类型投影；MODIFY 终态投递见 C14 |
+| Public Run 线级信封 | EXISTS | Backend Skill Run API | `runs.py#get_run` 直接返回 `_public_run_view(...)`，不再套 Portal `{code,data}` | KEEP 历史 C06 |
+| 员工 `tools/call` Accepted 对象 | PARTIAL | Backend MCP Gateway + Runtime Skill Run | `RuntimeSkillRunService.build_structured_content` 员工分支已能给出 `run_id` + `/api/v1/runs/*`；`resolve_mcp_execution_mode` 在默认 `async_event` 下把 `user_jwt` 分流为 `queued`，随后 `_build_task_response` 丢弃该信封 | MODIFY：C11 关闭凭证分流 |
+| 冻结 v1.2.1 Public 合同包 | EXISTS | Backend Skill Run Contract Package | `contracts/skill-run/v1.2.1/`；tag `skill-run-contract-v1.2.1`；RM-11 DONE | KEEP 字节与 tag |
+| Agent Event SoT 与终态 | EXISTS | Agent Run 域 | RM-02/RM-06 历史交付；`run_service.py#aggregate_run_terminal`；`TERMINAL` 含 `TIMED_OUT` | KEEP；Backend 不裁决 |
+| 员工 Catalog `tools/list` | PARTIAL | Backend MCP Gateway / Hermes Skill 域 | `_build_runtime_skill_tool_metadata` 无条件宣告 `executionModes=[async_event]`；调用侧 resolver 可对 `user_jwt` 返回 `queued` | KEEP Catalog 合同；MODIFY 宣告与可达集合一致性见 C12 |
+| Credential-agnostic 公共信封 | MISSING | Backend MCP Gateway | `mcp_execution_mode.py#resolve_mcp_execution_mode`：`mcp_client_token` → `async_event`，`user_jwt` → `queued`；`McpAuthContext.auth_type` 默认 `user_jwt` | ADD 于既有 Owner：禁止 `auth_type` 决定信封 |
+| Catalog / Call 共用 execution mode resolver | MISSING | Backend MCP Gateway | Catalog 硬编码 `ASYNC_EVENT_MODE`；Call 调用 `resolve_mcp_execution_mode` | ADD 于既有 Owner |
+| 单一执行平面 / HermesTask 公共隔离 | PARTIAL | Backend MCP Gateway + Skill Run API + HermesTask 投影 | `_build_task_response` 输出 `task_id` / `task_no` / `agent_id` / `installation_id` / `/api/v1/hermes/tasks/`；`RunProjectionUpdaterService._map_event_type` 无 `run.timed_out`，未知类型落入 `HERMES_RUN_DELTA`；投影失败 `return False` | MODIFY：HermesTask 降级为内部投影 |
+| 真实 `user_jwt` 符合性证据 | MISSING | Repository Acceptance Assets | Roadmap 记录既有证据为 fixture 路径，未覆盖 `auth_type=user_jwt` | MODIFY 证据门禁，不新建验收服务 |
+| Workspace ACL | EXISTS | Backend Workspace 域 | 历史 KEEP；本项不删除办公室模型 | KEEP |
 
 ## Target End-State Inventory
 
 | Capability | Target State | Production Owner | Boundary |
 |---|---|---|---|
-| Installation / Routing Context | Installation 可继续保存 `workspace_id` 作为路由元数据，并具备同组织引用完整性 | Backend Installation 域 | 不得写入 `StartRuntimeSkillRunRequest.workspace_id` 或 Execution Context Descriptor |
-| Execution Authorization Context | Prompt-first 无受信任 Execution Workspace 时 `execution.workspace_id` 为空且不进 Workspace ACL；显式 Workspace 与认证 `org_id` 一致 | Backend Runtime Skill Run 构建；Agent 持久化 Snapshot | 客户端不能声称拥有 Workspace 权限；跨组织、软删除、无权限 fail-closed |
-| 员工 `tools/call` Accepted | 冻结 accepted 对象：`run_id`、合同状态、`/api/v1/runs/{id}/events|result|artifacts` | Backend MCP Gateway + Runtime Skill Run | 无 `task_no`、无 `/hermes/tasks/*`、无 Installation 路由身份 |
-| 员工幂等 | Header `X-Idempotency-Key`；scope=`org_id+user_id+tool_name`；TTL=86400；同键同请求 200 回放原 `run_id`；同键冲突 HTTP 409 + `IDEMPOTENCY_CONFLICT` | Backend Runtime Skill Run 域 | 不新增幂等服务或第二 `run_id` 分配者 |
-| Public `/api/v1/runs/*` | GET Run/Result/Artifacts、Artifact 下载、SSE、Cancel 的成功体与事件符合冻结 Schema；无 HermesTask 身份 | Backend Skill Run API | 只代理 Agent 事实；失败关闭跨组织访问 |
+| Credential-agnostic Accepted | 同 Skill、同组织、同参数下 `user_jwt` 与 `mcp_client_token` 返回冻结 v1.2.1 Accepted；至少含 `run_id`、合同 `/api/v1/runs/*` 链接与 `contract_version` | Backend MCP Gateway + Runtime Skill Run | `auth_type` 不得切换到 HermesTask 信封 |
+| Shared execution mode resolver | `tools/list` 与 `tools/call` 共用同一 resolver；`Catalog.executionModes` 等于该调用者实际可达集合；`defaultExecutionMode` 等于不显式覆盖时的真实模式 | Backend MCP Gateway | 禁止 Catalog 与 Call 分别硬编码 |
+| Single execution plane | 公共身份只有 `run_id`；公共 replay 只有 Agent Event SoT；公共终态只由 Agent terminal aggregator 裁决 | Backend Public Run API；HermesTask 为内部投影 | 禁止字段与 `/api/v1/hermes/tasks/` 不出现在公共 `tools/call`、Run REST、Result、Artifact、SSE |
+| Public SSE terminal delivery | `COMPLETED` / `FAILED` / `CANCELLED` / `TIMED_OUT` 均先投递合同终态事件再关闭 SSE | Backend Skill Run API | 禁止无终态事件直接关闭或长挂；禁止 `HermesTask.status` 覆盖 Agent terminal |
+| 历史公共面修复 | Installation/Execution 解耦、租户证明、幂等 TTL、Public 对象信封、语义类型投影保持 | 原 Owner | 不回滚；不改 v1.2.1 字节 |
 | 冻结合同 | v1.2.1 目录与 tag 不变 | Backend Skill Run Contract Package | 兼容变化必须新合同版本，走 RM-09 且等待 RM-08 |
 
 ## Change Classification
 
 | Change ID | Capability | Action | Production Owner | Observable Target |
 |---|---|---|---|---|
-| C01 | Installation 与 Execution Workspace 解耦 | MODIFY | Backend MCP Gateway + Runtime Skill Run | Prompt-first `tools/call` 不因 Installation Workspace 进入 Workspace ACL；`execution.workspace_id` 只由 Runtime Skill Run 在受信任 Execution Context 下写入 |
-| C02 | Execution Workspace 租户证明 | MODIFY | Backend Runtime Skill Run 域 | 显式 Execution Workspace 必须属于认证 `org_id`；跨组织、软删除、无权限 fail-closed。不改变 Workspace ACL Owner |
-| C03 | Installation Workspace 引用完整性 | MODIFY | Backend Installation 域 | 写入或保留的 `installation.workspace_id` 若有值，必须指向同组织未删除 Workspace；该字段仍只是路由元数据 |
-| C04 | 员工 Public 幂等合同 | MODIFY | Backend Runtime Skill Run 域 | 冻结合同的 scope/TTL/回放/409 `IDEMPOTENCY_CONFLICT` 可观察。同一 Owner 内扩展存储可以，禁止新服务 |
-| C05 | Public 语义 SSE 投影 | MODIFY | Backend Skill Run API | 合同已发布的 `assistant.message` / `reasoning.summary` / `tool.call` / `clarify.requested` / `approval.requested` / `artifact.persisted` 与允许的 `run.*` 控制事件可投影；未知内部事件丢弃；`Last-Event-ID` 可续播；`Cache-Control: no-store` |
-| C06 | Public Run 线级信封 | MODIFY | Backend Skill Run API | 合同列出的 Run/Result/Artifact/Cancel 成功体为冻结合同对象，不套 Portal `{code,data}`；无 HermesTask 公共身份 |
-| C07 | 员工 `tools/call` Accepted 对象 | MODIFY | Backend MCP Gateway + Runtime Skill Run | Accepted `structuredContent` 符合冻结 accepted 对象；状态使用合同枚举；公共 URL 位于 `/api/v1/runs/*` |
+| C01 | Installation 与 Execution Workspace 解耦 | KEEP | Backend MCP Gateway + Runtime Skill Run | Prompt-first 不因 Installation Workspace 进入 Workspace ACL |
+| C02 | Execution Workspace 租户证明 | KEEP | Backend Runtime Skill Run 域 | 显式 Execution Workspace 必须属于认证 `org_id`；跨组织 fail-closed |
+| C03 | Installation Workspace 引用完整性 | KEEP | Backend Installation 域 | 有值时必须指向同组织未删除 Workspace；仍只是路由元数据 |
+| C04 | 员工 Public 幂等合同 | KEEP | Backend Runtime Skill Run 域 | 同键同请求回放原身份；冲突 409 `IDEMPOTENCY_CONFLICT`；TTL=86400。身份字段必须是 `run_id`（由 C11 保证） |
+| C05 | Public 语义 SSE 类型投影 | KEEP | Backend Skill Run API | 合同已发布语义类型可从 Agent Event SoT 投影；未知内部事件丢弃 |
+| C06 | Public Run 线级信封 | KEEP | Backend Skill Run API | 合同列出的 Run/Result/Artifact/Cancel 成功体为冻结合同对象 |
+| C07 | async_event Accepted 构造器 | KEEP | Backend Runtime Skill Run 域 | 员工 `build_structured_content` 已能构造 v1.2.1 形状；C11 使其成为唯一公共出口 |
 | C08 | 已发布 Public 合同包 | KEEP | Backend Skill Run Contract Package | `contracts/skill-run/v1.2.1/` 与 tag `skill-run-contract-v1.2.1` 零修改 |
 | C09 | Workspace ACL、Agent Event SoT、Run 终态 | KEEP | Workspace 域 + Agent Run 域 | 不删除办公室模型；不新建 Event Store；Backend 不裁决 Agent-owned 终态 |
-| C10 | 员工 Catalog `tools/list` | KEEP | Backend MCP Gateway / Hermes Skill 域 | RM-01 已发布的 Catalog 投影保持；本项不改 Catalog Schema |
+| C10 | 员工 Catalog 合同形状 | KEEP | Backend MCP Gateway / Hermes Skill 域 | 不改 Catalog Schema；宣告集合由 C12 校正 |
+| C11 | Credential-agnostic Accepted Envelope | MODIFY | Backend MCP Gateway + Runtime Skill Run | `auth_type` 不再决定信封形状；`user_jwt` 与 `mcp_client_token` 除 `run_id` 取值外键集与语义一致 |
+| C12 | Shared execution mode resolver | MODIFY | Backend MCP Gateway | Catalog 宣告等于该调用者真实可达模式；`defaultExecutionMode` 属于该集合且等于默认实际模式 |
+| C13 | Single Plane Public Isolation | MODIFY | Backend MCP Gateway + Skill Run API + HermesTask 投影 | 公共面不出现禁用字段与 `/api/v1/hermes/tasks/`；HermesTask 仅为内部投影；投影失败可观察且不得让 Public Run 返回陈旧终态 |
+| C14 | Public Terminal Delivery | MODIFY | Backend Skill Run API | 四类终态均先投递合同终态事件再关闭 SSE；`TIMED_OUT` 不得当作普通 delta |
+| C15 | Real Employee Conformance Evidence | MODIFY | Repository Acceptance Assets | PC-10 至 PC-14 必须使用真实 `user_jwt`；证据记录 `auth_type`；fixture PASS 不构成 DONE |
 
 ## Behaviour And Security Contract
 
-### Installation Routing Versus Execution Authorization
+### Credential-Agnostic Public Envelope
 
-员工 MCP `tools/call` 解析 Installation 后，可以把 `installation_id`、agent/profile/placement 与 `installation.workspace_id` 留在 Routing Context。不得把 Installation Workspace 拷贝进 Runtime Skill Run 请求的 Execution `workspace_id`，也不得把它写入 Execution Context Descriptor。Prompt-first 且无受信任 Execution Workspace、无附件引用时，不得调用 Workspace ACL。`errors.workspace.not_found` 不得再作为 prompt-first 员工 Skill 的默认失败。
+同一 Skill、同一组织、同一调用语义，不得因 `auth_type` 返回不同契约。`auth_type` 允许影响身份、组织、授权、配额、限流、审计与可见 Skill 范围。`auth_type` 禁止影响信封形状、字段键集、身份字段命名、URL 路径族、执行模式选择、事件类型集合。执行模式若确需差异化，必须由 Skill Release 或组织策略等服务端授权事实决定，并在 Catalog 中如实宣告，不得由客户端凭证类型隐式决定。
 
-Runtime Skill Run 是 `execution.workspace_id` 的唯一写入者。该值只来自已通过来源域证明的 Execution Context（例如 RM-06 已授权的 Session/Workspace/Attachment 链）。客户端 arguments、`client_context` 或 Installation 元数据不能声称拥有 Workspace 权限。
+员工 `tools/call` 在 Runtime Skill 已由 `RuntimeSkillRunService.start()` 建立 Agent Run 后，必须返回该 Run 的冻结 v1.2.1 Accepted，不得改走 `_build_task_response` 的 HermesTask 信封。幂等回放返回的公共身份仍是同一个 `run_id`。
 
-### Execution Workspace Proof
+### Catalog Advertisement Equals Reachable Capability
 
-当且仅当存在受信任 Execution Workspace 时，Runtime 才消费既有 Workspace ACL。证明必须同时满足：Workspace 未软删除、属于认证 `org_id`、当前用户按既有 ACL 可执行所需动作。Workspace 属于其他组织时必须失败关闭，即使调用者在该组织另有成员或管理员身份。附件引用仍然要求已证明的 Execution Workspace；缺少时拒绝附件，而不是回退到 Installation Workspace。
+`tools/list` 与 `tools/call` 必须共用同一个 execution mode resolver。`executionModes` 必须等于该调用者实际可达集合；`defaultExecutionMode` 必须是该集合成员，且等于不传显式覆盖时的真实模式。Catalog 不得无条件硬编码 `async_event` 而调用侧对 `user_jwt` 解析为 `queued`。
 
-### Installation Referential Integrity
+### Single Execution Plane
 
-Installation Owner 在创建、更新或同步 Installation 时，若设置 `workspace_id`，必须验证目标是同组织、未删除的 Workspace。失效引用不得继续作为活跃路由元数据。本约束不把 Installation Workspace 变成 Execution Workspace，也不要求员工 `tools/call` 携带办公室。
+Agent 是唯一执行平面。HermesTask 平面降级为纯内部投影，可服务内部审计、运维视图与历史数据，不再具有对外契约地位。以下键与路径片段禁止出现在任何公共信封、公共 SSE 帧、公共 REST 响应中：`task_id`、`task_no`、`agent_alias`、`agent_id`、`profile_id`、`workspace_id`、`installation_id`、`routing_reason`、`event_token_url`、`wait_strategy`、`/api/v1/hermes/tasks/`。
 
-### Idempotency
+公共身份字段只有 `run_id`。`HermesTaskEvent.event_seq` 不得作为 Public cursor 或 `Last-Event-ID` 语义载体。公共终态只能由 Agent 裁决，禁止以 `HermesTask.status` 覆盖。投影失败必须可观察，不得静默；投影落后时公共面继续以 Agent Event SoT / terminal aggregator 为准。同 ID 双语义若短期无法拆分，公共面语义必须完全由 Agent 平面定义。
 
-员工 `tools/call` 使用冻结合同 Header `X-Idempotency-Key`。Scope 为认证得到的 `org_id + user_id + tool_name`。TTL 为 86400 秒：窗口内相同键且请求等价则 HTTP 200 并返回原 `run_id`；窗口内冲突则 HTTP 409 且公共错误码 `IDEMPOTENCY_CONFLICT`；窗口结束后同一键视为新请求。并发首写必须收敛为一次接受或一次冲突，不得产生两个员工可见 `run_id`。现有 HermesTask 键可以继续作为回放锚点，但不能靠删除任务来模拟 TTL。若任务行无法承载过期与冲突预留，只允许在 Runtime Skill Run Owner 内增加最小预留存储。
+`HermesTaskWorker` 经 `execute_runtime_skill_via_api_server` 调用 `/v1/chat/completions` 不得再作为员工 Public Skill Run 的执行出口。员工 Runtime Skill 必须停留在 Agent Public Run 平面。Expert / Legacy `/hermes/tasks/*` 可继续服务既有 Expert 入口，但不属于员工 Public 面。
 
-### Public Wire And Events
+### Public SSE And Terminal
 
-合同 `http/endpoint-matrix.json` 列出的员工 HTTP 成功响应必须是对应冻结 Schema 的对象，而不是 Portal `{code:0,data:...}`。SSE 只投影 Agent 已持久的结构化 Public 事件；禁止解析自然语言猜测事件类型；禁止把内部南向字段或 HermesTask 身份放进 payload。未知内部事件丢弃且不中断流。`Last-Event-ID` 按合同续播。失败响应不得把内部路由、凭证或跨组织存在性泄漏给调用者。
+Public SSE 只从 Agent Event SoT 投影冻结合同已发布事件。未知 Internal Runtime Event 丢弃，不得透传。不得从 HermesTask 或自然语言构造第二事实源。`reasoning.summary` 仅当 Agent Event SoT 原本就存在该事件时投影；本项不从 Hermes `reasoning.available` 生成（归属 RM-14 隔离）。
 
-员工 Accepted 对象不得再合并 `agent_id` / `profile_id` / `installation_id` / `task_no` / `routing_reason` / `/api/v1/hermes/tasks/*`。Expert / Legacy `/hermes/tasks/*` 可继续服务既有 Expert 入口，但不属于员工 Public 面。
+四类终态必须满足：Agent terminal decided → durable Agent terminal event → Public SSE terminal event → SSE close。禁止终态已产生但 SSE 无终态事件直接关闭，禁止无终态事件长挂，禁止把 `TIMED_OUT` 当作普通 delta。
+
+### Tenant And Fail-Closed
+
+真实 `org_id` 边界不得因 resolver 合并而扩大跨组织 Skill / Run 可见性。跨组织或非属主访问 Public Run 失败关闭。禁止通过 ChatCompletion 或 HermesTask 公共平面绕过失败。
+
+A1 第 30.5 节两项不进入本项范围：Artifact 列表字段名以冻结合同 `items` 为准；幂等重放同一身份不是独立缺陷。
 
 ## Acceptance Criteria
 
-- **AC-01 / C01**：Installation 带有无效或不存在的 `workspace_id` 时，prompt-first 员工 `tools/call` 仍被接受并返回合同 accepted 对象；不出现 `errors.workspace.not_found` / 「办公室不存在」，不创建 Workspace 成员关系。
-- **AC-02 / C01/C02**：无受信任 Execution Workspace 的 prompt-first Run，其冻结 Descriptor 不含 workspace 类型；Agent Snapshot 的 `execution.workspace_id` 为空。
-- **AC-03 / C02**：显式受信任 Execution Workspace 与认证 `org_id` 不一致、已软删除或调用者无权限时，入队失败关闭，不创建 Agent-owned Run。
-- **AC-04 / C01/C09**：真实需要 Execution Workspace 的附件/办公室场景仍走既有 Workspace ACL；不绕过 RM-06 复核，不删除办公室模型。
-- **AC-05 / C03**：Installation 写入不属于本组织或已删除的 `workspace_id` 被拒绝；历史无效引用不得作为活跃路由继续使用。
-- **AC-06 / C04**：同一用户、同一工具、同一幂等键、等价请求在 86400 秒内回放同一 `run_id` 且 HTTP 200。
-- **AC-07 / C04**：同一键在 TTL 内与已接受请求冲突时，员工面 HTTP 409 且错误码 `IDEMPOTENCY_CONFLICT`；并发首写最多一个可见 Run。
-- **AC-08 / C04**：TTL 结束后同一键可作为新请求接受，不要求软删除原 HermesTask。
-- **AC-09 / C07**：员工 accepted `structuredContent` 含 `run_id`、合同状态、`event_stream` / `result_url` / `artifact_url` 指向 `/api/v1/runs/{run_id}/...`；不含 HermesTask 号、Installation 路由身份或 `/hermes/tasks/*`。
-- **AC-10 / C06**：`GET /api/v1/runs/{run_id}` 成功体顶层含 `run_id` / `tool_name` / `status`，符合 `public-run.schema.json`，不以 `{code,data}` 包裹。
-- **AC-11 / C06**：Result / Artifact list / Cancel 成功体符合对应冻结 Schema；下载不泄漏内部存储凭证。
-- **AC-12 / C05**：当 Agent 已持久对应结构化事件时，SSE 投影 `reasoning.summary`、`tool.call`、`clarify.requested`、`approval.requested` 以及既有 `run.*` / `assistant.message` / `artifact.persisted`；未持久则不得虚构。
-- **AC-13 / C05**：未知内部事件被丢弃；`Last-Event-ID` 续播不重复已确认事件；流响应声明 `Cache-Control: no-store`。
-- **AC-14 / C02/C06/C09**：跨组织或非属主访问 Run 失败关闭；Public 面不泄漏其他租户的 HermesTask 或 Run 存在性细节。
-- **AC-15 / C08**：`contracts/skill-run/v1.2.1/` 与 tag `skill-run-contract-v1.2.1` 的字节、checksum 与 tag 目标不变。
-- **AC-16 / C01–C10**：本仓针对冻结 v1.2.1 员工公共面的自动化符合性（含既有 consumer Postman/Newman 与聚焦测试）通过；证据不包含仓外 Work 源码、构建或导入。不宣称 RM-04 分布式拓扑验收完成。
+- **AC-01 / C01–C04, C06–C10**：历史 KEEP 行为无回归：prompt-first 不因 Installation Workspace 失败；跨组织 Execution Workspace fail-closed；Public Run/Result/Artifact 成功体仍为冻结合同对象；v1.2.1 字节不变。
+- **AC-02 / C11**：同 Skill、同组织、同参数分别使用 `user_jwt` 与 `mcp_client_token` 调用 `tools/call`；除不同请求产生的 `run_id` 值外，公共键集与语义一致，均为 v1.2.1 形状，且均不含 HermesTask 平面字段（PC-10）。
+- **AC-03 / C11/C13**：员工 accepted `structuredContent` 含 `run_id`、合同状态、`event_stream` / `result_url` / `artifact_url` 指向 `/api/v1/runs/{run_id}/...` 与 `contract_version`；幂等回放返回同一 `run_id`，不得回放出 `task_id`。
+- **AC-04 / C12**：逐 `auth_type` 验证 `executionModes` / `defaultExecutionMode` 与真实 call resolver 结果一致（PC-11）。
+- **AC-05 / C13**：对 accepted、Run、Result、Artifacts、SSE 全量扫描，不出现禁用字段及 `/api/v1/hermes/tasks/`（PC-12）。
+- **AC-06 / C13**：HermesTask 投影失败留下结构化错误或指标；Public GET Run / SSE 仍以 Agent 为准，不停留在陈旧 `HermesTask.status`。
+- **AC-07 / C14**：真实覆盖 `COMPLETED` / `FAILED` / `CANCELLED` / `TIMED_OUT` 四类终态；每种均先投递合同终态事件再关闭 SSE（PC-13）。
+- **AC-08 / C05/C14**：未知内部事件被丢弃；`Last-Event-ID` 续播不重复已确认事件；流响应声明 `Cache-Control: no-store`。
+- **AC-09 / C02/C09/C13**：跨组织或非属主访问 Run 失败关闭；Public 面不泄漏其他租户的 HermesTask 或 Run 存在性细节。
+- **AC-10 / C08**：`contracts/skill-run/v1.2.1/` 与 tag `skill-run-contract-v1.2.1` 的字节、checksum 与 tag 目标不变。
+- **AC-11 / C15**：PC-10 至 PC-14 使用真实员工 `user_jwt` 与 Work 实际调用序列；证据显式记录 `auth_type=user_jwt`。仅 fixture / schema PASS 不得作为 DONE。
+- **AC-12 / C11–C15**：本仓针对冻结 v1.2.1 员工公共面的自动化符合性通过；证据不包含仓外 Work 源码、构建或导入。不宣称 RM-04 分布式拓扑验收完成，不宣称 RM-13/RM-14 DONE。
 
 ## Definition of Done
 
-- **DOD-01**：C01–C10 均有可观察证据；prompt-first 不再因 Installation Workspace 失败；幂等 TTL/冲突、Public 信封与语义 SSE 均对照冻结 v1.2.1。
-- **DOD-02**：未新增 Control Plane、Idempotency Service、第二 Event Store 或第二 Run 终态 Owner；Workspace ACL 与 Agent Event SoT 仍为原 Owner。
-- **DOD-03**：v1.2.1 合同目录与 tag 未被改写；未发布第二份 Work canonical。
-- **DOD-04**：Review 与 Verification PASS，真实 implementation commit 与验证证据写入 Roadmap 后，RM-12 才可标记 `DONE`。仓外 Work 联调不是本仓 DONE。
+- **DOD-01**：C11–C15 均有可观察证据；PC-10 至 PC-14 全 PASS；真实 `user_jwt` 证据存在；Public blacklist 扫描零泄漏；四类 terminal event 可观察。
+- **DOD-02**：C01–C10 无回归；未新增 Control Plane、Idempotency Service、第二 Event Store 或第二 Run 终态 Owner。
+- **DOD-03**：v1.2.1 合同目录与 tag 未被改写；未发布第二份 Work canonical；未把 Work 前端纳入本仓交付。
+- **DOD-04**：Review 与 Verification PASS，真实 implementation commit 与验证证据写入 Roadmap 后，RM-12 才可标记 `DONE`。
 
 ## Non-Goals
 
 - 不改写 `contracts/skill-run/v1.2.1/`，不发布 v1.2.2 / v1.3，不把本项标成 RM-09。
 - 不实施 RM-08 Shared Agent Contract，不把内部南向字段打进 Public 面。
-- 不把本项并入 RM-04 / RM-07 / RM-10，不把双 Central / 故障注入当作本项退出条件。
-- 不新建 Idempotency Service，不删除 HermesTask，不重构 Expert Gateway 或 Workspace 产品模型。
+- 不实施 RM-13 Native Runtime Bridge、RM-14 Coalescer/Normalizer、RM-15 Approval/Cancel 全闭环、RM-16 Provider Conformance。
+- 不新建 Idempotency Service，不删除 HermesTask 表，不重构 Expert Gateway 或 Workspace 产品模型。
 - 不删除 Workspace ACL 来让 prompt-first 通过。
 - 不修改外部 Work 前端，不把其构建、发布或导入测试作为本仓交付条件。
-- 不把 Resume/Approve 升格为 v1.2.1 合同承诺（合同仍将 approval 标为 unsupported）。
+- 不把 Resume/Approve 升格为 v1.2.1 合同承诺。
+- 不把 Artifact 列表字段从 `items` 改成 `artifacts`（A1 第 30.5 节）。
 
 ## Evidence Baseline
 
-当前证据以 `630da4e9` 为准；代码锚点与 `3d5a056c` 一致。
+当前证据以 `81babaebae7c7a1400db5be6139633af47bf5161` 为准。Architecture Source 为 `AD-SKILL-AGENT-V16-A1@1.6.0`。
 
 | Claim | Evidence Anchor | Result |
 |---|---|---|
-| 员工 MCP 把 Installation Workspace 写入 Runtime 请求 | `nodeskclaw-backend/app/services/hermes_skill/mcp_tool_mapper.py#McpToolMapper` at `630da4e9`：`workspace_id=installation.workspace_id` | PARTIAL：C01 必须切断该拷贝 |
-| Runtime 只要请求带 `workspace_id` 就进 Workspace 证明 | `runtime_skill_run_service.py#RuntimeSkillRunService#_build_authorized_execution_context` at `630da4e9` | PARTIAL：C01/C02 |
-| Workspace 证明不校验请求 `org_id` | `_assert_workspace_proof` 调用 `check_workspace_access`；`org_id` 只进入 auth_version 哈希 at `630da4e9` | PARTIAL：跨组织失败关闭缺失 |
-| 办公室不存在返回 `errors.workspace.not_found` | `workspace_member_service.py#check_workspace_access` at `630da4e9` | EXISTS：KEEP ACL；C01 停止错误进入 |
-| Installation `workspace_id` 无引用完整性 | `skill_installation.py#HermesSkillInstallation.workspace_id` at `630da4e9` | PARTIAL：C03 |
-| 幂等复用 HermesTask 键且无 TTL | `task_service.py#find_idempotent_task`、`hermes_task.py#uq_hermes_tasks_idempotency_alive` at `630da4e9`；合同 `http/endpoint-matrix.json` TTL=86400 | PARTIAL：C04 同一 Owner 扩展 |
-| 参数冲突可映射 `IDEMPOTENCY_CONFLICT` | Runtime `ConflictError` + `errors.py` 将 `errors.run.idempotency_conflict` 映射为 `IDEMPOTENCY_CONFLICT` at `630da4e9` | PARTIAL：缺 TTL 与并发预留 |
-| Public 成功体套 Portal 信封 | `app/api/runs.py` 返回 `{"code": 0, "data": _public_run_view(...)}` at `630da4e9` | PARTIAL：C06 |
-| 冻结合同要求顶层 `run_id`/`tool_name`/`status` | `contracts/skill-run/v1.2.1/runs/public-run.schema.json` at `630da4e9` | SOURCE KEEP：C08 |
-| Public SSE 丢弃部分语义事件 | `runs.py#_public_run_event` 只放行 `run.*`、`assistant.message`、`artifact.persisted` at `630da4e9` | PARTIAL：C05 |
-| 员工 accepted 再合并 Installation 身份 | `mcp_tool_mapper.py#_merge_org_mcp_async_payload` at `630da4e9` | PARTIAL：C07 |
-| 员工 structuredContent 已能指向 `/api/v1/runs/*` | `runtime_skill_run_service.py#build_structured_content` employee_contract 分支 at `630da4e9` | PARTIAL：可复用，但会被 mapper 污染且状态会把 queued 写成 RUNNING |
-| Agent 仍是 Event/终态 Owner | AD-SKILL-AGENT-V16 Ownership；RM-02/RM-06 DONE | KEEP：C09 |
-| v1.2.1 已发布且不可改写 | RM-11 DONE；tag `skill-run-contract-v1.2.1` | KEEP：C08 |
-| 用户草稿不是 Stage PRD | `docs_agent/prd-hotfix-skill-run-v1.2.1-postman-ready.md` 无 SMC frontmatter / Inventory | 已降为 source input；exact SQL/新表名不进入本 PRD |
+| `user_jwt` 默认被分流到 `queued` | `mcp_execution_mode.py#resolve_mcp_execution_mode` at `81babaeb`：默认 `async_event` 时 `mcp_client_token` → `async_event`，`user_jwt` → `queued` | PARTIAL：C11 |
+| `McpAuthContext.auth_type` 默认 `user_jwt` | `mcp_skill_gateway/auth.py#McpAuthContext` at `81babaeb` | EXISTS：员工主路径命中 queued 分支 |
+| queued 出口是 HermesTask 信封 | `mcp_tool_mapper.py#McpToolMapper#_build_task_response` at `81babaeb`：`task_id` / `task_no` / `event_token_url` / `/api/v1/hermes/tasks/` | PARTIAL：C11/C13 |
+| Agent Run 信封在 async_event 才返回 | `mcp_tool_mapper.py` queued 走 `_build_task_response`；async_event 才用 `runtime_run_result.structured_content` at `81babaeb` | PARTIAL：C11 |
+| Catalog 硬编码 `async_event` | `mcp_tool_mapper.py#_build_runtime_skill_tool_metadata` at `81babaeb`：`executionModes=[ASYNC_EVENT_MODE]` | PARTIAL：C12 |
+| 员工 Runtime 请求不再拷贝 Installation Workspace | `mcp_tool_mapper.py` `workspace_id=None` at `81babaeb` | EXISTS：KEEP C01 |
+| Public Run 不再套 Portal 信封 | `runs.py#get_run` 返回 `_public_run_view(data)` at `81babaeb` | EXISTS：KEEP C06 |
+| Public SSE 已投影合同语义类型 | `runs.py#_public_run_event` at `81babaeb` | EXISTS 类型投影；终态关闭见下行 |
+| SSE 终态在无新 items 时直接关闭 | `runs.py` event_generator：`status in TERMINAL and not items: return` at `81babaeb` | PARTIAL：C14 |
+| HermesTask 投影缺少 `run.timed_out` | `run_projection_updater_service.py#_map_event_type` at `81babaeb` | PARTIAL：C13/C14 |
+| HermesTaskWorker 仍可走 chat/completions | `hermes_task_worker.py` 调用 `execute_runtime_skill_via_api_server` at `81babaeb` | PARTIAL：不得作为员工 Public 执行出口 |
+| 冻结合同要求顶层 `run_id` | `contracts/skill-run/v1.2.1/runs/public-run.schema.json` at `81babaeb` | SOURCE KEEP：C08 |
+| A1 冻结四条公共面不变量 | `AD-SKILL-AGENT-V16-v1.6.0-hermes-runtime-native-run.md` 第 30 节 | SOURCE：C11–C15 |
+| 既有 fixture 证据未覆盖 `user_jwt` | Roadmap RM-12 Verification Evidence 记录 | MISSING：C15 |
 
 ## Dependencies And Handoff
 
-RM-06 与 RM-11 已 `DONE`。本 PRD 已 `APPROVED`。Roadmap RM-12 进入 `IN_PRD` 并挂接本文件。下一步由 `smc-plan-from-approved-prd-ponytail` 生成 canonical Plan。Plan 负责 exact file、幂等存储 minimality 选型、Installation 约束实现与 focused tests。审查 Minor 作为 Plan 约束，不改变 C01–C10 Owner/Action。
+RM-06 与 RM-11 已 `DONE`，本项依赖已满足。RM-13 不依赖本项。RM-14 与本项在 Public Projection 上协同：先完成者复跑 PC-12 与 PC-13。本 PRD 已 `APPROVED`。下一步由 `smc-plan-from-approved-prd-ponytail` 生成 canonical Plan。Plan 负责 exact file、resolver 合并策略与 focused tests，并吸收 initial review Minor。A1 增补文档当前 frontmatter 仍为 `PROPOSED`，记为 Note，不回退本 PRD 批准；本 PRD 的 `source_revision` 与 Roadmap `AD-SKILL-AGENT-V16-A1@1.6.0` 对齐。
