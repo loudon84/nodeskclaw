@@ -143,6 +143,88 @@ def _map_http_status(status_code: int, *, start: bool = False, stream: bool = Fa
     return RUNTIME_START_FAILED
 
 
+def normalize_hermes_approval_choice(raw: str | None) -> str:
+    value = str(raw or "").strip().lower()
+    if value in {"session", "always"}:
+        raise ValueError("client_approval_choice_forbidden")
+    if value in {"approve", "approved", "once", "allow"}:
+        return "once"
+    if value in {"deny", "denied", "reject"}:
+        return "deny"
+    raise ValueError("invalid_approval_choice")
+
+
+def gateway_from_snapshot(snapshot: dict[str, Any] | None) -> str:
+    data = snapshot or {}
+    policy = data.get("runtime_policy") if isinstance(data.get("runtime_policy"), dict) else {}
+    return str(
+        policy.get("gateway_url")
+        or data.get("gateway_url")
+        or policy.get("hermes_base_url")
+        or data.get("hermes_base_url")
+        or ""
+    ).rstrip("/")
+
+
+# @lat: [[architecture/skill-agent#RM-15 Approval Runtime Control]]
+async def respond_runtime_approval(
+    *,
+    attempt_id: str,
+    generation: int,
+    choice: str,
+    gateway_url: str,
+    headers: dict[str, str] | None = None,
+    runtime_run_id: str | None = None,
+) -> str | None:
+    mapped = normalize_hermes_approval_choice(choice)
+    binding = await load_runtime_binding(attempt_id)
+    if not binding or int(binding.get("generation") or 0) != int(generation):
+        return "fenced"
+    bound_id = binding.get("runtime_run_id")
+    target = str(runtime_run_id or bound_id or "")
+    if not target or (bound_id and bound_id != target):
+        return "fenced"
+    auth_headers = dict(headers or {"Content-Type": "application/json"})
+    url = f"{gateway_url.rstrip('/')}/v1/runs/{target}/approval"
+    async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=5.0)) as client:
+        try:
+            resp = await client.post(url, headers=auth_headers, json={"choice": mapped})
+        except (httpx.TimeoutException, httpx.NetworkError, OSError):
+            return RUNTIME_UNREACHABLE
+        if resp.status_code == 404:
+            return RUNTIME_STATE_UNAVAILABLE
+        if resp.status_code >= 400:
+            return _map_http_status(resp.status_code)
+        return None
+
+
+async def stop_runtime_attempt(
+    *,
+    attempt_id: str,
+    generation: int,
+    gateway_url: str,
+    headers: dict[str, str] | None = None,
+    runtime_run_id: str | None = None,
+) -> str | None:
+    binding = await load_runtime_binding(attempt_id)
+    if not binding or int(binding.get("generation") or 0) != int(generation):
+        return "fenced"
+    bound_id = binding.get("runtime_run_id")
+    target = str(runtime_run_id or bound_id or "")
+    if not target or (bound_id and bound_id != target):
+        return "fenced"
+    auth_headers = dict(headers or {"Content-Type": "application/json"})
+    async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=5.0)) as client:
+        return await _stop_runtime(
+            client,
+            gateway_url=gateway_url.rstrip("/"),
+            runtime_run_id=target,
+            headers=auth_headers,
+            attempt_id=attempt_id,
+            generation=generation,
+        )
+
+
 def _extract_runtime_run_id(data: Any) -> str | None:
     if not isinstance(data, dict):
         return None
@@ -658,13 +740,67 @@ async def execute_hermes_run(
                     await mark_native_terminal(attempt_id=attempt_id, generation=generation)
                 yield terminal
                 return
-            if status in {"running", "waiting_for_approval", "waiting"}:
+            if status not in {"running", "waiting_for_approval", "waiting"}:
+                yield _failed(RUNTIME_STATE_UNAVAILABLE, "Hermes runtime status could not be mapped")
+                return
+            while status in {"running", "waiting_for_approval", "waiting"}:
                 phase = "WAITING_APPROVAL" if status in {"waiting_for_approval", "waiting"} else "RUNTIME_RUNNING"
                 yield {
                     "event_type": "run.progress",
                     "payload": progress_payload(phase, f"hermes runtime status {status}"),
                 }
-                return
+                if cancel_event and cancel_event.is_set():
+                    stop_code = await _stop_runtime(
+                        client,
+                        gateway_url=gateway_url,
+                        runtime_run_id=runtime_run_id,
+                        headers=auth_headers,
+                        attempt_id=attempt_id,
+                        generation=generation,
+                    )
+                    for leftover in normalizer.close(terminal_status="failed"):
+                        yield leftover
+                    if stop_code == "stop_404":
+                        rec_status, _data, rec_code = await _reconcile_status(
+                            client,
+                            gateway_url=gateway_url,
+                            runtime_run_id=runtime_run_id,
+                            headers=auth_headers,
+                        )
+                        rec_terminal = _terminal_from_status(rec_status, rec_code)
+                        if rec_terminal:
+                            if rec_terminal["event_type"] in {"run.completed", "run.failed", "run.cancelled"}:
+                                await mark_native_terminal(attempt_id=attempt_id, generation=generation)
+                            yield rec_terminal
+                        else:
+                            yield {"event_type": "run.cancelled", "payload": {"message": "cancelled after stop 404"}}
+                        return
+                    if stop_code and stop_code != "fenced":
+                        yield _failed(stop_code, "Hermes runtime stop failed")
+                        return
+                    yield {"event_type": "run.cancelled", "payload": {"message": "cancelled while waiting for approval"}}
+                    await mark_native_terminal(attempt_id=attempt_id, generation=generation)
+                    return
+                waiter = cancel_event.wait() if cancel_event is not None else asyncio.sleep(0.05)
+                try:
+                    await asyncio.wait_for(waiter, timeout=0.05)
+                except TimeoutError:
+                    pass
+                status, _data, rec_code = await _reconcile_status(
+                    client,
+                    gateway_url=gateway_url,
+                    runtime_run_id=runtime_run_id,
+                    headers=auth_headers,
+                )
+                terminal = _terminal_from_status(status, rec_code)
+                if terminal:
+                    close_status = "completed" if status in {"completed", "succeeded", "success"} else "failed"
+                    for leftover in normalizer.close(terminal_status=close_status):
+                        yield leftover
+                    if terminal["event_type"] in {"run.completed", "run.failed", "run.cancelled"}:
+                        await mark_native_terminal(attempt_id=attempt_id, generation=generation)
+                    yield terminal
+                    return
             yield _failed(RUNTIME_STATE_UNAVAILABLE, "Hermes runtime status could not be mapped")
     except Exception:
         logger.exception("hermes execute failed tool=%s", tool_name)

@@ -11,6 +11,7 @@ import pytest
 from app.services.hermes_engine import (
     REQUIRED_FEATURES,
     RUNTIME_CAPABILITY_MISSING,
+    RUNTIME_INTERRUPTED,
     RUNTIME_UNREACHABLE,
     RUNTIME_VERSION_UNSUPPORTED,
     build_native_run_payload,
@@ -78,14 +79,20 @@ def _native_client(
     caps: dict | None = None,
     health: dict | None = None,
     start: dict | None = None,
-    status: dict | None = None,
+    status: dict | list | None = None,
     event_lines: list[str] | None = None,
     stop_status: int = 200,
+    approval_status: int = 200,
     assistant_text: str = "ok",
 ):
     caps = caps if caps is not None else FLOOR_CAPS
     start = start if start is not None else {"id": "rr-1", "status": "running"}
-    status = status if status is not None else {"id": "rr-1", "status": "completed"}
+    if status is None:
+        status_queue: list[dict] = [{"id": "rr-1", "status": "completed"}]
+    elif isinstance(status, list):
+        status_queue = list(status)
+    else:
+        status_queue = [status]
     if event_lines is None:
         event_lines = [
             "data: " + json.dumps({"type": "assistant.message", "text": assistant_text}),
@@ -97,9 +104,10 @@ def _native_client(
     caps_resp = _json_response(caps)
     health_resp = _json_response(health) if health is not None else probe_resp
     start_resp = _json_response(start)
-    status_resp = _json_response(status)
     stop_resp = MagicMock()
     stop_resp.status_code = stop_status
+    approval_resp = MagicMock()
+    approval_resp.status_code = approval_status
     sse_resp = _sse_response(event_lines)
 
     client = AsyncMock()
@@ -113,7 +121,8 @@ def _native_client(
         if text.rstrip("/").endswith("/health") or text.rstrip("/").endswith("/health/detailed"):
             return health_resp
         if "/v1/runs/" in text and not text.endswith("/events"):
-            return status_resp
+            payload = status_queue.pop(0) if len(status_queue) > 1 else status_queue[0]
+            return _json_response(payload)
         return probe_resp
 
     async def fake_post(url, **kwargs):
@@ -122,6 +131,8 @@ def _native_client(
             return start_resp
         if text.endswith("/stop"):
             return stop_resp
+        if text.endswith("/approval"):
+            return approval_resp
         raise AssertionError(f"unexpected POST {text}")
 
     client.get = AsyncMock(side_effect=fake_get)
@@ -798,4 +809,129 @@ async def test_execute_hermes_uses_normalizer_not_chat_completion_parser():
     messages = [e for e in events if e["event_type"] == "assistant.message"]
     assert "".join(e["payload"]["text"] for e in messages) == "一二三四五六七八九十" * 9
     assert len(messages) < 90
+
+
+@pytest.mark.asyncio
+async def test_execute_hermes_parks_on_waiting_for_approval():
+    client = _native_client(
+        event_lines=['data: {"type": "approval.request", "approval_id": "appr-1", "summary": "Need approval"}'],
+        status=[
+            {"id": "rr-1", "status": "waiting_for_approval"},
+            {"id": "rr-1", "status": "completed"},
+        ],
+    )
+    with patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client):
+        events = [
+            event
+            async for event in execute_hermes_run(
+                tool_name="foo",
+                arguments={"prompt": "hi"},
+                route_snapshot={"gateway_url": "http://hermes:8642"},
+                run_id="run-park",
+                attempt_id="att-park",
+            )
+        ]
+    assert client.stream.call_count == 1
+    start_posts = [c for c in client.post.await_args_list if str(c.args[0]).endswith("/v1/runs")]
+    assert len(start_posts) == 1
+    phases = [
+        e["payload"].get("phase")
+        for e in events
+        if e["event_type"] == "run.progress"
+    ]
+    assert "WAITING_APPROVAL" in phases
+    assert events[-1]["event_type"] == "run.completed"
+
+
+@pytest.mark.asyncio
+async def test_execute_hermes_waiting_approval_cancel_stops():
+    cancel = __import__("asyncio").Event()
+    client = _native_client(
+        event_lines=['data: {"type": "approval.request", "approval_id": "appr-1", "summary": "Need approval"}'],
+        status={"id": "rr-1", "status": "waiting_for_approval"},
+        stop_status=200,
+    )
+    original_get = client.get.side_effect
+
+    async def get_then_cancel(url, **kwargs):
+        text = str(url)
+        if "/v1/runs/" in text and not text.endswith("/events") and not text.endswith("/capabilities"):
+            cancel.set()
+        return await original_get(url, **kwargs)
+
+    client.get = AsyncMock(side_effect=get_then_cancel)
+    with patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client):
+        events = [
+            event
+            async for event in execute_hermes_run(
+                tool_name="foo",
+                arguments={"prompt": "hi"},
+                route_snapshot={"gateway_url": "http://hermes:8642"},
+                run_id="run-wait-stop",
+                attempt_id="att-wait-stop",
+                cancel_event=cancel,
+            )
+        ]
+    stop_posts = [c for c in client.post.await_args_list if str(c.args[0]).endswith("/stop")]
+    assert stop_posts
+    assert events[-1]["event_type"] in {"run.cancelled", "run.failed"}
+
+
+@pytest.mark.asyncio
+async def test_respond_runtime_approval_posts_once():
+    from app.services.hermes_engine import respond_runtime_approval
+
+    client = _native_client()
+    with patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client):
+        result = await respond_runtime_approval(
+            attempt_id="att-1",
+            generation=1,
+            choice="approve",
+            gateway_url="http://hermes:8642",
+        )
+    assert result is None
+    approval_posts = [c for c in client.post.await_args_list if str(c.args[0]).endswith("/approval")]
+    assert len(approval_posts) == 1
+    assert approval_posts[0].kwargs.get("json", {}).get("choice") == "once"
+
+
+@pytest.mark.asyncio
+async def test_respond_runtime_approval_stale_generation_does_not_post():
+    from app.services.hermes_engine import respond_runtime_approval
+
+    async def _stale(_attempt_id: str):
+        return {"runtime_run_id": "rr-1", "generation": 2}
+
+    client = _native_client()
+    with patch("app.services.hermes_engine.load_runtime_binding", _stale):
+        with patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client):
+            result = await respond_runtime_approval(
+                attempt_id="att-1",
+                generation=1,
+                choice="once",
+                gateway_url="http://hermes:8642",
+            )
+    assert result == "fenced"
+    approval_posts = [c for c in client.post.await_args_list if str(c.args[0]).endswith("/approval")]
+    assert approval_posts == []
+
+
+@pytest.mark.asyncio
+async def test_execute_hermes_interrupted_fails_without_new_submit():
+    client = _native_client(status={"id": "rr-1", "status": "interrupted"})
+    with patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client):
+        events = [
+            event
+            async for event in execute_hermes_run(
+                tool_name="foo",
+                arguments={"prompt": "hi"},
+                route_snapshot={"gateway_url": "http://hermes:8642"},
+                run_id="run-int",
+                attempt_id="att-int",
+            )
+        ]
+    start_posts = [c for c in client.post.await_args_list if str(c.args[0]).endswith("/v1/runs")]
+    assert len(start_posts) == 1
+    assert events[-1]["event_type"] == "run.failed"
+    assert events[-1]["payload"]["error_code"] == RUNTIME_INTERRUPTED
 

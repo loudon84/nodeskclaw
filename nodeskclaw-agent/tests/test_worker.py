@@ -10,6 +10,7 @@ from app.services.worker import (
     build_edge_step_snapshot,
     build_hybrid_step_plan,
     needs_edge_jobs,
+    next_status_after_stale_lease,
 )
 
 
@@ -524,4 +525,20 @@ async def test_claim_one_insert_does_not_reuse_bind_for_generation():
     assert "attempt_no" in insert_params
     assert "generation" in insert_params
     assert insert_params["attempt_no"] == insert_params["generation"] == 1
+
+
+def test_stale_lease_waiting_approval_keeps_waiting():
+    assert next_status_after_stale_lease(
+        last_event_type="run.progress",
+        last_phase="WAITING_APPROVAL",
+        last_error_code=None,
+    ) == "WAITING_APPROVAL"
+
+
+def test_stale_lease_interrupted_fails():
+    assert next_status_after_stale_lease(
+        last_event_type="run.failed",
+        last_phase=None,
+        last_error_code="RUNTIME_INTERRUPTED",
+    ) == "FAILED"
 

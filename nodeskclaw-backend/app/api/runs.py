@@ -513,7 +513,28 @@ async def approve_run(
     if _is_outbox_undelivered(outbox):
         raise ForbiddenError("未派发的 Run 无法执行审批", "errors.run.undelivered")
 
-    payload = body or {}
+    payload = dict(body or {})
+    raw_decision = str(payload.get("decision") or payload.get("choice") or "approve").strip().lower()
+    if raw_decision in {"session", "always"}:
+        raise AppException(
+            code=40001,
+            message="Public approval only accepts approve or deny",
+            status_code=400,
+            message_key="errors.run.approval_choice_forbidden",
+        )
+    if raw_decision in {"approve", "approved", "once", "allow"}:
+        mapped = "approve"
+    elif raw_decision in {"deny", "denied", "reject"}:
+        mapped = "deny"
+    else:
+        raise AppException(
+            code=40001,
+            message="Public approval only accepts approve or deny",
+            status_code=400,
+            message_key="errors.run.approval_choice_forbidden",
+        )
+    payload["decision"] = mapped
+    payload.pop("choice", None)
     data = await _agent_post(
         f"/internal/v1/runs/{run_id}/approvals/{approval_id}",
         json_body=payload,

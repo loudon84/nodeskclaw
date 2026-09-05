@@ -332,6 +332,28 @@ async def test_cancel_delivered_run_requests_cancellation_for_active_edge_jobs()
 
 
 @pytest.mark.asyncio
+async def test_cancel_run_agent_conflict_is_not_http_500():
+    db = AsyncMock()
+    user_org = _mock_user_org()
+    task = HermesTask(id="run-1", org_id="org-1", user_id="user-1", tool_name="test_tool", status=TaskStatus.RUNNING)
+    conflict = AppException(
+        code=40900,
+        message="approval not active",
+        status_code=409,
+        message_key="errors.run.agent_error",
+    )
+    with patch("app.api.runs.PermissionChecker.require_permission", new=AsyncMock()), \
+         patch("app.api.runs.TaskService.get_task", new=AsyncMock(return_value=task)), \
+         patch("app.api.runs.TaskService.assert_task_access", new=AsyncMock()), \
+         patch("app.api.runs._get_outbox_entry", new=AsyncMock(return_value=None)), \
+         patch("app.api.runs._agent_post", new=AsyncMock(side_effect=conflict)):
+        with pytest.raises(AppException) as exc_info:
+            await cancel_run(run_id="run-1", user_org=user_org, db=db)
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.status_code != 500
+
+
+@pytest.mark.asyncio
 async def test_resume_undelivered_outbox_rejected():
     db = AsyncMock()
     user_org = _mock_user_org()
@@ -419,10 +441,72 @@ async def test_approve_run_proxies_json_body_and_exec_headers():
         assert res["data"]["status"] == "APPROVED"
         mock_post.assert_called_once_with(
             "/internal/v1/runs/run-1/approvals/app-1",
-            json_body=payload,
+            json_body={"decision": "approve", "evidence": "verified by admin"},
             org_id="org-1",
             user_id="user-1",
         )
+
+
+@pytest.mark.asyncio
+async def test_approve_run_deny_maps_to_internal_deny():
+    db = AsyncMock()
+    user_org = _mock_user_org()
+    task = HermesTask(
+        id="run-1",
+        org_id="org-1",
+        user_id="user-1",
+        tool_name="test_tool",
+        status=TaskStatus.RUNNING,
+    )
+    with patch("app.api.runs.PermissionChecker.require_permission", new=AsyncMock()), \
+         patch("app.api.runs.TaskService.get_task", new=AsyncMock(return_value=task)), \
+         patch("app.api.runs.TaskService.assert_task_access", new=AsyncMock()), \
+         patch("app.api.runs._get_outbox_entry", new=AsyncMock(return_value=None)), \
+         patch("app.api.runs._agent_post", new=AsyncMock(return_value={"run_id": "run-1", "org_id": "org-1", "status": "WAITING_APPROVAL"})) as mock_post:
+        res = await approve_run(
+            run_id="run-1",
+            approval_id="app-1",
+            body={"decision": "DENY"},
+            user_org=user_org,
+            db=db,
+        )
+    assert res["code"] == 0
+    mock_post.assert_called_once_with(
+        "/internal/v1/runs/run-1/approvals/app-1",
+        json_body={"decision": "deny"},
+        org_id="org-1",
+        user_id="user-1",
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("forbidden", ["session", "always"])
+async def test_approve_run_rejects_session_and_always_before_agent(forbidden):
+    db = AsyncMock()
+    user_org = _mock_user_org()
+    task = HermesTask(
+        id="run-1",
+        org_id="org-1",
+        user_id="user-1",
+        tool_name="test_tool",
+        status=TaskStatus.RUNNING,
+    )
+    with patch("app.api.runs.PermissionChecker.require_permission", new=AsyncMock()), \
+         patch("app.api.runs.TaskService.get_task", new=AsyncMock(return_value=task)), \
+         patch("app.api.runs.TaskService.assert_task_access", new=AsyncMock()), \
+         patch("app.api.runs._get_outbox_entry", new=AsyncMock(return_value=None)), \
+         patch("app.api.runs._agent_post", new=AsyncMock()) as mock_post:
+        with pytest.raises(AppException) as exc_info:
+            await approve_run(
+                run_id="run-1",
+                approval_id="app-1",
+                body={"decision": forbidden},
+                user_org=user_org,
+                db=db,
+            )
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.message_key == "errors.run.approval_choice_forbidden"
+    mock_post.assert_not_called()
 
 
 @pytest.mark.asyncio

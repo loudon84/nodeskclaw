@@ -30,6 +30,22 @@ logger = logging.getLogger(__name__)
 SCHEMA = settings.SKILL_AGENT_SCHEMA
 
 
+def next_status_after_stale_lease(
+    *,
+    last_event_type: str | None,
+    last_phase: str | None,
+    last_error_code: str | None,
+) -> str:
+    error_code = str(last_error_code or "")
+    if error_code in {"RUNTIME_INTERRUPTED", "RUNTIME_STATE_UNAVAILABLE"}:
+        return "FAILED"
+    if (last_phase or "") == "WAITING_APPROVAL":
+        return "WAITING_APPROVAL"
+    if last_event_type == "run.failed" and error_code:
+        return "FAILED"
+    return "QUEUED"
+
+
 def build_hybrid_step_plan(snapshot: dict[str, Any] | None) -> list[dict[str, Any]]:
     """Build a deterministic list of steps (central vs edge) for hybrid execution.
     Returns:
@@ -165,10 +181,24 @@ class RunWorker:
                 await db.execute(
                     text(
                         f"""
-                        SELECT id, attempt_id, worker_id
-                        FROM "{SCHEMA}".runs
-                        WHERE status IN ('PREPARING', 'RUNNING')
-                          AND lease_until < NOW()
+                        SELECT r.id, r.attempt_id, r.worker_id,
+                               (
+                                 SELECT e.event_type
+                                 FROM "{SCHEMA}".run_events e
+                                 WHERE e.run_id = r.id
+                                 ORDER BY e.event_seq DESC
+                                 LIMIT 1
+                               ) AS last_event_type,
+                               (
+                                 SELECT e.payload
+                                 FROM "{SCHEMA}".run_events e
+                                 WHERE e.run_id = r.id
+                                 ORDER BY e.event_seq DESC
+                                 LIMIT 1
+                               ) AS last_payload
+                        FROM "{SCHEMA}".runs r
+                        WHERE r.status IN ('PREPARING', 'RUNNING')
+                          AND r.lease_until < NOW()
                         FOR UPDATE SKIP LOCKED
                         """
                     )
@@ -178,6 +208,73 @@ class RunWorker:
                 run_id = r["id"]
                 att_id = r["attempt_id"]
                 logger.warning("recovering stale run_id=%s attempt_id=%s", run_id, att_id)
+                payload = r.get("last_payload") or {}
+                if hasattr(payload, "keys") and not isinstance(payload, dict):
+                    payload = dict(payload)
+                if not isinstance(payload, dict):
+                    payload = {}
+                next_status = next_status_after_stale_lease(
+                    last_event_type=r.get("last_event_type"),
+                    last_phase=payload.get("phase"),
+                    last_error_code=payload.get("error_code"),
+                )
+                if next_status == "WAITING_APPROVAL":
+                    await db.execute(
+                        text(
+                            f"""
+                            UPDATE "{SCHEMA}".runs
+                            SET status = 'WAITING_APPROVAL',
+                                worker_id = NULL,
+                                lease_until = NULL,
+                                updated_at = NOW()
+                            WHERE id = :id
+                            """
+                        ),
+                        {"id": run_id},
+                    )
+                    await run_service.append_event(
+                        db,
+                        run_id,
+                        "run.recovered",
+                        {"reason": "lease_expired_waiting_approval", "previous_attempt_id": att_id},
+                    )
+                    continue
+                if next_status == "FAILED":
+                    if att_id:
+                        await db.execute(
+                            text(
+                                f"""
+                                UPDATE "{SCHEMA}".run_attempts
+                                SET status = 'FAILED', completed_at = NOW(), error_message = 'lease expired after interrupted runtime'
+                                WHERE id = :id AND status IN ('PREPARING', 'RUNNING')
+                                """
+                            ),
+                            {"id": att_id},
+                        )
+                    await db.execute(
+                        text(
+                            f"""
+                            UPDATE "{SCHEMA}".runs
+                            SET status = 'FAILED',
+                                worker_id = NULL,
+                                lease_until = NULL,
+                                updated_at = NOW()
+                            WHERE id = :id
+                            """
+                        ),
+                        {"id": run_id},
+                    )
+                    await run_service.append_event(
+                        db,
+                        run_id,
+                        "run.failed",
+                        {
+                            "error_code": payload.get("error_code") or "RUNTIME_INTERRUPTED",
+                            "reason": "lease_expired",
+                            "previous_attempt_id": att_id,
+                        },
+                    )
+                    continue
                 if att_id:
                     await db.execute(
                         text(
@@ -421,6 +518,11 @@ class RunWorker:
         cancel_task = asyncio.create_task(_cancel_check_loop())
         renew_task = asyncio.create_task(_renew_loop())
 
+        async def _run_is_cancelling() -> bool:
+            async with SessionLocal() as check_db:
+                run_row = await run_service.get_run(check_db, run_id, org_id=org_id or "")
+            return bool(run_row and run_row.status in ("CANCELLING", "CANCELLED"))
+
         snapshot = claimed["snapshot"] or {}
         placement = snapshot.get("placement") or {}
         engine_name = str(placement.get("engine") or "hermes")
@@ -494,7 +596,15 @@ class RunWorker:
                 )
                 await db.commit()
 
-                central_step_id = "central_hermes" if any(s.get("step_id") == "central_hermes" for s in step_plan) else "central"
+                engine_name = str(placement.get("engine") or "hermes")
+                if engine_name == "hybrid":
+                    engine_name = "hermes"
+                is_direct_edge = placement.get("role") == "edge" and engine_name == "connector"
+                central_step_id = (
+                    str(step_plan[0].get("step_id") or "edge_connector")
+                    if is_direct_edge
+                    else "central_hermes" if any(s.get("step_id") == "central_hermes" for s in step_plan) else "central"
+                )
                 await run_service.update_step_state(
                     db,
                     run_id,
@@ -505,22 +615,44 @@ class RunWorker:
                 )
                 await db.commit()
 
-                engine_name = str(placement.get("engine") or "hermes")
-                if engine_name == "hybrid":
-                    engine_name = "hermes"
-
-                event_iter = execute_engine(
-                    engine=engine_name,
-                    tool_name=claimed["tool_name"],
-                    arguments=claimed["arguments"] or {},
-                    route_snapshot=route_snapshot if engine_name == "hermes" else snapshot,
-                    org_id=org_id,
-                    run_id=run_id,
-                    attempt_id=attempt_id,
-                    cancel_event=cancel_event,
-                )
                 is_hybrid = placement.get("engine") == "hybrid" or needs_edge_jobs(snapshot)
-                has_pending_edge_steps = is_hybrid and needs_edge_jobs(snapshot)
+                has_pending_edge_steps = is_direct_edge or (is_hybrid and needs_edge_jobs(snapshot))
+                if is_direct_edge:
+                    await run_service.set_status(
+                        db,
+                        run_id,
+                        "WAITING_EDGE",
+                        org_id=org_id,
+                        attempt_id=attempt_id,
+                        generation=generation,
+                        expected_status=["RUNNING", "PREPARING", "RESUMING"],
+                    )
+                    await run_service.append_event(
+                        db,
+                        run_id,
+                        "run.waiting_edge",
+                        {"status": "WAITING_EDGE", "attempt_id": attempt_id},
+                        org_id=org_id,
+                        attempt_id=attempt_id,
+                        generation=generation,
+                    )
+
+                    async def _direct_edge_events():
+                        if False:
+                            yield {}
+
+                    event_iter = _direct_edge_events()
+                else:
+                    event_iter = execute_engine(
+                        engine=engine_name,
+                        tool_name=claimed["tool_name"],
+                        arguments=claimed["arguments"] or {},
+                        route_snapshot=route_snapshot if engine_name == "hermes" else snapshot,
+                        org_id=org_id,
+                        run_id=run_id,
+                        attempt_id=attempt_id,
+                        cancel_event=cancel_event,
+                    )
 
                 async for event in event_iter:
                     event_type = event["event_type"]
@@ -671,6 +803,8 @@ class RunWorker:
 
                 # Hybrid: after central section, dispatch edge jobs to transport port
                 if has_pending_edge_steps:
+                    if cancel_event.is_set() or await _run_is_cancelling():
+                        raise asyncio.CancelledError
                     await revalidate_execution_context(
                         snapshot=snapshot,
                         run_id=run_id,
@@ -691,9 +825,17 @@ class RunWorker:
 
                     async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=5.0)) as http_client:
                         for edge_step in edge_steps:
+                            if cancel_event.is_set() or await _run_is_cancelling():
+                                raise asyncio.CancelledError
                             step_id = edge_step.get("step_id") or edge_step.get("step")
                             binding = edge_step.get("binding") or {}
-                            edge_node_id = binding.get("edge_node_id") or binding.get("node_id") or snapshot.get("edge_node_id") or "default-edge-node"
+                            edge_node_id = (
+                                binding.get("edge_node_id")
+                                or binding.get("node_id")
+                                or placement.get("edge_node_id")
+                                or snapshot.get("edge_node_id")
+                                or "default-edge-node"
+                            )
                             idempotency_key = f"{run_id}:{attempt_id}:{generation}:{step_id}"
 
                             enqueue_payload = {
@@ -713,6 +855,13 @@ class RunWorker:
                                 resp.raise_for_status()
                                 job_data = resp.json().get("data") or {}
                                 edge_job_id = job_data.get("job_id")
+                                if not edge_job_id:
+                                    raise RuntimeError(f"Edge job enqueue returned no job_id for step {step_id}")
+                                if await _run_is_cancelling():
+                                    cancel_url = f"{central_url}/api/v1/internal/edge/jobs/{edge_job_id}/cancel/agent"
+                                    cancel_resp = await http_client.post(cancel_url, headers=req_headers)
+                                    cancel_resp.raise_for_status()
+                                    raise asyncio.CancelledError
                                 dispatched_jobs.append({"step_id": step_id, "job_id": edge_job_id, "status": job_data.get("status")})
                                 await run_service.update_step_state(
                                     db,
@@ -723,6 +872,8 @@ class RunWorker:
                                     attempt_id=attempt_id,
                                     run_generation=generation,
                                 )
+                            except asyncio.CancelledError:
+                                raise
                             except Exception as exc:
                                 logger.error("failed to enqueue edge step %s for run_id=%s: %s", step_id, run_id, exc)
                                 raise RuntimeError(f"Edge job enqueue failed for step {step_id}: {exc}") from exc
@@ -737,6 +888,39 @@ class RunWorker:
                         generation=generation,
                     )
                     await db.commit()
+            except asyncio.CancelledError:
+                execute_outcome = "cancelled"
+                await db.rollback()
+                async with SessionLocal() as cancel_db:
+                    try:
+                        await run_service.update_step_state(
+                            cancel_db,
+                            run_id,
+                            central_step_id,
+                            "CANCELLED",
+                            attempt_id=attempt_id,
+                            run_generation=generation,
+                        )
+                        await run_service.append_event(
+                            cancel_db,
+                            run_id,
+                            "run.cancelled",
+                            {"reason": "cancel_requested"},
+                            org_id=org_id,
+                            attempt_id=attempt_id,
+                            generation=generation,
+                        )
+                        await run_service.aggregate_run_terminal(
+                            cancel_db,
+                            run_id,
+                            org_id=org_id,
+                            attempt_id=attempt_id,
+                            generation=generation,
+                        )
+                        await cancel_db.commit()
+                    except Exception:
+                        await cancel_db.rollback()
+                        logger.exception("failed to persist run cancellation run_id=%s", run_id)
             except ContextRevalidationError as exc:
                 execute_outcome = "error"
                 logger.warning("context revalidation denied run_id=%s: %s", run_id, exc)

@@ -763,6 +763,7 @@ async def approve_run(
     org_id: str,
     approval_id: str | None = None,
     evidence: dict[str, Any] | None = None,
+    decision: str | None = None,
 ) -> RunView | None:
     run = await get_run(db, run_id, org_id=org_id)
     if not run:
@@ -771,6 +772,9 @@ async def approve_run(
     if not approval_id:
         raise ValueError("approval_id is required to approve run")
 
+    from app.services.hermes_engine import normalize_hermes_approval_choice
+
+    choice = normalize_hermes_approval_choice(decision or "approve")
     evidence_dict = evidence or {}
 
     try:
@@ -778,22 +782,56 @@ async def approve_run(
             text(
                 f"""
                 INSERT INTO "{SCHEMA}".run_approvals (id, run_id, approval_id, decision, evidence, created_at)
-                VALUES (:id, :run_id, :approval_id, 'APPROVED', CAST(:evidence AS jsonb), NOW())
-                ON CONFLICT (run_id, approval_id) DO UPDATE SET evidence = CAST(:evidence AS jsonb)
+                VALUES (:id, :run_id, :approval_id, :decision, CAST(:evidence AS jsonb), NOW())
+                ON CONFLICT (run_id, approval_id) DO UPDATE SET evidence = CAST(:evidence AS jsonb), decision = :decision
                 """
             ),
             {
                 "id": str(uuid.uuid4()),
                 "run_id": run_id,
                 "approval_id": approval_id,
+                "decision": "DENIED" if choice == "deny" else "APPROVED",
                 "evidence": json.dumps(evidence_dict),
             },
         )
     except Exception:
         pass
 
+    binding = None
+    if run.attempt_id:
+        binding = await get_runtime_binding(db, run.attempt_id)
+    if binding and binding.get("runtime_run_id"):
+        from app.services import hermes_engine
+
+        gateway_url = hermes_engine.gateway_from_snapshot(run.snapshot or {})
+        if not gateway_url:
+            raise ValueError("runtime gateway is not configured")
+        result = await hermes_engine.respond_runtime_approval(
+            attempt_id=run.attempt_id,
+            generation=int(run.generation or 0),
+            choice=choice,
+            gateway_url=gateway_url,
+            runtime_run_id=str(binding.get("runtime_run_id")),
+        )
+        if result == "fenced":
+            raise ValueError("stale runtime generation")
+        if result:
+            raise ValueError(result)
+        return await get_run(db, run_id, org_id=org_id)
+
     if run.status != "WAITING_APPROVAL":
         return run
+
+    if choice == "deny":
+        await set_status(db, run_id, "FAILED", org_id=org_id, expected_status=["WAITING_APPROVAL"])
+        await append_event(
+            db,
+            run_id,
+            "run.failed",
+            {"status": "FAILED", "approval_id": approval_id, "reason": "denied"},
+            org_id=org_id,
+        )
+        return await get_run(db, run_id, org_id=org_id)
 
     evidence_payload = {"status": "RESUMING", "approval_id": approval_id, "evidence": evidence_dict}
     await set_status(db, run_id, "RESUMING", org_id=org_id, expected_status=["WAITING_APPROVAL"])
@@ -833,12 +871,37 @@ async def cancel_run(db: AsyncSession, run_id: str, *, org_id: str) -> RunView |
         )
         return await aggregate_run_terminal(db, run_id, org_id=org_id)
 
-    # If already CANCELLING or in-flight (RUNNING/PREPARING/RESUMING with worker)
     if run.status in ("PREPARING", "RUNNING", "RESUMING") and run.attempt_id:
-        # Move to CANCELLING state
         ok = await set_status(db, run_id, "CANCELLING", org_id=org_id, expected_status=["PREPARING", "RUNNING", "RESUMING"])
         if ok:
             await append_event(db, run_id, "run.cancelling", {"status": "CANCELLING"}, org_id=org_id)
+        return await get_run(db, run_id, org_id=org_id)
+
+    binding = None
+    if run.status == "WAITING_APPROVAL" and run.attempt_id:
+        binding = await get_runtime_binding(db, run.attempt_id)
+    has_runtime = bool(binding and binding.get("runtime_run_id"))
+
+    if run.status == "WAITING_APPROVAL" and has_runtime:
+        ok = await set_status(
+            db,
+            run_id,
+            "CANCELLING",
+            org_id=org_id,
+            expected_status=["WAITING_APPROVAL", "PREPARING", "RUNNING", "RESUMING"],
+        )
+        if ok:
+            await append_event(db, run_id, "run.cancelling", {"status": "CANCELLING"}, org_id=org_id)
+        from app.services import hermes_engine
+
+        gateway_url = hermes_engine.gateway_from_snapshot(run.snapshot or {})
+        if gateway_url:
+            await hermes_engine.stop_runtime_attempt(
+                attempt_id=run.attempt_id,
+                generation=int(run.generation or 0),
+                gateway_url=gateway_url,
+                runtime_run_id=str(binding.get("runtime_run_id")),
+            )
         return await get_run(db, run_id, org_id=org_id)
 
     # If QUEUED, WAITING_APPROVAL, PAUSED, SUSPENDED (no active in-flight worker execution), cancel immediately

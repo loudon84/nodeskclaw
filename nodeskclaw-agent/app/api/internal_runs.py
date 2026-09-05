@@ -525,7 +525,25 @@ async def approve_internal_run(
     if not run:
         raise HTTPException(status_code=404, detail="run not found")
     evidence = body.get("evidence") if body else None
-    res = await run_service.approve_run(db, run_id, approval_id=approval_id, evidence=evidence, org_id=x_exec_org_id)
+    decision = None
+    if isinstance(body, dict):
+        raw_choice = body.get("choice")
+        raw_decision = body.get("decision")
+        for raw in (raw_choice, raw_decision):
+            if str(raw or "").strip().lower() in {"session", "always"}:
+                raise HTTPException(status_code=400, detail="client must not submit session/always")
+        decision = raw_decision or raw_choice
+    try:
+        res = await run_service.approve_run(
+            db,
+            run_id,
+            approval_id=approval_id,
+            evidence=evidence,
+            org_id=x_exec_org_id,
+            decision=decision,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not res:
         raise HTTPException(status_code=404, detail="run not found")
     return MutationResponse(
