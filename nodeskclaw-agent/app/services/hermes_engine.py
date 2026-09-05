@@ -27,6 +27,7 @@ RUNTIME_STATE_UNAVAILABLE = "RUNTIME_STATE_UNAVAILABLE"
 
 HERMES_VERSION_FLOOR = (2026, 8, 31)
 HERMES_VERSION_FLOOR_LABEL = "v2026.8.31"
+HERMES_PACKAGE_RELEASE_FLOOR = (0, 21, 0)
 
 REQUIRED_FEATURES = frozenset(
     {
@@ -55,12 +56,40 @@ def parse_hermes_version(raw: Any) -> tuple[int, int, int] | None:
     if not isinstance(raw, str) or not raw.strip():
         return None
     text = raw.strip()
+    dated = re.search(r"(20\d{2})\.(\d{1,2})\.(\d{1,2})", text)
+    if dated:
+        return int(dated.group(1)), int(dated.group(2)), int(dated.group(3))
     if text.lower().startswith("v"):
         text = text[1:]
     parts = re.findall(r"\d+", text)
     if len(parts) < 3:
         return None
     return int(parts[0]), int(parts[1]), int(parts[2])
+
+
+def hermes_version_for_floor(raw: Any) -> tuple[int, int, int] | None:
+    parsed = parse_hermes_version(raw)
+    if parsed is None:
+        return None
+    if parsed[0] >= 2000:
+        return parsed
+    if parsed >= HERMES_PACKAGE_RELEASE_FLOOR:
+        return HERMES_VERSION_FLOOR
+    return parsed
+
+
+def reported_hermes_version(payload: dict[str, Any] | None) -> str:
+    if not isinstance(payload, dict):
+        return ""
+    nested = payload.get("runtime") if isinstance(payload.get("runtime"), dict) else {}
+    raw = (
+        payload.get("version")
+        or payload.get("hermes_version")
+        or payload.get("runtime_version")
+        or nested.get("version")
+        or ""
+    )
+    return str(raw).strip()
 
 
 def _feature_set(payload: dict[str, Any]) -> set[str]:
@@ -520,13 +549,26 @@ async def execute_hermes_run(
                 yield _failed(RUNTIME_PROTOCOL_INVALID, "Hermes capabilities response is invalid")
                 return
 
-            version_raw = (
-                caps_body.get("version")
-                or caps_body.get("hermes_version")
-                or caps_body.get("runtime_version")
-                or ""
-            )
-            parsed = parse_hermes_version(version_raw)
+            version_raw = reported_hermes_version(caps_body)
+            if not version_raw:
+                try:
+                    health_resp = await client.get(f"{gateway_url}/health", headers=auth_headers)
+                except (httpx.TimeoutException, httpx.NetworkError, OSError):
+                    yield _failed(RUNTIME_UNREACHABLE, "Hermes health version probe unreachable")
+                    return
+                if health_resp.status_code in (401, 403):
+                    yield _failed(RUNTIME_UNAUTHORIZED, "Hermes health version probe unauthorized")
+                    return
+                if health_resp.status_code >= 400:
+                    yield _failed(RUNTIME_VERSION_UNSUPPORTED, "Hermes health version probe failed")
+                    return
+                try:
+                    health_body = health_resp.json()
+                except Exception:
+                    yield _failed(RUNTIME_PROTOCOL_INVALID, "Hermes health response is not JSON")
+                    return
+                version_raw = reported_hermes_version(health_body if isinstance(health_body, dict) else None)
+            parsed = hermes_version_for_floor(version_raw)
             if parsed is None or parsed < HERMES_VERSION_FLOOR:
                 yield _failed(
                     RUNTIME_VERSION_UNSUPPORTED,

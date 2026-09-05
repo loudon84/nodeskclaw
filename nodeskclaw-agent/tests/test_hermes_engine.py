@@ -15,6 +15,8 @@ from app.services.hermes_engine import (
     RUNTIME_VERSION_UNSUPPORTED,
     build_native_run_payload,
     execute_hermes_run,
+    hermes_version_for_floor,
+    parse_hermes_version,
 )
 
 FLOOR_CAPS = {
@@ -74,6 +76,7 @@ def _sse_response(lines: list[str], status_code: int = 200) -> MagicMock:
 def _native_client(
     *,
     caps: dict | None = None,
+    health: dict | None = None,
     start: dict | None = None,
     status: dict | None = None,
     event_lines: list[str] | None = None,
@@ -92,6 +95,7 @@ def _native_client(
     probe_resp = MagicMock()
     probe_resp.status_code = 404
     caps_resp = _json_response(caps)
+    health_resp = _json_response(health) if health is not None else probe_resp
     start_resp = _json_response(start)
     status_resp = _json_response(status)
     stop_resp = MagicMock()
@@ -106,6 +110,8 @@ def _native_client(
         text = str(url)
         if text.rstrip("/").endswith("/v1/capabilities"):
             return caps_resp
+        if text.rstrip("/").endswith("/health") or text.rstrip("/").endswith("/health/detailed"):
+            return health_resp
         if "/v1/runs/" in text and not text.endswith("/events"):
             return status_resp
         return probe_resp
@@ -138,6 +144,14 @@ def test_build_native_run_payload_includes_skill():
     assert payload["input"].startswith("hello")
     assert "writer" in payload["instructions"]
     assert "stream" not in payload
+
+
+def test_parse_hermes_version_prefers_calendar_tag():
+    assert parse_hermes_version("Hermes Agent v0.21.0 (2026.8.31)") == (2026, 8, 31)
+    assert parse_hermes_version("v2026.4.23") == (2026, 4, 23)
+    assert hermes_version_for_floor("0.21.0") == (2026, 8, 31)
+    assert hermes_version_for_floor("0.18.2") == (0, 18, 2)
+    assert hermes_version_for_floor("v2026.8.3") == (2026, 8, 3)
 
 
 @pytest.mark.asyncio
@@ -454,6 +468,45 @@ async def test_execute_hermes_low_version_runtime_unsupported():
     assert not any(str(c.args[0]).endswith("/v1/runs") for c in client.post.await_args_list)
     assert "/v1/chat/completions" not in str(client.post.await_args_list)
     client.stream.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_execute_hermes_health_package_version_meets_floor():
+    caps = {"features": {name: True for name in REQUIRED_FEATURES}}
+    client = _native_client(caps=caps, health={"status": "ok", "version": "0.21.0"})
+    with patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client):
+        events = [
+            event
+            async for event in execute_hermes_run(
+                tool_name="foo",
+                arguments={"prompt": "hi"},
+                route_snapshot={"gateway_url": "http://hermes:8642"},
+                run_id="run-pkg",
+                attempt_id="att-pkg",
+            )
+        ]
+    assert any(str(c.args[0]).endswith("/health") for c in client.get.await_args_list)
+    assert any(str(c.args[0]).endswith("/v1/runs") for c in client.post.await_args_list)
+    assert events[-1]["event_type"] == "run.completed"
+
+
+@pytest.mark.asyncio
+async def test_execute_hermes_health_old_package_runtime_unsupported():
+    caps = {"features": {name: True for name in REQUIRED_FEATURES}}
+    client = _native_client(caps=caps, health={"status": "ok", "version": "0.18.2"})
+    with patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client):
+        events = [
+            event
+            async for event in execute_hermes_run(
+                tool_name="foo",
+                arguments={"prompt": "hi"},
+                route_snapshot={"gateway_url": "http://hermes:8642"},
+                run_id="run-old-pkg",
+                attempt_id="att-old-pkg",
+            )
+        ]
+    assert events[-1]["payload"]["error_code"] == RUNTIME_VERSION_UNSUPPORTED
+    assert not any(str(c.args[0]).endswith("/v1/runs") for c in client.post.await_args_list)
 
 
 @pytest.mark.asyncio
