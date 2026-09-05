@@ -841,6 +841,52 @@ async def test_execute_hermes_parks_on_waiting_for_approval():
     ]
     assert "WAITING_APPROVAL" in phases
     assert events[-1]["event_type"] == "run.completed"
+    assert any(e["event_type"] == "approval.requested" for e in events)
+
+
+@pytest.mark.asyncio
+# @lat: [[architecture/skill-agent#RM-15 Approval Runtime Control]]
+async def test_execute_hermes_parks_while_sse_still_open():
+    async def hanging_lines():
+        if False:
+            yield ""
+        while True:
+            await __import__("asyncio").sleep(0.05)
+
+    client = _native_client(
+        event_lines=[],
+        status=[
+            {"id": "rr-1", "status": "waiting_for_approval", "approval_id": "appr-open"},
+            {"id": "rr-1", "status": "waiting_for_approval", "approval_id": "appr-open"},
+            {"id": "rr-1", "status": "completed"},
+        ],
+    )
+    sse_resp = client.stream.return_value.__aenter__.return_value
+    sse_resp.aiter_lines = hanging_lines
+    with patch("app.services.hermes_engine.STREAM_STATUS_IDLE_TICKS", 1):
+        with patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client):
+            events = [
+                event
+                async for event in execute_hermes_run(
+                    tool_name="foo",
+                    arguments={"prompt": "hi"},
+                    route_snapshot={"gateway_url": "http://hermes:8642"},
+                    run_id="run-open-sse",
+                    attempt_id="att-open-sse",
+                )
+            ]
+    types = [e["event_type"] for e in events]
+    phases = [
+        e["payload"].get("phase")
+        for e in events
+        if e["event_type"] == "run.progress"
+    ]
+    assert client.stream.call_count == 1
+    assert "WAITING_APPROVAL" in phases
+    assert "approval.requested" in types
+    approval = next(e for e in events if e["event_type"] == "approval.requested")
+    assert approval["payload"]["approval_id"] == "appr-open"
+    assert events[-1]["event_type"] == "run.completed"
 
 
 @pytest.mark.asyncio

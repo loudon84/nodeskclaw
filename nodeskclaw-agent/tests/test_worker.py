@@ -415,6 +415,58 @@ async def test_worker_semantic_events_do_not_aggregate_terminal():
 
 
 @pytest.mark.asyncio
+# @lat: [[architecture/skill-agent#RM-15 Approval Runtime Control]]
+async def test_worker_sets_waiting_approval_on_park_events():
+    worker = RunWorker()
+    claimed = {
+        "id": "run-wait-1",
+        "org_id": "org-1",
+        "tool_name": "test_tool",
+        "arguments": {},
+        "snapshot": {
+            "org_id": "org-1",
+            "placement": {"role": "central", "engine": "hermes"},
+        },
+        "attempt_id": "attempt-1",
+        "generation": 1,
+    }
+    mock_db = AsyncMock()
+    mock_db.commit = AsyncMock()
+    mock_db.rollback = AsyncMock()
+    set_status_calls = []
+
+    async def mock_engine_gen(*args, **kwargs):
+        yield {
+            "event_type": "approval.requested",
+            "payload": {"approval_id": "appr-1", "summary": "Need approval"},
+            "source": "agent",
+            "source_event_id": "appr-evt",
+        }
+        yield {
+            "event_type": "run.progress",
+            "payload": {"phase": "WAITING_APPROVAL", "message": "hermes runtime status waiting_for_approval"},
+        }
+        yield {"event_type": "run.completed", "payload": {"summary": "done"}}
+
+    async def mock_set_status(db, run_id, status, **kwargs):
+        set_status_calls.append(status)
+        return True
+
+    with patch("app.services.worker.SessionLocal", return_value=mock_db), \
+         patch("app.services.worker.revalidate_execution_context", new=AsyncMock()), \
+         patch("app.services.worker.execute_engine", side_effect=mock_engine_gen), \
+         patch("app.services.worker.run_service.set_status", side_effect=mock_set_status), \
+         patch("app.services.worker.run_service.append_event", new=AsyncMock()), \
+         patch("app.services.worker.run_service.aggregate_run_terminal", new=AsyncMock()), \
+         patch("app.services.worker.run_service.update_step_state", new=AsyncMock()), \
+         patch("app.services.worker.run_service.persist_step_plan", new=AsyncMock(return_value=[])), \
+         patch("app.services.worker.run_service.get_run", return_value=None):
+        await worker._execute(claimed)
+
+    assert "WAITING_APPROVAL" in set_status_calls
+
+
+@pytest.mark.asyncio
 async def test_worker_skips_execute_engine_when_context_revalidate_denied():
     worker = RunWorker()
     claimed = {

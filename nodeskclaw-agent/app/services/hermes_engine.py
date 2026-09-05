@@ -241,6 +241,38 @@ def _extract_status(data: Any) -> str:
     return str(raw).strip().lower()
 
 
+STREAM_STATUS_IDLE_TICKS = 10
+WAIT_STATUSES = frozenset({"waiting_for_approval", "waiting"})
+ALIVE_STATUSES = frozenset({"running", "waiting_for_approval", "waiting"})
+
+
+def _is_wait_status(status: str) -> bool:
+    return status in WAIT_STATUSES
+
+
+def _approval_request_chunk(data: dict[str, Any] | None, runtime_run_id: str) -> dict[str, Any]:
+    nested = data.get("data") if isinstance(data, dict) and isinstance(data.get("data"), dict) else {}
+    approval = data.get("approval") if isinstance(data, dict) and isinstance(data.get("approval"), dict) else {}
+    nested_approval = nested.get("approval") if isinstance(nested.get("approval"), dict) else {}
+    candidates = [
+        (data or {}).get("approval_id") if isinstance(data, dict) else None,
+        nested.get("approval_id"),
+        approval.get("approval_id"),
+        nested_approval.get("approval_id"),
+        approval.get("id"),
+        nested_approval.get("id"),
+    ]
+    approval_id = None
+    for item in candidates:
+        if isinstance(item, str) and item.strip() and item.strip() != runtime_run_id:
+            approval_id = item.strip()
+            break
+    chunk: dict[str, Any] = {"type": "approval.request", "summary": "approval requested"}
+    if approval_id:
+        chunk["approval_id"] = approval_id
+    return chunk
+
+
 
 
 async def load_attempt_generation(attempt_id: str) -> int | None:
@@ -660,6 +692,11 @@ async def execute_hermes_run(
 
             events_url = f"{gateway_url}/v1/runs/{runtime_run_id}/events"
             yield {"event_type": "run.progress", "payload": progress_payload("RUNTIME_RUNNING", "streaming")}
+            saw_approval = False
+            polled_status: str | None = None
+            polled_data: dict[str, Any] | None = None
+            polled_code: str | None = None
+            idle_ticks = 0
             try:
                 async with client.stream("GET", events_url, headers=auth_headers) as response:
                     events_subscribed = True
@@ -695,9 +732,22 @@ async def execute_hermes_run(
                         except TimeoutError:
                             for semantic in normalizer.flush_due_to_latency():
                                 yield semantic
+                            idle_ticks += 1
+                            if idle_ticks % STREAM_STATUS_IDLE_TICKS != 0:
+                                continue
+                            status, data, rec_code = await _reconcile_status(
+                                client,
+                                gateway_url=gateway_url,
+                                runtime_run_id=runtime_run_id,
+                                headers=auth_headers,
+                            )
+                            polled_status, polled_data, polled_code = status, data, rec_code
+                            if _is_wait_status(status) or _terminal_from_status(status, rec_code):
+                                break
                             continue
                         except StopAsyncIteration:
                             break
+                        idle_ticks = 0
                         if not line or not line.startswith("data:"):
                             continue
                         data_str = line.split(":", 1)[1].strip()
@@ -709,42 +759,56 @@ async def execute_hermes_run(
                             continue
                         if not isinstance(chunk, dict):
                             continue
+                        leave_stream = False
                         for semantic in normalizer.ingest(chunk):
                             yield semantic
+                            if semantic.get("event_type") == "approval.requested":
+                                saw_approval = True
+                                leave_stream = True
+                        if leave_stream:
+                            break
             except (httpx.TimeoutException, httpx.NetworkError, OSError):
                 if not events_subscribed:
                     yield _failed(RUNTIME_EVENT_STREAM_FAILED, "Hermes event stream failed")
                     return
 
             yield {"event_type": "run.progress", "payload": progress_payload("RECONCILING", "reconciling hermes status")}
-            status, _data, rec_code = await _reconcile_status(
-                client,
-                gateway_url=gateway_url,
-                runtime_run_id=runtime_run_id,
-                headers=auth_headers,
-            )
+            if polled_status is None:
+                status, data, rec_code = await _reconcile_status(
+                    client,
+                    gateway_url=gateway_url,
+                    runtime_run_id=runtime_run_id,
+                    headers=auth_headers,
+                )
+            else:
+                status, data, rec_code = polled_status, polled_data, polled_code
             if status == "stopping":
                 yield {"event_type": "run.progress", "payload": progress_payload("STOPPING", "hermes runtime stopping")}
-                status, _data, rec_code = await _reconcile_status(
+                status, data, rec_code = await _reconcile_status(
                     client,
                     gateway_url=gateway_url,
                     runtime_run_id=runtime_run_id,
                     headers=auth_headers,
                 )
             terminal = _terminal_from_status(status, rec_code)
-            close_status = "completed" if status in {"completed", "succeeded", "success"} else "failed"
-            for leftover in normalizer.close(terminal_status=close_status):
-                yield leftover
             if terminal:
+                close_status = "completed" if status in {"completed", "succeeded", "success"} else "failed"
+                for leftover in normalizer.close(terminal_status=close_status):
+                    yield leftover
                 if terminal["event_type"] in {"run.completed", "run.failed", "run.cancelled"}:
                     await mark_native_terminal(attempt_id=attempt_id, generation=generation)
                 yield terminal
                 return
-            if status not in {"running", "waiting_for_approval", "waiting"}:
+            if status not in ALIVE_STATUSES:
                 yield _failed(RUNTIME_STATE_UNAVAILABLE, "Hermes runtime status could not be mapped")
                 return
-            while status in {"running", "waiting_for_approval", "waiting"}:
-                phase = "WAITING_APPROVAL" if status in {"waiting_for_approval", "waiting"} else "RUNTIME_RUNNING"
+            while status in ALIVE_STATUSES:
+                if _is_wait_status(status) and not saw_approval:
+                    for semantic in normalizer.ingest(_approval_request_chunk(data, runtime_run_id)):
+                        yield semantic
+                        if semantic.get("event_type") == "approval.requested":
+                            saw_approval = True
+                phase = "WAITING_APPROVAL" if _is_wait_status(status) else "RUNTIME_RUNNING"
                 yield {
                     "event_type": "run.progress",
                     "payload": progress_payload(phase, f"hermes runtime status {status}"),
@@ -786,7 +850,7 @@ async def execute_hermes_run(
                     await asyncio.wait_for(waiter, timeout=0.05)
                 except TimeoutError:
                     pass
-                status, _data, rec_code = await _reconcile_status(
+                status, data, rec_code = await _reconcile_status(
                     client,
                     gateway_url=gateway_url,
                     runtime_run_id=runtime_run_id,

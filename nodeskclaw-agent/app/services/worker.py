@@ -671,6 +671,16 @@ class RunWorker:
                             source=source,
                             source_event_id=source_event_id,
                         )
+                        if event_type == "approval.requested":
+                            await run_service.set_status(
+                                db,
+                                run_id,
+                                "WAITING_APPROVAL",
+                                org_id=org_id,
+                                attempt_id=attempt_id,
+                                generation=generation,
+                                expected_status=["RUNNING", "PREPARING", "RESUMING", "WAITING_APPROVAL"],
+                            )
                     elif event_type == "run.completed":
                         await run_service.update_step_state(
                             db,
@@ -799,6 +809,16 @@ class RunWorker:
                             source=source,
                             source_event_id=source_event_id,
                         )
+                        if event_type == "run.progress" and str(payload.get("phase") or "").upper() == "WAITING_APPROVAL":
+                            await run_service.set_status(
+                                db,
+                                run_id,
+                                "WAITING_APPROVAL",
+                                org_id=org_id,
+                                attempt_id=attempt_id,
+                                generation=generation,
+                                expected_status=["RUNNING", "PREPARING", "RESUMING", "WAITING_APPROVAL"],
+                            )
                     await db.commit()
 
                 # Hybrid: after central section, dispatch edge jobs to transport port
