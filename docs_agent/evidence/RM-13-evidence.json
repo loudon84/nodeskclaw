@@ -1,0 +1,84 @@
+{
+  "schema": "smc.evidence.manifest.v1",
+  "plan_id": "RM-13",
+  "plan": ".cursor/plans/rm-13_hermes-native-runtime-bridge.plan.md",
+  "generated_at": "2026-09-05T01:47:00.000000Z",
+  "code_origin_commit": "59ebfb6683286dfadd9dad5586adb8feefece148",
+  "wtree_fingerprint": "sha256:478769c0172bbd49b29cffdf1e4790172eb9420b33df57d9799747cbd0e64f3d",
+  "blocking_verifications": [
+    {
+      "verification_id": "V01",
+      "command": "uv --directory nodeskclaw-agent run pytest tests/test_hermes_engine.py -q",
+      "exit_code": 0,
+      "policy": "LOCAL_TRANSIENT",
+      "result": "PASS",
+      "timestamp": "2026-09-05T01:47:00.000000Z",
+      "raw_log_ref": "docs_agent/evidence/RM-13-recovery-audit.json",
+      "raw_log_sha256": "sha256:5faf78d2b30e589cd77ea2c6d42a9e90bce74fa8c61e4c0a8dad476b8cc63df4"
+    },
+    {
+      "verification_id": "V02",
+      "command": "uv --directory nodeskclaw-agent run pytest tests/test_attempt_runtime_binding.py -q",
+      "exit_code": 0,
+      "policy": "LOCAL_TRANSIENT",
+      "result": "PASS",
+      "timestamp": "2026-09-05T01:47:00.000000Z",
+      "raw_log_ref": "docs_agent/evidence/RM-13-recovery-audit.json",
+      "raw_log_sha256": "sha256:5faf78d2b30e589cd77ea2c6d42a9e90bce74fa8c61e4c0a8dad476b8cc63df4"
+    },
+    {
+      "verification_id": "V03",
+      "command": "git diff --exit-code 81babaebae7c7a1400db5be6139633af47bf5161 -- contracts/skill-run/v1.2.1",
+      "exit_code": 0,
+      "policy": "REPO_SUMMARY",
+      "result": "PASS",
+      "timestamp": "2026-09-05T01:47:00.000000Z",
+      "raw_log_ref": "docs_agent/evidence/RM-13-recovery-audit.json",
+      "raw_log_sha256": "sha256:5faf78d2b30e589cd77ea2c6d42a9e90bce74fa8c61e4c0a8dad476b8cc63df4"
+    },
+    {
+      "verification_id": "V04",
+      "command": "python -c \"import subprocess,sys; r=subprocess.run(['git','grep','2026.4.23','--','nodeskclaw-agent/app','nodeskclaw-backend/app/startup','nodeskclaw-artifacts/hermes-image']); sys.exit(0 if r.returncode==1 else 1)\"",
+      "exit_code": 0,
+      "policy": "REPO_SUMMARY",
+      "result": "PASS",
+      "timestamp": "2026-09-05T01:47:00.000000Z",
+      "raw_log_ref": "docs_agent/evidence/RM-13-recovery-audit.json",
+      "raw_log_sha256": "sha256:5faf78d2b30e589cd77ea2c6d42a9e90bce74fa8c61e4c0a8dad476b8cc63df4"
+    },
+    {
+      "verification_id": "V11",
+      "command": "python tools/acceptance/run_rm13_live_native.py --output docs_agent/evidence/RM-13-live-v11.json",
+      "exit_code": 0,
+      "policy": "REAL_RUNTIME",
+      "result": "PASS",
+      "timestamp": "2026-09-05T01:46:00.954328Z",
+      "raw_log_ref": "docs_agent/evidence/RM-13-live-v11.json",
+      "raw_log_sha256": "sha256:e7c36dbf879607c9179dc577b81a590a1e24d676218db05b98fab187b2a9ae2a",
+      "notes": "Live Native Run PASS; Binding before runtime-derived events; public leaks empty."
+    }
+  ],
+  "completion_audit": {
+    "changed": 0,
+    "deferred": 0,
+    "done": 2,
+    "scope_drift": 0,
+    "timestamp": "2026-09-05T01:47:00.000000Z",
+    "total_items": 2,
+    "unverifiable": 0,
+    "verdict": "PASS"
+  },
+  "implementation_review": {
+    "reviewer": "code-review-and-quality",
+    "timestamp": "2026-09-05T01:47:00.000000Z",
+    "verdict": "PASS",
+    "wtree_fingerprint": "sha256:478769c0172bbd49b29cffdf1e4790172eb9420b33df57d9799747cbd0e64f3d"
+  },
+  "plan_review": {
+    "plan_sha256": "sha256:753bab2ebf47e8e47cd5b373f1f1a5f2b2bef80164d8316cb37741c949f75f2b",
+    "reviewer": "smc-plan-review",
+    "timestamp": "2026-09-05T01:47:00.000000Z",
+    "verdict": "PASS"
+  },
+  "payload_sha256": "sha256:b330f6952fbca6a5f5d52bb4863a600b587c99b02a21d4b2c9bd117499a4f2c9"
+}
