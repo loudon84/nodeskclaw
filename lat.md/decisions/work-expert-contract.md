@@ -102,7 +102,7 @@ Skill Run v1.0.0 为 apps/work 提供独立的公开消费者合同，冻结 MCP
 
 发布产物位于 `nodeskclaw-backend/contracts/skill-run/v1.0.0/`。`manifest.json` 记录实现提交，`SHA256SUMS` 覆盖所有消费者产物；发布提交只能改写该目录，并由 `skill-run-contract-v1.0.0` annotated tag 指向。Consumer 必须锁定 tag、peeled commit 和 SHA256SUMS。
 
-P0 Catalog 仅接受 `capabilityKind: skill`。Approval 与 Attachment 明示为 unsupported，调用端须 fail-closed；`WAITING_APPROVAL` 仅可读取状态。`X-Idempotency-Key` 的作用域是已认证的 org、user、tool，TTL 24 小时，冲突返回 409，同键重放返回原 Run；[[nodeskclaw-backend/app/services/hermes_skill/runtime_skill_run_service.py#RuntimeSkillRunService#start]] 与 [[nodeskclaw-backend/app/services/hermes_skill/task_service.py#TaskService#find_idempotent_task]] 必须使用该相同键，数据库唯一索引由 `alembic/versions/e9802bb694b2_统一_skill_run_幂等键.py` 保证。
+P0 Catalog 仅接受 `capabilityKind: skill`。该 v1.0.0 冻结面把 Approval 与 Attachment 明示为 unsupported，调用端须 fail-closed；`WAITING_APPROVAL` 仅可读取状态。v1.2.1 员工审批 mutation 的两档约束见 [[architecture/skill-agent#RM-15 Approval Runtime Control]]。`X-Idempotency-Key` 的作用域是已认证的 org、user、tool，TTL 24 小时，冲突返回 409，同键重放返回原 Run；[[nodeskclaw-backend/app/services/hermes_skill/runtime_skill_run_service.py#RuntimeSkillRunService#start]] 与 [[nodeskclaw-backend/app/services/hermes_skill/task_service.py#TaskService#find_idempotent_task]] 必须使用该相同键，数据库唯一索引由 `alembic/versions/e9802bb694b2_统一_skill_run_幂等键.py` 保证。
 
 公开 Run 投影由 [[nodeskclaw-backend/app/api/runs.py#_public_run_view]]、[[nodeskclaw-backend/app/api/runs.py#_public_run_result]] 和 [[nodeskclaw-backend/app/api/runs.py#_public_artifact_descriptor]] 限定字段。[[nodeskclaw-backend/app/api/runs.py#_public_run_event]] 将 Agent 事件映射为有稳定 `run_id:event_seq` identity 的受限 union；未知事件不得透传。[[nodeskclaw-backend/scripts/contracts.py#_validate_skill_run_release]] 验证 tagged release 的提交边界。
 

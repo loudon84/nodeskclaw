@@ -68,7 +68,7 @@ Run 生命周期的幂等、CAS 状态迁移、Attempt 代次和取消审批分�
 
 - **已实现**：[[nodeskclaw-agent/app/services/run_service.py#create_run]] 以幂等键和快照摘要收敛重复创建；认领时创建 Attempt 并递增 Generation。
 - **已实现**：[[nodeskclaw-agent/app/services/run_service.py#set_status]] 与 [[nodeskclaw-agent/app/services/run_service.py#append_event]] 校验 Run、组织、Attempt 和 Generation，并通过原子事件序列及 `source_event_id` 去重阻止迟到写入。终态 Run 拒绝新事件，因此聚合器与 Worker 失败落盘必须先 CAS 到 `FAILED`，事件写入失败不得把状态打回可认领。
-- **已实现**：取消经过 `CANCELLING` 中间态；Resume 不处理 `WAITING_APPROVAL`；[[nodeskclaw-agent/app/services/run_service.py#approve_run]] 独立保存审批决定和证据。
+- **已实现**：取消经过 `CANCELLING` 中间态；绑定等待审批同样 `CANCELLING` 后走 Hermes `/stop`，见 [[architecture/skill-agent#RM-15 Approval Runtime Control]]。Resume 不处理 `WAITING_APPROVAL`；[[nodeskclaw-agent/app/services/run_service.py#approve_run]] 有 Binding 时回写 `/approval`（不得 `QUEUED`），无 Binding 时 approve 才允许 create-time `QUEUED`，deny 记 `FAILED`。
 - **部分实现**：租约续期、过期恢复和 Fencing 已有实现与 Mock 测试；Harness 已定义 kill Central A 故障注入，但尚未取得真实 PostgreSQL 上双 Central 崩溃接管与迟到写入的实跑证据。
 - **目标状态**：故障报告证明最多一个有效 Attempt、终态不回退、旧代事件和 Artifact 无副作用地被拒绝。
 
@@ -98,7 +98,7 @@ Installation 的 Desired/Actual Generation 合同已实现，Edge 通过 Backend
 
 短期凭证租约已经实现；生产南向已切到 Native Run API。Native 事件经 Normalizer 与 Coalescer 进入 Agent Event SoT；ChatCompletion parser 未恢复。
 
-- **已实现**：[[nodeskclaw-agent/app/services/hermes_engine.py#execute_hermes_run]] 先 `GET /v1/capabilities`（地板 [[nodeskclaw-agent/app/services/hermes_engine.py#HERMES_VERSION_FLOOR]] `v2026.8.31`，必选 [[nodeskclaw-agent/app/services/hermes_engine.py#REQUIRED_FEATURES]]），再 `POST /v1/runs`（[[nodeskclaw-agent/app/services/hermes_engine.py#build_native_run_payload]]，无 `messages`，`Idempotency-Key` 为 `{run_id}:{attempt_id}:{generation}`），Binding 成功后才 `GET /events`；断开只 `GET` status；cancel 走 `/stop`。低版本 `RUNTIME_VERSION_UNSUPPORTED`，缺 feature `RUNTIME_CAPABILITY_MISSING`。实现来源 `59ebfb6683286dfadd9dad5586adb8feefece148`。
+- **已实现**：[[nodeskclaw-agent/app/services/hermes_engine.py#execute_hermes_run]] 先 `GET /v1/capabilities`（地板 [[nodeskclaw-agent/app/services/hermes_engine.py#HERMES_VERSION_FLOOR]] `v2026.8.31`，必选 [[nodeskclaw-agent/app/services/hermes_engine.py#REQUIRED_FEATURES]]），再 `POST /v1/runs`（[[nodeskclaw-agent/app/services/hermes_engine.py#build_native_run_payload]]，无 `messages`，`Idempotency-Key` 为 `{run_id}:{attempt_id}:{generation}`），Binding 成功后才 `GET /events`；SSE 仍打开时也按 GET status 侦测 `waiting_for_approval`，驻留当前 Attempt，进度 `phase=WAITING_APPROVAL`，缺 SSE `approval.request` 时从 GET 合成 `approval.requested`；不重订 `/events`；cancel 走 `/stop`；批准走 [[nodeskclaw-agent/app/services/hermes_engine.py#respond_runtime_approval]]。低版本 `RUNTIME_VERSION_UNSUPPORTED`，缺 feature `RUNTIME_CAPABILITY_MISSING`。实现来源 `59ebfb6683286dfadd9dad5586adb8feefece148`。
 - **已实现**：语义事件与控制事件共享 `append_event` 序列；Worker 语义路径只落事件不迁终态；`artifact.persisted` 仅在 CAS `PERSISTED` 后由 Agent 发出。
 - **已实现**：Snapshot 不保存 `gateway_token` 或 `env_file` 明文；Attempt 时领取 Hermes `API_SERVER_KEY`（不是平台 JWT），见 [[architecture/skill-agent#Hermes Engine Adapter#Credential Lease API Server Key]]。
 
@@ -120,7 +120,7 @@ Attempt 时 `mint_credential_lease` 从实例 `.env` 读取 `API_SERVER_KEY` 作
 Hermes `runtime_run_id` 记在当前 Attempt 行上，受 generation 栅栏，且不得进入 Public Event。
 
 - **已实现**：[[nodeskclaw-agent/app/db_metadata.py#run_attempts]] 增加可空 Binding 列；[[nodeskclaw-agent/app/services/run_service.py#persist_runtime_binding]] 按 generation CAS，同 Attempt 重试保持一个 `runtime_run_id`。Native 终态后 [[nodeskclaw-agent/app/services/run_service.py#mark_runtime_terminal]] 写 `runtime_terminal_at`。Knowledge [[nodeskclaw-knowledge/app/models/runtime_binding.py#KnowledgeRuntimeBinding]] 是另一 Owner，禁止混用。
-- **已实现**：[[nodeskclaw-agent/app/services/run_service.py#append_event]] 经 [[nodeskclaw-agent/app/services/run_service.py#_omit_runtime_binding_keys]] 剥离 `runtime_run_id` 等 Binding 键。Alembic head `0007_attempt_runtime_binding` 与 Worker INSERT 靠可空列共存。
+- **已实现**：[[nodeskclaw-agent/app/services/run_service.py#append_event]] 经 [[nodeskclaw-agent/app/services/run_service.py#_omit_runtime_binding_keys]] 剥离 `runtime_run_id` 等 Binding 键。Public `WAITING_APPROVAL` 与 `approval.requested` 同样不得带 Binding 键，见 [[architecture/skill-agent#RM-15 Approval Runtime Control]]。Alembic head `0007_attempt_runtime_binding` 与 Worker INSERT 靠可空列共存。
 
 ## Runtime Delegation Boundary
 
@@ -202,7 +202,7 @@ RM-12 员工公共面已用真实 Backend 的 REAL_PROCESS live runner 关闭；
 
 - **已实现**：[[tools/acceptance/run_rm12_live_conformance.py#run_live]] 只用 `user_jwt` 对 `RM12_TOOL_NAME` 跑 PC-10 至 PC-14。不要求 `mcp_client_token`，不得把 tool 换成仅为历史容器互调 Token 授权的 Skill。证据 `docs_agent/evidence/RM-12-live-conformance.json` 为 `result=PASS`。
 - **已实现**：[[tools/acceptance/run_rm12_live_conformance.py#tool_arguments]] 默认 `{"prompt":"rm12-live-conformance"}` 以满足 Skill `input_schema`；可用 `RM12_TOOL_ARGUMENTS` JSON 覆盖。幂等冲突与 PC-13 变体只在已有 `prompt` 或 `message` 字符串上加后缀。PC-13 在 ingest / cancel 前经 [[tools/acceptance/run_rm12_live_conformance.py#wait_until_agent_has_run]] 等到 Agent 已落到该 `run_id`，避免 Outbox 未投递时 404。
-- **已实现**：PC-10 / PC-11 / PC-12 / PC-14 与 PC-13 COMPLETED / FAILED / TIMED_OUT 为自动化 PASS。PC-13 CANCELLED 保留自动化观察 `cancel HTTP 500`，出口按操作者手工验证记 PASS，不再重跑 live。
+- **已实现**：PC-10 / PC-11 / PC-12 / PC-14 与 PC-13 COMPLETED / FAILED / TIMED_OUT 为自动化 PASS。PC-13 CANCELLED 保留自动化观察 `cancel HTTP 500`，出口按操作者手工验证记 PASS，不再重跑 live。本地 Adapter 把 Agent 冲突映射为非 HTTP 500。RM-15 V13 不再把员工 cancel HTTP 500 当作本闸失败条件，见 [[architecture/skill-agent#RM-15 Live Control V13]]。
 - **目标状态**：员工 `user_jwt` 公共信封保持冻结 v1.2.1（`run_id` + `/api/v1/runs/*`）；live 不要求 `mcp_client_token`。
 
 ## RM-13 Live Native V11
@@ -217,7 +217,26 @@ RM-13 Native Bridge 已用真实 Hermes Native Run 关闭；员工 `user_jwt` �
 V13 用真实 Hermes Native Run 证明已部署 Adapter 的 progress 带 canonical `phase`。
 
 - **已实现**：[[tools/acceptance/run_rm14_live_semantic.py#run_live]] 复用 RM-13 Native 路径后核对 Agent SoT `run.progress.payload.phase`。证据 `docs_agent/evidence/RM-14-live-v13.json` 为 `result=PASS`，`hermes_runtime_version=v2026.8.31`。
-- **目标状态**：保持 REAL_PROCESS 证据可复跑；mock-only 不能关闭 RM-14。RM-15 才做 Approval Decision / Cancel 闭环。
+- **目标状态**：保持 REAL_PROCESS 证据可复跑；mock-only 不能关闭 RM-14。审批决策与 cancel 南向见 [[architecture/skill-agent#RM-15 Approval Runtime Control]]。
+
+## RM-15 Approval Runtime Control
+
+RM-15 已把 Public 批准/拒绝与取消接到同一 Hermes Native Attempt 的 `/approval` 与 `/stop`，并禁止 interrupted 自动续跑。
+
+- **已实现**：[[nodeskclaw-agent/app/services/hermes_engine.py#execute_hermes_run]] 在 Hermes `waiting_for_approval` 时驻留当前 Attempt；SSE 未结束也轮询 GET status，进度 `phase=WAITING_APPROVAL`，不重订 `/events`，不 `POST` 第二条 `/v1/runs`。[[nodeskclaw-agent/app/services/worker.py#RunWorker#_execute]] 收到 `approval.requested` 或 `phase=WAITING_APPROVAL` 时把 Run 切到 `WAITING_APPROVAL`。
+- **已实现**：有 Binding 时 [[nodeskclaw-agent/app/services/run_service.py#approve_run]] 经 [[nodeskclaw-agent/app/services/hermes_engine.py#respond_runtime_approval]] 把 Public `approve`/`deny` 映射为 Hermes `once`/`deny`，不得把已绑定 Attempt `QUEUED` 成新 Hermes Run。无 Binding 时 deny 记 `FAILED`，approve 才允许 create-time `QUEUED`。[[nodeskclaw-agent/app/services/hermes_engine.py#normalize_hermes_approval_choice]] 拒绝客户端 `session`/`always`。generation 与 `runtime_run_id` 栅栏与 [[nodeskclaw-agent/app/services/hermes_engine.py#stop_runtime_attempt]] 相同。
+- **已实现**：[[nodeskclaw-backend/app/api/runs.py#approve_run]] 公共两档，`session`/`always` 返回 `message_key=errors.run.approval_choice_forbidden`；[[nodeskclaw-agent/app/api/internal_runs.py#approve_internal_run]] 只转发已映射 choice。绑定等待审批时 [[nodeskclaw-agent/app/services/run_service.py#cancel_run]] 进入 `CANCELLING` 并 `/stop`。Public `WAITING_APPROVAL` / `approval.requested` 仍剥离 Binding 键。
+- **已实现**：interrupted / unavailable 记 `FAILED`；[[nodeskclaw-agent/app/services/worker.py#next_status_after_stale_lease]] 与 [[nodeskclaw-agent/app/services/worker.py#RunWorker#_recover_stale_runs]] 不得把 waiting/interrupted 再 `QUEUED` 成新 Hermes Run。Direct Edge 仍跳过 `execute_engine`，取消竞态补写 EdgeJob，见 [[architecture/skill-agent#Connector Center Execution]]。
+- **已实现**：聚焦自动化覆盖 park、bound 不 `QUEUED`、wait-cancel `/stop`、两档 Public choice、WAITING_APPROVAL 投影剥离 Binding 键：[[nodeskclaw-agent/tests/test_hermes_engine.py#test_execute_hermes_parks_on_waiting_for_approval]]、[[nodeskclaw-agent/tests/test_hermes_engine.py#test_execute_hermes_parks_while_sse_still_open]]、[[nodeskclaw-agent/tests/test_worker.py#test_worker_sets_waiting_approval_on_park_events]]、[[nodeskclaw-agent/tests/test_run_service.py#test_approve_run_bound_does_not_queue]]、[[nodeskclaw-agent/tests/test_run_service.py#test_cancel_waiting_approval_with_binding_goes_cancelling]]、[[nodeskclaw-agent/tests/test_worker.py#test_stale_lease_interrupted_fails]]、[[nodeskclaw-backend/tests/hermes_skill/test_employee_runs_api.py#test_approve_run_rejects_session_and_always_before_agent]]、[[nodeskclaw-backend/tests/hermes_skill/test_pc12_pc13_projection_regression.py#test_pc12_waiting_approval_event_hides_runtime_identity]]、[[nodeskclaw-backend/tests/hermes_skill/test_employee_runs_api.py#test_cancel_run_agent_conflict_is_not_http_500]]。这些测试不能代替 live Native。
+- **目标状态**：不得改写 v1.2.1，不得恢复 ChatCompletion parser，不得把 PC-01 至 PC-09 并入本项。live Native 出口见 [[architecture/skill-agent#RM-15 Live Control V13]]。Roadmap `DONE` 证据提交 `c4210717`。
+
+## RM-15 Live Control V13
+
+V13 用真实 Hermes Native Run 证明 Public 批准、拒绝与取消接到同一 Attempt。
+
+- **已实现**：[[tools/acceptance/run_rm15_live_control.py#run_live]] 复用 RM-13/RM-14 环境变量与 preflight，记录 `hermes_runtime_version`，并对员工 `user_jwt` 路径做 session 拒绝、deny、approve。可用 `RM15_TOOL_NAME` 覆盖工具。等待审批时同时看 Agent SoT、Public GET 与 Hermes GET；Hermes 已终态且未驻留则立即结束等待。员工 cancel HTTP 500 只记观察，不作为本闸失败条件。mock-only 不能关闭 RM-15。
+- **已实现**：live 证据 `docs_agent/evidence/RM-15-live-v13.json`（`2026-09-05T08:57:42Z`）为 `result=PASS`：工具 `hermes_marketing__park-waiting-approval`，`hermes_runtime_version=v2026.8.31`，Public `WAITING_APPROVAL`，Hermes `waiting_for_approval`，SoT 含 `approval.requested`。`session` 被拒绝；deny/approve 非 HTTP 500；cancel HTTP 500 仅观察。
+- **目标状态**：保持该 REAL_PROCESS 证据可复跑。Catalog `requiresApproval` 仍不能代替 Hermes 中途驻留。cancel HTTP 状态仅作观察，不挡本闸。
 
 ## Hermes Native Runtime And Employee Public Face
 
@@ -227,4 +246,5 @@ V13 用真实 Hermes Native Run 证明已部署 Adapter 的 progress 带 canonic
 - **已实现**：Adapter 走 Native Run：版本地板 `v2026.8.31`、per-Attempt capabilities、[[nodeskclaw-agent/app/services/hermes_engine.py#build_native_run_payload]]、[[nodeskclaw-agent/app/services/run_service.py#persist_runtime_binding]] 后再 `/events`；断开只 GET status；稳定内部码含 `RUNTIME_UNREACHABLE` / `RUNTIME_VERSION_UNSUPPORTED` / `RUNTIME_CAPABILITY_MISSING`。默认种子见 [[nodeskclaw-backend/app/startup/seed.py#DEFAULT_ENGINE_VERSION_SEEDS]]；镜像 `ARG` 为 `nodeskclaw-artifacts/hermes-image/Dockerfile` 的 `HERMES_VERSION=v2026.8.31`。实现提交 `59ebfb6683286dfadd9dad5586adb8feefece148`。
 - **已实现**：真实 Hermes Native Run 证据（V11）已关闭；出口 runner 为 [[tools/acceptance/run_rm13_live_native.py#run_live]]，证据 `docs_agent/evidence/RM-13-live-v11.json`。[[tools/acceptance/hermes_test_server.py#HermesHandler]] 仍只服务 `/v1/chat/completions`，Compose mock 不能取代 live Runtime。RM-13 已 DONE。
 - **已实现**：RM-14 Normalizer / Coalescer / canonical `phase` 已在 Adapter 与 Public 投影落地，见 [[architecture/skill-agent#Hermes Engine Adapter#Runtime Semantic Event Fidelity]]。V13 live 出口见 [[architecture/skill-agent#RM-14 Live Semantic V13]]。
-- **目标状态**：不得恢复 ChatCompletion parser，不得改写 v1.2.1。RM-15 才做 Approval Decision / Cancel 闭环。
+- **已实现**：审批与 cancel 南向见 [[architecture/skill-agent#RM-15 Approval Runtime Control]]。live 出口见 [[architecture/skill-agent#RM-15 Live Control V13]]。
+- **目标状态**：不得恢复 ChatCompletion parser，不得改写 v1.2.1。
