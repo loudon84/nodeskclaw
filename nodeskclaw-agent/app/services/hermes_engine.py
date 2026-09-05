@@ -8,6 +8,7 @@ from typing import Any
 import httpx
 
 from app.config import settings
+from app.services.native_event_normalizer import NativeEventNormalizer, progress_payload
 
 logger = logging.getLogger(__name__)
 
@@ -158,93 +159,6 @@ def _extract_status(data: Any) -> str:
     return str(raw).strip().lower()
 
 
-def _map_native_event(
-    data: dict[str, Any],
-    *,
-    source_prefix: str,
-    counter: list[int],
-) -> list[dict[str, Any]]:
-    if "choices" in data or (isinstance(data.get("delta"), dict) and "content" in (data.get("delta") or {})):
-        return []
-
-    def _next_id(kind: str) -> str:
-        counter[0] += 1
-        return f"{source_prefix}:{kind}:{counter[0]}"
-
-    events: list[dict[str, Any]] = []
-    event_type = str(data.get("type") or data.get("event_type") or data.get("event") or "").strip()
-    payload = data.get("payload") if isinstance(data.get("payload"), dict) else data
-
-    if event_type in {"assistant.delta", "token.delta", "response.output_text.delta"}:
-        return []
-
-    text = payload.get("text") or payload.get("content") or payload.get("message")
-    if event_type in {"assistant.message", "message", "agent.message"} and isinstance(text, str) and text:
-        events.append(
-            {
-                "event_type": "assistant.message",
-                "payload": {"text": text},
-                "source": "agent",
-                "source_event_id": _next_id("assistant"),
-            }
-        )
-
-    summary = payload.get("reasoning_summary") or payload.get("summary")
-    if event_type in {"reasoning.summary"} and isinstance(summary, str) and summary:
-        events.append(
-            {
-                "event_type": "reasoning.summary",
-                "payload": {"summary": summary},
-                "source": "agent",
-                "source_event_id": _next_id("reasoning"),
-            }
-        )
-
-    if event_type in {"tool.call", "tool_call"}:
-        tool_name = payload.get("tool_name") or payload.get("name")
-        call_id = payload.get("call_id") or payload.get("id")
-        status = payload.get("status") or "started"
-        if isinstance(tool_name, str) and tool_name and isinstance(call_id, str) and call_id:
-            if status not in {"started", "completed", "failed"}:
-                status = "started"
-            events.append(
-                {
-                    "event_type": "tool.call",
-                    "payload": {"tool_name": tool_name, "call_id": call_id, "status": status},
-                    "source": "agent",
-                    "source_event_id": _next_id(f"tool:{call_id}"),
-                }
-            )
-
-    if event_type in {"clarify.requested", "clarify"}:
-        question = payload.get("question")
-        if isinstance(question, str) and question:
-            clarify_payload: dict[str, Any] = {"question": question}
-            if isinstance(payload.get("options"), list):
-                clarify_payload["options"] = payload["options"]
-            events.append(
-                {
-                    "event_type": "clarify.requested",
-                    "payload": clarify_payload,
-                    "source": "agent",
-                    "source_event_id": _next_id("clarify"),
-                }
-            )
-
-    if event_type in {"approval.requested", "approval.request"}:
-        approval_id = payload.get("approval_id")
-        approval_summary = payload.get("summary")
-        if isinstance(approval_id, str) and approval_id and isinstance(approval_summary, str) and approval_summary:
-            events.append(
-                {
-                    "event_type": "approval.requested",
-                    "payload": {"approval_id": approval_id, "summary": approval_summary},
-                    "source": "agent",
-                    "source_event_id": _next_id("approval"),
-                }
-            )
-
-    return events
 
 
 async def load_attempt_generation(attempt_id: str) -> int | None:
@@ -416,7 +330,7 @@ async def execute_hermes_run(
     attempt_id: str | None = None,
     cancel_event: asyncio.Event | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
-    yield {"event_type": "run.progress", "payload": {"stage": "preparing", "message": "preparing hermes"}}
+    yield {"event_type": "run.progress", "payload": progress_payload("PREPARING", "preparing hermes")}
     if cancel_event and cancel_event.is_set():
         yield {"event_type": "run.cancelled", "payload": {"message": "cancelled before hermes call"}}
         return
@@ -522,10 +436,10 @@ async def execute_hermes_run(
     )
     idempotency_key = f"{run_id}:{attempt_id}:{generation}"
     source_prefix = f"hermes:{run_id}:{attempt_id}"
-    event_counter = [0]
+    normalizer = NativeEventNormalizer(attempt_id=attempt_id, source_prefix=source_prefix)
     events_subscribed = False
 
-    yield {"event_type": "run.progress", "payload": {"stage": "tool_calling", "message": "calling hermes native run"}}
+    yield {"event_type": "run.progress", "payload": progress_payload("RUNTIME_STARTING", "calling hermes native run")}
 
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=10.0)) as client:
@@ -663,7 +577,7 @@ async def execute_hermes_run(
                 return
 
             events_url = f"{gateway_url}/v1/runs/{runtime_run_id}/events"
-            yield {"event_type": "run.progress", "payload": {"stage": "streaming", "message": "streaming"}}
+            yield {"event_type": "run.progress", "payload": progress_payload("RUNTIME_RUNNING", "streaming")}
             try:
                 async with client.stream("GET", events_url, headers=auth_headers) as response:
                     events_subscribed = True
@@ -673,7 +587,8 @@ async def execute_hermes_run(
                             "Hermes event stream failed",
                         )
                         return
-                    async for line in response.aiter_lines():
+                    line_iter = response.aiter_lines().__aiter__()
+                    while True:
                         if cancel_event and cancel_event.is_set():
                             stop_code = await _stop_runtime(
                                 client,
@@ -683,6 +598,8 @@ async def execute_hermes_run(
                                 attempt_id=attempt_id,
                                 generation=generation,
                             )
+                            for leftover in normalizer.close(terminal_status="failed"):
+                                yield leftover
                             if stop_code == "stop_404":
                                 break
                             if stop_code:
@@ -691,6 +608,14 @@ async def execute_hermes_run(
                             yield {"event_type": "run.cancelled", "payload": {"message": "cancelled during stream"}}
                             await mark_native_terminal(attempt_id=attempt_id, generation=generation)
                             return
+                        try:
+                            line = await asyncio.wait_for(line_iter.__anext__(), timeout=0.1)
+                        except TimeoutError:
+                            for semantic in normalizer.flush_due_to_latency():
+                                yield semantic
+                            continue
+                        except StopAsyncIteration:
+                            break
                         if not line or not line.startswith("data:"):
                             continue
                         data_str = line.split(":", 1)[1].strip()
@@ -702,17 +627,14 @@ async def execute_hermes_run(
                             continue
                         if not isinstance(chunk, dict):
                             continue
-                        for semantic in _map_native_event(
-                            chunk,
-                            source_prefix=source_prefix,
-                            counter=event_counter,
-                        ):
+                        for semantic in normalizer.ingest(chunk):
                             yield semantic
             except (httpx.TimeoutException, httpx.NetworkError, OSError):
                 if not events_subscribed:
                     yield _failed(RUNTIME_EVENT_STREAM_FAILED, "Hermes event stream failed")
                     return
 
+            yield {"event_type": "run.progress", "payload": progress_payload("RECONCILING", "reconciling hermes status")}
             status, _data, rec_code = await _reconcile_status(
                 client,
                 gateway_url=gateway_url,
@@ -720,6 +642,7 @@ async def execute_hermes_run(
                 headers=auth_headers,
             )
             if status == "stopping":
+                yield {"event_type": "run.progress", "payload": progress_payload("STOPPING", "hermes runtime stopping")}
                 status, _data, rec_code = await _reconcile_status(
                     client,
                     gateway_url=gateway_url,
@@ -727,15 +650,19 @@ async def execute_hermes_run(
                     headers=auth_headers,
                 )
             terminal = _terminal_from_status(status, rec_code)
+            close_status = "completed" if status in {"completed", "succeeded", "success"} else "failed"
+            for leftover in normalizer.close(terminal_status=close_status):
+                yield leftover
             if terminal:
                 if terminal["event_type"] in {"run.completed", "run.failed", "run.cancelled"}:
                     await mark_native_terminal(attempt_id=attempt_id, generation=generation)
                 yield terminal
                 return
             if status in {"running", "waiting_for_approval", "waiting"}:
+                phase = "WAITING_APPROVAL" if status in {"waiting_for_approval", "waiting"} else "RUNTIME_RUNNING"
                 yield {
                     "event_type": "run.progress",
-                    "payload": {"stage": "waiting", "message": f"hermes runtime status {status}"},
+                    "payload": progress_payload(phase, f"hermes runtime status {status}"),
                 }
                 return
             yield _failed(RUNTIME_STATE_UNAVAILABLE, "Hermes runtime status could not be mapped")

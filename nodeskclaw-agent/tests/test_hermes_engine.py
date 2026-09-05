@@ -742,3 +742,60 @@ async def test_execute_hermes_never_calls_chat_completions():
     assert any(u.endswith("/v1/runs") for u in posted)
     assert all("/v1/chat/completions" not in u for u in posted + streamed)
     assert events[-1]["event_type"] == "run.completed"
+
+
+@pytest.mark.asyncio
+async def test_execute_hermes_progress_has_canonical_phase():
+    client = _native_client()
+    with patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client):
+        events = [
+            event
+            async for event in execute_hermes_run(
+                tool_name="foo",
+                arguments={"prompt": "hi"},
+                route_snapshot={"gateway_url": "http://hermes:8642"},
+                run_id="run-phase",
+                attempt_id="att-phase",
+            )
+        ]
+    progress = [e for e in events if e["event_type"] == "run.progress"]
+    assert progress
+    for item in progress:
+        phase = item["payload"]["phase"]
+        stage = item["payload"]["stage"]
+        assert phase == phase.upper()
+        assert stage == phase.lower()
+
+
+@pytest.mark.asyncio
+async def test_execute_hermes_uses_normalizer_not_chat_completion_parser():
+    import inspect
+
+    from app.services import hermes_engine as engine
+
+    source = inspect.getsource(engine.execute_hermes_run)
+    assert "NativeEventNormalizer" in source
+    assert "_emit_semantic_from_choice" not in source
+    assert "_map_native_event" not in source
+    assert not hasattr(engine, "_emit_semantic_from_choice")
+
+    lines = [
+        "data: " + json.dumps({"type": "message.delta", "text": ch})
+        for ch in "一二三四五六七八九十" * 9
+    ] + ["data: [DONE]"]
+    client = _native_client(event_lines=lines)
+    with patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client):
+        events = [
+            event
+            async for event in execute_hermes_run(
+                tool_name="foo",
+                arguments={"prompt": "hi"},
+                route_snapshot={"gateway_url": "http://hermes:8642"},
+                run_id="run-coal",
+                attempt_id="att-coal",
+            )
+        ]
+    messages = [e for e in events if e["event_type"] == "assistant.message"]
+    assert "".join(e["payload"]["text"] for e in messages) == "一二三四五六七八九十" * 9
+    assert len(messages) < 90
+

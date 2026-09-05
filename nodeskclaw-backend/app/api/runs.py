@@ -113,6 +113,7 @@ def _public_artifact_descriptor(data: dict[str, Any]) -> dict[str, Any]:
 _TOOL_CALL_STATUSES = frozenset({"started", "completed", "failed"})
 
 
+# @lat: [[decisions/skill-platform-execution#Employee Contract]]
 def _public_run_event(data: dict[str, Any], run_id: str) -> dict[str, Any] | None:
     event_type = str(data.get("event_type") or "")
     event_seq = int(data.get("event_seq") or 0)
@@ -133,9 +134,12 @@ def _public_run_event(data: dict[str, Any], run_id: str) -> dict[str, Any] | Non
         "run.timed_out",
     }:
         event["payload"] = {
-            "phase": str(payload.get("phase") or data.get("status") or event_type.rsplit(".", 1)[-1]).upper(),
+            "phase": str(payload.get("phase") or payload.get("stage") or event_type.rsplit(".", 1)[-1]).upper(),
+            **({"stage": payload["stage"]} if isinstance(payload.get("stage"), str) else {}),
             **({"message": payload["message"]} if isinstance(payload.get("message"), str) else {}),
         }
+        if "stage" not in event["payload"]:
+            event["payload"]["stage"] = event["payload"]["phase"].lower()
         return event
     if event_type == "assistant.message" and isinstance(payload.get("text"), str):
         event["payload"] = {"text": payload["text"]}

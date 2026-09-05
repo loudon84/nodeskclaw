@@ -528,6 +528,23 @@ def test_public_run_event_projects_semantic_types_and_drops_unknown():
     ) is None
 
 
+def test_public_run_event_progress_uses_phase_not_status():
+    projected = _public_run_event(
+        {
+            "event_type": "run.progress",
+            "event_seq": 1,
+            "status": "HERMES_TASK_SECRET",
+            "timestamp": "2026-08-31T00:00:00Z",
+            "payload": {"phase": "RUNTIME_RUNNING", "stage": "runtime_running", "message": "streaming"},
+        },
+        "run-1",
+    )
+    assert projected is not None
+    assert projected["payload"]["phase"] == "RUNTIME_RUNNING"
+    assert projected["payload"]["stage"] == "runtime_running"
+    assert "HERMES_TASK_SECRET" not in str(projected)
+
+
 @pytest.mark.asyncio
 async def test_stream_run_events_passes_semantic_event_type_and_seq():
     db = AsyncMock()
