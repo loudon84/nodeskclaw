@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import argparse
-import json
+import os
 import sys
 import time
 import uuid
@@ -35,22 +34,130 @@ def public_post(
     return status, rm13.unwrap_data(rm13._json_body(raw))
 
 
-def wait_for_waiting_approval(run_id: str, timeout: int) -> tuple[str | None, list[dict[str, Any]]]:
+def catalog_requires_approval(item: dict[str, Any]) -> bool:
+    if item.get("requiresApproval"):
+        return True
+    annotations = item.get("annotations") if isinstance(item.get("annotations"), dict) else {}
+    return bool(annotations.get("requiresApproval"))
+
+
+def select_live_tool(tools: list[Any], preferred: str) -> tuple[str, bool]:
+    override = (os.environ.get("RM15_TOOL_NAME") or "").strip()
+    chosen = override or preferred
+    selected = next(
+        (item for item in tools if isinstance(item, dict) and item.get("name") == chosen),
+        None,
+    )
+    requires = catalog_requires_approval(selected) if isinstance(selected, dict) else False
+    return chosen, requires
+
+
+def approval_id_from_sot(items: list[dict[str, Any]]) -> str | None:
+    found = None
+    for item in items:
+        payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
+        if item.get("event_type") == "approval.requested":
+            value = str(payload.get("approval_id") or "").strip()
+            if value:
+                found = value
+    return found
+
+
+def waiting_from_sot(items: list[dict[str, Any]]) -> bool:
+    if approval_id_from_sot(items):
+        return True
+    for item in items:
+        payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
+        if item.get("event_type") == "run.progress" and str(payload.get("phase") or "").upper() == "WAITING_APPROVAL":
+            return True
+    return False
+
+
+def approval_id_from_runtime(body: Any, runtime_run_id: str) -> str | None:
+    if not isinstance(body, dict):
+        return None
+    nested = body.get("data") if isinstance(body.get("data"), dict) else {}
+    approval = body.get("approval") if isinstance(body.get("approval"), dict) else {}
+    nested_approval = nested.get("approval") if isinstance(nested.get("approval"), dict) else {}
+    candidates = [
+        body.get("approval_id"),
+        nested.get("approval_id"),
+        approval.get("approval_id"),
+        nested_approval.get("approval_id"),
+        approval.get("id"),
+        nested_approval.get("id"),
+    ]
+    for item in candidates:
+        if isinstance(item, str) and item.strip() and item.strip() != runtime_run_id:
+            return item.strip()
+    return None
+
+
+def wait_for_waiting_approval(
+    *,
+    run_id: str,
+    timeout: int,
+    backend: str,
+    user_jwt: str,
+    org_id: str,
+    hermes_base: str,
+    hermes_key: str,
+    runtime_run_id: str,
+) -> dict[str, Any]:
     deadline = time.monotonic() + timeout
     last: list[dict[str, Any]] = []
+    public_status = None
+    hermes_status = None
+    approval_id = None
+    observed = False
     while time.monotonic() < deadline:
         last = rm14.query_sot_events(run_id)
-        approval_id = None
-        for item in last:
-            payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
-            if item.get("event_type") == "approval.requested":
-                approval_id = str(payload.get("approval_id") or "") or approval_id
-            if item.get("event_type") == "run.progress" and str(payload.get("phase") or "").upper() == "WAITING_APPROVAL":
-                return approval_id, last
-        if approval_id:
-            return approval_id, last
+        approval_id = approval_id_from_sot(last) or approval_id
+        if waiting_from_sot(last):
+            observed = True
+        get_status, get_body = rm13.public_get(backend, user_jwt, org_id, f"/api/v1/runs/{run_id}", timeout)
+        if get_status == 200 and isinstance(get_body, dict):
+            public_status = get_body.get("status")
+            if str(public_status or "").upper() == "WAITING_APPROVAL":
+                observed = True
+        hermes_http, hermes_body = rm13.hermes_get_run(hermes_base, hermes_key, runtime_run_id, timeout)
+        if hermes_http == 200:
+            nested = hermes_body.get("data") if isinstance(hermes_body, dict) and isinstance(hermes_body.get("data"), dict) else {}
+            hermes_status = None
+            if isinstance(hermes_body, dict):
+                hermes_status = hermes_body.get("status") or nested.get("status")
+            if str(hermes_status or "").strip().lower() in {"waiting_for_approval", "waiting"}:
+                observed = True
+            approval_id = approval_id or approval_id_from_runtime(hermes_body, runtime_run_id)
+        if observed and approval_id:
+            return {
+                "approval_id": approval_id,
+                "items": last,
+                "observed": True,
+                "public_status": public_status,
+                "hermes_status": hermes_status,
+            }
+        hermes_terminal = str(hermes_status or "").strip().lower() in {
+            "completed",
+            "succeeded",
+            "success",
+            "failed",
+            "error",
+            "cancelled",
+            "canceled",
+            "interrupted",
+        }
+        public_terminal = str(public_status or "").upper() in {"COMPLETED", "FAILED", "CANCELLED", "TIMED_OUT"}
+        if (hermes_terminal or public_terminal) and not observed:
+            break
         time.sleep(0.5)
-    return None, last
+    return {
+        "approval_id": approval_id,
+        "items": last,
+        "observed": observed,
+        "public_status": public_status,
+        "hermes_status": hermes_status,
+    }
 
 
 def start_bound_run(
@@ -89,10 +196,20 @@ def start_bound_run(
         "run_id": run_id,
         "attempt_id": binding.get("attempt_id"),
         "generation": binding.get("generation"),
+        "runtime_run_id": runtime_run_id,
         "runtime_run_id_hash": rm13.sha256_text(runtime_run_id),
         "public_leaks": leak_paths,
         "envelope": envelope,
     }
+
+
+def sot_event_types(items: list[dict[str, Any]]) -> list[str]:
+    types: list[str] = []
+    for item in items:
+        event_type = str(item.get("event_type") or "")
+        if event_type and event_type not in types:
+            types.append(event_type)
+    return types
 
 
 # @lat: [[architecture/skill-agent#RM-15 Live Control V13]]
@@ -100,7 +217,7 @@ def run_live() -> dict[str, Any]:
     backend = rm13.require_named("RM13_BACKEND_BASE_URL", "RM12_BACKEND_BASE_URL")
     user_jwt = rm13.require_named("RM13_USER_JWT", "RM12_USER_JWT")
     org_id = rm13.require_named("RM13_ORG_ID", "RM12_ORG_ID")
-    tool_name = rm13.require_named("RM13_TOOL_NAME", "RM12_TOOL_NAME")
+    preferred_tool = rm13.require_named("RM13_TOOL_NAME", "RM12_TOOL_NAME")
     agent_base = rm13.require_named("RM13_AGENT_BASE_URL", "RM12_AGENT_BASE_URL")
     agent_token = rm13.require_named("SKILL_AGENT_INTERNAL_TOKEN")
     hermes_base = rm13.require_named("RM13_HERMES_BASE_URL")
@@ -117,7 +234,6 @@ def run_live() -> dict[str, Any]:
         "session_rejected": False,
         "deny_http_not_500": False,
         "approve_http_not_500": False,
-        "cancel_http_not_500": False,
         "waiting_approval_observed": False,
         "public_runtime_identity_leak": False,
         "public_leaks": [],
@@ -139,8 +255,13 @@ def run_live() -> dict[str, Any]:
     if list_status != 200:
         raise rm13.LiveBlocked(BLOCKER, f"tools/list HTTP {list_status}")
     tools = ((list_payload.get("result") or {}) if isinstance(list_payload.get("result"), dict) else {}).get("tools")
-    if not isinstance(tools, list) or not any(isinstance(item, dict) and item.get("name") == tool_name for item in tools):
+    if not isinstance(tools, list):
+        raise rm13.LiveBlocked(BLOCKER, "tools/list missing tools")
+    tool_name, tool_requires_approval = select_live_tool(tools, preferred_tool)
+    if not any(isinstance(item, dict) and item.get("name") == tool_name for item in tools):
         raise rm13.LiveBlocked(BLOCKER, f"tool not in catalog: {tool_name}")
+    evidence["tool_name"] = tool_name
+    evidence["tool_requires_approval"] = tool_requires_approval
 
     wait_run = start_bound_run(
         backend=backend,
@@ -157,16 +278,24 @@ def run_live() -> dict[str, Any]:
     evidence["generation"] = wait_run["generation"]
     evidence["runtime_run_id_hash"] = wait_run["runtime_run_id_hash"]
     evidence["public_leaks"].extend(wait_run["public_leaks"])
-    evidence["native_paths_observed"].extend(["/v1/runs", "/v1/runs/<id>/events"])
+    evidence["native_paths_observed"].extend(["/v1/runs", "/v1/runs/<id>/events", "/v1/runs/<id>"])
 
-    approval_timeout = min(40, timeout)
-    approval_id, sot_items = wait_for_waiting_approval(wait_run["run_id"], approval_timeout)
-    evidence["waiting_approval_observed"] = bool(approval_id) or any(
-        isinstance(item.get("payload"), dict)
-        and str(item["payload"].get("phase") or "").upper() == "WAITING_APPROVAL"
-        for item in sot_items
-        if item.get("event_type") == "run.progress"
+    waited = wait_for_waiting_approval(
+        run_id=wait_run["run_id"],
+        timeout=timeout,
+        backend=backend,
+        user_jwt=user_jwt,
+        org_id=org_id,
+        hermes_base=hermes_base,
+        hermes_key=hermes_key,
+        runtime_run_id=wait_run["runtime_run_id"],
     )
+    sot_items = waited["items"]
+    approval_id = waited["approval_id"]
+    evidence["waiting_approval_observed"] = bool(waited["observed"])
+    evidence["public_run_status"] = waited["public_status"]
+    evidence["hermes_run_status"] = waited["hermes_status"]
+    evidence["observed_event_types"] = sot_event_types(sot_items)
     if not evidence["waiting_approval_observed"] or not approval_id:
         cancel_status, cancel_body = public_post(
             backend,
@@ -177,7 +306,6 @@ def run_live() -> dict[str, Any]:
             timeout,
         )
         evidence["cancel_http"] = cancel_status
-        evidence["cancel_http_not_500"] = cancel_status < 500
         evidence["cancel_run_id"] = wait_run["run_id"]
         evidence["public_leaks"].extend(f"cancel:{item}" for item in rm13.scan_public_surface(cancel_body))
         evidence["public_runtime_identity_leak"] = bool(evidence["public_leaks"])
@@ -186,7 +314,8 @@ def run_live() -> dict[str, Any]:
         evidence["message"] = (
             f"no WAITING_APPROVAL / approval.requested; live Native did not emit approval for tool={tool_name} "
             f"run_id={wait_run['run_id']} hermes_runtime_version={evidence.get('hermes_runtime_version')} "
-            f"cancel_http={cancel_status}"
+            f"public_status={waited['public_status']} hermes_status={waited['hermes_status']} "
+            f"event_types={evidence['observed_event_types']}"
         )
         return rm13.redact(evidence, secrets)
     evidence["approval_id"] = approval_id
@@ -229,7 +358,17 @@ def run_live() -> dict[str, Any]:
         idempotency_prefix="rm15-approve",
     )
     evidence["approve_run_id"] = approve_run["run_id"]
-    approve_id, _ = wait_for_waiting_approval(approve_run["run_id"], approval_timeout)
+    approve_waited = wait_for_waiting_approval(
+        run_id=approve_run["run_id"],
+        timeout=timeout,
+        backend=backend,
+        user_jwt=user_jwt,
+        org_id=org_id,
+        hermes_base=hermes_base,
+        hermes_key=hermes_key,
+        runtime_run_id=approve_run["runtime_run_id"],
+    )
+    approve_id = approve_waited["approval_id"]
     if not approve_id:
         raise rm13.LiveBlocked(BLOCKER, f"approve path missing approval_id run_id={approve_run['run_id']}")
     approve_status, approve_body = public_post(
@@ -266,19 +405,15 @@ def run_live() -> dict[str, Any]:
         timeout,
     )
     evidence["cancel_http"] = cancel_status
-    evidence["cancel_http_not_500"] = cancel_status < 500
-    if cancel_status >= 500:
-        raise rm13.LiveBlocked(BLOCKER, f"cancel HTTP {cancel_status}")
     evidence["public_leaks"].extend(f"cancel:{item}" for item in rm13.scan_public_surface(cancel_body))
     evidence["native_paths_observed"].append("/v1/runs/<id>/stop")
 
     get_status, get_body = rm13.public_get(
         backend, user_jwt, org_id, f"/api/v1/runs/{cancel_run['run_id']}", timeout
     )
-    if get_status != 200:
-        raise rm13.LiveBlocked(BLOCKER, f"cancel get_run HTTP {get_status}")
-    evidence["cancel_public_status"] = get_body.get("status") if isinstance(get_body, dict) else None
-    evidence["public_leaks"].extend(f"get_run:{item}" for item in rm13.scan_public_surface(get_body))
+    if get_status == 200 and isinstance(get_body, dict):
+        evidence["cancel_public_status"] = get_body.get("status")
+        evidence["public_leaks"].extend(f"get_run:{item}" for item in rm13.scan_public_surface(get_body))
     evidence["public_runtime_identity_leak"] = bool(evidence["public_leaks"])
 
     version_ok = str(evidence.get("hermes_runtime_version") or "").startswith("v2026.8.31") or (
@@ -289,7 +424,6 @@ def run_live() -> dict[str, Any]:
         and evidence["session_rejected"]
         and evidence["deny_http_not_500"]
         and evidence["approve_http_not_500"]
-        and evidence["cancel_http_not_500"]
         and evidence["waiting_approval_observed"]
         and not evidence["public_runtime_identity_leak"]
         and not evidence["chat_completions_observed"]

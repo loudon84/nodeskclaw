@@ -1,0 +1,174 @@
+{
+  "ambient_fingerprint": "sha256:961d4d748d7cb8e263ecdab85dca5cf35360f7618734d486e26105b827d92a93",
+  "blocking_verifications": [
+    {
+      "command": "uv --directory nodeskclaw-agent run pytest tests/test_native_event_normalizer.py -q -k approval",
+      "exit_code": 0,
+      "policy": "LOCAL_TRANSIENT",
+      "raw_log_ref": ".smc/evidence/RM-15/logs/20260905T091144.285782Z-V01.log",
+      "raw_log_sha256": "sha256:9dc7469eac626b266995a08491f72f94bdc9320e5853d970950e77f2c52e324f",
+      "result": "PASS",
+      "timestamp": "2026-09-05T09:11:44.285782Z",
+      "verification_id": "V01"
+    },
+    {
+      "command": "uv --directory nodeskclaw-agent run pytest tests/test_hermes_engine.py tests/test_worker.py -q -k approval",
+      "exit_code": 0,
+      "policy": "LOCAL_TRANSIENT",
+      "raw_log_ref": ".smc/evidence/RM-15/logs/20260905T091145.752326Z-V02.log",
+      "raw_log_sha256": "sha256:ef4604ff7ba478a90136841aac728d0d699ab0175a13b83e19c66b2f55a2bbba",
+      "result": "PASS",
+      "timestamp": "2026-09-05T09:11:45.752326Z",
+      "verification_id": "V02"
+    },
+    {
+      "command": "uv --directory nodeskclaw-agent run pytest tests/test_run_service.py tests/test_hermes_engine.py -q -k approv",
+      "exit_code": 0,
+      "policy": "LOCAL_TRANSIENT",
+      "raw_log_ref": ".smc/evidence/RM-15/logs/20260905T091147.532391Z-V03.log",
+      "raw_log_sha256": "sha256:feed444bc277d07c8045bedb9db822175e245d3325af724117ec20c540d6ce7f",
+      "result": "PASS",
+      "timestamp": "2026-09-05T09:11:47.532391Z",
+      "verification_id": "V03"
+    },
+    {
+      "command": "uv --directory nodeskclaw-backend run pytest tests/hermes_skill/test_employee_runs_api.py -q -k approv",
+      "exit_code": 0,
+      "policy": "LOCAL_TRANSIENT",
+      "raw_log_ref": ".smc/evidence/RM-15/logs/20260905T091149.364339Z-V04.log",
+      "raw_log_sha256": "sha256:6ed1182d50ff2b95018e635e272c37d43023497be76c4f1f9baae3c404f6bac9",
+      "result": "PASS",
+      "timestamp": "2026-09-05T09:11:49.364339Z",
+      "verification_id": "V04"
+    },
+    {
+      "command": "uv --directory nodeskclaw-agent run pytest tests/test_hermes_engine.py -q -k stale",
+      "exit_code": 0,
+      "policy": "LOCAL_TRANSIENT",
+      "raw_log_ref": ".smc/evidence/RM-15/logs/20260905T091152.905815Z-V05.log",
+      "raw_log_sha256": "sha256:4524b32e27d3edbb56f3ba6ca6421b3d7d904a9716839506cc9df7bd0ea40509",
+      "result": "PASS",
+      "timestamp": "2026-09-05T09:11:52.905815Z",
+      "verification_id": "V05"
+    },
+    {
+      "command": "uv --directory nodeskclaw-agent run pytest tests/test_run_service.py tests/test_hermes_engine.py -q -k cancel",
+      "exit_code": 0,
+      "policy": "LOCAL_TRANSIENT",
+      "raw_log_ref": ".smc/evidence/RM-15/logs/20260905T091154.146675Z-V06.log",
+      "raw_log_sha256": "sha256:c14bd80f87b395c2d90135cb345f3557079cfd5e086c67b28e5b196698ab1c19",
+      "result": "PASS",
+      "timestamp": "2026-09-05T09:11:54.146675Z",
+      "verification_id": "V06"
+    },
+    {
+      "command": "uv --directory nodeskclaw-agent run pytest tests/test_run_service.py tests/test_hermes_engine.py -q -k approval",
+      "exit_code": 0,
+      "policy": "LOCAL_TRANSIENT",
+      "raw_log_ref": ".smc/evidence/RM-15/logs/20260905T091155.699137Z-V07.log",
+      "raw_log_sha256": "sha256:2e44e1881397e92a144e640af3115f0a84109a7ee30e432c72618aea58c023d5",
+      "result": "PASS",
+      "timestamp": "2026-09-05T09:11:55.699137Z",
+      "verification_id": "V07"
+    },
+    {
+      "command": "uv --directory nodeskclaw-agent run pytest tests/test_hermes_engine.py tests/test_worker.py -q",
+      "exit_code": 0,
+      "policy": "LOCAL_TRANSIENT",
+      "raw_log_ref": ".smc/evidence/RM-15/logs/20260905T091157.412304Z-V08.log",
+      "raw_log_sha256": "sha256:ab33003f2ccf67785cccac2112e4d6a4860f881ce764e09dd68e5c2676501ead",
+      "result": "PASS",
+      "timestamp": "2026-09-05T09:11:57.412304Z",
+      "verification_id": "V08"
+    },
+    {
+      "command": "uv --directory nodeskclaw-agent run pytest tests/test_run_service.py -q -k aggregat",
+      "exit_code": 0,
+      "policy": "LOCAL_TRANSIENT",
+      "raw_log_ref": ".smc/evidence/RM-15/logs/20260905T091159.735660Z-V09.log",
+      "raw_log_sha256": "sha256:718d920882a2433c14ad63218bd13e1412dbc2929ca4ee900c80b4da718a1986",
+      "result": "PASS",
+      "timestamp": "2026-09-05T09:11:59.735660Z",
+      "verification_id": "V09"
+    },
+    {
+      "command": "git diff --exit-code b6ebbc260ab02aad328ebdbf5f977e22763c9207 -- contracts/skill-run/v1.2.1",
+      "exit_code": 0,
+      "policy": "REPO_SUMMARY",
+      "raw_log_ref": ".smc/evidence/RM-15/logs/20260905T091201.303358Z-V10.log",
+      "raw_log_sha256": "sha256:8a82d3f1baac4eb7e639501f2db428a96181f9e070fbc2b4f7499dfeeee00865",
+      "result": "PASS",
+      "timestamp": "2026-09-05T09:12:01.303358Z",
+      "verification_id": "V10"
+    },
+    {
+      "command": "uv --directory nodeskclaw-backend run pytest tests/hermes_skill/test_pc12_pc13_projection_regression.py tests/hermes_skill/test_employee_runs_api.py -q",
+      "exit_code": 0,
+      "policy": "LOCAL_TRANSIENT",
+      "raw_log_ref": ".smc/evidence/RM-15/logs/20260905T091201.851308Z-V11.log",
+      "raw_log_sha256": "sha256:e6ad689820ec51cb7a6588c63cd85551293130d2b67de522240f59432f99b388",
+      "result": "PASS",
+      "timestamp": "2026-09-05T09:12:01.851308Z",
+      "verification_id": "V11"
+    },
+    {
+      "command": "uv --directory nodeskclaw-agent run pytest tests/test_hermes_engine.py -q -k chat",
+      "exit_code": 0,
+      "policy": "LOCAL_TRANSIENT",
+      "raw_log_ref": ".smc/evidence/RM-15/logs/20260905T091206.089158Z-V12.log",
+      "raw_log_sha256": "sha256:b20b159db29ca197bbf37e0e208ea7f141e9c33f4d8a3824d52b9b922ce579f5",
+      "result": "PASS",
+      "timestamp": "2026-09-05T09:12:06.089158Z",
+      "verification_id": "V12"
+    },
+    {
+      "command": "python tools/acceptance/run_rm15_live_control.py '--preflight-env`' then '`python' tools/acceptance/run_rm15_live_control.py",
+      "exit_code": 0,
+      "policy": "LOCAL_TRANSIENT",
+      "raw_log_ref": ".smc/evidence/RM-15/logs/20260905T091217.774879Z-V13.log",
+      "raw_log_sha256": "sha256:bba0ad041d0cf80b3f32e69cf126cb70b624dc717b2a5fc939d39a667d7fe5f0",
+      "result": "PASS",
+      "timestamp": "2026-09-05T09:12:17.774879Z",
+      "verification_id": "V13"
+    },
+    {
+      "command": "git diff --name-only b6ebbc260ab02aad328ebdbf5f977e22763c9207",
+      "exit_code": 0,
+      "policy": "REPO_SUMMARY",
+      "raw_log_ref": ".smc/evidence/RM-15/logs/20260905T091207.313107Z-V14.log",
+      "raw_log_sha256": "sha256:0fd2453f826cb3ed69c82cf9fba63e57ce1fbc987706cc4130387366cf1c7e2d",
+      "result": "PASS",
+      "timestamp": "2026-09-05T09:12:07.313107Z",
+      "verification_id": "V14"
+    }
+  ],
+  "completion_audit": {
+    "changed": 1,
+    "deferred": 0,
+    "done": 7,
+    "scope_drift": 0,
+    "timestamp": "2026-09-05T09:11:23.989792Z",
+    "total_items": 7,
+    "unverifiable": 0,
+    "verdict": "PASS"
+  },
+  "generated_at": "2026-09-05T09:13:34.375817Z",
+  "implementation_review": {
+    "reviewer": "code-review-and-quality",
+    "scope_fingerprint": "sha256:6194c329fd040e065b0ce83ef11b767dbd3a5b15a8bbd5a79b55278f1f59938b",
+    "timestamp": "2026-09-05T09:11:24.152327Z",
+    "verdict": "PASS"
+  },
+  "payload_sha256": "sha256:63924b4cb823adac6b06af08e2f99bbb0dd860a8f645154435a4f74d011bac34",
+  "plan": ".cursor/plans/rm-15_approval-runtime-control-closure.plan.md",
+  "plan_id": "RM-15",
+  "plan_review": {
+    "plan_sha256": "sha256:82f7312afabe69bd6b6225b41aee123e6bb2c5eaca548addd610e585129b77cc",
+    "reviewer": "smc-plan-review",
+    "timestamp": "2026-09-05T04:34:21.530708Z",
+    "verdict": "PASS"
+  },
+  "schema": "smc.evidence.manifest.v2",
+  "scope_fingerprint": "sha256:6194c329fd040e065b0ce83ef11b767dbd3a5b15a8bbd5a79b55278f1f59938b",
+  "workspace_base_commit": "2c2b007e3da69facd3219045b4ffdd6662221ce3"
+}
