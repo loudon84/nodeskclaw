@@ -230,6 +230,13 @@ RM-15 已把 Public 批准/拒绝与取消接到同一 Hermes Native Attempt 的
 - **已实现**：聚焦自动化覆盖 park、bound 不 `QUEUED`、wait-cancel `/stop`、两档 Public choice、WAITING_APPROVAL 投影剥离 Binding 键：[[nodeskclaw-agent/tests/test_hermes_engine.py#test_execute_hermes_parks_on_waiting_for_approval]]、[[nodeskclaw-agent/tests/test_hermes_engine.py#test_execute_hermes_parks_while_sse_still_open]]、[[nodeskclaw-agent/tests/test_worker.py#test_worker_sets_waiting_approval_on_park_events]]、[[nodeskclaw-agent/tests/test_run_service.py#test_approve_run_bound_does_not_queue]]、[[nodeskclaw-agent/tests/test_run_service.py#test_cancel_waiting_approval_with_binding_goes_cancelling]]、[[nodeskclaw-agent/tests/test_worker.py#test_stale_lease_interrupted_fails]]、[[nodeskclaw-backend/tests/hermes_skill/test_employee_runs_api.py#test_approve_run_rejects_session_and_always_before_agent]]、[[nodeskclaw-backend/tests/hermes_skill/test_pc12_pc13_projection_regression.py#test_pc12_waiting_approval_event_hides_runtime_identity]]、[[nodeskclaw-backend/tests/hermes_skill/test_employee_runs_api.py#test_cancel_run_agent_conflict_is_not_http_500]]。这些测试不能代替 live Native。
 - **目标状态**：不得改写 v1.2.1，不得恢复 ChatCompletion parser，不得把 PC-01 至 PC-09 并入本项。live Native 出口见 [[architecture/skill-agent#RM-15 Live Control V13]]。Roadmap `DONE` 证据提交 `c4210717`。
 
+## RM-16 Provider Conformance Grounding
+
+RM-16 正在把 PC-01 至 PC-09 校准为真实 Hermes Native 的可复跑证据，不新建第二 Adapter。
+
+- **部分实现**：Stage PRD `docs_agent/prd-v1.6.14-hermes-provider-conformance-recovery.md` 已 APPROVED；canonical Plan 为 `.cursor/plans/rm-16_hermes-provider-conformance-recovery.plan.md`。生产 Native Bridge / Coalescer / 审批驻留仍见 [[architecture/skill-agent#RM-15 Approval Runtime Control]]。RM-15 live 未证明 Hermes 接受 `/approval`，cancel 曾停在 `CANCELLING`。
+- **目标状态**：PC-01 至 PC-09 全部 REAL_PROCESS；禁止 mock OpenAI 字段结项；不得改写 v1.2.1，不得恢复 ChatCompletion parser。
+
 ## RM-15 Live Control V13
 
 V13 用真实 Hermes Native Run 证明 Public 批准、拒绝与取消接到同一 Attempt。
