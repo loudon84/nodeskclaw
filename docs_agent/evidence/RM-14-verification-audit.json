@@ -1,0 +1,47 @@
+{
+  "schema": "smc.rm14.verification-audit.v1",
+  "generated_at": "2026-09-05T03:33:00.965832Z",
+  "notes": "Fresh local V01-V12/V14 plus live V13 after Adapter deploy.",
+  "runs": [
+    {
+      "verification_id": "V01",
+      "exit_code": 0,
+      "result": "PASS"
+    },
+    {
+      "verification_id": "V02-V08",
+      "exit_code": 0,
+      "result": "PASS"
+    },
+    {
+      "verification_id": "V09",
+      "exit_code": 0,
+      "result": "PASS"
+    },
+    {
+      "verification_id": "V10",
+      "exit_code": 0,
+      "result": "PASS"
+    },
+    {
+      "verification_id": "V11",
+      "exit_code": 0,
+      "result": "PASS"
+    },
+    {
+      "verification_id": "V12",
+      "exit_code": 0,
+      "result": "PASS"
+    },
+    {
+      "verification_id": "V13",
+      "exit_code": 0,
+      "result": "PASS"
+    },
+    {
+      "verification_id": "V14",
+      "exit_code": 0,
+      "result": "PASS"
+    }
+  ]
+}

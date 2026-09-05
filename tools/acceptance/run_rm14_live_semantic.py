@@ -130,6 +130,7 @@ def evaluate_sot(items: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+# @lat: [[architecture/skill-agent#RM-14 Live Semantic V13]]
 def run_live() -> dict[str, Any]:
     base = rm13.run_live()
     if base.get("result") != "PASS":

@@ -107,7 +107,7 @@ Installation 的 Desired/Actual Generation 合同已实现，Edge 通过 Backend
 RM-14 把 Hermes Native transport 规范成低噪声 Agent Event SoT，并让公共 progress 以 `phase` 为事实字段。
 
 - **已实现**：[[nodeskclaw-agent/app/services/native_event_normalizer.py#normalize_native_event]] 分流 coalescer buffer、durable 语义或 Internal Trace；[[nodeskclaw-agent/app/services/assistant_delta_coalescer.py#AssistantDeltaCoalescer]] 按 80 字 / 100ms / `\n\n` / tool / approval / terminal flush。`tool.started/completed` 合成 Attempt 作用域 `call_id`，`correlation_confidence` 只留 Internal。`reasoning.available` 与 `subagent.*` / `run.steered` / `approval.responded` 不进 Public。[[nodeskclaw-backend/app/api/runs.py#_public_run_event]] 读 `phase` 并派生 `stage`。
-- **目标状态**：V13 真实 Runtime 证据须打到已部署本实现的 Agent；Roadmap 在此之前保持未 DONE。不得恢复 ChatCompletion parser，不得改写 v1.2.1。
+- **已实现**：V13 live Native 已打到部署本实现的 Agent，见 [[architecture/skill-agent#RM-14 Live Semantic V13]]。不得恢复 ChatCompletion parser，不得改写 v1.2.1。
 
 ### Credential Lease API Server Key
 
@@ -212,6 +212,13 @@ RM-13 Native Bridge 已用真实 Hermes Native Run 关闭；员工 `user_jwt` �
 - **已实现**：[[tools/acceptance/run_rm13_live_native.py#run_live]] 先 `GET /v1/capabilities`，capabilities 无版本时读 `/health`，再走员工 `user_jwt` `tools/call`，只读 `agent.run_attempts` 核对 Binding，并用 `runtime_run_id` 调 Hermes `GET /v1/runs/{id}`。证据 `docs_agent/evidence/RM-13-live-v11.json` 为 `result=PASS`。
 - **目标状态**：保持 REAL_RUNTIME 证据可复跑；Compose mock 不能取代 live Runtime。
 
+## RM-14 Live Semantic V13
+
+V13 用真实 Hermes Native Run 证明已部署 Adapter 的 progress 带 canonical `phase`。
+
+- **已实现**：[[tools/acceptance/run_rm14_live_semantic.py#run_live]] 复用 RM-13 Native 路径后核对 Agent SoT `run.progress.payload.phase`。证据 `docs_agent/evidence/RM-14-live-v13.json` 为 `result=PASS`，`hermes_runtime_version=v2026.8.31`。
+- **目标状态**：保持 REAL_PROCESS 证据可复跑；mock-only 不能关闭 RM-14。RM-15 才做 Approval Decision / Cancel 闭环。
+
 ## Hermes Native Runtime And Employee Public Face
 
 生产 Skill Run 的 Hermes 南向必须走 Native Run API，员工公共信封必须与凭证类型无关。ChatCompletion token delta 不是 Event Source；HermesTask 只做内部投影。
@@ -219,5 +226,5 @@ RM-13 Native Bridge 已用真实 Hermes Native Run 关闭；员工 `user_jwt` �
 - **已实现**：员工 Runtime Skill 默认 `async_event` 不再按 `auth_type` 分流。[[nodeskclaw-backend/app/services/mcp_skill_gateway/mcp_execution_mode.py#resolve_mcp_execution_mode]] 与 Catalog 共用 resolver；[[nodeskclaw-backend/app/services/hermes_skill/mcp_tool_mapper.py#McpToolMapper#call_tool]] 在 `SKILL_AGENT_ENABLED` 时返回 v1.2.1 Accepted，不走 HermesTask 信封。[[nodeskclaw-backend/app/api/runs.py#stream_run_events]] 对四类终态先投递合同事件再关流。HermesTask 投影补 `run.timed_out`，失败打 `PROJECTION_SYNC_FAILED`。RM-12 已 DONE，出口见 [[architecture/skill-agent#RM-12 Live Public Conformance]]。
 - **已实现**：Adapter 走 Native Run：版本地板 `v2026.8.31`、per-Attempt capabilities、[[nodeskclaw-agent/app/services/hermes_engine.py#build_native_run_payload]]、[[nodeskclaw-agent/app/services/run_service.py#persist_runtime_binding]] 后再 `/events`；断开只 GET status；稳定内部码含 `RUNTIME_UNREACHABLE` / `RUNTIME_VERSION_UNSUPPORTED` / `RUNTIME_CAPABILITY_MISSING`。默认种子见 [[nodeskclaw-backend/app/startup/seed.py#DEFAULT_ENGINE_VERSION_SEEDS]]；镜像 `ARG` 为 `nodeskclaw-artifacts/hermes-image/Dockerfile` 的 `HERMES_VERSION=v2026.8.31`。实现提交 `59ebfb6683286dfadd9dad5586adb8feefece148`。
 - **已实现**：真实 Hermes Native Run 证据（V11）已关闭；出口 runner 为 [[tools/acceptance/run_rm13_live_native.py#run_live]]，证据 `docs_agent/evidence/RM-13-live-v11.json`。[[tools/acceptance/hermes_test_server.py#HermesHandler]] 仍只服务 `/v1/chat/completions`，Compose mock 不能取代 live Runtime。RM-13 已 DONE。
-- **已实现**：RM-14 Normalizer / Coalescer / canonical `phase` 已在 Adapter 与 Public 投影落地，见 [[architecture/skill-agent#Hermes Engine Adapter#Runtime Semantic Event Fidelity]]。Roadmap 在 V13 live 证明前保持未 DONE。
-- **目标状态**：RM-14 用已部署 Agent 取得 V13 真实 Runtime 证据后才可标 DONE；不得恢复 ChatCompletion parser，不得改写 v1.2.1。RM-15 才做 Approval Decision / Cancel 闭环。
+- **已实现**：RM-14 Normalizer / Coalescer / canonical `phase` 已在 Adapter 与 Public 投影落地，见 [[architecture/skill-agent#Hermes Engine Adapter#Runtime Semantic Event Fidelity]]。V13 live 出口见 [[architecture/skill-agent#RM-14 Live Semantic V13]]。
+- **目标状态**：不得恢复 ChatCompletion parser，不得改写 v1.2.1。RM-15 才做 Approval Decision / Cancel 闭环。

@@ -1,0 +1,176 @@
+{
+  "schema": "smc.evidence.manifest.v1",
+  "plan_id": "RM-14",
+  "plan": ".cursor/plans/rm-14_runtime-semantic-event-fidelity.plan.md",
+  "generated_at": "2026-09-05T03:33:00.965832Z",
+  "code_origin_commit": "bd7cbbb9bb6b4d075e627c4044c570d4375177e2",
+  "wtree_fingerprint": "sha256:a78e1e330636f9fb180a948be2021808da61dbf5a4bf368fe44f9a061d6d64f3",
+  "blocking_verifications": [
+    {
+      "verification_id": "V01",
+      "command": "uv --directory nodeskclaw-agent run pytest tests/test_assistant_delta_coalescer.py -q",
+      "exit_code": 0,
+      "policy": "LOCAL_TRANSIENT",
+      "result": "PASS",
+      "timestamp": "2026-09-05T03:33:00.965832Z",
+      "raw_log_ref": "docs_agent/evidence/RM-14-verification-audit.json",
+      "raw_log_sha256": "sha256:72b1463493ff43e7e98db7a74b40b17cb42f81ed799e23d1ef2142e7dcdbd326"
+    },
+    {
+      "verification_id": "V02",
+      "command": "uv --directory nodeskclaw-agent run pytest tests/test_native_event_normalizer.py -q -k order",
+      "exit_code": 0,
+      "policy": "LOCAL_TRANSIENT",
+      "result": "PASS",
+      "timestamp": "2026-09-05T03:33:00.965832Z",
+      "raw_log_ref": "docs_agent/evidence/RM-14-verification-audit.json",
+      "raw_log_sha256": "sha256:72b1463493ff43e7e98db7a74b40b17cb42f81ed799e23d1ef2142e7dcdbd326"
+    },
+    {
+      "verification_id": "V03",
+      "command": "uv --directory nodeskclaw-agent run pytest tests/test_native_event_normalizer.py -q -k call_id",
+      "exit_code": 0,
+      "policy": "LOCAL_TRANSIENT",
+      "result": "PASS",
+      "timestamp": "2026-09-05T03:33:00.965832Z",
+      "raw_log_ref": "docs_agent/evidence/RM-14-verification-audit.json",
+      "raw_log_sha256": "sha256:72b1463493ff43e7e98db7a74b40b17cb42f81ed799e23d1ef2142e7dcdbd326"
+    },
+    {
+      "verification_id": "V04",
+      "command": "uv --directory nodeskclaw-agent run pytest tests/test_native_event_normalizer.py -q -k parallel",
+      "exit_code": 0,
+      "policy": "LOCAL_TRANSIENT",
+      "result": "PASS",
+      "timestamp": "2026-09-05T03:33:00.965832Z",
+      "raw_log_ref": "docs_agent/evidence/RM-14-verification-audit.json",
+      "raw_log_sha256": "sha256:72b1463493ff43e7e98db7a74b40b17cb42f81ed799e23d1ef2142e7dcdbd326"
+    },
+    {
+      "verification_id": "V05",
+      "command": "uv --directory nodeskclaw-agent run pytest tests/test_native_event_normalizer.py -q -k unpaired",
+      "exit_code": 0,
+      "policy": "LOCAL_TRANSIENT",
+      "result": "PASS",
+      "timestamp": "2026-09-05T03:33:00.965832Z",
+      "raw_log_ref": "docs_agent/evidence/RM-14-verification-audit.json",
+      "raw_log_sha256": "sha256:72b1463493ff43e7e98db7a74b40b17cb42f81ed799e23d1ef2142e7dcdbd326"
+    },
+    {
+      "verification_id": "V06",
+      "command": "uv --directory nodeskclaw-agent run pytest tests/test_native_event_normalizer.py -q -k reasoning",
+      "exit_code": 0,
+      "policy": "LOCAL_TRANSIENT",
+      "result": "PASS",
+      "timestamp": "2026-09-05T03:33:00.965832Z",
+      "raw_log_ref": "docs_agent/evidence/RM-14-verification-audit.json",
+      "raw_log_sha256": "sha256:72b1463493ff43e7e98db7a74b40b17cb42f81ed799e23d1ef2142e7dcdbd326"
+    },
+    {
+      "verification_id": "V07",
+      "command": "uv --directory nodeskclaw-agent run pytest tests/test_native_event_normalizer.py -q -k subagent",
+      "exit_code": 0,
+      "policy": "LOCAL_TRANSIENT",
+      "result": "PASS",
+      "timestamp": "2026-09-05T03:33:00.965832Z",
+      "raw_log_ref": "docs_agent/evidence/RM-14-verification-audit.json",
+      "raw_log_sha256": "sha256:72b1463493ff43e7e98db7a74b40b17cb42f81ed799e23d1ef2142e7dcdbd326"
+    },
+    {
+      "verification_id": "V08",
+      "command": "uv --directory nodeskclaw-agent run pytest tests/test_native_event_normalizer.py -q -k approval",
+      "exit_code": 0,
+      "policy": "LOCAL_TRANSIENT",
+      "result": "PASS",
+      "timestamp": "2026-09-05T03:33:00.965832Z",
+      "raw_log_ref": "docs_agent/evidence/RM-14-verification-audit.json",
+      "raw_log_sha256": "sha256:72b1463493ff43e7e98db7a74b40b17cb42f81ed799e23d1ef2142e7dcdbd326"
+    },
+    {
+      "verification_id": "V09",
+      "command": "uv --directory nodeskclaw-agent run pytest tests/test_hermes_engine.py -q -k phase",
+      "exit_code": 0,
+      "policy": "LOCAL_TRANSIENT",
+      "result": "PASS",
+      "timestamp": "2026-09-05T03:33:00.965832Z",
+      "raw_log_ref": "docs_agent/evidence/RM-14-verification-audit.json",
+      "raw_log_sha256": "sha256:72b1463493ff43e7e98db7a74b40b17cb42f81ed799e23d1ef2142e7dcdbd326"
+    },
+    {
+      "verification_id": "V10",
+      "command": "git diff --exit-code 81babaebae7c7a1400db5be6139633af47bf5161 -- contracts/skill-run/v1.2.1",
+      "exit_code": 0,
+      "policy": "REPO_SUMMARY",
+      "result": "PASS",
+      "timestamp": "2026-09-05T03:33:00.965832Z",
+      "raw_log_ref": "docs_agent/evidence/RM-14-verification-audit.json",
+      "raw_log_sha256": "sha256:72b1463493ff43e7e98db7a74b40b17cb42f81ed799e23d1ef2142e7dcdbd326"
+    },
+    {
+      "verification_id": "V11",
+      "command": "uv --directory nodeskclaw-backend run pytest tests/hermes_skill/test_pc12_pc13_projection_regression.py -q",
+      "exit_code": 0,
+      "policy": "LOCAL_TRANSIENT",
+      "result": "PASS",
+      "timestamp": "2026-09-05T03:33:00.965832Z",
+      "raw_log_ref": "docs_agent/evidence/RM-14-verification-audit.json",
+      "raw_log_sha256": "sha256:72b1463493ff43e7e98db7a74b40b17cb42f81ed799e23d1ef2142e7dcdbd326"
+    },
+    {
+      "verification_id": "V12",
+      "command": "uv --directory nodeskclaw-agent run pytest tests/test_hermes_engine.py -q",
+      "exit_code": 0,
+      "policy": "LOCAL_TRANSIENT",
+      "result": "PASS",
+      "timestamp": "2026-09-05T03:33:00.965832Z",
+      "raw_log_ref": "docs_agent/evidence/RM-14-verification-audit.json",
+      "raw_log_sha256": "sha256:72b1463493ff43e7e98db7a74b40b17cb42f81ed799e23d1ef2142e7dcdbd326"
+    },
+    {
+      "verification_id": "V13",
+      "command": "python tools/acceptance/run_rm14_live_semantic.py --output docs_agent/evidence/RM-14-live-v13.json",
+      "exit_code": 0,
+      "policy": "REAL_PROCESS",
+      "result": "PASS",
+      "timestamp": "2026-09-05T03:28:31.799171Z",
+      "raw_log_ref": "docs_agent/evidence/RM-14-live-v13.json",
+      "raw_log_sha256": "sha256:098c46184b2d903e9c4eb399c124accbf0af3066e6436226407e6c830181efc5",
+      "notes": "Live Native Run PASS after Adapter deploy; SoT progress has canonical phase; public leaks empty."
+    },
+    {
+      "verification_id": "V14",
+      "command": "git diff --name-only d13b98bb2a829d0f145fd9eb18fa35cfd462e24c",
+      "exit_code": 0,
+      "policy": "REPO_SUMMARY",
+      "result": "PASS",
+      "timestamp": "2026-09-05T03:33:00.965832Z",
+      "raw_log_ref": "docs_agent/evidence/RM-14-verification-audit.json",
+      "raw_log_sha256": "sha256:72b1463493ff43e7e98db7a74b40b17cb42f81ed799e23d1ef2142e7dcdbd326",
+      "notes": "No second event store, no ChatCompletion restore, no v1.2.1 rewrite."
+    }
+  ],
+  "completion_audit": {
+    "changed": 0,
+    "deferred": 0,
+    "done": 2,
+    "scope_drift": 0,
+    "timestamp": "2026-09-05T03:33:00.965832Z",
+    "total_items": 2,
+    "unverifiable": 0,
+    "verdict": "PASS"
+  },
+  "implementation_review": {
+    "reviewer": "code-review-and-quality",
+    "timestamp": "2026-09-05T03:33:00.965832Z",
+    "verdict": "PASS",
+    "wtree_fingerprint": "sha256:a78e1e330636f9fb180a948be2021808da61dbf5a4bf368fe44f9a061d6d64f3",
+    "notes": "NativeEventNormalizer is production semantic entry; coalescer flush boundaries; public progress reads phase; ChatCompletion parser not restored; v1.2.1 untouched."
+  },
+  "plan_review": {
+    "plan_sha256": "sha256:6968162924e896da34f30c8b977f2224248de81020a48afcc305ddb38a49131d",
+    "reviewer": "smc-plan-review",
+    "timestamp": "2026-09-05T03:33:00.965832Z",
+    "verdict": "PASS"
+  },
+  "payload_sha256": "sha256:8002e04e6106932c8e4ec13c362bfc5f9e942a06c2d87b45d87611f9c9293e46"
+}

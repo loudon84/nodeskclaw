@@ -1,0 +1,46 @@
+{
+  "schema": "smc.rm14.live-v13.v1",
+  "policy": "REAL_PROCESS",
+  "result": "PASS",
+  "timestamp": "2026-09-05T03:28:31.799171Z",
+  "hermes_runtime_version": "v2026.8.31",
+  "observed_version": "0.21.0",
+  "version_source": "health",
+  "run_id": "4b0cf3ab-a0cc-4a26-9f57-ab273f538c56",
+  "attempt_id": "3dbd4085-5f17-486d-9308-1f276e2a95ad",
+  "generation": 1,
+  "native_paths_observed": [
+    "/v1/capabilities",
+    "/health",
+    "/v1/runs",
+    "/v1/runs/<id>/events",
+    "/v1/runs/<id>"
+  ],
+  "chat_completions_observed": false,
+  "public_runtime_identity_leak": false,
+  "public_leaks": [],
+  "sot": {
+    "progress_has_canonical_phase": true,
+    "progress_phases": [
+      "PREPARING",
+      "RECONCILING",
+      "RUNTIME_RUNNING",
+      "RUNTIME_STARTING"
+    ],
+    "assistant_message_count": 0,
+    "reasoning_summary_count": 0,
+    "correlation_confidence_in_sot": false,
+    "output_tail_in_sot": false,
+    "event_types": [
+      "run.created",
+      "run.queued",
+      "run.started",
+      "run.plan",
+      "run.progress",
+      "run.progress",
+      "run.progress",
+      "run.progress",
+      "run.progress"
+    ]
+  }
+}
