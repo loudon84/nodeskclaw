@@ -942,6 +942,41 @@ async def test_respond_runtime_approval_posts_once():
 
 
 @pytest.mark.asyncio
+async def test_respond_runtime_approval_generation_zero_posts():
+    from app.services.hermes_engine import respond_runtime_approval
+
+    client = _native_client()
+    with patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client):
+        result = await respond_runtime_approval(
+            attempt_id="att-1",
+            generation=0,
+            choice="deny",
+            gateway_url="http://hermes:8642",
+        )
+    assert result is None
+    approval_posts = [c for c in client.post.await_args_list if str(c.args[0]).endswith("/approval")]
+    assert len(approval_posts) == 1
+    assert approval_posts[0].kwargs.get("json", {}).get("choice") == "deny"
+
+
+@pytest.mark.asyncio
+async def test_runtime_control_headers_adds_bearer():
+    from app.services.hermes_engine import runtime_control_headers
+
+    async def _mint(**kwargs):
+        return {"token": "lease-token"}
+
+    with patch("app.services.hermes_engine.fetch_credential_lease", _mint):
+        headers = await runtime_control_headers(
+            snapshot={"runtime_policy": {"credential_lease_ref": {"instance_id": "i1"}}},
+            org_id="org-1",
+            run_id="run-1",
+            attempt_id="att-1",
+        )
+    assert headers.get("Authorization") == "Bearer lease-token"
+
+
+@pytest.mark.asyncio
 async def test_respond_runtime_approval_stale_generation_does_not_post():
     from app.services.hermes_engine import respond_runtime_approval
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -11,6 +12,7 @@ from app.services.worker import (
     build_hybrid_step_plan,
     needs_edge_jobs,
     next_status_after_stale_lease,
+    worker_restart_gap_payload,
 )
 
 
@@ -593,4 +595,13 @@ def test_stale_lease_interrupted_fails():
         last_phase=None,
         last_error_code="RUNTIME_INTERRUPTED",
     ) == "FAILED"
+
+
+def test_worker_restart_gap_payload_is_queryable():
+    payload = worker_restart_gap_payload(reason="lease_expired", previous_attempt_id="att-1")
+    assert payload["kind"] == "worker_restart_gap"
+    assert payload["observability_gap"] is True
+    assert payload["previous_attempt_id"] == "att-1"
+    source = inspect.getsource(RunWorker._recover_stale_runs)
+    assert "worker_restart_gap_payload" in source
 

@@ -166,6 +166,43 @@ def gateway_from_snapshot(snapshot: dict[str, Any] | None) -> str:
     ).rstrip("/")
 
 
+def _snapshot_lease_ref(snapshot: dict[str, Any] | None) -> dict[str, Any] | None:
+    data = snapshot or {}
+    policy = data.get("runtime_policy") if isinstance(data.get("runtime_policy"), dict) else {}
+    ref = data.get("credential_lease_ref") or policy.get("credential_lease_ref")
+    return ref if isinstance(ref, dict) else None
+
+
+# @lat: [[architecture/skill-agent#RM-16 Provider Conformance Grounding]]
+def control_generation(*, run_generation: int | None, binding: dict[str, Any] | None) -> int:
+    return int(run_generation or 0) or int((binding or {}).get("generation") or 0)
+
+
+async def runtime_control_headers(
+    *,
+    snapshot: dict[str, Any] | None = None,
+    org_id: str | None = None,
+    run_id: str | None = None,
+    attempt_id: str | None = None,
+    headers: dict[str, str] | None = None,
+) -> dict[str, str]:
+    if headers:
+        return dict(headers)
+    out = {"Content-Type": "application/json"}
+    ref = _snapshot_lease_ref(snapshot)
+    if ref and org_id and run_id and attempt_id:
+        minted = await fetch_credential_lease(
+            org_id=org_id,
+            run_id=run_id,
+            attempt_id=attempt_id,
+            lease_ref=ref,
+        )
+        token = minted.get("token") if minted else None
+        if token:
+            out["Authorization"] = f"Bearer {token}"
+    return out
+
+
 # @lat: [[architecture/skill-agent#RM-15 Approval Runtime Control]]
 async def respond_runtime_approval(
     *,
@@ -175,16 +212,27 @@ async def respond_runtime_approval(
     gateway_url: str,
     headers: dict[str, str] | None = None,
     runtime_run_id: str | None = None,
+    snapshot: dict[str, Any] | None = None,
+    org_id: str | None = None,
+    run_id: str | None = None,
 ) -> str | None:
     mapped = normalize_hermes_approval_choice(choice)
     binding = await load_runtime_binding(attempt_id)
-    if not binding or int(binding.get("generation") or 0) != int(generation):
+    bound_gen = int((binding or {}).get("generation") or 0)
+    cmd_gen = control_generation(run_generation=generation, binding=binding)
+    if not binding or not bound_gen or cmd_gen != bound_gen:
         return "fenced"
     bound_id = binding.get("runtime_run_id")
     target = str(runtime_run_id or bound_id or "")
     if not target or (bound_id and bound_id != target):
         return "fenced"
-    auth_headers = dict(headers or {"Content-Type": "application/json"})
+    auth_headers = await runtime_control_headers(
+        snapshot=snapshot,
+        org_id=org_id,
+        run_id=run_id,
+        attempt_id=attempt_id,
+        headers=headers,
+    )
     url = f"{gateway_url.rstrip('/')}/v1/runs/{target}/approval"
     async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=5.0)) as client:
         try:
@@ -205,15 +253,26 @@ async def stop_runtime_attempt(
     gateway_url: str,
     headers: dict[str, str] | None = None,
     runtime_run_id: str | None = None,
+    snapshot: dict[str, Any] | None = None,
+    org_id: str | None = None,
+    run_id: str | None = None,
 ) -> str | None:
     binding = await load_runtime_binding(attempt_id)
-    if not binding or int(binding.get("generation") or 0) != int(generation):
+    bound_gen = int((binding or {}).get("generation") or 0)
+    cmd_gen = control_generation(run_generation=generation, binding=binding)
+    if not binding or not bound_gen or cmd_gen != bound_gen:
         return "fenced"
     bound_id = binding.get("runtime_run_id")
     target = str(runtime_run_id or bound_id or "")
     if not target or (bound_id and bound_id != target):
         return "fenced"
-    auth_headers = dict(headers or {"Content-Type": "application/json"})
+    auth_headers = await runtime_control_headers(
+        snapshot=snapshot,
+        org_id=org_id,
+        run_id=run_id,
+        attempt_id=attempt_id,
+        headers=headers,
+    )
     async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=5.0)) as client:
         return await _stop_runtime(
             client,
@@ -221,8 +280,45 @@ async def stop_runtime_attempt(
             runtime_run_id=target,
             headers=auth_headers,
             attempt_id=attempt_id,
-            generation=generation,
+            generation=cmd_gen,
         )
+
+
+async def inspect_runtime_terminal(
+    *,
+    attempt_id: str,
+    generation: int,
+    gateway_url: str,
+    headers: dict[str, str] | None = None,
+    runtime_run_id: str | None = None,
+    snapshot: dict[str, Any] | None = None,
+    org_id: str | None = None,
+    run_id: str | None = None,
+) -> dict[str, Any] | None:
+    binding = await load_runtime_binding(attempt_id)
+    bound_gen = int((binding or {}).get("generation") or 0)
+    cmd_gen = control_generation(run_generation=generation, binding=binding)
+    if not binding or not bound_gen or cmd_gen != bound_gen:
+        return None
+    bound_id = binding.get("runtime_run_id")
+    target = str(runtime_run_id or bound_id or "")
+    if not target or (bound_id and bound_id != target):
+        return None
+    auth_headers = await runtime_control_headers(
+        snapshot=snapshot,
+        org_id=org_id,
+        run_id=run_id,
+        attempt_id=attempt_id,
+        headers=headers,
+    )
+    async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=5.0)) as client:
+        status, _data, rec_code = await _reconcile_status(
+            client,
+            gateway_url=gateway_url.rstrip("/"),
+            runtime_run_id=target,
+            headers=auth_headers,
+        )
+    return _terminal_from_status(status, rec_code)
 
 
 def _extract_runtime_run_id(data: Any) -> str | None:

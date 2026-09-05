@@ -806,12 +806,19 @@ async def approve_run(
         gateway_url = hermes_engine.gateway_from_snapshot(run.snapshot or {})
         if not gateway_url:
             raise ValueError("runtime gateway is not configured")
+        generation = hermes_engine.control_generation(
+            run_generation=int(run.generation or 0),
+            binding=binding,
+        )
         result = await hermes_engine.respond_runtime_approval(
             attempt_id=run.attempt_id,
-            generation=int(run.generation or 0),
+            generation=generation,
             choice=choice,
             gateway_url=gateway_url,
             runtime_run_id=str(binding.get("runtime_run_id")),
+            snapshot=run.snapshot,
+            org_id=org_id,
+            run_id=run_id,
         )
         if result == "fenced":
             raise ValueError("stale runtime generation")
@@ -895,14 +902,44 @@ async def cancel_run(db: AsyncSession, run_id: str, *, org_id: str) -> RunView |
         from app.services import hermes_engine
 
         gateway_url = hermes_engine.gateway_from_snapshot(run.snapshot or {})
+        generation = hermes_engine.control_generation(
+            run_generation=int(run.generation or 0),
+            binding=binding,
+        )
+        stop_result = None
         if gateway_url:
-            await hermes_engine.stop_runtime_attempt(
-                attempt_id=run.attempt_id,
-                generation=int(run.generation or 0),
-                gateway_url=gateway_url,
-                runtime_run_id=str(binding.get("runtime_run_id")),
-            )
-        return await get_run(db, run_id, org_id=org_id)
+            try:
+                stop_result = await hermes_engine.stop_runtime_attempt(
+                    attempt_id=run.attempt_id,
+                    generation=generation,
+                    gateway_url=gateway_url,
+                    runtime_run_id=str(binding.get("runtime_run_id")),
+                    snapshot=run.snapshot,
+                    org_id=org_id,
+                    run_id=run_id,
+                )
+            except Exception:
+                logger.exception("runtime stop during cancel failed run_id=%s", run_id)
+                stop_result = "RUNTIME_STOP_FAILED"
+            terminal = None
+            try:
+                terminal = await hermes_engine.inspect_runtime_terminal(
+                    attempt_id=run.attempt_id,
+                    generation=generation,
+                    gateway_url=gateway_url,
+                    runtime_run_id=str(binding.get("runtime_run_id")),
+                    snapshot=run.snapshot,
+                    org_id=org_id,
+                    run_id=run_id,
+                )
+            except Exception:
+                logger.exception("runtime reconcile during cancel failed run_id=%s", run_id)
+            if stop_result == "stop_404" or (
+                terminal and terminal.get("event_type") in {"run.cancelled", "run.failed"}
+            ):
+                pass
+            else:
+                return await get_run(db, run_id, org_id=org_id)
 
     # If QUEUED, WAITING_APPROVAL, PAUSED, SUSPENDED (no active in-flight worker execution), cancel immediately
     if run.attempt_id:

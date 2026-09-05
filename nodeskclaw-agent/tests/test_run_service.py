@@ -824,9 +824,114 @@ async def test_cancel_waiting_approval_with_binding_goes_cancelling(monkeypatch)
         return None
 
     monkeypatch.setattr("app.services.hermes_engine.stop_runtime_attempt", _stop)
+    inspect_called = {}
+
+    async def _inspect(**kwargs):
+        inspect_called.update(kwargs)
+        return None
+
+    monkeypatch.setattr("app.services.hermes_engine.inspect_runtime_terminal", _inspect)
     res = await run_service.cancel_run(AsyncMock(), "run-wait", org_id="org-1")
     assert res.status == "CANCELLING"
     assert stop_called.get("attempt_id") == "att-1"
+    assert inspect_called.get("attempt_id") == "att-1"
+
+
+@pytest.mark.asyncio
+async def test_cancel_waiting_approval_reconciles_to_cancelled(monkeypatch):
+    waiting_view = run_service.RunView(
+        run_id="run-wait",
+        org_id="org-1",
+        user_id="user-1",
+        tool_name="test_tool",
+        status="WAITING_APPROVAL",
+        snapshot={"runtime_policy": {"gateway_url": "http://hermes:8642"}},
+        attempt_id="att-1",
+        generation=0,
+        created_at="2026-08-27T00:00:00Z",
+        updated_at="2026-08-27T00:00:00Z",
+    )
+    cancelled_view = run_service.RunView(
+        run_id="run-wait",
+        org_id="org-1",
+        user_id="user-1",
+        tool_name="test_tool",
+        status="CANCELLED",
+        snapshot={"runtime_policy": {"gateway_url": "http://hermes:8642"}},
+        attempt_id="att-1",
+        generation=0,
+        created_at="2026-08-27T00:00:00Z",
+        updated_at="2026-08-27T00:00:00Z",
+    )
+    monkeypatch.setattr(run_service, "get_run", AsyncMock(side_effect=[waiting_view, cancelled_view]))
+    monkeypatch.setattr(run_service, "set_status", AsyncMock(return_value=True))
+    monkeypatch.setattr(run_service, "append_event", AsyncMock())
+    monkeypatch.setattr(
+        run_service,
+        "get_runtime_binding",
+        AsyncMock(return_value={"runtime_run_id": "rr-1", "generation": 1}),
+    )
+
+    async def _stop(**kwargs):
+        assert kwargs.get("generation") == 1
+        return None
+
+    async def _inspect(**kwargs):
+        return {"event_type": "run.cancelled", "payload": {"message": "hermes native run cancelled"}}
+
+    monkeypatch.setattr("app.services.hermes_engine.stop_runtime_attempt", _stop)
+    monkeypatch.setattr("app.services.hermes_engine.inspect_runtime_terminal", _inspect)
+    res = await run_service.cancel_run(AsyncMock(), "run-wait", org_id="org-1")
+    assert res.status == "CANCELLED"
+    cancelled_status_calls = [
+        c
+        for c in run_service.set_status.await_args_list
+        if c.args and len(c.args) >= 3 and c.args[2] == "CANCELLED"
+    ]
+    assert cancelled_status_calls
+
+
+@pytest.mark.asyncio
+async def test_approve_run_bound_generation_zero_uses_binding(monkeypatch):
+    waiting_view = run_service.RunView(
+        run_id="run-bound",
+        org_id="org-1",
+        user_id="user-1",
+        tool_name="test_tool",
+        status="WAITING_APPROVAL",
+        snapshot={"runtime_policy": {"gateway_url": "http://hermes:8642", "credential_lease_ref": {"instance_id": "i1"}}},
+        attempt_id="att-1",
+        generation=0,
+        created_at="2026-08-27T00:00:00Z",
+        updated_at="2026-08-27T00:00:00Z",
+    )
+    monkeypatch.setattr(run_service, "get_run", AsyncMock(side_effect=[waiting_view, waiting_view]))
+    monkeypatch.setattr(run_service, "set_status", AsyncMock(return_value=True))
+    monkeypatch.setattr(run_service, "append_event", AsyncMock())
+    monkeypatch.setattr(
+        run_service,
+        "get_runtime_binding",
+        AsyncMock(return_value={"runtime_run_id": "rr-1", "generation": 1}),
+    )
+    called: dict = {}
+
+    async def _respond(**kwargs):
+        called.update(kwargs)
+        return None
+
+    monkeypatch.setattr("app.services.hermes_engine.respond_runtime_approval", _respond)
+    res = await run_service.approve_run(
+        db=AsyncMock(),
+        run_id="run-bound",
+        org_id="org-1",
+        approval_id="appr-1",
+        decision="approve",
+    )
+    assert res.status == "WAITING_APPROVAL"
+    assert called.get("generation") == 1
+    assert called.get("snapshot") == waiting_view.snapshot
+    assert called.get("org_id") == "org-1"
+    assert called.get("run_id") == "run-bound"
 
 
 @pytest.mark.asyncio

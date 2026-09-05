@@ -46,6 +46,15 @@ def next_status_after_stale_lease(
     return "QUEUED"
 
 
+def worker_restart_gap_payload(*, reason: str, previous_attempt_id: str | None) -> dict[str, Any]:
+    return {
+        "reason": reason,
+        "kind": "worker_restart_gap",
+        "observability_gap": True,
+        "previous_attempt_id": previous_attempt_id,
+    }
+
+
 def build_hybrid_step_plan(snapshot: dict[str, Any] | None) -> list[dict[str, Any]]:
     """Build a deterministic list of steps (central vs edge) for hybrid execution.
     Returns:
@@ -236,7 +245,10 @@ class RunWorker:
                         db,
                         run_id,
                         "run.recovered",
-                        {"reason": "lease_expired_waiting_approval", "previous_attempt_id": att_id},
+                        worker_restart_gap_payload(
+                            reason="lease_expired_waiting_approval",
+                            previous_attempt_id=att_id,
+                        ),
                     )
                     continue
                 if next_status == "FAILED":
@@ -269,9 +281,11 @@ class RunWorker:
                         run_id,
                         "run.failed",
                         {
+                            **worker_restart_gap_payload(
+                                reason="lease_expired",
+                                previous_attempt_id=att_id,
+                            ),
                             "error_code": payload.get("error_code") or "RUNTIME_INTERRUPTED",
-                            "reason": "lease_expired",
-                            "previous_attempt_id": att_id,
                         },
                     )
                     continue
@@ -304,7 +318,10 @@ class RunWorker:
                     db,
                     run_id,
                     "run.recovered",
-                    {"reason": "lease_expired", "previous_attempt_id": att_id},
+                    worker_restart_gap_payload(
+                        reason="lease_expired",
+                        previous_attempt_id=att_id,
+                    ),
                 )
 
             # Also recover and attempt aggregation for WAITING_EDGE / CANCELLING runs
