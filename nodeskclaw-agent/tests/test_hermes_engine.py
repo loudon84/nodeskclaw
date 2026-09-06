@@ -217,7 +217,8 @@ async def test_execute_hermes_uses_minted_credential_lease():
     assistant_events = [e for e in events if e["event_type"] == "assistant.message"]
     assert len(assistant_events) == 1
     assert assistant_events[0]["payload"]["text"] == "ok from minted lease"
-    assert assistant_events[0]["source_event_id"]
+    assert assistant_events[0]["source_event_id"] == "hermes:att-1:1"
+    assert "run-1" not in assistant_events[0]["source_event_id"]
     assert "token" not in assistant_events[0]["payload"]
     assert "gateway_url" not in assistant_events[0]["payload"]
     assert "runtime_run_id" not in assistant_events[0]["payload"]

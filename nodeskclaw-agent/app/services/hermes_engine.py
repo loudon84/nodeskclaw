@@ -695,7 +695,7 @@ async def execute_hermes_run(
         session_id=str(session_id) if session_id else None,
     )
     idempotency_key = f"{run_id}:{attempt_id}:{generation}"
-    source_prefix = f"hermes:{run_id}:{attempt_id}"
+    source_prefix = f"hermes:{attempt_id}"
     normalizer = NativeEventNormalizer(attempt_id=attempt_id, source_prefix=source_prefix)
     events_subscribed = False
 

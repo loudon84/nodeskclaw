@@ -87,11 +87,43 @@ def test_subagent_stays_internal_without_sensitive_fields():
         }
     ]
     assert n.drain_internal_traces() == []
+    assert traces[0]["source_event_id"] == "hermes:att-1:1"
     trace_dump = str(traces)
     assert "child_session_id" not in trace_dump
     assert "output_tail" not in trace_dump
     assert "cost_usd" not in trace_dump
     assert "goal" not in traces[0]["payload"]
+
+
+# @lat: [[architecture/skill-agent#Hermes Engine Adapter#Runtime Semantic Event Fidelity]]
+def test_source_event_id_is_bounded_without_run_or_call_id():
+    attempt_id = "183551be-15cc-40f0-8f1a-9b784cf3e345"
+    run_id = "d5c83bc0-462f-421c-b5c6-7e275d652510"
+    long_call_id = "call-" + ("x" * 200)
+    n = NativeEventNormalizer(attempt_id=attempt_id, source_prefix=f"hermes:{attempt_id}")
+    started = n.ingest(
+        {
+            "type": "tool.started",
+            "tool": "hermes_marketing__live-tool-call",
+            "call_id": long_call_id,
+        }
+    )
+    completed = n.ingest(
+        {
+            "type": "tool.completed",
+            "tool": "hermes_marketing__live-tool-call",
+            "call_id": long_call_id,
+        }
+    )
+    assert started[0]["source_event_id"] == f"hermes:{attempt_id}:1"
+    assert completed[0]["source_event_id"] == f"hermes:{attempt_id}:2"
+    for event in (*started, *completed):
+        source_event_id = event["source_event_id"]
+        assert len(source_event_id) <= 512
+        assert run_id not in source_event_id
+        assert long_call_id not in source_event_id
+        assert "hermes_marketing__live-tool-call" not in source_event_id
+    assert started[0]["payload"]["call_id"] == long_call_id
 
 
 def test_approval_request_maps_to_requested():

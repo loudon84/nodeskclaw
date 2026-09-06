@@ -23,6 +23,16 @@ config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
 target_metadata = agent_metadata
 
 
+def include_object(object_, name, type_, reflected, compare_to):
+    schema = alembic_schema_name()
+    if type_ == "table":
+        return getattr(object_, "schema", None) == schema
+    parent = getattr(object_, "table", None)
+    if parent is not None:
+        return getattr(parent, "schema", None) == schema
+    return True
+
+
 def run_migrations_offline() -> None:
     url = config.get_main_option("sqlalchemy.url")
     context.configure(
@@ -30,6 +40,8 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        include_schemas=True,
+        include_object=include_object,
         **alembic_context_version_options(),
     )
 
@@ -66,6 +78,8 @@ def do_run_migrations(connection: Connection) -> None:
     context.configure(
         connection=connection,
         target_metadata=target_metadata,
+        include_schemas=True,
+        include_object=include_object,
         **alembic_context_version_options(),
     )
 

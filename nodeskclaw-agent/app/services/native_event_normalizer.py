@@ -173,12 +173,12 @@ class NativeEventNormalizer:
             events = self._from_texts([self.coalescer.flush()] if self.coalescer.buffered_text() else [])
             text = payload.get("text") or payload.get("content") or payload.get("message")
             if isinstance(text, str) and text:
-                events.append(self._sot("assistant.message", {"text": text}, "assistant"))
+                events.append(self._sot("assistant.message", {"text": text}))
             return events
         if event_type == "reasoning.summary":
             summary = payload.get("reasoning_summary") or payload.get("summary")
             if isinstance(summary, str) and summary:
-                return [self._sot("reasoning.summary", {"summary": summary}, "reasoning")]
+                return [self._sot("reasoning.summary", {"summary": summary})]
             return []
         if event_type in {"tool.call", "tool_call"}:
             events = self._from_texts([self.coalescer.flush()] if self.coalescer.buffered_text() else [])
@@ -190,7 +190,7 @@ class NativeEventNormalizer:
                 clarify: dict[str, Any] = {"question": question}
                 if isinstance(payload.get("options"), list):
                     clarify["options"] = payload["options"]
-                return [self._sot("clarify.requested", clarify, "clarify")]
+                return [self._sot("clarify.requested", clarify)]
             return []
         return []
 
@@ -207,7 +207,6 @@ class NativeEventNormalizer:
                 self._sot(
                     "internal.runtime.trace",
                     {"runtime_event_type": event_type, "category": "subagent"},
-                    "runtime-trace",
                 )
             )
         return events
@@ -225,7 +224,6 @@ class NativeEventNormalizer:
                 self._sot(
                     "tool.call",
                     {"tool_name": opened["tool_name"], "call_id": opened["call_id"], "status": mapped},
-                    f"tool:{opened['call_id']}",
                 )
             )
             self.observability_gaps.append(
@@ -276,7 +274,6 @@ class NativeEventNormalizer:
             self._sot(
                 "tool.call",
                 {"tool_name": tool_name, "call_id": call_id, "status": "started"},
-                f"tool:{call_id}",
             )
         ]
 
@@ -302,7 +299,6 @@ class NativeEventNormalizer:
             self._sot(
                 "tool.call",
                 {"tool_name": opened["tool_name"], "call_id": opened["call_id"], "status": status},
-                f"tool:{opened['call_id']}",
             )
         ]
 
@@ -315,7 +311,7 @@ class NativeEventNormalizer:
         if status not in {"started", "completed", "failed"}:
             status = "started"
         public = {"tool_name": tool_name, "call_id": call_id, "status": status}
-        return [self._sot("tool.call", public, f"tool:{call_id}")]
+        return [self._sot("tool.call", public)]
 
     def _approval(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
         approval_id = payload.get("approval_id") or payload.get("id")
@@ -324,21 +320,21 @@ class NativeEventNormalizer:
             approval_id = f"{self.attempt_id}:approval:{self._next_id('approval')}"
         if not isinstance(summary, str) or not summary:
             summary = "approval requested"
-        return [self._sot("approval.requested", {"approval_id": approval_id, "summary": summary}, "approval")]
+        return [self._sot("approval.requested", {"approval_id": approval_id, "summary": summary})]
 
     def _from_texts(self, texts: list[str | None]) -> list[dict[str, Any]]:
         events: list[dict[str, Any]] = []
         for text in texts:
             if isinstance(text, str) and text:
-                events.append(self._sot("assistant.message", {"text": text}, "assistant"))
+                events.append(self._sot("assistant.message", {"text": text}))
         return events
 
-    def _sot(self, event_type: str, payload: dict[str, Any], kind: str) -> dict[str, Any]:
+    def _sot(self, event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
         return {
             "event_type": event_type,
             "payload": payload,
             "source": "agent",
-            "source_event_id": f"{self.source_prefix}:{kind}:{self._next_counter()}",
+            "source_event_id": f"{self.source_prefix}:{self._next_counter()}",
         }
 
     def _next_counter(self) -> int:
