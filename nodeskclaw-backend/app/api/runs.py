@@ -434,7 +434,18 @@ async def cancel_run(
             "updated_at": task.updated_at.isoformat() if task.updated_at else None,
         })
 
-    data = await _agent_post(f"/internal/v1/runs/{run_id}/cancel", org_id=org.id, user_id=user.id)
+    try:
+        data = await _agent_post(f"/internal/v1/runs/{run_id}/cancel", org_id=org.id, user_id=user.id)
+    except httpx.HTTPStatusError as exc:
+        status_code = exc.response.status_code if exc.response is not None else 500
+        if status_code >= 500:
+            raise AppException(
+                code=40900,
+                message="Run cancel could not complete",
+                status_code=409,
+                message_key="errors.run.agent_error",
+            ) from exc
+        raise
     if str(data.get("org_id") or "") != org.id or str(data.get("run_id") or "") != run_id:
         raise ForbiddenError("无权访问该 Run", "errors.run.forbidden")
     await db.execute(

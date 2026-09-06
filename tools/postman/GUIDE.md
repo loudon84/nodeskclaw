@@ -70,6 +70,7 @@ Agent 内部接口不用 Postman 的 Bearer Token（持有者令牌）。集合�
 | Event 与 Artifact | 20–30 | Artifact 上传并重试返回同一 ID；下载字节和 SHA256（文件摘要）匹配；旧代返回 `409`；跨组织读取返回 `404`；重复事件计数为 `0` |
 | Edge 协议 | 40–53 | Edge Job 可认领并续租；旧 Delivery Generation 返回 `403`；on-demand 请求可签发、拉取、上传及读取；无效 Edge Token 返回 `403` |
 | Installation 代次 | 60–68 | Desired/Actual 代次一致时接受；旧 Actual Generation 返回 `403`；卸载进入 `uninstalling` 后由 `uninstalled` Actual 收敛 |
+| RM-16 live | 70–87 | 员工 JWT 公共面 + Hermes Native 手工复现。按 [../../reports/live手工执行指导.dmd](../../reports/live手工执行指导.dmd) 逐项 Send，不要 Collection Runner |
 
 ## 5. 关键响应断言
 
@@ -108,3 +109,17 @@ Collection 已内置精确断言。遇到失败时先保留请求和响应，再
 ## 8. 提交问题时应附带的信息
 
 请至少提供请求编号、请求 URL、HTTP 状态码、响应体中的 `error_code`（错误代码）/`message_key`（消息键）、`run_id`、`edge_job_id`、Generation 和 Agent/Backend 日志时间段。不要提交真实 JWT、Internal Token 或 Edge Token。
+
+## 9. RM-16 Live（70 文件夹）
+
+01–68 验证 Agent 内部控制面。**70 - RM-16 Live Conformance** 验证员工 Public 路径是否接到真实 Hermes Native（版本地板 `v2026.8.31`），以及 v1.2.1 投影质量。
+
+完整步骤、Skill 选择、PC-05/PC-08 进程操作和过关表见 [../../reports/live手工执行指导.dmd](../../reports/live手工执行指导.dmd)。
+
+要点：
+
+- 公共请求使用 Bearer `backend_access_token`，不要继承集合默认的 `X-Skill-Agent-Token`。
+- 审批工具必须是 `hermes_marketing__park-waiting-approval`。
+- PC-01 必须换「纯中文、不调工具」的 Skill；选错会 `COMPLETED` 但没有 `assistant.message`。
+- PC-05 杀 Agent `:4580` Worker；PC-08 重启 Hermes `:29401`。Postman 不能代替这两步，跳过不得记 PASS。
+- Postman 绿勾不能改写 `run_rm16_live_conformance.py` 的 Ledger 证据。

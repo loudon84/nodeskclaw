@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "9f30d8f5-4776-4ef0-91ef-153000000001",
     "name": "DeskClaw 团队版 - NoDeskClaw Agent Full Flow Manual Debug",
-    "description": "用于人工启动 Backend/Agent 后逐项调试 nodeskclaw-agent 全流程。集合不包含有效凭证；先填写 backend_access_token、org_id、user_id、other_org_id、agent_internal_token。请求按编号顺序手工执行。01-08 准备 Skill 与 Edge 节点；10-18 验证 Central/Approval/Cancel；20-30 验证 Event 与 Artifact；40-52 验证 Edge Job、Lease、Event 与 on-demand Artifact；60-68 验证 Installation Generation。Edge 协议段使用集合新注册的独立 Edge 节点，避免与真实 Edge Worker 抢占。真实 Edge install/uninstall 副作用需改用实际 Edge Worker 的 node/token 后观察本地安装目录，本集合只验证其控制面合同。",
+    "description": "用于人工启动 Backend/Agent 后逐项调试 nodeskclaw-agent 全流程。集合不包含有效凭证；先填写 backend_access_token、org_id、user_id、other_org_id、agent_internal_token。请求按编号顺序手工执行。01-08 准备 Skill 与 Edge 节点；10-18 验证 Central/Approval/Cancel；20-30 验证 Event 与 Artifact；40-52 验证 Edge Job、Lease、Event 与 on-demand Artifact；60-68 验证 Installation Generation。Edge 协议段使用集合新注册的独立 Edge 节点，避免与真实 Edge Worker 抢占。真实 Edge install/uninstall 副作用需改用实际 Edge Worker 的 node/token 后观察本地安装目录，本集合只验证其控制面合同。 70-88 文件夹验证 RM-16 员工 Public live（真实 Hermes Native）。公共请求用 Bearer backend_access_token，不要走集合默认 Agent Token。手工步骤见 reports/live手工执行指导.dmd。禁止 Collection Runner 一键跑。",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "event": [
@@ -172,6 +172,63 @@
     {
       "key": "previous_installation_generation",
       "value": "0"
+    },
+    {
+      "key": "hermes_base_url",
+      "value": "http://127.0.0.1:29401"
+    },
+    {
+      "key": "hermes_api_server_key",
+      "value": "REPLACE_WITH_HERMES_API_SERVER_KEY",
+      "type": "string"
+    },
+    {
+      "key": "rm16_plain_tool_name",
+      "value": ""
+    },
+    {
+      "key": "rm16_tool_skill_name",
+      "value": ""
+    },
+    {
+      "key": "rm16_park_tool_name",
+      "value": "hermes_marketing__park-waiting-approval"
+    },
+    {
+      "key": "rm16_plain_prompt",
+      "value": "请只用中文直接回答：知识库检索是什么？不要调用任何工具。"
+    },
+    {
+      "key": "rm16_tool_prompt",
+      "value": "请实际调用一个工具完成任务，然后给出结果。"
+    },
+    {
+      "key": "rm16_long_prompt",
+      "value": "请用中文写一段不少于一百二十字的说明，解释什么是知识库检索，不要调用任何工具，不要分条碎片化。"
+    },
+    {
+      "key": "rm16_run_id",
+      "value": ""
+    },
+    {
+      "key": "rm16_approval_id",
+      "value": ""
+    },
+    {
+      "key": "rm16_hermes_runtime_run_id",
+      "value": ""
+    },
+    {
+      "key": "rm16_attempt_id",
+      "value": ""
+    },
+    {
+      "key": "rm16_hermes_version",
+      "value": ""
+    },
+    {
+      "key": "rm16_public_status",
+      "value": ""
     }
   ],
   "item": [
@@ -2353,6 +2410,1186 @@
             "exec": [
               "pm.test('Installation uninstalled report is 200', () => pm.response.to.have.status(200));",
               "const j = pm.response.json(); pm.expect(j.code).to.eql(0); pm.expect(j.data.actual_status).to.eql('uninstalled');"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "70 - RM-16 Live Conformance",
+      "item": [
+        {
+          "name": "70a Preflight",
+          "item": [
+            {
+              "name": "70 - Hermes GET /v1/capabilities (V14 / PC-09 floor)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{hermes_base_url}}/v1/capabilities",
+                  "host": [
+                    "{{hermes_base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "capabilities"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{hermes_api_server_key}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "description": "南向 Hermes Native 版本地板。期望 HTTP 200，version >= v2026.8.31。这是真正打到 Hermes 的请求。PC-09 无旧 Runtime 时不要用 ChatCompletion 当事件源。"
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Hermes capabilities HTTP 200', () => pm.response.to.have.status(200));",
+                      "const j = pm.response.json();",
+                      "const ver = String(j.version || j.hermes_version || j.runtime_version || '');",
+                      "pm.collectionVariables.set('rm16_hermes_version', ver);",
+                      "function parseVer(s) { return String(s).replace(/^v/i, '').split('.').map((x) => parseInt(x, 10) || 0); }",
+                      "function gte(a, b) { for (let i = 0; i < Math.max(a.length, b.length); i++) { const d = (a[i] || 0) - (b[i] || 0); if (d !== 0) return d > 0; } return true; }",
+                      "pm.test('Hermes version >= v2026.8.31', () => {",
+                      "  pm.expect(ver).to.be.a('string').and.to.have.lengthOf.at.least(1);",
+                      "  pm.expect(gte(parseVer(ver), [2026, 8, 31])).to.eql(true);",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "70b - Backend Health",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{backend_base_url}}/api/v1/health",
+                  "host": [
+                    "{{backend_base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "health"
+                  ]
+                },
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Backend health 200', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "70c - MCP tools/list (核对工具名)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Org-Id",
+                    "value": "{{org_id}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{backend_base_url}}/api/v1/mcp",
+                  "host": [
+                    "{{backend_base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "mcp"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{backend_access_token}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"rm16-list\",\n  \"method\": \"tools/list\",\n  \"params\": {}\n}"
+                },
+                "description": "在 result.tools[].name 中确认 rm16_plain_tool_name / rm16_tool_skill_name / rm16_park_tool_name 都已发布并 MCP 暴露。"
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('tools/list HTTP 200', () => pm.response.to.have.status(200));",
+                      "const tools = (((pm.response.json() || {}).result || {}).tools) || [];",
+                      "pm.test('tools array', () => pm.expect(tools).to.be.an('array'));",
+                      "const names = tools.map((t) => t.name);",
+                      "['rm16_plain_tool_name','rm16_tool_skill_name','rm16_park_tool_name'].forEach((key) => {",
+                      "  const want = pm.collectionVariables.get(key);",
+                      "  if (want) { pm.test(key + ' in catalog', () => pm.expect(names).to.include(want)); }",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            }
+          ],
+          "description": "先确认 Hermes 版本地板、Backend 健康、Catalog 里工具名存在。"
+        },
+        {
+          "name": "70b Shared inspect",
+          "item": [
+            {
+              "name": "72 - Public GET Run",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "X-Org-Id",
+                    "value": "{{org_id}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{backend_base_url}}/api/v1/runs/{{rm16_run_id}}",
+                  "host": [
+                    "{{backend_base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "runs",
+                    "{{rm16_run_id}}"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{backend_access_token}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "description": "员工公共 Run 投影。期望 HTTP 200，字段 run_id/status。不得出现 runtime_run_id。终态：COMPLETED/FAILED/CANCELLED/TIMED_OUT。CANCELLING 对 PC-04 为失败。"
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Public GET Run 200', () => pm.response.to.have.status(200));",
+                      "const j = pm.response.json();",
+                      "const d = (j && j.data && j.data.run_id) ? j.data : j;",
+                      "pm.test('public run envelope', () => {",
+                      "  pm.expect(d.run_id).to.eql(pm.collectionVariables.get('rm16_run_id'));",
+                      "  pm.expect(d).to.have.property('status');",
+                      "});",
+                      "pm.collectionVariables.set('rm16_public_status', String(d.status || ''));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "73 - Agent SoT events (内部)",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "X-Exec-Org-Id",
+                    "value": "{{org_id}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{agent_base_url}}/internal/v1/runs/{{rm16_run_id}}/events?after_seq=0",
+                  "host": [
+                    "{{agent_base_url}}"
+                  ],
+                  "path": [
+                    "internal",
+                    "v1",
+                    "runs",
+                    "{{rm16_run_id}}",
+                    "events"
+                  ],
+                  "query": [
+                    {
+                      "key": "after_seq",
+                      "value": "0"
+                    }
+                  ]
+                },
+                "description": "Agent Event SoT，用集合级 X-Skill-Agent-Token。PC-01：assistant.message > 0，且明显少于 run.progress；无 tool.call / approval.requested / reasoning.summary。PC-02：tool.call 同一 call_id 既有 started/running 又有 completed/failed。PC-03：出现 approval.requested 后把 approval_id 写入变量。"
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('SoT events 200', () => pm.response.to.have.status(200));",
+                      "const j = pm.response.json();",
+                      "const items = j.items || [];",
+                      "pm.test('items array', () => pm.expect(items).to.be.an('array'));",
+                      "const types = items.map((e) => String(e.event_type || ''));",
+                      "const assistant = types.filter((t) => t === 'assistant.message').length;",
+                      "const progress = types.filter((t) => t === 'run.progress').length;",
+                      "pm.collectionVariables.set('rm16_assistant_count', String(assistant));",
+                      "pm.collectionVariables.set('rm16_progress_count', String(progress));",
+                      "const appr = items.find((e) => e.event_type === 'approval.requested');",
+                      "if (appr) {",
+                      "  const payload = appr.payload || {};",
+                      "  const aid = payload.approval_id || appr.approval_id || '';",
+                      "  if (aid) pm.collectionVariables.set('rm16_approval_id', String(aid));",
+                      "}",
+                      "const calls = items.filter((e) => e.event_type === 'tool.call');",
+                      "pm.collectionVariables.set('rm16_tool_call_count', String(calls.length));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "74 - Agent GET Run (attempt / 内部快照)",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "X-Exec-Org-Id",
+                    "value": "{{org_id}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{agent_base_url}}/internal/v1/runs/{{rm16_run_id}}",
+                  "host": [
+                    "{{agent_base_url}}"
+                  ],
+                  "path": [
+                    "internal",
+                    "v1",
+                    "runs",
+                    "{{rm16_run_id}}"
+                  ]
+                },
+                "description": "内部 Run 视图。保存 attempt_id 供 PC-08 对照 Attempt 数。runtime_run_id 若出现在 snapshot，可写入 rm16_hermes_runtime_run_id；禁止从 Public GET 抄这个字段。"
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Agent GET Run 200', () => pm.response.to.have.status(200));",
+                      "const j = pm.response.json();",
+                      "if (j.attempt_id) pm.collectionVariables.set('rm16_attempt_id', String(j.attempt_id));",
+                      "pm.collectionVariables.set('rm16_agent_status', String(j.status || ''));",
+                      "const snap = j.snapshot || {};",
+                      "const rid = snap.runtime_run_id || (snap.runtime && snap.runtime.run_id) || '';",
+                      "if (rid) pm.collectionVariables.set('rm16_hermes_runtime_run_id', String(rid));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "75 - Public GET Result",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "X-Org-Id",
+                    "value": "{{org_id}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{backend_base_url}}/api/v1/runs/{{rm16_run_id}}/result",
+                  "host": [
+                    "{{backend_base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "runs",
+                    "{{rm16_run_id}}",
+                    "result"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{backend_access_token}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "description": "PC-01 需要非空中文文本；PC-06 合并后文本不少于 80 字，不能全是 1～2 字碎片。"
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Public result 200', () => pm.response.to.have.status(200));",
+                      "const j = pm.response.json();",
+                      "const d = (j && j.data && (j.data.run_id || j.data.text !== undefined)) ? j.data : j;",
+                      "const text = String(d.text || d.content || d.result_content || '');",
+                      "pm.collectionVariables.set('rm16_result_text', text);",
+                      "pm.collectionVariables.set('rm16_result_chars', String(text.length));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "76 - Public SSE events (可选，可能挂起)",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "X-Org-Id",
+                    "value": "{{org_id}}"
+                  },
+                  {
+                    "key": "Accept",
+                    "value": "text/event-stream"
+                  },
+                  {
+                    "key": "Last-Event-ID",
+                    "value": "0"
+                  }
+                ],
+                "url": {
+                  "raw": "{{backend_base_url}}/api/v1/runs/{{rm16_run_id}}/events",
+                  "host": [
+                    "{{backend_base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "runs",
+                    "{{rm16_run_id}}",
+                    "events"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{backend_access_token}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "description": "公共 SSE 可能一直开到终态。优先用 73 SoT。若 hung，在 Postman 取消请求，不要当成失败依据。"
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "const body = pm.response.text() || '';",
+                      "pm.test('SSE reachable (200 or cancelled)', () => pm.expect(pm.response.code).to.be.oneOf([200, 0]));",
+                      "if (body.indexOf('data:') !== -1) {",
+                      "  pm.test('SSE has data lines', () => pm.expect(body).to.include('data:'));",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            }
+          ],
+          "description": "启动任一 Run 后反复 Send 72–75。不要用 76 SSE 当唯一观察面，SSE 可能一直挂到终态。"
+        },
+        {
+          "name": "70c PC-01 Plain text",
+          "item": [
+            {
+              "name": "71 - PC-01 Start plain Chinese run",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Org-Id",
+                    "value": "{{org_id}}"
+                  },
+                  {
+                    "key": "X-Idempotency-Key",
+                    "value": "rm16-{{$guid}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{backend_base_url}}/api/v1/mcp",
+                  "host": [
+                    "{{backend_base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "mcp"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{backend_access_token}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"rm16-call\",\n  \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"{{rm16_plain_tool_name}}\",\n    \"arguments\": {\"prompt\": \"{{rm16_plain_prompt}}\"}\n  }\n}"
+                },
+                "description": "启动后轮询 72/73/75。过关：非空中文；assistant.message>0 且少于 run.progress；无 tool.call / approval.requested / reasoning.summary。"
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('tools/call HTTP 200', () => pm.response.to.have.status(200));",
+                      "const j = pm.response.json();",
+                      "pm.test('JSON-RPC result present', () => pm.expect(j.result).to.be.an('object'));",
+                      "const sc = (j.result && j.result.structuredContent) || {};",
+                      "pm.test('v1.2.1 accepted has run_id', () => {",
+                      "  pm.expect(sc.run_id).to.be.a('string').and.to.have.lengthOf.at.least(1);",
+                      "  pm.expect(sc.event_stream).to.include('/api/v1/runs/' + sc.run_id + '/events');",
+                      "});",
+                      "pm.collectionVariables.set('rm16_run_id', sc.run_id);",
+                      "pm.collectionVariables.set('rm16_approval_id', '');",
+                      "pm.collectionVariables.set('rm16_hermes_runtime_run_id', '');"
+                    ]
+                  }
+                }
+              ]
+            }
+          ],
+          "description": "需要纯中文、不调工具的 Skill。填 rm16_plain_tool_name。刺激选错会永远 FAIL（assistant_message_count=0）。"
+        },
+        {
+          "name": "70d PC-02 Tool call",
+          "item": [
+            {
+              "name": "77 - PC-02 Start tool run",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Org-Id",
+                    "value": "{{org_id}}"
+                  },
+                  {
+                    "key": "X-Idempotency-Key",
+                    "value": "rm16-{{$guid}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{backend_base_url}}/api/v1/mcp",
+                  "host": [
+                    "{{backend_base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "mcp"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{backend_access_token}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"rm16-call\",\n  \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"{{rm16_tool_skill_name}}\",\n    \"arguments\": {\"prompt\": \"{{rm16_tool_prompt}}\"}\n  }\n}"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('tools/call HTTP 200', () => pm.response.to.have.status(200));",
+                      "const j = pm.response.json();",
+                      "pm.test('JSON-RPC result present', () => pm.expect(j.result).to.be.an('object'));",
+                      "const sc = (j.result && j.result.structuredContent) || {};",
+                      "pm.test('v1.2.1 accepted has run_id', () => {",
+                      "  pm.expect(sc.run_id).to.be.a('string').and.to.have.lengthOf.at.least(1);",
+                      "  pm.expect(sc.event_stream).to.include('/api/v1/runs/' + sc.run_id + '/events');",
+                      "});",
+                      "pm.collectionVariables.set('rm16_run_id', sc.run_id);",
+                      "pm.collectionVariables.set('rm16_approval_id', '');",
+                      "pm.collectionVariables.set('rm16_hermes_runtime_run_id', '');"
+                    ]
+                  }
+                }
+              ]
+            }
+          ],
+          "description": "需要真 Tool Skill。可用 rm16_tool_skill_name 覆盖。过关：Public/SoT tool.call 同一 call_id 既有 started/running 又有 completed/failed。"
+        },
+        {
+          "name": "70e PC-03 Approval (Hermes /approval)",
+          "item": [
+            {
+              "name": "78 - PC-03 Start park-waiting-approval run",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Org-Id",
+                    "value": "{{org_id}}"
+                  },
+                  {
+                    "key": "X-Idempotency-Key",
+                    "value": "rm16-{{$guid}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{backend_base_url}}/api/v1/mcp",
+                  "host": [
+                    "{{backend_base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "mcp"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{backend_access_token}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"rm16-call\",\n  \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"{{rm16_park_tool_name}}\",\n    \"arguments\": {\"prompt\": \"{{rm16_plain_prompt}}\"}\n  }\n}"
+                },
+                "description": "等到 Public WAITING_APPROVAL 且 73 写出 rm16_approval_id 后再发 79–82。"
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('tools/call HTTP 200', () => pm.response.to.have.status(200));",
+                      "const j = pm.response.json();",
+                      "pm.test('JSON-RPC result present', () => pm.expect(j.result).to.be.an('object'));",
+                      "const sc = (j.result && j.result.structuredContent) || {};",
+                      "pm.test('v1.2.1 accepted has run_id', () => {",
+                      "  pm.expect(sc.run_id).to.be.a('string').and.to.have.lengthOf.at.least(1);",
+                      "  pm.expect(sc.event_stream).to.include('/api/v1/runs/' + sc.run_id + '/events');",
+                      "});",
+                      "pm.collectionVariables.set('rm16_run_id', sc.run_id);",
+                      "pm.collectionVariables.set('rm16_approval_id', '');",
+                      "pm.collectionVariables.set('rm16_hermes_runtime_run_id', '');"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "79 - PC-03 Reject decision=session",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Org-Id",
+                    "value": "{{org_id}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{backend_base_url}}/api/v1/runs/{{rm16_run_id}}/approvals/{{rm16_approval_id}}",
+                  "host": [
+                    "{{backend_base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "runs",
+                    "{{rm16_run_id}}",
+                    "approvals",
+                    "{{rm16_approval_id}}"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{backend_access_token}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"decision\": \"session\"\n}"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('session forbidden 400/403/409/422', () => pm.expect(pm.response.code).to.be.oneOf([400, 403, 409, 422]));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "80 - PC-03 Reject decision=always",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Org-Id",
+                    "value": "{{org_id}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{backend_base_url}}/api/v1/runs/{{rm16_run_id}}/approvals/{{rm16_approval_id}}",
+                  "host": [
+                    "{{backend_base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "runs",
+                    "{{rm16_run_id}}",
+                    "approvals",
+                    "{{rm16_approval_id}}"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{backend_access_token}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"decision\": \"always\"\n}"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('always forbidden 400/403/409/422', () => pm.expect(pm.response.code).to.be.oneOf([400, 403, 409, 422]));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "81 - PC-03 Approve",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Org-Id",
+                    "value": "{{org_id}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{backend_base_url}}/api/v1/runs/{{rm16_run_id}}/approvals/{{rm16_approval_id}}",
+                  "host": [
+                    "{{backend_base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "runs",
+                    "{{rm16_run_id}}",
+                    "approvals",
+                    "{{rm16_approval_id}}"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{backend_access_token}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"decision\": \"approve\"\n}"
+                },
+                "description": "期望 HTTP <400。随后 72/83：离开 WAITING_APPROVAL / waiting_for_approval。Public 只允许 approve/deny。"
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('approve accepted (not 4xx/5xx)', () => pm.expect(pm.response.code).to.be.below(400));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "82 - PC-03 Deny (先对新 Run 做 78-80)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Org-Id",
+                    "value": "{{org_id}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{backend_base_url}}/api/v1/runs/{{rm16_run_id}}/approvals/{{rm16_approval_id}}",
+                  "host": [
+                    "{{backend_base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "runs",
+                    "{{rm16_run_id}}",
+                    "approvals",
+                    "{{rm16_approval_id}}"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{backend_access_token}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"decision\": \"deny\"\n}"
+                },
+                "description": "不要在已经 approve 过的 Run 上发 deny。重新 78 等到审批后再 79、80、82。"
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('deny accepted (not 4xx/5xx)', () => pm.expect(pm.response.code).to.be.below(400));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "83 - Hermes GET /v1/runs/{runtime_run_id} (可选)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{hermes_base_url}}/v1/runs/{{rm16_hermes_runtime_run_id}}",
+                  "host": [
+                    "{{hermes_base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "runs",
+                    "{{rm16_hermes_runtime_run_id}}"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{hermes_api_server_key}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "description": "真正打到 Hermes 的 Run 状态。runtime_run_id 只能来自 Agent 内部/库绑定，禁止出现在 Public。PC-03 后应变为非 waiting_for_approval。"
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "const rid = pm.collectionVariables.get('rm16_hermes_runtime_run_id') || '';",
+                      "if (!rid) {",
+                      "  pm.test('skip Hermes GET when runtime_run_id empty', () => pm.expect(true).to.eql(true));",
+                      "  return;",
+                      "}",
+                      "pm.test('Hermes GET run 200', () => pm.response.to.have.status(200));",
+                      "const j = pm.response.json();",
+                      "pm.collectionVariables.set('rm16_hermes_status', String(j.status || j.state || ''));"
+                    ]
+                  }
+                }
+              ]
+            }
+          ],
+          "description": "必须用 rm16_park_tool_name=hermes_marketing__park-waiting-approval。approve 与 deny 各开一次新 Run。session/always 必须 400/403/409/422。"
+        },
+        {
+          "name": "70f PC-04 Cancel",
+          "item": [
+            {
+              "name": "84 - PC-04 Cancel",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Org-Id",
+                    "value": "{{org_id}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{backend_base_url}}/api/v1/runs/{{rm16_run_id}}/cancel",
+                  "host": [
+                    "{{backend_base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "runs",
+                    "{{rm16_run_id}}",
+                    "cancel"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{backend_access_token}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}"
+                },
+                "description": "先 78 等到 WAITING_APPROVAL 或执行中，再 Cancel。随后 72 直到 COMPLETED/FAILED/CANCELLED/TIMED_OUT。"
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('cancel HTTP < 500', () => pm.expect(pm.response.code).to.be.below(500));",
+                      "pm.test('cancel not 500 mapping hole', () => pm.expect(pm.response.code).to.not.eql(500));"
+                    ]
+                  }
+                }
+              ]
+            }
+          ],
+          "description": "Cancel 必须落到 Hermes /stop，Public 到合同终态，HTTP 不得 500，不得停在 CANCELLING。远端 Backend 若未部署映射会 500，记 FAIL 不要改断言。"
+        },
+        {
+          "name": "70g PC-06 Long Chinese",
+          "item": [
+            {
+              "name": "85 - PC-06 Start long Chinese run",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Org-Id",
+                    "value": "{{org_id}}"
+                  },
+                  {
+                    "key": "X-Idempotency-Key",
+                    "value": "rm16-{{$guid}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{backend_base_url}}/api/v1/mcp",
+                  "host": [
+                    "{{backend_base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "mcp"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{backend_access_token}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"rm16-call\",\n  \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"{{rm16_plain_tool_name}}\",\n    \"arguments\": {\"prompt\": \"{{rm16_long_prompt}}\"}\n  }\n}"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('tools/call HTTP 200', () => pm.response.to.have.status(200));",
+                      "const j = pm.response.json();",
+                      "pm.test('JSON-RPC result present', () => pm.expect(j.result).to.be.an('object'));",
+                      "const sc = (j.result && j.result.structuredContent) || {};",
+                      "pm.test('v1.2.1 accepted has run_id', () => {",
+                      "  pm.expect(sc.run_id).to.be.a('string').and.to.have.lengthOf.at.least(1);",
+                      "  pm.expect(sc.event_stream).to.include('/api/v1/runs/' + sc.run_id + '/events');",
+                      "});",
+                      "pm.collectionVariables.set('rm16_run_id', sc.run_id);",
+                      "pm.collectionVariables.set('rm16_approval_id', '');",
+                      "pm.collectionVariables.set('rm16_hermes_runtime_run_id', '');"
+                    ]
+                  }
+                }
+              ]
+            }
+          ],
+          "description": "需要会长文的 Skill（可与 PC-01 同工具）。合并文本 >= 80 字。"
+        },
+        {
+          "name": "70h PC-07 / PC-12 Scan",
+          "item": [
+            {
+              "name": "86 - PC-07/12 Rescan public GET",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "X-Org-Id",
+                    "value": "{{org_id}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{backend_base_url}}/api/v1/runs/{{rm16_run_id}}",
+                  "host": [
+                    "{{backend_base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "runs",
+                    "{{rm16_run_id}}"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{backend_access_token}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Public GET 200', () => pm.response.to.have.status(200));",
+                      "const raw = pm.response.text() || '';",
+                      "pm.test('PC-07 no child_session_id', () => pm.expect(raw).to.not.include('child_session_id'));",
+                      "pm.test('PC-07 no subagent.', () => pm.expect(raw).to.not.include('subagent.'));"
+                    ]
+                  }
+                }
+              ]
+            }
+          ],
+          "description": "PC-07：单一 Public Run，无 child_session_id / subagent.。PC-12：无 HermesTask 禁止字段。文件夹级脚本已扫 /api/v1/ 响应。"
+        },
+        {
+          "name": "70i Out-of-band PC-05 / PC-08",
+          "item": [
+            {
+              "name": "87 - PC-05/08 Observe public status after host action",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "X-Org-Id",
+                    "value": "{{org_id}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{backend_base_url}}/api/v1/runs/{{rm16_run_id}}",
+                  "host": [
+                    "{{backend_base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "runs",
+                    "{{rm16_run_id}}"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{backend_access_token}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "description": "仅观察。PC-05 看 Worker 重启后的合同恢复；PC-08 看 FAILED + 内部事件 RUNTIME_INTERRUPTED。不要把跳过写成 PASS。"
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('observe GET 200', () => pm.response.to.have.status(200));",
+                      "const j = pm.response.json();",
+                      "const d = (j && j.data && j.data.run_id) ? j.data : j;",
+                      "pm.collectionVariables.set('rm16_public_status', String(d.status || ''));"
+                    ]
+                  }
+                }
+              ]
+            }
+          ],
+          "description": "Postman 不能杀进程。PC-05：在宿主机杀/重启 Agent :4580 Worker 后轮询 72/73。PC-08：在 Hermes 所在机器重启 :29401 后轮询，期望 FAILED + RUNTIME_INTERRUPTED，Attempt 数不变。缺少重启命令则跳过，Ledger 不得记 PASS。"
+        }
+      ],
+      "description": "员工 JWT 公共面 + 真实 Hermes Native 的 RM-16 live 手工复现。本文件夹不是 Hermes 产品验收，也不替代 tools/acceptance/run_rm16_live_conformance.py 的 Ledger 证据。按编号手工 Send，禁止 Collection Runner。PC-05 杀的是 Agent :4580 Worker；PC-08 重启的是 Hermes :29401；二者都不能用 Postman 代替进程操作。操作说明见仓库 reports/live手工执行指导.dmd。公共请求必须用 Bearer backend_access_token，不要继承集合级 X-Skill-Agent-Token。",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const url = pm.request.url.toString();",
+              "if (url.indexOf('/api/v1/') === -1) { return; }",
+              "const forbiddenKeys = ['task_id','task_no','agent_alias','agent_id','profile_id','workspace_id','installation_id','routing_reason','event_token_url','wait_strategy','gateway_token','env_file','runtime_run_id','runtime_session_id','child_session_id'];",
+              "const forbiddenSubs = ['/api/v1/hermes/tasks/','token=','API_SERVER_KEY','subagent.'];",
+              "function scan(value) {",
+              "  if (Array.isArray(value)) { value.forEach(scan); return; }",
+              "  if (value && typeof value === 'object') {",
+              "    Object.keys(value).forEach((key) => { pm.expect(forbiddenKeys).to.not.include(key); scan(value[key]); });",
+              "    return;",
+              "  }",
+              "  if (typeof value === 'string') { forbiddenSubs.forEach((frag) => pm.expect(value).to.not.include(frag)); }",
+              "}",
+              "const raw = pm.response.text() || '';",
+              "forbiddenSubs.forEach((frag) => pm.expect(raw).to.not.include(frag));",
+              "try { scan(pm.response.json()); } catch (e) {",
+              "  forbiddenKeys.forEach((key) => pm.expect(raw).to.not.match(new RegExp('\"' + key + '\"')));",
+              "}"
             ]
           }
         }

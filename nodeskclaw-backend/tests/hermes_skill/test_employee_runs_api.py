@@ -2,6 +2,8 @@ import pytest
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
+
 from app.api.runs import (
     _agent_post,
     _public_run_event,
@@ -342,6 +344,25 @@ async def test_cancel_run_agent_conflict_is_not_http_500():
         status_code=409,
         message_key="errors.run.agent_error",
     )
+    with patch("app.api.runs.PermissionChecker.require_permission", new=AsyncMock()), \
+         patch("app.api.runs.TaskService.get_task", new=AsyncMock(return_value=task)), \
+         patch("app.api.runs.TaskService.assert_task_access", new=AsyncMock()), \
+         patch("app.api.runs._get_outbox_entry", new=AsyncMock(return_value=None)), \
+         patch("app.api.runs._agent_post", new=AsyncMock(side_effect=conflict)):
+        with pytest.raises(AppException) as exc_info:
+            await cancel_run(run_id="run-1", user_org=user_org, db=db)
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.status_code != 500
+
+
+@pytest.mark.asyncio
+async def test_cancel_run_agent_500_is_not_http_500():
+    db = AsyncMock()
+    user_org = _mock_user_org()
+    task = HermesTask(id="run-1", org_id="org-1", user_id="user-1", tool_name="test_tool", status=TaskStatus.RUNNING)
+    response = MagicMock()
+    response.status_code = 500
+    conflict = httpx.HTTPStatusError("agent failed", request=MagicMock(), response=response)
     with patch("app.api.runs.PermissionChecker.require_permission", new=AsyncMock()), \
          patch("app.api.runs.TaskService.get_task", new=AsyncMock(return_value=task)), \
          patch("app.api.runs.TaskService.assert_task_access", new=AsyncMock()), \
