@@ -375,6 +375,33 @@ async def test_cancel_run_agent_500_is_not_http_500():
 
 
 @pytest.mark.asyncio
+async def test_cancel_run_agent_mutation_without_tool_name_is_not_http_500():
+    db = AsyncMock()
+    user_org = _mock_user_org()
+    task = HermesTask(id="run-1", org_id="org-1", user_id="user-1", tool_name="test_tool", status=TaskStatus.RUNNING)
+    with patch("app.api.runs.PermissionChecker.require_permission", new=AsyncMock()), \
+         patch("app.api.runs.TaskService.get_task", new=AsyncMock(return_value=task)), \
+         patch("app.api.runs.TaskService.assert_task_access", new=AsyncMock()), \
+         patch("app.api.runs._get_outbox_entry", new=AsyncMock(return_value=None)), \
+         patch(
+             "app.api.runs._agent_post",
+             new=AsyncMock(
+                 return_value={
+                     "org_id": "org-1",
+                     "run_id": "run-1",
+                     "status": "CANCELLING",
+                     "idempotent": True,
+                 }
+             ),
+         ):
+        result = await cancel_run(run_id="run-1", user_org=user_org, db=db)
+    _assert_unwrapped_public_body(result)
+    assert result["run_id"] == "run-1"
+    assert result["tool_name"] == "test_tool"
+    assert result["status"] == "CANCELLING"
+
+
+@pytest.mark.asyncio
 async def test_resume_undelivered_outbox_rejected():
     db = AsyncMock()
     user_org = _mock_user_org()

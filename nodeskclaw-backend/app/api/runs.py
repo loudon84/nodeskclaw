@@ -73,8 +73,8 @@ def _public_run_status(value: Any, fallback: str = "FAILED") -> str:
 
 def _public_run_view(data: dict[str, Any]) -> dict[str, Any]:
     return {
-        "run_id": str(data["run_id"]),
-        "tool_name": str(data["tool_name"]),
+        "run_id": str(data.get("run_id") or ""),
+        "tool_name": str(data.get("tool_name") or ""),
         "status": _public_run_status(data.get("status")),
         "created_at": data.get("created_at"),
         "updated_at": data.get("updated_at"),
@@ -465,7 +465,17 @@ async def cancel_run(
         .values(cancel_requested_at=datetime.now(timezone.utc))
     )
     await db.commit()
-    return _public_run_view(data)
+    return _public_run_view(
+        {
+            "run_id": data.get("run_id") or run_id,
+            "tool_name": data.get("tool_name") or task.tool_name,
+            "status": data.get("status"),
+            "created_at": data.get("created_at")
+            or (task.created_at.isoformat() if task.created_at else None),
+            "updated_at": data.get("updated_at")
+            or (task.updated_at.isoformat() if task.updated_at else None),
+        }
+    )
 
 
 @router.post("/{run_id}/resume")
