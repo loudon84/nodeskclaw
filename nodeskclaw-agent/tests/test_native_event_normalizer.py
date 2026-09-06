@@ -148,3 +148,53 @@ def test_run_completed_does_not_duplicate_existing_assistant_text():
     events = n.ingest({"event": "run.completed", "output": "状态回填文本"})
     messages = [e for e in events if e["event_type"] == "assistant.message"]
     assert [e["payload"]["text"] for e in messages] == ["流上文本"]
+
+
+# @lat: [[architecture/skill-agent#Hermes Engine Adapter#Runtime Semantic Event Fidelity]]
+def test_streaming_assistant_message_coalesces_until_close():
+    n = _norm("att-stream")
+    events = []
+    events.extend(n.ingest({"type": "assistant.message", "text": "你好"}))
+    events.extend(n.ingest({"type": "assistant.message", "text": "世界"}))
+    assert events == []
+    closed = n.close(terminal_status="completed")
+    messages = [e for e in closed if e["event_type"] == "assistant.message"]
+    assert [e["payload"]["text"] for e in messages] == ["你好世界"]
+
+
+# @lat: [[architecture/skill-agent#Hermes Engine Adapter#Runtime Semantic Event Fidelity]]
+def test_assistant_message_snapshot_does_not_duplicate_deltas():
+    n = _norm("att-snap")
+    n.ingest({"type": "message.delta", "text": "你好"})
+    n.ingest({"type": "message.delta", "text": "世界"})
+    assert n.ingest({"type": "assistant.message", "text": "你好世界"}) == []
+    closed = n.close(terminal_status="completed")
+    messages = [e for e in closed if e["event_type"] == "assistant.message"]
+    assert [e["payload"]["text"] for e in messages] == ["你好世界"]
+
+
+# @lat: [[architecture/skill-agent#Hermes Engine Adapter#Runtime Semantic Event Fidelity]]
+def test_emit_assistant_snapshot_is_one_message_and_dedupes():
+    n = _norm("att-shot")
+    long_text = "字" * 200
+    first = n.emit_assistant_snapshot(long_text)
+    assert [e["payload"]["text"] for e in first] == [long_text]
+    assert n.emit_assistant_snapshot(long_text) == []
+
+
+# @lat: [[architecture/skill-agent#Hermes Engine Adapter#Runtime Semantic Event Fidelity]]
+def test_flush_due_to_latency_waits_one_second():
+    from app.services.assistant_delta_coalescer import AssistantDeltaCoalescer
+
+    clock = {"ms": 0}
+    n = NativeEventNormalizer(
+        attempt_id="att-lat",
+        source_prefix="hermes:att-lat",
+        coalescer=AssistantDeltaCoalescer(clock_ms=lambda: clock["ms"]),
+    )
+    assert n.ingest({"type": "message.delta", "text": "ab"}) == []
+    clock["ms"] = 100
+    assert n.flush_due_to_latency() == []
+    clock["ms"] = 1000
+    flushed = n.flush_due_to_latency()
+    assert [e["payload"]["text"] for e in flushed] == ["ab"]

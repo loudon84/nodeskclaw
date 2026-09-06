@@ -574,8 +574,10 @@ def _events_after_status_terminal(
         saw_assistant = True
     output = _status_output_text(data)
     if close_status == "completed" and output and not saw_assistant:
-        events.extend(_emit_ingested(normalizer, {"event": "assistant.message", "text": output}))
-        saw_assistant = True
+        extra = normalizer.emit_assistant_snapshot(output)
+        events.extend(extra)
+        if extra:
+            saw_assistant = True
     return events, saw_assistant
 
 
@@ -893,8 +895,6 @@ async def execute_hermes_run(
                                 line = await asyncio.wait_for(asyncio.shield(pending_line), timeout=0.1)
                                 pending_line = None
                             except TimeoutError:
-                                for semantic in normalizer.flush_due_to_latency():
-                                    yield semantic
                                 if drain_deadline is not None:
                                     if time.monotonic() >= drain_deadline:
                                         break

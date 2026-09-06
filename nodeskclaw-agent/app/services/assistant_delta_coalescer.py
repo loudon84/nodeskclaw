@@ -7,7 +7,8 @@ from collections.abc import Callable
 # @lat: [[architecture/skill-agent#Hermes Engine Adapter#Runtime Semantic Event Fidelity]]
 class AssistantDeltaCoalescer:
     MAX_BUFFERED_CHARS = 80
-    MAX_LATENCY_MS = 100
+    MAX_LATENCY_MS = 1000
+    MIN_EMIT_STRIP_CHARS = 3
 
     def __init__(self, *, clock_ms: Callable[[], int] | None = None) -> None:
         self._clock_ms = clock_ms or (lambda: int(time.monotonic() * 1000))
@@ -29,6 +30,8 @@ class AssistantDeltaCoalescer:
             if split_at >= 0:
                 self._parts.append(remaining[: split_at + 2])
                 remaining = remaining[split_at + 2 :]
+                if len(self.buffered_text().strip()) < self.MIN_EMIT_STRIP_CHARS:
+                    continue
                 chunk = self.flush()
                 if chunk:
                     flushed.append(chunk)

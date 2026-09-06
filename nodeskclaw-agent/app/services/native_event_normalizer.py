@@ -126,6 +126,7 @@ class NativeEventNormalizer:
         self._counter = 0
         self._segment_seq = 0
         self._open: list[dict[str, Any]] = []
+        self._emitted_assistant = ""
         self.internal_traces: list[dict[str, Any]] = []
         self.observability_gaps: list[dict[str, Any]] = []
         self._drained_trace_count = 0
@@ -148,13 +149,8 @@ class NativeEventNormalizer:
                 status = "failed"
             events = self.close(terminal_status=status)
             output = payload.get("output") or payload.get("final_response")
-            if (
-                status == "completed"
-                and isinstance(output, str)
-                and output.strip()
-                and not any(item.get("event_type") == "assistant.message" for item in events)
-            ):
-                events = self._from_texts([output.strip()]) + events
+            if status == "completed" and isinstance(output, str) and output.strip() and not self._emitted_assistant:
+                events = self.emit_assistant_snapshot(output.strip()) + events
             return events
         if event_type in {"tool.started", "tool.start"}:
             events = self._from_texts([self.coalescer.flush()] if self.coalescer.buffered_text() else [])
@@ -170,11 +166,10 @@ class NativeEventNormalizer:
             events.extend(self._approval(payload))
             return events
         if event_type in {"assistant.message", "message", "agent.message"}:
-            events = self._from_texts([self.coalescer.flush()] if self.coalescer.buffered_text() else [])
             text = payload.get("text") or payload.get("content") or payload.get("message")
             if isinstance(text, str) and text:
-                events.append(self._sot("assistant.message", {"text": text}))
-            return events
+                return self._ingest_assistant_text(text)
+            return []
         if event_type == "reasoning.summary":
             summary = payload.get("reasoning_summary") or payload.get("summary")
             if isinstance(summary, str) and summary:
@@ -214,6 +209,13 @@ class NativeEventNormalizer:
     def flush_due_to_latency(self) -> list[dict[str, Any]]:
         text = self.coalescer.flush_if_stale()
         return self._from_texts([text] if text else [])
+
+    def emit_assistant_snapshot(self, text: str) -> list[dict[str, Any]]:
+        if not isinstance(text, str) or not text:
+            return []
+        if self._is_duplicate_assistant(text):
+            return []
+        return self._from_texts([text])
 
     def close(self, *, terminal_status: str = "failed") -> list[dict[str, Any]]:
         events = self._from_texts([self.coalescer.flush()] if self.coalescer.buffered_text() else [])
@@ -322,11 +324,32 @@ class NativeEventNormalizer:
             summary = "approval requested"
         return [self._sot("approval.requested", {"approval_id": approval_id, "summary": summary})]
 
+    def _ingest_assistant_text(self, text: str) -> list[dict[str, Any]]:
+        emitted = self._emitted_assistant
+        pending = self.coalescer.buffered_text()
+        current = emitted + pending
+        if text == emitted or text == current:
+            return []
+        if current and text.startswith(current):
+            text = text[len(current) :]
+            if not text:
+                return []
+        return self._from_texts(self.coalescer.push(text))
+
+    def _is_duplicate_assistant(self, text: str) -> bool:
+        emitted = self._emitted_assistant
+        pending = self.coalescer.buffered_text()
+        return text == emitted or text == emitted + pending
+
     def _from_texts(self, texts: list[str | None]) -> list[dict[str, Any]]:
         events: list[dict[str, Any]] = []
         for text in texts:
-            if isinstance(text, str) and text:
-                events.append(self._sot("assistant.message", {"text": text}))
+            if not isinstance(text, str) or not text:
+                continue
+            if self._is_duplicate_assistant(text):
+                continue
+            self._emitted_assistant += text
+            events.append(self._sot("assistant.message", {"text": text}))
         return events
 
     def _sot(self, event_type: str, payload: dict[str, Any]) -> dict[str, Any]:

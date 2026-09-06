@@ -28,6 +28,17 @@ def test_coalescer_flushes_on_latency_and_paragraph():
     coalescer = AssistantDeltaCoalescer(clock_ms=lambda: clock["ms"])
     assert coalescer.push("ab") == []
     clock["ms"] = 120
-    assert coalescer.push("c") == ["abc"]
+    assert coalescer.push("c") == []
+    clock["ms"] = 1000
+    assert coalescer.push("d") == ["abcd"]
     assert coalescer.push("para\n\nmore") == ["para\n\n"]
     assert coalescer.flush() == "more"
+
+
+# @lat: [[architecture/skill-agent#Hermes Engine Adapter#Runtime Semantic Event Fidelity]]
+def test_coalescer_keeps_tiny_paragraph_in_buffer():
+    coalescer = AssistantDeltaCoalescer(clock_ms=lambda: 0)
+    assert coalescer.push("。\n\n") == []
+    assert coalescer.buffered_text() == "。\n\n"
+    assert coalescer.push("后文") == []
+    assert coalescer.flush() == "。\n\n后文"

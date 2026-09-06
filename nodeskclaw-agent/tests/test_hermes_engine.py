@@ -918,6 +918,57 @@ async def test_execute_hermes_does_not_duplicate_status_output_when_stream_has_t
 
 
 @pytest.mark.asyncio
+# @lat: [[architecture/skill-agent#Hermes Engine Adapter#Runtime Semantic Event Fidelity]]
+async def test_execute_hermes_coalesces_streaming_assistant_messages():
+    client = _native_client(
+        event_lines=[
+            'data: {"type": "assistant.message", "text": "你"}',
+            'data: {"type": "assistant.message", "text": "好"}',
+            'data: {"type": "assistant.message", "text": "世界"}',
+            "data: [DONE]",
+        ]
+    )
+    with patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client):
+        events = [
+            event
+            async for event in execute_hermes_run(
+                tool_name="foo",
+                arguments={"prompt": "hi"},
+                route_snapshot={"gateway_url": "http://hermes:8642"},
+                run_id="run-coal-msg",
+                attempt_id="att-coal-msg",
+            )
+        ]
+    messages = [e for e in events if e["event_type"] == "assistant.message"]
+    assert [e["payload"]["text"] for e in messages] == ["你好世界"]
+
+
+@pytest.mark.asyncio
+# @lat: [[architecture/skill-agent#Hermes Engine Adapter#Runtime Semantic Event Fidelity]]
+async def test_execute_hermes_drops_duplicate_assistant_snapshot():
+    client = _native_client(
+        event_lines=[
+            'data: {"type": "message.delta", "text": "你好世界"}',
+            'data: {"type": "assistant.message", "text": "你好世界"}',
+            "data: [DONE]",
+        ]
+    )
+    with patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client):
+        events = [
+            event
+            async for event in execute_hermes_run(
+                tool_name="foo",
+                arguments={"prompt": "hi"},
+                route_snapshot={"gateway_url": "http://hermes:8642"},
+                run_id="run-snap-dedupe",
+                attempt_id="att-snap-dedupe",
+            )
+        ]
+    messages = [e for e in events if e["event_type"] == "assistant.message"]
+    assert [e["payload"]["text"] for e in messages] == ["你好世界"]
+
+
+@pytest.mark.asyncio
 # @lat: [[architecture/skill-agent#Hermes Engine Adapter]]
 async def test_execute_hermes_ingests_sse_event_line_subagent():
     client = _native_client(
