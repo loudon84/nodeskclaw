@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from app.services.assistant_delta_coalescer import AssistantDeltaCoalescer
 from app.services.native_event_normalizer import NativeEventNormalizer
 
 
@@ -163,6 +164,16 @@ def test_streaming_assistant_message_coalesces_until_close():
 
 
 # @lat: [[architecture/skill-agent#Hermes Engine Adapter#Runtime Semantic Event Fidelity]]
+def test_long_assistant_text_does_not_flush_until_close():
+    n = _norm("att-long")
+    chunk = "字" * 200 + "段\n\n落"
+    assert n.ingest({"type": "assistant.message", "text": chunk}) == []
+    closed = n.close(terminal_status="completed")
+    messages = [e for e in closed if e["event_type"] == "assistant.message"]
+    assert [e["payload"]["text"] for e in messages] == [chunk]
+
+
+# @lat: [[architecture/skill-agent#Hermes Engine Adapter#Runtime Semantic Event Fidelity]]
 def test_assistant_message_snapshot_does_not_duplicate_deltas():
     n = _norm("att-snap")
     n.ingest({"type": "message.delta", "text": "你好"})
@@ -184,8 +195,6 @@ def test_emit_assistant_snapshot_is_one_message_and_dedupes():
 
 # @lat: [[architecture/skill-agent#Hermes Engine Adapter#Runtime Semantic Event Fidelity]]
 def test_flush_due_to_latency_waits_one_second():
-    from app.services.assistant_delta_coalescer import AssistantDeltaCoalescer
-
     clock = {"ms": 0}
     n = NativeEventNormalizer(
         attempt_id="att-lat",

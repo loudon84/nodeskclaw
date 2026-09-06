@@ -895,6 +895,8 @@ async def execute_hermes_run(
                                 line = await asyncio.wait_for(asyncio.shield(pending_line), timeout=0.1)
                                 pending_line = None
                             except TimeoutError:
+                                for semantic in normalizer.flush_due_to_latency():
+                                    yield semantic
                                 if drain_deadline is not None:
                                     if time.monotonic() >= drain_deadline:
                                         break

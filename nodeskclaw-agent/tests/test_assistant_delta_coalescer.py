@@ -19,20 +19,22 @@ def test_coalescer_chinese_chars_are_batched_not_per_glyph():
         flushed.append(tail)
     joined = "".join(flushed)
     assert joined == "".join(deltas)
-    assert len(flushed) < len(deltas)
-    assert all(len(item) >= 2 or "\n\n" in item for item in flushed[:-1] or flushed)
+    assert flushed == ["".join(deltas)]
 
 
-def test_coalescer_flushes_on_latency_and_paragraph():
+# @lat: [[architecture/skill-agent#Hermes Engine Adapter#Runtime Semantic Event Fidelity]]
+def test_coalescer_does_not_flush_on_size_or_paragraph():
     clock = {"ms": 0}
     coalescer = AssistantDeltaCoalescer(clock_ms=lambda: clock["ms"])
-    assert coalescer.push("ab") == []
+    long_text = "字" * 200
+    assert coalescer.push(long_text) == []
+    assert coalescer.push("para\n\nmore") == []
     clock["ms"] = 120
-    assert coalescer.push("c") == []
+    assert coalescer.flush_if_stale() is None
+    clock["ms"] = 999
+    assert coalescer.flush_if_stale() is None
     clock["ms"] = 1000
-    assert coalescer.push("d") == ["abcd"]
-    assert coalescer.push("para\n\nmore") == ["para\n\n"]
-    assert coalescer.flush() == "more"
+    assert coalescer.flush_if_stale() == long_text + "para\n\nmore"
 
 
 # @lat: [[architecture/skill-agent#Hermes Engine Adapter#Runtime Semantic Event Fidelity]]

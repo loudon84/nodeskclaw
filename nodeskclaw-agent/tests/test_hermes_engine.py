@@ -841,7 +841,7 @@ async def test_execute_hermes_uses_normalizer_not_chat_completion_parser():
         ]
     messages = [e for e in events if e["event_type"] == "assistant.message"]
     assert "".join(e["payload"]["text"] for e in messages) == "一二三四五六七八九十" * 9
-    assert len(messages) < 90
+    assert len(messages) == 1
 
 
 @pytest.mark.asyncio
