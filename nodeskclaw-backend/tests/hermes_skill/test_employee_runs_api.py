@@ -624,6 +624,15 @@ def test_public_run_event_projects_semantic_types_and_drops_unknown():
     ) is None
     assert _public_run_event(
         {
+            "event_type": "internal.runtime.trace",
+            "event_seq": 100,
+            "timestamp": "2026-08-31T00:00:07Z",
+            "payload": {"runtime_event_type": "subagent.started", "category": "subagent"},
+        },
+        "run-1",
+    ) is None
+    assert _public_run_event(
+        {
             "event_type": "tool.call",
             "event_seq": 3,
             "timestamp": "2026-08-31T00:00:01Z",

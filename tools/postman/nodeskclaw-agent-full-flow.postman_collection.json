@@ -195,6 +195,26 @@
       "value": "hermes_marketing__park-waiting-approval"
     },
     {
+      "key": "rm16_subagent_tool_name",
+      "value": ""
+    },
+    {
+      "key": "rm16_running_tool_name",
+      "value": ""
+    },
+    {
+      "key": "rm16_old_runtime_tool_name",
+      "value": ""
+    },
+    {
+      "key": "rm16_running_prompt",
+      "value": "请持续执行当前任务，完成前保持运行，不要请求审批，不要立即结束。"
+    },
+    {
+      "key": "rm16_bound_instance_id",
+      "value": ""
+    },
+    {
       "key": "rm16_plain_prompt",
       "value": "请只用中文直接回答：知识库检索是什么？不要调用任何工具。"
     },
@@ -2446,7 +2466,7 @@
                     }
                   ]
                 },
-                "description": "南向 Hermes Native 版本地板。期望 HTTP 200，version >= v2026.8.31。这是真正打到 Hermes 的请求。PC-09 无旧 Runtime 时不要用 ChatCompletion 当事件源。"
+                "description": "可选连通性检查，不是某次 Run 的 Runtime 事实源。正式场景必须用 74 的 snapshot.runtime_policy.credential_lease_ref 解析 HermesAgentInstance，再打该实例的 API_SERVER。禁止用集合变量 hermes_base_url 或写死 29401 当作本次 Run 的路由。"
               },
               "event": [
                 {
@@ -2540,7 +2560,7 @@
                   "mode": "raw",
                   "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"rm16-list\",\n  \"method\": \"tools/list\",\n  \"params\": {}\n}"
                 },
-                "description": "在 result.tools[].name 中确认 rm16_plain_tool_name / rm16_tool_skill_name / rm16_park_tool_name 都已发布并 MCP 暴露。"
+                "description": "在 result.tools[].name 中确认 rm16_plain_tool_name / rm16_tool_skill_name / rm16_park_tool_name / rm16_subagent_tool_name / rm16_running_tool_name / rm16_old_runtime_tool_name。缺 fixture 不得把对应 PC 记成 PASS。"
               },
               "event": [
                 {
@@ -2552,7 +2572,7 @@
                       "const tools = (((pm.response.json() || {}).result || {}).tools) || [];",
                       "pm.test('tools array', () => pm.expect(tools).to.be.an('array'));",
                       "const names = tools.map((t) => t.name);",
-                      "['rm16_plain_tool_name','rm16_tool_skill_name','rm16_park_tool_name'].forEach((key) => {",
+                      "['rm16_plain_tool_name','rm16_tool_skill_name','rm16_park_tool_name','rm16_subagent_tool_name','rm16_running_tool_name','rm16_old_runtime_tool_name'].forEach((key) => {",
                       "  const want = pm.collectionVariables.get(key);",
                       "  if (want) { pm.test(key + ' in catalog', () => pm.expect(names).to.include(want)); }",
                       "});"
@@ -2649,7 +2669,7 @@
                     }
                   ]
                 },
-                "description": "Agent Event SoT，用集合级 X-Skill-Agent-Token。PC-01：assistant.message > 0，且明显少于 run.progress；无 tool.call / approval.requested / reasoning.summary。PC-02：tool.call 同一 call_id 既有 started/running 又有 completed/failed。PC-03：出现 approval.requested 后把 approval_id 写入变量。"
+                "description": "Agent Event SoT，用集合级 X-Skill-Agent-Token。PC-01：assistant.message > 0，且明显少于 run.progress；无 tool.call / approval.requested / reasoning.summary。PC-02：tool.call 同一 call_id 既有 started/running 又有 completed/failed。PC-03：出现 approval.requested 后把 approval_id 写入变量。PC-07：必须出现 event_type=internal.runtime.trace 且 payload.category=subagent；仅 Public 无泄漏不能过关。"
               },
               "event": [
                 {
@@ -2673,7 +2693,9 @@
                       "  if (aid) pm.collectionVariables.set('rm16_approval_id', String(aid));",
                       "}",
                       "const calls = items.filter((e) => e.event_type === 'tool.call');",
-                      "pm.collectionVariables.set('rm16_tool_call_count', String(calls.length));"
+                      "pm.collectionVariables.set('rm16_tool_call_count', String(calls.length));",
+                      "const traces = items.filter((e) => e.event_type === 'internal.runtime.trace' && e.payload && e.payload.category === 'subagent');",
+                      "pm.collectionVariables.set('rm16_internal_subagent_observed', traces.length ? 'true' : 'false');"
                     ]
                   }
                 }
@@ -2701,7 +2723,7 @@
                     "{{rm16_run_id}}"
                   ]
                 },
-                "description": "内部 Run 视图。保存 attempt_id 供 PC-08 对照 Attempt 数。runtime_run_id 若出现在 snapshot，可写入 rm16_hermes_runtime_run_id；禁止从 Public GET 抄这个字段。"
+                "description": "内部 Run 视图。从 snapshot.runtime_policy.credential_lease_ref 读取 instance_id，这才是本次 Run 绑定的 HermesAgentInstance。禁止用 hermes_base_url / 29401 代替。runtime_run_id 若出现可写入变量，禁止从 Public GET 抄。"
               },
               "event": [
                 {
@@ -2714,6 +2736,9 @@
                       "if (j.attempt_id) pm.collectionVariables.set('rm16_attempt_id', String(j.attempt_id));",
                       "pm.collectionVariables.set('rm16_agent_status', String(j.status || ''));",
                       "const snap = j.snapshot || {};",
+                      "const policy = snap.runtime_policy || {};",
+                      "const lease = policy.credential_lease_ref || snap.credential_lease_ref || {};",
+                      "if (lease.instance_id) pm.collectionVariables.set('rm16_bound_instance_id', String(lease.instance_id));",
                       "const rid = snap.runtime_run_id || (snap.runtime && snap.runtime.run_id) || '';",
                       "if (rid) pm.collectionVariables.set('rm16_hermes_runtime_run_id', String(rid));"
                     ]
@@ -3460,6 +3485,70 @@
           "name": "70h PC-07 / PC-12 Scan",
           "item": [
             {
+              "name": "88 - PC-07 Start subagent run",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Org-Id",
+                    "value": "{{org_id}}"
+                  },
+                  {
+                    "key": "X-Idempotency-Key",
+                    "value": "rm16-{{$guid}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{backend_base_url}}/api/v1/mcp",
+                  "host": [
+                    "{{backend_base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "mcp"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{backend_access_token}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"rm16-call\",\n  \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"{{rm16_subagent_tool_name}}\",\n    \"arguments\": {\"prompt\": \"如需委派内部子代理，请在当前 Run 内完成，不要创建外部 Child Run。\"}\n  }\n}"
+                },
+                "description": "必须填 rm16_subagent_tool_name。完成后看 73 是否出现 internal.runtime.trace，再扫 86。Catalog 没有该工具则 BLOCKED，不得记 PASS。"
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('tools/call HTTP 200', () => pm.response.to.have.status(200));",
+                      "const j = pm.response.json();",
+                      "pm.test('JSON-RPC result present', () => pm.expect(j.result).to.be.an('object'));",
+                      "const sc = (j.result && j.result.structuredContent) || {};",
+                      "pm.test('v1.2.1 accepted has run_id', () => {",
+                      "  pm.expect(sc.run_id).to.be.a('string').and.to.have.lengthOf.at.least(1);",
+                      "});",
+                      "pm.collectionVariables.set('rm16_run_id', sc.run_id);"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
               "name": "86 - PC-07/12 Rescan public GET",
               "request": {
                 "method": "GET",
@@ -3501,18 +3590,83 @@
                       "pm.test('Public GET 200', () => pm.response.to.have.status(200));",
                       "const raw = pm.response.text() || '';",
                       "pm.test('PC-07 no child_session_id', () => pm.expect(raw).to.not.include('child_session_id'));",
-                      "pm.test('PC-07 no subagent.', () => pm.expect(raw).to.not.include('subagent.'));"
+                      "pm.test('PC-07 no subagent.', () => pm.expect(raw).to.not.include('subagent.'));",
+                      "pm.test('PC-07 no internal.runtime.trace', () => pm.expect(raw).to.not.include('internal.runtime.trace'));"
                     ]
                   }
                 }
               ]
             }
           ],
-          "description": "PC-07：单一 Public Run，无 child_session_id / subagent.。PC-12：无 HermesTask 禁止字段。文件夹级脚本已扫 /api/v1/ 响应。"
+          "description": "PC-07：先用 rm16_subagent_tool_name 开 Run，73 必须看到 internal.runtime.trace（category=subagent），86 证明 Public 无泄漏。仅 Public 干净不能过关。PC-12：无 HermesTask 禁止字段。"
         },
         {
           "name": "70i Out-of-band PC-05 / PC-08",
           "item": [
+            {
+              "name": "89 - PC-05/08 Start stable RUNNING run",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Org-Id",
+                    "value": "{{org_id}}"
+                  },
+                  {
+                    "key": "X-Idempotency-Key",
+                    "value": "rm16-{{$guid}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{backend_base_url}}/api/v1/mcp",
+                  "host": [
+                    "{{backend_base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "mcp"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{backend_access_token}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"rm16-call\",\n  \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"{{rm16_running_tool_name}}\",\n    \"arguments\": {\"prompt\": \"{{rm16_running_prompt}}\"}\n  }\n}"
+                },
+                "description": "不要用 park 工具。轮询 72 直到 RUNNING，74 确认 bound instance，再做 Worker kill 或 Hermes restart。太快终态则 fixture 不稳定，不得注入故障。"
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('tools/call HTTP 200', () => pm.response.to.have.status(200));",
+                      "const j = pm.response.json();",
+                      "pm.test('JSON-RPC result present', () => pm.expect(j.result).to.be.an('object'));",
+                      "const sc = (j.result && j.result.structuredContent) || {};",
+                      "pm.test('v1.2.1 accepted has run_id', () => {",
+                      "  pm.expect(sc.run_id).to.be.a('string').and.to.have.lengthOf.at.least(1);",
+                      "});",
+                      "pm.collectionVariables.set('rm16_run_id', sc.run_id);"
+                    ]
+                  }
+                }
+              ]
+            },
             {
               "name": "87 - PC-05/08 Observe public status after host action",
               "request": {
@@ -3561,12 +3715,73 @@
                   }
                 }
               ]
+            },
+            {
+              "name": "90 - PC-09 Start old-runtime skill",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Org-Id",
+                    "value": "{{org_id}}"
+                  },
+                  {
+                    "key": "X-Idempotency-Key",
+                    "value": "rm16-{{$guid}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{backend_base_url}}/api/v1/mcp",
+                  "host": [
+                    "{{backend_base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "mcp"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{backend_access_token}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"rm16-call\",\n  \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"{{rm16_old_runtime_tool_name}}\",\n    \"arguments\": {\"prompt\": \"{{rm16_plain_prompt}}\"}\n  }\n}"
+                },
+                "description": "必须绑定真实旧 HermesAgentInstance（版本 < v2026.8.31）。期望 Public FAILED + RUNTIME_VERSION_UNSUPPORTED，且没有有效 runtime_run_id，禁止 ChatCompletion。没有该 Skill 则 BLOCKED，不得用本地 stub 记 PASS。"
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('tools/call HTTP 200', () => pm.response.to.have.status(200));",
+                      "const j = pm.response.json();",
+                      "pm.test('JSON-RPC result present', () => pm.expect(j.result).to.be.an('object'));",
+                      "const sc = (j.result && j.result.structuredContent) || {};",
+                      "if (sc.run_id) pm.collectionVariables.set('rm16_run_id', sc.run_id);"
+                    ]
+                  }
+                }
+              ]
             }
           ],
-          "description": "Postman 不能杀进程。PC-05：在宿主机杀/重启 Agent :4580 Worker 后轮询 72/73。PC-08：在 Hermes 所在机器重启 :29401 后轮询，期望 FAILED + RUNTIME_INTERRUPTED，Attempt 数不变。缺少重启命令则跳过，Ledger 不得记 PASS。"
+          "description": "Postman 不能杀进程。PC-05/PC-08 必须用 rm16_running_tool_name 开一个稳定 RUNNING 的 Run（不要用 park 工具）。故障前 72 为 RUNNING，74 已绑定实例。PC-05：杀/重启 Agent :4580 Worker。PC-08：按 74 解析出的实际实例重启 Hermes API_SERVER，不得因变量写了 29401 就假设绑定到 29401。PC-09 用 90。缺少命令或旧 Runtime 则跳过，Ledger 不得记 PASS。"
         }
       ],
-      "description": "员工 JWT 公共面 + 真实 Hermes Native 的 RM-16 live 手工复现。本文件夹不是 Hermes 产品验收，也不替代 tools/acceptance/run_rm16_live_conformance.py 的 Ledger 证据。按编号手工 Send，禁止 Collection Runner。PC-05 杀的是 Agent :4580 Worker；PC-08 重启的是 Hermes :29401；二者都不能用 Postman 代替进程操作。操作说明见仓库 reports/live手工执行指导.dmd。公共请求必须用 Bearer backend_access_token，不要继承集合级 X-Skill-Agent-Token。",
+      "description": "员工 JWT 公共面 + 真实 Hermes Native 的 RM-16 live 手工复现。本文件夹不是 Hermes 产品验收，也不替代 tools/acceptance/run_rm16_live_conformance.py 的 Ledger 证据。按编号手工 Send，禁止 Collection Runner。每次 Run 的 Runtime 以 74 snapshot + credential lease 为准，hermes_base_url 不是权威路由。PC-05 杀的是 Agent :4580 Worker；PC-08 重启的是该 Run 绑定的 Hermes API_SERVER。PC-09 无真实旧 Runtime 不得记 PASS。操作说明见仓库 reports/live手工执行指导.dmd。公共请求必须用 Bearer backend_access_token，不要继承集合级 X-Skill-Agent-Token。",
       "event": [
         {
           "listen": "test",

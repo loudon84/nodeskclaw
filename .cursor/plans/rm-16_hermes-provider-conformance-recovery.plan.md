@@ -7,6 +7,18 @@ todos:
     status: completed
   - id: t2-pc01-pc09-live-suite
     content: "T2 — 组合 PC-01 至 PC-09 live 证据套件 [C02, C03, C07, C08, C09, C10, C17, C18]"
+    status: pending
+  - id: p0-1-bound-runtime
+    content: "P0-1 — Run-Bound HermesAgentInstance 解析 [C19]"
+    status: completed
+  - id: p0-2-pc09-stub-ban
+    content: "P0-2 — PC-09 禁止 Stub 正式 PASS [C20]"
+    status: completed
+  - id: p0-3-internal-trace
+    content: "P0-3 — persist internal.runtime.trace + PC-07 真 delegation [C21]"
+    status: completed
+  - id: p0-4-stable-running
+    content: "P0-4 — PC-05/08 stable RUNNING fixture [C22]"
     status: completed
 isProject: false
 plan_contract: smc.plan.v3.4
@@ -34,18 +46,25 @@ Canonical 落盘路径：[`.cursor/plans/rm-16_hermes-provider-conformance-recov
 
 [Approved PRD](../../docs_agent/prd-v1.6.14-hermes-provider-conformance-recovery.md)
 
+P0 修正子 PRD（冲突时以本文件为准）：[RM-16 P0 Live Conformance Correction](../../reports/PRD-RM16-P0-Live-Conformance-Correction-v1.6.14-p0.1.md)
+
+禁止创建第二份 RM-16 Plan。T1 生产闭合保留；T2 live 套件在 P0-1～P0-4 落地前不得视为 completed。P0 完成后仍须重新跑正式 PC-01～PC-09 live，不得把 RM-16 标 DONE。
+
 ## Scope
 
 - In: 真实 Hermes `>= v2026.8.31` 上 PC-01 至 PC-09 可复跑证据；把 RM-15 live 未闭合的 `/approval` 接受与 cancel 合同终态补上；Worker kill gap 记在既有 Attempt；组合复用 RM-12..15 runner；RM-02 Revalidation 证据包；live PC-12 隔离扫描。
 - Out: PC-10 至 PC-14 结项；RM-10 全量指标仓；改写 v1.2.1；Backend 员工 Native 客户端；ChatCompletion parser；拆除 HermesTaskWorker；上游 `tool_call_id` PR；Work 前端；MCP/Knowledge 审批；合并 RM-13 至 RM-16；把 RM-02 代码重做一遍。
 - Production Owner inherited from PRD: Agent Hermes Adapter + Backend Skill Run API（C04）；Agent Run 域 + Adapter + Backend Skill Run API（C05）；Agent Worker + Adapter（C06）；Acceptance tools + Adapter（C02, C03, C07, C08, C09, C10, C17）；Backend Skill Run API 回归（C18）；KEEP Native/SoT/Coalescer/合同（C01, C11–C16）。
 
-Plan 级冻结（不改 PRD 语义）:
+Plan 级冻结（P0 子 PRD 冲突时以 P0 为准）:
 
-- 复用 `run_rm13_live_native.py` / `run_rm14_live_semantic.py` / `run_rm15_live_control.py` 的环境、`user_jwt`、`no_proxy`（含 `192.168.0.0/16`）。审批驻留工具显式 `RM15_TOOL_NAME=hermes_marketing__park-waiting-approval`。
+- 复用 `run_rm13_live_native.py` / `run_rm14_live_semantic.py` / `run_rm15_live_control.py` 的环境、`user_jwt`、`no_proxy`（含 `192.168.0.0/16`）。审批驻留工具显式 `RM15_TOOL_NAME=hermes_marketing__park-waiting-approval`，**仅 PC-03 / PC-04**。
+- PC-01～PC-08 的 Runtime 事实源是该 Run 的 Snapshot `credential_lease_ref` + Backend mint，禁止 `RM13_HERMES_BASE_URL` / 写死 29401 作为路由。
 - PC-03 出口必须观察到 Native `POST /v1/runs/{id}/approval` 被 Hermes 接受，不得以 HTTP 非 500 代替。
 - PC-04 出口必须出现合同终态事件，不得停在 `CANCELLING`。
-- PC-09 优先真实旧 Runtime；若不可得，只允许 Capability Probe 版本桩，禁止 OpenAI ChatCompletion mock 当 Event Source。
+- PC-07 必须先在 Agent SoT 观察到 `internal.runtime.trace`（真实 subagent），再证明 Public 无泄漏。
+- PC-05 / PC-08 必须使用 `RM16_RUNNING_TOOL_NAME` 稳定 RUNNING fixture，禁止 park 工具。
+- PC-09 只有 Backend 绑定的真实旧 Runtime 才能 PASS；`_OldRuntimeStub` / probe-only stub 禁止正式 PASS。缺旧 Runtime 则 BLOCKED。
 - Worker gap 写入既有 Attempt / 可被 Public 剥离的内部事件，不新建 Metrics Store。
 
 ```mermaid
@@ -88,9 +107,9 @@ flowchart LR
 | AC-05 | AC | 运行中 cancel 调用 Hermes /stop，随后出现合同终态 CANCELLED 或等价失败事件，而不是只停在 CANCELLING；stop 404 走 reconciliation。 | LIFECYCLE | C05 | T1 | V05 | REAL_PROCESS | yes |
 | AC-06 | AC | Runtime 执行中 kill/restart NodeSKClaw Worker：旧 Attempt fencing 生效、GET status reconcile、无重复 Public terminal、Attempt 上可查询 gap 记录。 | LIFECYCLE | C06 | T1 | V06 | FAULT_INJECTION | yes |
 | AC-07 | AC | 长中文输出 Event 数量受 coalescing 控制，最终文本无丢失无重复且顺序正确。 | BEHAVIOR | C07 | T2 | V07 | REAL_PROCESS | yes |
-| AC-08 | AC | Hermes subagent 不产生 Public Child Run，敏感字段不进 Public，Runtime terminal 仍落在当前 Attempt。 | SECURITY | C08 | T2 | V08 | REAL_PROCESS | yes |
+| AC-08 | AC | Hermes subagent 必须先在 Agent Internal 留下 `internal.runtime.trace`，再证明不产生 Public Child Run，敏感字段不进 Public，Runtime terminal 仍落在当前 Attempt。 | SECURITY | C08; C21 | T2; P0-3 | V08 | REAL_PROCESS | yes |
 | AC-09 | AC | Hermes Runtime 重启得到 interrupted → Public/Agent FAILED + RUNTIME_INTERRUPTED，无自动新 Attempt；允许用户新提示词复用同一 runtime_session_id（该字段不进 Public）。 | LIFECYCLE | C09 | T2 | V09 | FAULT_INJECTION | yes |
-| AC-10 | AC | 指向低于 v2026.8.31 的 Runtime 时 Capability Probe 失败关闭 RUNTIME_VERSION_UNSUPPORTED，生产路径无 ChatCompletion。 | NEGATIVE | C10 | T2 | V10 | REAL_PROCESS | yes |
+| AC-10 | AC | 指向低于 v2026.8.31 的 **Backend-bound 真实旧 Runtime** 时 Capability Probe 失败关闭 RUNTIME_VERSION_UNSUPPORTED，生产路径无 ChatCompletion；stub 不得 PASS。 | NEGATIVE | C10; C20 | T2; P0-2 | V10 | REAL_PROCESS | yes |
 | AC-11 | AC | 不新建 Adapter、Event Store、Worker 状态机或 Coalescer。 | SCOPE | C01; C11; C12 | - | V11 | DIFF_SCOPE | yes |
 | AC-12 | AC | contracts/skill-run/v1.2.1/ 零修改。 | CONTRACT | C13 | - | V12 | CONTRACT_RELEASE | yes |
 | AC-13 | AC | 不恢复 ChatCompletion parser；Backend 不成为员工 Native /v1/runs 客户端。 | SCOPE | C14; C15 | - | V13 | DIFF_SCOPE | yes |
@@ -132,9 +151,9 @@ flowchart LR
 | V05 | INTEGRATION | `python tools/acceptance/run_rm16_live_conformance.py --scenario pc04` | `/stop` then contract terminal CANCELLED or failed; not stuck CANCELLING | HTTP 500 or CANCELLING-only PASS fails | LOCAL_TRANSIENT | Hermes Runtime v2026.8.31 or newer | yes |
 | V06 | INTEGRATION | `python tools/acceptance/run_rm16_live_conformance.py --scenario pc05` | Worker kill fences old Attempt; GET reconcile; one Public terminal; queryable gap | duplicate terminal or auto new Hermes Run fails | LOCAL_TRANSIENT | Hermes Runtime v2026.8.31 or newer | yes |
 | V07 | INTEGRATION | `python tools/acceptance/run_rm16_live_conformance.py --scenario pc06` | long Chinese coalesced; no lost/dup/out-of-order text | one-or-two-char events PASS fails | LOCAL_TRANSIENT | Hermes Runtime v2026.8.31 or newer | yes |
-| V08 | INTEGRATION | `python tools/acceptance/run_rm16_live_conformance.py --scenario pc07` | single Public Run; no child run; no sensitive leak | Public subagent or child_session_id fails | LOCAL_TRANSIENT | Hermes Runtime v2026.8.31 or newer | yes |
-| V09 | INTEGRATION | `python tools/acceptance/run_rm16_live_conformance.py --scenario pc08` | interrupted → FAILED RUNTIME_INTERRUPTED; no auto Attempt | recover QUEUED new Hermes Run fails | LOCAL_TRANSIENT | Hermes Runtime v2026.8.31 or newer | yes |
-| V10 | INTEGRATION | `python tools/acceptance/run_rm16_live_conformance.py --scenario pc09` | probe fail-closed RUNTIME_VERSION_UNSUPPORTED; no ChatCompletion | ChatCompletion fallback fails | LOCAL_TRANSIENT | Hermes Runtime older than v2026.8.31 or probe-only version stub | yes |
+| V08 | INTEGRATION | `python tools/acceptance/run_rm16_live_conformance.py --scenario pc07` | Agent SoT `internal.runtime.trace` + Public 无 child/subagent 泄漏 + runtime_binding_verified | 仅 Public 无泄漏或无真实 delegation 不得 PASS | LOCAL_TRANSIENT | Hermes Runtime v2026.8.31 or newer | yes |
+| V09 | INTEGRATION | `python tools/acceptance/run_rm16_live_conformance.py --scenario pc08` | stable RUNNING fixture → bound instance restart → interrupted → FAILED RUNTIME_INTERRUPTED; no auto Attempt | recover QUEUED new Hermes Run or park-tool fixture fails | LOCAL_TRANSIENT | Hermes Runtime v2026.8.31 or newer | yes |
+| V10 | INTEGRATION | `python tools/acceptance/run_rm16_live_conformance.py --scenario pc09` | real_bound_old_runtime + runtime_binding_verified + RUNTIME_VERSION_UNSUPPORTED; no ChatCompletion | stub / probe-only PASS fails | LOCAL_TRANSIENT | Hermes Runtime older than v2026.8.31 bound by Backend | yes |
 | V11 | UNIT | `git diff --name-only 1319cf1fd5a56613ca96b8e026c446d10c9b676c` | no new Adapter/Event Store/Worker state machine/Coalescer module | second hermes engine or event store file fails | REPO_SUMMARY | local | yes |
 | V12 | UNIT | `git diff --exit-code 1319cf1fd5a56613ca96b8e026c446d10c9b676c -- contracts/skill-run/v1.2.1` | zero contract diff | schema edit fails | REPO_SUMMARY | local | yes |
 | V13 | UNIT | `uv --directory nodeskclaw-agent run pytest tests/test_hermes_engine.py -q -k chat` plus Backend diff | parser stays removed; Backend has no employee Native `/v1/runs` client | restoring `_emit_semantic_from_choice` or Backend Native employee client fails | REPO_SUMMARY | local | yes |
@@ -159,14 +178,14 @@ flowchart LR
 - If cancel still HTTP 500 or stuck CANCELLING: `run_service.py#cancel_run` and `runs.py#_handle_agent_error_response`
 - If Worker kill duplicates terminal: `worker.py#next_status_after_stale_lease`
 - If long Chinese still one-char events: `assistant_delta_coalescer.py#AssistantDeltaCoalescer`
-- If PC-09 has no old Runtime: only a probe-only version stub, never ChatCompletion
+- If PC-09 has no old Runtime: BLOCKED `RM16_OLD_RUNTIME_UNAVAILABLE`; never stub PASS
 - Otherwise: do not read
 
 ## Change Matrix
 
 | Change ID | File / Symbol | Kind | Action | Existing Owner | Todo Owner | Target State | PRD Capability | New File? |
 |---|---|---|---|---|---|---|---|---|
-| C01 | `nodeskclaw-agent/app/services/hermes_engine.py#execute_hermes_run` | PROD | KEEP | Agent Hermes Adapter | - | Native Bridge unchanged | Native Bridge / Binding / Event SoT | no |
+| C01 | `nodeskclaw-agent/app/services/hermes_engine.py#execute_hermes_run` | PROD | MODIFY | Agent Hermes Adapter | P0-3 | ingest 后 drain `internal.runtime.trace` | Native Bridge / Binding / Event SoT | no |
 | C02 | `tools/acceptance/run_rm16_live_conformance.py` | TEST | ADD | Acceptance tools | T2 | PC-01 live plain text | PC-01 Plain Response live | yes |
 | C03 | `tools/acceptance/run_rm16_live_conformance.py` | TEST | ADD | Acceptance tools | T2 | PC-02 live tool.call | PC-02 Tool Run live | yes |
 | C04 | `nodeskclaw-agent/app/services/hermes_engine.py#respond_runtime_approval` | PROD | MODIFY | Agent Hermes Adapter | T1 | Hermes accepts once/deny | PC-03 Approval southbound live | no |
@@ -178,9 +197,9 @@ flowchart LR
 | C06 | `nodeskclaw-agent/app/services/worker.py#RunWorker#_recover_stale_runs` | PROD | MODIFY | Agent Worker | T1 | queryable Worker restart gap | PC-05 Worker restart live + gap | no |
 | C06 | `nodeskclaw-agent/tests/test_worker.py` | TEST | MODIFY | Agent Worker tests | T1 | gap + fencing oracle | PC-05 Worker restart live + gap | no |
 | C07 | `tools/acceptance/run_rm16_live_conformance.py` | TEST | ADD | Acceptance tools | T2 | PC-06 long Chinese live | PC-06 Long Chinese coalescing live | yes |
-| C08 | `tools/acceptance/run_rm16_live_conformance.py` | TEST | ADD | Acceptance tools | T2 | PC-07 single Public Run | PC-07 Delegation isolation live | yes |
-| C09 | `tools/acceptance/run_rm16_live_conformance.py` | TEST | ADD | Acceptance tools | T2 | PC-08 interrupted live | PC-08 Hermes restart interrupted live | yes |
-| C10 | `tools/acceptance/run_rm16_live_conformance.py` | TEST | ADD | Acceptance tools | T2 | PC-09 version floor live | PC-09 Version floor live | yes |
+| C08 | `tools/acceptance/run_rm16_live_conformance.py` | TEST | MODIFY | Acceptance tools | T2; P0-3 | PC-07 真 delegation + Public 隔离 | PC-07 Delegation isolation live | yes |
+| C09 | `tools/acceptance/run_rm16_live_conformance.py` | TEST | MODIFY | Acceptance tools | T2; P0-4 | PC-08 interrupted live on stable RUNNING | PC-08 Hermes restart interrupted live | yes |
+| C10 | `tools/acceptance/run_rm16_live_conformance.py` | TEST | MODIFY | Acceptance tools | T2; P0-2 | PC-09 仅 real_bound_old_runtime | PC-09 Version floor live | yes |
 | C11 | `nodeskclaw-agent/app/services/worker.py#next_status_after_stale_lease` | PROD | KEEP | Agent Worker | - | no auto QUEUED waiting/interrupted | Worker stale-lease fencing | no |
 | C12 | `nodeskclaw-agent/app/services/assistant_delta_coalescer.py#AssistantDeltaCoalescer` | PROD | KEEP | Agent Hermes Adapter | - | existing coalescer only | Coalescer / Normalizer / dual-track call_id | no |
 | C13 | `contracts/skill-run/v1.2.1/` | PROD | KEEP | Contract Package | - | bytes unchanged | Public v1.2.1 | no |
@@ -190,6 +209,10 @@ flowchart LR
 | C17 | `tools/acceptance/run_rm16_live_conformance.py` | TEST | ADD | Acceptance tools | T2 | RM-02 revalidation package | RM-02 Provider Conformance 再验证包 | yes |
 | C18 | `nodeskclaw-backend/tests/hermes_skill/test_pc12_pc13_projection_regression.py` | TEST | KEEP | Skill Run API regression | - | unit PC-12 remains | PC-12 公共面隔离回归 | no |
 | C18 | `tools/acceptance/run_rm16_live_conformance.py` | TEST | ADD | Acceptance tools | T2 | live PC-12 public-face scan | PC-12 公共面隔离回归 | yes |
+| C19 | `tools/acceptance/run_rm16_live_conformance.py#resolve_bound_runtime` | TEST | ADD | Acceptance tools | P0-1 | Run-Bound HermesAgentInstance | P0 Run-bound Runtime | no |
+| C20 | `tools/acceptance/run_rm16_live_conformance.py#run_pc09` | TEST | MODIFY | Acceptance tools | P0-2 | stub 禁止正式 PASS | P0 PC-09 stub ban | no |
+| C21 | `nodeskclaw-agent/app/services/native_event_normalizer.py#drain_internal_traces` | PROD | MODIFY | Agent Hermes Adapter | P0-3 | 最小 internal.runtime.trace | P0 PC-07 delegation fact | no |
+| C22 | `tools/acceptance/run_rm16_live_conformance.py#start_stable_running_run` | TEST | ADD | Acceptance tools | P0-4 | PC-05/08 stable RUNNING | P0 stable RUNNING fixture | no |
 
 ## Implementation Decisions
 
@@ -201,9 +224,9 @@ flowchart LR
 | C02 | MINIMAL_NEW | Coalescer EXISTS; live plain text missing | One live runner scenario; do not replace Coalescer |
 | C03 | MINIMAL_NEW | Normalizer EXISTS; live tool missing | Same runner; dual-track call_id stays |
 | C07 | MINIMAL_NEW | same Coalescer; RM-14 live had zero assistant.message | Same runner long-Chinese scenario |
-| C08 | MINIMAL_NEW | Internal Trace EXISTS | Same runner subagent scenario |
-| C09 | MINIMAL_NEW | interrupted mapping EXISTS | Same runner Hermes restart scenario |
-| C10 | MINIMAL_NEW | version probe EXISTS | Same runner old-runtime or probe-only stub |
+| C08 | MINIMAL_NEW | Internal Trace EXISTS；须持久化最小 subagent marker | drain_internal_traces；不新增 Event Store |
+| C09 | MINIMAL_NEW | interrupted mapping EXISTS | Same runner Hermes restart on stable RUNNING fixture |
+| C10 | MINIMAL_NEW | version probe EXISTS | Same runner old-runtime Skill；缺则 BLOCKED，禁止 stub PASS |
 | C17 | MINIMAL_NEW | RM-02 needs revalidation evidence, not a new Store | Runner summary package; independent Roadmap update later |
 | C18 | REUSE_EXISTING | PC-12 tests exist | Live scan in the new runner; keep unit tests |
 
@@ -212,7 +235,11 @@ flowchart LR
 | Todo | Owns Changes | Writes | Reads | Depends On | Parallel Safe |
 |---|---|---|---|---|---|
 | T1 | C04; C05; C06 | `nodeskclaw-agent/app/services/hermes_engine.py#respond_runtime_approval`<br>`nodeskclaw-agent/app/services/run_service.py#approve_run`<br>`nodeskclaw-agent/tests/test_run_service.py`<br>`nodeskclaw-agent/app/services/run_service.py#cancel_run`<br>`nodeskclaw-backend/app/api/runs.py#cancel_run`<br>`nodeskclaw-backend/tests/hermes_skill/test_employee_runs_api.py`<br>`nodeskclaw-agent/app/services/worker.py#RunWorker#_recover_stale_runs`<br>`nodeskclaw-agent/tests/test_worker.py` | `nodeskclaw-agent/app/services/hermes_engine.py#_stop_runtime`<br>`nodeskclaw-agent/app/services/worker.py#next_status_after_stale_lease`<br>`nodeskclaw-agent/app/services/run_service.py#aggregate_run_terminal`<br>`nodeskclaw-backend/app/api/runs.py#_handle_agent_error_response`<br>`tools/acceptance/run_rm15_live_control.py#run_live` | - | no |
-| T2 | C02; C03; C07; C08; C09; C10; C17; C18 | `tools/acceptance/run_rm16_live_conformance.py` | `tools/acceptance/run_rm13_live_native.py#run_live`<br>`tools/acceptance/run_rm14_live_semantic.py#run_live`<br>`tools/acceptance/run_rm15_live_control.py#run_live`<br>`nodeskclaw-agent/app/services/assistant_delta_coalescer.py#AssistantDeltaCoalescer`<br>`nodeskclaw-agent/app/services/native_event_normalizer.py#normalize_native_event`<br>`nodeskclaw-backend/tests/hermes_skill/test_pc12_pc13_projection_regression.py` | T1 | no |
+| T2 | C02; C03; C07; C08; C09; C10; C17; C18 | `tools/acceptance/run_rm16_live_conformance.py` | `tools/acceptance/run_rm13_live_native.py#run_live`<br>`tools/acceptance/run_rm14_live_semantic.py#run_live`<br>`tools/acceptance/run_rm15_live_control.py#run_live`<br>`nodeskclaw-agent/app/services/assistant_delta_coalescer.py#AssistantDeltaCoalescer`<br>`nodeskclaw-agent/app/services/native_event_normalizer.py#normalize_native_event`<br>`nodeskclaw-backend/tests/hermes_skill/test_pc12_pc13_projection_regression.py` | T1; P0-1; P0-2; P0-3; P0-4 | no |
+| P0-1 | C19 | `tools/acceptance/run_rm16_live_conformance.py#resolve_bound_runtime` | `nodeskclaw-backend/app/api/internal_skill_agent.py#mint_credential_lease`<br>`nodeskclaw-agent/app/api/internal_runs.py#get_internal_run` | T1 | no |
+| P0-2 | C20 | `tools/acceptance/run_rm16_live_conformance.py#run_pc09` | `tools/acceptance/run_rm16_live_conformance.py#resolve_bound_runtime` | P0-1 | no |
+| P0-3 | C01; C21 | `nodeskclaw-agent/app/services/native_event_normalizer.py#drain_internal_traces`<br>`nodeskclaw-agent/app/services/hermes_engine.py#execute_hermes_run`<br>`nodeskclaw-agent/tests/test_native_event_normalizer.py`<br>`nodeskclaw-agent/tests/test_hermes_engine.py`<br>`nodeskclaw-backend/tests/hermes_skill/test_employee_runs_api.py` | `nodeskclaw-agent/app/services/worker.py#RunWorker` | T1 | no |
+| P0-4 | C22 | `tools/acceptance/run_rm16_live_conformance.py#start_stable_running_run` | `tools/acceptance/run_rm16_live_conformance.py#resolve_bound_runtime` | P0-1 | no |
 
 ## Integration Hotspots
 
@@ -299,20 +326,83 @@ One live runner reuses RM-12..15 env and proves PC-01, PC-02, PC-06, PC-07, PC-0
 **Changes**
 - Add `tools/acceptance/run_rm16_live_conformance.py` that imports/reuses existing live helpers; do not replace RM-13/14/15 runners.
 - Scenarios: plain text, real tool, long Chinese, subagent isolation, Hermes restart interrupted, version floor, plus approve/deny/cancel/worker-kill after T1.
-- Record `hermes_runtime_version` and `auth_type=user_jwt`. Approval tool stays `hermes_marketing__park-waiting-approval`.
-- PC-09 may use a probe-only old-version stub if a real old Runtime is unavailable; never ChatCompletion as Event Source.
+- Record `hermes_runtime_version` and `auth_type=user_jwt` from the **bound** Runtime. Approval tool stays `hermes_marketing__park-waiting-approval` for PC-03/PC-04 only.
+- PC-09 PASS only from `real_bound_old_runtime` + `runtime_binding_verified`; missing old Runtime is BLOCKED, never stub PASS.
+- PC-07 requires Agent Internal `internal.runtime.trace`; Public-only isolation cannot PASS.
+- PC-05/PC-08 use `RM16_RUNNING_TOOL_NAME` stable RUNNING fixture.
 - Emit a package that RM-02 can cite; do not change RM-02 Roadmap status in the implementation commit.
 
 **Stop conditions**
-- [ ] PC-01..09 live evidence exists with hermes_runtime_version
+- [ ] PC-01..09 live evidence exists with bound runtime_binding_verified and hermes_runtime_version
 - [ ] mock-only cannot close the suite
+- [ ] PC-09 stub cannot close rm02-package
 - [ ] PC-12 scan clean
 - [ ] RM-02 status is not rewritten in the same commit as implementation
 
 **Triggered reads**
 - If long Chinese still fragments: `AssistantDeltaCoalescer`
-- If PC-09 has no old Runtime: probe-only version stub only
+- If PC-09 has no old Runtime: BLOCKED, do not stub
 - Otherwise: do not read
+
+## Todo P0-1 — Run-Bound HermesAgentInstance
+
+**Owns Changes**
+- C19
+
+**Goal**
+Each live scenario resolves Runtime from the Run snapshot credential lease, never from global Hermes URL.
+
+**Immediate anchors**
+- `tools/acceptance/run_rm16_live_conformance.py#resolve_bound_runtime`
+- `nodeskclaw-backend/app/api/internal_skill_agent.py#mint_credential_lease`
+
+**Changes**
+- Add BoundRuntimeContext and fail-closed mint/probe helpers.
+- All PC-01..08 Runtime GET/approval/stop observation uses the bound context.
+
+**Stop conditions**
+- [x] env_ctx no longer requires RM13_HERMES_BASE_URL as route
+- [x] Evidence records runtime_binding_verified, instance id, URL hash, parsed port
+
+## Todo P0-2 — PC-09 stub ban
+
+**Owns Changes**
+- C20
+
+**Goal**
+Formal PC-09 PASS only from a Backend-bound old Runtime Skill.
+
+**Stop conditions**
+- [x] `_OldRuntimeStub` removed from live runner
+- [x] missing RM16_OLD_RUNTIME_TOOL_NAME is BLOCKED
+- [x] rm02-package rejects non real_bound_old_runtime
+
+## Todo P0-3 — internal.runtime.trace
+
+**Owns Changes**
+- C01
+- C21
+
+**Goal**
+Persist minimal subagent traces to existing run_events and keep them off Public.
+
+**Stop conditions**
+- [x] drain_internal_traces yields only runtime_event_type + category
+- [x] execute_hermes_run yields traces to Worker
+- [x] `_public_run_event(internal.runtime.trace) is None`
+
+## Todo P0-4 — stable RUNNING fixture
+
+**Owns Changes**
+- C22
+
+**Goal**
+PC-05/PC-08 fault injection only after Public RUNNING and bound Hermes running/alive.
+
+**Stop conditions**
+- [x] park tool not used by PC-05/PC-08
+- [x] unstable fixture BLOCKED
+- [x] PC-08 restart blocked on instance mismatch
 
 ## Verification
 

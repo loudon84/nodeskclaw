@@ -1,0 +1,10 @@
+{
+  "schema": "smc.rm16.live-conformance.v1",
+  "policy": "REAL_PROCESS",
+  "result": "BLOCKED",
+  "scenario": "pc05",
+  "auth_type": "user_jwt",
+  "blocker": "REAL_HERMES_RUNTIME_UNAVAILABLE",
+  "message": "missing environment variable: RM13_BACKEND_BASE_URL, RM12_BACKEND_BASE_URL",
+  "timestamp": "2026-09-05T13:52:23.921055Z"
+}

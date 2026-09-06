@@ -1,0 +1,31 @@
+{
+  "schema": "smc.rm16.live-conformance.v1",
+  "policy": "REAL_PROCESS",
+  "result": "PASS",
+  "scenario": "pc07",
+  "auth_type": "user_jwt",
+  "timestamp": "2026-09-05T14:38:18.848911Z",
+  "reused_runners": [
+    "tools/acceptance/run_rm12_live_conformance.py",
+    "tools/acceptance/run_rm13_live_native.py",
+    "tools/acceptance/run_rm14_live_semantic.py",
+    "tools/acceptance/run_rm15_live_control.py"
+  ],
+  "chat_completions_observed": false,
+  "native_paths_observed": [
+    "/v1/capabilities",
+    "/health"
+  ],
+  "public_leaks": [],
+  "public_runtime_identity_leak": false,
+  "hermes_runtime_version": "v2026.8.31",
+  "observed_version": "0.21.0",
+  "version_source": "health",
+  "tool_name": "hermes_marketing__customer-profiling",
+  "run_id": "6ee5a65c-b8e7-4c5f-a1ae-abac876149f8",
+  "attempt_id": "d763409e-c623-4b10-bf2d-db8909fd725c",
+  "generation": 1,
+  "runtime_run_id_hash": "sha256:4f28a180d8e859f0a4cad239d9972a1f6e4436ab46f7bd31bf549288330e1780",
+  "public_status": "COMPLETED",
+  "child_or_subagent_public": false
+}

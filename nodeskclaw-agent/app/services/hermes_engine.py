@@ -530,6 +530,12 @@ def _terminal_from_status(status: str, error_code: str | None) -> dict[str, Any]
     return None
 
 
+def _emit_ingested(normalizer: NativeEventNormalizer, chunk: dict[str, Any]) -> list[dict[str, Any]]:
+    events = list(normalizer.ingest(chunk))
+    events.extend(normalizer.drain_internal_traces())
+    return events
+
+
 async def execute_hermes_run(
     *,
     tool_name: str,
@@ -856,7 +862,7 @@ async def execute_hermes_run(
                         if not isinstance(chunk, dict):
                             continue
                         leave_stream = False
-                        for semantic in normalizer.ingest(chunk):
+                        for semantic in _emit_ingested(normalizer, chunk):
                             yield semantic
                             if semantic.get("event_type") == "approval.requested":
                                 saw_approval = True
@@ -900,7 +906,7 @@ async def execute_hermes_run(
                 return
             while status in ALIVE_STATUSES:
                 if _is_wait_status(status) and not saw_approval:
-                    for semantic in normalizer.ingest(_approval_request_chunk(data, runtime_run_id)):
+                    for semantic in _emit_ingested(normalizer, _approval_request_chunk(data, runtime_run_id)):
                         yield semantic
                         if semantic.get("event_type") == "approval.requested":
                             saw_approval = True

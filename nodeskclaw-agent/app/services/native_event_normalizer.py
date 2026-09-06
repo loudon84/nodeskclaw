@@ -128,6 +128,7 @@ class NativeEventNormalizer:
         self._open: list[dict[str, Any]] = []
         self.internal_traces: list[dict[str, Any]] = []
         self.observability_gaps: list[dict[str, Any]] = []
+        self._drained_trace_count = 0
 
     def ingest(self, data: dict[str, Any]) -> list[dict[str, Any]]:
         if "choices" in data or (
@@ -183,6 +184,24 @@ class NativeEventNormalizer:
                 return [self._sot("clarify.requested", clarify, "clarify")]
             return []
         return []
+
+    # @lat: [[architecture/skill-agent#Hermes Engine Adapter#Runtime Semantic Event Fidelity]]
+    def drain_internal_traces(self) -> list[dict[str, Any]]:
+        pending = self.internal_traces[self._drained_trace_count :]
+        self._drained_trace_count = len(self.internal_traces)
+        events: list[dict[str, Any]] = []
+        for trace in pending:
+            event_type = str(trace.get("event_type") or "")
+            if not event_type.startswith("subagent."):
+                continue
+            events.append(
+                self._sot(
+                    "internal.runtime.trace",
+                    {"runtime_event_type": event_type, "category": "subagent"},
+                    "runtime-trace",
+                )
+            )
+        return events
 
     def flush_due_to_latency(self) -> list[dict[str, Any]]:
         text = self.coalescer.flush_if_stale()

@@ -756,6 +756,42 @@ async def test_execute_hermes_never_calls_chat_completions():
 
 
 @pytest.mark.asyncio
+async def test_execute_hermes_yields_internal_runtime_trace_for_subagent():
+    client = _native_client(
+        event_lines=[
+            "data: "
+            + json.dumps(
+                {
+                    "type": "subagent.started",
+                    "payload": {"child_session_id": "secret-child", "cost": 1.2},
+                }
+            ),
+            "data: " + json.dumps({"type": "assistant.message", "text": "ok"}),
+            "data: [DONE]",
+        ]
+    )
+    with patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client):
+        events = [
+            event
+            async for event in execute_hermes_run(
+                tool_name="foo",
+                arguments={"prompt": "hi"},
+                route_snapshot={"gateway_url": "http://hermes:8642"},
+                run_id="run-sub",
+                attempt_id="att-sub",
+            )
+        ]
+    traces = [event for event in events if event.get("event_type") == "internal.runtime.trace"]
+    assert traces
+    assert traces[0]["payload"] == {"runtime_event_type": "subagent.started", "category": "subagent"}
+    assert traces[0]["source"] == "agent"
+    dumped = json.dumps(traces)
+    assert "child_session_id" not in dumped
+    assert "secret-child" not in dumped
+    assert "cost" not in dumped
+
+
+@pytest.mark.asyncio
 async def test_execute_hermes_progress_has_canonical_phase():
     client = _native_client()
     with patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client):

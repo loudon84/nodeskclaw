@@ -1,0 +1,35 @@
+{
+  "schema": "smc.rm16.live-conformance.v1",
+  "policy": "REAL_PROCESS",
+  "result": "FAIL",
+  "scenario": "pc06",
+  "auth_type": "user_jwt",
+  "timestamp": "2026-09-05T14:38:04.166957Z",
+  "reused_runners": [
+    "tools/acceptance/run_rm12_live_conformance.py",
+    "tools/acceptance/run_rm13_live_native.py",
+    "tools/acceptance/run_rm14_live_semantic.py",
+    "tools/acceptance/run_rm15_live_control.py"
+  ],
+  "chat_completions_observed": false,
+  "native_paths_observed": [
+    "/v1/capabilities",
+    "/health"
+  ],
+  "public_leaks": [],
+  "public_runtime_identity_leak": false,
+  "hermes_runtime_version": "v2026.8.31",
+  "observed_version": "0.21.0",
+  "version_source": "health",
+  "tool_name": "hermes_marketing__customer-profiling",
+  "run_id": "d27de350-bd50-414f-885e-22c82a0981c8",
+  "attempt_id": "f0a3234a-2e34-4945-a638-ee360424faea",
+  "generation": 1,
+  "runtime_run_id_hash": "sha256:fd34078dbdc5f7cc04ccbcacbc587d76b058f4a095a628cccb85d807c6debcfe",
+  "assistant_message_count": 0,
+  "public_text_chars": 0,
+  "tiny_fragment_count": 0,
+  "public_status": "COMPLETED",
+  "message": "PC-06 long Chinese coalescing failed",
+  "blocker": "RM16_LIVE_CONFORMANCE_BLOCKED"
+}

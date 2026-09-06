@@ -1,0 +1,25 @@
+{
+  "schema": "smc.rm16.live-conformance.v1",
+  "policy": "REAL_PROCESS",
+  "result": "PASS",
+  "scenario": "pc09",
+  "auth_type": "user_jwt",
+  "timestamp": "2026-09-05T14:38:39.826972Z",
+  "reused_runners": [
+    "tools/acceptance/run_rm12_live_conformance.py",
+    "tools/acceptance/run_rm13_live_native.py",
+    "tools/acceptance/run_rm14_live_semantic.py",
+    "tools/acceptance/run_rm15_live_control.py"
+  ],
+  "chat_completions_observed": false,
+  "native_paths_observed": [],
+  "public_leaks": [],
+  "public_runtime_identity_leak": false,
+  "pc09_mode": "probe_only_version_stub",
+  "stub_paths_observed": [
+    "GET /v1/capabilities"
+  ],
+  "blocked_code": "RUNTIME_VERSION_UNSUPPORTED",
+  "blocked_message": "Hermes runtime version below v2026.8.31: v2026.4.23",
+  "hermes_runtime_version": "v2026.4.23"
+}

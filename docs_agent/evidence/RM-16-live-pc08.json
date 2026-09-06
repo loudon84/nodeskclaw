@@ -1,0 +1,10 @@
+{
+  "schema": "smc.rm16.live-conformance.v1",
+  "policy": "REAL_PROCESS",
+  "result": "BLOCKED",
+  "scenario": "pc08",
+  "auth_type": "user_jwt",
+  "blocker": "RM16_HERMES_RESTART_UNAVAILABLE",
+  "message": "PC-08 requires RM16_HERMES_RESTART_CMD",
+  "timestamp": "2026-09-05T14:38:39.301520Z"
+}

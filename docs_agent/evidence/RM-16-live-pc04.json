@@ -1,0 +1,10 @@
+{
+  "schema": "smc.rm16.live-conformance.v1",
+  "policy": "REAL_PROCESS",
+  "result": "BLOCKED",
+  "scenario": "pc04",
+  "auth_type": "user_jwt",
+  "blocker": "RM16_LIVE_CONFORMANCE_BLOCKED",
+  "message": "cancel HTTP 500",
+  "timestamp": "2026-09-05T14:38:03.627639Z"
+}

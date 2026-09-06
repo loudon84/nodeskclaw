@@ -119,7 +119,10 @@ Collection 已内置精确断言。遇到失败时先保留请求和响应，再
 要点：
 
 - 公共请求使用 Bearer `backend_access_token`，不要继承集合默认的 `X-Skill-Agent-Token`。
-- 审批工具必须是 `hermes_marketing__park-waiting-approval`。
+- 审批工具必须是 `hermes_marketing__park-waiting-approval`，且 **只用于 PC-03 / PC-04**。
 - PC-01 必须换「纯中文、不调工具」的 Skill；选错会 `COMPLETED` 但没有 `assistant.message`。
-- PC-05 杀 Agent `:4580` Worker；PC-08 重启 Hermes `:29401`。Postman 不能代替这两步，跳过不得记 PASS。
+- 每次 Run 的 Runtime 以 Agent 74 snapshot 的 `credential_lease_ref` 为准，`hermes_base_url` 不是权威路由。
+- PC-05 / PC-08 使用 `rm16_running_tool_name` 稳定 RUNNING fixture，不要用 park 工具。PC-08 重启绑定实例的 API_SERVER，不要假设 29401。
+- PC-07 必须在 73 看到 `internal.runtime.trace`；仅 Public 无泄漏不能过关。
+- PC-09 只有真实 Backend-bound 旧 Runtime 才能 PASS；stub / probe-only 不能关闭。
 - Postman 绿勾不能改写 `run_rm16_live_conformance.py` 的 Ledger 证据。

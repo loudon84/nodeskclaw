@@ -6,12 +6,12 @@ import json
 import os
 import subprocess
 import sys
-import threading
 import time
 import uuid
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -159,6 +159,46 @@ def park_tool_name() -> str:
     return chosen
 
 
+@dataclass
+class BoundRuntimeContext:
+    hermes_agent_instance_id: str
+    agent_profile: str | None
+    api_server_base_url: str
+    api_server_key: str
+    runtime_version: str | None
+    runtime_run_id: str | None
+
+
+HERMES_RUNNING_STATUSES = frozenset({"running", "alive"})
+HERMES_WAIT_STATUSES = frozenset({"waiting_for_approval", "waiting"})
+HERMES_TERMINAL_STATUSES = frozenset(
+    {"completed", "failed", "cancelled", "canceled", "interrupted", "stopped", "timed_out"}
+)
+PC07_PUBLIC_FORBIDDEN = (
+    "subagent.",
+    "child_session_id",
+    "runtime_run_id",
+    "runtime_session_id",
+    "internal.runtime.trace",
+)
+
+
+def missing_rm16_preflight_vars() -> list[str]:
+    required = [
+        ("RM13_BACKEND_BASE_URL", "RM12_BACKEND_BASE_URL"),
+        ("RM13_USER_JWT", "RM12_USER_JWT"),
+        ("RM13_ORG_ID", "RM12_ORG_ID"),
+        ("RM13_AGENT_BASE_URL", "RM12_AGENT_BASE_URL"),
+        ("SKILL_AGENT_INTERNAL_TOKEN",),
+        ("RM13_AGENT_DATABASE_URL",),
+    ]
+    missing: list[str] = []
+    for names in required:
+        if not rm13.env_first(*names):
+            missing.append(" or ".join(names))
+    return missing
+
+
 def env_ctx() -> dict[str, Any]:
     reject_mock_event_source()
     backend = rm13.require_named("RM13_BACKEND_BASE_URL", "RM12_BACKEND_BASE_URL")
@@ -166,8 +206,6 @@ def env_ctx() -> dict[str, Any]:
     org_id = rm13.require_named("RM13_ORG_ID", "RM12_ORG_ID")
     agent_base = rm13.require_named("RM13_AGENT_BASE_URL", "RM12_AGENT_BASE_URL")
     agent_token = rm13.require_named("SKILL_AGENT_INTERNAL_TOKEN")
-    hermes_base = rm13.require_named("RM13_HERMES_BASE_URL")
-    hermes_key = rm13.require_named("RM13_HERMES_API_SERVER_KEY")
     rm13.require_named("RM13_AGENT_DATABASE_URL")
     return {
         "backend": backend,
@@ -175,10 +213,8 @@ def env_ctx() -> dict[str, Any]:
         "org_id": org_id,
         "agent_base": agent_base,
         "agent_token": agent_token,
-        "hermes_base": hermes_base,
-        "hermes_key": hermes_key,
         "timeout": rm13.timeout_seconds(),
-        "secrets": (user_jwt, agent_token, hermes_key),
+        "secrets": (user_jwt, agent_token),
     }
 
 
@@ -200,6 +236,7 @@ def base_evidence(scenario: str) -> dict[str, Any]:
         "native_paths_observed": [],
         "public_leaks": [],
         "public_runtime_identity_leak": False,
+        "runtime_binding_verified": False,
     }
 
 
@@ -209,13 +246,7 @@ def probe_and_health(ctx: dict[str, Any], evidence: dict[str, Any]) -> None:
     health_status, _ = rm13._http("GET", f"{ctx['backend'].rstrip('/')}/api/v1/health", headers={}, timeout=ctx["timeout"])
     if health_status != 200:
         fail(f"backend health HTTP {health_status}")
-    caps = rm13.probe_hermes(ctx["hermes_base"], ctx["hermes_key"], ctx["timeout"])
-    evidence["hermes_runtime_version"] = caps["hermes_runtime_version"]
-    evidence["observed_version"] = caps.get("observed_version")
-    evidence["version_source"] = caps.get("version_source")
-    evidence["native_paths_observed"].append("/v1/capabilities")
-    if caps.get("version_source") == "health":
-        evidence["native_paths_observed"].append("/health")
+    evidence["backend_health"] = health_status
 
 
 def finish(evidence: dict[str, Any], secrets: tuple[str, ...], ok: bool, message: str | None = None) -> dict[str, Any]:
@@ -228,12 +259,250 @@ def finish(evidence: dict[str, Any], secrets: tuple[str, ...], ok: bool, message
     return rm13.redact(evidence, secrets)
 
 
+def catalog_tool_names(ctx: dict[str, Any]) -> set[str]:
+    list_status, list_payload = rm13.mcp_call(
+        ctx["backend"],
+        ctx["user_jwt"],
+        ctx["org_id"],
+        "tools/list",
+        {},
+        timeout=ctx["timeout"],
+    )
+    if list_status != 200:
+        fail(f"tools/list HTTP {list_status}")
+    result = list_payload.get("result") if isinstance(list_payload, dict) else None
+    tools = result.get("tools") if isinstance(result, dict) else None
+    if not isinstance(tools, list):
+        fail("tools/list missing result.tools")
+    names: set[str] = set()
+    for item in tools:
+        if isinstance(item, dict) and isinstance(item.get("name"), str) and item["name"]:
+            names.add(item["name"])
+    return names
+
+
+def require_catalog_tool(ctx: dict[str, Any], tool_name: str, blocker: str) -> None:
+    if tool_name not in catalog_tool_names(ctx):
+        fail(f"catalog missing tool {tool_name}", blocker)
+
+
+def expected_instance_id(env_name: str | None) -> str | None:
+    if not env_name:
+        return None
+    value = (os.environ.get(env_name) or "").strip()
+    return value or None
+
+
+def agent_get_run(ctx: dict[str, Any], run_id: str) -> dict[str, Any]:
+    status, raw = rm13._http(
+        "GET",
+        f"{ctx['agent_base'].rstrip('/')}/internal/v1/runs/{run_id}",
+        headers={"X-Skill-Agent-Token": ctx["agent_token"], "X-Exec-Org-Id": ctx["org_id"]},
+        timeout=ctx["timeout"],
+    )
+    if status != 200:
+        fail(f"agent GET run HTTP {status}", "RM16_RUNTIME_BINDING_MISSING")
+    body = rm13._json_body(raw)
+    payload = rm13.unwrap_data(body) if isinstance(body, dict) else body
+    if not isinstance(payload, dict):
+        fail("agent GET run returned non-object", "RM16_RUNTIME_BINDING_MISSING")
+    return payload
+
+
+def credential_lease_ref_from_snapshot(snapshot: Any) -> dict[str, Any] | None:
+    if not isinstance(snapshot, dict):
+        return None
+    policy = snapshot.get("runtime_policy")
+    if isinstance(policy, dict) and isinstance(policy.get("credential_lease_ref"), dict):
+        return policy["credential_lease_ref"]
+    if isinstance(snapshot.get("credential_lease_ref"), dict):
+        return snapshot["credential_lease_ref"]
+    return None
+
+
+def wait_for_attempt(run_id: str, timeout: int) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout
+    last: dict[str, Any] = {"found": False}
+    while time.monotonic() < deadline:
+        last = rm13.query_binding(run_id)
+        if last.get("found") and last.get("attempt_id"):
+            return last
+        time.sleep(0.5)
+    fail("attempt row missing for run", "RM16_RUNTIME_BINDING_MISSING")
+    raise AssertionError("unreachable")
+
+
+def bound_url_port(url: str) -> int:
+    parsed = urlparse(url)
+    if parsed.port is not None:
+        return int(parsed.port)
+    if parsed.scheme == "https":
+        return 443
+    return 80
+
+
+def probe_bound_capabilities(bound_url: str, api_key: str, timeout: int) -> dict[str, Any]:
+    try:
+        status, raw = rm13._http(
+            "GET",
+            f"{bound_url.rstrip('/')}/v1/capabilities",
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=timeout,
+        )
+    except rm13.LiveBlocked as exc:
+        fail(str(exc), "RM16_BOUND_RUNTIME_PROBE_FAILED")
+        raise AssertionError("unreachable") from exc
+    if status != 200:
+        fail(f"bound capabilities HTTP {status}", "RM16_BOUND_RUNTIME_PROBE_FAILED")
+    body = rm13._json_body(raw)
+    if not isinstance(body, dict):
+        fail("bound capabilities is not JSON object", "RM16_BOUND_RUNTIME_PROBE_FAILED")
+    version_raw = str(body.get("version") or body.get("hermes_version") or body.get("runtime_version") or "")
+    version_source = "capabilities"
+    if not version_raw:
+        health_status, health_raw = rm13._http(
+            "GET",
+            f"{bound_url.rstrip('/')}/health",
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=timeout,
+        )
+        if health_status != 200:
+            fail(f"bound /health HTTP {health_status}", "RM16_BOUND_RUNTIME_PROBE_FAILED")
+        health_body = rm13._json_body(health_raw)
+        if not isinstance(health_body, dict):
+            fail("bound /health is not JSON object", "RM16_BOUND_RUNTIME_PROBE_FAILED")
+        version_raw = str(health_body.get("version") or "")
+        version_source = "health"
+    return {"version": version_raw, "version_source": version_source, "body": body}
+
+
+def mint_bound_credentials(
+    ctx: dict[str, Any],
+    *,
+    run_id: str,
+    attempt_id: str,
+    lease_ref: dict[str, Any],
+) -> dict[str, Any]:
+    status, raw = rm13._http(
+        "POST",
+        f"{ctx['backend'].rstrip('/')}/api/v1/internal/v1/skill-agent/credentials/mint",
+        headers={
+            "X-Skill-Agent-Token": ctx["agent_token"],
+            "X-Exec-Org-Id": ctx["org_id"],
+        },
+        body={
+            "run_id": run_id,
+            "attempt_id": attempt_id,
+            "instance_id": lease_ref.get("instance_id"),
+            "agent_profile": lease_ref.get("agent_profile"),
+            "scope": lease_ref.get("scope") or "hermes:invoke",
+            "target": lease_ref.get("target"),
+        },
+        timeout=ctx["timeout"],
+    )
+    if status != 200:
+        fail(f"credential mint HTTP {status}", "RM16_CREDENTIAL_LEASE_FAILED")
+    payload = rm13._json_body(raw)
+    minted = rm13.unwrap_data(payload) if isinstance(payload, dict) else payload
+    if not isinstance(minted, dict):
+        fail("credential mint returned non-object", "RM16_CREDENTIAL_LEASE_FAILED")
+    return minted
+
+
+# @lat: [[architecture/skill-agent#RM-16 Live Conformance]]
+def resolve_bound_runtime(
+    ctx: dict[str, Any],
+    *,
+    run_id: str,
+    attempt_id: str | None,
+    runtime_run_id: str | None,
+    expected_env: str | None = None,
+) -> BoundRuntimeContext:
+    run_view = agent_get_run(ctx, run_id)
+    snapshot = run_view.get("snapshot")
+    lease_ref = credential_lease_ref_from_snapshot(snapshot)
+    if not isinstance(lease_ref, dict):
+        fail("run snapshot missing credential_lease_ref", "RM16_RUNTIME_BINDING_MISSING")
+    instance_id = str(lease_ref.get("instance_id") or "").strip()
+    if not instance_id:
+        fail("credential_lease_ref missing instance_id", "RM16_RUNTIME_INSTANCE_MISSING")
+    expected = expected_instance_id(expected_env)
+    if expected and expected != instance_id:
+        fail(
+            f"bound instance {instance_id} != expected {expected}",
+            "RM16_BOUND_RUNTIME_INSTANCE_MISMATCH",
+        )
+    resolved_attempt = str(attempt_id or run_view.get("attempt_id") or "").strip()
+    if not resolved_attempt:
+        fail("attempt_id missing for credential mint", "RM16_RUNTIME_BINDING_MISSING")
+    minted = mint_bound_credentials(
+        ctx,
+        run_id=run_id,
+        attempt_id=resolved_attempt,
+        lease_ref=lease_ref,
+    )
+    gateway_url = str(minted.get("gateway_url") or "").rstrip("/")
+    token = str(minted.get("token") or minted.get("api_server_key") or "")
+    if not gateway_url:
+        fail("credential mint missing gateway_url", "RM16_BOUND_RUNTIME_URL_MISSING")
+    if not token:
+        fail("credential mint missing token", "RM16_CREDENTIAL_LEASE_FAILED")
+    caps = probe_bound_capabilities(gateway_url, token, ctx["timeout"])
+    profile = lease_ref.get("agent_profile")
+    return BoundRuntimeContext(
+        hermes_agent_instance_id=instance_id,
+        agent_profile=str(profile) if isinstance(profile, str) and profile else None,
+        api_server_base_url=gateway_url,
+        api_server_key=token,
+        runtime_version=caps.get("version") or None,
+        runtime_run_id=runtime_run_id or None,
+    )
+
+
+def apply_bound_evidence(evidence: dict[str, Any], bound: BoundRuntimeContext) -> None:
+    evidence["runtime_binding_verified"] = True
+    evidence["hermes_agent_instance_id"] = bound.hermes_agent_instance_id
+    evidence["agent_profile"] = bound.agent_profile
+    evidence["bound_api_server_url_hash"] = rm13.sha256_text(bound.api_server_base_url)
+    evidence["bound_api_server_port"] = bound_url_port(bound.api_server_base_url)
+    if bound.runtime_version:
+        evidence["hermes_runtime_version"] = bound.runtime_version
+        evidence["observed_version"] = bound.runtime_version
+    if bound.runtime_run_id:
+        evidence["runtime_run_id_hash"] = rm13.sha256_text(bound.runtime_run_id)
+    evidence["native_paths_observed"].append("/v1/capabilities")
+
+
+def merge_secrets(ctx: dict[str, Any], bound: BoundRuntimeContext) -> tuple[str, ...]:
+    secrets = list(ctx["secrets"])
+    if bound.api_server_key:
+        secrets.append(bound.api_server_key)
+    return tuple(secrets)
+
+
+def attach_started(evidence: dict[str, Any], started: dict[str, Any]) -> None:
+    evidence.update(
+        {
+            "run_id": started["run_id"],
+            "attempt_id": started["attempt_id"],
+            "generation": started["generation"],
+            "public_leaks": started["public_leaks"],
+        }
+    )
+    if started.get("runtime_run_id"):
+        evidence["runtime_run_id_hash"] = started["runtime_run_id_hash"]
+    apply_bound_evidence(evidence, started["bound"])
+    evidence["native_paths_observed"].extend(["/v1/runs", "/v1/runs/<id>/events", "/v1/runs/<id>"])
+
+
 def start_bound_run(
     ctx: dict[str, Any],
     *,
     tool_name: str,
     arguments: dict[str, Any],
     prefix: str,
+    require_runtime_run_id: bool = True,
+    expected_env: str | None = "RM16_EXPECTED_PRIMARY_INSTANCE_ID",
 ) -> dict[str, Any]:
     call_status, call_payload = rm13.mcp_call(
         ctx["backend"],
@@ -252,20 +521,97 @@ def start_bound_run(
         fail("tools/call missing run_id")
     leaks = rm13.scan_public_surface(call_payload)
     leaks.extend(rm12.scan_public_surface(call_payload))
+    dumped_call = json.dumps(call_payload, ensure_ascii=False)
+    if "/v1/chat/completions" in dumped_call:
+        fail("ChatCompletion fallback observed on tools/call", "RM16_MOCK_ONLY")
     rm13.wait_until_agent_has_run(ctx["agent_base"], ctx["agent_token"], ctx["org_id"], run_id, ctx["timeout"])
-    binding = rm13.wait_for_binding(run_id, ctx["timeout"])
-    runtime_run_id = str(binding.get("runtime_run_id") or "")
-    if not runtime_run_id:
-        fail("attempt runtime binding missing runtime_run_id")
+    if require_runtime_run_id:
+        binding = rm13.wait_for_binding(run_id, ctx["timeout"])
+        runtime_run_id = str(binding.get("runtime_run_id") or "")
+        if not runtime_run_id:
+            fail("attempt runtime binding missing runtime_run_id", "RM16_RUNTIME_BINDING_MISSING")
+    else:
+        binding = wait_for_attempt(run_id, ctx["timeout"])
+        runtime_run_id = str(binding.get("runtime_run_id") or "") or None
+    attempt_id = str(binding.get("attempt_id") or "")
+    bound = resolve_bound_runtime(
+        ctx,
+        run_id=run_id,
+        attempt_id=attempt_id,
+        runtime_run_id=runtime_run_id,
+        expected_env=expected_env,
+    )
     return {
         "run_id": run_id,
-        "attempt_id": binding.get("attempt_id"),
+        "attempt_id": attempt_id or binding.get("attempt_id"),
         "generation": binding.get("generation"),
         "runtime_run_id": runtime_run_id,
-        "runtime_run_id_hash": rm13.sha256_text(runtime_run_id),
+        "runtime_run_id_hash": rm13.sha256_text(runtime_run_id) if runtime_run_id else None,
         "public_leaks": leaks,
         "envelope": envelope,
+        "bound": bound,
+        "secrets": merge_secrets(ctx, bound),
     }
+
+
+def start_stable_running_run(
+    ctx: dict[str, Any],
+    evidence: dict[str, Any],
+    *,
+    prefix: str,
+    expected_env: str = "RM16_EXPECTED_RUNNING_INSTANCE_ID",
+) -> dict[str, Any]:
+    tool_name = (os.environ.get("RM16_RUNNING_TOOL_NAME") or "").strip()
+    if not tool_name:
+        fail("missing RM16_RUNNING_TOOL_NAME", "RM16_RUNNING_FIXTURE_UNSTABLE")
+    if tool_name == PARK_TOOL:
+        fail("PC-05/PC-08 must not use park-waiting-approval", "RM16_RUNNING_FIXTURE_UNSTABLE")
+    require_catalog_tool(ctx, tool_name, "RM16_RUNNING_FIXTURE_UNSTABLE")
+    hold = int(os.environ.get("RM16_RUNNING_MIN_HOLD_SECONDS") or "3")
+    prompt = (os.environ.get("RM16_RUNNING_PROMPT") or "").strip() or (
+        "请持续执行当前任务，完成前保持运行，不要请求审批，不要立即结束。"
+    )
+    started = start_bound_run(
+        ctx,
+        tool_name=tool_name,
+        arguments={"prompt": prompt},
+        prefix=prefix,
+        expected_env=expected_env,
+    )
+    evidence["tool_name"] = tool_name
+    attach_started(evidence, started)
+    runtime_run_id = str(started.get("runtime_run_id") or "")
+    if not runtime_run_id:
+        fail("stable running fixture missing runtime_run_id", "RM16_RUNNING_FIXTURE_UNSTABLE")
+    stable_since: float | None = None
+    last_public = None
+    last_hermes = ""
+    deadline = time.monotonic() + ctx["timeout"]
+    while time.monotonic() < deadline:
+        get_status, body = rm13.public_get(
+            ctx["backend"], ctx["user_jwt"], ctx["org_id"], f"/api/v1/runs/{started['run_id']}", ctx["timeout"]
+        )
+        if get_status == 200 and isinstance(body, dict):
+            last_public = str(body.get("status") or "").upper()
+        last_hermes = hermes_status(started["bound"], runtime_run_id, ctx["timeout"])
+        if last_public == "WAITING_APPROVAL" or last_hermes in HERMES_WAIT_STATUSES:
+            fail("running fixture entered waiting_for_approval", "RM16_RUNNING_FIXTURE_UNSTABLE")
+        if last_public in PUBLIC_TERMINAL or last_hermes in HERMES_TERMINAL_STATUSES:
+            fail("running fixture terminated before fault injection", "RM16_RUNNING_FIXTURE_UNSTABLE")
+        if last_public == "RUNNING" and last_hermes in HERMES_RUNNING_STATUSES:
+            if stable_since is None:
+                stable_since = time.monotonic()
+            elif time.monotonic() - stable_since >= hold:
+                evidence["fault_fixture"] = "stable_running"
+                evidence["pre_fault_public_status"] = last_public
+                evidence["pre_fault_hermes_status"] = last_hermes
+                evidence["pre_fault_runtime_binding_verified"] = True
+                return started
+        else:
+            stable_since = None
+        time.sleep(0.5)
+    fail("stable RUNNING window not observed", "RM16_RUNNING_FIXTURE_UNSTABLE")
+    raise AssertionError("unreachable")
 
 
 def tool_arguments(default_prompt: str) -> dict[str, Any]:
@@ -375,7 +721,9 @@ def gap_from_sot(items: list[dict[str, Any]]) -> bool:
 
 def scan_surfaces(ctx: dict[str, Any], run_id: str, evidence: dict[str, Any], extra: Any = None) -> None:
     leaks = list(evidence.get("public_leaks") or [])
+    surfaces: list[tuple[str, Any]] = []
     if extra is not None:
+        surfaces.append(("extra", extra))
         leaks.extend(rm13.scan_public_surface(extra))
         leaks.extend(rm12.scan_public_surface(extra))
     for label, path in (
@@ -385,28 +733,39 @@ def scan_surfaces(ctx: dict[str, Any], run_id: str, evidence: dict[str, Any], ex
     ):
         status, body = rm13.public_get(ctx["backend"], ctx["user_jwt"], ctx["org_id"], path, ctx["timeout"])
         if status == 200:
+            surfaces.append((label, body))
             leaks.extend(f"{label}:{item}" for item in rm13.scan_public_surface(body))
             leaks.extend(f"{label}:{item}" for item in rm12.scan_public_surface(body))
             dumped = json.dumps(body, ensure_ascii=False)
             if "/api/v1/hermes/tasks/" in dumped:
                 leaks.append(f"{label}:hermes_tasks_path")
+    for label, payload in surfaces:
+        dumped = json.dumps(payload, ensure_ascii=False)
+        for fragment in PC07_PUBLIC_FORBIDDEN:
+            if fragment in dumped:
+                leaks.append(f"{label}:{fragment}")
     evidence["public_leaks"] = sorted(set(leaks))
 
 
-def hermes_status(ctx: dict[str, Any], runtime_run_id: str) -> str:
-    http_status, body = rm13.hermes_get_run(ctx["hermes_base"], ctx["hermes_key"], runtime_run_id, ctx["timeout"])
+def hermes_status(bound: BoundRuntimeContext, runtime_run_id: str, timeout: int) -> str:
+    http_status, body = rm13.hermes_get_run(
+        bound.api_server_base_url,
+        bound.api_server_key,
+        runtime_run_id,
+        timeout,
+    )
     if http_status != 200 or not isinstance(body, dict):
         return ""
     nested = body.get("data") if isinstance(body.get("data"), dict) else {}
     return str(body.get("status") or nested.get("status") or "").strip().lower()
 
 
-def wait_hermes_left_waiting(ctx: dict[str, Any], runtime_run_id: str) -> str:
-    deadline = time.monotonic() + ctx["timeout"]
+def wait_hermes_left_waiting(bound: BoundRuntimeContext, runtime_run_id: str, timeout: int) -> str:
+    deadline = time.monotonic() + timeout
     last = ""
     while time.monotonic() < deadline:
-        last = hermes_status(ctx, runtime_run_id)
-        if last and last not in {"waiting_for_approval", "waiting"}:
+        last = hermes_status(bound, runtime_run_id, timeout)
+        if last and last not in HERMES_WAIT_STATUSES:
             return last
         time.sleep(0.5)
     return last
@@ -415,24 +774,17 @@ def wait_hermes_left_waiting(ctx: dict[str, Any], runtime_run_id: str) -> str:
 def run_pc01(ctx: dict[str, Any]) -> dict[str, Any]:
     evidence = base_evidence("pc01")
     probe_and_health(ctx, evidence)
-    tool_name = rm13.require_named("RM13_TOOL_NAME", "RM12_TOOL_NAME")
+    tool_name = rm13.env_first("RM16_PLAIN_TOOL_NAME", "RM13_TOOL_NAME", "RM12_TOOL_NAME")
+    if not tool_name:
+        fail("missing RM16_PLAIN_TOOL_NAME or RM13_TOOL_NAME")
     started = start_bound_run(
         ctx,
         tool_name=tool_name,
         arguments=tool_arguments(os.environ.get("RM16_PLAIN_PROMPT") or PLAIN_PROMPT),
         prefix="rm16-pc01",
     )
-    evidence.update(
-        {
-            "tool_name": tool_name,
-            "run_id": started["run_id"],
-            "attempt_id": started["attempt_id"],
-            "generation": started["generation"],
-            "runtime_run_id_hash": started["runtime_run_id_hash"],
-            "public_leaks": started["public_leaks"],
-        }
-    )
-    evidence["native_paths_observed"].extend(["/v1/runs", "/v1/runs/<id>/events", "/v1/runs/<id>"])
+    evidence["tool_name"] = tool_name
+    attach_started(evidence, started)
     waited = wait_terminal(ctx, started["run_id"])
     sse_events = public_sse(ctx, started["run_id"])
     sot = rm14.evaluate_sot(waited["items"])
@@ -445,7 +797,8 @@ def run_pc01(ctx: dict[str, Any]) -> dict[str, Any]:
     coalesced = assistant_count > 0 and (tokenish == 0 or assistant_count < max(tokenish, 8))
     scan_surfaces(ctx, started["run_id"], evidence, sse_events)
     ok = (
-        bool(joined.strip())
+        bool(evidence.get("runtime_binding_verified"))
+        and bool(joined.strip())
         and coalesced
         and not fake_tool
         and not fake_approval
@@ -456,7 +809,7 @@ def run_pc01(ctx: dict[str, Any]) -> dict[str, Any]:
     evidence["assistant_message_count"] = assistant_count
     evidence["public_text_chars"] = len(joined)
     evidence["public_status"] = waited["status"]
-    return finish(evidence, ctx["secrets"], ok, None if ok else "PC-01 plain text quality failed")
+    return finish(evidence, started["secrets"], ok, None if ok else "PC-01 plain text quality failed")
 
 
 def run_pc02(ctx: dict[str, Any]) -> dict[str, Any]:
@@ -471,17 +824,8 @@ def run_pc02(ctx: dict[str, Any]) -> dict[str, Any]:
         arguments=tool_arguments("请实际调用一个工具完成任务，然后给出结果。"),
         prefix="rm16-pc02",
     )
-    evidence.update(
-        {
-            "tool_name": tool_name,
-            "run_id": started["run_id"],
-            "attempt_id": started["attempt_id"],
-            "generation": started["generation"],
-            "runtime_run_id_hash": started["runtime_run_id_hash"],
-            "public_leaks": started["public_leaks"],
-        }
-    )
-    evidence["native_paths_observed"].extend(["/v1/runs", "/v1/runs/<id>/events", "/v1/runs/<id>"])
+    evidence["tool_name"] = tool_name
+    attach_started(evidence, started)
     waited = wait_terminal(ctx, started["run_id"])
     sse_events = public_sse(ctx, started["run_id"])
     calls = tool_calls(waited["items"]) or tool_calls(sse_events)
@@ -504,7 +848,8 @@ def run_pc02(ctx: dict[str, Any]) -> dict[str, Any]:
     evidence["tool_call_ids"] = sorted(set(ids))
     evidence["sse_event_types"] = [str(item.get("event_type") or "") for item in sse_events]
     evidence["public_status"] = waited["status"]
-    return finish(evidence, ctx["secrets"], ok, None if ok else "PC-02 missing public tool.call with shared call_id")
+    ok = bool(ok) and bool(evidence.get("runtime_binding_verified"))
+    return finish(evidence, started["secrets"], ok, None if ok else "PC-02 missing public tool.call with shared call_id")
 
 
 def _approval_round(
@@ -522,25 +867,17 @@ def _approval_round(
         arguments=rm13.tool_arguments(),
         prefix=f"rm16-{scenario}",
     )
-    evidence.update(
-        {
-            "tool_name": tool_name,
-            "run_id": started["run_id"],
-            "attempt_id": started["attempt_id"],
-            "generation": started["generation"],
-            "runtime_run_id_hash": started["runtime_run_id_hash"],
-            "public_leaks": started["public_leaks"],
-        }
-    )
-    evidence["native_paths_observed"].extend(["/v1/runs", "/v1/runs/<id>/events", "/v1/runs/<id>"])
+    evidence["tool_name"] = tool_name
+    attach_started(evidence, started)
+    bound: BoundRuntimeContext = started["bound"]
     waited = rm15.wait_for_waiting_approval(
         run_id=started["run_id"],
         timeout=ctx["timeout"],
         backend=ctx["backend"],
         user_jwt=ctx["user_jwt"],
         org_id=ctx["org_id"],
-        hermes_base=ctx["hermes_base"],
-        hermes_key=ctx["hermes_key"],
+        hermes_base=bound.api_server_base_url,
+        hermes_key=bound.api_server_key,
         runtime_run_id=started["runtime_run_id"],
     )
     approval_id = waited.get("approval_id")
@@ -585,9 +922,9 @@ def _approval_round(
         fail(f"{decision} HTTP {decision_status}")
     if decision_status >= 400:
         fail(f"{decision} HTTP {decision_status}; HTTP non-500 is not PC-03 exit")
-    after = wait_hermes_left_waiting(ctx, started["runtime_run_id"])
+    after = wait_hermes_left_waiting(bound, started["runtime_run_id"], ctx["timeout"])
     evidence["hermes_run_status_after"] = after
-    accepted = bool(after) and after not in {"waiting_for_approval", "waiting"}
+    accepted = bool(after) and after not in HERMES_WAIT_STATUSES
     if accepted:
         evidence["native_paths_observed"].append("/v1/runs/<id>/approval")
     evidence["approval_accepted"] = accepted
@@ -598,12 +935,13 @@ def _approval_round(
     evidence["public_status"] = public_status
     scan_surfaces(ctx, started["run_id"], evidence, decision_body)
     ok = (
-        accepted
+        bool(evidence.get("runtime_binding_verified"))
+        and accepted
         and evidence["session_rejected"]
         and evidence["always_rejected"]
         and "/v1/runs/<id>/approval" in evidence["native_paths_observed"]
     )
-    return finish(evidence, ctx["secrets"], ok, None if ok else f"Hermes did not accept /approval for {decision}")
+    return finish(evidence, started["secrets"], ok, None if ok else f"Hermes did not accept /approval for {decision}")
 
 
 def run_pc03_approve(ctx: dict[str, Any]) -> dict[str, Any]:
@@ -624,17 +962,8 @@ def run_pc04(ctx: dict[str, Any]) -> dict[str, Any]:
         arguments=rm13.tool_arguments(),
         prefix="rm16-pc04",
     )
-    evidence.update(
-        {
-            "tool_name": tool_name,
-            "run_id": started["run_id"],
-            "attempt_id": started["attempt_id"],
-            "generation": started["generation"],
-            "runtime_run_id_hash": started["runtime_run_id_hash"],
-            "public_leaks": started["public_leaks"],
-        }
-    )
-    evidence["native_paths_observed"].extend(["/v1/runs", "/v1/runs/<id>/events", "/v1/runs/<id>"])
+    evidence["tool_name"] = tool_name
+    attach_started(evidence, started)
     cancel_status, cancel_body = rm15.public_post(
         ctx["backend"],
         ctx["user_jwt"],
@@ -656,14 +985,15 @@ def run_pc04(ctx: dict[str, Any]) -> dict[str, Any]:
     stuck = waited["status"] == "CANCELLING"
     scan_surfaces(ctx, started["run_id"], evidence, cancel_body)
     ok = (
-        cancel_status < 500
+        bool(evidence.get("runtime_binding_verified"))
+        and cancel_status < 500
         and not stuck
         and waited["status"] in PUBLIC_TERMINAL
         and terminal_event
     )
     return finish(
         evidence,
-        ctx["secrets"],
+        started["secrets"],
         ok,
         None if ok else "PC-04 did not reach contract terminal after /stop",
     )
@@ -675,23 +1005,8 @@ def run_pc05(ctx: dict[str, Any]) -> dict[str, Any]:
     kill_cmd = (os.environ.get("RM16_WORKER_KILL_CMD") or "").strip()
     if not kill_cmd:
         fail("PC-05 requires RM16_WORKER_KILL_CMD to kill/restart the Agent Worker", "RM16_WORKER_KILL_UNAVAILABLE")
-    tool_name = park_tool_name()
-    started = start_bound_run(
-        ctx,
-        tool_name=tool_name,
-        arguments=rm13.tool_arguments(),
-        prefix="rm16-pc05",
-    )
-    evidence.update(
-        {
-            "tool_name": tool_name,
-            "run_id": started["run_id"],
-            "attempt_id": started["attempt_id"],
-            "generation": started["generation"],
-            "runtime_run_id_hash": started["runtime_run_id_hash"],
-            "public_leaks": started["public_leaks"],
-        }
-    )
+    started = start_stable_running_run(ctx, evidence, prefix="rm16-pc05")
+    bound: BoundRuntimeContext = started["bound"]
     before = query_attempts(started["run_id"])
     expire_run_lease(started["run_id"])
     completed = subprocess.run(kill_cmd, shell=True, capture_output=True, text=True, check=False)
@@ -710,7 +1025,15 @@ def run_pc05(ctx: dict[str, Any]) -> dict[str, Any]:
     after = query_attempts(started["run_id"])
     waited = wait_terminal(ctx, started["run_id"])
     terminals = [item.get("event_type") for item in waited["items"] if item.get("event_type") in SOT_TERMINAL]
-    hermes_after = hermes_status(ctx, started["runtime_run_id"])
+    hermes_after = hermes_status(bound, started["runtime_run_id"], ctx["timeout"])
+    recovered = resolve_bound_runtime(
+        ctx,
+        run_id=started["run_id"],
+        attempt_id=started["attempt_id"],
+        runtime_run_id=started["runtime_run_id"],
+        expected_env="RM16_EXPECTED_RUNNING_INSTANCE_ID",
+    )
+    same_instance = recovered.hermes_agent_instance_id == bound.hermes_agent_instance_id
     evidence["native_paths_observed"].append("/v1/runs/<id>")
     evidence["observability_gap"] = gap
     evidence["attempt_count_before"] = before.get("count")
@@ -718,41 +1041,42 @@ def run_pc05(ctx: dict[str, Any]) -> dict[str, Any]:
     evidence["public_terminal_events"] = terminals
     evidence["hermes_run_status_after"] = hermes_after
     evidence["public_status"] = waited["status"]
+    evidence["recovered_hermes_agent_instance_id"] = recovered.hermes_agent_instance_id
     scan_surfaces(ctx, started["run_id"], evidence)
     ok = (
-        gap
+        bool(evidence.get("runtime_binding_verified"))
+        and evidence.get("fault_fixture") == "stable_running"
+        and evidence.get("pre_fault_public_status") == "RUNNING"
+        and evidence.get("pre_fault_hermes_status") in HERMES_RUNNING_STATUSES
+        and gap
+        and same_instance
         and int(after.get("count") or 0) <= int(before.get("count") or 0) + 1
         and len(set(terminals)) <= 1
     )
-    return finish(evidence, ctx["secrets"], ok, None if ok else "PC-05 worker restart gap/fencing failed")
+    return finish(evidence, started["secrets"], ok, None if ok else "PC-05 worker restart gap/fencing failed")
 
 
 def run_pc06(ctx: dict[str, Any]) -> dict[str, Any]:
     evidence = base_evidence("pc06")
     probe_and_health(ctx, evidence)
-    tool_name = rm13.require_named("RM13_TOOL_NAME", "RM12_TOOL_NAME")
+    tool_name = rm13.env_first("RM16_PLAIN_TOOL_NAME", "RM13_TOOL_NAME", "RM12_TOOL_NAME")
+    if not tool_name:
+        fail("missing RM16_PLAIN_TOOL_NAME or RM13_TOOL_NAME")
     started = start_bound_run(
         ctx,
         tool_name=tool_name,
         arguments={"prompt": os.environ.get("RM16_LONG_CHINESE_PROMPT") or LONG_CHINESE_PROMPT},
         prefix="rm16-pc06",
     )
-    evidence.update(
-        {
-            "tool_name": tool_name,
-            "run_id": started["run_id"],
-            "attempt_id": started["attempt_id"],
-            "generation": started["generation"],
-            "runtime_run_id_hash": started["runtime_run_id_hash"],
-            "public_leaks": started["public_leaks"],
-        }
-    )
+    evidence["tool_name"] = tool_name
+    attach_started(evidence, started)
     waited = wait_terminal(ctx, started["run_id"])
     texts = assistant_texts(waited["items"])
     joined = "".join(texts)
     tiny = [text for text in texts if 0 < len(text.strip()) <= 2]
     ok = (
-        len(joined) >= 80
+        bool(evidence.get("runtime_binding_verified"))
+        and len(joined) >= 80
         and len(texts) >= 1
         and len(tiny) == 0
         and joined == "".join(texts)
@@ -762,40 +1086,72 @@ def run_pc06(ctx: dict[str, Any]) -> dict[str, Any]:
     evidence["tiny_fragment_count"] = len(tiny)
     evidence["public_status"] = waited["status"]
     scan_surfaces(ctx, started["run_id"], evidence)
-    return finish(evidence, ctx["secrets"], ok, None if ok else "PC-06 long Chinese coalescing failed")
+    return finish(evidence, started["secrets"], ok, None if ok else "PC-06 long Chinese coalescing failed")
+
+
+def observed_subagent_event_types(items: list[dict[str, Any]]) -> list[str]:
+    observed: list[str] = []
+    for item in items:
+        if item.get("event_type") != "internal.runtime.trace":
+            continue
+        payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
+        runtime_type = str(payload.get("runtime_event_type") or "")
+        if payload.get("category") == "subagent" and runtime_type.startswith("subagent."):
+            observed.append(runtime_type)
+    return observed
 
 
 def run_pc07(ctx: dict[str, Any]) -> dict[str, Any]:
     evidence = base_evidence("pc07")
     probe_and_health(ctx, evidence)
-    tool_name = rm13.env_first("RM16_SUBAGENT_TOOL_NAME", "RM13_TOOL_NAME", "RM12_TOOL_NAME")
+    tool_name = (os.environ.get("RM16_SUBAGENT_TOOL_NAME") or "").strip()
     if not tool_name:
-        fail("missing tool name for PC-07")
+        fail("missing RM16_SUBAGENT_TOOL_NAME", "RM16_SUBAGENT_FIXTURE_UNAVAILABLE")
+    require_catalog_tool(ctx, tool_name, "RM16_SUBAGENT_FIXTURE_UNAVAILABLE")
     started = start_bound_run(
         ctx,
         tool_name=tool_name,
         arguments=tool_arguments("如需委派内部子代理，请在当前 Run 内完成，不要创建外部 Child Run。"),
         prefix="rm16-pc07",
     )
-    evidence.update(
-        {
-            "tool_name": tool_name,
-            "run_id": started["run_id"],
-            "attempt_id": started["attempt_id"],
-            "generation": started["generation"],
-            "runtime_run_id_hash": started["runtime_run_id_hash"],
-            "public_leaks": started["public_leaks"],
-        }
-    )
+    evidence["tool_name"] = tool_name
+    attach_started(evidence, started)
     waited = wait_terminal(ctx, started["run_id"])
     sse_events = public_sse(ctx, started["run_id"])
-    dumped = json.dumps({"sot": waited["items"], "sse": sse_events, "public": waited["body"]}, ensure_ascii=False)
-    child = "child_session_id" in dumped or "subagent." in dumped
+    get_status, get_body = rm13.public_get(
+        ctx["backend"], ctx["user_jwt"], ctx["org_id"], f"/api/v1/runs/{started['run_id']}", ctx["timeout"]
+    )
+    result_status, result_body = rm13.public_get(
+        ctx["backend"], ctx["user_jwt"], ctx["org_id"], f"/api/v1/runs/{started['run_id']}/result", ctx["timeout"]
+    )
+    public_payload = {
+        "sse": sse_events,
+        "public": get_body if get_status == 200 else None,
+        "result": result_body if result_status == 200 else None,
+        "mcp": started["envelope"],
+    }
+    dumped = json.dumps(public_payload, ensure_ascii=False)
+    child = any(fragment in dumped for fragment in PC07_PUBLIC_FORBIDDEN)
+    traces = observed_subagent_event_types(waited["items"])
     scan_surfaces(ctx, started["run_id"], evidence, sse_events)
-    ok = (not child) and (waited["status"] in PUBLIC_TERMINAL or waited["status"] is not None)
     evidence["public_status"] = waited["status"]
-    evidence["child_or_subagent_public"] = child
-    return finish(evidence, ctx["secrets"], ok, None if ok else "PC-07 public child/subagent leak")
+    evidence["internal_subagent_observed"] = bool(traces)
+    evidence["observed_subagent_event_types"] = traces
+    evidence["public_child_or_subagent_leak"] = child or bool(evidence.get("public_leaks"))
+    if waited["status"] in PUBLIC_TERMINAL and not traces:
+        return finish(
+            evidence,
+            started["secrets"],
+            False,
+            "real delegation was not observed",
+        )
+    ok = (
+        bool(evidence.get("runtime_binding_verified"))
+        and bool(traces)
+        and not evidence["public_child_or_subagent_leak"]
+        and waited["status"] in PUBLIC_TERMINAL
+    )
+    return finish(evidence, started["secrets"], ok, None if ok else "PC-07 public child/subagent leak")
 
 
 def run_pc08(ctx: dict[str, Any]) -> dict[str, Any]:
@@ -804,23 +1160,14 @@ def run_pc08(ctx: dict[str, Any]) -> dict[str, Any]:
     restart_cmd = (os.environ.get("RM16_HERMES_RESTART_CMD") or "").strip()
     if not restart_cmd:
         fail("PC-08 requires RM16_HERMES_RESTART_CMD", "RM16_HERMES_RESTART_UNAVAILABLE")
-    tool_name = park_tool_name()
-    started = start_bound_run(
-        ctx,
-        tool_name=tool_name,
-        arguments=rm13.tool_arguments(),
-        prefix="rm16-pc08",
-    )
-    evidence.update(
-        {
-            "tool_name": tool_name,
-            "run_id": started["run_id"],
-            "attempt_id": started["attempt_id"],
-            "generation": started["generation"],
-            "runtime_run_id_hash": started["runtime_run_id_hash"],
-            "public_leaks": started["public_leaks"],
-        }
-    )
+    started = start_stable_running_run(ctx, evidence, prefix="rm16-pc08")
+    bound: BoundRuntimeContext = started["bound"]
+    expected_restart = expected_instance_id("RM16_EXPECTED_RESTART_INSTANCE_ID")
+    if expected_restart and expected_restart != bound.hermes_agent_instance_id:
+        fail(
+            f"restart instance mismatch {bound.hermes_agent_instance_id} != {expected_restart}",
+            "RM16_BOUND_RUNTIME_INSTANCE_MISMATCH",
+        )
     before = query_attempts(started["run_id"])
     completed = subprocess.run(restart_cmd, shell=True, capture_output=True, text=True, check=False)
     evidence["hermes_restart_exit"] = completed.returncode
@@ -835,111 +1182,81 @@ def run_pc08(ctx: dict[str, Any]) -> dict[str, Any]:
     evidence["attempt_count_after"] = after.get("count")
     evidence["runtime_interrupted"] = interrupted
     scan_surfaces(ctx, started["run_id"], evidence)
-    ok = waited["status"] == "FAILED" and interrupted and int(after.get("count") or 0) == int(before.get("count") or 0)
-    return finish(evidence, ctx["secrets"], ok, None if ok else "PC-08 interrupted mapping failed")
-
-
-class _OldRuntimeStub(BaseHTTPRequestHandler):
-    observed: list[str] = []
-
-    def log_message(self, format: str, *args: Any) -> None:
-        return
-
-    def _write(self, code: int, payload: dict[str, Any]) -> None:
-        raw = json.dumps(payload).encode("utf-8")
-        self.send_response(code)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(raw)))
-        self.end_headers()
-        self.wfile.write(raw)
-
-    def do_GET(self) -> None:
-        type(self).observed.append(f"GET {self.path}")
-        path = self.path.split("?", 1)[0]
-        if path.rstrip("/").endswith("/v1/capabilities"):
-            self._write(200, {"version": "v2026.4.23", "features": {}})
-            return
-        if path.rstrip("/").endswith("/health"):
-            self._write(200, {"version": "v2026.4.23"})
-            return
-        self._write(404, {"error": "not found"})
-
-    def do_POST(self) -> None:
-        type(self).observed.append(f"POST {self.path}")
-        self._write(404, {"error": "not found"})
+    ok = (
+        bool(evidence.get("runtime_binding_verified"))
+        and evidence.get("fault_fixture") == "stable_running"
+        and evidence.get("pre_fault_public_status") == "RUNNING"
+        and evidence.get("pre_fault_hermes_status") in HERMES_RUNNING_STATUSES
+        and waited["status"] == "FAILED"
+        and interrupted
+        and int(after.get("count") or 0) == int(before.get("count") or 0)
+    )
+    return finish(evidence, started["secrets"], ok, None if ok else "PC-08 interrupted mapping failed")
 
 
 def run_pc09(ctx: dict[str, Any]) -> dict[str, Any]:
     evidence = base_evidence("pc09")
     evidence["policy"] = "REAL_PROCESS"
-    old_base = (os.environ.get("RM16_OLD_HERMES_BASE_URL") or "").strip()
-    observed: list[str] = []
-    blocked_code = None
-    blocked_message = None
-    if old_base:
-        evidence["pc09_mode"] = "real_old_runtime"
-        try:
-            rm13.probe_hermes(old_base, ctx["hermes_key"], ctx["timeout"])
-            fail("old Hermes runtime was accepted; expected RUNTIME_VERSION_UNSUPPORTED")
-        except rm13.LiveBlocked as exc:
-            blocked_code = exc.code
-            blocked_message = str(exc)
-    else:
-        evidence["pc09_mode"] = "probe_only_version_stub"
-        _OldRuntimeStub.observed = []
-        server = ThreadingHTTPServer(("127.0.0.1", 0), _OldRuntimeStub)
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
-        try:
-            host, port = server.server_address
-            stub_base = f"http://{host}:{port}"
-            try:
-                rm13.probe_hermes(stub_base, "stub-key", ctx["timeout"])
-                fail("version stub was accepted; expected RUNTIME_VERSION_UNSUPPORTED")
-            except rm13.LiveBlocked as exc:
-                blocked_code = exc.code
-                blocked_message = str(exc)
-            observed = list(_OldRuntimeStub.observed)
-        finally:
-            server.shutdown()
-            server.server_close()
-    chat = any("chat/completions" in item for item in observed)
+    probe_and_health(ctx, evidence)
+    tool_name = (os.environ.get("RM16_OLD_RUNTIME_TOOL_NAME") or "").strip()
+    if not tool_name:
+        fail("missing RM16_OLD_RUNTIME_TOOL_NAME", "RM16_OLD_RUNTIME_UNAVAILABLE")
+    require_catalog_tool(ctx, tool_name, "RM16_OLD_RUNTIME_UNAVAILABLE")
+    started = start_bound_run(
+        ctx,
+        tool_name=tool_name,
+        arguments=tool_arguments(PLAIN_PROMPT),
+        prefix="rm16-pc09",
+        require_runtime_run_id=False,
+        expected_env="RM16_EXPECTED_OLD_INSTANCE_ID",
+    )
+    evidence["tool_name"] = tool_name
+    attach_started(evidence, started)
+    evidence["pc09_mode"] = "real_bound_old_runtime"
+    bound: BoundRuntimeContext = started["bound"]
+    parsed = rm13.hermes_version_for_floor(bound.runtime_version)
+    below_floor = parsed is None or parsed < rm13.HERMES_VERSION_FLOOR
+    evidence["old_runtime_version"] = bound.runtime_version
+    evidence["version_floor_rejected"] = below_floor
+    waited = wait_terminal(ctx, started["run_id"])
+    dumped = json.dumps({"items": waited["items"], "body": waited["body"]}, ensure_ascii=False)
+    unsupported = "RUNTIME_VERSION_UNSUPPORTED" in dumped
+    chat = "/v1/chat/completions" in dumped
     evidence["chat_completions_observed"] = chat
-    evidence["stub_paths_observed"] = observed
-    evidence["blocked_code"] = blocked_code
-    evidence["blocked_message"] = blocked_message
-    evidence["hermes_runtime_version"] = evidence.get("hermes_runtime_version") or "v2026.4.23"
-    if old_base:
-        evidence["native_paths_observed"].append("/v1/capabilities")
-    ok = blocked_code == "RUNTIME_VERSION_UNSUPPORTED" and not chat
-    return finish(evidence, ctx["secrets"], ok, None if ok else "PC-09 did not fail-closed on version floor")
+    evidence["public_status"] = waited["status"]
+    evidence["has_runtime_run_id"] = bool(started.get("runtime_run_id"))
+    scan_surfaces(ctx, started["run_id"], evidence)
+    ok = (
+        evidence.get("pc09_mode") == "real_bound_old_runtime"
+        and bool(evidence.get("runtime_binding_verified"))
+        and below_floor
+        and waited["status"] == "FAILED"
+        and unsupported
+        and not started.get("runtime_run_id")
+        and not chat
+    )
+    return finish(evidence, started["secrets"], ok, None if ok else "PC-09 did not fail-closed on bound old runtime")
 
 
 def run_pc12_scan(ctx: dict[str, Any]) -> dict[str, Any]:
     evidence = base_evidence("pc12-scan")
     probe_and_health(ctx, evidence)
-    tool_name = rm13.require_named("RM13_TOOL_NAME", "RM12_TOOL_NAME")
+    tool_name = rm13.env_first("RM16_PLAIN_TOOL_NAME", "RM13_TOOL_NAME", "RM12_TOOL_NAME")
+    if not tool_name:
+        fail("missing RM16_PLAIN_TOOL_NAME or RM13_TOOL_NAME")
     started = start_bound_run(
         ctx,
         tool_name=tool_name,
         arguments=tool_arguments(PLAIN_PROMPT),
         prefix="rm16-pc12",
     )
-    evidence.update(
-        {
-            "tool_name": tool_name,
-            "run_id": started["run_id"],
-            "attempt_id": started["attempt_id"],
-            "generation": started["generation"],
-            "runtime_run_id_hash": started["runtime_run_id_hash"],
-            "public_leaks": started["public_leaks"],
-        }
-    )
+    evidence["tool_name"] = tool_name
+    attach_started(evidence, started)
     wait_terminal(ctx, started["run_id"])
     sse_events = public_sse(ctx, started["run_id"])
     scan_surfaces(ctx, started["run_id"], evidence, sse_events)
-    ok = not evidence["public_leaks"]
-    return finish(evidence, ctx["secrets"], ok, None if ok else "PC-12 public-face scan found forbidden fields")
+    ok = bool(evidence.get("runtime_binding_verified")) and not evidence["public_leaks"]
+    return finish(evidence, started["secrets"], ok, None if ok else "PC-12 public-face scan found forbidden fields")
 
 
 def scenario_output_path(scenario: str) -> Path:
@@ -961,6 +1278,11 @@ def run_rm02_package() -> dict[str, Any]:
         payload = json.loads(path.read_text(encoding="utf-8"))
         if payload.get("result") != "PASS":
             failed.append(name)
+        if name == "pc09":
+            if payload.get("pc09_mode") != "real_bound_old_runtime":
+                failed.append("pc09:not_real_bound_old_runtime")
+            if payload.get("runtime_binding_verified") is not True:
+                failed.append("pc09:runtime_binding_unverified")
         if payload.get("pc09_mode") == "chat_completion_mock":
             failed.append(f"{name}:mock")
         version = str(payload.get("hermes_runtime_version") or "")
@@ -1021,12 +1343,29 @@ def self_check() -> int:
     if not leaks:
         print("self-check failed: leak scan", file=sys.stderr)
         return 1
+    src = Path(__file__).read_text(encoding="utf-8")
+    stub_class = "class _" + "OldRuntimeStub"
+    if stub_class in src:
+        print("self-check failed: PC-09 stub path still present", file=sys.stderr)
+        return 1
+    if 'require_named("RM13_' + 'HERMES_BASE_URL")' in src:
+        print("self-check failed: global Hermes URL still authoritative", file=sys.stderr)
+        return 1
+    if "def resolve_bound_runtime" not in src or "def start_stable_running_run" not in src:
+        print("self-check failed: bound runtime helpers missing", file=sys.stderr)
+        return 1
+    if "park_tool_name()" in src.split("def run_pc05", 1)[-1].split("def run_pc06", 1)[0]:
+        print("self-check failed: PC-05 still uses park tool", file=sys.stderr)
+        return 1
+    if "park_tool_name()" in src.split("def run_pc08", 1)[-1].split("def run_pc09", 1)[0]:
+        print("self-check failed: PC-08 still uses park tool", file=sys.stderr)
+        return 1
     print("self-check passed")
     return 0
 
 
 def preflight_env() -> int:
-    missing = rm13.missing_live_vars()
+    missing = missing_rm16_preflight_vars()
     if missing:
         print("REAL_HERMES_RUNTIME_UNAVAILABLE")
         for name in missing:
@@ -1039,10 +1378,10 @@ def preflight_env() -> int:
     try:
         reject_mock_event_source()
         ctx = env_ctx()
-        caps = rm13.probe_hermes(ctx["hermes_base"], ctx["hermes_key"], ctx["timeout"])
+        probe_and_health(ctx, base_evidence("preflight"))
         print("RM-16 live env complete")
-        print(f"auth_type=user_jwt")
-        print(f"hermes_runtime_version={caps.get('hermes_runtime_version')}")
+        print("auth_type=user_jwt")
+        print("runtime_route=run_bound_credential_lease")
         print("reused=run_rm12_live_conformance.py,run_rm13_live_native.py,run_rm14_live_semantic.py,run_rm15_live_control.py")
         return 0
     except rm13.LiveBlocked as exc:

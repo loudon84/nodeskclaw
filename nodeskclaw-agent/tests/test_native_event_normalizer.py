@@ -77,6 +77,21 @@ def test_subagent_stays_internal_without_sensitive_fields():
     assert "output_tail" not in dumped
     assert "child_session_id" not in dumped
     assert "cost_usd" not in dumped
+    traces = n.drain_internal_traces()
+    assert traces == [
+        {
+            "event_type": "internal.runtime.trace",
+            "payload": {"runtime_event_type": "subagent.start", "category": "subagent"},
+            "source": "agent",
+            "source_event_id": traces[0]["source_event_id"],
+        }
+    ]
+    assert n.drain_internal_traces() == []
+    trace_dump = str(traces)
+    assert "child_session_id" not in trace_dump
+    assert "output_tail" not in trace_dump
+    assert "cost_usd" not in trace_dump
+    assert "goal" not in traces[0]["payload"]
 
 
 def test_approval_request_maps_to_requested():
