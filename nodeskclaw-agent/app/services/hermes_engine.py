@@ -46,6 +46,29 @@ def _failed(code: str, message: str) -> dict[str, Any]:
     return {"event_type": "run.failed", "payload": {"error": message, "error_code": code}}
 
 
+def _attach_sse_event_type(chunk: dict[str, Any], sse_event: str | None) -> dict[str, Any]:
+    if not sse_event:
+        return chunk
+    if chunk.get("type") or chunk.get("event_type") or chunk.get("event"):
+        return chunk
+    attached = dict(chunk)
+    attached["event"] = sse_event
+    return attached
+
+
+def _status_output_text(data: dict[str, Any] | None) -> str:
+    if not isinstance(data, dict):
+        return ""
+    for key in ("output", "final_response"):
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    nested = data.get("data")
+    if isinstance(nested, dict):
+        return _status_output_text(nested)
+    return ""
+
+
 # @lat: [[architecture/skill-agent#Configuration#Gateway Reachability Probe]]
 async def probe_gateway_url(gateway_url: str, timeout_seconds: int) -> None:
     timeout = httpx.Timeout(timeout_seconds, connect=timeout_seconds)
@@ -536,6 +559,24 @@ def _emit_ingested(normalizer: NativeEventNormalizer, chunk: dict[str, Any]) -> 
     return events
 
 
+def _events_after_status_terminal(
+    normalizer: NativeEventNormalizer,
+    *,
+    status: str,
+    data: dict[str, Any] | None,
+    saw_assistant: bool,
+) -> tuple[list[dict[str, Any]], bool]:
+    close_status = "completed" if status in {"completed", "succeeded", "success"} else "failed"
+    events = list(normalizer.close(terminal_status=close_status))
+    if any(item.get("event_type") == "assistant.message" for item in events):
+        saw_assistant = True
+    output = _status_output_text(data)
+    if close_status == "completed" and output and not saw_assistant:
+        events.extend(_emit_ingested(normalizer, {"event": "assistant.message", "text": output}))
+        saw_assistant = True
+    return events, saw_assistant
+
+
 # @lat: [[architecture/skill-agent#Hermes Engine Adapter]]
 async def execute_hermes_run(
     *,
@@ -752,6 +793,8 @@ async def execute_hermes_run(
 
             events_url = f"{gateway_url}/v1/runs/{runtime_run_id}/events"
             saw_approval = False
+            saw_assistant = False
+            sse_event_name: str | None = None
             polled_status: str | None = None
             polled_data: dict[str, Any] | None = None
             polled_code: str | None = None
@@ -860,6 +903,9 @@ async def execute_hermes_run(
                         except StopAsyncIteration:
                             break
                         idle_ticks = 0
+                        if line.startswith("event:"):
+                            sse_event_name = line.split(":", 1)[1].strip() or None
+                            continue
                         if not line or not line.startswith("data:"):
                             continue
                         data_str = line.split(":", 1)[1].strip()
@@ -868,12 +914,18 @@ async def execute_hermes_run(
                         try:
                             chunk = json.loads(data_str)
                         except json.JSONDecodeError:
+                            sse_event_name = None
                             continue
                         if not isinstance(chunk, dict):
+                            sse_event_name = None
                             continue
+                        chunk = _attach_sse_event_type(chunk, sse_event_name)
+                        sse_event_name = None
                         leave_stream = False
                         for semantic in _emit_ingested(normalizer, chunk):
                             yield semantic
+                            if semantic.get("event_type") == "assistant.message":
+                                saw_assistant = True
                             if semantic.get("event_type") == "approval.requested":
                                 saw_approval = True
                                 leave_stream = True
@@ -904,8 +956,13 @@ async def execute_hermes_run(
                 )
             terminal = _terminal_from_status(status, rec_code)
             if terminal:
-                close_status = "completed" if status in {"completed", "succeeded", "success"} else "failed"
-                for leftover in normalizer.close(terminal_status=close_status):
+                leftovers, saw_assistant = _events_after_status_terminal(
+                    normalizer,
+                    status=status,
+                    data=data,
+                    saw_assistant=saw_assistant,
+                )
+                for leftover in leftovers:
                     yield leftover
                 if terminal["event_type"] in {"run.completed", "run.failed", "run.cancelled"}:
                     await mark_native_terminal(attempt_id=attempt_id, generation=generation)
@@ -970,8 +1027,13 @@ async def execute_hermes_run(
                 )
                 terminal = _terminal_from_status(status, rec_code)
                 if terminal:
-                    close_status = "completed" if status in {"completed", "succeeded", "success"} else "failed"
-                    for leftover in normalizer.close(terminal_status=close_status):
+                    leftovers, saw_assistant = _events_after_status_terminal(
+                        normalizer,
+                        status=status,
+                        data=data,
+                        saw_assistant=saw_assistant,
+                    )
+                    for leftover in leftovers:
                         yield leftover
                     if terminal["event_type"] in {"run.completed", "run.failed", "run.cancelled"}:
                         await mark_native_terminal(attempt_id=attempt_id, generation=generation)

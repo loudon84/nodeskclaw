@@ -99,3 +99,20 @@ def test_approval_request_maps_to_requested():
     events = n.ingest({"type": "approval.request", "id": "appr-9", "text": "delete file"})
     assert events[0]["event_type"] == "approval.requested"
     assert events[0]["payload"] == {"approval_id": "appr-9", "summary": "delete file"}
+
+
+# @lat: [[architecture/skill-agent#Hermes Engine Adapter#Runtime Semantic Event Fidelity]]
+def test_run_completed_output_becomes_assistant_message():
+    n = _norm("att-out")
+    events = n.ingest({"event": "run.completed", "output": "完整中文回复"})
+    assert [e["event_type"] for e in events] == ["assistant.message"]
+    assert events[0]["payload"]["text"] == "完整中文回复"
+
+
+# @lat: [[architecture/skill-agent#Hermes Engine Adapter#Runtime Semantic Event Fidelity]]
+def test_run_completed_does_not_duplicate_existing_assistant_text():
+    n = _norm("att-keep")
+    n.ingest({"type": "message.delta", "text": "流上文本"})
+    events = n.ingest({"event": "run.completed", "output": "状态回填文本"})
+    messages = [e for e in events if e["event_type"] == "assistant.message"]
+    assert [e["payload"]["text"] for e in messages] == ["流上文本"]

@@ -843,6 +843,106 @@ async def test_execute_hermes_uses_normalizer_not_chat_completion_parser():
 
 
 @pytest.mark.asyncio
+# @lat: [[architecture/skill-agent#Hermes Engine Adapter]]
+async def test_execute_hermes_ingests_sse_event_line_message_delta():
+    client = _native_client(
+        event_lines=[
+            "event: message.delta",
+            'data: {"delta": "你好世界"}',
+            "data: [DONE]",
+        ]
+    )
+    with patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client):
+        events = [
+            event
+            async for event in execute_hermes_run(
+                tool_name="foo",
+                arguments={"prompt": "hi"},
+                route_snapshot={"gateway_url": "http://hermes:8642"},
+                run_id="run-sse-event",
+                attempt_id="att-sse-event",
+            )
+        ]
+    messages = [e for e in events if e["event_type"] == "assistant.message"]
+    assert [e["payload"]["text"] for e in messages] == ["你好世界"]
+
+
+@pytest.mark.asyncio
+# @lat: [[architecture/skill-agent#Hermes Engine Adapter]]
+async def test_execute_hermes_backfills_assistant_message_from_status_output():
+    client = _native_client(
+        event_lines=["data: [DONE]"],
+        status={"id": "rr-1", "status": "completed", "output": "完整中文回复"},
+    )
+    with patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client):
+        events = [
+            event
+            async for event in execute_hermes_run(
+                tool_name="foo",
+                arguments={"prompt": "hi"},
+                route_snapshot={"gateway_url": "http://hermes:8642"},
+                run_id="run-output",
+                attempt_id="att-output",
+            )
+        ]
+    messages = [e for e in events if e["event_type"] == "assistant.message"]
+    assert [e["payload"]["text"] for e in messages] == ["完整中文回复"]
+    assert events[-1]["event_type"] == "run.completed"
+
+
+@pytest.mark.asyncio
+# @lat: [[architecture/skill-agent#Hermes Engine Adapter]]
+async def test_execute_hermes_does_not_duplicate_status_output_when_stream_has_text():
+    client = _native_client(
+        event_lines=[
+            'data: {"type": "assistant.message", "text": "流上文本"}',
+            "data: [DONE]",
+        ],
+        status={"id": "rr-1", "status": "completed", "output": "状态回填文本"},
+    )
+    with patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client):
+        events = [
+            event
+            async for event in execute_hermes_run(
+                tool_name="foo",
+                arguments={"prompt": "hi"},
+                route_snapshot={"gateway_url": "http://hermes:8642"},
+                run_id="run-nodup",
+                attempt_id="att-nodup",
+            )
+        ]
+    messages = [e for e in events if e["event_type"] == "assistant.message"]
+    assert [e["payload"]["text"] for e in messages] == ["流上文本"]
+
+
+@pytest.mark.asyncio
+# @lat: [[architecture/skill-agent#Hermes Engine Adapter]]
+async def test_execute_hermes_ingests_sse_event_line_subagent():
+    client = _native_client(
+        event_lines=[
+            "event: subagent.start",
+            'data: {"goal": "delegate"}',
+            'data: {"type": "assistant.message", "text": "ok"}',
+            "data: [DONE]",
+        ]
+    )
+    with patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client):
+        events = [
+            event
+            async for event in execute_hermes_run(
+                tool_name="foo",
+                arguments={"prompt": "hi"},
+                route_snapshot={"gateway_url": "http://hermes:8642"},
+                run_id="run-sse-subagent",
+                attempt_id="att-sse-subagent",
+            )
+        ]
+    traces = [e for e in events if e["event_type"] == "internal.runtime.trace"]
+    assert traces
+    assert traces[0]["payload"] == {"runtime_event_type": "subagent.start", "category": "subagent"}
+
+
+@pytest.mark.asyncio
 async def test_execute_hermes_parks_on_waiting_for_approval():
     client = _native_client(
         event_lines=['data: {"type": "approval.request", "approval_id": "appr-1", "summary": "Need approval"}'],

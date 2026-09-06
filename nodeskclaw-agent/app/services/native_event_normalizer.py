@@ -146,7 +146,16 @@ class NativeEventNormalizer:
             status = "completed" if event_type == "run.completed" else "failed"
             if event_type in {"run.cancelled", "run.canceled"}:
                 status = "failed"
-            return self.close(terminal_status=status)
+            events = self.close(terminal_status=status)
+            output = payload.get("output") or payload.get("final_response")
+            if (
+                status == "completed"
+                and isinstance(output, str)
+                and output.strip()
+                and not any(item.get("event_type") == "assistant.message" for item in events)
+            ):
+                events = self._from_texts([output.strip()]) + events
+            return events
         if event_type in {"tool.started", "tool.start"}:
             events = self._from_texts([self.coalescer.flush()] if self.coalescer.buffered_text() else [])
             events.extend(self._start_tool(payload))
