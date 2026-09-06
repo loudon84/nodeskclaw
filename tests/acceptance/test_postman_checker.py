@@ -8,67 +8,105 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from tools.acceptance.check_postman_collection import check_collection, scan_acceptance_secrets
 
+REPO_COLLECTION = Path("tests/postman/nodeskclaw_acceptance_closure.postman_collection.json")
+REPO_ENV_TEMPLATE = Path("tests/postman/nodeskclaw_agent_acceptance.postman_environment.template.json")
 
-def test_checker_passes_on_valid_collection(tmp_path):
-    coll = {
+
+def _assert_ok():
+    return [
+        {
+            "listen": "test",
+            "script": {
+                "exec": [
+                    "pm.test('200 ok', function() { pm.expect(pm.response.code).to.equal(200); });"
+                ]
+            },
+        }
+    ]
+
+
+def _jwt_item(name: str, url: str, *, body: str = "") -> dict:
+    request = {
+        "method": "POST" if body else "GET",
+        "header": [{"key": "Authorization", "value": "Bearer {{JWT_TOKEN}}"}],
+        "url": {"raw": url},
+    }
+    if body:
+        request["body"] = {"raw": body}
+    return {"name": name, "request": request, "event": _assert_ok()}
+
+
+def _internal_item(name: str, url: str) -> dict:
+    return {
+        "name": name,
+        "request": {
+            "method": "GET",
+            "header": [{"key": "X-Skill-Agent-Token", "value": "{{INTERNAL_TOKEN}}"}],
+            "url": {"raw": url},
+        },
+        "event": _assert_ok(),
+    }
+
+
+def _valid_collection(*, extra_public: list[dict] | None = None, include_bundle: bool = True) -> dict:
+    public = [
+        _jwt_item("AC-01 Health", "{{BACKEND_BASE_URL}}/api/v1/health"),
+        _jwt_item(
+            "AC-02 Catalog",
+            "{{BACKEND_BASE_URL}}/api/v1/mcp",
+            body='{"jsonrpc":"2.0","id":"list-1","method":"tools/list","params":{}}',
+        ),
+        _jwt_item(
+            "AC-03 tools/call",
+            "{{BACKEND_BASE_URL}}/api/v1/mcp",
+            body='{"jsonrpc":"2.0","id":"call-1","method":"tools/call","params":{"name":"demo_search","arguments":{"q":"{{RUN_PREFIX}}"}}}',
+        ),
+        _jwt_item("AC-04 Events", "{{BACKEND_BASE_URL}}/api/v1/runs/{{RUN_ID}}/events"),
+        _jwt_item("AC-05 Result", "{{BACKEND_BASE_URL}}/api/v1/runs/{{RUN_ID}}/result"),
+        _jwt_item(
+            "AC-07 Approve",
+            "{{BACKEND_BASE_URL}}/api/v1/runs/{{RUN_ID}}/approvals/{{APPROVAL_ID}}",
+            body='{"choice":"once"}',
+        ),
+        _jwt_item("AC-08 Resume", "{{BACKEND_BASE_URL}}/api/v1/runs/{{RUN_ID}}/resume"),
+        _jwt_item("AC-06 Cancel", "{{BACKEND_BASE_URL}}/api/v1/runs/{{RUN_ID}}/cancel"),
+        _jwt_item("AC-09 Artifacts", "{{BACKEND_BASE_URL}}/api/v1/runs/{{RUN_ID}}/artifacts"),
+    ]
+    if extra_public:
+        public.extend(extra_public)
+    internal = [_internal_item("AC-22 Internal Request", "{{AGENT_BASE_URL}}/health/ready")]
+    if include_bundle:
+        internal.append(
+            _internal_item(
+                "AC-27 Bundle Desired Installations",
+                "{{BACKEND_BASE_URL}}/api/v1/internal/edge/installations/desired",
+            )
+        )
+    return {
         "info": {"name": "Valid Collection"},
         "item": [
-            {
-                "name": "Public Contract (Backend JWT)",
-                "item": [
-                    {
-                        "name": "AC-01 Valid Request",
-                        "request": {
-                            "method": "GET",
-                            "header": [{"key": "Authorization", "value": "Bearer {{JWT_TOKEN}}"}],
-                            "url": {"raw": "{{BACKEND_BASE_URL}}/api/v1/health"},
-                        },
-                        "event": [
-                            {
-                                "listen": "test",
-                                "script": {
-                                    "exec": [
-                                        "pm.test('200 ok', function() { pm.expect(pm.response.code).to.equal(200); });"
-                                    ]
-                                },
-                            }
-                        ],
-                    }
-                ],
-            },
-            {
-                "name": "Internal Harness (Edge/Bundle)",
-                "item": [
-                    {
-                        "name": "AC-22 Internal Request",
-                        "request": {
-                            "method": "GET",
-                            "header": [{"key": "X-Skill-Agent-Token", "value": "{{INTERNAL_TOKEN}}"}],
-                            "url": {"raw": "{{AGENT_BASE_URL}}/health/ready"},
-                        },
-                        "event": [
-                            {
-                                "listen": "test",
-                                "script": {
-                                    "exec": [
-                                        "pm.test('200 ok', function() { pm.expect(pm.response.code).to.equal(200); });"
-                                    ]
-                                },
-                            }
-                        ],
-                    }
-                ],
-            },
+            {"name": "Public Contract (Backend JWT)", "item": public},
+            {"name": "Internal Harness (Edge/Bundle)", "item": internal},
         ],
     }
-    env = {
+
+
+def _valid_env() -> dict:
+    return {
         "values": [
-            {"key": "AGENT_BASE_URL", "value": "http://127.0.0.1:4520"},
+            {"key": "AGENT_BASE_URL", "value": "http://127.0.0.1:4580"},
             {"key": "BACKEND_BASE_URL", "value": "http://127.0.0.1:4510"},
             {"key": "JWT_TOKEN", "value": "${JWT_TOKEN}"},
             {"key": "INTERNAL_TOKEN", "value": "${SKILL_AGENT_INTERNAL_TOKEN}"},
+            {"key": "ORG_ID", "value": "${ACCEPTANCE_ORG_ID}"},
+            {"key": "RUN_PREFIX", "value": "${ACCEPTANCE_RUN_PREFIX}"},
         ]
     }
+
+
+def test_checker_passes_on_valid_collection(tmp_path):
+    coll = _valid_collection()
+    env = _valid_env()
 
     c_path = tmp_path / "coll.json"
     e_path = tmp_path / "env.json"
@@ -232,3 +270,53 @@ def test_secret_scan_detects_generic_secret_in_rendered_report(tmp_path):
     errors = scan_acceptance_secrets([report])
 
     assert any("Secret-like value" in error for error in errors)
+
+
+def test_checker_rejects_public_hermes_task_url(tmp_path):
+    coll = _valid_collection(
+        extra_public=[
+            _jwt_item(
+                "AC-05 Task Timeline SSE",
+                "{{BACKEND_BASE_URL}}/api/v1/hermes/tasks/{{TASK_ID}}/timeline",
+            )
+        ]
+    )
+    c_path = tmp_path / "hermes_task.json"
+    e_path = tmp_path / "env.json"
+    c_path.write_text(json.dumps(coll))
+    e_path.write_text(json.dumps(_valid_env()))
+
+    errors = check_collection(c_path, e_path)
+
+    assert any("hermes/tasks" in error.lower() or "hermestask" in error.lower() for error in errors)
+
+
+def test_checker_rejects_missing_bundle_journey(tmp_path):
+    coll = _valid_collection(include_bundle=False)
+    c_path = tmp_path / "no_bundle.json"
+    e_path = tmp_path / "env.json"
+    c_path.write_text(json.dumps(coll))
+    e_path.write_text(json.dumps(_valid_env()))
+
+    errors = check_collection(c_path, e_path)
+
+    assert any("bundle" in error.lower() for error in errors)
+
+
+def test_checker_rejects_missing_public_result_journey(tmp_path):
+    coll = _valid_collection()
+    public = coll["item"][0]["item"]
+    coll["item"][0]["item"] = [item for item in public if "/result" not in str(item["request"]["url"]["raw"])]
+    c_path = tmp_path / "no_result.json"
+    e_path = tmp_path / "env.json"
+    c_path.write_text(json.dumps(coll))
+    e_path.write_text(json.dumps(_valid_env()))
+
+    errors = check_collection(c_path, e_path)
+
+    assert any("result" in error.lower() for error in errors)
+
+
+def test_formal_collection_uses_v121_public_paths():
+    errors = check_collection(REPO_COLLECTION, REPO_ENV_TEMPLATE)
+    assert errors == []

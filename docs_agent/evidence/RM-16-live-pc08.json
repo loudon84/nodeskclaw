@@ -6,5 +6,5 @@
   "auth_type": "user_jwt",
   "blocker": "RM16_HERMES_RESTART_UNAVAILABLE",
   "message": "PC-08 requires RM16_HERMES_RESTART_CMD",
-  "timestamp": "2026-09-05T14:38:39.301520Z"
+  "timestamp": "2026-09-06T11:03:47.068550Z"
 }

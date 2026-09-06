@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -30,9 +31,48 @@ def _require_env(name: str) -> str:
     return value
 
 
-def generate_env_file(template_path: Path, output_path: Path) -> None:
+def allocate_run_prefix(used: set[str], candidate: str | None = None) -> str:
+    value = (candidate or f"acceptance-{uuid.uuid4().hex[:12]}").strip()
+    if not value:
+        raise RuntimeError("Acceptance run prefix is empty")
+    if value in used:
+        raise RuntimeError(f"Duplicate acceptance run prefix: {value}")
+    used.add(value)
+    return value
+
+
+def assert_reports_present(report_paths: tuple[Path, ...]) -> None:
+    missing = [str(path) for path in report_paths if not path.is_file() or path.stat().st_size == 0]
+    if missing:
+        raise RuntimeError(
+            "Newman completed without all required JUnit and JSON reports: " + ", ".join(missing)
+        )
+
+
+def assert_private_env_path(output_path: Path) -> None:
+    parts = {part.lower() for part in Path(output_path).resolve().parts}
+    if "reports" in parts:
+        raise RuntimeError("Rendered Newman environment must not be written under reports/")
+    if "tests" in parts and "postman" in parts:
+        raise RuntimeError("Rendered Newman environment must not be written under tests/postman/")
+
+
+def run_skill_run_contract_check() -> None:
+    script = Path("nodeskclaw-backend/scripts/contracts.py").resolve()
+    if not script.is_file():
+        raise RuntimeError(f"Contract checker not found: {script}")
+    res = subprocess.run(
+        [sys.executable, str(script), "check", "--family", "skill-run"],
+        check=False,
+    )
+    if res.returncode != 0:
+        raise RuntimeError("Skill Run contract check failed")
+
+
+def generate_env_file(template_path: Path, output_path: Path, *, run_prefix: str | None = None) -> None:
     if not template_path.exists():
         raise FileNotFoundError(f"Template environment file not found: {template_path}")
+    assert_private_env_path(output_path)
 
     internal_token = _require_env("SKILL_AGENT_INTERNAL_TOKEN")
     edge_token = _require_env("SKILL_AGENT_EDGE_TOKEN")
@@ -42,6 +82,7 @@ def generate_env_file(template_path: Path, output_path: Path) -> None:
     org_id = _require_env("ACCEPTANCE_ORG_ID")
     user_id = _require_env("ACCEPTANCE_USER_ID")
     org_prefix = os.getenv("ACCEPTANCE_ORG_PREFIX", "acceptance")
+    prefix = run_prefix or os.getenv("ACCEPTANCE_RUN_PREFIX", "").strip() or allocate_run_prefix(set())
 
     if not org_id.startswith(org_prefix):
         raise RuntimeError(
@@ -54,6 +95,7 @@ def generate_env_file(template_path: Path, output_path: Path) -> None:
     content = content.replace("${JWT_TOKEN}", jwt_token)
     content = content.replace("${ACCEPTANCE_ORG_ID}", org_id)
     content = content.replace("${ACCEPTANCE_USER_ID}", user_id)
+    content = content.replace("${ACCEPTANCE_RUN_PREFIX}", prefix)
     content = content.replace("http://127.0.0.1:4520", agent_url)
     content = content.replace("http://127.0.0.1:4580", agent_url)
     content = content.replace("http://127.0.0.1:4510", backend_url)
@@ -95,6 +137,8 @@ def construct_newman_command(
         str(report_xml_path),
         "--delay-request",
         str(delay_ms),
+        "--timeout-request",
+        "15000",
     ]
     if report_json_path:
         cmd += ["--reporter-json-export", str(report_json_path)]
@@ -173,43 +217,57 @@ def main() -> None:
             print("Static collection validation failed. Aborting runs.")
             sys.exit(1)
 
+    try:
+        run_skill_run_contract_check()
+    except RuntimeError as exc:
+        print(f"ERROR: {exc}")
+        sys.exit(1)
+
     xml_1 = reports_dir / "newman_run1_junit.xml"
     xml_2 = reports_dir / "newman_run2_junit.xml"
     json_1 = reports_dir / "newman_run1.json"
     json_2 = reports_dir / "newman_run2.json"
     reports = (xml_1, xml_2, json_1, json_2)
     secret_values = tuple(os.getenv(name, "") for name in REQUIRED_ENV_VARS)
+    used_prefixes: set[str] = set()
 
     with tempfile.TemporaryDirectory(prefix="nodeskclaw-newman-") as temp_dir:
-        rendered_env = Path(temp_dir) / "acceptance_environment.json"
-        generate_env_file(env_template_path, rendered_env)
-        cmd1 = construct_newman_command(collection_path, rendered_env, xml_1, json_1)
-        cmd2 = construct_newman_command(collection_path, rendered_env, xml_2, json_2)
+        try:
+            prefix_1 = allocate_run_prefix(used_prefixes, os.getenv("ACCEPTANCE_RUN_PREFIX", "").strip() or None)
+            prefix_2 = allocate_run_prefix(used_prefixes)
+            env_1 = Path(temp_dir) / "acceptance_environment_1.json"
+            env_2 = Path(temp_dir) / "acceptance_environment_2.json"
+            generate_env_file(env_template_path, env_1, run_prefix=prefix_1)
+            generate_env_file(env_template_path, env_2, run_prefix=prefix_2)
+            cmd1 = construct_newman_command(collection_path, env_1, xml_1, json_1)
+            cmd2 = construct_newman_command(collection_path, env_2, xml_2, json_2)
 
-        if args.validate_only:
-            print("\n--- Newman Validation & Command Construction Successful ---")
-            print("Run 1 Command:", " ".join(cmd1))
-            print("Run 2 Command:", " ".join(cmd2))
-            sys.exit(0)
+            if args.validate_only:
+                print("\n--- Newman Validation & Command Construction Successful ---")
+                print("Run 1 Command:", " ".join(cmd1))
+                print("Run 2 Command:", " ".join(cmd2))
+                sys.exit(0)
 
-        ok_1 = run_newman(collection_path, rendered_env, xml_1, iteration=1, report_json_path=json_1)
-        if not ok_1:
-            print("\nERROR: Newman Run #1 Failed.")
+            ok_1 = run_newman(collection_path, env_1, xml_1, iteration=1, report_json_path=json_1)
+            if not ok_1:
+                print("\nERROR: Newman Run #1 Failed.")
+                redact_report_files(reports, secret_values)
+                sys.exit(1)
+
+            ok_2 = run_newman(collection_path, env_2, xml_2, iteration=2, report_json_path=json_2)
+            if not ok_2:
+                print("\nERROR: Newman Run #2 Failed.")
+                redact_report_files(reports, secret_values)
+                sys.exit(1)
+        finally:
             redact_report_files(reports, secret_values)
-            sys.exit(1)
 
-        ok_2 = run_newman(collection_path, rendered_env, xml_2, iteration=2, report_json_path=json_2)
-        if not ok_2:
-            print("\nERROR: Newman Run #2 Failed.")
-            redact_report_files(reports, secret_values)
-            sys.exit(1)
-
-    if any(not path.is_file() or path.stat().st_size == 0 for path in reports):
-        print("ERROR: Newman completed without all required JUnit and JSON reports.")
+    try:
+        assert_reports_present(reports)
+    except RuntimeError as exc:
+        print(f"ERROR: {exc}")
         redact_report_files(reports, secret_values)
         sys.exit(1)
-
-    redact_report_files(reports, secret_values)
 
     print("\n================ Newman Two-Run Suite Completed Successfully ================")
     summary = {

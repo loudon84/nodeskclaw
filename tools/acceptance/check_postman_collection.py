@@ -46,8 +46,23 @@ RUNTIME_ENV_VAR_NAMES = {
     "JOB_ID",
     "ARTIFACT_ID",
     "INSTALLATION_ID",
+    "APPROVAL_ID",
+    "RUN_PREFIX",
     "run_id",
     "task_id",
+}
+
+PUBLIC_HERMES_TASK_RE = re.compile(r"/api/v1/hermes/tasks(?:/|\b)", re.IGNORECASE)
+BUNDLE_JOURNEY_RE = re.compile(r"/installations(?:/|\b)|/bundles(?:/|\b)", re.IGNORECASE)
+PUBLIC_JOURNEY_PATTERNS = {
+    "catalog": re.compile(r"tools/list"),
+    "tools_call": re.compile(r"tools/call"),
+    "events": re.compile(r"/api/v1/runs/[^/\s]+/events"),
+    "result": re.compile(r"/api/v1/runs/[^/\s]+/result"),
+    "approval": re.compile(r"/api/v1/runs/[^/\s]+/approvals/"),
+    "cancel": re.compile(r"/api/v1/runs/[^/\s]+/cancel"),
+    "resume": re.compile(r"/api/v1/runs/[^/\s]+/resume"),
+    "artifacts": re.compile(r"/api/v1/runs/[^/\s]+/artifacts"),
 }
 
 
@@ -63,6 +78,20 @@ def _iter_collection_items(items: list[Any]) -> Iterable[dict[str, Any]]:
             yield item
 
 
+def _request_surface(item: dict[str, Any]) -> str:
+    req = item.get("request") or {}
+    url_raw = str((req.get("url") or {}).get("raw") or "")
+    raw_body = str((req.get("body") or {}).get("raw") or "")
+    return f"{url_raw}\n{raw_body}"
+
+
+def _is_jwt_public_item(item: dict[str, Any]) -> bool:
+    req = item.get("request") or {}
+    headers = req.get("header") or []
+    header_map = {str(h.get("key") or "").lower(): str(h.get("value") or "") for h in headers}
+    return header_map.get("authorization", "").startswith("Bearer {{")
+
+
 def _has_permissive_mixed_status(script_text: str) -> bool:
     for matched in STATUS_LIST_PATTERN.finditer(script_text):
         status_codes = {int(code) for code in re.findall(r"\b[1-5]\d{2}\b", matched.group(1))}
@@ -75,6 +104,7 @@ def check_collection(
     collection_path: Path | str,
     env_template_path: Path | str | None = None,
 ) -> list[str]:
+    # @lat: [[architecture/skill-agent#Production Readiness And Security#Public Newman Contract Gate]]
     errors: list[str] = []
     collection_path = Path(collection_path)
 
@@ -107,12 +137,23 @@ def check_collection(
 
     jwt_items = 0
     internal_only_items = 0
+    jwt_surfaces: list[str] = []
+    all_surfaces: list[str] = []
 
     for idx, item in enumerate(items):
         name = str(item.get("name") or f"Item_{idx}")
         req = item.get("request") or {}
         body = req.get("body") or {}
         raw_body = str(body.get("raw") or "")
+        surface = _request_surface(item)
+        all_surfaces.append(surface)
+        is_jwt_public = _is_jwt_public_item(item)
+        if is_jwt_public:
+            jwt_surfaces.append(surface)
+            if PUBLIC_HERMES_TASK_RE.search(surface):
+                errors.append(
+                    f"Item '{name}' uses public HermesTask path /api/v1/hermes/tasks/"
+                )
 
         if ".repeat(" in raw_body:
             errors.append(f"Item '{name}' contains raw body with unparsed dynamic JS expression .repeat()")
@@ -168,6 +209,14 @@ def check_collection(
 
     if internal_only_items == 0:
         errors.append("Collection must include at least one internal harness request (Edge/Bundle/internal)")
+
+    jwt_blob = "\n".join(jwt_surfaces)
+    for journey, pattern in PUBLIC_JOURNEY_PATTERNS.items():
+        if not pattern.search(jwt_blob):
+            errors.append(f"Collection missing public v1.2.1 journey '{journey}'")
+
+    if not BUNDLE_JOURNEY_RE.search("\n".join(all_surfaces)):
+        errors.append("Collection missing Bundle journey")
 
     return errors
 

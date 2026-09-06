@@ -50,9 +50,12 @@ services:
 
   hermes-test:
     platform: linux/amd64
+    container_name: hermes-acceptance
     build:
       context: .
       dockerfile: tools/acceptance/Dockerfile.hermes-test
+    environment:
+      HERMES_TEST_API_KEY: ${HERMES_TEST_API_KEY:?HERMES_TEST_API_KEY required}
     ports:
       - "8088:8088"
     healthcheck:
@@ -97,8 +100,12 @@ services:
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY required}
       INIT_ADMIN_ACCOUNT: admin
       DEBUG: "false"
-      HERMES_GATEWAY_URL: http://hermes-test:8088
+      HERMES_INSTANCES_ROOT: /hermes-instances
+      DOCKER_PUBLIC_HOST: hermes-test
+      DOCKER_PUBLIC_SCHEME: http
       TZ: Asia/Shanghai
+    volumes:
+      - ${HERMES_INSTANCES_HOST_DIR:?HERMES_INSTANCES_HOST_DIR required}:/hermes-instances:ro
     ports:
       - "4510:8000"
     restart: "no"
@@ -128,6 +135,7 @@ services:
       SKILL_AGENT_ARTIFACT_DIR: /data/artifacts
       SKILL_AGENT_CENTRAL_BASE_URL: http://nodeskclaw-backend:8000
       SKILL_AGENT_INSECURE_MODE: "false"
+      SKILL_AGENT_LEASE_SECONDS: "15"
       TZ: Asia/Shanghai
     ports:
       - "4580:4580"
@@ -158,6 +166,7 @@ services:
       SKILL_AGENT_ARTIFACT_DIR: /data/artifacts
       SKILL_AGENT_CENTRAL_BASE_URL: http://nodeskclaw-backend:8000
       SKILL_AGENT_INSECURE_MODE: "false"
+      SKILL_AGENT_LEASE_SECONDS: "15"
       TZ: Asia/Shanghai
     ports:
       - "4521:4580"
@@ -187,6 +196,7 @@ services:
       TZ: Asia/Shanghai
     volumes:
       - caddy_ca:/caddy-ca:ro
+      - ${EDGE_SPOOL_HOST_DIR:?EDGE_SPOOL_HOST_DIR required}:/app/data/edge_spool
     restart: "no"
 
   caddy-ca-ready:

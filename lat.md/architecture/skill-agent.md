@@ -41,7 +41,7 @@ Agent 的 Central（中心执行）与 Edge（边缘执行）角色已经落地�
 - **已实现**：[[nodeskclaw-agent/app/main.py#lifespan]] 在 `SKILL_AGENT_WORKER_ENABLED` 时按角色构造 Worker：Central 必须导入并实例化 [[nodeskclaw-agent/app/services/worker.py#RunWorker]]，Edge 实例化 [[nodeskclaw-agent/app/services/edge_worker.py#EdgeWorker]]。缺导入会使 uvicorn 在 application startup 以 `NameError` 退出，4580 无法 listen。健康探针测试关闭 Worker 不能替代此启动回归。
 - **已实现**：Edge 由 [[nodeskclaw-agent/app/services/edge_worker.py#EdgeWorker]] 出站访问 Backend，轮询心跳、EdgeJob 和 Desired Installation，无需开放生产入站控制端口。
 - **已实现**：[[nodeskclaw-agent/app/main.py#health_ready]] 比对唯一 Alembic head（[[nodeskclaw-agent/app/services/readiness.py#expected_alembic_heads]]）；Central 执行 StoragePort `probe_isolation`，Edge 只检查 Artifact 目录可达；Central 要求首次成功 Worker loop，Edge 要求首次成功 heartbeat；缺失或过期返回 503 与稳定 `codes`。
-- **部分实现**：`docker-compose.acceptance.yml` 已定义双 Central、单 Edge、PostgreSQL、MinIO 与 Hermes test endpoint（[[tools/acceptance/hermes_test_server.py#HermesHandler]] 仍只服务 `/v1/chat/completions`，不能证明 Native `/v1/runs`）；完整实跑指纹与 Newman 证据仍待 Docker 环境执行。
+- **部分实现**：`docker-compose.acceptance.yml` 已定义双 Central、单 Edge、PostgreSQL、MinIO 与 Native Hermes test endpoint，见 [[architecture/skill-agent#Production Readiness And Security#Native Acceptance Fixture]]；完整实跑指纹与 Newman 证据仍待 Docker 环境执行。
 
 ### Central Lifespan Constructs RunWorker
 
@@ -59,7 +59,7 @@ Hybrid 编排的持久化 Step 与唯一终态聚合器已经落地，跨 Edge �
 
 - **已实现**：[[nodeskclaw-agent/app/services/run_service.py#persist_step_plan]] 将 Step Plan 持久化到 `run_steps`，保存 Owner、依赖、必选状态、required Artifact、代次和 EdgeJob 关联。
 - **已实现**：[[nodeskclaw-agent/app/services/run_service.py#aggregate_run_terminal]] 统一裁决 `COMPLETED`、`FAILED` 和 `CANCELLED`；终态事件经 [[nodeskclaw-agent/app/services/run_service.py#_append_terminal_event]] 写入，CAS 成功后事件被拒不回滚状态；[[nodeskclaw-agent/app/services/run_service.py#record_event_rejection]] 审计拒绝非法、过期或重复事件。
-- **部分实现**：required Artifact 的 `PERSISTED` 门禁已有状态机和单元测试，且 Edge Artifact 上传路由与 Backend Relay 合同已对齐；Compose Harness 已提供双 Central + MinIO 拓扑，但完整实跑证据仍待 Docker 环境执行。
+- **部分实现**：required Artifact 的 `PERSISTED` 门禁已有状态机和单元测试，且 Edge Artifact 上传路由与 Backend Relay 合同已对齐；Harness 场景 `dual_central_minio_artifact` 经内部 API 做 A 写 B 读 SHA-256 对照，见 [[architecture/skill-agent#Production Readiness And Security#Native Acceptance Fixture#Harness Oracles And Fail-Closed Report]]。完整实跑证据仍待 Docker 环境执行。
 - **目标状态**：在真实 PostgreSQL、多 Worker 和 Edge 故障条件下证明终态只写入一次，旧 Attempt、旧 Run Generation 和旧 Delivery Generation 均不能推进终态。
 
 ## Run Lifecycle And Fencing
@@ -69,7 +69,7 @@ Run 生命周期的幂等、CAS 状态迁移、Attempt 代次和取消审批分�
 - **已实现**：[[nodeskclaw-agent/app/services/run_service.py#create_run]] 以幂等键和快照摘要收敛重复创建；认领时创建 Attempt 并递增 Generation。
 - **已实现**：[[nodeskclaw-agent/app/services/run_service.py#set_status]] 与 [[nodeskclaw-agent/app/services/run_service.py#append_event]] 校验 Run、组织、Attempt 和 Generation，并通过原子事件序列及 `source_event_id` 去重阻止迟到写入。终态 Run 拒绝新事件，因此聚合器与 Worker 失败落盘必须先 CAS 到 `FAILED`，事件写入失败不得把状态打回可认领。
 - **已实现**：取消经过 `CANCELLING` 中间态；绑定等待审批同样 `CANCELLING` 后走 Hermes `/stop`，再 [[nodeskclaw-agent/app/services/hermes_engine.py#inspect_runtime_terminal]]，`stop_404` 或合同终态则落到 `CANCELLED`/`FAILED`，不得以 `CANCELLING` 作为出口，见 [[architecture/skill-agent#RM-16 Provider Conformance Grounding]]。Resume 不处理 `WAITING_APPROVAL`；[[nodeskclaw-agent/app/services/run_service.py#approve_run]] 有 Binding 时回写 `/approval`（不得 `QUEUED`），无 Binding 时 approve 才允许 create-time `QUEUED`，deny 记 `FAILED`。
-- **部分实现**：租约续期、过期恢复和 Fencing 已有实现与 Mock 测试；Harness 已定义 kill Central A 故障注入，但尚未取得真实 PostgreSQL 上双 Central 崩溃接管与迟到写入的实跑证据。
+- **部分实现**：租约续期、过期恢复和 Fencing 已有实现与 Mock 测试；Harness 会 kill Central A，并用旧 Attempt 迟到 ingest 证明拒绝，见 [[architecture/skill-agent#Production Readiness And Security#Native Acceptance Fixture#Harness Oracles And Fail-Closed Report]]。真实 PostgreSQL 双 Central 崩溃接管证据仍待 Docker 实跑。
 - **目标状态**：故障报告证明最多一个有效 Attempt、终态不回退、旧代事件和 Artifact 无副作用地被拒绝。
 
 ## Formal Run Session And Execute-Time Revalidation
@@ -160,7 +160,7 @@ Edge 出站执行、租约续期与磁盘 Spool 已有实现；RM-07 用 `bind_r
 - **已实现**：Spool Envelope 保存 `job_id`、`delivery_generation`、`attempt_id`、`step_id`、`request_trace_id` 和 `idempotency_key`，单元测试覆盖落盘、排空和 403 丢弃旧代信封。
 - **已实现**：Desired Installation 调谐、Bundle 下载与本地安装闭环见 [[architecture/skill-agent#Installation Generation Closed Loop]]。
 - **已实现**：出站拉取并在授权下履约 on-demand Artifact；通过标准 `/artifacts` 路由中继。
-- **部分实现**：Harness 已定义 pause Edge 网络分区与恢复；跨租约 Spool 单次重放与旧代拒绝仍待 Docker 实跑证明。
+- **部分实现**：Harness `edge_network_partition` 暂停 `acceptance-tls`（不是 Edge 容器），让 Edge 进程在断网时仍可写 Spool；主机挂载 `EDGE_SPOOL_HOST_DIR`，见 [[architecture/skill-agent#Production Readiness And Security#Native Acceptance Fixture#Harness Oracles And Fail-Closed Report]]。跨租约单次重放与旧代拒绝仍待 Docker 实跑证明。
 - **目标状态**：真实断网跨租约、Edge 重启和网络恢复证明事件只重放一次；on-demand Artifact 只能在有效 Backend 授权下履约并校验 SHA256。
 
 ## Execution Observability Trace And Metrics
@@ -194,12 +194,56 @@ Agent 已具备严格就绪探针、真实 S3 StoragePort 探针隔离与可执�
 - **已实现**：[[nodeskclaw-agent/app/auth.py#require_internal_token]] 校验内部 Token，并基于组织和用户 Header 实施 fail-closed 隔离；支持 previous Token 双密钥轮换。
 - **已实现**：[[nodeskclaw-agent/app/main.py#health_ready]] 精确比对唯一 Alembic head；Central 执行 [[nodeskclaw-agent/app/services/storage_port.py#StoragePort#probe_isolation]] 读写清理探针并要求首次成功 Worker loop（[[nodeskclaw-agent/app/services/worker.py#RunWorker]] 的 `last_successful_loop_at`）；Edge 只检查 Artifact 目录并要求首次成功 heartbeat；失败返回 503 与稳定 `codes`（`database.*` / `migration.*` / `worker.loop.*` / `storage.probe.*` / `edge.heartbeat.*` / `config.security.*` / `credential_broker.*`）。
 - **已实现**：[[nodeskclaw-agent/app/services/storage_port.py#S3StorageDriver]] 通过 httpx + SigV4 访问真实 S3 兼容后端；credential broker 健康检查走 `/api/v1/health`。因此验收 Compose 禁止 Backend `depends_on` Agent `service_healthy`，避免 Central ready 回探 Backend 形成启动死锁。
-- **已实现**：[[tools/acceptance/harness.py#validate_topology]]、[[tools/acceptance/harness.py#run_compose_acceptance]] 对 `docker-compose.acceptance.yml` 做离线/实跑验收：全部服务 `platform: linux/amd64`、Central `SKILL_AGENT_STORAGE_DRIVER=s3`、`SKILL_AGENT_INSECURE_MODE=false`、凭据经 `${VAR:?}` 运行时注入、MinIO、双 Central、Edge HTTPS + Caddy 测试 CA（Edge 经 `SSL_CERT_FILE` 信任内部 CA）、`tools/acceptance/Dockerfile.hermes-test` 包装 [[tools/acceptance/hermes_test_server.py#HermesHandler]]、故障注入（pause Postgres/MinIO、kill Central A、pause Edge）；[[tools/acceptance/harness.py#check_docker_available]] 与 `check-docker` / `run` 在 Docker 不可用或 env 缺失时 fail-closed 非零退出。
-- **已实现**：[[tools/acceptance/check_postman_collection.py#check_collection]] 递归校验 `tests/postman/nodeskclaw_acceptance_closure.postman_collection.json`（Backend JWT 公共合同 + 内部 Edge/Bundle harness）；[[tools/acceptance/check_postman_collection.py#scan_acceptance_secrets]] 扫描 compose/env/scripts/reports 禁止仓库固定秘密；[[tools/acceptance/run_newman.py#generate_env_file]] 禁止默认 Token 回退并要求隔离 org 前缀，[[tools/acceptance/run_newman.py#construct_newman_command]] 组装两连跑命令。
-- **部分实现**：[[tools/acceptance/hermes_test_server.py#HermesHandler]] 仍只服务 `/v1/chat/completions`；Compose Hermes test endpoint 不能作为 Native Run / RM-13 V11 证据，见 [[architecture/skill-agent#Hermes Native Runtime And Employee Public Face]]。
+- **已实现**：[[tools/acceptance/harness.py#validate_topology]]、[[tools/acceptance/harness.py#run_compose_acceptance]] 对 `docker-compose.acceptance.yml` 做离线/实跑验收：全部服务 `platform: linux/amd64`、Central `SKILL_AGENT_STORAGE_DRIVER=s3`、`SKILL_AGENT_INSECURE_MODE=false`、凭据经 `${VAR:?}` 运行时注入、MinIO、双 Central、Edge HTTPS + Caddy 测试 CA（Edge 经 `SSL_CERT_FILE` 信任内部 CA）、去掉死变量 `HERMES_GATEWAY_URL`、挂载 scan-existing 实例目录与 Edge Spool、`tools/acceptance/Dockerfile.hermes-test` 包装 Native [[tools/acceptance/hermes_test_server.py#HermesHandler]]、故障注入（pause Postgres/MinIO、kill Central A、pause TLS 模拟 Edge 断网）；[[tools/acceptance/harness.py#check_docker_available]] 与 `check-docker` / `run` 在 Docker 不可用或 env 缺失时 fail-closed 非零退出。
+- **已实现**：Newman 公共合同门禁见 [[architecture/skill-agent#Production Readiness And Security#Public Newman Contract Gate]]。
+- **已实现**：验收 Native 夹具边界见 [[architecture/skill-agent#Production Readiness And Security#Native Acceptance Fixture]]。Compose mock 仍不能取代 RM-13 live Runtime。
 - **部分实现**：完整 Harness 实跑与 Newman 两连跑需 Docker 与运行时 JWT/Token 注入；本地无 Docker 时记 `BLOCKED`，不得假绿。
 - **部分实现**：RM-12 员工公共面出口不是 Compose/Newman，见 [[architecture/skill-agent#RM-12 Live Public Conformance]]。
 - **目标状态**：真实 PostgreSQL、多 Pod、故障注入、Postman/Newman 真实环境两连跑、Secret 扫描和合同 release check 全部生成可复现证据后，才允许声明生产验收闭环。
+
+### Public Newman Contract Gate
+
+RM-04 正式 Collection 只证明冻结 v1.2.1 员工信封；公共 JWT 项不得请求 HermesTask 路径，两连跑必须隔离前缀且不落盘秘密。
+
+- **已实现**：[[tools/acceptance/check_postman_collection.py#check_collection]] 拒绝 JWT 公共项中的 `/api/v1/hermes/tasks/`，并要求 Catalog/`tools/call`、`GET /api/v1/runs/{run_id}/events`、`/result`、`POST .../approvals/{approval_id}`、`/cancel`、`/resume`、`/artifacts` 与内部 Bundle/`installations` 旅程；禁止空断言、2xx 与 4xx/5xx 混断言。[[tools/acceptance/check_postman_collection.py#scan_acceptance_secrets]] 扫描 compose/env/scripts/reports，禁止仓库固定秘密。
+- **已实现**：正式集合 `tests/postman/nodeskclaw_acceptance_closure.postman_collection.json` 使用 `/api/v1/runs/{run_id}`，不再请求 Task Timeline 或 `/api/v1/hermes/runtime/worker/resume`；内部 Edge/Bundle harness 保留。模板含 `RUN_PREFIX` 与 `APPROVAL_ID`。
+- **已实现**：[[tools/acceptance/run_newman.py#generate_env_file]] 只写入私有临时目录，经 [[tools/acceptance/run_newman.py#assert_private_env_path]] 拒绝 `reports/` 与 `tests/postman/`；要求隔离 org 前缀。[[tools/acceptance/run_newman.py#allocate_run_prefix]] 在两连跑间禁止重复前缀。
+- **已实现**：[[tools/acceptance/run_newman.py#main]] 先跑静态检查，再经 [[tools/acceptance/run_newman.py#run_skill_run_contract_check]] 调用既有 `scripts/contracts.py check --family skill-run`（v1.0.0/v1.1.0/v1.2.0/v1.2.1，禁止 `generate`、不改写合同目录）。[[tools/acceptance/run_newman.py#construct_newman_command]] 带 `--timeout-request`，避免 SSE `/events` 挂死套件。两次各一份临时 env；[[tools/acceptance/run_newman.py#assert_reports_present]] 缺 JUnit/JSON 失败关闭；[[tools/acceptance/run_newman.py#redact_report_files]] 脱敏报告中的运行时秘密。
+- **已实现**：聚焦回归在 `tests/acceptance/test_postman_checker.py` 与 `tests/acceptance/test_run_newman.py`（公共 HermesTask、缺 Bundle/result、重复前缀、缺报告、reports 目录落盘、合同检查失败关闭）。
+- **部分实现**：真实拓扑两连跑仍需 Docker 与运行时 JWT/Token；离线 checker/runner 通过不等于 RM-04 生产验收闭环。
+
+### Native Acceptance Fixture
+
+RM-04 验收 `hermes-test` 必须实现 Agent 已调用的 Native Run 表面，ChatCompletion 不能作为 Event Source。
+
+夹具、scan-existing 绑定与 Harness 报告门禁见下列子节。Compose mock 只证明验收拓扑，不能取代 RM-13/RM-16 live Runtime，也不得把 Docker 写进生产 Adapter。
+
+#### Native Fixture Protocol
+
+验收夹具只模拟 Agent 已调用的 Native Run 表面；ChatCompletion 永远不是 Event Source。
+
+- **已实现**：[[tools/acceptance/hermes_test_server.py#HermesHandler]] 提供 `GET /v1/capabilities`（`version=v2026.8.31` / 包 `0.21.0`，features 含 `run_submission` / `run_status` / `run_events_sse` / `run_stop` / `run_approval_response`，审批另含 `approval_events`）、`POST /v1/runs`、SSE `/v1/runs/{id}/events`、`GET /v1/runs/{id}`、`POST /stop` 与 `/approval`。输入含 `acceptance-hold` 的 Run 保持 `running` 直到 stop/approval，供接管故障使用。
+- **已实现**：`GET /health` 不鉴权，供 Compose healthcheck 与版本回退；配置 `HERMES_TEST_API_KEY` 时 `/v1/*` 要求 Bearer。`POST /v1/chat/completions` 无论是否带鉴权都返回 404，不得 200。
+- **已实现**：[[tools/acceptance/harness.py#observe_native_runtime]] 从宿主机核对 capabilities、submit、status、SSE、stop 与 approval；[[tools/acceptance/harness.py#observe_chat_completions]] 要求 HTTP 404。ChatCompletion 200 使 Harness 失败关闭。
+- **目标状态**：不得恢复生产 ChatCompletion parser；夹具不得冒充 live Hermes Provider。
+
+#### Scan Bind And Topology
+
+Native 实例只经既有 scan-existing 绑定；Compose 提供可扫描目录与公开主机名，不新增生产 API。
+
+- **已实现**：`docker-compose.acceptance.yml` 去掉死变量 `HERMES_GATEWAY_URL`；Backend 设 `DOCKER_PUBLIC_HOST=hermes-test`、`HERMES_INSTANCES_ROOT=/hermes-instances`，挂载 `${HERMES_INSTANCES_HOST_DIR}`；`hermes-test` 容器名 `hermes-acceptance`。Edge Spool 挂 `${EDGE_SPOOL_HOST_DIR}` 到 `/app/data/edge_spool`。Central `SKILL_AGENT_LEASE_SECONDS` 为 15 秒，便于 kill-A 接管窗口。
+- **已实现**：[[tools/acceptance/harness.py#prepare_hermes_instance_dir]] 在临时目录写入 `.env`（`PROFILE_NAME=acceptance-native`、`CONTAINER_NAME=hermes-acceptance`、`API_SERVER_KEY`），不提交仓库。[[tools/acceptance/harness.py#run_compose_acceptance]] 用运行时 JWT 调既有 [[nodeskclaw-backend/app/api/hermes_skill/agents_bind_router.py#scan_existing_agents]]，`call_test=false`、`instances_root=/hermes-instances`。
+- **已实现**：[[tools/acceptance/harness.py#interpret_scan_bind]] 要求 HTTP 200、`bound>=1` 且 `gateway_url` 非空。绑不上则报告 `RETURN_PRD`，禁止 SQL insert 或 `/test/*`。[[tools/acceptance/harness.py#validate_topology]] 拒绝 `HERMES_GATEWAY_URL`，并要求实例目录与 Spool 卷。
+- **目标状态**：mint 仍走实例 `.env` 的 `API_SERVER_KEY`；不得为验收新增生产 Owner。
+
+#### Harness Oracles And Fail-Closed Report
+
+Harness 总报告必须带齐命名场景、故障 oracle 与 Native 观察；缺项或 ChatCompletion 200 失败关闭。
+
+- **已实现**：[[tools/acceptance/harness.py#validate_execution_report]] 要求场景 `dual_central_minio_artifact`（Central A 上传、B 按 SHA-256 读回）、`edge_delivery_and_spool_replay`（暂停 `acceptance-tls`，主机 Spool 目录对照）、`bundle_lifecycle`（JWT `GET /api/v1/hermes/skill-installations`）；故障 `postgres_unavailable` / `minio_unavailable` / `kill_central_a` / `edge_network_partition` 必须 `injected`、恢复前取样、`recovered` 且 `ok`。PASSED 且已启动时缺 teardown 失败关闭。
+- **已实现**：`kill_central_a` 在 A 被杀后用旧 Attempt 向 B 做迟到 `events/ingest`，拒绝才算 oracle。Newman 作为子门禁调用既有 [[tools/acceptance/run_newman.py#main]]，不改 T4 runner。报告经 `_write_report` 脱敏 `REQUIRED_ENV`（含 `JWT_TOKEN` / `HERMES_TEST_API_KEY`）。
+- **已实现**：聚焦回归 `tests/acceptance/test_harness.py` 覆盖拓扑死变量、ChatCompletion 200、scan `bound=0`、缺 oracle、无 teardown、Native 夹具 404。Docker 不可用时 `check-docker` / `run` 非零退出并记 BLOCKED，不得假绿。
+- **目标状态**：Docker 可用时 V04/V07 必须留下实跑证据；离线测试通过不等于生产验收闭环。
 
 ## RM-12 Live Public Conformance
 
@@ -272,7 +316,7 @@ V13 用真实 Hermes Native Run 证明 Public 批准、拒绝与取消接到同�
 
 - **已实现**：员工 Runtime Skill 默认 `async_event` 不再按 `auth_type` 分流。[[nodeskclaw-backend/app/services/mcp_skill_gateway/mcp_execution_mode.py#resolve_mcp_execution_mode]] 与 Catalog 共用 resolver；[[nodeskclaw-backend/app/services/hermes_skill/mcp_tool_mapper.py#McpToolMapper#call_tool]] 在 `SKILL_AGENT_ENABLED` 时返回 v1.2.1 Accepted，不走 HermesTask 信封。[[nodeskclaw-backend/app/api/runs.py#stream_run_events]] 对四类终态先投递合同事件再关流。HermesTask 投影补 `run.timed_out`，失败打 `PROJECTION_SYNC_FAILED`。RM-12 已 DONE，出口见 [[architecture/skill-agent#RM-12 Live Public Conformance]]。
 - **已实现**：Adapter 走 Native Run：版本地板 `v2026.8.31`、per-Attempt capabilities、[[nodeskclaw-agent/app/services/hermes_engine.py#build_native_run_payload]]、`POST /v1/runs` 后立刻 `GET /events`，再 [[nodeskclaw-agent/app/services/run_service.py#persist_runtime_binding]]；SSE `event:` 行与完成态 GET `output` 回填见 [[architecture/skill-agent#Hermes Engine Adapter]]；断开只 GET status，不重订 `/events`，也不得把 status JSON 当 ChatCompletion parser 入口。稳定内部码含 `RUNTIME_UNREACHABLE` / `RUNTIME_VERSION_UNSUPPORTED` / `RUNTIME_CAPABILITY_MISSING`。默认种子见 [[nodeskclaw-backend/app/startup/seed.py#DEFAULT_ENGINE_VERSION_SEEDS]]；镜像 `ARG` 为 `nodeskclaw-artifacts/hermes-image/Dockerfile` 的 `HERMES_VERSION=v2026.8.31`。实现提交 `59ebfb6683286dfadd9dad5586adb8feefece148`。
-- **已实现**：真实 Hermes Native Run 证据（V11）已关闭；出口 runner 为 [[tools/acceptance/run_rm13_live_native.py#run_live]]，证据 `docs_agent/evidence/RM-13-live-v11.json`。[[tools/acceptance/hermes_test_server.py#HermesHandler]] 仍只服务 `/v1/chat/completions`，Compose mock 不能取代 live Runtime。RM-13 已 DONE。
+- **已实现**：真实 Hermes Native Run 证据（V11）已关闭；出口 runner 为 [[tools/acceptance/run_rm13_live_native.py#run_live]]，证据 `docs_agent/evidence/RM-13-live-v11.json`。RM-04 Compose 夹具走 Native 表面，见 [[architecture/skill-agent#Production Readiness And Security#Native Acceptance Fixture]]；Compose mock 仍不能取代 RM-13 live Runtime。RM-13 已 DONE。
 - **已实现**：RM-14 Normalizer / Coalescer / canonical `phase` 已在 Adapter 与 Public 投影落地，见 [[architecture/skill-agent#Hermes Engine Adapter#Runtime Semantic Event Fidelity]]。V13 live 出口见 [[architecture/skill-agent#RM-14 Live Semantic V13]]。
 - **已实现**：审批与 cancel 南向见 [[architecture/skill-agent#RM-15 Approval Runtime Control]]。live 出口见 [[architecture/skill-agent#RM-15 Live Control V13]]。
 - **部分实现**：RM-16 生产路径已补 `/approval` 接受条件、cancel 合同终态、Worker gap、最小 `internal.runtime.trace` 与 coalescer 合并规则，见 [[architecture/skill-agent#RM-16 Provider Conformance Grounding]] 与 [[architecture/skill-agent#Hermes Engine Adapter#Runtime Semantic Event Fidelity]]。PC-01 / PC-06 / PC-09 live PASS，其余见 [[architecture/skill-agent#RM-16 Live Conformance]]。Roadmap 为 `BACKLOG`，不得标 `DONE`。

@@ -108,9 +108,9 @@
                   "    pm.response.to.have.status(200);",
                   "    var json = pm.response.json();",
                   "    pm.expect(json).to.have.property('result');",
-                  "    if (json.result && json.result.structuredContent && json.result.structuredContent.run_id) {",
-                  "        pm.environment.set('RUN_ID', json.result.structuredContent.run_id);",
-                  "    }",
+                  "    var runId = json.result && json.result.structuredContent && json.result.structuredContent.run_id;",
+                  "    pm.expect(runId).to.be.a('string').and.to.have.lengthOf.at.least(1);",
+                  "    pm.environment.set('RUN_ID', runId);",
                   "});"
                 ],
                 "type": "text/javascript"
@@ -146,7 +146,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\"jsonrpc\":\"2.0\",\"id\":\"call-1\",\"method\":\"tools/call\",\"params\":{\"name\":\"demo_search\",\"arguments\":{\"q\":\"acceptance\"}}}"
+              "raw": "{\"jsonrpc\":\"2.0\",\"id\":\"call-1\",\"method\":\"tools/call\",\"params\":{\"name\":\"demo_search\",\"arguments\":{\"q\":\"{{RUN_PREFIX}}\"}}}"
             }
           }
         },
@@ -158,7 +158,8 @@
               "script": {
                 "exec": [
                   "pm.test('Run events endpoint responds', function () {",
-                  "    pm.expect(pm.response.code).to.be.oneOf([200, 404]);",
+                  "    pm.expect(pm.environment.get('RUN_ID')).to.be.a('string').and.to.have.lengthOf.at.least(1);",
+                  "    pm.response.to.have.status(200);",
                   "});"
                 ],
                 "type": "text/javascript"
@@ -193,14 +194,16 @@
           }
         },
         {
-          "name": "AC-05 Task Timeline SSE",
+          "name": "AC-05 Run Result",
           "event": [
             {
               "listen": "test",
               "script": {
                 "exec": [
-                  "pm.test('Task timeline SSE responds', function () {",
-                  "    pm.expect(pm.response.code).to.be.oneOf([200, 404]);",
+                  "pm.test('Run result endpoint responds', function () {",
+                  "    pm.expect(pm.environment.get('RUN_ID')).to.be.a('string').and.to.have.lengthOf.at.least(1);",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json()).to.be.an('object');",
                   "});"
                 ],
                 "type": "text/javascript"
@@ -215,55 +218,12 @@
                 "value": "Bearer {{JWT_TOKEN}}"
               },
               {
-                "key": "Accept",
-                "value": "text/event-stream"
-              }
-            ],
-            "url": {
-              "raw": "{{BACKEND_BASE_URL}}/api/v1/hermes/tasks/{{TASK_ID}}/timeline",
-              "host": [
-                "{{BACKEND_BASE_URL}}"
-              ],
-              "path": [
-                "api",
-                "v1",
-                "hermes",
-                "tasks",
-                "{{TASK_ID}}",
-                "timeline"
-              ]
-            }
-          }
-        },
-        {
-          "name": "AC-06 Cancel Run",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "exec": [
-                  "pm.test('Cancel converges idempotently', function () {",
-                  "    pm.expect(pm.response.code).to.be.oneOf([200, 404, 400]);",
-                  "});"
-                ],
-                "type": "text/javascript"
-              }
-            }
-          ],
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{JWT_TOKEN}}"
-              },
-              {
                 "key": "X-Org-Id",
                 "value": "{{ORG_ID}}"
               }
             ],
             "url": {
-              "raw": "{{BACKEND_BASE_URL}}/api/v1/runs/{{RUN_ID}}/cancel",
+              "raw": "{{BACKEND_BASE_URL}}/api/v1/runs/{{RUN_ID}}/result",
               "host": [
                 "{{BACKEND_BASE_URL}}"
               ],
@@ -272,100 +232,7 @@
                 "v1",
                 "runs",
                 "{{RUN_ID}}",
-                "cancel"
-              ]
-            }
-          }
-        },
-        {
-          "name": "AC-07 Approve Run",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "exec": [
-                  "pm.test('Approve handles state cleanly', function () {",
-                  "    pm.expect(pm.response.code).to.be.oneOf([200, 400, 404, 403]);",
-                  "});"
-                ],
-                "type": "text/javascript"
-              }
-            }
-          ],
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              },
-              {
-                "key": "Authorization",
-                "value": "Bearer {{JWT_TOKEN}}"
-              },
-              {
-                "key": "X-Org-Id",
-                "value": "{{ORG_ID}}"
-              }
-            ],
-            "url": {
-              "raw": "{{BACKEND_BASE_URL}}/api/v1/runs/{{RUN_ID}}/approve",
-              "host": [
-                "{{BACKEND_BASE_URL}}"
-              ],
-              "path": [
-                "api",
-                "v1",
-                "runs",
-                "{{RUN_ID}}",
-                "approve"
-              ]
-            },
-            "body": {
-              "mode": "raw",
-              "raw": "{\"approval_id\":\"acceptance-appr-1\",\"evidence\":{\"actor\":\"acceptance\"}}"
-            }
-          }
-        },
-        {
-          "name": "AC-08 Resume Worker",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "exec": [
-                  "pm.test('Resume worker endpoint responds', function () {",
-                  "    pm.expect(pm.response.code).to.be.oneOf([200, 403, 404]);",
-                  "});"
-                ],
-                "type": "text/javascript"
-              }
-            }
-          ],
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{JWT_TOKEN}}"
-              },
-              {
-                "key": "X-Org-Id",
-                "value": "{{ORG_ID}}"
-              }
-            ],
-            "url": {
-              "raw": "{{BACKEND_BASE_URL}}/api/v1/hermes/runtime/worker/resume",
-              "host": [
-                "{{BACKEND_BASE_URL}}"
-              ],
-              "path": [
-                "api",
-                "v1",
-                "hermes",
-                "runtime",
-                "worker",
-                "resume"
+                "result"
               ]
             }
           }
@@ -378,7 +245,9 @@
               "script": {
                 "exec": [
                   "pm.test('Artifact list responds', function () {",
-                  "    pm.expect(pm.response.code).to.be.oneOf([200, 404]);",
+                  "    pm.expect(pm.environment.get('RUN_ID')).to.be.a('string').and.to.have.lengthOf.at.least(1);",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json()).to.have.property('items');",
                   "});"
                 ],
                 "type": "text/javascript"
@@ -408,6 +277,142 @@
                 "runs",
                 "{{RUN_ID}}",
                 "artifacts"
+              ]
+            }
+          }
+        },
+        {
+          "name": "AC-07 Approve Run",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Approve handles state cleanly', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([400, 403, 404]);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{JWT_TOKEN}}"
+              },
+              {
+                "key": "X-Org-Id",
+                "value": "{{ORG_ID}}"
+              }
+            ],
+            "url": {
+              "raw": "{{BACKEND_BASE_URL}}/api/v1/runs/{{RUN_ID}}/approvals/{{APPROVAL_ID}}",
+              "host": [
+                "{{BACKEND_BASE_URL}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "runs",
+                "{{RUN_ID}}",
+                "approvals",
+                "{{APPROVAL_ID}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"choice\":\"once\"}"
+            }
+          }
+        },
+        {
+          "name": "AC-08 Resume Run",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Resume run endpoint responds', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([400, 403, 404]);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{JWT_TOKEN}}"
+              },
+              {
+                "key": "X-Org-Id",
+                "value": "{{ORG_ID}}"
+              }
+            ],
+            "url": {
+              "raw": "{{BACKEND_BASE_URL}}/api/v1/runs/{{RUN_ID}}/resume",
+              "host": [
+                "{{BACKEND_BASE_URL}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "runs",
+                "{{RUN_ID}}",
+                "resume"
+              ]
+            }
+          }
+        },
+        {
+          "name": "AC-06 Cancel Run",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Cancel converges', function () {",
+                  "    pm.expect(pm.environment.get('RUN_ID')).to.be.a('string').and.to.have.lengthOf.at.least(1);",
+                  "    pm.response.to.have.status(200);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{JWT_TOKEN}}"
+              },
+              {
+                "key": "X-Org-Id",
+                "value": "{{ORG_ID}}"
+              }
+            ],
+            "url": {
+              "raw": "{{BACKEND_BASE_URL}}/api/v1/runs/{{RUN_ID}}/cancel",
+              "host": [
+                "{{BACKEND_BASE_URL}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "runs",
+                "{{RUN_ID}}",
+                "cancel"
               ]
             }
           }
@@ -1019,7 +1024,7 @@
               "script": {
                 "exec": [
                   "pm.test('Readiness probe response valid structure', function () {",
-                  "    pm.expect(pm.response.code).to.be.oneOf([200, 503]);",
+                  "    pm.response.to.have.status(200);",
                   "    var data = pm.response.json();",
                   "    pm.expect(data.checks).to.be.an('object');",
                   "});"
@@ -1050,7 +1055,7 @@
               "script": {
                 "exec": [
                   "pm.test('Migration status checked in readiness', function () {",
-                  "    pm.expect(pm.response.code).to.be.oneOf([200, 503]);",
+                  "    pm.response.to.have.status(200);",
                   "    var data = pm.response.json();",
                   "    pm.expect(data.checks.migration).to.be.a('boolean');",
                   "});"
@@ -1081,7 +1086,7 @@
               "script": {
                 "exec": [
                   "pm.test('Artifact storage check present in readiness response', function () {",
-                  "    pm.expect(pm.response.code).to.be.oneOf([200, 503]);",
+                  "    pm.response.to.have.status(200);",
                   "    var data = pm.response.json();",
                   "    pm.expect(data.checks.artifact_storage).to.be.a('boolean');",
                   "});"
@@ -1112,7 +1117,7 @@
               "script": {
                 "exec": [
                   "pm.test('Cancel run converges idempotently', function () {",
-                  "    pm.expect(pm.response.code).to.be.oneOf([200, 404]);",
+                  "    pm.response.to.have.status(200);",
                   "    if (pm.response.code === 200) {",
                   "        var data = pm.response.json().data || pm.response.json();",
                   "        pm.expect(data.status).to.be.oneOf(['CANCELLED', 'CANCELLING', 'COMPLETED', 'FAILED']);",
@@ -1158,7 +1163,7 @@
               "script": {
                 "exec": [
                   "pm.test('Request artifact returns binary metadata and content', function () {",
-                  "    pm.expect(pm.response.code).to.be.oneOf([200, 404]);",
+                  "    pm.response.to.have.status(200);",
                   "    if (pm.response.code === 200) {",
                   "        var data = pm.response.json().data || pm.response.json();",
                   "        pm.expect(data.content_base64).to.be.a('string');",

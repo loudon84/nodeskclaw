@@ -48,6 +48,7 @@ Architecture Closure 与 Acceptance Hardening (v1.5) 确立了 Run 生产执行�
 - **Edge Control Channel Closure（RM-07）**：Internal Edge 出站请求必须携带 Ed25519 证明，载荷摘要绑定真实 Body/Query（请求头哈希不是信任源，不一致为 `errors.connector.edge_payload_digest_mismatch`），并通过 append-only [[nodeskclaw-backend/app/models/connector/edge_control_nonce.py#EdgeControlNonce]] 反重放；Backend 对 job claim、install desired、on-demand 与 cancel check 下发 issuer 签名的 `{envelope, payload}` 封套，Agent 校验 purpose/nonce/全局 command_seq 后才产生 Connector/安装/Artifact/cancel 副作用，同一 `command_id` 重放无副作用，裸 Job 不执行；一次性 bootstrap 仅用于 enroll，节点私钥与引导材料不得明文写入 Agent 本地状态；命令封套不进入 Public Consumer Contract。
 - **Execution Observability Closure（RM-10）**：Agent in-process [[nodeskclaw-agent/app/services/execution_observability.py#MetricsRegistry]] 暴露 documented 低基数 metrics；[[nodeskclaw-agent/app/services/execution_observability.py#bind_from_snapshot]] 关联 Run/Attempt/Session/Release/Step/Generation/Edge 标识，不写入第二 Event SoT；Backend [[nodeskclaw-backend/app/schemas/hermes_skill/runtime_skill_run.py#normalize_request_trace_id]] 只做 handoff；observe/metrics 故障 fail-open；禁止 `delegation_topology` 与 Public Contract 变更。
 - **Zero-DDL Startup & Alembic Migrations**：Agent 移除服务启动直接 DDL，全量 DDL 纳入 Alembic 迁移链管理；生产环境独立运行 `/health/live`（存活）与 `/health/ready`（就绪）探针，深度探测唯一 Alembic head、StoragePort `probe_isolation`、Worker 首次成功 loop 与 Edge heartbeat 新鲜度，并返回稳定 readiness `codes`。
+- **Native Acceptance Fixture（RM-04）**：验收 Compose 的 [[tools/acceptance/hermes_test_server.py#HermesHandler]] 实现 Native `/v1/runs` 表面并对 `/v1/chat/completions` 返回 404；实例绑定只走既有 `POST /api/v1/hermes/agents/scan-existing`（`call_test=false`）。Harness 用命名场景/故障 oracle 与 Newman 子门禁失败关闭，绑不上则 `RETURN_PRD`。不得恢复生产 ChatCompletion parser，不得新增 `/test/*`，不得把 Docker 写进生产 Adapter。见 [[architecture/skill-agent#Production Readiness And Security#Native Acceptance Fixture]]。
 - **Identity Rotation**：Agent 内部鉴权支持 `SKILL_AGENT_INTERNAL_TOKEN_PREVIOUS` 双密钥平滑轮换，暴露 `/health` 与 `/metrics` 探针。
 
 ## Owners
@@ -92,7 +93,9 @@ Architecture Closure 与 Acceptance Hardening (v1.5) 确立了 Run 生产执行�
 
 ## Employee Contract
 
-员工 `tools/call` 返回 `run_id` + `/api/v1/runs/*`（`contracts/skill-run/v1.0.0`、`v1.1.0` 与 `v1.2.0`）。Expert `task_source=expert_mcp` 仍返回冻结 `task_id` + `/hermes/tasks/*`。
+员工 `tools/call` 返回 `run_id` + `/api/v1/runs/*`；当前冻结面是 `v1.2.1`，`v1.0.0`/`v1.1.0`/`v1.2.0` 目录不改写。Expert `task_source=expert_mcp` 仍返回冻结 `task_id` + `/hermes/tasks/*`。
+
+员工验收 Collection 必须走同一 `/api/v1/runs/*` 信封，见 [[architecture/skill-agent#Production Readiness And Security#Public Newman Contract Gate]]。不得把 Expert `/hermes/tasks/*` 写进员工 JWT 旅程。
 
 v1.1.0 在保持 v1.0.0 兼容的同时，扩展了 MCP Tools List 描述符与 Accepted Result 结构：[[nodeskclaw-backend/app/schemas/skill_run/mcp_jsonrpc.py#SkillToolDescriptorV11]]、[[nodeskclaw-backend/app/schemas/skill_run/mcp_jsonrpc.py#SkillRunAcceptedStructuredContentV11]] 与常量 [[nodeskclaw-backend/app/schemas/skill_run/constants.py#SKILL_RUN_CONTRACT_VERSION_V11]]。
 

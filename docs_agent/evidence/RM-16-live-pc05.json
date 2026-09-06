@@ -4,7 +4,7 @@
   "result": "BLOCKED",
   "scenario": "pc05",
   "auth_type": "user_jwt",
-  "blocker": "REAL_HERMES_RUNTIME_UNAVAILABLE",
-  "message": "missing environment variable: RM13_BACKEND_BASE_URL, RM12_BACKEND_BASE_URL",
-  "timestamp": "2026-09-05T13:52:23.921055Z"
+  "blocker": "RM16_WORKER_KILL_UNAVAILABLE",
+  "message": "PC-05 requires RM16_WORKER_KILL_CMD to kill/restart the Agent Worker",
+  "timestamp": "2026-09-06T11:03:20.168747Z"
 }
