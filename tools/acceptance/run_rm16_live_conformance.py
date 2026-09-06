@@ -22,6 +22,8 @@ import run_rm15_live_control as rm15
 
 BLOCKER = "RM16_LIVE_CONFORMANCE_BLOCKED"
 PARK_TOOL = "hermes_marketing__park-waiting-approval"
+LIVE_PARK_TOOL = "hermes_marketing__live-approval-park"
+PARK_TOOLS = frozenset({PARK_TOOL, LIVE_PARK_TOOL})
 PUBLIC_TERMINAL = {"COMPLETED", "FAILED", "CANCELLED", "TIMED_OUT"}
 SOT_TERMINAL = {"run.completed", "run.failed", "run.cancelled", "run.timed_out"}
 SCENARIOS = (
@@ -153,9 +155,12 @@ def reject_mock_event_source() -> None:
 
 
 def park_tool_name() -> str:
-    chosen = (os.environ.get("RM15_TOOL_NAME") or "").strip()
-    if chosen != PARK_TOOL:
-        fail(f"RM15_TOOL_NAME must be explicitly {PARK_TOOL}")
+    chosen = rm13.env_first("LIVE_APPROVAL_TOOL_NAME", "RM15_TOOL_NAME")
+    if chosen not in PARK_TOOLS:
+        fail(
+            "LIVE_APPROVAL_TOOL_NAME or RM15_TOOL_NAME must be explicitly "
+            f"{LIVE_PARK_TOOL} or {PARK_TOOL}"
+        )
     return chosen
 
 
@@ -561,10 +566,10 @@ def start_stable_running_run(
     prefix: str,
     expected_env: str = "RM16_EXPECTED_RUNNING_INSTANCE_ID",
 ) -> dict[str, Any]:
-    tool_name = (os.environ.get("RM16_RUNNING_TOOL_NAME") or "").strip()
+    tool_name = rm13.env_first("LIVE_RUNNING_TOOL_NAME", "RM16_RUNNING_TOOL_NAME")
     if not tool_name:
-        fail("missing RM16_RUNNING_TOOL_NAME", "RM16_RUNNING_FIXTURE_UNSTABLE")
-    if tool_name == PARK_TOOL:
+        fail("missing LIVE_RUNNING_TOOL_NAME or RM16_RUNNING_TOOL_NAME", "RM16_RUNNING_FIXTURE_UNSTABLE")
+    if tool_name in PARK_TOOLS:
         fail("PC-05/PC-08 must not use park-waiting-approval", "RM16_RUNNING_FIXTURE_UNSTABLE")
     require_catalog_tool(ctx, tool_name, "RM16_RUNNING_FIXTURE_UNSTABLE")
     hold = int(os.environ.get("RM16_RUNNING_MIN_HOLD_SECONDS") or "3")
@@ -774,9 +779,11 @@ def wait_hermes_left_waiting(bound: BoundRuntimeContext, runtime_run_id: str, ti
 def run_pc01(ctx: dict[str, Any]) -> dict[str, Any]:
     evidence = base_evidence("pc01")
     probe_and_health(ctx, evidence)
-    tool_name = rm13.env_first("RM16_PLAIN_TOOL_NAME", "RM13_TOOL_NAME", "RM12_TOOL_NAME")
+    tool_name = rm13.env_first(
+        "LIVE_PLAIN_TOOL_NAME", "RM16_PLAIN_TOOL_NAME", "RM13_TOOL_NAME", "RM12_TOOL_NAME"
+    )
     if not tool_name:
-        fail("missing RM16_PLAIN_TOOL_NAME or RM13_TOOL_NAME")
+        fail("missing LIVE_PLAIN_TOOL_NAME or RM16_PLAIN_TOOL_NAME")
     started = start_bound_run(
         ctx,
         tool_name=tool_name,
@@ -815,9 +822,11 @@ def run_pc01(ctx: dict[str, Any]) -> dict[str, Any]:
 def run_pc02(ctx: dict[str, Any]) -> dict[str, Any]:
     evidence = base_evidence("pc02")
     probe_and_health(ctx, evidence)
-    tool_name = rm13.env_first("RM16_TOOL_NAME", "RM13_TOOL_NAME", "RM12_TOOL_NAME")
+    tool_name = rm13.env_first(
+        "LIVE_TOOL_CALL_TOOL_NAME", "RM16_TOOL_NAME", "RM13_TOOL_NAME", "RM12_TOOL_NAME"
+    )
     if not tool_name:
-        fail("missing RM16_TOOL_NAME or RM13_TOOL_NAME")
+        fail("missing LIVE_TOOL_CALL_TOOL_NAME or RM16_TOOL_NAME")
     started = start_bound_run(
         ctx,
         tool_name=tool_name,
@@ -1059,9 +1068,11 @@ def run_pc05(ctx: dict[str, Any]) -> dict[str, Any]:
 def run_pc06(ctx: dict[str, Any]) -> dict[str, Any]:
     evidence = base_evidence("pc06")
     probe_and_health(ctx, evidence)
-    tool_name = rm13.env_first("RM16_PLAIN_TOOL_NAME", "RM13_TOOL_NAME", "RM12_TOOL_NAME")
+    tool_name = rm13.env_first(
+        "LIVE_PLAIN_TOOL_NAME", "RM16_PLAIN_TOOL_NAME", "RM13_TOOL_NAME", "RM12_TOOL_NAME"
+    )
     if not tool_name:
-        fail("missing RM16_PLAIN_TOOL_NAME or RM13_TOOL_NAME")
+        fail("missing LIVE_PLAIN_TOOL_NAME or RM16_PLAIN_TOOL_NAME")
     started = start_bound_run(
         ctx,
         tool_name=tool_name,
@@ -1104,9 +1115,9 @@ def observed_subagent_event_types(items: list[dict[str, Any]]) -> list[str]:
 def run_pc07(ctx: dict[str, Any]) -> dict[str, Any]:
     evidence = base_evidence("pc07")
     probe_and_health(ctx, evidence)
-    tool_name = (os.environ.get("RM16_SUBAGENT_TOOL_NAME") or "").strip()
+    tool_name = rm13.env_first("LIVE_SUBAGENT_TOOL_NAME", "RM16_SUBAGENT_TOOL_NAME")
     if not tool_name:
-        fail("missing RM16_SUBAGENT_TOOL_NAME", "RM16_SUBAGENT_FIXTURE_UNAVAILABLE")
+        fail("missing LIVE_SUBAGENT_TOOL_NAME or RM16_SUBAGENT_TOOL_NAME", "RM16_SUBAGENT_FIXTURE_UNAVAILABLE")
     require_catalog_tool(ctx, tool_name, "RM16_SUBAGENT_FIXTURE_UNAVAILABLE")
     started = start_bound_run(
         ctx,
@@ -1198,9 +1209,9 @@ def run_pc09(ctx: dict[str, Any]) -> dict[str, Any]:
     evidence = base_evidence("pc09")
     evidence["policy"] = "REAL_PROCESS"
     probe_and_health(ctx, evidence)
-    tool_name = (os.environ.get("RM16_OLD_RUNTIME_TOOL_NAME") or "").strip()
+    tool_name = rm13.env_first("LIVE_OLD_RUNTIME_TOOL_NAME", "RM16_OLD_RUNTIME_TOOL_NAME")
     if not tool_name:
-        fail("missing RM16_OLD_RUNTIME_TOOL_NAME", "RM16_OLD_RUNTIME_UNAVAILABLE")
+        fail("missing LIVE_OLD_RUNTIME_TOOL_NAME or RM16_OLD_RUNTIME_TOOL_NAME", "RM16_OLD_RUNTIME_UNAVAILABLE")
     require_catalog_tool(ctx, tool_name, "RM16_OLD_RUNTIME_UNAVAILABLE")
     started = start_bound_run(
         ctx,
@@ -1241,9 +1252,11 @@ def run_pc09(ctx: dict[str, Any]) -> dict[str, Any]:
 def run_pc12_scan(ctx: dict[str, Any]) -> dict[str, Any]:
     evidence = base_evidence("pc12-scan")
     probe_and_health(ctx, evidence)
-    tool_name = rm13.env_first("RM16_PLAIN_TOOL_NAME", "RM13_TOOL_NAME", "RM12_TOOL_NAME")
+    tool_name = rm13.env_first(
+        "LIVE_PLAIN_TOOL_NAME", "RM16_PLAIN_TOOL_NAME", "RM13_TOOL_NAME", "RM12_TOOL_NAME"
+    )
     if not tool_name:
-        fail("missing RM16_PLAIN_TOOL_NAME or RM13_TOOL_NAME")
+        fail("missing LIVE_PLAIN_TOOL_NAME or RM16_PLAIN_TOOL_NAME")
     started = start_bound_run(
         ctx,
         tool_name=tool_name,

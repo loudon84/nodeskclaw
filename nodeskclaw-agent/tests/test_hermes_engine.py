@@ -551,7 +551,8 @@ async def test_execute_hermes_missing_capability_fail_closed():
 
 
 @pytest.mark.asyncio
-async def test_execute_hermes_binding_before_events_and_retry_same_runtime_run_id():
+# @lat: [[architecture/skill-agent#Hermes Engine Adapter]]
+async def test_execute_hermes_subscribes_events_before_binding_and_retry_same_runtime_run_id():
     order: list[str] = []
     persist_ids: list[str] = []
 
@@ -563,12 +564,6 @@ async def test_execute_hermes_binding_before_events_and_retry_same_runtime_run_i
             "generation": kwargs["generation"],
             "runtime_capability_snapshot": kwargs.get("runtime_capability_snapshot"),
         }
-
-    orig_stream_factory = None
-
-    def stream_wrapper(*args, **kwargs):
-        order.append("events")
-        return orig_stream_factory(*args, **kwargs)
 
     client = _native_client()
     orig_stream_factory = client.stream
@@ -601,7 +596,7 @@ async def test_execute_hermes_binding_before_events_and_retry_same_runtime_run_i
 
     assert events[-1]["event_type"] == "run.completed"
     assert events2[-1]["event_type"] == "run.completed"
-    assert order[:2] == ["persist", "events"]
+    assert order[:2] == ["events", "persist"]
     assert persist_ids == ["rr-1", "rr-1"]
     keys = [
         c.kwargs["headers"]["Idempotency-Key"]

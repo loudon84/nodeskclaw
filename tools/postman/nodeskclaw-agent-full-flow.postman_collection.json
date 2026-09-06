@@ -184,27 +184,27 @@
     },
     {
       "key": "rm16_plain_tool_name",
-      "value": ""
+      "value": "hermes_marketing__live-plain-response"
     },
     {
       "key": "rm16_tool_skill_name",
-      "value": ""
+      "value": "hermes_marketing__live-tool-call"
     },
     {
       "key": "rm16_park_tool_name",
-      "value": "hermes_marketing__park-waiting-approval"
+      "value": "hermes_marketing__live-approval-park"
     },
     {
       "key": "rm16_subagent_tool_name",
-      "value": ""
+      "value": "hermes_marketing__live-subagent-delegation"
     },
     {
       "key": "rm16_running_tool_name",
-      "value": ""
+      "value": "hermes_marketing__live-stable-running"
     },
     {
       "key": "rm16_old_runtime_tool_name",
-      "value": ""
+      "value": "hermes_marketing__live-old-runtime-probe"
     },
     {
       "key": "rm16_running_prompt",

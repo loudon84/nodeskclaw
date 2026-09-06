@@ -1,10 +1,10 @@
 {
   "schema": "smc.rm16.live-conformance.v1",
   "policy": "REAL_PROCESS",
-  "result": "PASS",
+  "result": "FAIL",
   "scenario": "pc07",
   "auth_type": "user_jwt",
-  "timestamp": "2026-09-05T14:38:18.848911Z",
+  "timestamp": "2026-09-06T07:38:13.471637Z",
   "reused_runners": [
     "tools/acceptance/run_rm12_live_conformance.py",
     "tools/acceptance/run_rm13_live_native.py",
@@ -14,18 +14,29 @@
   "chat_completions_observed": false,
   "native_paths_observed": [
     "/v1/capabilities",
-    "/health"
+    "/v1/runs",
+    "/v1/runs/<id>/events",
+    "/v1/runs/<id>"
   ],
   "public_leaks": [],
   "public_runtime_identity_leak": false,
-  "hermes_runtime_version": "v2026.8.31",
-  "observed_version": "0.21.0",
-  "version_source": "health",
-  "tool_name": "hermes_marketing__customer-profiling",
-  "run_id": "6ee5a65c-b8e7-4c5f-a1ae-abac876149f8",
-  "attempt_id": "d763409e-c623-4b10-bf2d-db8909fd725c",
+  "runtime_binding_verified": true,
+  "backend_health": 200,
+  "tool_name": "hermes_marketing__live-subagent-delegation",
+  "run_id": "bcb67c70-3281-4561-b388-8aa6282173ae",
+  "attempt_id": "25a002bb-d228-4875-9973-d5f971689d96",
   "generation": 1,
-  "runtime_run_id_hash": "sha256:4f28a180d8e859f0a4cad239d9972a1f6e4436ab46f7bd31bf549288330e1780",
+  "runtime_run_id_hash": "sha256:b4a470241eb7e4101ca85505162efd362ccd495b8f349e04b22854c55abc5356",
+  "hermes_agent_instance_id": "8ae103db-e441-4bf4-a7bb-d369d2aeb21f",
+  "agent_profile": "marketing",
+  "bound_api_server_url_hash": "sha256:ef510f80bed70bdd185d89dbc37c5d46a2a41700dd00f8e06175d6dd6b362d15",
+  "bound_api_server_port": 29401,
+  "hermes_runtime_version": "0.21.0",
+  "observed_version": "0.21.0",
   "public_status": "COMPLETED",
-  "child_or_subagent_public": false
+  "internal_subagent_observed": false,
+  "observed_subagent_event_types": [],
+  "public_child_or_subagent_leak": false,
+  "message": "real delegation was not observed",
+  "blocker": "RM16_LIVE_CONFORMANCE_BLOCKED"
 }

@@ -536,6 +536,7 @@ def _emit_ingested(normalizer: NativeEventNormalizer, chunk: dict[str, Any]) -> 
     return events
 
 
+# @lat: [[architecture/skill-agent#Hermes Engine Adapter]]
 async def execute_hermes_run(
     *,
     tool_name: str,
@@ -749,51 +750,7 @@ async def execute_hermes_run(
                 or route_snapshot.get("agent_profile")
             )
 
-            binding = await persist_native_binding(
-                attempt_id=attempt_id,
-                generation=generation,
-                runtime_run_id=runtime_run_id,
-                runtime_version=str(version_raw),
-                runtime_session_id=str(runtime_session_id) if runtime_session_id else None,
-                runtime_profile=str(runtime_profile) if runtime_profile else None,
-                runtime_capability_snapshot=caps_body,
-                runtime_idempotency_key=idempotency_key,
-            )
-            if binding is None:
-                yield _failed(RUNTIME_PROTOCOL_INVALID, "Hermes runtime binding persist was rejected")
-                return
-            runtime_run_id = str(binding.get("runtime_run_id") or runtime_run_id)
-
-            if cancel_event and cancel_event.is_set():
-                stop_code = await _stop_runtime(
-                    client,
-                    gateway_url=gateway_url,
-                    runtime_run_id=runtime_run_id,
-                    headers=auth_headers,
-                    attempt_id=attempt_id,
-                    generation=generation,
-                )
-                if stop_code == "stop_404":
-                    status, _data, rec_code = await _reconcile_status(
-                        client,
-                        gateway_url=gateway_url,
-                        runtime_run_id=runtime_run_id,
-                        headers=auth_headers,
-                    )
-                    terminal = _terminal_from_status(status, rec_code)
-                    if terminal:
-                        yield terminal
-                    else:
-                        yield {"event_type": "run.cancelled", "payload": {"message": "cancelled after stop 404"}}
-                    return
-                if stop_code:
-                    yield _failed(stop_code, "Hermes runtime stop failed")
-                    return
-                yield {"event_type": "run.cancelled", "payload": {"message": "cancelled before event stream"}}
-                return
-
             events_url = f"{gateway_url}/v1/runs/{runtime_run_id}/events"
-            yield {"event_type": "run.progress", "payload": progress_payload("RUNTIME_RUNNING", "streaming")}
             saw_approval = False
             polled_status: str | None = None
             polled_data: dict[str, Any] | None = None
@@ -808,6 +765,59 @@ async def execute_hermes_run(
                             "Hermes event stream failed",
                         )
                         return
+                    binding = await persist_native_binding(
+                        attempt_id=attempt_id,
+                        generation=generation,
+                        runtime_run_id=runtime_run_id,
+                        runtime_version=str(version_raw),
+                        runtime_session_id=str(runtime_session_id) if runtime_session_id else None,
+                        runtime_profile=str(runtime_profile) if runtime_profile else None,
+                        runtime_capability_snapshot=caps_body,
+                        runtime_idempotency_key=idempotency_key,
+                    )
+                    if binding is None:
+                        yield _failed(RUNTIME_PROTOCOL_INVALID, "Hermes runtime binding persist was rejected")
+                        return
+                    runtime_run_id = str(binding.get("runtime_run_id") or runtime_run_id)
+
+                    if cancel_event and cancel_event.is_set():
+                        stop_code = await _stop_runtime(
+                            client,
+                            gateway_url=gateway_url,
+                            runtime_run_id=runtime_run_id,
+                            headers=auth_headers,
+                            attempt_id=attempt_id,
+                            generation=generation,
+                        )
+                        if stop_code == "stop_404":
+                            status, _data, rec_code = await _reconcile_status(
+                                client,
+                                gateway_url=gateway_url,
+                                runtime_run_id=runtime_run_id,
+                                headers=auth_headers,
+                            )
+                            terminal = _terminal_from_status(status, rec_code)
+                            if terminal:
+                                yield terminal
+                            else:
+                                yield {
+                                    "event_type": "run.cancelled",
+                                    "payload": {"message": "cancelled after stop 404"},
+                                }
+                            return
+                        if stop_code:
+                            yield _failed(stop_code, "Hermes runtime stop failed")
+                            return
+                        yield {
+                            "event_type": "run.cancelled",
+                            "payload": {"message": "cancelled before event stream"},
+                        }
+                        return
+
+                    yield {
+                        "event_type": "run.progress",
+                        "payload": progress_payload("RUNTIME_RUNNING", "streaming"),
+                    }
                     line_iter = response.aiter_lines().__aiter__()
                     while True:
                         if cancel_event and cancel_event.is_set():
