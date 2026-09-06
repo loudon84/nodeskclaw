@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -361,6 +362,7 @@ def _extract_status(data: Any) -> str:
 
 
 STREAM_STATUS_IDLE_TICKS = 10
+STREAM_DRAIN_TIMEOUT_SECONDS = 2.0
 WAIT_STATUSES = frozenset({"waiting_for_approval", "waiting"})
 ALIVE_STATUSES = frozenset({"running", "waiting_for_approval", "waiting"})
 
@@ -799,6 +801,7 @@ async def execute_hermes_run(
             polled_data: dict[str, Any] | None = None
             polled_code: str | None = None
             idle_ticks = 0
+            drain_deadline: float | None = None
             try:
                 async with client.stream("GET", events_url, headers=auth_headers) as response:
                     events_subscribed = True
@@ -808,6 +811,7 @@ async def execute_hermes_run(
                             "Hermes event stream failed",
                         )
                         return
+                    line_iter = response.aiter_lines().__aiter__()
                     binding = await persist_native_binding(
                         attempt_id=attempt_id,
                         generation=generation,
@@ -861,76 +865,90 @@ async def execute_hermes_run(
                         "event_type": "run.progress",
                         "payload": progress_payload("RUNTIME_RUNNING", "streaming"),
                     }
-                    line_iter = response.aiter_lines().__aiter__()
-                    while True:
-                        if cancel_event and cancel_event.is_set():
-                            stop_code = await _stop_runtime(
-                                client,
-                                gateway_url=gateway_url,
-                                runtime_run_id=runtime_run_id,
-                                headers=auth_headers,
-                                attempt_id=attempt_id,
-                                generation=generation,
-                            )
-                            for leftover in normalizer.close(terminal_status="failed"):
-                                yield leftover
-                            if stop_code == "stop_404":
-                                break
-                            if stop_code:
-                                yield _failed(stop_code, "Hermes runtime stop failed")
+                    pending_line: asyncio.Task[str] | None = None
+                    try:
+                        while True:
+                            if cancel_event and cancel_event.is_set():
+                                stop_code = await _stop_runtime(
+                                    client,
+                                    gateway_url=gateway_url,
+                                    runtime_run_id=runtime_run_id,
+                                    headers=auth_headers,
+                                    attempt_id=attempt_id,
+                                    generation=generation,
+                                )
+                                for leftover in normalizer.close(terminal_status="failed"):
+                                    yield leftover
+                                if stop_code == "stop_404":
+                                    break
+                                if stop_code:
+                                    yield _failed(stop_code, "Hermes runtime stop failed")
+                                    return
+                                yield {"event_type": "run.cancelled", "payload": {"message": "cancelled during stream"}}
+                                await mark_native_terminal(attempt_id=attempt_id, generation=generation)
                                 return
-                            yield {"event_type": "run.cancelled", "payload": {"message": "cancelled during stream"}}
-                            await mark_native_terminal(attempt_id=attempt_id, generation=generation)
-                            return
-                        try:
-                            line = await asyncio.wait_for(line_iter.__anext__(), timeout=0.1)
-                        except TimeoutError:
-                            for semantic in normalizer.flush_due_to_latency():
-                                yield semantic
-                            idle_ticks += 1
-                            if idle_ticks % STREAM_STATUS_IDLE_TICKS != 0:
+                            try:
+                                if pending_line is None:
+                                    pending_line = asyncio.create_task(line_iter.__anext__())
+                                line = await asyncio.wait_for(asyncio.shield(pending_line), timeout=0.1)
+                                pending_line = None
+                            except TimeoutError:
+                                for semantic in normalizer.flush_due_to_latency():
+                                    yield semantic
+                                if drain_deadline is not None:
+                                    if time.monotonic() >= drain_deadline:
+                                        break
+                                    continue
+                                idle_ticks += 1
+                                if idle_ticks % STREAM_STATUS_IDLE_TICKS != 0:
+                                    continue
+                                status, data, rec_code = await _reconcile_status(
+                                    client,
+                                    gateway_url=gateway_url,
+                                    runtime_run_id=runtime_run_id,
+                                    headers=auth_headers,
+                                )
+                                polled_status, polled_data, polled_code = status, data, rec_code
+                                if _is_wait_status(status):
+                                    break
+                                if _terminal_from_status(status, rec_code):
+                                    drain_deadline = time.monotonic() + STREAM_DRAIN_TIMEOUT_SECONDS
                                 continue
-                            status, data, rec_code = await _reconcile_status(
-                                client,
-                                gateway_url=gateway_url,
-                                runtime_run_id=runtime_run_id,
-                                headers=auth_headers,
-                            )
-                            polled_status, polled_data, polled_code = status, data, rec_code
-                            if _is_wait_status(status) or _terminal_from_status(status, rec_code):
+                            except StopAsyncIteration:
+                                pending_line = None
                                 break
-                            continue
-                        except StopAsyncIteration:
-                            break
-                        idle_ticks = 0
-                        if line.startswith("event:"):
-                            sse_event_name = line.split(":", 1)[1].strip() or None
-                            continue
-                        if not line or not line.startswith("data:"):
-                            continue
-                        data_str = line.split(":", 1)[1].strip()
-                        if data_str in {"[DONE]", "done"}:
-                            break
-                        try:
-                            chunk = json.loads(data_str)
-                        except json.JSONDecodeError:
+                            idle_ticks = 0
+                            if line.startswith("event:"):
+                                sse_event_name = line.split(":", 1)[1].strip() or None
+                                continue
+                            if not line or not line.startswith("data:"):
+                                continue
+                            data_str = line.split(":", 1)[1].strip()
+                            if data_str in {"[DONE]", "done"}:
+                                break
+                            try:
+                                chunk = json.loads(data_str)
+                            except json.JSONDecodeError:
+                                sse_event_name = None
+                                continue
+                            if not isinstance(chunk, dict):
+                                sse_event_name = None
+                                continue
+                            chunk = _attach_sse_event_type(chunk, sse_event_name)
                             sse_event_name = None
-                            continue
-                        if not isinstance(chunk, dict):
-                            sse_event_name = None
-                            continue
-                        chunk = _attach_sse_event_type(chunk, sse_event_name)
-                        sse_event_name = None
-                        leave_stream = False
-                        for semantic in _emit_ingested(normalizer, chunk):
-                            yield semantic
-                            if semantic.get("event_type") == "assistant.message":
-                                saw_assistant = True
-                            if semantic.get("event_type") == "approval.requested":
-                                saw_approval = True
-                                leave_stream = True
-                        if leave_stream:
-                            break
+                            leave_stream = False
+                            for semantic in _emit_ingested(normalizer, chunk):
+                                yield semantic
+                                if semantic.get("event_type") == "assistant.message":
+                                    saw_assistant = True
+                                if semantic.get("event_type") == "approval.requested":
+                                    saw_approval = True
+                                    leave_stream = True
+                            if leave_stream:
+                                break
+                    finally:
+                        if pending_line is not None and not pending_line.done():
+                            pending_line.cancel()
             except (httpx.TimeoutException, httpx.NetworkError, OSError):
                 if not events_subscribed:
                     yield _failed(RUNTIME_EVENT_STREAM_FAILED, "Hermes event stream failed")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -940,6 +941,44 @@ async def test_execute_hermes_ingests_sse_event_line_subagent():
     traces = [e for e in events if e["event_type"] == "internal.runtime.trace"]
     assert traces
     assert traces[0]["payload"] == {"runtime_event_type": "subagent.start", "category": "subagent"}
+
+
+@pytest.mark.asyncio
+# @lat: [[architecture/skill-agent#Hermes Engine Adapter]]
+async def test_execute_hermes_drains_sse_after_status_completed():
+    async def delayed_lines():
+        await asyncio.sleep(0.25)
+        yield "event: tool.started"
+        yield 'data: {"tool": "web_search"}'
+        yield "event: tool.completed"
+        yield 'data: {"tool": "web_search"}'
+        yield "event: subagent.start"
+        yield 'data: {"goal": "delegate"}'
+        yield "data: [DONE]"
+
+    client = _native_client(
+        event_lines=[],
+        status={"id": "rr-1", "status": "completed", "output": "最终回复"},
+    )
+    sse_resp = client.stream.return_value.__aenter__.return_value
+    sse_resp.aiter_lines = delayed_lines
+    with patch("app.services.hermes_engine.STREAM_STATUS_IDLE_TICKS", 1):
+        with patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client):
+            events = [
+                event
+                async for event in execute_hermes_run(
+                    tool_name="foo",
+                    arguments={"prompt": "hi"},
+                    route_snapshot={"gateway_url": "http://hermes:8642"},
+                    run_id="run-drain",
+                    attempt_id="att-drain",
+                )
+            ]
+    calls = [e for e in events if e["event_type"] == "tool.call"]
+    traces = [e for e in events if e["event_type"] == "internal.runtime.trace"]
+    assert [e["payload"]["status"] for e in calls] == ["started", "completed"]
+    assert traces
+    assert traces[0]["payload"]["runtime_event_type"] == "subagent.start"
 
 
 @pytest.mark.asyncio
