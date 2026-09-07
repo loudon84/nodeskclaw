@@ -10,7 +10,7 @@ from typing import Any
 
 import httpx
 from fastapi import APIRouter, Depends, Header, Request
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -20,6 +20,10 @@ from app.models.base import not_deleted
 from app.models.connector.edge_job import EdgeJob, EdgeJobStatus
 from app.models.hermes_skill.hermes_task import HermesTask
 from app.models.hermes_skill.run_dispatch_outbox import RunDispatchOutbox, RunDispatchStatus
+from app.services.hermes_skill.approval_decision_service import (
+    ApprovalDecisionContractError,
+    submit_approval_decision,
+)
 from app.services.hermes_skill.permission_checker import PermissionChecker
 from app.services.hermes_skill.task_service import TaskService
 from app.services.runtime.pg_notify import pg_notify_service
@@ -176,7 +180,11 @@ def _public_run_event(data: dict[str, Any], run_id: str) -> dict[str, Any] | Non
         approval_id = payload.get("approval_id")
         summary = payload.get("summary")
         if isinstance(approval_id, str) and approval_id and isinstance(summary, str):
-            event["payload"] = {"approval_id": approval_id, "summary": summary}
+            event["payload"] = {
+                "approval_id": approval_id,
+                "summary": summary,
+                "options": ["allow", "deny"],
+            }
             return event
         return None
     if event_type == "artifact.persisted":
@@ -519,6 +527,89 @@ async def resume_run(
     return {"code": 0, "data": data}
 
 
+def _legacy_approval_error(exc: ApprovalDecisionContractError) -> AppException:
+    return AppException(
+        code=exc.status_code * 100,
+        message=exc.message,
+        status_code=exc.status_code,
+        message_key=exc.message_key,
+    )
+
+
+def _canonical_approval_error(exc: ApprovalDecisionContractError) -> JSONResponse:
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "error_code": exc.error_code,
+            "message_key": exc.message_key,
+            "message": exc.message,
+        },
+    )
+
+
+async def _submit_public_approval(
+    *,
+    db: AsyncSession,
+    user_id: str,
+    org_id: str,
+    run_id: str,
+    approval_id: str,
+    body: dict | None,
+    idempotency_key: str | None,
+    require_idempotency_key: bool,
+    strict_body: bool,
+    allow_legacy_aliases: bool,
+) -> dict[str, Any]:
+    await PermissionChecker.require_permission(db, user_id, org_id, "skill:invoke")
+    await _authorize_run(db, user_id, org_id, run_id)
+    outbox = await _get_outbox_entry(db, run_id, org_id)
+    if _is_outbox_undelivered(outbox):
+        raise ForbiddenError("未派发的 Run 无法执行审批", "errors.run.undelivered")
+    return await submit_approval_decision(
+        db,
+        org_id=org_id,
+        user_id=user_id,
+        run_id=run_id,
+        approval_id=approval_id,
+        body=body,
+        idempotency_key=idempotency_key,
+        require_idempotency_key=require_idempotency_key,
+        strict_body=strict_body,
+        allow_legacy_aliases=allow_legacy_aliases,
+        agent_post=_agent_post,
+        agent_get=_agent_get,
+        public_run_status=_public_run_status,
+    )
+
+
+@router.post("/{run_id}/approvals/{approval_id}/decision")
+# @lat: [[architecture/skill-agent#RM-17 Public Approval Decision]]
+async def decide_run_approval(
+    run_id: str,
+    approval_id: str,
+    body: dict | None = None,
+    user_org=Depends(require_org_member),
+    db: AsyncSession = Depends(get_db),
+    idempotency_key: str | None = Header(default=None, alias="X-Idempotency-Key"),
+):
+    user, org = user_org
+    try:
+        return await _submit_public_approval(
+            db=db,
+            user_id=user.id,
+            org_id=org.id,
+            run_id=run_id,
+            approval_id=approval_id,
+            body=body,
+            idempotency_key=idempotency_key,
+            require_idempotency_key=True,
+            strict_body=True,
+            allow_legacy_aliases=False,
+        )
+    except ApprovalDecisionContractError as exc:
+        return _canonical_approval_error(exc)
+
+
 @router.post("/{run_id}/approvals/{approval_id}")
 async def approve_run(
     run_id: str,
@@ -526,45 +617,25 @@ async def approve_run(
     body: dict | None = None,
     user_org=Depends(require_org_member),
     db: AsyncSession = Depends(get_db),
+    idempotency_key: str | None = Header(default=None, alias="X-Idempotency-Key"),
 ):
     user, org = user_org
-    await PermissionChecker.require_permission(db, user.id, org.id, "skill:invoke")
-    task = await _authorize_run(db, user.id, org.id, run_id)
-    outbox = await _get_outbox_entry(db, run_id, org.id)
-    if _is_outbox_undelivered(outbox):
-        raise ForbiddenError("未派发的 Run 无法执行审批", "errors.run.undelivered")
-
-    payload = dict(body or {})
-    raw_decision = str(payload.get("decision") or payload.get("choice") or "approve").strip().lower()
-    if raw_decision in {"session", "always"}:
-        raise AppException(
-            code=40001,
-            message="Public approval only accepts approve or deny",
-            status_code=400,
-            message_key="errors.run.approval_choice_forbidden",
+    try:
+        receipt = await _submit_public_approval(
+            db=db,
+            user_id=user.id,
+            org_id=org.id,
+            run_id=run_id,
+            approval_id=approval_id,
+            body=body if body is not None else {"decision": "allow"},
+            idempotency_key=idempotency_key,
+            require_idempotency_key=False,
+            strict_body=False,
+            allow_legacy_aliases=True,
         )
-    if raw_decision in {"approve", "approved", "once", "allow"}:
-        mapped = "approve"
-    elif raw_decision in {"deny", "denied", "reject"}:
-        mapped = "deny"
-    else:
-        raise AppException(
-            code=40001,
-            message="Public approval only accepts approve or deny",
-            status_code=400,
-            message_key="errors.run.approval_choice_forbidden",
-        )
-    payload["decision"] = mapped
-    payload.pop("choice", None)
-    data = await _agent_post(
-        f"/internal/v1/runs/{run_id}/approvals/{approval_id}",
-        json_body=payload,
-        org_id=org.id,
-        user_id=user.id,
-    )
-    if str(data.get("org_id") or "") != org.id or str(data.get("run_id") or "") != run_id:
-        raise ForbiddenError("无权访问该 Run", "errors.run.forbidden")
-    return {"code": 0, "data": data}
+    except ApprovalDecisionContractError as exc:
+        raise _legacy_approval_error(exc) from exc
+    return {"code": 0, "data": receipt}
 
 
 @router.get("/{run_id}/events")

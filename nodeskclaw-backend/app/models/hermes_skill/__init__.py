@@ -17,6 +17,7 @@ from app.models.hermes_skill.hermes_runtime_control import HermesRuntimeControl 
 from app.models.hermes_skill.hermes_skill_authorization_grant import HermesSkillAuthorizationGrant  # noqa: F401
 from app.models.hermes_skill.hermes_task_event_token import HermesTaskEventToken  # noqa: F401
 from app.models.hermes_skill.run_dispatch_outbox import RunDispatchOutbox, RunDispatchStatus  # noqa: F401
+from app.models.hermes_skill.skill_run_approval_decision import SkillRunApprovalDecision  # noqa: F401
 from app.models.hermes_skill.hermes_agent_instance import HermesAgentInstance  # noqa: F401
 from app.models.hermes_skill.hermes_mcp_router_sync_log import HermesMcpRouterSyncLog  # noqa: F401
 from app.models.mcp_client_token import McpClientToken  # noqa: F401

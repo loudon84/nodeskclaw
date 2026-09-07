@@ -1,14 +1,18 @@
+import json
+
 import pytest
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
+from fastapi.responses import JSONResponse
 
 from app.api.runs import (
     _agent_post,
     _public_run_event,
     approve_run,
     cancel_run,
+    decide_run_approval,
     download_run_artifact,
     get_run,
     get_run_artifacts,
@@ -29,14 +33,58 @@ def _mock_user_org():
     return user, org
 
 
+def _empty_ledger_db(db: AsyncMock) -> AsyncMock:
+    empty = MagicMock()
+    empty.scalar_one_or_none.return_value = None
+    db.execute = AsyncMock(return_value=empty)
+    nested = AsyncMock()
+    nested.__aenter__ = AsyncMock(return_value=None)
+    nested.__aexit__ = AsyncMock(return_value=False)
+    db.begin_nested = MagicMock(return_value=nested)
+    db.add = MagicMock()
+    db.flush = AsyncMock()
+    return db
+
+
 def _assert_unwrapped_public_body(result: dict):
     assert "code" not in result
     assert "data" not in result
 
 
+def _ledger_db_with_existing(existing) -> AsyncMock:
+    db = _empty_ledger_db(AsyncMock())
+    loaded = MagicMock()
+    loaded.scalar_one_or_none.return_value = existing
+    db.execute = AsyncMock(return_value=loaded)
+    return db
+
+
+def _approval_task() -> HermesTask:
+    return HermesTask(
+        id="run-1",
+        org_id="org-1",
+        user_id="user-1",
+        tool_name="test_tool",
+        status=TaskStatus.RUNNING,
+    )
+
+
+def _approval_route_patches(task: HermesTask, *, agent_post=None, agent_get=None):
+    get_payload = {"run_id": "run-1", "org_id": "org-1", "status": "WAITING_APPROVAL"}
+    post_payload = {"run_id": "run-1", "org_id": "org-1", "status": "WAITING_APPROVAL"}
+    return (
+        patch("app.api.runs.PermissionChecker.require_permission", new=AsyncMock()),
+        patch("app.api.runs.TaskService.get_task", new=AsyncMock(return_value=task)),
+        patch("app.api.runs.TaskService.assert_task_access", new=AsyncMock()),
+        patch("app.api.runs._get_outbox_entry", new=AsyncMock(return_value=None)),
+        patch("app.api.runs._agent_post", new=agent_post or AsyncMock(return_value=post_payload)),
+        patch("app.api.runs._agent_get", new=agent_get or AsyncMock(return_value=get_payload)),
+    )
+
+
 @pytest.mark.asyncio
 async def test_get_run_projection_missing_fails_closed():
-    db = AsyncMock()
+    db = _empty_ledger_db(AsyncMock())
     user_org = _mock_user_org()
 
     with patch("app.api.runs.PermissionChecker.require_permission", new=AsyncMock()), \
@@ -51,7 +99,7 @@ async def test_get_run_projection_missing_fails_closed():
 
 @pytest.mark.asyncio
 async def test_get_run_undelivered_outbox_returns_dispatch_pending():
-    db = AsyncMock()
+    db = _empty_ledger_db(AsyncMock())
     user_org = _mock_user_org()
 
     task = HermesTask(
@@ -90,7 +138,7 @@ async def test_get_run_undelivered_outbox_returns_dispatch_pending():
 
 @pytest.mark.asyncio
 async def test_get_run_delivered_outbox_proxies_agent_and_verifies_org():
-    db = AsyncMock()
+    db = _empty_ledger_db(AsyncMock())
     user_org = _mock_user_org()
 
     task = HermesTask(
@@ -113,7 +161,7 @@ async def test_get_run_delivered_outbox_proxies_agent_and_verifies_org():
 
 @pytest.mark.asyncio
 async def test_get_run_returns_only_the_public_run_projection():
-    db = AsyncMock()
+    db = _empty_ledger_db(AsyncMock())
     user_org = _mock_user_org()
     task = HermesTask(id="run-1", org_id="org-1", user_id="user-1", tool_name="test_tool", status=TaskStatus.RUNNING)
     agent_run = {
@@ -147,7 +195,7 @@ async def test_get_run_returns_only_the_public_run_projection():
 
 @pytest.mark.asyncio
 async def test_get_run_result_returns_only_public_text_and_error_fields():
-    db = AsyncMock()
+    db = _empty_ledger_db(AsyncMock())
     user_org = _mock_user_org()
     task = HermesTask(id="run-1", org_id="org-1", user_id="user-1", tool_name="test_tool", status=TaskStatus.RUNNING)
     agent_result = {
@@ -179,7 +227,7 @@ async def test_get_run_result_returns_only_public_text_and_error_fields():
 
 @pytest.mark.asyncio
 async def test_get_run_artifacts_returns_only_public_descriptors():
-    db = AsyncMock()
+    db = _empty_ledger_db(AsyncMock())
     user_org = _mock_user_org()
     task = HermesTask(id="run-1", org_id="org-1", user_id="user-1", tool_name="test_tool", status=TaskStatus.RUNNING)
     agent_artifacts = {
@@ -223,7 +271,7 @@ async def test_get_run_artifacts_returns_only_public_descriptors():
 async def test_download_run_artifact_does_not_leak_storage_credentials():
     import httpx
 
-    db = AsyncMock()
+    db = _empty_ledger_db(AsyncMock())
     user_org = _mock_user_org()
     task = HermesTask(id="run-1", org_id="org-1", user_id="user-1", tool_name="test_tool", status=TaskStatus.RUNNING)
     agent_artifacts = {
@@ -276,7 +324,7 @@ async def test_download_run_artifact_does_not_leak_storage_credentials():
 
 @pytest.mark.asyncio
 async def test_cancel_undelivered_outbox_cancels_projection():
-    db = AsyncMock()
+    db = _empty_ledger_db(AsyncMock())
     user_org = _mock_user_org()
 
     task = HermesTask(
@@ -314,7 +362,7 @@ async def test_cancel_undelivered_outbox_cancels_projection():
 
 @pytest.mark.asyncio
 async def test_cancel_delivered_run_requests_cancellation_for_active_edge_jobs():
-    db = AsyncMock()
+    db = _empty_ledger_db(AsyncMock())
     user_org = _mock_user_org()
     task = HermesTask(id="run-1", org_id="org-1", user_id="user-1", tool_name="test_tool", status=TaskStatus.RUNNING)
 
@@ -335,7 +383,7 @@ async def test_cancel_delivered_run_requests_cancellation_for_active_edge_jobs()
 
 @pytest.mark.asyncio
 async def test_cancel_run_agent_conflict_is_not_http_500():
-    db = AsyncMock()
+    db = _empty_ledger_db(AsyncMock())
     user_org = _mock_user_org()
     task = HermesTask(id="run-1", org_id="org-1", user_id="user-1", tool_name="test_tool", status=TaskStatus.RUNNING)
     conflict = AppException(
@@ -357,7 +405,7 @@ async def test_cancel_run_agent_conflict_is_not_http_500():
 
 @pytest.mark.asyncio
 async def test_cancel_run_agent_500_is_not_http_500():
-    db = AsyncMock()
+    db = _empty_ledger_db(AsyncMock())
     user_org = _mock_user_org()
     task = HermesTask(id="run-1", org_id="org-1", user_id="user-1", tool_name="test_tool", status=TaskStatus.RUNNING)
     response = MagicMock()
@@ -376,7 +424,7 @@ async def test_cancel_run_agent_500_is_not_http_500():
 
 @pytest.mark.asyncio
 async def test_cancel_run_agent_mutation_without_tool_name_is_not_http_500():
-    db = AsyncMock()
+    db = _empty_ledger_db(AsyncMock())
     user_org = _mock_user_org()
     task = HermesTask(id="run-1", org_id="org-1", user_id="user-1", tool_name="test_tool", status=TaskStatus.RUNNING)
     with patch("app.api.runs.PermissionChecker.require_permission", new=AsyncMock()), \
@@ -403,7 +451,7 @@ async def test_cancel_run_agent_mutation_without_tool_name_is_not_http_500():
 
 @pytest.mark.asyncio
 async def test_resume_undelivered_outbox_rejected():
-    db = AsyncMock()
+    db = _empty_ledger_db(AsyncMock())
     user_org = _mock_user_org()
 
     task = HermesTask(
@@ -435,7 +483,7 @@ async def test_resume_undelivered_outbox_rejected():
 
 @pytest.mark.asyncio
 async def test_resume_run_proxies_json_body_and_exec_headers():
-    db = AsyncMock()
+    db = _empty_ledger_db(AsyncMock())
     user_org = _mock_user_org()
 
     task = HermesTask(
@@ -466,7 +514,7 @@ async def test_resume_run_proxies_json_body_and_exec_headers():
 
 @pytest.mark.asyncio
 async def test_approve_run_proxies_json_body_and_exec_headers():
-    db = AsyncMock()
+    db = _empty_ledger_db(AsyncMock())
     user_org = _mock_user_org()
 
     task = HermesTask(
@@ -481,12 +529,15 @@ async def test_approve_run_proxies_json_body_and_exec_headers():
          patch("app.api.runs.TaskService.get_task", new=AsyncMock(return_value=task)), \
          patch("app.api.runs.TaskService.assert_task_access", new=AsyncMock()), \
          patch("app.api.runs._get_outbox_entry", new=AsyncMock(return_value=None)), \
-         patch("app.api.runs._agent_post", new=AsyncMock(return_value={"run_id": "run-1", "org_id": "org-1", "status": "APPROVED"})) as mock_post:
+         patch("app.api.runs._agent_post", new=AsyncMock(return_value={"run_id": "run-1", "org_id": "org-1", "status": "APPROVED"})) as mock_post, \
+         patch("app.api.runs._agent_get", new=AsyncMock(return_value={"run_id": "run-1", "org_id": "org-1", "status": "WAITING_APPROVAL"})):
 
         payload = {"decision": "APPROVE", "evidence": "verified by admin"}
         res = await approve_run(run_id="run-1", approval_id="app-1", body=payload, user_org=user_org, db=db)
         assert res["code"] == 0
-        assert res["data"]["status"] == "APPROVED"
+        assert res["data"]["decision"] == "allow"
+        assert res["data"]["status"] == "WAITING_APPROVAL"
+        assert res["data"]["approval_id"] == "app-1"
         mock_post.assert_called_once_with(
             "/internal/v1/runs/run-1/approvals/app-1",
             json_body={"decision": "approve", "evidence": "verified by admin"},
@@ -497,7 +548,7 @@ async def test_approve_run_proxies_json_body_and_exec_headers():
 
 @pytest.mark.asyncio
 async def test_approve_run_deny_maps_to_internal_deny():
-    db = AsyncMock()
+    db = _empty_ledger_db(AsyncMock())
     user_org = _mock_user_org()
     task = HermesTask(
         id="run-1",
@@ -510,7 +561,8 @@ async def test_approve_run_deny_maps_to_internal_deny():
          patch("app.api.runs.TaskService.get_task", new=AsyncMock(return_value=task)), \
          patch("app.api.runs.TaskService.assert_task_access", new=AsyncMock()), \
          patch("app.api.runs._get_outbox_entry", new=AsyncMock(return_value=None)), \
-         patch("app.api.runs._agent_post", new=AsyncMock(return_value={"run_id": "run-1", "org_id": "org-1", "status": "WAITING_APPROVAL"})) as mock_post:
+         patch("app.api.runs._agent_post", new=AsyncMock(return_value={"run_id": "run-1", "org_id": "org-1", "status": "WAITING_APPROVAL"})) as mock_post, \
+         patch("app.api.runs._agent_get", new=AsyncMock(return_value={"run_id": "run-1", "org_id": "org-1", "status": "WAITING_APPROVAL"})):
         res = await approve_run(
             run_id="run-1",
             approval_id="app-1",
@@ -530,7 +582,7 @@ async def test_approve_run_deny_maps_to_internal_deny():
 @pytest.mark.asyncio
 @pytest.mark.parametrize("forbidden", ["session", "always"])
 async def test_approve_run_rejects_session_and_always_before_agent(forbidden):
-    db = AsyncMock()
+    db = _empty_ledger_db(AsyncMock())
     user_org = _mock_user_org()
     task = HermesTask(
         id="run-1",
@@ -554,6 +606,222 @@ async def test_approve_run_rejects_session_and_always_before_agent(forbidden):
             )
     assert exc_info.value.status_code == 400
     assert exc_info.value.message_key == "errors.run.approval_choice_forbidden"
+    mock_post.assert_not_called()
+
+
+def _canonical_error(result) -> tuple[int, dict]:
+    assert isinstance(result, JSONResponse)
+    return result.status_code, json.loads(result.body.decode())
+
+
+@pytest.mark.asyncio
+# @lat: [[architecture/skill-agent#RM-17 Public Approval Decision]]
+async def test_decide_run_approval_returns_bare_receipt():
+    db = _empty_ledger_db(AsyncMock())
+    user_org = _mock_user_org()
+    task = _approval_task()
+    mock_post = AsyncMock(return_value={"run_id": "run-1", "org_id": "org-1", "status": "WAITING_APPROVAL"})
+    patches = _approval_route_patches(task, agent_post=mock_post)
+    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5]:
+        res = await decide_run_approval(
+            run_id="run-1",
+            approval_id="app-1",
+            body={"decision": "allow"},
+            user_org=user_org,
+            db=db,
+            idempotency_key="key-1",
+        )
+    assert res["run_id"] == "run-1"
+    assert res["approval_id"] == "app-1"
+    assert res["decision"] == "allow"
+    assert res["status"] == "WAITING_APPROVAL"
+    assert "decided_at" in res
+    assert "code" not in res
+    assert "data" not in res
+    mock_post.assert_called_once_with(
+        "/internal/v1/runs/run-1/approvals/app-1",
+        json_body={"decision": "approve"},
+        org_id="org-1",
+        user_id="user-1",
+    )
+
+
+@pytest.mark.asyncio
+async def test_decide_run_approval_requires_idempotency_key():
+    db = _empty_ledger_db(AsyncMock())
+    user_org = _mock_user_org()
+    task = _approval_task()
+    mock_post = AsyncMock()
+    patches = _approval_route_patches(task, agent_post=mock_post)
+    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5]:
+        res = await decide_run_approval(
+            run_id="run-1",
+            approval_id="app-1",
+            body={"decision": "allow"},
+            user_org=user_org,
+            db=db,
+            idempotency_key=None,
+        )
+    status, payload = _canonical_error(res)
+    assert status == 400
+    assert payload["error_code"] == "IDEMPOTENCY_KEY_REQUIRED"
+    assert payload["message_key"] == "errors.run.idempotency_key_required"
+    mock_post.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("body", "error_code", "message_key"),
+    [
+        ({"decision": "session"}, "APPROVAL_DECISION_INVALID", "errors.run.approval_choice_forbidden"),
+        ({"decision": "always"}, "APPROVAL_DECISION_INVALID", "errors.run.approval_choice_forbidden"),
+        ({"decision": "maybe"}, "APPROVAL_DECISION_INVALID", "errors.run.approval_choice_forbidden"),
+        ({"decision": "allow", "extra": True}, "APPROVAL_DECISION_INVALID", "errors.run.approval_decision_invalid"),
+        ({"decision": "allow", "comment": "x" * 501}, "APPROVAL_DECISION_INVALID", "errors.run.approval_decision_invalid"),
+    ],
+)
+async def test_decide_run_approval_rejects_invalid_decision(body, error_code, message_key):
+    db = _empty_ledger_db(AsyncMock())
+    user_org = _mock_user_org()
+    task = _approval_task()
+    mock_post = AsyncMock()
+    patches = _approval_route_patches(task, agent_post=mock_post)
+    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5]:
+        res = await decide_run_approval(
+            run_id="run-1",
+            approval_id="app-1",
+            body=body,
+            user_org=user_org,
+            db=db,
+            idempotency_key="key-1",
+        )
+    status, payload = _canonical_error(res)
+    assert status == 400
+    assert payload["error_code"] == error_code
+    assert payload["message_key"] == message_key
+    mock_post.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_approve_run_and_decision_share_submit_service():
+    db = _empty_ledger_db(AsyncMock())
+    user_org = _mock_user_org()
+    task = _approval_task()
+    receipt = {
+        "run_id": "run-1",
+        "approval_id": "app-1",
+        "decision": "allow",
+        "status": "WAITING_APPROVAL",
+        "decided_at": "2026-09-07T00:00:00Z",
+    }
+    mock_submit = AsyncMock(return_value=receipt)
+    with patch("app.api.runs.PermissionChecker.require_permission", new=AsyncMock()), \
+         patch("app.api.runs.TaskService.get_task", new=AsyncMock(return_value=task)), \
+         patch("app.api.runs.TaskService.assert_task_access", new=AsyncMock()), \
+         patch("app.api.runs._get_outbox_entry", new=AsyncMock(return_value=None)), \
+         patch("app.api.runs.submit_approval_decision", new=mock_submit):
+        legacy = await approve_run(
+            run_id="run-1",
+            approval_id="app-1",
+            body={"decision": "allow"},
+            user_org=user_org,
+            db=db,
+            idempotency_key="legacy-key",
+        )
+        canonical = await decide_run_approval(
+            run_id="run-1",
+            approval_id="app-1",
+            body={"decision": "allow"},
+            user_org=user_org,
+            db=db,
+            idempotency_key="canon-key",
+        )
+    assert mock_submit.call_count == 2
+    assert legacy == {"code": 0, "data": receipt}
+    assert canonical == receipt
+
+
+@pytest.mark.asyncio
+async def test_idempotency_replay_returns_frozen_receipt_without_second_post():
+    existing = MagicMock()
+    existing.idempotency_key = "key-1"
+    existing.decision = "allow"
+    existing.response_body = {
+        "run_id": "run-1",
+        "approval_id": "app-1",
+        "decision": "allow",
+        "status": "WAITING_APPROVAL",
+        "decided_at": "2026-09-07T00:00:00Z",
+    }
+    db = _ledger_db_with_existing(existing)
+    user_org = _mock_user_org()
+    task = _approval_task()
+    mock_post = AsyncMock()
+    patches = _approval_route_patches(task, agent_post=mock_post)
+    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5]:
+        res = await decide_run_approval(
+            run_id="run-1",
+            approval_id="app-1",
+            body={"decision": "allow"},
+            user_org=user_org,
+            db=db,
+            idempotency_key="key-1",
+        )
+    assert res == existing.response_body
+    mock_post.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_idempotency_conflict_same_key_different_decision():
+    existing = MagicMock()
+    existing.idempotency_key = "key-1"
+    existing.decision = "allow"
+    existing.response_body = {"run_id": "run-1", "decision": "allow"}
+    db = _ledger_db_with_existing(existing)
+    user_org = _mock_user_org()
+    task = _approval_task()
+    mock_post = AsyncMock()
+    patches = _approval_route_patches(task, agent_post=mock_post)
+    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5]:
+        res = await decide_run_approval(
+            run_id="run-1",
+            approval_id="app-1",
+            body={"decision": "deny"},
+            user_org=user_org,
+            db=db,
+            idempotency_key="key-1",
+        )
+    status, payload = _canonical_error(res)
+    assert status == 409
+    assert payload["error_code"] == "IDEMPOTENCY_CONFLICT"
+    assert payload["message_key"] == "errors.run.idempotency_conflict"
+    mock_post.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_idempotency_already_decided_new_key():
+    existing = MagicMock()
+    existing.idempotency_key = "key-1"
+    existing.decision = "allow"
+    existing.response_body = {"run_id": "run-1", "decision": "allow"}
+    db = _ledger_db_with_existing(existing)
+    user_org = _mock_user_org()
+    task = _approval_task()
+    mock_post = AsyncMock()
+    patches = _approval_route_patches(task, agent_post=mock_post)
+    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5]:
+        res = await decide_run_approval(
+            run_id="run-1",
+            approval_id="app-1",
+            body={"decision": "allow"},
+            user_org=user_org,
+            db=db,
+            idempotency_key="key-2",
+        )
+    status, payload = _canonical_error(res)
+    assert status == 409
+    assert payload["error_code"] == "APPROVAL_ALREADY_DECIDED"
+    assert payload["message_key"] == "errors.run.approval_already_decided"
     mock_post.assert_not_called()
 
 
@@ -639,7 +907,22 @@ def test_public_run_event_projects_semantic_types_and_drops_unknown():
             "payload": {"approval_id": "appr-1", "summary": "delete file"},
         },
         "run-1",
-    )["payload"] == {"approval_id": "appr-1", "summary": "delete file"}
+    )["payload"] == {"approval_id": "appr-1", "summary": "delete file", "options": ["allow", "deny"]}
+
+
+def test_public_run_event_projects_approval_options():
+    projected = _public_run_event(
+        {
+            "event_type": "approval.requested",
+            "event_seq": 7,
+            "timestamp": "2026-08-31T00:00:05Z",
+            "payload": {"approval_id": "appr-1", "summary": "delete file", "runtime_run_id": "secret"},
+        },
+        "run-1",
+    )
+    assert projected is not None
+    assert projected["payload"] == {"approval_id": "appr-1", "summary": "delete file", "options": ["allow", "deny"]}
+    assert "runtime_run_id" not in str(projected)
     assert _public_run_event(
         {
             "event_type": "internal.debug",
@@ -688,7 +971,7 @@ def test_public_run_event_progress_uses_phase_not_status():
 
 @pytest.mark.asyncio
 async def test_stream_run_events_passes_semantic_event_type_and_seq():
-    db = AsyncMock()
+    db = _empty_ledger_db(AsyncMock())
     user_org = _mock_user_org()
     request = MagicMock()
     request.is_disconnected = AsyncMock(return_value=False)
@@ -825,7 +1108,7 @@ async def test_stream_run_events_passes_semantic_event_type_and_seq():
     ],
 )
 async def test_stream_run_events_delivers_terminal_before_close(agent_status, event_type):
-    db = AsyncMock()
+    db = _empty_ledger_db(AsyncMock())
     user_org = _mock_user_org()
     request = MagicMock()
     request.is_disconnected = AsyncMock(return_value=False)
@@ -873,7 +1156,7 @@ async def test_stream_run_events_delivers_terminal_before_close(agent_status, ev
 
 @pytest.mark.asyncio
 async def test_stream_run_events_honors_last_event_id_resume():
-    db = AsyncMock()
+    db = _empty_ledger_db(AsyncMock())
     user_org = _mock_user_org()
     request = MagicMock()
     request.is_disconnected = AsyncMock(return_value=False)

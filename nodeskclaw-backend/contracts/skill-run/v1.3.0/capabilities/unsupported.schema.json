@@ -1,0 +1,19 @@
+{
+  "title": "UnsupportedCapabilitiesV130",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "attachments": {
+      "const": "unsupported",
+      "type": "string"
+    },
+    "approvalExpiry": {
+      "const": "unsupported",
+      "type": "string"
+    }
+  },
+  "required": [
+    "attachments",
+    "approvalExpiry"
+  ]
+}

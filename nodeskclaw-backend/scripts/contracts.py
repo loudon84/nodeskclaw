@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import shutil
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -943,6 +944,9 @@ def _validate_skill_run_release(manifest: dict[str, Any], *, version: str) -> No
     if version == "1.2.1":
         contract_prefix = "nodeskclaw-backend/contracts/skill-run/v1.2.1/"
         release_diff_base = implementation_commit
+    elif version == "1.3.0":
+        contract_prefix = "nodeskclaw-backend/contracts/skill-run/v1.3.0/"
+        release_diff_base = implementation_commit
     else:
         if peeled_commit != _git_head():
             raise SystemExit(f"skill-run contract tag '{tag_name}' must point at the release commit")
@@ -957,9 +961,9 @@ def _validate_skill_run_release(manifest: dict[str, Any], *, version: str) -> No
         check=True,
     )
     changed_paths = [path for path in release_diff.stdout.splitlines() if path]
-    if version == "1.2.1":
+    if version in {"1.2.1", "1.3.0"}:
         if not any(path.startswith(contract_prefix) for path in changed_paths):
-            raise SystemExit("skill-run v1.2.1 release tag must include contract bundle changes")
+            raise SystemExit(f"skill-run v{version} release tag must include contract bundle changes")
         return
 
     if not changed_paths or any(not path.startswith(contract_prefix) for path in changed_paths):
@@ -970,13 +974,15 @@ def _check_skill_run_contracts(release: bool = False, version: str = "1.0.0") ->
     skill_run_root = SKILL_RUN_CONTRACTS_HOME / f"v{version}"
     if not skill_run_root.exists():
         raise SystemExit(f"Skill-run contract directory missing: {skill_run_root}")
-    if version == "1.2.1":
+    if version in {"1.2.1", "1.3.0"}:
         _validate_skill_run_checksums_exact(skill_run_root)
         _validate_skill_run_public_boundary(skill_run_root)
         _validate_skill_run_fixtures(skill_run_root)
         _validate_skill_run_v12_event_fixtures(skill_run_root)
         _validate_skill_run_v12_negative_fixtures(skill_run_root)
         _validate_skill_run_v11_negative_fixtures(skill_run_root)
+        if version == "1.3.0":
+            _validate_skill_run_v130_decision_artifacts(skill_run_root)
     else:
         _validate_checksums(skill_run_root)
         _validate_skill_run_fixtures(skill_run_root)
@@ -994,7 +1000,7 @@ def _check_skill_run_contracts(release: bool = False, version: str = "1.0.0") ->
 def check_contracts(release: bool = False, family: str = "all", skill_run_version: str | None = None) -> None:
     sys.path.insert(0, str(BACKEND_ROOT))
     if family == "skill-run":
-        versions = [skill_run_version] if skill_run_version else ["1.0.0", "1.1.0", "1.2.0", "1.2.1"]
+        versions = [skill_run_version] if skill_run_version else ["1.0.0", "1.1.0", "1.2.0", "1.2.1", "1.3.0"]
         for version in versions:
             root = SKILL_RUN_CONTRACTS_HOME / f"v{version}"
             if not root.exists():
@@ -1040,7 +1046,7 @@ def check_contracts(release: bool = False, family: str = "all", skill_run_versio
 
     print("WORK-EXPERT-CONTRACT check passed")
 
-    for version in ("1.0.0", "1.1.0", "1.2.0", "1.2.1"):
+    for version in ("1.0.0", "1.1.0", "1.2.0", "1.2.1", "1.3.0"):
         root = SKILL_RUN_CONTRACTS_HOME / f"v{version}"
         if not root.exists():
             continue
@@ -1142,7 +1148,7 @@ def _validate_skill_run_v11_negative_fixtures(root: Path) -> None:
 
 
 def _generate_skill_run_v10_public_contract() -> None:
-    from app.schemas.skill_run.constants import SKILL_RUN_CONTRACT_VERSION
+    from app.schemas.skill_run.constants import SKILL_RUN_CONTRACT_NAME, SKILL_RUN_CONTRACT_VERSION
 
     if _is_frozen_skill_run_version(SKILL_RUN_CONTRACT_VERSION):
         print(f"Kept frozen {SKILL_RUN_CONTRACT_NAME} at {SKILL_RUN_CONTRACTS_HOME / f'v{SKILL_RUN_CONTRACT_VERSION}'}")
@@ -1672,6 +1678,329 @@ def _generate_skill_run_v121_public_contract() -> None:
     print(f"Generated {SKILL_RUN_CONTRACT_NAME} at {root} (backendCommit={backend_commit})")
 
 
+def _patch_v130_approval_requested_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    defs = schema.get("$defs")
+    if not isinstance(defs, dict) or "ApprovalRequestedPayload" not in defs:
+        raise SystemExit("v1.3.0 run-event schema missing ApprovalRequestedPayload")
+    payload = defs["ApprovalRequestedPayload"]
+    properties = dict(payload.get("properties") or {})
+    properties["options"] = {
+        "title": "Options",
+        "type": "array",
+        "minItems": 2,
+        "maxItems": 2,
+        "items": {"type": "string", "enum": ["allow", "deny"]},
+    }
+    payload["properties"] = properties
+    required = list(payload.get("required") or [])
+    if "options" not in required:
+        required.append("options")
+    payload["required"] = required
+    defs["ApprovalRequestedPayload"] = payload
+    schema["$defs"] = defs
+    return schema
+
+
+def _v130_decision_request_schema() -> dict[str, Any]:
+    return {
+        "title": "ApprovalDecisionRequest",
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "decision": {"type": "string", "enum": ["allow", "deny"]},
+            "comment": {"type": "string", "maxLength": 500},
+        },
+        "required": ["decision"],
+    }
+
+
+def _v130_decision_response_schema() -> dict[str, Any]:
+    return {
+        "title": "ApprovalDecisionReceipt",
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "run_id": {"type": "string"},
+            "approval_id": {"type": "string"},
+            "decision": {"type": "string", "enum": ["allow", "deny"]},
+            "status": {
+                "type": "string",
+                "enum": [
+                    "CREATED",
+                    "QUEUED",
+                    "PREPARING",
+                    "RUNNING",
+                    "WAITING_APPROVAL",
+                    "RESUMING",
+                    "CANCELLING",
+                    "COMPLETED",
+                    "FAILED",
+                    "CANCELLED",
+                    "TIMED_OUT",
+                ],
+            },
+            "decided_at": {"type": "string", "format": "date-time"},
+        },
+        "required": ["run_id", "approval_id", "decision", "status", "decided_at"],
+    }
+
+
+def _v130_error_body(status: int, error_code: str, message_key: str) -> dict[str, Any]:
+    return {
+        "status": status,
+        "error_code": error_code,
+        "message_key": message_key,
+        "message": error_code,
+    }
+
+
+def _validate_skill_run_v130_decision_artifacts(root: Path) -> None:
+    import jsonschema
+
+    required = [
+        "runs/approval-decision.request.schema.json",
+        "runs/approval-decision.response.schema.json",
+        "fixtures/run-event-approval-requested.json",
+        "fixtures/approval-decision-allow.json",
+        "fixtures/approval-decision-deny.json",
+        "fixtures/approval-decision-replay.json",
+        "fixtures/approval-decision-conflict.json",
+        "fixtures/approval-unknown-id.json",
+        "fixtures/approval-unauthorized.json",
+        "fixtures/approval-already-terminal.json",
+    ]
+    for relative in required:
+        if not (root / relative).is_file():
+            raise SystemExit(f"Missing skill-run v1.3.0 artifact: {relative}")
+    request_schema = json.loads((root / "runs/approval-decision.request.schema.json").read_text(encoding="utf-8"))
+    response_schema = json.loads((root / "runs/approval-decision.response.schema.json").read_text(encoding="utf-8"))
+    if request_schema.get("additionalProperties") is not False:
+        raise SystemExit("v1.3.0 decision request schema must set additionalProperties false")
+    jsonschema.validate(
+        json.loads((root / "fixtures/approval-decision-allow.json").read_text(encoding="utf-8")),
+        request_schema,
+    )
+    jsonschema.validate(
+        json.loads((root / "fixtures/approval-decision-deny.json").read_text(encoding="utf-8")),
+        request_schema,
+    )
+    replay = json.loads((root / "fixtures/approval-decision-replay.json").read_text(encoding="utf-8"))
+    jsonschema.validate(replay["first"], response_schema)
+    jsonschema.validate(replay["replay"], response_schema)
+    conflict = json.loads((root / "fixtures/approval-decision-conflict.json").read_text(encoding="utf-8"))
+    if conflict.get("error_code") != "IDEMPOTENCY_CONFLICT":
+        raise SystemExit("v1.3.0 conflict fixture must use IDEMPOTENCY_CONFLICT")
+    requested = json.loads((root / "fixtures/run-event-approval-requested.json").read_text(encoding="utf-8"))
+    if requested.get("payload", {}).get("options") != ["allow", "deny"]:
+        raise SystemExit("v1.3.0 approval.requested fixture must project options allow/deny")
+    matrix = json.loads((root / "http/endpoint-matrix.json").read_text(encoding="utf-8"))
+    decision_rows = [
+        row
+        for row in matrix.get("endpoints") or []
+        if row.get("path") == "/api/v1/runs/{run_id}/approvals/{approval_id}/decision"
+    ]
+    if not decision_rows:
+        raise SystemExit("v1.3.0 endpoint matrix missing canonical decision path")
+    approval_idempotency = matrix.get("approvalIdempotency") or {}
+    if approval_idempotency.get("header") != "X-Idempotency-Key":
+        raise SystemExit("v1.3.0 matrix must declare approval X-Idempotency-Key")
+    if any("upload" in str(row.get("path") or "").lower() for row in matrix.get("endpoints") or []):
+        raise SystemExit("v1.3.0 matrix must not include Attachment upload")
+    manifest = _read_manifest(root)
+    capabilities = manifest.get("capabilities") or {}
+    if capabilities.get("approvalDecision") != "supported" or capabilities.get("approval") != "supported":
+        raise SystemExit("v1.3.0 manifest must mark approvalDecision and approval supported")
+    if capabilities.get("attachments") != "unsupported":
+        raise SystemExit("v1.3.0 manifest must keep attachments unsupported")
+    if manifest.get("compatibility", {}).get("wireBreaking") is not False:
+        raise SystemExit("v1.3.0 manifest wireBreaking must be false")
+    release = (root / "RELEASE.md").read_text(encoding="utf-8")
+    if "approvalExpiry=unsupported" not in release.replace(" ", ""):
+        if "approvalExpiry = unsupported" not in release and "approvalExpiry=unsupported" not in release:
+            raise SystemExit("v1.3.0 RELEASE.md must freeze approvalExpiry=unsupported")
+    if "FAILED" not in release:
+        raise SystemExit("v1.3.0 RELEASE.md must freeze deny Public terminal FAILED until live revises it")
+
+
+def _finalize_skill_run_v130_bundle(root: Path, *, backend_commit: str, release_commit: str | None) -> None:
+    from app.schemas.skill_run.constants import (
+        SKILL_RUN_CAPABILITIES,
+        SKILL_RUN_CONTRACT_NAME,
+        SKILL_RUN_CONTRACT_VERSION_V130,
+        SKILL_RUN_TAG_NAME_V130,
+    )
+
+    payload_hashes = {
+        str(path.relative_to(root)).replace("\\", "/"): _sha256_file(path)
+        for path in _public_artifact_files(root)
+    }
+    manifest = {
+        "contractName": SKILL_RUN_CONTRACT_NAME,
+        "contractVersion": SKILL_RUN_CONTRACT_VERSION_V130,
+        "bundleFormatVersion": "1",
+        "provider": "nodeskclaw-backend",
+        "consumer": "external-agent-clients",
+        "primaryConsumer": "smc-copilot/apps/work",
+        "backendCommit": backend_commit,
+        "releaseCommit": release_commit or backend_commit,
+        "tagName": SKILL_RUN_TAG_NAME_V130,
+        "generatedAt": _skill_run_generated_at(),
+        "compatibility": {
+            "supersedesForWork": ["1.0.0", "1.1.0", "1.2.0", "1.2.1"],
+            "wireBreaking": False,
+        },
+        "artifacts": payload_hashes,
+        "capabilities": {
+            **SKILL_RUN_CAPABILITIES,
+            "catalogV11": True,
+            "semanticRunEvents": True,
+            "approvalDecision": "supported",
+            "approval": "supported",
+            "attachments": "unsupported",
+            "approvalExpiry": "unsupported",
+        },
+    }
+    _write_json_lf(root / "manifest.json", manifest)
+    bundle_hashes = {
+        str(path.relative_to(root)).replace("\\", "/"): _sha256_file(path)
+        for path in _public_artifact_files(root)
+    }
+    bundle_hashes["manifest.json"] = _sha256_file(root / "manifest.json")
+    checksum_lines = [f"{digest}  {relative}" for relative, digest in sorted(bundle_hashes.items())]
+    _write_text_lf(root / "SHA256SUMS", "\n".join(checksum_lines) + "\n")
+    _validate_skill_run_checksums_exact(root)
+    _validate_skill_run_public_boundary(root)
+    _validate_skill_run_fixtures(root)
+    _validate_skill_run_v12_event_fixtures(root)
+    _validate_skill_run_v12_negative_fixtures(root)
+    _validate_skill_run_v11_negative_fixtures(root)
+    _validate_skill_run_v130_decision_artifacts(root)
+
+
+# @lat: [[architecture/skill-agent#RM-17 Public Approval Decision]]
+def _generate_skill_run_v130_public_contract() -> None:
+    import os
+
+    from app.schemas.skill_run.constants import (
+        SKILL_RUN_CONTRACT_NAME,
+        SKILL_RUN_CONTRACT_VERSION_V121,
+        SKILL_RUN_CONTRACT_VERSION_V130,
+        SKILL_RUN_TAG_NAME_V130,
+    )
+
+    source = SKILL_RUN_CONTRACTS_HOME / f"v{SKILL_RUN_CONTRACT_VERSION_V121}"
+    root = SKILL_RUN_CONTRACTS_HOME / f"v{SKILL_RUN_CONTRACT_VERSION_V130}"
+    if not source.exists():
+        raise SystemExit(f"v1.3.0 generate requires frozen v1.2.1 bundle at {source}")
+    if root.exists():
+        shutil.rmtree(root)
+    shutil.copytree(source, root)
+    (root / "SHA256SUMS").unlink(missing_ok=True)
+    (root / "manifest.json").unlink(missing_ok=True)
+
+    event_schema = json.loads((root / "events/run-event.schema.json").read_text(encoding="utf-8"))
+    _write_json_lf(root / "events/run-event.schema.json", _patch_v130_approval_requested_schema(event_schema))
+    _write_json_lf(root / "runs/approval-decision.request.schema.json", _v130_decision_request_schema())
+    _write_json_lf(root / "runs/approval-decision.response.schema.json", _v130_decision_response_schema())
+    _write_json_lf(
+        root / "capabilities/unsupported.schema.json",
+        {
+            "title": "UnsupportedCapabilitiesV130",
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "attachments": {"const": "unsupported", "type": "string"},
+                "approvalExpiry": {"const": "unsupported", "type": "string"},
+            },
+            "required": ["attachments", "approvalExpiry"],
+        },
+    )
+
+    matrix = json.loads((root / "http/endpoint-matrix.json").read_text(encoding="utf-8"))
+    matrix["approvalIdempotency"] = {
+        "header": "X-Idempotency-Key",
+        "scope": "authenticated org_id + user_id + run_id + approval_id",
+        "ttlSeconds": 86400,
+        "replay": {"status": 200, "returns": "frozen decision receipt"},
+        "conflict": {"status": 409, "errorCode": "IDEMPOTENCY_CONFLICT"},
+        "alreadyDecided": {"status": 409, "errorCode": "APPROVAL_ALREADY_DECIDED"},
+        "missingKey": {"status": 400, "errorCode": "IDEMPOTENCY_KEY_REQUIRED"},
+    }
+    endpoints = list(matrix.get("endpoints") or [])
+    endpoints.append(
+        {
+            "method": "POST",
+            "path": "/api/v1/runs/{run_id}/approvals/{approval_id}/decision",
+            "success": [200],
+            "retry": "same-idempotency-key",
+            "headers": ["X-Idempotency-Key"],
+            "body": "bare object decision allow|deny",
+            "response": "bare decision receipt",
+        }
+    )
+    endpoints.append(
+        {
+            "method": "POST",
+            "path": "/api/v1/runs/{run_id}/approvals/{approval_id}",
+            "success": [200],
+            "retry": "same-idempotency-key",
+            "legacy": True,
+        }
+    )
+    matrix["endpoints"] = endpoints
+    _write_json_lf(root / "http/endpoint-matrix.json", matrix)
+
+    requested = json.loads((root / "fixtures/run-event-approval-requested.json").read_text(encoding="utf-8"))
+    payload = dict(requested.get("payload") or {})
+    payload["options"] = ["allow", "deny"]
+    requested["payload"] = payload
+    _write_json_lf(root / "fixtures/run-event-approval-requested.json", requested)
+    _write_json_lf(root / "fixtures/unsupported-capabilities.json", {"attachments": "unsupported", "approvalExpiry": "unsupported"})
+    _write_json_lf(root / "fixtures/approval-decision-allow.json", {"decision": "allow"})
+    _write_json_lf(root / "fixtures/approval-decision-deny.json", {"decision": "deny"})
+    receipt = {
+        "run_id": "run-1",
+        "approval_id": "appr-1",
+        "decision": "allow",
+        "status": "WAITING_APPROVAL",
+        "decided_at": "2026-09-07T00:00:00Z",
+    }
+    _write_json_lf(
+        root / "fixtures/approval-decision-replay.json",
+        {"key": "decision-1", "first": receipt, "replay": receipt},
+    )
+    _write_json_lf(
+        root / "fixtures/approval-decision-conflict.json",
+        _v130_error_body(409, "IDEMPOTENCY_CONFLICT", "errors.run.idempotency_conflict"),
+    )
+    _write_json_lf(
+        root / "fixtures/approval-unknown-id.json",
+        _v130_error_body(404, "APPROVAL_NOT_FOUND", "errors.run.approval_not_found"),
+    )
+    _write_json_lf(
+        root / "fixtures/approval-unauthorized.json",
+        _v130_error_body(403, "RUN_FORBIDDEN", "errors.run.forbidden"),
+    )
+    _write_json_lf(
+        root / "fixtures/approval-already-terminal.json",
+        _v130_error_body(409, "APPROVAL_ALREADY_DECIDED", "errors.run.approval_already_decided"),
+    )
+    _write_text_lf(
+        root / "RELEASE.md",
+        f"# {SKILL_RUN_CONTRACT_NAME} v{SKILL_RUN_CONTRACT_VERSION_V130}\n\n"
+        "Cumulative Public Skill Run contract. Adds canonical approval decision receipts on top of frozen v1.2.1.\n"
+        "approvalDecision=supported; approval=supported; attachments=unsupported; approvalExpiry=unsupported.\n"
+        "Public decision enum is allow|deny. Canonical path returns a bare receipt; accepted is not Run advanced.\n"
+        "Deny Public terminal default is FAILED (local no-binding path). Live may freeze a different observed terminal;\n"
+        "do not rewrite deny as CANCELLED. Tag name is "
+        f"{SKILL_RUN_TAG_NAME_V130}.\n",
+    )
+    backend_commit = os.environ.get("CONTRACT_BACKEND_COMMIT") or _git_head()
+    release_commit = os.environ.get("CONTRACT_RELEASE_COMMIT")
+    _finalize_skill_run_v130_bundle(root, backend_commit=backend_commit, release_commit=release_commit)
+    print(f"Generated {SKILL_RUN_CONTRACT_NAME} at {root} (backendCommit={backend_commit})")
+
+
 def generate_skill_run_contracts(version: str | None = None) -> None:
     from app.api.internal_edge import (
         EdgeActualReportBody,
@@ -1686,6 +2015,7 @@ def generate_skill_run_contracts(version: str | None = None) -> None:
         SKILL_RUN_CONTRACT_VERSION_V11,
         SKILL_RUN_CONTRACT_VERSION_V12,
         SKILL_RUN_CONTRACT_VERSION_V121,
+        SKILL_RUN_CONTRACT_VERSION_V130,
         SKILL_RUN_TAG_NAME,
     )
     from app.schemas.skill_run.mcp_jsonrpc import (
@@ -1706,6 +2036,9 @@ def generate_skill_run_contracts(version: str | None = None) -> None:
 
     if version == SKILL_RUN_CONTRACT_VERSION_V121:
         _generate_skill_run_v121_public_contract()
+        return
+    if version == SKILL_RUN_CONTRACT_VERSION_V130:
+        _generate_skill_run_v130_public_contract()
         return
 
     _generate_skill_run_v10_public_contract()
@@ -2226,7 +2559,7 @@ def main() -> None:
     )
     generate_parser.add_argument(
         "--version",
-        choices=("1.0.0", "1.1.0", "1.2.0", "1.2.1"),
+        choices=("1.0.0", "1.1.0", "1.2.0", "1.2.1", "1.3.0"),
         help="Generate only the requested skill-run contract version",
     )
     check_parser = sub.add_parser("check", help="Validate committed contract artifacts")
@@ -2234,7 +2567,7 @@ def main() -> None:
     check_parser.add_argument("--family", choices=("work-expert", "skill-run", "all"), default="all")
     check_parser.add_argument(
         "--version",
-        choices=("1.0.0", "1.1.0", "1.2.0", "1.2.1"),
+        choices=("1.0.0", "1.1.0", "1.2.0", "1.2.1", "1.3.0"),
         help="Validate only the requested skill-run contract version",
     )
     args = parser.parse_args()
