@@ -98,13 +98,13 @@ Expert Skill v1 目标架构采用 Skill-first 调用、不可变 Revision、服
 
 ## Skill Run Public Contract V1
 
-Skill Run v1.0.0 为 apps/work 提供独立的公开消费者合同，冻结 MCP、Run、Result、Artifact、SSE 和幂等 HTTP 语义，不允许向消费者泄露组织、用户、快照、凭据或内部路由。
+Skill Run 为 apps/work 提供独立公开消费者合同；当前 Work pin 为累积 `v1.2.1`，Approval Decision / Attachment 在该版仍为 unsupported。
 
-发布产物位于 `nodeskclaw-backend/contracts/skill-run/v1.0.0/`。`manifest.json` 记录实现提交，`SHA256SUMS` 覆盖所有消费者产物；发布提交只能改写该目录，并由 `skill-run-contract-v1.0.0` annotated tag 指向。Consumer 必须锁定 tag、peeled commit 和 SHA256SUMS。
+发布产物位于 `nodeskclaw-backend/contracts/skill-run/`。历史 `v1.0.0`/`v1.1.0`/`v1.2.0`/`v1.2.1` 冻结只读。AD@1.7.0 Public Contract Release Lane：RM-17 发布 `v1.3.0`（Approval Decision；attachments 仍 unsupported），RM-18 发布 `v1.4.0`（Attachment，累积 Approval）；不依赖 RM-08，不并入 RM-09。Consumer 锁定 annotated tag、peeled commit 与 SHA256SUMS。
 
-P0 Catalog 仅接受 `capabilityKind: skill`。该 v1.0.0 冻结面把 Approval 与 Attachment 明示为 unsupported，调用端须 fail-closed；`WAITING_APPROVAL` 仅可读取状态。v1.2.1 员工审批 mutation 的两档约束见 [[architecture/skill-agent#RM-15 Approval Runtime Control]]。`X-Idempotency-Key` 的作用域是已认证的 org、user、tool，TTL 24 小时，冲突返回 409，同键重放返回原 Run；[[nodeskclaw-backend/app/services/hermes_skill/runtime_skill_run_service.py#RuntimeSkillRunService#start]] 与 [[nodeskclaw-backend/app/services/hermes_skill/task_service.py#TaskService#find_idempotent_task]] 必须使用该相同键，数据库唯一索引由 `alembic/versions/e9802bb694b2_统一_skill_run_幂等键.py` 保证。
+P0 Catalog 仅接受 `capabilityKind: skill`。v1.2.1 冻结面把 Approval Decision 与 Attachment 明示为 unsupported，调用端须 fail-closed；`WAITING_APPROVAL` 仅可读取状态。v1.2.1 员工审批 mutation 的两档约束见 [[architecture/skill-agent#RM-15 Approval Runtime Control]]。RM-17 Stage PRD 见 [prd-v1.6.15](../../docs_agent/prd-v1.6.15-skill-run-v130-public-approval-decision.md)：canonical `/decision`、决策回执语义与独立幂等 scope。`X-Idempotency-Key` 对 `tools/call` 的作用域是已认证的 org、user、tool，TTL 24 小时；决策幂等 scope 为 org+user+run+approval（同窗 TTL）。[[nodeskclaw-backend/app/services/hermes_skill/runtime_skill_run_service.py#RuntimeSkillRunService#start]] 与 [[nodeskclaw-backend/app/services/hermes_skill/task_service.py#TaskService#find_idempotent_task]] 必须使用 tools/call 相同键；数据库唯一索引由 `alembic/versions/e9802bb694b2_统一_skill_run_幂等键.py` 保证。
 
-公开 Run 投影由 [[nodeskclaw-backend/app/api/runs.py#_public_run_view]]、[[nodeskclaw-backend/app/api/runs.py#_public_run_result]] 和 [[nodeskclaw-backend/app/api/runs.py#_public_artifact_descriptor]] 限定字段。[[nodeskclaw-backend/app/api/runs.py#_public_run_event]] 将 Agent 事件映射为有稳定 `run_id:event_seq` identity 的受限 union；未知事件不得透传。[[nodeskclaw-backend/scripts/contracts.py#_validate_skill_run_release]] 验证 tagged release 的提交边界。
+公开 Run 投影由 [[nodeskclaw-backend/app/api/runs.py#_public_run_view]]、[[nodeskclaw-backend/app/api/runs.py#_public_run_result]] 和 [[nodeskclaw-backend/app/api/runs.py#_public_artifact_descriptor]] 限定字段。[[nodeskclaw-backend/app/api/runs.py#_public_run_event]] 将 Agent 事件映射为有稳定 `run_id:event_seq` identity 的受限 union；未知事件不得透传。[[nodeskclaw-backend/scripts/contracts.py#_validate_skill_run_release]] 验证 tagged release 的提交边界；v1.3.0+ 须扩展同一生成链，禁止第二脚本。
 
 ## Related
 
