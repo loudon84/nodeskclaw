@@ -2,8 +2,9 @@
 decision_id: AD-SKILL-AGENT-V16
 addendum_id: AD-SKILL-AGENT-V16-A1
 version: 1.6.0
-status: PROPOSED
 document_kind: architecture_addendum
+role: technical_appendix
+normative_fold_note: 规范性内容已折叠进父 AD@1.7.0；本文件保留为技术附录（PC 编号与 Runtime 协议细节）。
 parent_architecture: docs_agent/architecture/AD-SKILL-AGENT-V16.md
 target_branch: main
 source_revision: architecture-correction:2026-09-04/hermes-runtime-native-run
@@ -17,15 +18,16 @@ hermes_grounded_tags:
   - v2026.8.31
 feature_id: FEAT-SKILL-FIRST-001
 work_package_id: WP-SKILL-FIRST-NODESKCLAW
+status: APPROVED
 ---
 
 # Architecture Addendum: Skill Agent v1.6 Hermes Runtime Native Run Integration
 
 ## 0. Document Status And Scope
 
-本文是 `AD-SKILL-AGENT-V16` 的**架构增补（Addendum）**，不是 AD 全文替换。
+本文原是 `AD-SKILL-AGENT-V16` 的**架构增补（Addendum）**。父 AD `1.7.0` 已将本文规范性决策折叠进正文；**本文现为 `APPROVED` 技术附录**，保留 PC 编号、Runtime 协议细节与 Recovery 规则供 RM-16 等出口引用。后续架构纠偏一律修订父 AD，不再以独立 status 的 addendum 承载 Boundaries。
 
-父 AD `1.5.0` 的以下章节继续完整有效，本文不改写其字节：Decision Drivers、Evidence Baseline、Options Considered、Ownership & Boundaries、Risks & Kill Criteria、Rejected Alternatives、Roadmap Boundaries（RM-01 至 RM-12）。
+父 AD `1.5.0` 的以下章节在折叠前曾继续完整有效；折叠后以父 AD `1.7.0` 正文为准：Decision Drivers、Evidence Baseline、Options Considered、Ownership & Boundaries、Risks & Kill Criteria、Rejected Alternatives、Roadmap Boundaries（现含 RM-01 至 RM-18）。
 
 本文纠正两个已由真实运行暴露的实现偏差。
 

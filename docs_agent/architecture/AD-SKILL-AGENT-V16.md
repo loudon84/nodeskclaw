@@ -1,22 +1,23 @@
 ---
 decision_id: AD-SKILL-AGENT-V16
-version: 1.5.0
-status: APPROVED
+version: 1.7.0
 target_branch: main
-review_verdict: PASS
-approved_at: 2026-09-03T11:01:08Z
-source_revision: user-input:2026-09-03/v121-postman-ready-hotfix
-grounded_commit: 3d5a056c7335d389e760cd2622bb7ffe3c06aa4d
+source_revision: reports/PRD-ENGINEERING-GOVERNANCE-SKILL-RUN-CONTRACT-V13@1.1.0
+grounded_commit: e500357cab58f7f9e32b01b75112f5b90328054c
 feature_id: FEAT-SKILL-FIRST-001
 work_package_id: WP-SKILL-FIRST-NODESKCLAW
 addenda:
   - addendum_id: AD-SKILL-AGENT-V16-A1
     version: 1.6.0
-    status: PROPOSED
+    addendum_status: APPROVED
+    role: technical_appendix
     document: docs_agent/architecture/AD-SKILL-AGENT-V16-v1.6.0-hermes-runtime-native-run.md
+review_verdict: PASS
+approved_at: 2026-09-07T13:45:21Z
+status: APPROVED
 ---
 
-# Architecture Decision: Skill Agent v1.6 生产闭环、共享执行合同、Runtime Delegation Entry 与 v1.2.1 Public Conformance Hotfix
+# Architecture Decision: Skill Agent v1.6 生产闭环、共享执行合同、Runtime Delegation Entry、v1.2.1 Public Conformance 与 v1.7 Public Contract Release Lane
 
 ## Problem
 
@@ -28,12 +29,14 @@ v1.4.0 进一步冻结 Runtime Delegation（运行时内部委派）边界：v1.
 
 v1.5.0 处理一个被 RM-11 / RM-09 拆分留下的交付空洞：累积 Public `SKILL-RUN-CONTRACT v1.2.1` 已由 RM-11 发布且 Work 导入不得等待 RM-08，但员工 Public Skill Run 实现仍与该冻结合同存在可观察缺口（Installation Workspace 被提升为 Execution Authorization、Public Run 线级信封、语义 SSE 投影、幂等合同）。这不是新合同版本，也不是 RM-09。RM-09 仍必须等待 RM-08，只承接 v1.2.1 **之后**的批准增量以及依赖 Shared Agent Contract 的剩余符合性。工作包 `WP-SKILL-FIRST-NODESKCLAW` 的本地验收「Provider conformance passes」由新增 RM-12 承担。
 
+v1.7.0 处理三条治理空洞。（一）A1 addendum 长期 `PROPOSED`，而 RM-13/14/15 已按 A1 实施并 DONE，形成独立 status 灰区；规范性内容必须折叠进父 AD，A1 降为技术附录。（二）Work 需要下一批纯 Public 能力（Approval Decision / Attachment），但不得靠提前 READY RM-09 绕过 RM-08；必须冻结独立 Public Contract Release Lane，并拆出 RM-17（v1.3.0）与 RM-18（v1.4.0）。（三）Attachment 需要 org/user scoped 授权边界，否则 org-global Skill 会被强制 `workspace_id` 死锁；该边界必须先写入 Architecture，再进入 RM-18。
+
 ## Decision Drivers
 
 - `USER_CONSTRAINT`（用户约束）：Work（员工端）只访问 Backend，永不直连 Agent。
 - `USER_CONSTRAINT`（用户约束）：本仓库只负责 Backend/Agent 功能实现和外部前端统一合同，不把外部 Work 前端源码纳入交付 Owner。
 - `USER_CONSTRAINT`（用户约束）：外部前端发生能力或交互变更时，必须先批准合同变更；外部前端按合同适配，本项目再从批准合同反推 Backend 功能、兼容性和验证，禁止从未版本化的前端实现倒灌私有语义。
-- `USER_CONSTRAINT`（用户约束）：外部 Work 的 canonical（当前权威）Skill Run Consumer Contract Bundle（消费合同包）是累积 Public 包 `SKILL-RUN-CONTRACT v1.2.1`（tag `skill-run-contract-v1.2.1`），由 RM-11 发布；历史 `v1.0.0` / `v1.1.0` / `v1.2.0` 保持冻结，不再作为 Work 导入目标。Work 导入不得等待 RM-08。不得把 RM-09 在 RM-08 完成前标为 READY（就绪）；RM-09 不得再发布第二份 Work canonical 合同。
+- `USER_CONSTRAINT`（用户约束）：外部 Work 的当前冻结 Work pin 仍是累积 Public 包 `SKILL-RUN-CONTRACT v1.2.1`（tag `skill-run-contract-v1.2.1`），由 RM-11 发布；历史 `v1.0.0` / `v1.1.0` / `v1.2.0` 保持冻结。v1.2.1 在 RM-17 发布 `v1.3.0` 之前仍是唯一 Work-importable 增量；RM-17 发布后，下一 Work-importable 增量变为 `v1.3.0`（再由 RM-18 累积到 `v1.4.0`），v1.2.1 转为只读历史 pin，字节仍不可改写。Work 导入不得等待 RM-08。不得把 RM-09 在 RM-08 完成前标为 READY（就绪）；RM-09 不得再发布第二份 Work canonical 合同，也不得承担 RM-17/RM-18 已发布的纯 Public Capability。
 - `SOURCE_FACT`（来源事实）：v1.6 必须冻结已发布合同，新增能力通过新合同版本表达。
 - `REPO_FACT`（仓库事实）：Backend 已拥有员工 Catalog、公共 Run Proxy（运行代理）与发布投影；Agent 已拥有 Run、Attempt（执行尝试）、Event（事件）、Artifact（产物）和终态裁决。
 - `REPO_FACT`（仓库事实）：现有能力大多是可扩展的 `PARTIAL`（部分能力），无需新增 Control Plane（控制面）或第二执行 Owner（生产归属）。
@@ -42,6 +45,11 @@ v1.5.0 处理一个被 RM-11 / RM-09 拆分留下的交付空洞：累积 Public
 - `USER_CONSTRAINT`（用户约束）：已发布 v1.2.1 公共面的实现缺口必须在不改写冻结合同的前提下修复；不得把该 Hotfix 标成 RM-09，也不得为迁就实现而改 v1.2.1 字节。用户 2026-09-03 确认新增独立 Roadmap Item RM-12，依赖已完成的 RM-06 与 RM-11，不依赖 RM-08。
 - `ARCHITECTURE_INVARIANT`（架构不变量）：Delegation Topology（委派拓扑）不得取代或重命名 Central/Edge Placement（中心/边缘放置）及其 Hybrid Step Plan（混合步骤计划）。
 - `ARCHITECTURE_INVARIANT`（架构不变量）：`org_id` 是租户安全边界；`installation.workspace_id` 是 Installation / Routing 元数据，不得隐式变成 Execution Authorization Context（执行授权上下文）。
+- `USER_CONSTRAINT`（用户约束）：纯 Public Contract 增量若只改 Backend Public API / Public Contract Package，且不新增或依赖 RM-08 Shared Agent Execution Contract 字段，则走 Public Contract Release Lane，不依赖 RM-08；KEEP `RM-09 Depends On RM-08`，禁止靠提前 READY RM-09 交付纯 Public Bundle。
+- `USER_CONSTRAINT`（用户约束）：A1 规范性内容折叠进父 AD v1.7.0 正文；A1 文件保留为 `APPROVED` 技术附录。后续架构纠偏一律走 AD 修订，禁止再新建携带独立 `status` 的 addendum。
+- `USER_CONSTRAINT`（用户约束）：合同版本策略冻结为「新增公共 capability = minor bump」：Approval Decision → `SKILL-RUN-CONTRACT v1.3.0`；Attachment Input → `SKILL-RUN-CONTRACT v1.4.0`（累积 Approval）。禁止把 Approval 与 Attachment 并进同一 Release Gate。
+- `ARCHITECTURE_INVARIANT`（架构不变量）：Execution Authorization Context 允许 org/user scoped attachment proof；`workspace_id` 为 null 时不得因附件进入 Workspace ACL；显式 Execution Workspace 时叠加 ACL；Installation Workspace 仍禁止写入 Execution Authorization。
+- `REPO_FACT`（仓库事实）：A1 已冻结 Hermes Native Runtime 版本地板 `v2026.8.31`、单一执行平面（HermesTask 降级为纯内部投影）与 RM-02/RM-12/RM-10 重定义；RM-13/14/15 已 DONE，规范性内容现为一等 AD 正文。
 - 每个阶段必须有独立可观察结果、稳定边界和失败停止条件，才能形成一个 Roadmap Item（路线图项）对应一个 Stage PRD。
 
 ## Evidence Baseline
@@ -83,6 +91,14 @@ v1.5.0 处理一个被 RM-11 / RM-09 拆分留下的交付空洞：累积 Public
 | RM-11 已发布 v1.2.1；RM-09 仍 BACKLOG 且依赖 RM-08 | REPO_FACT | `docs_agent/roadmaps/ROADMAP-SKILL-AGENT-V16.md` RM-11 `DONE` / RM-09 `BACKLOG`；tag `skill-run-contract-v1.2.1` |
 | 工作包要求 Provider 符合性，且合同已 RELEASED | SOURCE_FACT | `.agents/governance/work-packages/FEAT-SKILL-FIRST-001.yaml`：`SKILL-RUN-CONTRACT@1.2.1` `target_state: RELEASED`；acceptance 含 Provider conformance passes |
 | 用户确认以独立 RM-12 修复已发布公共面，而不是提前 READY RM-09 | USER_CONSTRAINT | `user-input:2026-09-03/v121-postman-ready-hotfix` |
+| Work 需要 SKILL-RUN-CONTRACT v1.3 承载 Approval Decision + Attachment | SOURCE_FACT | smc-copilot PRD；`reports/PRD-ENGINEERING-GOVERNANCE-SKILL-RUN-CONTRACT-V13@1.1.0` |
+| v1.2.1 manifest 将 approvalDecision / approval / attachments 标为 unsupported | REPO_FACT | `nodeskclaw-backend/contracts/skill-run/v1.2.1/manifest.json` at `e500357c` |
+| Backend 已有 `POST /api/v1/runs/{run_id}/approvals/{approval_id}`，但未进 matrix；返回 Portal 信封；无 `X-Idempotency-Key` | REPO_FACT | `nodeskclaw-backend/app/api/runs.py` at `e500357c`；v1.2.1 `http/endpoint-matrix.json` 无该路径 |
+| `approval.requested` 公共 payload 仅 `approval_id` + `summary` | REPO_FACT | v1.2.1 `events/run-event.schema.json` `ApprovalRequestedPayload` at `e500357c` |
+| Agent `approve_run`：有 Hermes binding 时本地不改 status（同步可仍为 `WAITING_APPROVAL`）；无 binding 时 deny→`FAILED`、allow→`RESUMING`→`QUEUED` | REPO_FACT | `nodeskclaw-agent/app/services/run_service.py#approve_run` at `e500357c` |
+| `attachment_refs` 当前强制要求 `workspace_id`（`errors.run.attachment_workspace_required`），与 org-global Skill 允许 `workspace_id=null` 冲突 | REPO_FACT | `nodeskclaw-backend/app/services/hermes_skill/runtime_skill_run_service.py` at `e500357c` |
+| A1 addendum 曾为 PROPOSED，而 RM-13/14/15 已 DONE | REPO_FACT | A1 历史 frontmatter；`ROADMAP-SKILL-AGENT-V16.md` RM-13/14/15 `DONE`；v1.7.0 折叠后 A1 为 APPROVED 技术附录 |
+| `ApprovalRequestedPayload` 无 `additionalProperties:false`，故 `options` 对 v1.2.1 pin 消费者为 additive | REPO_FACT | v1.2.1 `events/run-event.schema.json` `ApprovalRequestedPayload` at `e500357c` |
 
 ## Current Capability
 
@@ -97,6 +113,8 @@ v1.2.0 定向校准曾把 tag `skill-run-contract-v1.0.0` 当作 Work P0 导出�
 v1.4.0 复用既有 Backend 路由冻结、Agent Run/Attempt/Event/Artifact（运行/尝试/事件/产物）状态机、AgentEnginePort（Agent 引擎端口）和 Hermes Adapter（Hermes 适配器）。Backend 负责将已发布 SkillRelease（技能发布版本）、策略和 Runtime Capability（运行时能力）冻结为 Agent 输入；Agent 负责构建并持久化 ExecutionSnapshot，继续作为唯一 Run 终态和 Event SoT（事件事实源）Owner；Hermes Runtime 只拥有其内部委派的执行权。现有 Hybrid Placement 与 Step Plan 仍由 Agent Owner 管理，和 Hermes 的 delegation topology 是两个正交维度。
 
 v1.5.0 在 `3d5a056c` 定向重校确认：v1.4.0 的 Runtime Delegation / EnginePort / Snapshot Owner 仍然成立。员工 Catalog、MCP Gateway、Runtime Skill Run、Public `/api/v1/runs/*` 投影、HermesTask 幂等键、Workspace ACL、Agent Event SoT 与已发布 v1.2.1 合同包均已存在，全部是可扩展的 PARTIAL，不需要新服务或第二 Run 终态 Owner。缺口是既有 Owner 上的实现漂移：Installation Routing Context 被写进 Execution Authorization；Public Run 仍输出 Portal 信封；SSE 未投影合同已冻结的全部语义事件；幂等未承载冻结合同的 TTL/冲突语义。Workspace ACL Owner 必须 KEEP，修复方式是停止错误进入该证明，而不是删除办公室模型。员工幂等 Owner 仍是 Backend Runtime Skill Run；是否扩展 `HermesTask.idempotency_key` 或在同一 Owner 下增加最小预留存储，属于 Stage PRD/Plan 的 minimality 选择。Minimality：不新增 Control Plane、不新增 Idempotency Service、不新增 Event Store、不改写 v1.2.1。
+
+v1.7.0 在 `e500357c` 定向重校确认：A1 南向 Native Run 与单一执行平面条款已成为事实架构；RM-13/14/15 DONE，Hermes Adapter 已走 Native Run API，公共面单一平面收敛已落地。当前缺口转向下一 Public 增量：v1.2.1 仍把 Approval Decision / Attachment 标为 unsupported；Backend Approval 代理存在但未进合同 matrix、仍套 Portal 信封、缺幂等键；`attachment_refs` 强制 workspace 与 org-global Skill 冲突。这些缺口由 Release Lane 上的 RM-17/RM-18 承接，不改写 v1.2.1，不提前 READY RM-09，不新建第二合同生成链。Minimality 升级为单一执行平面：Agent 是唯一执行平面，HermesTask 仅为内部投影。
 
 ## Options Considered
 
@@ -121,6 +139,13 @@ v1.5.0 在 `3d5a056c` 定向重校确认：v1.4.0 的 Runtime Delegation / Engin
 | Q. 新建独立 Idempotency Service / 第二 Control Plane | 表面隔离幂等 | 新增 Production Owner 与第二事实源 | 现有 Runtime Skill Run / HermesTask 幂等已能扩展 | 拒绝 |
 | R. 改写 v1.2.1 Schema/Fixture 以迁就当前实现 | 表面减少 Backend 改动 | 破坏已发布 Work canonical 与工作包 RELEASED 合同 | 把错误实现提升为合同 | 拒绝 |
 | S. 跳过 Architecture/Roadmap，直接按用户草稿 PRD 实施 | 表面加快 P0 | Plan 层引入未批准的新 Store、FK 与精确文件策略 | 无法审查 Owner/边界，且与治理链冲突 | 拒绝 |
+| T. 将 A1 规范性内容折叠进父 AD，A1 文件保留为 APPROVED 技术附录；禁止再建独立 status addendum | 复用已实施的 RM-13/14/15 与 A1 协议细节 | Owner 不变；消除 PROPOSED 灰区；后续纠偏走 AD 修订 | 正文变长，但边界可审查 | 采用 |
+| U. 新增 Public Contract Release Lane：纯 Public 增量走独立 Item（RM-17/RM-18），不依赖 RM-08；KEEP RM-09→RM-08 | 复用既有 Contract Package 与 Public API Owner | Owner 不变；纯 Public Bundle 与 Shared Contract 符合性拆项 | 须防止把依赖 Internal 南向字段的增量误放进 Release Lane | 采用 |
+| V. 冻结 Execution Authorization 允许 org/user scoped attachment proof，不强制 workspace | 复用既有 Knowledge/Workspace/Attachment 授权 Owner | 解开 org-global Skill 附件死锁；Installation Workspace 仍禁止进入 Execution | 须防止跨组织/跨用户引用绕过 | 采用 |
+| W. 合同版本策略：新 capability=minor；Approval=`v1.3.0`，Attachment=`v1.4.0`；拆两个 Release Gate | 复用单一 `contracts.py` 生成链 | 一项一 Gate；Attachment 累积 Approval | 版本号增多，但失败模式可隔离 | 采用 |
+| X. 提前 READY RM-09 或取消其 RM-08 依赖以交付 Approval/Attachment | 表面减少 Item | 破坏已冻结依赖与 Shared Contract 承接项 | 伪造可实施入口；与 Release Lane 冲突 | 拒绝 |
+| Y. 将 Approval 与 Attachment 并进同一合同版本 / 同一 Item | 表面减少发布次数 | 一项两套 Owner 成熟度与授权模型 | 违反一项一 Gate；任一能力阻塞全部出口 | 拒绝 |
+| Z. 新建独立 A2/A3 addendum（独立 status）承载 Release Lane / Attachment 边界 | 表面隔离修订面 | 再现 PROPOSED 灰区；Boundaries 与父 AD 脱节 | 与「后续纠偏走 AD 修订」冲突 | 拒绝 |
 
 ## Decision
 
@@ -135,6 +160,8 @@ v1.4.0 在 RM-08 的 Internal Shared Agent Execution Contract（内部共享 Age
 外部 Work 的 Skill-first（技能优先）变化只通过 Backend 发布的版本化 Consumer Contract（消费合同）进入本项目。合同先冻结 Capability、请求/响应、事件、错误、兼容窗口与安全边界；外部前端自行按合同实现，本项目再把批准合同映射到 Backend 公共 API、投影、校验和兼容测试。外部前端源码、构建和发布不属于本 Roadmap 的实施或 DONE 证据。
 
 v1.5.0 采用 Option O。在既有 DAG 上增加 RM-12，专门修复已发布 `SKILL-RUN-CONTRACT v1.2.1` 员工公共面的实现符合性。RM-12 依赖已完成的 RM-06 与 RM-11，不依赖 RM-08，不得改写 `contracts/skill-run/v1.2.1/` 或 tag `skill-run-contract-v1.2.1`，不得发布第二份 Work canonical，不得把 Run 执行事实迁回 Backend。幂等继续由现有 Backend Runtime Skill Run Owner 承载；若现有 HermesTask 幂等键无法表达合同冻结的 TTL/冲突/并发语义，只允许在同一 Owner 内扩展存储，禁止新建 Idempotency Service。Installation Workspace 引用完整性属于既有 Installation Owner 的数据约束，不得把该字段提升为 Execution Workspace。RM-09 的含义收窄为：在 RM-08 完成且 RM-12 收敛的 v1.2.1 公共面之上，实现 v1.2.1 之后经批准的合同增量，以及依赖 Shared Agent Contract 内部南向字段的剩余符合性。Option F/H/N 继续拒绝。Workspace ACL、Agent Event SoT、Public Contract Package 全部 KEEP Owner；RM-12 只 MODIFY 既有 Backend Runtime Skill Run / MCP Gateway / Public Run Projection 的可观察行为。
+
+v1.7.0 采用 Option T、U、V、W。A1 规范性内容（Hermes Native Runtime 版本地板 `v2026.8.31`、Native Run API 南向、单一执行平面、Approval Bridge 四档内部/两档公共、以及对 RM-02/RM-12/RM-10 的重定义）现为一等 AD 正文；A1 文件转为 `APPROVED` 技术附录，不再以独立 `PROPOSED` status 承载 Boundaries。冻结 Public Contract Release Lane：纯 Public 增量（不依赖 RM-08 Shared Agent Execution Contract 字段）由独立 Item 发布；RM-17 发布 `v1.3.0` Approval Decision，RM-18 发布 `v1.4.0` Attachment（累积 Approval）。**KEEP `RM-09 Depends On RM-08`**：RM-09 不承担 RM-17/RM-18 已发布 Capability，只承接依赖 Shared Agent Contract 的剩余符合性与后续需 Internal 南向字段的 Public 增量。冻结 Attachment org/user scoped 授权边界，供 RM-18 使用。Option X/Y/Z 拒绝。后续架构纠偏一律修订本 AD，禁止再新建独立 status 的 addendum。
 
 ## Target Architecture
 
@@ -152,6 +179,22 @@ Runtime Delegation Entry（运行时委派入口）位于 Backend 冻结的 Inte
 - Execution Authorization Context（执行授权上下文）：回答本次 Run 被允许访问什么资源，只含认证得到的 `org_id`/`user_id`，以及来自受信任 Execution Context 的可选 `session_id`、`workspace_id`、attachment/knowledge 证明。
 
 Prompt-first 员工 Skill 在没有受信任 Execution Workspace 时，`execution.workspace_id` 必须为空，且不得因 Installation Workspace 进入 Workspace ACL。显式 Execution Workspace 必须与认证 `org_id` 一致，跨组织失败关闭。Public `/api/v1/runs/*` 对员工 Consumer 输出冻结合同对象，而不是 Portal `{code,data}` 信封；SSE 只投影 Agent 结构化事件中已进入 Public 合同的类型，禁止用自然语言推断事件类型，禁止泄漏 HermesTask 公共身份。
+
+### Public Contract Release Lane（v1.7.0）
+
+纯 Public Contract 增量若同时满足：（1）只修改 Backend Public API / Public Contract Package；（2）不新增或不依赖 RM-08 Shared Agent Execution Contract 字段——则允许作为独立 Public Release Item 执行，**不依赖 RM-08**。若增量同时改变 Execution Authorization / Ownership 边界，必须先在本 AD 冻结该边界，再进入对应 Release Item。Release 不变量：不改写已冻结目录字节；新 Bundle = 新目录 + 新 annotated tag；Public/Internal 分离；单一 `contracts.py` 生成链；未交付 capability 在 manifest 显式 `unsupported`；Bundle PASS 须有 Backend 可观察符合证据，不得只靠 CI fixture。合同版本策略：新增公共 capability = minor bump；Approval Decision = `v1.3.0`；Attachment = `v1.4.0`。
+
+### Attachment Authorization Scope（v1.7.0）
+
+Execution Authorization Context 允许 org/user scoped attachment proof：认证得到的 `org_id`/`user_id` 可授权附件引用，无需强制 `workspace_id`。`workspace_id=null` 时不得因附件进入 Workspace ACL；显式受信任 Execution Workspace 时叠加 Workspace ACL；Installation `workspace_id` 仍禁止写入 Execution Authorization。跨组织 / 跨用户引用失败关闭。细节留给 RM-18 Stage PRD。
+
+### Single Execution Plane（自 A1 折叠）
+
+Minimality 升级为单一执行平面：Agent 是 Run / Attempt / Event SoT / Artifact / Terminal 的唯一事实源与裁决者。HermesTask 平面降级为纯内部投影，禁止 `task_id`、`/api/v1/hermes/tasks/` 等内部键与路径出现在任何公共信封、公共 SSE 或公共 REST 响应中。公共身份字段只有 `run_id`；公共终态不得由 `HermesTask.status` 裁决；投影失败必须可观察，公共面继续以 Agent 为准。员工公共信封与 `auth_type` 无关；Catalog 宣告的 `executionModes` 必须等于该调用者实际可达集合。
+
+### Hermes Native Runtime Floor（自 A1 折叠）
+
+Hermes 是 Agent Runtime，不是 OpenAI Model Provider。生产 Skill Run 南向协议以 Native Run API 为主（`/v1/capabilities`、`/v1/runs`、`/events`、`/approval`、`/stop`）；版本地板 `v2026.8.31`，低于地板失败关闭。Internal 审批保留四档（`once`/`session`/`always`/`deny`），Public 只暴露批准与拒绝。协议细节与 PC 编号见 A1 技术附录。
 
 ## Ownership & Boundaries
 
@@ -178,7 +221,10 @@ Prompt-first 员工 Skill 在没有受信任 Execution Workspace 时，`executio
 | Edge Identity 签发与命令签名 | `nodeskclaw-backend` Edge 域 | Backend 签发可轮换身份并签署有时效、节点作用域和序列的命令 |
 | Edge Identity 验证与命令执行 | `nodeskclaw-agent` Edge Worker | Agent 验证身份、时效、Nonce、签名和序列后执行；不允许静态 Token 成为永久身份 |
 | P0 Work-importable Consumer Contract Bundle | `nodeskclaw-backend` Skill Run Contract Package | 历史 tag `skill-run-contract-v1.0.0` 冻结只读，不再作为 Work canonical；RM-11 新增 `v1.2.1/` 与 tag `skill-run-contract-v1.2.1` 为唯一当前 Work 导出物；禁止改写已冻结三版；Work 导入与 IPC 测试不是本仓 DONE |
-| 外部 Work 后续合同增量 | `nodeskclaw-backend` Skill Run Contract Package | RM-09 在 RM-08 之后实现 v1.2.1 **之后**经批准的 Public 增量，以及依赖 Shared Agent Contract 的剩余符合性；不得再发布第二份 Work canonical；不得改写 v1.2.1；外部 Work 是仓外 Consumer |
+| 外部 Work 后续合同增量 | `nodeskclaw-backend` Skill Run Contract Package | RM-09 在 RM-08 之后实现依赖 Shared Agent Contract 的剩余符合性，以及需要 Internal 南向字段的后续 Public 增量；**不承担** RM-17（v1.3.0 Approval）与 RM-18（v1.4.0 Attachment）已发布的纯 Public Capability；不得再发布第二份 Work canonical；不得改写 v1.2.1/v1.3.0/v1.4.0 冻结字节；外部 Work 是仓外 Consumer |
+| Public Approval Decision Contract Package（RM-17） | `nodeskclaw-backend` Skill Run Contract Package + Skill Run API | 发布累积 Public `v1.3.0`（Approval Decision）；不依赖 RM-08；不改写 v1.2.1；Attachment 在 manifest 继续 `unsupported`；仓外 Work 适配不是本仓 DONE |
+| Public Attachment Input Contract（RM-18） | `nodeskclaw-backend` Skill Run Contract Package + 既有 Attachment/Knowledge 授权域 | 发布累积 Public `v1.4.0`（Attachment，累积 Approval）；org/user scoped proof；不强制 workspace；不复用 Artifact download；不依赖 RM-08 |
+| Hermes Native Runtime Adapter | `nodeskclaw-agent` Hermes Adapter | 经 Native Run API 建立 Attempt 级 Runtime Binding；事件规范化与 Coalescing；Approval/Stop 南向桥接；低于 `v2026.8.31` 失败关闭；不成为第二 Event SoT 或终态 Owner |
 | Agent 执行 Trace 与 Metrics | `nodeskclaw-agent` | Agent 输出 Run/Attempt/Edge/Connector/Artifact 执行事实；Backend 只做公共投影或平台聚合 |
 | Legacy ExpertTeam 编排 | `nodeskclaw-backend` Expert Gateway | `gateway_sequential` 仅为兼容、缺陷与安全修复；不得作为 RM-08 或未来 Skill Agent Multi-Agent 主线 |
 
@@ -203,6 +249,11 @@ Prompt-first 员工 Skill 在没有受信任 Execution Workspace 时，`executio
 17. RM-10 复用 RM-08 冻结的命名关联 `run_id`、`attempt_id`、`session_id`、`skill_release_id`、`edge_node_id` 与 delegation topology；Trace 仍只关联既有 Event SoT。
 18. RM-12 依赖已完成的 RM-06 与 RM-11，可与仍在进行的 RM-04、RM-07、RM-10 并行，但不得并入其中任一项。它修正员工 Public 面对冻结 v1.2.1 的实现漂移，不改合同字节，不等待 RM-08，不把仓外 Work 联调当作本仓 DONE。幂等与 Workspace 证明只扩展既有 Owner；若 Stage PRD 证明现有 HermesTask 幂等键无法承载 TTL/冲突，也只能在 Runtime Skill Run Owner 内扩展，不能新建服务。
 19. 工作包 `WP-SKILL-FIRST-NODESKCLAW` 的合同输出 `SKILL-RUN-CONTRACT@1.2.1` 保持 RELEASED；RM-12 只补本地验收「Provider conformance passes」，不改变中央合同版本或 tag。
+20. A1 规范性内容折叠进本 AD 后，RM-13 至 RM-16 的 Architecture Source 仍可引用 A1 技术附录的 PC 编号与协议细节；Boundaries 以本 AD 正文为准。
+21. Public Contract Release Lane：RM-17（Depends On RM-11, RM-12, RM-15）发布 `v1.3.0`，不依赖 RM-08；RM-18（Depends On RM-06, RM-17）发布 `v1.4.0`，不依赖 RM-08。两者均不得并入 RM-09。
+22. RM-09 继续 Depends On RM-08；其出口排除 RM-17/RM-18 已交付的 Approval Decision 与 Attachment Capability。
+23. Attachment org/user scoped 授权边界是 RM-18 的 Architecture 前置；未冻结该边界不得实施 org-global Skill 附件路径。
+24. 合同版本策略级联到生成链白名单、manifest、SHA256SUMS、annotated tag 与兼容测试；禁止为 Release Lane 新建第二生成脚本。
 
 ## Risks & Kill Criteria
 
@@ -233,6 +284,12 @@ Prompt-first 员工 Skill 在没有受信任 Execution Workspace 时，`executio
 | Hermes Capability 不可验证或 Runtime 不支持时静默降级 | 使用版本化 capability reference 并失败关闭 | 发现自动回退到 `single_agent`、`gateway_sequential` 或未声明的 Runtime 路径时阻断 |
 | Runtime 内部委派泄漏为 Public Team/Child Run | 一个 Parent Run、一个 Event SoT、一个 Artifact namespace | 新增 TeamRun/ChildRun 公共模型、成员级公开 SSE 或 Backend 成员调度时必须新 AD |
 | Legacy ExpertTeam 被扩展为新主线 | 标记为兼容路径，只允许缺陷/安全/迁移修复 | 新增 Parallel/Consensus/Swarm/Planner 模式或 Skill-first Work 依赖 ExpertTeam 时回退 |
+| 提前 READY RM-09 以交付纯 Public Approval/Attachment | Release Lane 走 RM-17/RM-18；KEEP RM-09→RM-08 | RM-09 在 RM-08 非 DONE 时进入 READY/IN_PRD 即回退 |
+| 将 Approval 与 Attachment 合并为同一合同版本或同一 Item | 一项一 Gate；v1.3.0 与 v1.4.0 分列 | 任一 PRD 同时拥有两个独立 Public Release Gate 时停止并拆分 |
+| Attachment 强制要求 workspace，阻断 org-global Skill | org/user scoped proof；null workspace 不进 ACL | org-global Skill 因 `attachment_workspace_required` 失败即阻断 |
+| 改写冻结 v1.2.1 以迁就 Approval/Attachment 实现 | 新版本新目录；v1.2.1 零修改 | 发现改 v1.2.1 Schema/Fixture/SHA256SUMS 即阻断 |
+| 为 Public Release 新建第二合同生成链 | 复用既有 `contracts.py` 单一生成链 | 出现平行生成脚本或无法证明同源的字段定义时回退 |
+| 以独立 status=PROPOSED 的 addendum 承载新 Boundaries | 一律折叠进父 AD 修订；A1 仅技术附录 | 新建独立 status addendum 或 A1 重回 PROPOSED 灰区即回退 |
 
 ## Rejected Alternatives
 
@@ -257,39 +314,50 @@ Prompt-first 员工 Skill 在没有受信任 Execution Workspace 时，`executio
 | 把 v1.2.1 Public 符合性并进 RM-04 | 一项两套门禁 | 不重访；RM-04 保持分布式生产验收 |
 | 新建 Idempotency Service | 现有 Runtime Skill Run 幂等 Owner 可扩展 | 仅当生产证据证明同一 Owner 无法承载 TTL/冲突/并发时重新评估 |
 | 删除 Workspace ACL 以让 prompt-first Skill 通过 | 会削弱真实 Execution Workspace 的授权边界 | 不重访；只解耦 Installation 与 Execution Context |
+| 提前 READY RM-09 或取消其 RM-08 依赖以交付 Approval/Attachment | 破坏已冻结依赖；与 Release Lane 冲突 | 不重访；纯 Public 走 RM-17/RM-18 |
+| 将 Approval 与 Attachment 并进同一 Bundle / 同一 Item | 一项两套授权模型与成熟度 | 不重访；必须拆 v1.3.0 / v1.4.0 |
+| 强制 attachment 必须带 workspace_id | 与 org-global Skill 冲突，把 Installation 死锁回 Execution | 不重访；采用 org/user scoped proof |
+| 新建独立 A2/A3 addendum 承载 Release Lane 或 Attachment 边界 | 再现独立 status 灰区 | 不重访；后续纠偏只修订父 AD |
+| 为 v1.3.0/v1.4.0 新建第二合同生成脚本 | 破坏单一生成链与同源证明 | 仅当现有生成链有生产证据无法扩展时重新评估 |
 
 ## Roadmap Boundaries
 
 | Stage Outcome | Depends On | Exit Signal |
 |---|---|---|
 | RM-01：公共 Catalog v1.1 与 Run Control 可稳定被 Work 消费 | - | Resume/Approval 参数链正确；Catalog 类型与交互元数据有发布门禁；v1.0 内容不变且 v1.1 合同校验通过 |
-| RM-02：Agent 持久化可回放的结构化 Run Event，且控制状态机无绕过 | RM-01 | assistant/reasoning/tool/clarify/approval/artifact 事件仅由结构化事实生成；重复、迟到和旧代事件不产生副作用 |
+| RM-02：Agent 持久化可回放的结构化 Run Event，且控制状态机无绕过 | RM-01 | 事件仅由真实 Hermes Runtime 结构化事实生成；重复、迟到和旧代事件无副作用；Provider Conformance 按 A1 附录第 25 节 Conformance Gate 证明，禁止以 mock OpenAI 字段单独结项；历史 Event SoT/`event_seq`/Fencing/语义 Schema/Public 合同保留不回滚；重新关闭由 RM-16 证据驱动 |
 | RM-03：Edge 安装不可变 Published Bundle 并安全完成升级/卸载 | RM-02 | 下载、大小/摘要、路径与符号链接防护、原子切换、失败回滚和同代 Actual 验收通过 |
 | RM-04：严格 Readiness 与分布式生产验收形成可复现证据 | RM-03 | 双 Central、单 Edge、真实 PostgreSQL、共享 S3/MinIO（对象存储）、故障注入、Secret 扫描、合同检查和 Newman 两连跑全部通过 |
 | RM-05：Connector Runtime 通过统一执行入口可靠完成 Central/Edge 调用 | RM-03 | REST/MCP/DB Connector 经 AgentEnginePort 执行；取消、SecretRef、审批和受控私网策略可验证，客户端不能覆盖路由 |
 | RM-06：Session 与 ContextBuilder 形成授权、可恢复的执行上下文 | RM-05 | Session 是正式运行对象；Knowledge/Workspace/Attachment 引用经 Backend 授权并在执行前复核，撤权 fail-closed |
 | RM-07：Edge Control Channel 具备身份轮换与命令完整性 | RM-05 | 出站通道验证身份、过期、Nonce、签名与序列；重放、错节点和过期命令无副作用 |
 | RM-08：中立 Shared Agent Execution Contract 可由 Backend 单一生成链发布，并冻结 Hermes `single_agent` / `runtime_delegated` Delegation Topology | RM-06, RM-07 | Schema、OpenAPI、TypeScript 类型、Fixture 与兼容测试同源；Backend 冻结策略/能力引用、Agent 持久化 Snapshot、Hermes Capability 缺失时失败关闭；Topology 与 Placement/Hybrid 分列；不实现 Platform Multi-Agent |
-| RM-09：Backend 实现 v1.2.1 之后经批准的 Public 合同增量，并在 Shared Contract 稳定后补齐依赖内部南向字段的剩余符合性 | RM-08 | 不首次发布 Work canonical；不改写 v1.2.1；不承担已发布 v1.2.1 员工公共面的实现 Hotfix；外部前端源码、构建和发布不在范围内 |
-| RM-10：Agent 执行面具备统一 Trace 与运行指标 | RM-05 | Run/Attempt/Session/Edge/Connector/Artifact 可关联；关键队列、时延、失败、租约与重放指标可观测且不形成第二事件 Owner |
+| RM-09：Backend 在 Shared Contract 稳定后补齐依赖内部南向字段的剩余符合性，以及需要 RM-08 字段的后续 Public 增量 | RM-08 | 不首次发布 Work canonical；不改写 v1.2.1/v1.3.0/v1.4.0；不承担已发布 v1.2.1 员工公共面 Hotfix；**不承担** RM-17 Approval Decision 与 RM-18 Attachment 已发布 Capability；外部前端源码、构建和发布不在范围内 |
+| RM-10：Agent 执行面具备统一 Trace 与运行指标 | RM-05 | Run/Attempt/Session/Edge/Connector/Artifact 可关联；不形成第二事件 Owner；必须纳入 Runtime correlation 字段（`runtime_type`、`runtime_version`、`runtime_run_id`、`runtime_session_id`、`runtime_idempotency_key`、`tool_call_id`、`correlation_confidence`）及投影落后/失败指标，禁止静默 |
 | RM-11：累积 Public Skill Run Consumer Contract v1.2.1 成为外部 Work 可离线导入的当前合同导出项 | RM-01, RM-02 | 生成并发布 `v1.2.1/` 与 tag `skill-run-contract-v1.2.1`；manifest 纳入 SHA256SUMS；Public/Internal 分离；不改写 v1.0.0/v1.1.0/v1.2.0；不含 Work 前端；Internal Agent 合同留给 RM-08 |
-| RM-12：员工 Public Skill Run 面对冻结 `SKILL-RUN-CONTRACT v1.2.1` 可观察符合 | RM-06, RM-11 | Catalog/`tools.call`/幂等/Public Run/SSE/Result/Artifact/Cancel 符合冻结 v1.2.1；`contracts/skill-run/v1.2.1/` 零修改；prompt-first 不因 Installation Workspace 进入 Workspace ACL；跨组织 Execution Workspace 失败关闭；Public 面无 HermesTask 身份泄漏；不发布新合同版本；仓外 Work 联调不是本仓 DONE |
+| RM-12：员工 Public Skill Run 面对冻结 `SKILL-RUN-CONTRACT v1.2.1` 可观察符合 | RM-06, RM-11 | 公共信封与 `auth_type` 无关；Catalog `executionModes` 等于实际可达集合；HermesTask 降为内部投影且禁止字段/路径不进公共面；出口证据来自真实 `user_jwt` 并覆盖 PC-10 至 PC-14，fixture 通过不构成出口；`contracts/skill-run/v1.2.1/` 零修改；不发布新合同版本；仓外联调不是本仓 DONE |
+| RM-13：Hermes Native Runtime Bridge | RM-11 | Runtime 版本地板 `v2026.8.31` 生效且低版本失败关闭；Capability Probe + Attempt 级 Runtime Binding；Native `/v1/runs`+`/events`+terminal reconcile+`/stop`；生产路径移除 ChatCompletion 静默降级 |
+| RM-14：Runtime Semantic Event Fidelity | RM-13 | Assistant delta coalescing；tool 双轨 `call_id`；progress canonical `phase`；敏感 Runtime 事件不进 Public；与 RM-12 公共投影协同复跑断言 |
+| RM-15：Approval & Runtime Control Closure | RM-14 | Public approval/cancel 与 Hermes `/approval`/`/stop` 双向闭环；内部四档 / 公共两档；按 `runtime_run_id` 寻址；旧 Attempt fencing |
+| RM-16：Hermes Provider Conformance & Recovery | RM-15 | PC-01 至 PC-09 在真实 Hermes（`>= v2026.8.31`）取得可复现证据；禁止 mock OpenAI 结项；同时承接 RM-02 重新定义后的 Provider Conformance 出口 |
+| RM-17：Public Approval Decision Contract v1.3.0 | RM-11, RM-12, RM-15 | 发布不可变 `v1.3.0/` 与 tag `skill-run-contract-v1.3.0`；Work 可提交 allow/deny；Attachment 仍 `unsupported`；不改写 v1.2.1；不依赖 RM-08；不并入 RM-09；仓外适配不是本仓 DONE |
+| RM-18：Public Attachment Input Contract v1.4.0 | RM-06, RM-17 | 发布累积 `v1.4.0/` 与 tag `skill-run-contract-v1.4.0`；org/user scoped attachment proof；不强制 workspace；不复用 Artifact download；不依赖 RM-08；不并入 RM-09 |
 
 ## Architecture Addenda
 
-本 AD 主体保持 `1.5.0` / `APPROVED`。后续针对局部实现偏差的架构纠偏以**增补文档（Addendum）**形式发布，各自携带独立 `status`，不改写本文已批准字节。上表 RM-01 至 RM-12 的边界与出口信号不受增补文档影响，除增补文档显式声明的重定义项外。
+本 AD 主体现为 `1.7.0` / `APPROVED`。A1 规范性内容已折叠进上文 Target Architecture、Ownership、Roadmap Boundaries 与 Decision；**禁止再新建携带独立 `status` 的 addendum**——后续架构纠偏一律修订本 AD。
 
-| Addendum | Version | Status | Scope | Document |
-|---|---|---|---|---|
-| AD-SKILL-AGENT-V16-A1：Hermes Runtime Native Run Integration | 1.6.0 | PROPOSED | 纠正两项实现偏差。（一）Hermes 南向执行协议：Hermes 是 Agent Runtime 而非 OpenAI Model Provider，生产 Skill Run 必须走 Native Run API（`/v1/capabilities`、`/v1/runs`、`/events`、`/approval`、`/stop`），冻结 Runtime 版本地板 `v2026.8.31`、Transport Delta Coalescing、Runtime Binding、Recovery 与错误分类。（二）员工公共面与执行平面：公共信封与 `auth_type` 无关、Catalog 宣告等于实际可达能力、HermesTask 平面降级为纯内部投影并收敛为单一执行平面、Conformance Gate 覆盖 `user_jwt` 员工路径 | [AD-SKILL-AGENT-V16-v1.6.0-hermes-runtime-native-run.md](AD-SKILL-AGENT-V16-v1.6.0-hermes-runtime-native-run.md) |
+| Addendum | Version | Status | Role | Scope | Document |
+|---|---|---|---|---|---|
+| AD-SKILL-AGENT-V16-A1：Hermes Runtime Native Run Integration | 1.6.0 | APPROVED | technical_appendix | 技术附录：Native Run 协议细节、PC-01 至 PC-14、Recovery、Event Mapping。规范性决策已吸收进父 AD@1.7.0 | [AD-SKILL-AGENT-V16-v1.6.0-hermes-runtime-native-run.md](AD-SKILL-AGENT-V16-v1.6.0-hermes-runtime-native-run.md) |
 
-### A1 对本文的重定义项
+### 已折叠进 v1.7.0 正文的 A1 规范性重定义（一等内容）
 
-Addendum A1 在获批后重定义以下四处，其余章节不变：
+下列四项原为 A1 对父 AD 的重定义，现为一等 Architecture 内容（不再依赖 addendum 独立 status）：
 
-- **Minimality 条款升级**：本文 Decision Drivers 中「不新增 Control Plane、不新增 Idempotency Service、不新增 Event Store」只约束增量，未约束存量，导致既有 HermesTask 平面（`HermesTask.status` + `HermesTaskEvent` 独立 `event_seq`）作为第二状态源与第二事件存储合法存续并持续暴露于公共面。A1 第 30.3 节将该条款升级为**单一执行平面**：Agent 是唯一执行平面，HermesTask 平面降级为纯内部投影，禁止出现在任何公共信封、公共 SSE 与公共 REST 响应中。
-- **RM-02 出口信号**：A1 判定 RM-02 的 Hermes Provider Conformance 证明不足。已交付的 Event SoT、`event_seq`、Fencing、语义 Schema 与 Public 合同全部保留且不回滚，但 Provider Conformance 出口失效，RM-02 状态回退为 `BACKLOG`，退出条件改由 A1 第 25 节的 Conformance Gate 定义。
-- **RM-12 出口信号**：A1 依据 `apps/work` 员工端 live 报告判定 RM-12 的员工公共面符合性证明不足——本文 Decision Drivers 已列出的三项漂移（Public Run 仍输出 Portal 信封、SSE 未投影冻结合同全部语义事件、幂等未承载冻结合同语义）在真实 `user_jwt` 路径上仍然成立。已交付的 Catalog、prompt-first 绑定、Workspace ACL 边界与跨组织 fail-closed 保留且不回滚，但公共面符合性出口失效，RM-12 状态回退为 `BACKLOG`，退出条件改由 A1 第 30 节四条不变量与第 25 节 PC-10 至 PC-14 定义。HermesTask 平面降级属于 RM-12 重定义后的范围，不新增 Roadmap Item。
-- **RM-10 范围补充**：Observability Stage PRD 必须纳入 A1 第 21 节的 Runtime correlation 字段（`runtime_type`、`runtime_version`、`runtime_run_id`、`runtime_session_id`、`runtime_idempotency_key`、`tool_call_id`、`correlation_confidence`），并覆盖投影落后 / 投影失败的指标与告警（第 30.3 节禁止静默），且不得因此创建第二事件事实源。
+- **Minimality → 单一执行平面**：Agent 是唯一执行平面；HermesTask 降为纯内部投影，禁止出现在任何公共信封、公共 SSE 与公共 REST 响应中。
+- **RM-02 出口信号**：历史 Event SoT 等交付物保留不回滚；Provider Conformance 须按 A1 附录第 25 节 Conformance Gate 由真实 Hermes 证据证明；重新关闭由 RM-16 驱动。
+- **RM-12 出口信号**：须满足单一平面、credential-agnostic 信封、Catalog=可达能力，并以真实 `user_jwt` + PC-10 至 PC-14 结项；fixture 通过不构成出口。
+- **RM-10 范围补充**：必须纳入 Runtime correlation 字段与投影落后/失败可观测性，且不得创建第二事件事实源。
 
-A1 因南向纠偏新增的交付范围由 RM-13 至 RM-16 承载，不并入 RM-01 至 RM-12 任一项；A1 第 30 节的员工公共面纠偏归入重定义后的 RM-12，不新增 Item。
+南向交付范围由 RM-13 至 RM-16 承载；员工公共面单一平面纠偏归入 RM-12；纯 Public 下一增量由 RM-17 / RM-18 经 Release Lane 承载。
