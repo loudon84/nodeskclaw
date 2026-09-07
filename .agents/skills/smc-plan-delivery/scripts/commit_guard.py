@@ -17,6 +17,7 @@ def guard_path(root: Path, pid: str) -> Path:
 
 
 def capture(plan: Path) -> int:
+    # @lat: [[plan-delivery#post_review Commit]]
     root = find_repo_root(plan)
     errors, details = validate(plan)
     if errors:

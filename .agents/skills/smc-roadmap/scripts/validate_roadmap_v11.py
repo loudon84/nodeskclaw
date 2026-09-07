@@ -185,7 +185,7 @@ def validate_manifest_bytes(data: bytes, pid: str, expected_fp: str, expected_pl
     except Exception as exc:
         return [f"ROADMAP_EVIDENCE_MANIFEST_INVALID_JSON: {exc}"]
     schema = manifest.get("schema")
-    if schema not in {"smc.evidence.manifest.v1", "smc.evidence.manifest.v2"}:
+    if schema not in {"smc.evidence.manifest.v1", "smc.evidence.manifest.v2", "smc.evidence.manifest.v3"}:
         errors.append("ROADMAP_EVIDENCE_MANIFEST_SCHEMA_INVALID")
     if manifest.get("plan_id") != pid:
         errors.append(f"ROADMAP_EVIDENCE_MANIFEST_PLAN_ID_MISMATCH: expected={pid} actual={manifest.get('plan_id')}")
@@ -225,6 +225,16 @@ def validate_manifest_bytes(data: bytes, pid: str, expected_fp: str, expected_pl
             if not isinstance(row, dict) or row.get("result") != "PASS" or int(row.get("exit_code", 1)) != 0:
                 errors.append("ROADMAP_EVIDENCE_MANIFEST_BLOCKING_VERIFICATION_FAILED")
                 break
+
+    if schema == "smc.evidence.manifest.v3" and manifest.get("acceptance_contract") == "smc.acceptance.v1":
+        claims = manifest.get("blocking_claims")
+        if not isinstance(claims, list) or not claims:
+            errors.append("ROADMAP_EVIDENCE_MANIFEST_BLOCKING_CLAIM_MISSING")
+        else:
+            for claim in claims:
+                if not isinstance(claim, dict) or claim.get("result") != "PASS":
+                    errors.append("ROADMAP_EVIDENCE_MANIFEST_BLOCKING_CLAIM_FAILED")
+                    break
     return errors
 
 

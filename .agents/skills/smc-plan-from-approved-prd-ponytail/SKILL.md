@@ -1,17 +1,19 @@
 ---
 name: smc-plan-from-approved-prd-ponytail
-description: 将 APPROVED SMC PRD 转换为唯一 canonical Cursor Plan；保留 Ponytail minimality、Change ID、single writer、lifecycle/data-flow closure，并生成 smc.plan.v3.4 的 Cursor todo metadata 与 Evidence Policy。支持 CREATE/REVISE/AUDIT_SKILL/DIAGNOSE_PLAN。
-version: 3.5.0
+description: 将 APPROVED SMC PRD 转换为唯一 canonical Cursor Plan；v3.6 生成 smc.plan.v3.5，并通过 Consumer Profile + Change Matrix 绑定 Generic Domain Pack Activation；Domain Pack 只扩展专业能力，不成为第二 workflow owner。
+version: 3.6.0
 disable-model-invocation: true
 ---
 
-# SMC Plan From Approved PRD — Ponytail v3.5
+# SMC Plan From Approved PRD — Ponytail v3.6
 
 ## Purpose
 
 把 **APPROVED PRD** 转换为一个且仅一个可执行 canonical Cursor `.plan.md`。
 
-v3.5 不改变既有 Ponytail 核心：
+v3.6 新增 `smc.plan.v3.5` Domain Activation Ledger。Plan author 通过通用 Domain Runtime 解析 Consumer Profile + Change Matrix；禁止在本 Skill 中硬编码 frontend/backend/electron/mobile/data 分支。
+
+v3.6 不改变既有 Ponytail 核心：
 
 - 先理解真实调用流，再选最小正确实现；
 - Change ID 稳定；
@@ -41,6 +43,8 @@ v3.5 在既有四个交付合同上增加 Cursor Projection Contract：
 并以本升级包的：
 
 - [`references/plan-contract-v3.md`](references/plan-contract-v3.md)
+- [`references/plan-contract-v35.md`](references/plan-contract-v35.md)
+- [`references/plan-template-v35.md`](references/plan-template-v35.md)
 - [`references/plan-template.md`](references/plan-template.md)
 
 作为当前 contract/template。
@@ -119,6 +123,7 @@ python tools/agent-skills/validate_prd.py <prd> --require-approved --require-evi
 plan_contract: smc.plan.v3.4
 plan_id: <stable-roadmap-or-work-item-id>
 commit_policy: post_review
+acceptance_contract: smc.acceptance.v1
 ```
 
 CREATE 前检查：
@@ -156,6 +161,8 @@ DOD-01...DOD-nn
 ```
 
 每条进入 `Requirement Coverage Ledger`，关联 Change/Todo/Blocking Verification。
+
+同时从 APPROVED PRD 的 Acceptance Claim Baseline 建立 `Acceptance Claim Ledger`。若旧 PRD 没有现成 baseline，Plan Author 必须以 AC/DoD 为依据建立 Claim，但不得在 Plan 内改变 approved blocking semantics。
 
 若存在状态、并发、幂等、重试、lease、generation、单次消费等要求，必须填写 `Lifecycle Closure Matrix`。
 
@@ -275,15 +282,32 @@ pending | in_progress | completed | blocked
 
 Markdown Todo 是稳定 specification；动态 status 只写 Cursor metadata。
 
-## Gate 6 — Verification Ledger v3.4
+## Gate 6 — Verification Ledger v3.4 + Acceptance Contract
 
-使用：
+Acceptance-enabled Plan 使用：
 
 ```markdown
-| Verification ID | Level | Entry Point / Command | Oracle | Negative / Regression | Evidence Policy | Environment | Blocking |
+| Verification ID | Claim IDs | Level | Acceptance Mode | Entry Point / Command | Oracle | Negative / Regression | Evidence Policy | Environment | Evidence Action | Blocking |
 ```
 
-`Evidence Policy` 合法值：
+`Acceptance Mode`：
+
+```text
+LOCAL
+LIVE
+FAULT_INJECTION
+EXTERNAL
+```
+
+`Evidence Action`：
+
+```text
+NEW_EVIDENCE
+TARGETED_RERUN
+REUSE_EVIDENCE
+```
+
+`Evidence Policy` 仍只表示 retention/storage：
 
 ```text
 LOCAL_TRANSIENT
@@ -292,6 +316,8 @@ CI_ARTIFACT
 EXTERNAL_ARTIFACT
 REPO_SUMMARY
 ```
+
+禁止把 `REAL_PROCESS` / `REAL_RUNTIME` 塞进 Evidence Policy 代替 Acceptance Mode。
 
 默认 `LOCAL_TRANSIENT`。
 
@@ -304,7 +330,35 @@ artifacts/*.txt
 
 作为 Plan 的强制物理输出路径。
 
-Raw evidence 由 `smc-plan-delivery` 的 evidence ledger 管理，并绑定 working-tree fingerprint。
+Raw evidence 由 `smc-plan-delivery` 的 evidence ledger 管理，并绑定 Plan scope fingerprint。
+
+## Gate 6.5 — Acceptance Scenario / Environment Binding
+
+对于 `LIVE | FAULT_INJECTION | EXTERNAL` 且非 `REUSE_EVIDENCE` 的 Verification，Plan 必须在执行前冻结：
+
+```text
+Claim
+  -> exactly one Live Scenario
+  -> Subject / Fixture
+  -> Required Capabilities
+  -> Preconditions
+  -> Stimulus
+  -> Oracle
+  -> Environment
+  -> Candidate provenance mode
+```
+
+不同 AC/Claim 不得因为“方便”共享同一 Tool；只有语义 Review 证明同一 Fixture 满足各自 Required Capabilities 才允许复用。
+
+FAULT_INJECTION 必须预先声明 fault-driver 环境变量。缺失时 Plan 仍可存在，但 Delivery preflight 必须 BLOCKED，不得先跑 live 再发现。
+
+Execute 阶段禁止：
+
+```text
+search catalog -> try tool A -> try tool B -> change prompt until desired behaviour
+```
+
+Fixture 不可用或行为与声明不符 -> `PLAN_REVISE_REQUIRED` / `VERIFICATION_BLOCKED`，不得自行替换。
 
 ## Gate 7 — Completion Gate
 
@@ -320,7 +374,7 @@ RETURN_PRD
 但语义改为：
 
 - all Cursor todos completed = implementation complete；
-- `IMPLEMENTED_AND_PROVEN` = completion audit PASS + implementation review FRESH PASS + 所有 blocking Verification FRESH PASS；
+- `IMPLEMENTED_AND_PROVEN` = completion audit PASS + implementation review FRESH PASS + 所有 blocking Verification FRESH PASS + 所有 blocking Acceptance Claim PASS；
 - `IMPLEMENTED_NOT_PROVEN` = implementation 已存在但上述证明未齐；
 - `BLOCKED` = 环境/依赖阻断；
 - `RETURN_PRD` = approved owner/boundary 与现实冲突。

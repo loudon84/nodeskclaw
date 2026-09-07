@@ -172,6 +172,7 @@ def legacy_content_warnings(path: Path) -> list[str]:
 
 
 def set_status(path: Path, tid: str, status: str) -> None:
+    # @lat: [[plan-delivery#Execution Context]]
     if status not in VALID:
         raise ValueError(f"PLAN_CURSOR_TODO_STATE_INVALID: {status}")
     tid = tid.upper()

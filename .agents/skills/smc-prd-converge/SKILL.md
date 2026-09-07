@@ -22,6 +22,7 @@ disable-model-invocation: true
 - final Behaviour/Boundary/AC;
 - minimal Source Anchors;
 - **Evidence Baseline**;
+- **Acceptance Claim Baseline**（若存在）；
 - **source_revision**;
 - **grounded_commit**.
 

@@ -82,6 +82,7 @@ def init(plan: Path) -> dict:
 
 
 def transition(plan: Path, to: str, reason: str = "") -> dict:
+    # @lat: [[plan-delivery#Delivery State Machine]]
     data = init(plan)
     current = str(data["state"])
     if to not in STATES and to not in BLOCKED:

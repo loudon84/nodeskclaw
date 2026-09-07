@@ -1,4 +1,6 @@
-# SMC Delivery Evidence Contract v2
+# SMC Delivery Evidence Contract v3
+
+v3 preserves v2 scope/ambient freshness and adds Acceptance Claim + candidate provenance. Historical v1/v2 durable manifests remain readable.
 
 ## Scope
 
@@ -16,7 +18,15 @@ scope_fingerprint
 ambient_fingerprint
 Evidence Policy
 raw log ref
+claim_ids
+claim_results
+acceptance_mode
+evidence_action
+candidate_id
+inherited/source evidence identity (when reused)
 ```
+
+For LIVE/FAULT_INJECTION/EXTERNAL, `result=PASS` requires both process success and the machine-readable `SMC_ACCEPTANCE_RESULT` for every bound Claim.
 
 `scope_fingerprint` covers canonical Plan semantics + Change Matrix planned implementation paths. `ambient_fingerprint` proves startup unrelated dirty stayed unchanged.
 
@@ -55,13 +65,15 @@ After all proof gates pass:
 docs_agent/evidence/<plan-id>-evidence.json
 ```
 
-Schema for GES 4.2:
+New acceptance-enabled delivery writes:
 
 ```text
-smc.evidence.manifest.v2
+smc.evidence.manifest.v3
 ```
 
-The compact manifest records Plan ID/path, workspace base commit, scope/ambient fingerprints, plan review, completion audit, implementation review, blocking Verification summaries and raw-log SHA256.
+Historical `smc.evidence.manifest.v2` remains readable.
+
+The compact manifest records Plan ID/path, workspace base commit, scope/ambient fingerprints, plan review, completion audit, implementation review, blocking Verification summaries, raw-log SHA256, acceptance contract, blocking Claim results, and verification candidate provenance.
 
 Generating the manifest does not enter implementation scope and must not stale the proof it summarizes.
 

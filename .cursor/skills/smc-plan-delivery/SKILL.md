@@ -1,10 +1,10 @@
 ---
 name: smc-plan-delivery
-description: SMC canonical Plan 后半程唯一交付编排器。v1.1 增加 Plan-Scoped Delivery Workspace 与 Persistent Execution Context；执行 Static -> Semantic -> Scoped Execution -> Completion Audit -> Implementation Review -> Verification -> Evidence Freshness -> post_review scoped Commit -> Roadmap Update。
-version: 1.1.0
+description: SMC canonical Plan 后半程唯一交付编排器。v1.2 在 v1.1 scoped workspace/context 基础上增加 Generic Domain Provider hooks；Domain Pack 只在 engineering/review/verification 阶段扩展能力，不拥有 Delivery state。
+version: 1.2.0
 ---
 
-# SMC Plan Delivery v1.1
+# SMC Plan Delivery v1.2
 
 ## Role
 
@@ -39,7 +39,11 @@ Canonical Plan -> smc-plan-delivery
 12. implementation commit 只能包含 Plan-owned implementation delta + canonical Plan + durable Evidence Manifest；
 13. implementation commit 与 Roadmap status commit 分离；Roadmap DONE 必须引用真实 implementation commit；
 14. execution continuation gate 只决定“Agent 是否继续工作”，绝不替代 SMC Completion Gate；
-15. 不允许复制第二份 `.plan.md` 解决 Cursor metadata/UI 兼容问题。
+15. 不允许复制第二份 `.plan.md` 解决 Cursor metadata/UI 兼容问题；
+16. known blocking Claim FAIL 不得作为 observation 继续到 `IMPLEMENTED_AND_PROVEN`；
+17. LIVE/FAULT/EXTERNAL Verification 必须先通过 Scenario/Environment/Candidate Preflight；
+18. `REUSE_EVIDENCE` Verification 禁止重新执行 command，必须走显式 inheritance；
+19. live 环境的 SUT candidate 必须匹配当前 Plan scope candidate；不匹配返回 `LIVE_SUT_MISMATCH`。
 
 ## Required References
 
@@ -52,6 +56,32 @@ Canonical Plan -> smc-plan-delivery
 5. [`references/review-contract.md`](references/review-contract.md)
 6. [`references/completion-audit-contract.md`](references/completion-audit-contract.md)
 7. [`references/recovery-contract.md`](references/recovery-contract.md)
+8. [`references/acceptance-governance-contract.md`](references/acceptance-governance-contract.md)
+
+## Domain Pack Extension Contract (v1.2)
+
+对 `smc.plan.v3.5`，在任何 implementation write 前必须验证 Domain policy binding：
+
+```bash
+python .agents/skills/smc-plan-delivery/scripts/domain_hooks.py validate "$PLAN_PATH"
+python .agents/skills/smc-plan-delivery/scripts/domain_hooks.py assert-policy "$PLAN_PATH"
+```
+
+各阶段只通过通用 provider 查询扩展，不得在 Delivery Core 中写具体 domain 分支：
+
+```bash
+python .agents/skills/smc-plan-delivery/scripts/domain_hooks.py providers "$PLAN_PATH" --phase engineering
+python .agents/skills/smc-plan-delivery/scripts/domain_hooks.py providers "$PLAN_PATH" --phase review
+python .agents/skills/smc-plan-delivery/scripts/domain_hooks.py providers "$PLAN_PATH" --phase verification
+```
+
+规则：
+
+- engineering provider 作为当前 Todo implementation 的专业约束上下文；
+- review provider 的 findings 由 canonical `code-review-and-quality` 汇总；
+- verification provider 只提供项目级验证入口/oracle，真实 evidence/freshness 仍由 Delivery evidence layer 持有；
+- Domain Pack 不写 Plan/Delivery/Commit/Roadmap canonical state；
+- 多 Domain 可同时激活，但 Single Writer / scope fingerprint / post_review 不变。
 
 # Input Binding
 
@@ -141,6 +171,8 @@ python .agents/skills/smc-plan-validator/scripts/validate_plan_v34.py "$PLAN_PAT
 # Phase 2 — Plan Semantic Gate
 
 保留 `smc-plan-review` router。`REQUIRED` 不是 PASS；`NOT_REQUIRED` 仍必须写 content-bound clearance record。真正 review 必须得到 `PASS | REVISE | RETURN_PRD`。
+
+若 Plan 声明 `acceptance_contract: smc.acceptance.v1`，必须执行 Actual Semantic Review；router 的 `NOT_REQUIRED` 不得跳过 Acceptance Scenario / Evidence Reuse 语义审查。
 
 Plan semantic hash：
 
@@ -359,14 +391,54 @@ ambient_fingerprint
 Plan scope implementation content 改变 -> Review `STALE`。
 Ambient drift -> Review `STALE/BLOCKED`。
 
+# Phase 5.5 — Acceptance / Live Verification Preflight
+
+若 Plan 声明 `acceptance_contract: smc.acceptance.v1`，Implementation Review PASS 后先冻结当前 working-tree candidate：
+
+```bash
+python .agents/skills/smc-plan-delivery/scripts/acceptance.py capture \
+  --plan "$PLAN_PATH"
+```
+
+然后在任何 live/fault/external command 之前：
+
+```bash
+python .agents/skills/smc-plan-delivery/scripts/acceptance.py preflight \
+  --plan "$PLAN_PATH" --all-blocking
+```
+
+Preflight 检查：
+
+```text
+Scenario binding
+Fixture/environment prerequisites
+fault driver
+candidate provenance
+```
+
+任何缺失返回 `VERIFICATION_BLOCKED`，**不得**先执行 live 再把环境缺失记录成产品 FAIL。
+
 # Phase 6 — Verification
 
-对每个 blocking Verification：
+`NEW_EVIDENCE | TARGETED_RERUN`：
 
 ```bash
 python .agents/skills/smc-plan-delivery/scripts/evidence.py run \
   --plan "$PLAN_PATH" --verification V01 -- <exact command>
 ```
+
+`REUSE_EVIDENCE`：
+
+```bash
+python .agents/skills/smc-plan-delivery/scripts/acceptance.py inherit \
+  --plan "$PLAN_PATH" --verification V03 \
+  --from-manifest <prior-durable-manifest> \
+  --from-verification <prior-verification-id>
+```
+
+禁止对 `REUSE_EVIDENCE` 重新运行原 live command。
+
+LIVE/FAULT/EXTERNAL runner 必须输出 `SMC_ACCEPTANCE_RESULT` claim protocol；process exit 0 但 blocking Claim 为 FAIL/MISSING 时，Delivery 仍记录 Verification FAIL。
 
 记录：
 
@@ -410,6 +482,8 @@ Plan semantic clearance FRESH
 Completion Audit FRESH PASS
 Implementation Review FRESH PASS
 all blocking Verification FRESH PASS
+all blocking Acceptance Claims PASS（acceptance-enabled Plan）
+live proof candidate_id 与当前 captured candidate 一致
 scope fingerprint 一致
 ambient fingerprint 一致且 ambient stable
 no scope drift

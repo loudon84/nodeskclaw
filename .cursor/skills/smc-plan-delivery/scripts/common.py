@@ -204,6 +204,7 @@ def plan_id(path: Path) -> str:
 
 
 def semantic_plan_sha256(path: Path) -> str:
+    # @lat: [[invariants#Four State Classes]]
     """Hash Plan semantics while excluding derived/runtime Cursor todo fields.
 
     `status` is runtime state and is normalized. `content` is a deterministic UI

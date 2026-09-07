@@ -136,6 +136,7 @@ def load(plan: Path) -> dict | None:
 
 
 def init(plan: Path, *, refresh: bool = False) -> dict:
+    # @lat: [[plan-delivery#Workspace Scope]]
     """Freeze the execution baseline before the first implementation mutation.
 
     Unrelated pre-existing dirty paths are allowed and protected as ambient state.

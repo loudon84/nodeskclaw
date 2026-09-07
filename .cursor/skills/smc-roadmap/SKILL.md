@@ -50,7 +50,8 @@ Roadmap Item 到 DONE 前必须已经由 `smc-plan-delivery` 证明：
 3. Plan Completion Audit FRESH PASS；
 4. Implementation Review FRESH PASS；
 5. 所有 blocking Verification FRESH PASS；
-6. real implementation commit SHA。
+6. 若 Plan 使用 `smc.acceptance.v1`，所有 blocking Acceptance Claim PASS；
+7. real implementation commit SHA。
 
 更新：
 

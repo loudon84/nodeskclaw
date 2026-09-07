@@ -18,7 +18,7 @@ disable-model-invocation: true
 
 如果源码/Source Revision 未变化，不重新 full Grounding。独立 = 独立判断，不是重复扫描。
 
-## Six Gates
+## Seven Gates
 
 G1 Scope
 G2 Existing Capability / duplicate owner
@@ -26,6 +26,17 @@ G3 Production Ownership
 G4 KEEP/MODIFY/ADD/REPLACE/REMOVE
 G5 API/IPC/Auth/Contract/Security Boundary
 G6 Behaviour -> Acceptance Criteria
+G7 Acceptance / Blocking / Evidence Integrity
+
+G7 必须检查：
+
+- blocking AC 是否被拆成可观察 Acceptance Claim；
+- prior blocking FAIL 是否仍保持 residual gap，而不是被降级为 observation；
+- prior PASS 是否给出 REUSE / invalidation 决策，避免无理由重复 full live；
+- PRD 是否只冻结 Scenario Requirement，而没有越界绑定具体测试实现；
+- 已知失败若要 deferred/non-blocking，是否确实由 APPROVED scope/architecture 改变，而不是执行阶段临时解释。
+
+任何“blocking FAIL 允许 DONE，下一 RM 再修”的设计为 BLOCKER。
 
 Architecture/Plan 分层：exact private file/symbol、hook、fetch option、mock/test file、Todo ownership 不得作为 PRD MAJOR，除非它本身改变 contract/security/唯一 Owner/observable Behaviour。
 

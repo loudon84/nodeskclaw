@@ -78,6 +78,28 @@ PLAN_WRITE_SCOPE_VIOLATION
 
 停止当前 Todo，返回 Plan REVISE；不得“顺手修改”。
 
+## Governed Live Execution Boundary
+
+若 Plan 含 `smc.acceptance.v1`，本 implementation engine 不拥有 Live test subject discovery。
+
+禁止：
+
+```text
+search catalog -> try tool A -> try tool B
+reuse one convenient tool for semantically different ACs
+change prompt repeatedly until desired behaviour appears
+replace Plan-bound fixture / fault driver / environment
+```
+
+如果 Todo 局部 check 发现绑定 Fixture 不存在或实际能力与 Plan 声明不符：
+
+```text
+LIVE_FIXTURE_UNAVAILABLE
+LIVE_FIXTURE_CONTRACT_MISMATCH
+```
+
+立即返回 orchestrator，进入 `PLAN_REVISE_REQUIRED` / `VERIFICATION_BLOCKED`。不得自行换 Tool。
+
 ## Focused Check Semantics
 
 Todo focused check 只证明局部实现可继续，不替代 final Verification evidence。

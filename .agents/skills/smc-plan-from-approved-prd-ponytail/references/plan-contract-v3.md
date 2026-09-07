@@ -27,6 +27,7 @@ isProject: false
 plan_contract: smc.plan.v3.4
 plan_id: <stable-id>
 commit_policy: post_review
+acceptance_contract: smc.acceptance.v1
 source_revision: <prd-work-item@version>
 grounded_commit: <prd-grounded-commit>
 grounding_source: committed_baseline
@@ -105,8 +106,11 @@ Rules:
 4. `## Requirement Coverage Ledger`
 5. `## Lifecycle Closure Matrix`
 6. `## Contract / Data Flow Closure Matrix`
-7. `## Verification Ledger`
-8. `## Immediate Read`
+7. `## Acceptance Claim Ledger`
+8. `## Live Scenario Matrix`
+9. `## Live Environment Matrix`
+10. `## Verification Ledger`
+11. `## Immediate Read`
 9. `## Triggered Read`
 10. `## Change Matrix`
 11. `## Implementation Decisions`
@@ -149,13 +153,46 @@ Required for cross-owner/process/network/persistence/queue/generator flows.
 
 Use `None` only when no such flow exists.
 
-## Verification Ledger v3.4
+## Acceptance Claim Ledger
 
 ```markdown
-| Verification ID | Level | Entry Point / Command | Oracle | Negative / Regression | Evidence Policy | Environment | Blocking |
-|---|---|---|---|---|---|---|---|
-| V01 | INTEGRATION | `pytest tests/...` | terminal state observable | cancellation cannot be overwritten | LOCAL_TRANSIENT | local compose | yes |
+| Claim ID | Requirement | Observable Fact | Blocking | Prior Evidence | Prior Result | Evidence Action | Invalidation Reason | Verification IDs |
+|---|---|---|---|---|---|---|---|---|
+| CLM-01 | AC-01 | approval reaches provider and is accepted | yes | RM-15/V13 | FAIL | TARGETED_RERUN | control bearer changed | V03 |
 ```
+
+A blocking prior FAIL cannot use `REUSE_EVIDENCE`.
+
+## Live Scenario Matrix
+
+```markdown
+| Scenario ID | Claim IDs | Verification IDs | Subject / Fixture | Required Capabilities | Preconditions | Stimulus | Oracle | Environment ID |
+|---|---|---|---|---|---|---|---|---|
+| SCN-01 | CLM-01 | V03 | approval-fixture | waiting_approval | runtime ready | approve | HTTP 200 + provider path | ENV-01 |
+```
+
+Every non-reused LIVE/FAULT/EXTERNAL Verification binds exactly one Scenario.
+
+## Live Environment Matrix
+
+```markdown
+| Environment ID | Required Env Vars | Preflight Command | Fault Driver Env | Candidate Mode | Candidate Probe |
+|---|---|---|---|---|---|
+| ENV-01 | RM13_USER_JWT | `python tools/preflight.py` | - | ENV_TOKEN | DEPLOYED_CANDIDATE_ID |
+```
+
+The Plan records variable names, never secret values.
+
+## Verification Ledger v3.4 + `smc.acceptance.v1`
+
+```markdown
+| Verification ID | Claim IDs | Level | Acceptance Mode | Entry Point / Command | Oracle | Negative / Regression | Evidence Policy | Environment | Evidence Action | Blocking |
+|---|---|---|---|---|---|---|---|---|---|---|
+| V03 | CLM-01 | INTEGRATION | LIVE | `python tools/run_live.py --case approval` | claim result PASS | HTTP 400 fails | LOCAL_TRANSIENT | ENV-01 | TARGETED_RERUN | yes |
+```
+
+LIVE/FAULT/EXTERNAL commands must emit the claim result protocol defined by
+`smc-plan-delivery/references/acceptance-governance-contract.md`.
 
 ### Evidence Policy
 
@@ -243,7 +280,7 @@ Writes/Reads/Depends On remain SOT in Write Ownership Ledger, not repeated in ev
 ```markdown
 | Exit State | Allowed When | Blocking Evidence |
 |---|---|---|
-| IMPLEMENTED_AND_PROVEN | all Cursor todos completed; completion audit FRESH PASS; implementation review FRESH PASS; all blocking Verification FRESH PASS; durable Evidence Manifest FRESH | V01,V02 via SMC evidence ledger + durable Evidence Manifest |
+| IMPLEMENTED_AND_PROVEN | all Cursor todos completed; completion audit FRESH PASS; implementation review FRESH PASS; all blocking Verification FRESH PASS; all blocking Acceptance Claims PASS; durable Evidence Manifest FRESH | V01,V02 via SMC evidence ledger + durable Evidence Manifest |
 | IMPLEMENTED_NOT_PROVEN | implementation exists but one or more proof gates are pending/stale | pending/stale gate IDs |
 | BLOCKED | environment/dependency prevents implementation or proof | blocker record |
 | RETURN_PRD | approved owner/boundary conflicts with current reality | PRD revision request |

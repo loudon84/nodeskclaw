@@ -33,6 +33,8 @@ python .agents/skills/smc-plan-review/scripts/assess_plan_review.py <canonical-p
 
 表示当前风险规则不要求额外 semantic reviewer。
 
+**Acceptance override**：若 canonical Plan 声明 `acceptance_contract: smc.acceptance.v1`，`NOT_REQUIRED` 不得直接清场，必须按 REQUIRED 执行 Actual Semantic Review。Acceptance Scenario / prior evidence reuse 无法仅靠结构 Validator 判定。
+
 返回给 `smc-plan-delivery`，并由 orchestrator 记录等价的 content-bound clearance：
 
 ```bash
@@ -62,7 +64,12 @@ python .agents/skills/smc-plan-delivery/scripts/review_record.py \
 7. Cross-boundary producer/transport/consumer/failure mapping 是否完整；
 8. Verification command/oracle/negative case 是否可真正判定需求；
 9. 是否存在 PRD scope/owner/boundary drift；
-10. Cursor Todo mapping 是否与 Markdown Todo 同一语义 slice。
+10. Cursor Todo mapping 是否与 Markdown Todo 同一语义 slice；
+11. 每个 LIVE/FAULT/EXTERNAL Claim 的 Required Capability 是否与绑定 Fixture/Tool 真实匹配；
+12. 同一 Fixture 被多个 Scenario 复用时，是否逐 Scenario 证明 capability，而不是因为“能启动 Run”就通用复用；
+13. prior PASS 是否无理由重复执行；TARGETED_RERUN 是否有真实 invalidation reason；
+14. prior blocking FAIL 是否被错误降级为 observation/non-blocking；
+15. Live Environment / fault driver / Candidate Mode 是否能在执行前确定性 preflight，且 `LOCAL_WORKTREE` 没有被用于预部署旧 SUT。
 
 ## Verdict
 

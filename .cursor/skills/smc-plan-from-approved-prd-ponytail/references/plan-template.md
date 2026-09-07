@@ -9,6 +9,7 @@ isProject: false
 plan_contract: smc.plan.v3.4
 plan_id: <PLAN_ID>
 commit_policy: post_review
+acceptance_contract: smc.acceptance.v1
 source_revision: <SOURCE_REVISION>
 grounded_commit: <GROUNDED_COMMIT>
 grounding_source: committed_baseline
@@ -45,11 +46,29 @@ None
 
 None
 
+## Acceptance Claim Ledger
+
+| Claim ID | Requirement | Observable Fact | Blocking | Prior Evidence | Prior Result | Evidence Action | Invalidation Reason | Verification IDs |
+|---|---|---|---|---|---|---|---|---|
+| CLM-01 | AC-01 | <observable fact> | yes | - | UNKNOWN | NEW_EVIDENCE | - | V01 |
+
+## Live Scenario Matrix
+
+| Scenario ID | Claim IDs | Verification IDs | Subject / Fixture | Required Capabilities | Preconditions | Stimulus | Oracle | Environment ID |
+|---|---|---|---|---|---|---|---|---|
+| SCN-01 | CLM-01 | V01 | <fixture-or-None> | <capabilities> | <preconditions> | <stimulus> | <oracle> | ENV-01 |
+
+## Live Environment Matrix
+
+| Environment ID | Required Env Vars | Preflight Command | Fault Driver Env | Candidate Mode | Candidate Probe |
+|---|---|---|---|---|---|
+| ENV-01 | - | - | - | LOCAL_WORKTREE | - |
+
 ## Verification Ledger
 
-| Verification ID | Level | Entry Point / Command | Oracle | Negative / Regression | Evidence Policy | Environment | Blocking |
-|---|---|---|---|---|---|---|---|
-| V01 | UNIT | `<command>` | <oracle> | <negative/regression> | LOCAL_TRANSIENT | local | yes |
+| Verification ID | Claim IDs | Level | Acceptance Mode | Entry Point / Command | Oracle | Negative / Regression | Evidence Policy | Environment | Evidence Action | Blocking |
+|---|---|---|---|---|---|---|---|---|---|---|
+| V01 | CLM-01 | UNIT | LOCAL | `<command>` | <oracle> | <negative/regression> | LOCAL_TRANSIENT | local | NEW_EVIDENCE | yes |
 
 ## Immediate Read
 

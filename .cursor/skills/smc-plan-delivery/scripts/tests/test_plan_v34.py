@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
@@ -66,11 +67,13 @@ class PlanV34Test(unittest.TestCase):
     def tearDown(self): self.tmp.cleanup()
 
     def test_v33_missing_content_is_warning_not_error(self):
+        # @lat: [[ges-tests#GES Tests#Plan contract#v3.3 missing content is warning]]
         self.assertEqual([], plan_state.validate(self.plan))
         warnings = plan_state.legacy_content_warnings(self.plan)
         self.assertEqual(["PLAN_CURSOR_TODO_CONTENT_LEGACY_WARNING: T1"], warnings)
 
     def test_sync_content_backfills_without_status_change(self):
+        # @lat: [[ges-tests#GES Tests#Plan contract#sync-content backfills without status change]]
         before = common.semantic_plan_sha256(self.plan)
         changed = plan_state.sync_content(self.plan)
         self.assertEqual(1, changed)
@@ -119,7 +122,13 @@ grounded_commit: abcdef
 ''', encoding="utf-8")
         out = self.root / ".cursor/plans/rm-02.plan.md"
         script = HERE.parents[1] / "smc-plan-from-approved-prd-ponytail" / "scripts" / "create_plan_seed.py"
-        result = subprocess.run([sys.executable, str(script), str(prd), str(out), "--plan-id", "RM-02"], capture_output=True, text=True)
+        env = {**os.environ, "GES_PLAN_V34_COMPAT": "1"}
+        result = subprocess.run(
+            [sys.executable, str(script), str(prd), str(out), "--plan-id", "RM-02"],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
         text = out.read_text()
         self.assertIn("plan_contract: smc.plan.v3.4", text)

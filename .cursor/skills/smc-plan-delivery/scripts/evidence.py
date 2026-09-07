@@ -11,11 +11,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-from common import append_jsonl, atomic_write, find_repo_root, parse_first_table, plan_id, read_jsonl, repo_relative_path, section, strip_md, utc_now
+from common import append_jsonl, atomic_write, find_repo_root, parse_first_table, plan_id, read_jsonl, repo_relative_path, section, split_values, strip_md, utc_now
 from workspace import inspect as workspace_inspect
+from acceptance import acceptance_enabled, blocking_claims, candidate_status, preflight_verification, verification_meta
 
 VALID_POLICIES = {"LOCAL_TRANSIENT", "LOCAL_DURABLE", "CI_ARTIFACT", "EXTERNAL_ARTIFACT", "REPO_SUMMARY"}
-MANIFEST_SCHEMA = "smc.evidence.manifest.v2"
+MANIFEST_SCHEMA = "smc.evidence.manifest.v3"
 
 
 def verification_rows(plan: Path) -> dict[str, dict[str, str]]:
@@ -48,6 +49,12 @@ def default_manifest_path(root: Path, pid: str) -> Path:
 def expected_plan_command(plan: Path, vid: str) -> str | None:
     row = verification_rows(plan).get(vid)
     if not row: return None
+    if acceptance_enabled(plan):
+        try:
+            if verification_meta(plan, vid)["evidence_action"] == "REUSE_EVIDENCE":
+                return None
+        except ValueError:
+            pass
     raw = strip_md(row.get("Entry Point / Command", ""))
     if not raw: return None
     try: return shlex.join(shlex.split(raw))
@@ -64,15 +71,54 @@ def _freshness(plan: Path, rec: dict) -> bool:
 
 
 def current_status(plan: Path, vid: str, expected_command: str | None = None) -> tuple[str, dict | None]:
+    # @lat: [[plan-delivery#Evidence Freshness]]
     root = find_repo_root(plan); pid = plan_id(plan)
     records = [r for r in read_jsonl(ledger_path(root, pid)) if r.get("verification_id") == vid]
     if not records: return "MISSING", None
     latest = records[-1]
     if not _freshness(plan, latest): return "STALE", latest
-    expected_command = expected_command or expected_plan_command(plan, vid)
-    if expected_command and latest.get("command") != expected_command: return "STALE", latest
+    if acceptance_enabled(plan):
+        try:
+            meta = verification_meta(plan, vid)
+        except ValueError:
+            return "STALE", latest
+        if meta["evidence_action"] == "REUSE_EVIDENCE":
+            if not latest.get("inherited"):
+                return "STALE", latest
+        else:
+            expected_command = expected_command or expected_plan_command(plan, vid)
+            if expected_command and latest.get("command") != expected_command:
+                return "STALE", latest
+        for cid in meta["claim_ids"]:
+            if str((latest.get("claim_results") or {}).get(cid, "")).upper() != "PASS":
+                return "FAILED", latest
+    else:
+        expected_command = expected_command or expected_plan_command(plan, vid)
+        if expected_command and latest.get("command") != expected_command: return "STALE", latest
     if int(latest.get("exit_code", 1)) != 0 or latest.get("result") != "PASS": return "FAILED", latest
     return "FRESH", latest
+
+
+def _acceptance_claim_results(log: Path, claim_ids: list[str]) -> tuple[bool, dict[str, str], str | None]:
+    prefix = "SMC_ACCEPTANCE_RESULT "
+    payloads = []
+    for line in log.read_text(encoding="utf-8", errors="replace").splitlines():
+        if line.startswith(prefix):
+            try:
+                payloads.append(json.loads(line[len(prefix):]))
+            except json.JSONDecodeError:
+                return False, {}, "ACCEPTANCE_RESULT_INVALID_JSON"
+    if len(payloads) != 1:
+        return False, {}, "ACCEPTANCE_RESULT_MISSING_OR_DUPLICATE"
+    claims = payloads[0].get("claims")
+    if not isinstance(claims, dict):
+        return False, {}, "ACCEPTANCE_RESULT_CLAIMS_INVALID"
+    results: dict[str, str] = {}
+    for cid in claim_ids:
+        value = claims.get(cid)
+        result = value.get("result") if isinstance(value, dict) else value
+        results[cid] = str(result or "").upper()
+    return all(results.get(cid) == "PASS" for cid in claim_ids), results, None
 
 
 def run_cmd(plan: Path, vid: str, command: list[str]) -> int:
@@ -83,6 +129,21 @@ def run_cmd(plan: Path, vid: str, command: list[str]) -> int:
     policy = strip_md(row.get("Evidence Policy", "LOCAL_TRANSIENT")).upper() or "LOCAL_TRANSIENT"
     if policy not in VALID_POLICIES:
         print(f"PLAN_EVIDENCE_POLICY_INVALID: {vid}={policy}", file=sys.stderr); return 2
+
+    meta = None
+    preflight = None
+    if acceptance_enabled(plan):
+        try:
+            meta = verification_meta(plan, vid)
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr); return 2
+        if meta["evidence_action"] == "REUSE_EVIDENCE":
+            print(f"EVIDENCE_REUSE_REQUIRES_INHERIT: {vid}", file=sys.stderr); return 2
+        preflight = preflight_verification(plan, vid)
+        if not preflight.get("pass"):
+            print("VERIFICATION_PRECHECK_BLOCKED: " + json.dumps(preflight, ensure_ascii=False), file=sys.stderr)
+            return 2
+
     if not command:
         print("EVIDENCE_COMMAND_MISSING", file=sys.stderr); return 2
     rendered = shlex.join(command); expected = expected_plan_command(plan, vid)
@@ -101,23 +162,47 @@ def run_cmd(plan: Path, vid: str, command: list[str]) -> int:
         assert proc.stdout is not None
         for line in proc.stdout:
             sys.stdout.write(line); out.write(line)
-        proc.stdout.close(); rc = proc.wait()
+        proc.stdout.close(); command_rc = proc.wait()
+
+    effective_rc = command_rc
+    claim_results: dict[str, str] = {}
+    acceptance_error = None
+    if meta:
+        claim_ids = [str(x) for x in meta["claim_ids"]]
+        mode = str(meta["acceptance_mode"])
+        if mode in {"LIVE", "FAULT_INJECTION", "EXTERNAL"}:
+            claim_pass, claim_results, acceptance_error = _acceptance_claim_results(log, claim_ids)
+            if not claim_pass:
+                effective_rc = 1
+        else:
+            claim_results = {cid: ("PASS" if command_rc == 0 else "FAIL") for cid in claim_ids}
+
     record = {
-        "schema": "smc.evidence.v2",
+        "schema": "smc.evidence.v3",
         "plan_id": pid,
         "verification_id": vid,
         "command": rendered,
-        "exit_code": rc,
-        "result": "PASS" if rc == 0 else "FAIL",
+        "command_exit_code": command_rc,
+        "exit_code": effective_rc,
+        "result": "PASS" if effective_rc == 0 else "FAIL",
         "scope_fingerprint": ws["scope_fingerprint"],
         "ambient_fingerprint": ws["ambient_fingerprint"],
         "timestamp": ts,
         "log_path": repo_relative_path(log, root),
         "policy": policy,
+        "claim_ids": list(meta["claim_ids"]) if meta else [],
+        "claim_results": claim_results,
+        "acceptance_mode": meta["acceptance_mode"] if meta else "LOCAL",
+        "evidence_action": meta["evidence_action"] if meta else "NEW_EVIDENCE",
+        "inherited": False,
+        "candidate_id": (preflight or {}).get("candidate_id"),
+        "acceptance_error": acceptance_error,
     }
     append_jsonl(ledger_path(root, pid), record)
-    print(f"EVIDENCE {vid} {'PASS' if rc == 0 else 'FAIL'} scope={ws['scope_fingerprint']} log={record['log_path']}")
-    return rc
+    print(f"EVIDENCE {vid} {'PASS' if effective_rc == 0 else 'FAIL'} scope={ws['scope_fingerprint']} log={record['log_path']}")
+    if acceptance_error:
+        print(f"{acceptance_error}: {vid}", file=sys.stderr)
+    return effective_rc
 
 
 def file_sha256(path: Path | None) -> str | None:
@@ -158,7 +243,39 @@ def build_manifest(plan: Path, output: Path | None = None) -> tuple[Path, dict]:
             "verification_id": vid, "command": rec.get("command"), "exit_code": rec.get("exit_code"),
             "result": rec.get("result"), "timestamp": rec.get("timestamp"), "policy": rec.get("policy"),
             "raw_log_ref": log_rel or None, "raw_log_sha256": file_sha256(log_path),
+            "claim_ids": rec.get("claim_ids") or [], "claim_results": rec.get("claim_results") or {},
+            "acceptance_mode": rec.get("acceptance_mode"), "evidence_action": rec.get("evidence_action"),
+            "candidate_id": rec.get("candidate_id"), "inherited": bool(rec.get("inherited")),
+            "source_manifest": rec.get("source_manifest"), "source_manifest_sha256": rec.get("source_manifest_sha256"),
+            "source_verification_id": rec.get("source_verification_id"),
         })
+
+    blocking_claim_records = []
+    acceptance_contract = "smc.acceptance.v1" if acceptance_enabled(plan) else None
+    if acceptance_contract:
+        for cid, claim in blocking_claims(plan).items():
+            claim_vids = [x.upper() for x in split_values(claim.get("Verification IDs", ""))]
+            claim_ok = bool(claim_vids)
+            for claim_vid in claim_vids:
+                status, rec = current_status(plan, claim_vid)
+                if status != "FRESH" or rec is None:
+                    claim_ok = False
+                    break
+                if str((rec.get("claim_results") or {}).get(cid, "")).upper() != "PASS":
+                    claim_ok = False
+                    break
+            if not claim_ok:
+                raise ValueError(f"EVIDENCE_MANIFEST_BLOCKING_CLAIM_NOT_PASS: {cid}")
+            blocking_claim_records.append({
+                "claim_id": cid,
+                "requirement": strip_md(claim.get("Requirement", "")),
+                "result": "PASS",
+                "verification_ids": claim_vids,
+                "evidence_action": strip_md(claim.get("Evidence Action", "")).upper(),
+                "prior_evidence": strip_md(claim.get("Prior Evidence", "")) or None,
+            })
+
+    candidate_state, candidate = candidate_status(plan) if acceptance_contract else ("MISSING", None)
     payload = {
         "schema": MANIFEST_SCHEMA,
         "plan_id": pid,
@@ -171,6 +288,9 @@ def build_manifest(plan: Path, output: Path | None = None) -> tuple[Path, dict]:
         "completion_audit": {k: (audit or {}).get(k) for k in ("verdict", "total_items", "done", "changed", "deferred", "unverifiable", "scope_drift", "timestamp")},
         "implementation_review": {"reviewer": (implementation_review or {}).get("reviewer"), "verdict": (implementation_review or {}).get("verdict"), "scope_fingerprint": (implementation_review or {}).get("scope_fingerprint"), "timestamp": (implementation_review or {}).get("timestamp")},
         "blocking_verifications": verification_records,
+        "acceptance_contract": acceptance_contract,
+        "blocking_claims": blocking_claim_records,
+        "verification_candidate": candidate if candidate_state == "FRESH" else None,
     }
     payload["payload_sha256"] = payload_sha256(payload)
     out = output.resolve() if output else default_manifest_path(root, pid)
@@ -185,7 +305,7 @@ def manifest_status(plan: Path, expected_fingerprint: str | None = None, require
     if not path.is_file(): return "MISSING", None, path
     try: data = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError: return "INVALID", None, path
-    if data.get("schema") != MANIFEST_SCHEMA or data.get("plan_id") != pid: return "INVALID", data, path
+    if data.get("schema") not in {"smc.evidence.manifest.v2", MANIFEST_SCHEMA} or data.get("plan_id") != pid: return "INVALID", data, path
     stored_digest = data.get("payload_sha256"); check_payload = dict(data); check_payload.pop("payload_sha256", None)
     if stored_digest != payload_sha256(check_payload): return "INVALID", data, path
     ws = workspace_inspect(plan)

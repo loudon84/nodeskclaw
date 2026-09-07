@@ -190,19 +190,23 @@ class DeliveryToolsTest(unittest.TestCase):
         self.assertEqual(0, rc)
 
     def test_cursor_projection_valid(self):
+        # @lat: [[ges-tests#GES Tests#Plan contract#Cursor projection is valid]]
         self.assertEqual([], plan_state.validate(self.plan))
         item = plan_state.cursor_todos(self.plan.read_text(encoding="utf-8"))[0]
         self.assertEqual("T1 — change app [C01]", item["content"])
 
     def test_cursor_projection_missing_fails_v34(self):
+        # @lat: [[ges-tests#GES Tests#Plan contract#Missing content fails v3.4]]
         self.plan.write_text(self.plan.read_text().replace('    content: "T1 — change app [C01]"\n', ""), encoding="utf-8")
         self.assertTrue(any(x.startswith("PLAN_CURSOR_TODO_CONTENT_MISSING") for x in plan_state.validate(self.plan)))
 
     def test_cursor_projection_drift_fails_v34(self):
+        # @lat: [[ges-tests#GES Tests#Plan contract#Content drift fails v3.4]]
         self.plan.write_text(self.plan.read_text().replace("change app [C01]", "old title [C01]"), encoding="utf-8")
         self.assertTrue(any(x.startswith("PLAN_CURSOR_TODO_CONTENT_DRIFT") for x in plan_state.validate(self.plan)))
 
     def test_set_status_preserves_content(self):
+        # @lat: [[ges-tests#GES Tests#Plan contract#Status update preserves content]]
         before = plan_state.cursor_todos(self.plan.read_text())[0]["content"]
         plan_state.set_status(self.plan, "T1", "completed")
         item = plan_state.cursor_todos(self.plan.read_text())[0]
@@ -210,6 +214,7 @@ class DeliveryToolsTest(unittest.TestCase):
         self.assertEqual("completed", item["status"])
 
     def test_semantic_hash_ignores_status_and_projection_only(self):
+        # @lat: [[ges-tests#GES Tests#Plan contract#Semantic hash ignores runtime fields]]
         a = common.semantic_plan_sha256(self.plan)
         plan_state.set_status(self.plan, "T1", "completed")
         b = common.semantic_plan_sha256(self.plan)
@@ -221,22 +226,26 @@ class DeliveryToolsTest(unittest.TestCase):
         self.assertNotEqual(a, common.semantic_plan_sha256(self.plan))
 
     def test_plan_review_survives_runtime_status(self):
+        # @lat: [[ges-tests#GES Tests#Proof freshness#Plan review survives runtime status]]
         review_record.record("plan", self.plan, "PASS", "test")
         self.assertEqual("FRESH_PASS", review_record.latest_status(self.plan, "plan")[0])
         plan_state.set_status(self.plan, "T1", "completed")
         self.assertEqual("FRESH_PASS", review_record.latest_status(self.plan, "plan")[0])
 
     def test_workspace_refresh_cannot_hide_implementation_delta(self):
+        # @lat: [[ges-tests#GES Tests#Workspace#Refresh cannot hide implementation delta]]
         workspace.init(self.plan)
         (self.root / "app.py").write_text("print('changed')\n", encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "DELIVERY_WORKSPACE_REFRESH_AFTER_MUTATION"):
             workspace.init(self.plan, refresh=True)
 
     def test_workspace_requires_explicit_init(self):
+        # @lat: [[ges-tests#GES Tests#Workspace#Requires explicit init]]
         with self.assertRaisesRegex(ValueError, "DELIVERY_WORKSPACE_BASELINE_MISSING"):
             workspace.inspect(self.plan)
 
     def test_workspace_allows_ambient_preexisting(self):
+        # @lat: [[ges-tests#GES Tests#Workspace#Allows ambient preexisting]]
         (self.root / "notes.md").write_text("other task\n", encoding="utf-8")
         data = self.init_workspace()
         self.assertIn("notes.md", data["ambient_preexisting"])
@@ -244,17 +253,20 @@ class DeliveryToolsTest(unittest.TestCase):
         self.assertTrue(status["pass"], status)
 
     def test_workspace_target_conflict_blocks(self):
+        # @lat: [[ges-tests#GES Tests#Workspace#Target conflict blocks]]
         (self.root / "app.py").write_text("dirty before delivery\n", encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "DELIVERY_TARGET_CONFLICT"):
             self.init_workspace()
 
     def test_workspace_tooling_conflict_blocks(self):
+        # @lat: [[ges-tests#GES Tests#Workspace#Tooling conflict blocks]]
         path = self.root / ".agents/skills/smc-plan-validator/SKILL.md"
         path.parent.mkdir(parents=True); path.write_text("dirty tooling\n", encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "DELIVERY_TOOLING_BLOCKED"):
             self.init_workspace()
 
     def test_workspace_ambient_mutation_blocks(self):
+        # @lat: [[ges-tests#GES Tests#Workspace#Ambient mutation blocks]]
         (self.root / "notes.md").write_text("other task\n", encoding="utf-8")
         self.init_workspace()
         (self.root / "notes.md").write_text("changed\n", encoding="utf-8")
@@ -262,12 +274,14 @@ class DeliveryToolsTest(unittest.TestCase):
             workspace.assert_stable(self.plan)
 
     def test_workspace_scope_drift_blocks(self):
+        # @lat: [[ges-tests#GES Tests#Workspace#Scope drift blocks]]
         self.init_workspace()
         (self.root / "surprise.py").write_text("x=1\n", encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "DELIVERY_SCOPE_DRIFT"):
             workspace.assert_stable(self.plan)
 
     def test_workspace_head_drift_blocks(self):
+        # @lat: [[ges-tests#GES Tests#Workspace#HEAD drift blocks]]
         self.init_workspace()
         # Commit an unrelated file from a clean state to move HEAD.
         (self.root / "other.txt").write_text("x\n", encoding="utf-8")
@@ -277,12 +291,14 @@ class DeliveryToolsTest(unittest.TestCase):
             workspace.assert_stable(self.plan)
 
     def test_workspace_plan_semantic_drift_blocks(self):
+        # @lat: [[ges-tests#GES Tests#Workspace#Plan semantic drift blocks]]
         self.init_workspace()
         self.plan.write_text(self.plan.read_text().replace("- In: x", "- In: changed"), encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "DELIVERY_PLAN_SEMANTIC_DRIFT"):
             workspace.assert_stable(self.plan)
 
     def test_completion_precheck_with_ambient_dirty(self):
+        # @lat: [[ges-tests#GES Tests#Workspace#Completion precheck allows ambient dirty]]
         (self.root / "notes.md").write_text("other task\n", encoding="utf-8")
         self.init_workspace(); self.implement()
         pre = completion_audit.precheck(self.plan)
@@ -290,6 +306,7 @@ class DeliveryToolsTest(unittest.TestCase):
         self.assertEqual(["app.py"], pre["changed_files"])
 
     def test_completion_precheck_rejects_unplanned_file(self):
+        # @lat: [[ges-tests#GES Tests#Workspace#Completion precheck rejects unplanned files]]
         self.init_workspace(); self.implement()
         (self.root / "surprise.py").write_text("x=1\n", encoding="utf-8")
         pre = completion_audit.precheck(self.plan)
@@ -297,6 +314,7 @@ class DeliveryToolsTest(unittest.TestCase):
         self.assertIn("surprise.py", pre["unexpected_changed_files"])
 
     def test_completion_audit_freshness_is_scope_bound(self):
+        # @lat: [[ges-tests#GES Tests#Proof freshness#Completion audit is scope-bound]]
         self.init_workspace(); self.implement()
         result = self.root / ".smc" / "audit.json"
         result.parent.mkdir(parents=True, exist_ok=True)
@@ -307,6 +325,7 @@ class DeliveryToolsTest(unittest.TestCase):
         self.assertEqual("STALE", completion_audit.check(self.plan)[0])
 
     def test_implementation_review_scope_freshness(self):
+        # @lat: [[ges-tests#GES Tests#Proof freshness#Implementation review is scope-bound]]
         self.init_workspace(); self.implement()
         review_record.record("implementation", self.plan, "PASS", "test")
         self.assertEqual("FRESH_PASS", review_record.latest_status(self.plan, "implementation")[0])
@@ -314,12 +333,14 @@ class DeliveryToolsTest(unittest.TestCase):
         self.assertEqual("STALE", review_record.latest_status(self.plan, "implementation")[0])
 
     def test_evidence_command_must_match_plan(self):
+        # @lat: [[ges-tests#GES Tests#Proof freshness#Evidence command must match plan]]
         self.init_workspace()
         rc = evidence.run_cmd(self.plan, "V01", ["python", "-c", "print('wrong')"])
         self.assertEqual(2, rc)
         self.assertEqual("MISSING", evidence.current_status(self.plan, "V01")[0])
 
     def test_evidence_scope_freshness(self):
+        # @lat: [[ges-tests#GES Tests#Proof freshness#Evidence freshness is scope-bound]]
         self.init_workspace(); self.implement()
         rc = evidence.run_cmd(self.plan, "V01", ["python", "-c", "print('ok')"])
         self.assertEqual(0, rc)
@@ -328,6 +349,7 @@ class DeliveryToolsTest(unittest.TestCase):
         self.assertEqual("STALE", evidence.current_status(self.plan, "V01")[0])
 
     def test_durable_manifest_is_scope_neutral_and_fresh(self):
+        # @lat: [[ges-tests#GES Tests#Proof freshness#Durable manifest is scope-neutral]]
         self.prepare_full_proof()
         before = workspace.scope_fingerprint(self.plan)
         path, payload = evidence.build_manifest(self.plan)
@@ -337,6 +359,7 @@ class DeliveryToolsTest(unittest.TestCase):
         self.assertEqual(before, payload["scope_fingerprint"])
 
     def test_execution_context_resume_and_error_attempts(self):
+        # @lat: [[ges-tests#GES Tests#Execution context#Resume tracks attempts]]
         self.init_workspace()
         delivery_state.transition(self.plan, "PLAN_STATIC_VALID")
         delivery_state.transition(self.plan, "PLAN_REVIEW_CLEARED")
@@ -378,6 +401,7 @@ class DeliveryToolsTest(unittest.TestCase):
         self.assertEqual("newer-a", resume["last_event"]["summary"])
 
     def test_continuation_gate_stall_guard(self):
+        # @lat: [[ges-tests#GES Tests#Execution context#Continuation gate is not completion]]
         self.init_workspace(); plan_state.set_status(self.plan, "T1", "in_progress")
         execution_context.append_event(self.plan, "TODO_STARTED", todo="T1", summary="begin")
         first = execution_context.continuation_gate(self.plan, cap=3)
@@ -387,6 +411,7 @@ class DeliveryToolsTest(unittest.TestCase):
         self.assertIn("no execution progress", second["reason"])
 
     def test_commit_guard_allows_stable_ambient_dirty(self):
+        # @lat: [[ges-tests#GES Tests#Commit#Commit guard allows stable ambient dirty]]
         (self.root / "notes.md").write_text("other task\n", encoding="utf-8")
         self.prepare_full_proof()
         evidence.build_manifest(self.plan)
@@ -403,6 +428,7 @@ class DeliveryToolsTest(unittest.TestCase):
         self.assertIn("notes.md", workspace.dirty_paths(self.root))
 
     def test_repo_relative_path_accepts_filesystem_alias(self):
+        # @lat: [[ges-tests#GES Tests#Commit#Path identity accepts filesystem alias]]
         alias_root = self.root.parent / (self.root.name + "-SHORT")
         alias_plan = alias_root / ".cursor" / "plans" / "rm-01.plan.md"
         original_same = common.paths_same

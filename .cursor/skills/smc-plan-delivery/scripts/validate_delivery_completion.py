@@ -7,9 +7,10 @@ import subprocess
 import sys
 from pathlib import Path
 
-from common import find_repo_root, parse_first_table, parse_top_level_frontmatter, plan_id, section, strip_md
+from common import find_repo_root, parse_first_table, parse_top_level_frontmatter, plan_id, section, split_values, strip_md
 from completion_audit import check as audit_check
 from evidence import current_status as evidence_status, manifest_status
+from acceptance import acceptance_enabled, blocking_claims, candidate_status, verification_meta
 from plan_state import cursor_todos, smc_todo_id, validate as validate_todos
 from review_record import latest_status as review_status
 from workspace import inspect as workspace_inspect
@@ -57,11 +58,41 @@ def validate(plan: Path) -> tuple[list[str], dict]:
     if rstatus != "FRESH_PASS": errors.append(f"DELIVERY_IMPLEMENTATION_REVIEW_{rstatus}")
 
     evidence = {}
+    evidence_records = {}
     for vid in blocking_verifications(plan):
-        status, _ = evidence_status(plan, vid); evidence[vid] = status
+        status, rec = evidence_status(plan, vid); evidence[vid] = status; evidence_records[vid] = rec
         if status != "FRESH": errors.append(f"DELIVERY_EVIDENCE_{status}: {vid}")
     details["evidence"] = evidence
     if not evidence: errors.append("DELIVERY_BLOCKING_VERIFICATION_MISSING")
+
+    if acceptance_enabled(plan):
+        claim_status = {}
+        for cid, claim in blocking_claims(plan).items():
+            vids = [x.upper() for x in split_values(claim.get("Verification IDs", ""))]
+            ok = bool(vids)
+            for vid in vids:
+                rec = evidence_records.get(vid)
+                if evidence.get(vid) != "FRESH" or rec is None:
+                    ok = False
+                    break
+                if str((rec.get("claim_results") or {}).get(cid, "")).upper() != "PASS":
+                    ok = False
+                    break
+            claim_status[cid] = "PASS" if ok else "FAIL"
+            if not ok:
+                errors.append(f"DELIVERY_BLOCKING_CLAIM_NOT_PASS: {cid}")
+        details["acceptance_claims"] = claim_status
+
+        candidate_state, candidate = candidate_status(plan)
+        details["verification_candidate"] = {"status": candidate_state, "candidate_id": (candidate or {}).get("candidate_id")}
+        for vid, rec in evidence_records.items():
+            if rec is None:
+                continue
+            meta = verification_meta(plan, vid)
+            if meta["acceptance_mode"] in {"LIVE", "FAULT_INJECTION", "EXTERNAL"} and meta["evidence_action"] != "REUSE_EVIDENCE":
+                expected = (candidate or {}).get("candidate_id") if candidate_state == "FRESH" else None
+                if not expected or rec.get("candidate_id") != expected:
+                    errors.append(f"DELIVERY_LIVE_CANDIDATE_MISMATCH: {vid}")
 
     manifest_state, _, manifest_path = manifest_status(plan)
     details["evidence_manifest"] = {"status": manifest_state, "path": str(manifest_path)}
