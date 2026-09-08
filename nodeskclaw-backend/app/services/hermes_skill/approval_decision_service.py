@@ -226,4 +226,5 @@ async def submit_approval_decision(
         if raced is None:
             raise
         return _replay_or_conflict(raced, idempotency_key=key, decision=decision)
+    await db.commit()
     return receipt

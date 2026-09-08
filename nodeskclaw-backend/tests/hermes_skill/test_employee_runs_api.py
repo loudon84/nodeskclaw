@@ -43,6 +43,7 @@ def _empty_ledger_db(db: AsyncMock) -> AsyncMock:
     db.begin_nested = MagicMock(return_value=nested)
     db.add = MagicMock()
     db.flush = AsyncMock()
+    db.commit = AsyncMock()
     return db
 
 
@@ -638,6 +639,7 @@ async def test_decide_run_approval_returns_bare_receipt():
     assert "decided_at" in res
     assert "code" not in res
     assert "data" not in res
+    db.commit.assert_awaited_once()
     mock_post.assert_called_once_with(
         "/internal/v1/runs/run-1/approvals/app-1",
         json_body={"decision": "approve"},
@@ -769,6 +771,7 @@ async def test_idempotency_replay_returns_frozen_receipt_without_second_post():
         )
     assert res == existing.response_body
     mock_post.assert_not_called()
+    db.commit.assert_not_awaited()
 
 
 @pytest.mark.asyncio
