@@ -11,6 +11,8 @@
 - Plan Review：`docs_agent/reviews/rm-09-plan-initial-review.md`（PASS）；V07 oracle 修订后 `plan_sha256: sha256:e31cb11c728c86061f5e6cf8373be69ec07aa84454cd157dd02bee849dff9927`
 - Production baseline / grounded_commit：`2ed2f13796d813f9f5ad09bddc937185ae4ba181`
 - Docs HEAD at execute：`999bdcb472c03a9b487abeb9f7bfa6134f4785fe`（PRD APPROVED + Roadmap IN_PRD）
+- Implementation Commit：`d705ce7c956ac190fba610148e279318fe73ecc0`
+- Roadmap DONE commit：`736351d8037b75cdfcd6f8b15182da59caabedce`
 - RM-08 freeze commit：`ddf8a6538343f27d23593362a66cc3e1e2d3dc55`
 - Annotated tag：`skill-agent-contract-v1.0.0`（禁止 `git tag -f`；未 push）
 
