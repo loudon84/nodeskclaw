@@ -390,6 +390,61 @@ class EdgeWorker:
         )
         response.raise_for_status()
         self.last_heartbeat_at = datetime.now(timezone.utc)
+        wrapped = response.json().get("data") or {}
+        state = self._channel.load()
+        if not state or not isinstance(wrapped, dict):
+            return
+        payload = self._channel.verify_command_envelope(
+            state, wrapped, expected_purpose="node.heartbeat"
+        )
+        if not payload:
+            logger.warning("edge heartbeat envelope verification failed node_id=%s", self._node_id)
+            return
+        await self._maybe_complete_rotation(client, payload)
+
+    async def _maybe_complete_rotation(
+        self,
+        client: httpx.AsyncClient,
+        heartbeat_payload: dict[str, Any],
+    ) -> None:
+        expires_raw = heartbeat_payload.get("identity_rotation_expires_at")
+        if not expires_raw:
+            return
+        try:
+            expires = datetime.fromisoformat(str(expires_raw).replace("Z", "+00:00"))
+        except ValueError:
+            logger.warning("edge rotation window timestamp invalid node_id=%s", self._node_id)
+            return
+        if expires < datetime.now(timezone.utc):
+            return
+        new_private_key, new_public_key = self._channel.generate_rotation_keypair()
+        body = {"new_public_key": new_public_key}
+        rotate_url = f"{self._base_url}/api/v1/internal/edge/rotate"
+        response = await client.post(
+            rotate_url,
+            headers=self._request_headers(
+                method="POST",
+                path="/api/v1/internal/edge/rotate",
+                json_body=body,
+            ),
+            json=body,
+        )
+        response.raise_for_status()
+        data = response.json().get("data") or {}
+        state = self._channel.load()
+        if not state:
+            return
+        self._channel.apply_rotation_response(
+            state,
+            data,
+            new_private_key=new_private_key,
+            new_public_key=new_public_key,
+        )
+        logger.info(
+            "edge identity rotation completed node_id=%s identity_version=%s",
+            state.node_id,
+            state.identity_version,
+        )
 
     async def _claim_job(self, client: httpx.AsyncClient) -> dict[str, Any] | None:
         url = f"{self._base_url}/api/v1/internal/edge/jobs"

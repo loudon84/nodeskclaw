@@ -2572,6 +2572,7 @@ const enUS = {
       colName: "Name",
       colId: "Node ID",
       colStatus: "Status",
+      colRotationExpires: "Rotation expires",
       colHeartbeat: "Last heartbeat",
       colCreatedAt: "Created",
       colActions: "Actions",
@@ -2587,6 +2588,7 @@ const enUS = {
       disableSuccess: "Node disabled",
       enableSuccess: "Node enabled",
       rotateSuccess: "Rotation window opened; the edge agent will submit a new public key with the current identity",
+      rotatePendingHint: "Waiting for the edge agent to finish binding",
       revokeSuccess: "Node identity revoked",
       actionFailed: "Action failed. Check node status or contact an administrator.",
       confirmDisable: "Disable this edge node? It will not send or receive control operations.",
@@ -2596,6 +2598,7 @@ const enUS = {
         stale: "Stale",
         disabled: "Disabled",
         pending: "Pending",
+        rotating: "Rotating",
       },
     },
     imports: {

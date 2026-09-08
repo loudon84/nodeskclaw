@@ -656,52 +656,64 @@ class RuntimeSkillRunService:
             "expires_at": None,
         }
 
+    def _raise_attachment_contract_error(self, exc: Exception) -> None:
+        from app.services.hermes_skill.public_attachment_service import PublicAttachmentContractError
+
+        if not isinstance(exc, PublicAttachmentContractError):
+            raise exc
+        if exc.status_code == 400:
+            raise BadRequestError(exc.message, exc.message_key) from exc
+        raise ForbiddenError(exc.message, exc.message_key) from exc
+
+    # @lat: [[architecture/skill-agent#RM-18 Public Attachment Input]]
     async def _assert_attachment_proofs(
         self,
-        workspace_id: str,
+        workspace_id: str | None,
         org_id: str,
         user_id: str,
         attachment_refs: list[str],
     ) -> list[dict[str, Any]]:
         from app.models.user import User
-        from app.services import file_reference_service
         from app.services import workspace_member_service as wm_service
+        from app.services.hermes_skill.public_attachment_service import (
+            PublicAttachmentContractError,
+            prove_org_user_attachment,
+        )
 
         user = await self.db.get(User, user_id)
         if user is None or not user.is_active:
             raise ForbiddenError("用户不存在", "errors.auth.user_not_found")
-        await wm_service.check_workspace_access(workspace_id, user, "send_chat", self.db)
+        if workspace_id:
+            await wm_service.check_workspace_access(workspace_id, user, "send_chat", self.db)
 
-        parsed_refs: list[dict[str, str]] = []
-        for ref in attachment_refs:
-            if ":" in ref:
-                source, file_id = ref.split(":", 1)
-                parsed_refs.append({"source": source, "file_id": file_id})
-            else:
-                parsed_refs.append({"source": file_reference_service.SOURCE_CHAT_ATTACHMENT, "file_id": ref})
-
-        resolved = await file_reference_service.resolve_message_file_references(
-            self.db,
-            workspace_id,
-            file_references=parsed_refs,
-        )
-        if len(resolved) != len(parsed_refs):
-            raise ForbiddenError(
-                "附件引用未授权或不可用",
-                "errors.run.attachment_proof_denied",
-            )
         descriptors: list[dict[str, Any]] = []
-        for item in resolved:
-            stable_id = f"{item.get('source')}:{item.get('file_id')}"
+        for ref in attachment_refs:
+            try:
+                row = await prove_org_user_attachment(
+                    self.db,
+                    org_id=org_id,
+                    user_id=user_id,
+                    attachment_ref=ref,
+                )
+            except PublicAttachmentContractError as exc:
+                self._raise_attachment_contract_error(exc)
+                raise
+            payload = {
+                "attachment_ref": row.attachment_ref,
+                "org_id": row.org_id,
+                "user_id": row.user_id,
+                "checksum_sha256": row.checksum_sha256,
+                "expires_at": row.expires_at.isoformat() if row.expires_at else None,
+            }
             auth_version = hashlib.sha256(
-                json.dumps(item, sort_keys=True, default=str).encode()
+                json.dumps(payload, sort_keys=True, default=str).encode()
             ).hexdigest()[:16]
             descriptors.append(
                 {
                     "type": "attachment",
-                    "stable_id": stable_id,
+                    "stable_id": row.attachment_ref,
                     "auth_version": auth_version,
-                    "expires_at": None,
+                    "expires_at": row.expires_at.isoformat() if row.expires_at else None,
                 }
             )
         return descriptors
@@ -752,11 +764,6 @@ class RuntimeSkillRunService:
             )
 
         if request.attachment_refs:
-            if not request.workspace_id:
-                raise BadRequestError(
-                    "附件引用需要 workspace_id",
-                    "errors.run.attachment_workspace_required",
-                )
             descriptors.extend(
                 await self._assert_attachment_proofs(
                     request.workspace_id,
@@ -831,11 +838,6 @@ class RuntimeSkillRunService:
         attachment_refs = [d["stable_id"] for d in descriptors if d.get("type") == "attachment"]
         if attachment_refs:
             workspace_id = workspace_ids[0] if workspace_ids else None
-            if not workspace_id:
-                raise ForbiddenError(
-                    "附件上下文缺少 workspace",
-                    "errors.run.attachment_workspace_required",
-                )
             proofs = await self._assert_attachment_proofs(workspace_id, org_id, user_id, attachment_refs)
             proof_versions = {proof["stable_id"]: proof.get("auth_version") for proof in proofs}
             for descriptor in descriptors:
@@ -925,6 +927,8 @@ class RuntimeSkillRunService:
                 content["invocation_id"] = request.invocation_id
             if request.request_trace_id:
                 content["request_trace_id"] = request.request_trace_id
+            if request.attachment_refs:
+                content["attachment_refs"] = list(request.attachment_refs)
             return content
 
         if status in ("queued", "accepted"):
@@ -971,4 +975,6 @@ class RuntimeSkillRunService:
             content["invocation_id"] = request.invocation_id
         if request.request_trace_id:
             content["request_trace_id"] = request.request_trace_id
+        if request.attachment_refs:
+            content["attachment_refs"] = list(request.attachment_refs)
         return content

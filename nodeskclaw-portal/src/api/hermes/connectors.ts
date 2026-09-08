@@ -121,6 +121,7 @@ export interface EdgeNode {
   name: string
   status: string
   last_heartbeat_at: string | null
+  identity_rotation_expires_at?: string | null
   created_by: string | null
   created_at: string | null
 }

@@ -351,6 +351,7 @@ class McpToolMapper:
         skill: HermesSkill,
         org_id: str,
         user_id: str,
+        auth_type: str | None = None,
     ) -> dict[str, Any]:
         published = await SkillReleaseService(self.db).get_published_by_skill_db_id(skill.id)
         release_extra = dict(published.extra_metadata or {}) if published else {}
@@ -388,6 +389,8 @@ class McpToolMapper:
                 prompt_field = None
 
         supports_attachments = bool(release_extra.get("supportsAttachments", False))
+        reachable_upload = bool(user_id) and (auth_type or "user_jwt") == "user_jwt"
+        supports_attachments = supports_attachments and reachable_upload
 
         raw_ann = release_extra.get("annotations") if isinstance(release_extra.get("annotations"), dict) else {}
         requires_approval = bool(

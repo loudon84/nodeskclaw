@@ -2572,6 +2572,7 @@ const zhCN = {
       colName: "名称",
       colId: "节点 ID",
       colStatus: "状态",
+      colRotationExpires: "轮换截止",
       colHeartbeat: "最近心跳",
       colCreatedAt: "创建时间",
       colActions: "操作",
@@ -2587,6 +2588,7 @@ const zhCN = {
       disableSuccess: "节点已禁用",
       enableSuccess: "节点已启用",
       rotateSuccess: "轮换窗口已开启，Edge Agent 将用当前身份提交新公钥",
+      rotatePendingHint: "等待 Edge Agent 完成绑定",
       revokeSuccess: "节点身份已撤销",
       actionFailed: "操作失败，请检查节点状态或联系管理员",
       confirmDisable: "确认禁用该 Edge 节点？禁用后将无法发起或接收控制操作。",
@@ -2596,6 +2598,7 @@ const zhCN = {
         stale: "心跳超时",
         disabled: "已禁用",
         pending: "待上线",
+        rotating: "轮换中",
       },
     },
     imports: {

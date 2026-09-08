@@ -1,0 +1,108 @@
+{
+  "$defs": {
+    "JsonRpcErrorBody": {
+      "properties": {
+        "code": {
+          "title": "Code",
+          "type": "integer"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "data": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JsonRpcErrorData"
+            },
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Data"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "JsonRpcErrorBody",
+      "type": "object"
+    },
+    "JsonRpcErrorData": {
+      "properties": {
+        "errorCode": {
+          "title": "Errorcode",
+          "type": "string"
+        },
+        "message_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Message Key"
+        },
+        "forbiddenKeys": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Forbiddenkeys"
+        }
+      },
+      "required": [
+        "errorCode"
+      ],
+      "title": "JsonRpcErrorData",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "jsonrpc": {
+      "default": "2.0",
+      "title": "Jsonrpc",
+      "type": "string"
+    },
+    "id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Id"
+    },
+    "error": {
+      "$ref": "#/$defs/JsonRpcErrorBody"
+    }
+  },
+  "required": [
+    "error"
+  ],
+  "title": "JsonRpcErrorResponse",
+  "type": "object"
+}

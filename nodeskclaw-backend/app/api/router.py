@@ -39,6 +39,7 @@ from app.api.webhooks import router as webhook_router
 from app.api.blackboard import router as blackboard_router
 from app.api.performance import router as performance_router
 from app.api.runs import router as runs_router
+from app.api.attachments import router as attachments_router
 from app.api.workspaces import router as workspace_router
 from app.api.templates import router as template_router
 from app.api.workspace_deploys import router as workspace_deploys_router
@@ -213,6 +214,7 @@ api_router.include_router(hermes_skill_router, prefix="/hermes", tags=["Hermes S
 api_router.include_router(hermes_experts_router, prefix="/hermes-experts", tags=["Hermes Expert"])
 api_router.include_router(expert_router, prefix="/expert", tags=["Expert MCP Gateway"])
 api_router.include_router(runs_router, tags=["Runs"])
+api_router.include_router(attachments_router, tags=["Attachments"])
 api_router.include_router(internal_edge_router, tags=["Internal Edge"])
 api_router.include_router(internal_skill_agent_router, tags=["Internal Skill Agent"])
 api_router.include_router(desktop_genehub_router, tags=["Desktop GeneHub"])

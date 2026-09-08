@@ -485,3 +485,51 @@ def test_build_structured_content_employee_queued_without_hermes_token():
     assert content["artifact_url"] == "/api/v1/runs/run-2/artifacts"
     assert "task_no" not in content
     assert "task_id" not in content
+
+
+# @lat: [[architecture/skill-agent#RM-18 Public Attachment Input]]
+def test_frozen_attachment_refs_copy_ignores_camel_case_aliases():
+    from app.services.mcp_skill_gateway.handler import _copy_frozen_attachment_refs
+
+    copied = _copy_frozen_attachment_refs(
+        {
+            "client_context": {
+                "attachment_refs": ["att_a"],
+                "attachmentRefs": ["att_b"],
+            },
+            "attachment_refs": ["att_c"],
+            "clientContext": {"attachment_refs": ["att_d"]},
+        },
+        {"desktop_device_id": "dev-1"},
+    )
+    assert copied["attachment_refs"] == ["att_a"]
+    ignored = _copy_frozen_attachment_refs(
+        {"clientContext": {"attachment_refs": ["att_d"]}},
+        {"desktop_device_id": "dev-1"},
+    )
+    assert "attachment_refs" not in (ignored or {})
+
+
+def test_runtime_session_and_attachment_refs_snake_case_only():
+    from app.services.hermes_skill.mcp_tool_mapper import _runtime_session_and_attachment_refs
+
+    _, refs = _runtime_session_and_attachment_refs(
+        {"attachment_refs": ["att_a"], "attachmentRefs": ["nope"]}
+    )
+    assert refs == ["att_a"]
+
+
+def test_map_app_error_nests_canonical_attachment_fields():
+    from app.services.mcp_skill_gateway.errors import map_app_error
+
+    payload = map_app_error(
+        "1",
+        "errors.run.attachment_ref_invalid",
+        "附件引用格式无效",
+    )
+    data = payload["error"]["data"]
+    assert data["error_code"] == "ATTACHMENT_REF_INVALID"
+    assert data["message_key"] == "errors.run.attachment_ref_invalid"
+    assert data["message"] == "附件引用格式无效"
+    assert payload["error"]["code"] != 400
+

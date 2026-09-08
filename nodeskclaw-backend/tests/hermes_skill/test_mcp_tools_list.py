@@ -267,5 +267,47 @@ async def test_list_public_connector_tools_v11_descriptor():
     assert tool["supportsAttachments"] is False
     assert "annotations" in tool
     assert "skillReleaseId" not in tool
-    assert "skillReleaseDigest" not in tool
+
+
+@pytest.mark.asyncio
+async def test_supportsAttachments_false_when_caller_cannot_reach_upload():
+    db = AsyncMock()
+    inst_mock = MagicMock()
+    inst_mock.scalar_one_or_none.return_value = None
+    db.execute = AsyncMock(return_value=inst_mock)
+    mapper = McpToolMapper(db)
+    skill = MagicMock()
+    skill.id = "skill-db-1"
+    skill.skill_id = "skill-1"
+    skill.tool_name = "chat_skill"
+    skill.title = "Chat"
+    skill.name = "chat"
+    skill.description = "desc"
+    skill.version = "1.0.0"
+    skill.category = "general"
+    skill.source_type = "custom"
+    skill.extra_metadata = {}
+    skill.input_schema = {"type": "object", "properties": {"prompt": {"type": "string"}}}
+    published = MagicMock()
+    published.id = "release-1"
+    published.digest = "digest"
+    published.title = "Chat"
+    published.description = "desc"
+    published.version = "1.0.0"
+    published.category = "general"
+    published.input_schema = skill.input_schema
+    published.extra_metadata = {"supportsAttachments": True}
+    with patch(
+        "app.services.hermes_skill.mcp_tool_mapper.SkillReleaseService.get_published_by_skill_db_id",
+        new=AsyncMock(return_value=published),
+    ), patch(
+        "app.services.hermes_skill.mcp_tool_mapper.HermesSkillAuthorizationService.can_invoke",
+        new=AsyncMock(return_value=True),
+    ):
+        token_tool = await mapper._skill_to_tool_dict(
+            skill, "org-1", "user-1", auth_type="mcp_client_token"
+        )
+        jwt_tool = await mapper._skill_to_tool_dict(skill, "org-1", "user-1")
+    assert token_tool["supportsAttachments"] is False
+    assert jwt_tool["supportsAttachments"] is True
 

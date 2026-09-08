@@ -1,0 +1,47 @@
+{
+  "title": "ApprovalDecisionReceipt",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "run_id": {
+      "type": "string"
+    },
+    "approval_id": {
+      "type": "string"
+    },
+    "decision": {
+      "type": "string",
+      "enum": [
+        "allow",
+        "deny"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "CREATED",
+        "QUEUED",
+        "PREPARING",
+        "RUNNING",
+        "WAITING_APPROVAL",
+        "RESUMING",
+        "CANCELLING",
+        "COMPLETED",
+        "FAILED",
+        "CANCELLED",
+        "TIMED_OUT"
+      ]
+    },
+    "decided_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "run_id",
+    "approval_id",
+    "decision",
+    "status",
+    "decided_at"
+  ]
+}

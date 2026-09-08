@@ -184,6 +184,7 @@ class PublicSkillRunAccepted(PublicContractModel):
     result_url: str
     artifact_url: str
     execution_mode: Literal["async_event"]
+    attachment_refs: list[str] = Field(default_factory=list)
 
 
 class PublicToolsCallAccepted(PublicContractModel):

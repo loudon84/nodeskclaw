@@ -80,6 +80,21 @@ def _build_client_context(
     return cleaned or None
 
 
+# @lat: [[architecture/skill-agent#RM-18 Public Attachment Input]]
+def _copy_frozen_attachment_refs(params: dict | None, context: dict | None) -> dict | None:
+    payload = params or {}
+    client_ctx = payload.get("client_context")
+    if not isinstance(client_ctx, dict):
+        return context
+    refs = client_ctx.get("attachment_refs")
+    if not isinstance(refs, list):
+        return context
+    copied = [str(item) for item in refs if isinstance(item, str) and str(item).strip()]
+    merged = dict(context or {})
+    merged["attachment_refs"] = copied
+    return merged
+
+
 _REQUEST_SNAPSHOT_MAX_BYTES = 32 * 1024
 _SAFE_HEADER_PREFIXES = ("x-client", "x-proxy", "x-device", "x-nodeskclaw")
 
@@ -782,6 +797,7 @@ async def _handle_tools_call(
     normalized = _normalize_headers(request_headers)
     profile_name = auth_ctx.profile if auth_ctx and auth_ctx.profile else normalized.get(HEADER_HERMES_PROFILE.lower())
     client_context = _build_client_context(request_headers, auth_ctx)
+    client_context = _copy_frozen_attachment_refs(params, client_context)
     client_context = _inject_request_fingerprint(
         client_context,
         org_id=org_id,

@@ -21,7 +21,13 @@ from app.models.connector.edge_control_nonce import EdgeControlNonce
 from app.models.connector.edge_node import EdgeNode
 
 COMMAND_PURPOSES = frozenset(
-    {"job.claim", "install.desired", "artifact.on_demand", "job.cancel.check"}
+    {
+        "job.claim",
+        "install.desired",
+        "artifact.on_demand",
+        "job.cancel.check",
+        "node.heartbeat",
+    }
 )
 
 

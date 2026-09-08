@@ -947,6 +947,9 @@ def _validate_skill_run_release(manifest: dict[str, Any], *, version: str) -> No
     elif version == "1.3.0":
         contract_prefix = "nodeskclaw-backend/contracts/skill-run/v1.3.0/"
         release_diff_base = implementation_commit
+    elif version == "1.4.0":
+        contract_prefix = "nodeskclaw-backend/contracts/skill-run/v1.4.0/"
+        release_diff_base = implementation_commit
     else:
         if peeled_commit != _git_head():
             raise SystemExit(f"skill-run contract tag '{tag_name}' must point at the release commit")
@@ -961,7 +964,7 @@ def _validate_skill_run_release(manifest: dict[str, Any], *, version: str) -> No
         check=True,
     )
     changed_paths = [path for path in release_diff.stdout.splitlines() if path]
-    if version in {"1.2.1", "1.3.0"}:
+    if version in {"1.2.1", "1.3.0", "1.4.0"}:
         if not any(path.startswith(contract_prefix) for path in changed_paths):
             raise SystemExit(f"skill-run v{version} release tag must include contract bundle changes")
         return
@@ -974,7 +977,7 @@ def _check_skill_run_contracts(release: bool = False, version: str = "1.0.0") ->
     skill_run_root = SKILL_RUN_CONTRACTS_HOME / f"v{version}"
     if not skill_run_root.exists():
         raise SystemExit(f"Skill-run contract directory missing: {skill_run_root}")
-    if version in {"1.2.1", "1.3.0"}:
+    if version in {"1.2.1", "1.3.0", "1.4.0"}:
         _validate_skill_run_checksums_exact(skill_run_root)
         _validate_skill_run_public_boundary(skill_run_root)
         _validate_skill_run_fixtures(skill_run_root)
@@ -983,6 +986,8 @@ def _check_skill_run_contracts(release: bool = False, version: str = "1.0.0") ->
         _validate_skill_run_v11_negative_fixtures(skill_run_root)
         if version == "1.3.0":
             _validate_skill_run_v130_decision_artifacts(skill_run_root)
+        if version == "1.4.0":
+            _validate_skill_run_v140_attachment_artifacts(skill_run_root)
     else:
         _validate_checksums(skill_run_root)
         _validate_skill_run_fixtures(skill_run_root)
@@ -1000,7 +1005,7 @@ def _check_skill_run_contracts(release: bool = False, version: str = "1.0.0") ->
 def check_contracts(release: bool = False, family: str = "all", skill_run_version: str | None = None) -> None:
     sys.path.insert(0, str(BACKEND_ROOT))
     if family == "skill-run":
-        versions = [skill_run_version] if skill_run_version else ["1.0.0", "1.1.0", "1.2.0", "1.2.1", "1.3.0"]
+        versions = [skill_run_version] if skill_run_version else ["1.0.0", "1.1.0", "1.2.0", "1.2.1", "1.3.0", "1.4.0"]
         for version in versions:
             root = SKILL_RUN_CONTRACTS_HOME / f"v{version}"
             if not root.exists():
@@ -1046,7 +1051,7 @@ def check_contracts(release: bool = False, family: str = "all", skill_run_versio
 
     print("WORK-EXPERT-CONTRACT check passed")
 
-    for version in ("1.0.0", "1.1.0", "1.2.0", "1.2.1", "1.3.0"):
+    for version in ("1.0.0", "1.1.0", "1.2.0", "1.2.1", "1.3.0", "1.4.0"):
         root = SKILL_RUN_CONTRACTS_HOME / f"v{version}"
         if not root.exists():
             continue
@@ -2003,6 +2008,368 @@ def _generate_skill_run_v130_public_contract() -> None:
     print(f"Generated {SKILL_RUN_CONTRACT_NAME} at {root} (backendCommit={backend_commit})")
 
 
+def _v140_error_body(error_code: str, message_key: str) -> dict[str, Any]:
+    return {
+        "error_code": error_code,
+        "message_key": message_key,
+        "message": error_code,
+    }
+
+
+def _v140_upload_response_schema() -> dict[str, Any]:
+    return {
+        "title": "PublicAttachmentUploadReceipt",
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "attachment_ref": {"type": "string", "pattern": "^att_[A-Za-z0-9_-]+$"},
+            "name": {"type": "string"},
+            "size_bytes": {"type": "integer", "minimum": 0},
+            "checksum_sha256": {"type": "string"},
+            "content_type": {"type": "string"},
+            "expires_at": {"type": "string", "format": "date-time"},
+        },
+        "required": [
+            "attachment_ref",
+            "name",
+            "size_bytes",
+            "checksum_sha256",
+            "content_type",
+            "expires_at",
+        ],
+    }
+
+
+def _v140_error_schema() -> dict[str, Any]:
+    return {
+        "title": "PublicAttachmentCanonicalError",
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "error_code": {
+                "type": "string",
+                "enum": [
+                    "ATTACHMENT_UNAUTHORIZED",
+                    "ATTACHMENT_NOT_FOUND",
+                    "ATTACHMENT_EXPIRED",
+                    "ATTACHMENT_SCOPE_DENIED",
+                    "ATTACHMENT_REF_INVALID",
+                    "ATTACHMENT_TOO_LARGE",
+                    "ATTACHMENT_TYPE_UNSUPPORTED",
+                    "ATTACHMENT_SCAN_BLOCKED",
+                    "ATTACHMENT_NOT_SUPPORTED",
+                ],
+            },
+            "message_key": {"type": "string"},
+            "message": {"type": "string"},
+        },
+        "required": ["error_code", "message_key", "message"],
+    }
+
+
+def _patch_v140_accepted_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    defs = schema.get("$defs")
+    if not isinstance(defs, dict):
+        raise SystemExit("v1.4.0 tools-call response schema missing $defs")
+    key = "SkillRunAcceptedStructuredContentV11"
+    if key not in defs:
+        raise SystemExit("v1.4.0 tools-call response schema missing accepted structured content")
+    payload = dict(defs[key])
+    properties = dict(payload.get("properties") or {})
+    properties["attachment_refs"] = {
+        "title": "Attachment Refs",
+        "type": "array",
+        "items": {"type": "string"},
+        "default": [],
+    }
+    payload["properties"] = properties
+    defs[key] = payload
+    schema["$defs"] = defs
+    return schema
+
+
+def _validate_skill_run_v140_attachment_artifacts(root: Path) -> None:
+    import jsonschema
+
+    required = [
+        "runs/attachment-upload.response.schema.json",
+        "runs/attachment-error.schema.json",
+        "fixtures/attachment-upload-accepted.json",
+        "fixtures/attachment-ref-invalid.json",
+        "fixtures/attachment-expired.json",
+        "fixtures/attachment-scope-denied.json",
+        "fixtures/attachment-scan-blocked.json",
+        "fixtures/tools-call-attachment-binding.json",
+        "runs/approval-decision.request.schema.json",
+        "runs/approval-decision.response.schema.json",
+        "fixtures/approval-decision-allow.json",
+    ]
+    for relative in required:
+        if not (root / relative).is_file():
+            raise SystemExit(f"Missing skill-run v1.4.0 artifact: {relative}")
+
+    upload_schema = json.loads((root / "runs/attachment-upload.response.schema.json").read_text(encoding="utf-8"))
+    error_schema = json.loads((root / "runs/attachment-error.schema.json").read_text(encoding="utf-8"))
+    receipt = json.loads((root / "fixtures/attachment-upload-accepted.json").read_text(encoding="utf-8"))
+    jsonschema.validate(receipt, upload_schema)
+    if "workspace_id" in receipt:
+        raise SystemExit("v1.4.0 upload receipt must not include workspace_id")
+    for leak_key in ("storage_key", "object_key", "runtime_run_id", "artifact_id"):
+        if leak_key in receipt:
+            raise SystemExit(f"v1.4.0 upload receipt must not leak {leak_key}")
+    jsonschema.validate(
+        json.loads((root / "fixtures/attachment-ref-invalid.json").read_text(encoding="utf-8")),
+        error_schema,
+    )
+    jsonschema.validate(
+        json.loads((root / "fixtures/attachment-expired.json").read_text(encoding="utf-8")),
+        error_schema,
+    )
+    jsonschema.validate(
+        json.loads((root / "fixtures/attachment-scope-denied.json").read_text(encoding="utf-8")),
+        error_schema,
+    )
+    jsonschema.validate(
+        json.loads((root / "fixtures/attachment-scan-blocked.json").read_text(encoding="utf-8")),
+        error_schema,
+    )
+
+    binding = json.loads((root / "fixtures/tools-call-attachment-binding.json").read_text(encoding="utf-8"))
+    params = binding.get("params") if isinstance(binding, dict) else None
+    client_context = params.get("client_context") if isinstance(params, dict) else None
+    if not isinstance(client_context, dict) or "attachment_refs" not in client_context:
+        raise SystemExit("v1.4.0 binding fixture must use params.client_context.attachment_refs")
+    if "clientContext" in binding or (isinstance(params, dict) and "attachmentRefs" in params):
+        raise SystemExit("v1.4.0 binding fixture must not advertise camelCase aliases")
+    if isinstance(params, dict) and "attachment_refs" in params:
+        raise SystemExit("v1.4.0 binding fixture must not put attachment_refs at params top-level")
+
+    accepted = json.loads((root / "fixtures/tools-call-accepted.json").read_text(encoding="utf-8"))
+    structured = accepted.get("structuredContent") if isinstance(accepted, dict) else None
+    refs = structured.get("attachment_refs") if isinstance(structured, dict) else None
+    if not isinstance(refs, list) or not refs:
+        raise SystemExit("v1.4.0 accepted fixture must include opaque attachment_refs")
+    if any(not str(item).startswith("att_") for item in refs):
+        raise SystemExit("v1.4.0 accepted fixture refs must be opaque att_ tokens")
+
+    matrix = json.loads((root / "http/endpoint-matrix.json").read_text(encoding="utf-8"))
+    endpoints = matrix.get("endpoints") or []
+    upload_rows = [
+        row
+        for row in endpoints
+        if row.get("method") == "POST" and row.get("path") == "/api/v1/attachments"
+    ]
+    if not upload_rows:
+        raise SystemExit("v1.4.0 endpoint matrix missing POST /api/v1/attachments")
+    forbidden_upload = [
+        row
+        for row in endpoints
+        if "workspaces" in str(row.get("path") or "") and "upload" in str(row.get("path") or "").lower()
+    ]
+    if forbidden_upload:
+        raise SystemExit("v1.4.0 matrix Public upload must not be workspaces files/upload")
+    decision_rows = [
+        row
+        for row in endpoints
+        if row.get("path") == "/api/v1/runs/{run_id}/approvals/{approval_id}/decision"
+    ]
+    if not decision_rows:
+        raise SystemExit("v1.4.0 matrix must keep canonical approval decision path")
+
+    manifest = _read_manifest(root)
+    capabilities = manifest.get("capabilities") or {}
+    if capabilities.get("approvalDecision") != "supported" or capabilities.get("approval") != "supported":
+        raise SystemExit("v1.4.0 manifest must keep approvalDecision and approval supported")
+    if capabilities.get("attachments") != "supported":
+        raise SystemExit("v1.4.0 manifest must mark attachments supported")
+    if manifest.get("compatibility", {}).get("wireBreaking") is not False:
+        raise SystemExit("v1.4.0 manifest wireBreaking must be false")
+    if manifest.get("tagName") != "skill-run-contract-v1.4.0":
+        raise SystemExit("v1.4.0 manifest tagName must be skill-run-contract-v1.4.0")
+    release = (root / "RELEASE.md").read_text(encoding="utf-8")
+    compact = release.replace(" ", "")
+    if "attachments=supported" not in compact:
+        raise SystemExit("v1.4.0 RELEASE.md must declare attachments=supported")
+    if "approvalDecision=supported" not in compact:
+        raise SystemExit("v1.4.0 RELEASE.md must keep approvalDecision=supported")
+
+
+def _finalize_skill_run_v140_bundle(root: Path, *, backend_commit: str, release_commit: str | None) -> None:
+    from app.schemas.skill_run.constants import (
+        SKILL_RUN_CAPABILITIES,
+        SKILL_RUN_CONTRACT_NAME,
+        SKILL_RUN_CONTRACT_VERSION_V140,
+        SKILL_RUN_TAG_NAME_V140,
+    )
+
+    payload_hashes = {
+        str(path.relative_to(root)).replace("\\", "/"): _sha256_file(path)
+        for path in _public_artifact_files(root)
+    }
+    manifest = {
+        "contractName": SKILL_RUN_CONTRACT_NAME,
+        "contractVersion": SKILL_RUN_CONTRACT_VERSION_V140,
+        "bundleFormatVersion": "1",
+        "provider": "nodeskclaw-backend",
+        "consumer": "external-agent-clients",
+        "primaryConsumer": "smc-copilot/apps/work",
+        "backendCommit": backend_commit,
+        "releaseCommit": release_commit or backend_commit,
+        "tagName": SKILL_RUN_TAG_NAME_V140,
+        "generatedAt": _skill_run_generated_at(),
+        "compatibility": {
+            "supersedesForWork": ["1.0.0", "1.1.0", "1.2.0", "1.2.1", "1.3.0"],
+            "wireBreaking": False,
+        },
+        "artifacts": payload_hashes,
+        "capabilities": {
+            **SKILL_RUN_CAPABILITIES,
+            "catalogV11": True,
+            "semanticRunEvents": True,
+            "approvalDecision": "supported",
+            "approval": "supported",
+            "attachments": "supported",
+            "approvalExpiry": "unsupported",
+        },
+    }
+    _write_json_lf(root / "manifest.json", manifest)
+    bundle_hashes = {
+        str(path.relative_to(root)).replace("\\", "/"): _sha256_file(path)
+        for path in _public_artifact_files(root)
+    }
+    bundle_hashes["manifest.json"] = _sha256_file(root / "manifest.json")
+    checksum_lines = [f"{digest}  {relative}" for relative, digest in sorted(bundle_hashes.items())]
+    _write_text_lf(root / "SHA256SUMS", "\n".join(checksum_lines) + "\n")
+    _validate_skill_run_checksums_exact(root)
+    _validate_skill_run_public_boundary(root)
+    _validate_skill_run_fixtures(root)
+    _validate_skill_run_v12_event_fixtures(root)
+    _validate_skill_run_v12_negative_fixtures(root)
+    _validate_skill_run_v11_negative_fixtures(root)
+    _validate_skill_run_v140_attachment_artifacts(root)
+
+
+# @lat: [[architecture/skill-agent#RM-18 Public Attachment Input]]
+def _generate_skill_run_v140_public_contract() -> None:
+    import os
+
+    from app.schemas.skill_run.constants import (
+        SKILL_RUN_CONTRACT_NAME,
+        SKILL_RUN_CONTRACT_VERSION_V130,
+        SKILL_RUN_CONTRACT_VERSION_V140,
+        SKILL_RUN_TAG_NAME_V140,
+    )
+
+    source = SKILL_RUN_CONTRACTS_HOME / f"v{SKILL_RUN_CONTRACT_VERSION_V130}"
+    root = SKILL_RUN_CONTRACTS_HOME / f"v{SKILL_RUN_CONTRACT_VERSION_V140}"
+    if not source.exists():
+        raise SystemExit(f"v1.4.0 generate requires frozen v1.3.0 bundle at {source}")
+    if root.exists():
+        shutil.rmtree(root)
+    shutil.copytree(source, root)
+    (root / "SHA256SUMS").unlink(missing_ok=True)
+    (root / "manifest.json").unlink(missing_ok=True)
+
+    accepted_schema = json.loads((root / "mcp/tools-call.response.schema.json").read_text(encoding="utf-8"))
+    _write_json_lf(root / "mcp/tools-call.response.schema.json", _patch_v140_accepted_schema(accepted_schema))
+    _write_json_lf(root / "runs/attachment-upload.response.schema.json", _v140_upload_response_schema())
+    _write_json_lf(root / "runs/attachment-error.schema.json", _v140_error_schema())
+    _write_json_lf(
+        root / "capabilities/unsupported.schema.json",
+        {
+            "title": "CapabilityFlagsV140",
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "attachments": {"const": "supported", "type": "string"},
+                "approvalExpiry": {"const": "unsupported", "type": "string"},
+            },
+            "required": ["attachments", "approvalExpiry"],
+        },
+    )
+
+    matrix = json.loads((root / "http/endpoint-matrix.json").read_text(encoding="utf-8"))
+    endpoints = list(matrix.get("endpoints") or [])
+    endpoints.append(
+        {
+            "method": "POST",
+            "path": "/api/v1/attachments",
+            "success": [200],
+            "retry": "new-ref-allowed",
+            "headers": ["Authorization"],
+            "body": "multipart file",
+            "response": "bare attachment receipt",
+        }
+    )
+    matrix["endpoints"] = endpoints
+    _write_json_lf(root / "http/endpoint-matrix.json", matrix)
+
+    accepted = json.loads((root / "fixtures/tools-call-accepted.json").read_text(encoding="utf-8"))
+    structured = dict(accepted.get("structuredContent") or {})
+    structured["attachment_refs"] = ["att_live_example"]
+    structured["contract_version"] = SKILL_RUN_CONTRACT_VERSION_V140
+    accepted["structuredContent"] = structured
+    _write_json_lf(root / "fixtures/tools-call-accepted.json", accepted)
+    _write_json_lf(
+        root / "fixtures/unsupported-capabilities.json",
+        {"attachments": "supported", "approvalExpiry": "unsupported"},
+    )
+    _write_json_lf(
+        root / "fixtures/attachment-upload-accepted.json",
+        {
+            "attachment_ref": "att_live_example",
+            "name": "report.pdf",
+            "size_bytes": 123456,
+            "checksum_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "content_type": "application/pdf",
+            "expires_at": "2026-09-09T00:00:00Z",
+        },
+    )
+    _write_json_lf(
+        root / "fixtures/attachment-ref-invalid.json",
+        _v140_error_body("ATTACHMENT_REF_INVALID", "errors.run.attachment_ref_invalid"),
+    )
+    _write_json_lf(
+        root / "fixtures/attachment-expired.json",
+        _v140_error_body("ATTACHMENT_EXPIRED", "errors.run.attachment_expired"),
+    )
+    _write_json_lf(
+        root / "fixtures/attachment-scope-denied.json",
+        _v140_error_body("ATTACHMENT_SCOPE_DENIED", "errors.run.attachment_scope_denied"),
+    )
+    _write_json_lf(
+        root / "fixtures/attachment-scan-blocked.json",
+        _v140_error_body("ATTACHMENT_SCAN_BLOCKED", "errors.run.attachment_scan_blocked"),
+    )
+    _write_json_lf(
+        root / "fixtures/tools-call-attachment-binding.json",
+        {
+            "jsonrpc": "2.0",
+            "id": "1",
+            "method": "tools/call",
+            "params": {
+                "name": "writer.article",
+                "arguments": {},
+                "client_context": {"attachment_refs": ["att_live_example"]},
+            },
+        },
+    )
+    _write_text_lf(
+        root / "RELEASE.md",
+        f"# {SKILL_RUN_CONTRACT_NAME} v{SKILL_RUN_CONTRACT_VERSION_V140}\n\n"
+        "Cumulative Public Skill Run contract. Adds Public Attachment upload and opaque org/user refs on frozen v1.3.0.\n"
+        "approvalDecision=supported; approval=supported; attachments=supported; approvalExpiry=unsupported.\n"
+        "Public upload is POST /api/v1/attachments. Binding is params.client_context.attachment_refs only.\n"
+        "Accepted structuredContent includes opaque attachment_refs. wireBreaking=false.\n"
+        "Do not rewrite frozen v1.2.1 or v1.3.0. Tag name is "
+        f"{SKILL_RUN_TAG_NAME_V140}.\n",
+    )
+    backend_commit = os.environ.get("CONTRACT_BACKEND_COMMIT") or _git_head()
+    release_commit = os.environ.get("CONTRACT_RELEASE_COMMIT")
+    _finalize_skill_run_v140_bundle(root, backend_commit=backend_commit, release_commit=release_commit)
+    print(f"Generated {SKILL_RUN_CONTRACT_NAME} at {root} (backendCommit={backend_commit})")
+
+
 def generate_skill_run_contracts(version: str | None = None) -> None:
     from app.api.internal_edge import (
         EdgeActualReportBody,
@@ -2018,6 +2385,7 @@ def generate_skill_run_contracts(version: str | None = None) -> None:
         SKILL_RUN_CONTRACT_VERSION_V12,
         SKILL_RUN_CONTRACT_VERSION_V121,
         SKILL_RUN_CONTRACT_VERSION_V130,
+        SKILL_RUN_CONTRACT_VERSION_V140,
         SKILL_RUN_TAG_NAME,
     )
     from app.schemas.skill_run.mcp_jsonrpc import (
@@ -2041,6 +2409,9 @@ def generate_skill_run_contracts(version: str | None = None) -> None:
         return
     if version == SKILL_RUN_CONTRACT_VERSION_V130:
         _generate_skill_run_v130_public_contract()
+        return
+    if version == SKILL_RUN_CONTRACT_VERSION_V140:
+        _generate_skill_run_v140_public_contract()
         return
 
     _generate_skill_run_v10_public_contract()
@@ -2561,7 +2932,7 @@ def main() -> None:
     )
     generate_parser.add_argument(
         "--version",
-        choices=("1.0.0", "1.1.0", "1.2.0", "1.2.1", "1.3.0"),
+        choices=("1.0.0", "1.1.0", "1.2.0", "1.2.1", "1.3.0", "1.4.0"),
         help="Generate only the requested skill-run contract version",
     )
     check_parser = sub.add_parser("check", help="Validate committed contract artifacts")
@@ -2569,7 +2940,7 @@ def main() -> None:
     check_parser.add_argument("--family", choices=("work-expert", "skill-run", "all"), default="all")
     check_parser.add_argument(
         "--version",
-        choices=("1.0.0", "1.1.0", "1.2.0", "1.2.1", "1.3.0"),
+        choices=("1.0.0", "1.1.0", "1.2.0", "1.2.1", "1.3.0", "1.4.0"),
         help="Validate only the requested skill-run contract version",
     )
     args = parser.parse_args()

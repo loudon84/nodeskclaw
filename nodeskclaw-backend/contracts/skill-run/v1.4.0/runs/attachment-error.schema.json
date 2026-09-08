@@ -1,0 +1,32 @@
+{
+  "title": "PublicAttachmentCanonicalError",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "error_code": {
+      "type": "string",
+      "enum": [
+        "ATTACHMENT_UNAUTHORIZED",
+        "ATTACHMENT_NOT_FOUND",
+        "ATTACHMENT_EXPIRED",
+        "ATTACHMENT_SCOPE_DENIED",
+        "ATTACHMENT_REF_INVALID",
+        "ATTACHMENT_TOO_LARGE",
+        "ATTACHMENT_TYPE_UNSUPPORTED",
+        "ATTACHMENT_SCAN_BLOCKED",
+        "ATTACHMENT_NOT_SUPPORTED"
+      ]
+    },
+    "message_key": {
+      "type": "string"
+    },
+    "message": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "error_code",
+    "message_key",
+    "message"
+  ]
+}
