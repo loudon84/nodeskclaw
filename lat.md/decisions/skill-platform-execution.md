@@ -12,7 +12,7 @@ v1.6 保持既有 Production Owner 与信任边界，以独立 Roadmap Item 关�
 - Active Roadmap（活动路线图）：[ROADMAP-SKILL-AGENT-V16](../../docs_agent/roadmaps/ROADMAP-SKILL-AGENT-V16.md)（`1.7.0`）。
 - Current Stage PRD（当前阶段需求）：[RM-04 Strict Readiness 与 Production Acceptance](../../docs_agent/prd-v1.6.3-strict-readiness-production-acceptance.md)（`APPROVED`；Roadmap `IN_PRD`）。Public Contract Lane 已在 RM-17/RM-18 关闭。RM-07 / RM-10 仍为独立 `IN_PRD`。
 - RM-01：[Catalog 与 Run Control](../../docs_agent/prd-v1.6.0-skill-catalog-and-run-control.md)（Roadmap `DONE`）。
-- RM-02：[Semantic Run Events](../../docs_agent/prd-v1.6.1-semantic-run-events.md)（Roadmap `READY`；历史交付物保留；Conformance 出口对齐 RM-16 v1.6.15 live 包，不含 PC-05 / PC-08 live；修订 PRD 待审查，不得提前标 `DONE`）。
+- RM-02：[Semantic Run Events](../../docs_agent/prd-v1.6.1-semantic-run-events.md)（PRD `APPROVED` v1.6.1.1；Roadmap `IN_PRD`；历史交付物保留；Conformance 出口对齐 RM-16 v1.6.15 live 包，不含 PC-05 / PC-08 live；不得与 RM-16 `DONE` 混标）。
 - RM-03：[Edge Published Bundle Lifecycle](../../docs_agent/prd-v1.6.2-edge-published-bundle-lifecycle.md)（Roadmap `DONE`）。
 - RM-05：[Connector Runtime Execution Closure](../../docs_agent/prd-v1.6.4-connector-runtime-execution-closure.md)（Roadmap `DONE`；implementation `3611f371`，证据 `docs_agent/evidence/rm05-verification.md`）。
 - RM-06：[Session 与授权执行上下文](../../docs_agent/prd-v1.6.7-session-context-authorized-execution.md)（Roadmap `DONE`；证据 `docs_agent/evidence/rm06-verification.md`）。
