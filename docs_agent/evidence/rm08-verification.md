@@ -11,8 +11,8 @@
 - Plan Review：`docs_agent/reviews/rm-08-plan-initial-review.md`（PASS）
 - Production baseline / grounded_commit：`29006c0d6dfaeab5543b6951aa7b095c9edc656c`
 - Docs HEAD at execute：`76bb35eef19dd70527fa8949e6b612aa1dfb1397`（PRD APPROVED + Roadmap IN_PRD）
-- Implementation Commit：见 Roadmap RM-08 Implementation Commit 列
-- Annotated tag：`skill-agent-contract-v1.0.0`（指向 freeze commit；禁止 `git tag -f`；未 push）
+- Implementation Commit：`ddf8a6538343f27d23593362a66cc3e1e2d3dc55`
+- Annotated tag：`skill-agent-contract-v1.0.0` → peeled `ddf8a6538343f27d23593362a66cc3e1e2d3dc55`（禁止 `git tag -f`；未 push）
 - Implementation Review：`docs_agent/evidence/rm08-implementation-review.md`（PASS）
 
 ## Release Identity
@@ -23,6 +23,7 @@
 | contractVersion | 1.0.0 |
 | visibility | internal |
 | tagName | skill-agent-contract-v1.0.0 |
+| peeledTagCommit | `ddf8a6538343f27d23593362a66cc3e1e2d3dc55` |
 | Public skill-run | v1.2.1～v1.4.0 相对 grounded_commit 空 diff |
 
 ## Implementation Scope (Plan-owned)
@@ -47,7 +48,7 @@
 | V05 | `uv --directory nodeskclaw-agent run pytest tests/test_hermes_engine.py -q -k "unavailable or topology or capability"` | PASS（3 passed, 43 deselected） | 本证据复跑 |
 | V06 | `uv --directory nodeskclaw-agent run pytest tests/test_hermes_engine.py tests/test_run_service.py -q -k "topology_not_supported or platform_multi_agent"` | PASS（2 passed, 90 deselected） | 本证据复跑 |
 | V07 | `uv --directory nodeskclaw-agent run pytest tests/test_hermes_engine.py -q -k "execute_engine or subagent or multi_agent"` | PASS（5 passed, 41 deselected） | 本证据复跑 |
-| V08 | `git tag -l skill-agent-contract-v1.0.0`；`python nodeskclaw-backend/scripts/contracts.py check --family skill-agent --version 1.0.0 --release` | PASS after freeze tag（见本文件后续修订；tag 指向 implementation commit） | freeze commit 之后打 annotated tag，禁止 `-f` |
+| V08 | `git tag -l skill-agent-contract-v1.0.0`；`python nodeskclaw-backend/scripts/contracts.py check --family skill-agent --version 1.0.0 --release` | PASS（annotated tag；`SKILL-AGENT-CONTRACT v1.0.0 check passed`） | peeled = `ddf8a6538343f27d23593362a66cc3e1e2d3dc55`；未 `git tag -f` |
 | V09 | `uv --directory nodeskclaw-agent run pytest tests/test_execution_observability.py -q -k "delegation or allowlist or topology"` | PASS（2 passed, 34 deselected） | 本证据复跑 |
 | V10 | python 断言 ROADMAP RM-09 行仍 `BACKLOG` 且 Depends On 含 `RM-08` | PASS | 本证据复跑 |
 | V11 | `uv --directory nodeskclaw-agent run pytest tests/test_edge_control_channel.py tests/test_edge_worker.py -q -k "envelope or revalidate or command_seq or nonce"` | PASS（10 passed, 22 deselected） | 本证据复跑 |

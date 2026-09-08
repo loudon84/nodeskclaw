@@ -2,7 +2,7 @@
 
 **Verdict**: PASS  
 **Reviewer**: code-review-and-quality（五轴）  
-**Scope**: Plan-owned working-tree delta vs production baseline `29006c0d6dfaeab5543b6951aa7b095c9edc656c`（implementation commit 见 Roadmap RM-08 列）  
+**Scope**: Plan-owned working-tree delta vs production baseline `29006c0d6dfaeab5543b6951aa7b095c9edc656c`；implementation commit `ddf8a6538343f27d23593362a66cc3e1e2d3dc55`  
 **Plan**: `.cursor/plans/rm-08_shared-agent-execution-contract.plan.md`（`plan_id: RM-08`，`commit_policy: post_review`）  
 **PRD**: `docs_agent/prd-v1.6.17-shared-agent-execution-contract.md`
 
