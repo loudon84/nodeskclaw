@@ -1819,7 +1819,9 @@ def _validate_skill_run_v130_decision_artifacts(root: Path) -> None:
         if "approvalExpiry = unsupported" not in release and "approvalExpiry=unsupported" not in release:
             raise SystemExit("v1.3.0 RELEASE.md must freeze approvalExpiry=unsupported")
     if "FAILED" not in release:
-        raise SystemExit("v1.3.0 RELEASE.md must freeze deny Public terminal FAILED until live revises it")
+        raise SystemExit("v1.3.0 RELEASE.md must keep local no-binding deny terminal FAILED")
+    if "COMPLETED" not in release:
+        raise SystemExit("v1.3.0 RELEASE.md must freeze live deny Public terminal COMPLETED")
 
 
 def _finalize_skill_run_v130_bundle(root: Path, *, backend_commit: str, release_commit: str | None) -> None:
@@ -1991,7 +1993,7 @@ def _generate_skill_run_v130_public_contract() -> None:
         "Cumulative Public Skill Run contract. Adds canonical approval decision receipts on top of frozen v1.2.1.\n"
         "approvalDecision=supported; approval=supported; attachments=unsupported; approvalExpiry=unsupported.\n"
         "Public decision enum is allow|deny. Canonical path returns a bare receipt; accepted is not Run advanced.\n"
-        "Deny Public terminal default is FAILED (local no-binding path). Live may freeze a different observed terminal;\n"
+        "Deny Public terminal on Hermes binding REAL_PROCESS live is COMPLETED. Local no-binding path remains FAILED.\n"
         "do not rewrite deny as CANCELLED. Tag name is "
         f"{SKILL_RUN_TAG_NAME_V130}.\n",
     )

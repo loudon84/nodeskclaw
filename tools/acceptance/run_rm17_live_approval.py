@@ -369,6 +369,14 @@ def main() -> int:
         return 1
     emit_result({cid: "PASS" for cid in CLAIMS})
     print("RM-17 live public approval PASS")
+    print(
+        "auth_type="
+        + str(evidence.get("auth_type") or "")
+        + " deny_terminal="
+        + str(evidence.get("deny_terminal") or "")
+        + " allow_left_waiting="
+        + str(evidence.get("allow_left_waiting") or "")
+    )
     return 0
 
 

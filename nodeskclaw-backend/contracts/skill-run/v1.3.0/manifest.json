@@ -19,7 +19,7 @@
     "wireBreaking": false
   },
   "artifacts": {
-    "RELEASE.md": "779be45a6c6010719744e6003fec1be0ffdafe7200fd815f5b01ba92945b3a6b",
+    "RELEASE.md": "90acf8cda60ff74ad07bb85be55f6a43dd213fcfea06082126b1d73a3ac8dce0",
     "events/run-event.schema.json": "8bc844a31c31db7be514c8e11cc3138e85b7776e5e23b2a1ff858392e4e02d55",
     "mcp/json-rpc-error.schema.json": "70e6c99cd91bad60e4dc3058a79452cb93187589b3137d6ed6b098a843cc6893",
     "mcp/skill-tool-annotations.schema.json": "a1c823e7cda59642f46c128350b0d0422117416ce4b46d37c57e1568cd45454f",
