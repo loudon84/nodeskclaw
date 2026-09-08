@@ -9,7 +9,7 @@
 - Approved PRD：`docs_agent/prd-v1.6.9-agent-observability-trace-and-metrics.md`
 - Plan：`.cursor/plans/rm-10_agent-observability-trace-and-metrics.plan.md`（`plan_id: RM-10`，`commit_policy: post_review`）
 - Delivery base / grounded_commit：`53c9c1817c4e8619cead1eb2db1c1078ee4ec8fb`
-- Implementation Commit：见 Roadmap RM-10 Implementation Commit 列
+- Implementation Commit：9faf82c858204a3b52213cbdd5b2629d5c4c59ca
 - Implementation Review：`docs_agent/evidence/rm10-implementation-review.md`（PASS）
 - Workspace：`assert-stable` PASS；completion precheck PASS（scope fingerprint `sha256:ad83c4ed2a683f93daeeafe02daa3486dd0d2d83e9f861feb738e49e2ea39bfe`）
 
