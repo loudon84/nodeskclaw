@@ -6,7 +6,7 @@ architecture_decision: docs_agent/architecture/AD-SKILL-AGENT-V16.md
 architecture_addenda:
   - docs_agent/architecture/AD-SKILL-AGENT-V16-v1.6.0-hermes-runtime-native-run.md
 source_revision: AD-SKILL-AGENT-V16@1.7.0
-updated_at: 2026-09-08T07:36:00.088375Z
+updated_at: 2026-09-08T11:25:00Z
 feature_id: FEAT-SKILL-FIRST-001
 work_package_id: WP-SKILL-FIRST-NODESKCLAW
 ---
@@ -49,7 +49,7 @@ Technical Appendix（技术附录）：[AD-SKILL-AGENT-V16-A1 Hermes Runtime Nat
 - RM-18 于 2026-09-08 以真实 `user_jwt` REAL_PROCESS live 证据（V10）关闭为 `DONE`。代码来源 `5d0e538f`；annotated tag `skill-run-contract-v1.4.0`；`check --release` PASS。SMC `evidence.py` FRESH manifest 因 HEAD drift 未写入，出口证据为 `docs_agent/evidence/rm18-verification.md`。仓外 Work UI/IPC 不是本仓 DONE。
 - RM-10 于 2026-09-08 以自动化 oracle（Agent/Backend 聚焦 pytest、Public 合同空 diff、lat check）与 Implementation Review PASS 关闭为 DONE。代码来源 9faf82c8；SMC evidence.py FRESH manifest 因 V02/V10 Exact Entry Point 不兼容未写入，出口证据为 docs_agent/evidence/rm10-verification.md。
 - RM-07 于 2026-09-08 以自动化 oracle（Backend 20 / Agent 30 / Public 合同空 diff / `lat check`）与 Implementation Review PASS 关闭为 `DONE`。代码来源 `c29411e5`（同 commit 混有 RM-18 夹杂物，观察项）；SMC `evidence.py` FRESH manifest 未写入，出口证据为 `docs_agent/evidence/rm07-verification.md`。
-- RM-10 于 2026-09-08 以自动化 oracle（Agent/Backend 聚焦 pytest、Public 合同空 diff、lat check）与 Implementation Review PASS 关闭为 DONE。代码来源 9faf82c8；SMC evidence.py FRESH manifest 因 V02/V10 Exact Entry Point 不兼容未写入，出口证据为 docs_agent/evidence/rm10-verification.md。
+- RM-08 于 2026-09-08 进入 `IN_PRD`：Stage PRD `docs_agent/prd-v1.6.17-shared-agent-execution-contract.md` 已 `APPROVED`（review PASS）。
 
 ## Roadmap Items
 
@@ -62,7 +62,7 @@ Technical Appendix（技术附录）：[AD-SKILL-AGENT-V16-A1 Hermes Runtime Nat
 | RM-05 | Connector Runtime（连接器运行时）通过统一执行入口可靠完成 Central/Edge（中心/边缘）调用 | RM-03 | DONE | REST/MCP/DB Connector 经 AgentEnginePort（执行引擎端口）执行；取消、SecretRef（秘密引用）、审批和受控私网策略可验证；客户端不能覆盖物理路由、目标或凭证 | docs_agent/prd-v1.6.4-connector-runtime-execution-closure.md | .cursor/plans/rm-05_connector_runtime_execution.plan.md | 3611f37147fff25000317cbf1653fb12fb0b4b1b | docs_agent/evidence/rm05-verification.md |
 | RM-06 | Session（运行会话）与 ContextBuilder（上下文构建器）形成授权、可恢复的执行上下文 | RM-05 | DONE | Session 成为正式运行对象；Knowledge/Workspace/Attachment（知识/工作区/附件）引用经 Backend 授权并在执行前复核，撤权时 fail-closed（失败关闭） | docs_agent/prd-v1.6.7-session-context-authorized-execution.md | .cursor/plans/rm-06_session-context-authorized-execution.plan.md | d8fee3604be77d4ca330133c36012c721d638621 | docs_agent/evidence/rm06-verification.md |
 | RM-07 | Edge Control Channel（边缘控制通道）具备身份轮换与命令完整性 | RM-05 | DONE | 出站通道验证身份、过期、Nonce（随机数）、签名与序列；重放、错节点和过期命令无副作用 | docs_agent/prd-v1.6.8-edge-control-channel-security-closure.md | .cursor/plans/rm-07_edge_control_channel_601b46f4.plan.md | c29411e54d8357e6976cfc89f4bbee03498ea7ec | docs_agent/evidence/rm07-verification.md |
-| RM-08 | 中立 Shared Agent Execution Contract（共享 Agent 执行合同）可由 Backend 单一生成链发布，并冻结 Hermes（运行时）`single_agent` / `runtime_delegated` Delegation Topology（委派拓扑） | RM-06, RM-07 | BACKLOG | Schema、OpenAPI、TypeScript 类型、Fixture（固定样例）与兼容测试同源；Backend 冻结策略与 capability reference（能力引用），Agent 持久化 ExecutionSnapshot（执行快照），Runtime Capability（运行时能力）缺失时失败关闭；Topology 与 Central/Edge/Hybrid Placement（中心/边缘/混合放置）分列；不实现 Platform Multi-Agent（平台多智能体） | - | - | - | - |
+| RM-08 | 中立 Shared Agent Execution Contract（共享 Agent 执行合同）可由 Backend 单一生成链发布，并冻结 Hermes（运行时）`single_agent` / `runtime_delegated` Delegation Topology（委派拓扑） | RM-06, RM-07 | IN_PRD | Schema、OpenAPI、TypeScript 类型、Fixture（固定样例）与兼容测试同源；Backend 冻结策略与 capability reference（能力引用），Agent 持久化 ExecutionSnapshot（执行快照），Runtime Capability（运行时能力）缺失时失败关闭；Topology 与 Central/Edge/Hybrid Placement（中心/边缘/混合放置）分列；不实现 Platform Multi-Agent（平台多智能体） | docs_agent/prd-v1.6.17-shared-agent-execution-contract.md | - | - | - |
 | RM-09 | Backend 在 Shared Contract 稳定后补齐依赖内部南向字段的剩余符合性，以及需要 RM-08 字段的后续 Public 增量；**不承担** RM-17 Approval Decision 与 RM-18 Attachment 已发布 Capability；外部前端只作为仓外 Consumer | RM-08 | BACKLOG | 不首次发布 Work canonical；不改写 v1.2.1/v1.3.0/v1.4.0；不承担已发布 v1.2.1 员工公共面的实现 Hotfix；不承担 RM-17/RM-18 已发布纯 Public Capability；外部前端源码、构建和发布不在范围内 | - | - | - | - |
 | RM-10 | Agent 执行面具备统一 Trace（链路追踪）与运行指标 | RM-05 | DONE | Run/Attempt/Session/Edge/Connector/Artifact 可关联；队列、时延、失败、租约和重放指标可观测，且不形成第二事件事实源；**Trace correlation 必须纳入 A1 第 21 节 Runtime 字段**（`runtime_type`、`runtime_version`、`runtime_run_id`、`runtime_session_id`、`runtime_idempotency_key`、`tool_call_id`、`correlation_confidence`）与 Runtime 指标（start latency、event stream duration、delta 计数、coalescing 比、未配对 tool start 计数、approval 等待、stop 时延、disconnect/reconciliation/interrupted 计数） | docs_agent/prd-v1.6.9-agent-observability-trace-and-metrics.md | .cursor/plans/rm-10_agent-observability-trace-and-metrics.plan.md | 9faf82c858204a3b52213cbdd5b2629d5c4c59ca | docs_agent/evidence/rm10-verification.md |
 | RM-11 | 累积 Public Skill Run Consumer Contract v1.2.1 成为外部 Work 可离线导入的当前合同导出项 | RM-01, RM-02 | DONE | 生成并发布 `v1.2.1/` 与 tag `skill-run-contract-v1.2.1`；manifest 纳入 SHA256SUMS；Public 包不含 Internal Southbound；不改写 v1.0.0/v1.1.0/v1.2.0；不含 Work 前端；Internal Agent 合同留给 RM-08 | docs_agent/prd-v1.6.6-cumulative-public-consumer-contract.md | .cursor/plans/rm-11_v121_cumulative_public_contract.plan.md | 10d38f2c97739c4a55df893d1dc954fc8896f1a7 | docs_agent/evidence/rm11-verification.md |
