@@ -60,6 +60,13 @@ Backend 把 Agent Run 事实增量写入 HermesTask。轮询 worker 先抽出主
 
 Agent 是 Event / Result / Artifact 事实源；[[nodeskclaw-backend/app/services/hermes_skill/run_projection_updater_service.py#RunProjectionUpdaterService]] 按 `after_seq` 单调映射状态、事件、结果与工件。[[nodeskclaw-backend/app/services/hermes_skill/run_projection_updater_service.py#RunProjectionWorker]] 对齐 Outbox worker：批查询只收集 `(id, org_id, user_id)`，每条任务独立 session。SQLAlchemy asyncio 对 expired 属性的隐式刷新会触发 MissingGreenlet，中断整批投影。决策见 [[decisions/skill-platform-execution]]。
 
+### Projection Observability
+
+RM-10（AD 27.3）要求投影失败可观察，但不把 Backend 做成 Agent Trace Owner。
+
+- **已实现**：[[nodeskclaw-backend/app/services/hermes_skill/run_projection_updater_service.py#_inc_projection_sync_failed]] / [[nodeskclaw-backend/app/services/hermes_skill/run_projection_updater_service.py#get_projection_metrics_snapshot]] 维护进程内 `projection_sync_failed_total`，标签仅有限 reason 枚举（`task_not_found`、`agent_run_not_found`、`http_error`、`exception`；`lag` 预留）；计数 fail-open，不得改变 sync 返回值或 Agent SoT。
+- **KEEP**：opaque `request_trace_id` handoff 仍由 [[nodeskclaw-backend/app/schemas/hermes_skill/runtime_skill_run.py#normalize_request_trace_id]] 与 Runtime Skill Run start 路径负责；见 [[architecture/skill-agent#Execution Observability Trace And Metrics]]。
+
 ### Session Isolation After Commit
 
 同一批非终态任务中，前一条投影 sync 的 commit 或 rollback 不得让后续任务因 expired ORM 隐式刷新而失败。
