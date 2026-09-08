@@ -4,7 +4,7 @@
 
 RM-16 live **不是** Hermes 产品验收。目标是：员工路径走真实 Hermes Native（版本 `>= v2026.8.31`），观察 Public / Agent SoT 是否符合 Skill Run 合同 v1.2.1。
 
-Postman 只能做手工复现与观察。它 **不能** 替代 `tools/acceptance/run_rm16_live_conformance.py` 写入 Ledger 的 REAL_PROCESS 证据，也 **不能** 把跳过的 PC-05 / PC-08 记成 PASS。
+Postman 只能做手工复现与观察。它 **不能** 替代 `tools/acceptance/run_rm16_live_conformance.py` 写入 Ledger 的 REAL_PROCESS 证据。Stage PRD v1.6.15 **禁止再测 PC-05 Worker kill 与 PC-08 Hermes restart**，Postman 也不得补做这两项。
 
 ## 1. 测试分层（先看这一节）
 
@@ -15,7 +15,6 @@ Postman 只能做手工复现与观察。它 **不能** 替代 `tools/acceptance
 | V14 preflight | `GET {{hermes_base_url}}/v1/capabilities` 版本 `>= v2026.8.31` | 70 |
 | PC-03 approve / deny | Public `POST /api/v1/runs/{id}/approvals/{approval_id}` 被接受，Run 离开 `WAITING_APPROVAL`；Hermes 离开 `waiting_for_approval`。Public 只允许 `approve` / `deny`。`session` / `always` 必须 HTTP `400` / `403` / `409` / `422` | 78–83 |
 | PC-04 cancel | 映射到 Hermes `/stop` 后到达合同终态；HTTP 不得 `500`；不得停在 `CANCELLING` | 78 后 84，再轮询 72 |
-| PC-08 | 在 Hermes 所在机器重启 `:29401` 后 Public `FAILED`，SoT 含 `RUNTIME_INTERRUPTED`，Attempt 数不变 | 进程操作 + 87；Postman 不能代替重启 |
 | PC-09 | 真实 `< v2026.8.31` 的 Runtime 必须 probe 失败关闭，禁止 ChatCompletion 当 Event Source。没有旧 Runtime 时只做 70 的版本地板，不要用本地 ChatCompletion 桩冒充 | 70；无第二套旧网关则跳过，不得记 PASS |
 
 ### B. 投影质量（刺激 Skill 选错会永远 FAIL）
@@ -32,8 +31,9 @@ Postman 只能做手工复现与观察。它 **不能** 替代 `tools/acceptance
 
 | 场景 | 过关标准 | 注意 |
 | --- | --- | --- |
-| PC-05 | 杀 / 重启的是 **Agent `:4580` 的 RunWorker**，不是 Hermes | Postman 不能杀进程。没有宿主机命令就跳过，Ledger 仍非 PASS |
-| PC-07 | Public 单一 Run，无 `child_session_id` / `subagent.` | 不强制 Hermes 真开子代理。扫 72 / 86 即可 |
+| PC-05 | **禁止再测**。Worker fencing / gap 由 Agent 单测证明，不得 live kill Worker | 不要执行 `RM16_WORKER_KILL_CMD`，不要把缺命令记成 BLOCKED 出口 |
+| PC-07 | Public 单一 Run，无 `child_session_id` / `subagent.` | 须先在 Agent SoT 看到真实 `internal.runtime.trace` |
+| PC-08 | **禁止再测**。`interrupted` 映射由 Agent 单测证明，不得 live 重启 Hermes | 不要执行 `RM16_HERMES_RESTART_CMD` |
 | PC-12 | 公共面无 HermesTask 禁止字段 | 70 文件夹级脚本已扫描所有 `/api/v1/` 响应 |
 
 合同终态：`COMPLETED` / `FAILED` / `CANCELLED` / `TIMED_OUT`。`CANCELLING` 对 PC-04 是失败。
@@ -47,7 +47,7 @@ Postman 只能做手工复现与观察。它 **不能** 替代 `tools/acceptance
 1. 01–68 会创建临时 Skill / Edge 节点，和 RM-16 live 无关。
 2. PC-01 / PC-02 / PC-03 / PC-06 要换不同工具名，必须等终态后再看 73 / 75。
 3. PC-03 的 approve 与 deny 必须各开一次新 Run。
-4. PC-05 / PC-08 中间要在宿主机操作进程。
+4. **禁止** 再做 PC-05 / PC-08 进程故障注入。
 5. 76 的 Public SSE 可能一直挂到终态，会卡住 Runner。
 
 ## 3. 导入与变量（不要写入真实密钥）
@@ -69,7 +69,7 @@ Postman 只能做手工复现与观察。它 **不能** 替代 `tools/acceptance
 | `hermes_api_server_key` | 70 / 83 需要 | Hermes `API_SERVER_KEY`。占位 `REPLACE_WITH_HERMES_API_SERVER_KEY` |
 | `rm16_plain_tool_name` | PC-01 / PC-06 | 纯中文、不调工具的 MCP 工具名 |
 | `rm16_tool_skill_name` | PC-02 | 真 Tool Skill 的 MCP 工具名 |
-| `rm16_park_tool_name` | PC-03 / PC-04 / PC-05 / PC-08 | 必须是 `hermes_marketing__park-waiting-approval` |
+| `rm16_park_tool_name` | PC-03 / PC-04 | 必须是 `hermes_marketing__park-waiting-approval` |
 | `rm16_plain_prompt` / `rm16_tool_prompt` / `rm16_long_prompt` | 建议 | 已有中文默认值，可按 Skill 参数改 body 里的 `arguments` |
 | `rm16_run_id` 等 | 自动 | 71 / 77 / 78 / 85 的测试脚本会写入 |
 
@@ -155,21 +155,11 @@ PC-03 出口是 Hermes 接受 `/approval`。只看到 Public HTTP 非 500 但 He
 
 Send **86** 做一次复扫。70 文件夹级测试也会扫每个 `/api/v1/` 响应。
 
-### 5.8 PC-05（Agent Worker，不是 Hermes）
+### 5.8 PC-05 / PC-08（禁止）
 
-1. 用 **78** 开一个会跑一段时间的 Run。
-2. 在 **Agent 所在机器** 杀或重启监听 `:4580` 的 Worker 进程。Postman 没有这个步骤。
-3. Send **87** / 72 / 73，观察合同是否恢复或失败关闭。
-4. 没有可靠杀进程命令 → 跳过。禁止把跳过写成 PASS。
+Stage PRD v1.6.15 禁止再测 PC-05 Worker kill 与 PC-08 Hermes restart。不要杀 Agent Worker，不要重启 Hermes `:29401`。python runner 对 `--scenario pc05` / `pc08` 会打印 `RM16_LIVE_SCENARIO_FORBIDDEN`。
 
-### 5.9 PC-08（重启 Hermes `:29401`）
-
-1. 用 **78** 开 Run，74 记下 `rm16_attempt_id`。
-2. 重启命令必须打到 **Hermes 进程所在主机** 的 `:29401`。本机 `hermes gateway restart` 打不到远端时不要执行。
-3. 重启后再 72 / 73 / 87。期望 Public `FAILED`，事件含 `RUNTIME_INTERRUPTED`，Attempt 数不变。
-4. 没有可用重启命令 → 跳过，不得记 PASS。
-
-### 5.10 PC-09
+### 5.9 PC-09
 
 - 有旧版本 Hermes：把 `hermes_base_url` 临时改到旧实例，Send 70，期望失败关闭；不要改去打 `/v1/chat/completions`。
 - 没有旧实例：只保留 70 的地板检查（probe-only）。这与 python runner 的 `probe_only_version_stub` 同类，**不是**全量 PC-09 PASS。
@@ -185,10 +175,10 @@ Send **86** 做一次复扫。70 文件夹级测试也会扫每个 `/api/v1/` �
 | PC-02 | 同一 `call_id` 有开始态和结束态 | 工具不会真调 Tool |
 | PC-03 | session/always 4xx；approve/deny 成功且 Hermes 离开 waiting | 没用 park 工具；或南向 `/approval` 未接通 |
 | PC-04 | cancel < 500，到达终态，非 `CANCELLING` | Backend `:4510` 未部署 cancel 映射，HTTP 500 |
-| PC-05 | Worker 重启后合同可观察 | 缺少杀进程命令；误杀 Hermes |
+| PC-05 | **禁止再测**；单测证明 fencing / gap | 不要 live kill Worker |
 | PC-06 | 文本 >= 80 字 | 短答 Skill 或碎片 delta 未被合并 |
-| PC-07 | 无 child / subagent 泄漏 | 公共面漏了内部字段 |
-| PC-08 | `FAILED` + `RUNTIME_INTERRUPTED`，Attempt 不变 | 重启命令打不到 `:29401` |
+| PC-07 | 无 child / subagent 泄漏，且 SoT 有 runtime.trace | 公共面漏了内部字段，或没有真实 delegation |
+| PC-08 | **禁止再测**；单测证明 interrupted 映射 | 不要 live 重启 Hermes |
 | PC-09 | 旧版本 fail-closed，或明确 probe-only 跳过 | 用 ChatCompletion mock 冒充 |
 | PC-12 | 公共 JSON 无禁止键 | 信封仍带 HermesTask 字段 |
 
