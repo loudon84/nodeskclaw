@@ -24,6 +24,8 @@ RUNTIME_UNREACHABLE = "RUNTIME_UNREACHABLE"
 RUNTIME_UNAUTHORIZED = "RUNTIME_UNAUTHORIZED"
 RUNTIME_VERSION_UNSUPPORTED = "RUNTIME_VERSION_UNSUPPORTED"
 RUNTIME_CAPABILITY_MISSING = "RUNTIME_CAPABILITY_MISSING"
+RUNTIME_CAPABILITY_UNAVAILABLE = "RUNTIME_CAPABILITY_UNAVAILABLE"
+EXECUTION_TOPOLOGY_NOT_SUPPORTED = "EXECUTION_TOPOLOGY_NOT_SUPPORTED"
 RUNTIME_CAPACITY_EXCEEDED = "RUNTIME_CAPACITY_EXCEEDED"
 RUNTIME_START_FAILED = "RUNTIME_START_FAILED"
 RUNTIME_EVENT_STREAM_FAILED = "RUNTIME_EVENT_STREAM_FAILED"
@@ -119,6 +121,16 @@ def reported_hermes_version(payload: dict[str, Any] | None) -> str:
         or nested.get("version")
         or ""
     )
+    return str(raw).strip()
+
+
+ALLOWED_DELEGATION_TOPOLOGIES = frozenset({"single_agent", "runtime_delegated"})
+
+
+def _resolved_topology(route_snapshot: dict[str, Any]) -> str:
+    raw = route_snapshot.get("delegation_topology")
+    if raw in (None, ""):
+        return "single_agent"
     return str(raw).strip()
 
 
@@ -785,7 +797,25 @@ async def execute_hermes_run(
                 )
                 return
 
+            topology = _resolved_topology(route_snapshot)
+            if topology not in ALLOWED_DELEGATION_TOPOLOGIES:
+                yield _failed(
+                    EXECUTION_TOPOLOGY_NOT_SUPPORTED,
+                    "Delegation topology is not supported",
+                )
+                return
             present = _feature_set(caps_body)
+            if topology == "runtime_delegated":
+                ref = route_snapshot.get("runtime_capability_ref")
+                name = str((ref or {}).get("name") or "").strip() if isinstance(ref, dict) else ""
+                version = str((ref or {}).get("version") or "").strip() if isinstance(ref, dict) else ""
+                if not name or not version or name not in present:
+                    yield _failed(
+                        RUNTIME_CAPABILITY_UNAVAILABLE,
+                        "Runtime capability reference is unavailable for runtime_delegated topology",
+                    )
+                    return
+
             missing = sorted(required - present)
             if missing:
                 yield _failed(

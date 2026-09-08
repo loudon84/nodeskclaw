@@ -92,6 +92,41 @@ def bundle_zip_path(bundle_ref: str) -> Path:
     return Path(settings.HERMES_SKILL_HUB_ROOT) / "releases" / f"{normalized_ref}.zip"
 
 
+ALLOWED_DELEGATION_TOPOLOGIES = frozenset({"single_agent", "runtime_delegated"})
+
+
+def freeze_delegation_topology(
+    extra_metadata: dict[str, Any] | None,
+) -> tuple[str, dict[str, str] | None]:
+    extra = dict(extra_metadata or {})
+    raw = extra.get("delegation_topology")
+    if raw in (None, ""):
+        topology = "single_agent"
+    else:
+        topology = str(raw).strip()
+    if topology not in ALLOWED_DELEGATION_TOPOLOGIES:
+        raise BadRequestError(
+            "不支持的 Delegation Topology",
+            "errors.runtime.execution_topology_not_supported",
+        )
+    if topology == "single_agent":
+        return topology, None
+    ref = extra.get("runtime_capability_ref")
+    if not isinstance(ref, dict):
+        raise BadRequestError(
+            "runtime_delegated 需要版本化 Runtime Capability reference",
+            "errors.runtime.runtime_capability_unavailable",
+        )
+    name = str(ref.get("name") or "").strip()
+    version = str(ref.get("version") or "").strip()
+    if not name or not version:
+        raise BadRequestError(
+            "runtime_delegated 需要版本化 Runtime Capability reference",
+            "errors.runtime.runtime_capability_unavailable",
+        )
+    return topology, {"name": name, "version": version}
+
+
 def snapshot_hash(*, skill_release_id: str, digest: str, route_snapshot: dict[str, Any]) -> str:
     raw = json.dumps(
         {
@@ -326,6 +361,12 @@ class SkillReleaseService:
             "streaming": bool(existing_annotations.get("streaming", extra.get("streaming", False))),
             "artifacts": bool(existing_annotations.get("artifacts", extra.get("artifacts", False))),
         }
+        topology, capability_ref = freeze_delegation_topology(extra)
+        extra["delegation_topology"] = topology
+        if capability_ref is None:
+            extra.pop("runtime_capability_ref", None)
+        else:
+            extra["runtime_capability_ref"] = capability_ref
         release.extra_metadata = extra
 
         # @lat: [[decisions/skill-platform-execution#Publish Gate]]

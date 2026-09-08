@@ -181,6 +181,8 @@ class CreateRunRequest(BaseModel):
     run_session_id: str | None = None
     execution_context: dict[str, Any] | None = None
     context_version: int | None = None
+    delegation_topology: str | None = None
+    runtime_capability_ref: dict[str, Any] | None = None
 
 
 class CreateRunResponse(BaseModel):

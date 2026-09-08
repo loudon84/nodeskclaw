@@ -39,6 +39,7 @@ ALLOWED_TRACE_ATTRS = frozenset(
         "runtime_idempotency_key",
         "tool_call_id",
         "correlation_confidence",
+        "delegation_topology",
     }
 )
 
@@ -204,6 +205,10 @@ def _sanitize_attr_value(key: str, value: Any) -> str | None:
         return None
     if key == "request_trace_id":
         return normalize_request_trace_id(text)
+    if key == "delegation_topology":
+        if text not in {"single_agent", "runtime_delegated"}:
+            return None
+        return text
     if len(text) > 256:
         text = text[:256]
     return text

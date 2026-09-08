@@ -1,6 +1,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from app.core.exceptions import BadRequestError
 from app.services.hermes_skill.runtime_skill_run_service import RuntimeSkillRunService
 from app.schemas.hermes_skill.runtime_skill_run import StartRuntimeSkillRunRequest
 
@@ -110,6 +111,8 @@ async def test_start_delegates_to_skill_agent_and_returns_run_id():
     assert "credential_lease" not in payload["route_snapshot"]
     assert "token" not in str(payload["route_snapshot"].get("credential_lease_ref") or {})
     assert payload["request_trace_id"].startswith("req_")
+    assert payload["delegation_topology"] == "single_agent"
+    assert "runtime_capability_ref" not in payload
 
 
 @pytest.mark.asyncio
@@ -592,3 +595,81 @@ def test_projection_unknown_reason_maps_to_exception():
     snap = get_projection_metrics_snapshot()
     assert snap["projection_sync_failed_total"]["exception"] == 1
     assert "not_a_real_reason" not in snap["projection_sync_failed_total"]
+
+
+@pytest.mark.asyncio
+async def test_enqueue_freezes_server_topology_and_strips_client_overlay():
+    db = AsyncMock()
+    service = RuntimeSkillRunService(db)
+    request = _request(
+        client_context={
+            "delegation_topology": "runtime_delegated",
+            "runtime_capability_ref": {"name": "x", "version": "1"},
+        }
+    )
+    with patch.object(
+        service,
+        "_enrich_route_snapshot",
+        new=AsyncMock(side_effect=lambda request, route: dict(route)),
+    ):
+        outbox = await service._enqueue_agent_run_outbox(
+            request,
+            {},
+            "run-1",
+            release_meta=_release_meta(),
+            execution_context={},
+        )
+    assert outbox.payload["delegation_topology"] == "single_agent"
+    assert "runtime_capability_ref" not in outbox.payload
+    assert "delegation_topology" not in outbox.payload["client_context"]
+    assert "runtime_capability_ref" not in outbox.payload["client_context"]
+
+
+@pytest.mark.asyncio
+async def test_enqueue_persists_runtime_delegated_capability_ref():
+    db = AsyncMock()
+    service = RuntimeSkillRunService(db)
+    meta = {
+        **_release_meta(),
+        "delegation_topology": "runtime_delegated",
+        "runtime_capability_ref": {"name": "hermes.runtime.delegate", "version": "1"},
+    }
+    with patch.object(
+        service,
+        "_enrich_route_snapshot",
+        new=AsyncMock(side_effect=lambda request, route: dict(route)),
+    ):
+        outbox = await service._enqueue_agent_run_outbox(
+            _request(),
+            {},
+            "run-1",
+            release_meta=meta,
+            execution_context={},
+        )
+    assert outbox.payload["delegation_topology"] == "runtime_delegated"
+    assert outbox.payload["runtime_capability_ref"] == {
+        "name": "hermes.runtime.delegate",
+        "version": "1",
+    }
+
+
+@pytest.mark.asyncio
+async def test_enqueue_rejects_illegal_topology():
+    db = AsyncMock()
+    service = RuntimeSkillRunService(db)
+    meta = {**_release_meta(), "delegation_topology": "platform_multi_agent"}
+    with patch.object(
+        service,
+        "_enrich_route_snapshot",
+        new=AsyncMock(side_effect=lambda request, route: dict(route)),
+    ):
+        with pytest.raises(BadRequestError) as exc:
+            await service._enqueue_agent_run_outbox(
+                _request(),
+                {},
+                "run-1",
+                release_meta=meta,
+                execution_context={},
+            )
+    assert exc.value.message_key == "errors.runtime.execution_topology_not_supported"
+

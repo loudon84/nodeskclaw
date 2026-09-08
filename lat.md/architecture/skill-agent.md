@@ -128,13 +128,15 @@ Hermes `runtime_run_id` 记在当前 Attempt 行上，受 generation 栅栏，�
 
 ## Runtime Delegation Boundary
 
-Runtime Delegation（运行时内部委派）是 v1.6 的目标合同边界，不创建第二 Run、第二事件源或平台级多智能体调度。
+Runtime Delegation 已由 Internal `SKILL-AGENT-CONTRACT v1.0.0` 冻结：`single_agent`/`runtime_delegated` 与 placement 正交，Capability 不匹配失败关闭，不创建 Child Run。
 
-- **目标状态**：[[nodeskclaw-backend/app/services/hermes_skill/runtime_skill_run_service.py#RuntimeSkillRunService]] 冻结已发布 SkillRelease 的 `delegation_topology` 与版本化 Runtime Capability reference（运行时能力引用）；客户端不得提交 Runtime、成员、Profile 或拓扑。
-- **目标状态**：[[nodeskclaw-agent/app/services/run_service.py#build_snapshot]] 继续作为最终 ExecutionSnapshot（执行快照）的持久化 Owner；[[nodeskclaw-agent/app/services/engine_port.py#execute_engine]] 只选择 Adapter，不能把 Topology 变为新的 Engine。
-- **目标状态**：`single_agent` 与 `runtime_delegated` 只描述 Hermes Runtime 内的委派策略；`placement` 继续描述 Central/Edge/Hybrid 资源放置，[[nodeskclaw-agent/app/services/worker.py#build_hybrid_step_plan]] 仍是 Hybrid Step Plan（混合步骤计划）的唯一 Owner。
+- **已实现**：[[nodeskclaw-backend/scripts/contracts.py#generate_skill_agent_contracts]] 发布 `contracts/skill-agent/v1.0.0/`；Public `skill-run` v1.2.1～v1.4.0 不包含 Internal 路径。
+- **已实现**：[[nodeskclaw-backend/app/services/hermes_skill/skill_release_service.py#freeze_delegation_topology]] 与 [[nodeskclaw-backend/app/services/hermes_skill/runtime_skill_run_service.py#RuntimeSkillRunService#_enqueue_agent_run_outbox]] 从 Published SkillRelease 冻结 Topology 与 capability reference；客户端 `client_context` 覆盖被剥离。
+- **已实现**：[[nodeskclaw-agent/app/services/run_service.py#build_snapshot]] 将 Topology 与 `placement` 分列持久化；[[nodeskclaw-agent/app/services/engine_port.py#execute_engine]] 仍只选择 Hermes/Connector，不出现 `multi_agent` engine。
+- **已实现**：`single_agent` 与 `runtime_delegated` 只描述 Hermes Runtime 内委派；Hybrid Step Plan 仍由 [[nodeskclaw-agent/app/services/worker.py#build_hybrid_step_plan]] 拥有。
 - **已实现**：Hermes `subagent.*` 只作为当前 Attempt 的最小内部事件 `internal.runtime.trace` 进入 Agent SoT；Public 不投影该类型，也不产生 Child Run。见 [[architecture/skill-agent#Hermes Engine Adapter#Runtime Semantic Event Fidelity]]。
-- **目标状态**：Capability 缺失或不匹配时失败关闭；Runtime 内部成员不成为 Public Run、Backend 业务对象或公开事件。Platform Multi-Agent、Team Run 与 Child Run 需要新的 Architecture Decision。
+- **已实现**：[[nodeskclaw-agent/app/services/hermes_engine.py#execute_hermes_run]] 在版本地板之后校验 Topology：非法枚举/`platform_multi_agent` → `EXECUTION_TOPOLOGY_NOT_SUPPORTED`；`runtime_delegated` 且 capability 不匹配 → `RUNTIME_CAPABILITY_UNAVAILABLE`；不得降级 `single_agent` 或 `gateway_sequential`。既有 probe/地板失败仍用 `RUNTIME_CAPABILITY_MISSING`。
+- **边界**：Platform Multi-Agent、Team Run 与 Child Run 需要新的 Architecture Decision。
 
 ## Connector Center Execution
 
@@ -173,10 +175,10 @@ RM-10 在 Agent 执行平面内提供 in-process Execution Trace 关联与低基
 - **已实现**：[[nodeskclaw-backend/app/schemas/hermes_skill/runtime_skill_run.py#normalize_request_trace_id]] 与 [[nodeskclaw-backend/app/services/hermes_skill/runtime_skill_run_service.py#RuntimeSkillRunService#start]] 在入队前规范化 opaque `request_trace_id`（max 64、charset `[A-Za-z0-9_.:-]`）；缺失时生成 `req_` 前缀 id；无效降级为 `None` 后由 start 补齐，不阻断 enqueue。
 - **已实现**：[[nodeskclaw-agent/app/services/worker.py#RunWorker#_claim_one]] 观测 `run_queue_wait_seconds`（created→claim）；[[nodeskclaw-agent/app/services/worker.py#RunWorker#_execute]]、[[nodeskclaw-agent/app/services/edge_worker.py#EdgeWorker#_execute_job]]、[[nodeskclaw-agent/app/services/connector_router.py#execute_connector_run]]、[[nodeskclaw-agent/app/services/engine_port.py#execute_engine]]、[[nodeskclaw-agent/app/services/run_service.py#add_artifact]] / [[nodeskclaw-agent/app/services/run_service.py#store_artifact_bytes]] 补齐 claim/execute/connector/edge/artifact outcome；观测异常 fail-open，不改变 Run/Event/Job/Artifact 业务状态。
 - **已实现**：Edge live 与 Spool 路径经 [[nodeskclaw-agent/app/services/edge_worker.py#EdgeWorker#_send_or_spool_event]] 传播同一 `request_trace_id`；指标标签禁止 UUID 与高基数 Run/Attempt/Session/Node id；Trace/日志经 [[nodeskclaw-agent/app/services/execution_observability.py#trace_log_extra]] 与 [[nodeskclaw-agent/app/services/run_service.py#_sanitize_sensitive_keys]] 同类 redact。
-- **已实现**：A1 §21 Runtime Binding 经 [[nodeskclaw-agent/app/services/execution_observability.py#ALLOWED_TRACE_ATTRS]] / [[nodeskclaw-agent/app/services/execution_observability.py#apply_runtime_binding]] 进入 Trace（含 `runtime_type` / `runtime_version` / `runtime_run_id` / `runtime_session_id` / `runtime_idempotency_key` / `tool_call_id` / `correlation_confidence`）；[[nodeskclaw-agent/app/services/run_service.py#get_runtime_binding]] 读取后刷新当前 Trace；Hermes Native 在 Binding persist 后再 `apply_runtime_binding`。禁止把 runtime id 放进 metric labels；禁止写入 `delegation_topology`。
+- **已实现**：A1 §21 Runtime Binding 经 [[nodeskclaw-agent/app/services/execution_observability.py#ALLOWED_TRACE_ATTRS]] / [[nodeskclaw-agent/app/services/execution_observability.py#apply_runtime_binding]] 进入 Trace（含 `runtime_type` / `runtime_version` / `runtime_run_id` / `runtime_session_id` / `runtime_idempotency_key` / `tool_call_id` / `correlation_confidence`）；[[nodeskclaw-agent/app/services/run_service.py#get_runtime_binding]] 读取后刷新当前 Trace；Hermes Native 在 Binding persist 后再 `apply_runtime_binding`。禁止把 runtime id 放进 metric labels。RM-08 起合同枚举 `delegation_topology` 可作为可选 Trace 属性，不得作为 metric label。
 - **已实现**：Hermes Runtime 指标冻结于 [[nodeskclaw-agent/app/services/execution_observability.py#METRIC_DEFINITIONS]]：`runtime_start_seconds`、`runtime_stream_seconds`、`runtime_message_delta_total`、`runtime_assistant_coalesced_total`、`runtime_tool_start_total`、`runtime_tool_complete_total`、`runtime_tool_unpaired_total`、`runtime_approval_wait_seconds`、`runtime_stop_seconds`、`runtime_disconnect_total`、`runtime_reconcile_total`、`runtime_interrupted_total`；由 [[nodeskclaw-agent/app/services/hermes_engine.py#execute_hermes_run]]、[[nodeskclaw-agent/app/services/native_event_normalizer.py#NativeEventNormalizer]]、[[nodeskclaw-agent/app/services/assistant_delta_coalescer.py#AssistantDeltaCoalescer]] observe-only 写入，标签仅 `role`/`outcome`/`engine`/`kind`/`stage`，不进 Public SSE。
 - **已实现**：Backend 投影失败低基数计数见 [[architecture/backend#C2 Projection Sync#Projection Observability]]；Backend 不是 Agent Trace Owner。
-- **目标状态**：不产生或推断 `delegation_topology`；Public Skill Run Contract v1.0.0–v1.2.1 不变。v1.3.0 Approval Decision 是独立增量，见 [[architecture/skill-agent#RM-17 Public Approval Decision]]。
+- **已实现**：RM-08 发布 Internal `SKILL-AGENT-CONTRACT v1.0.0` 后，Trace 可记录合同枚举 `delegation_topology`，仍不得推断或实现 Platform Multi-Agent；Public Skill Run Contract v1.2.1～v1.4.0 不变。v1.3.0 Approval Decision 是独立增量，见 [[architecture/skill-agent#RM-17 Public Approval Decision]]。
 
 ## Artifact StoragePort And State Machine
 

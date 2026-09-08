@@ -159,6 +159,30 @@ def test_build_snapshot_keeps_connector_refs():
     assert snap["connector_binding_refs"] == ["binding-1"]
     assert snap["knowledge_refs"] == ["kb://doc-1"]
     assert snap["placement"] == {"role": "central", "engine": "connector"}
+    assert snap["delegation_topology"] == "single_agent"
+
+
+def test_build_snapshot_persists_hybrid_placement_with_single_agent_topology():
+    req = CreateRunRequest(
+        run_id="run-hyb",
+        tool_name="foo",
+        placement={"role": "hybrid", "engine": "hermes"},
+        delegation_topology="single_agent",
+    )
+    snap = run_service.build_snapshot(req, org_id="org", user_id="user")
+    assert snap["placement"]["role"] == "hybrid"
+    assert snap["delegation_topology"] == "single_agent"
+    assert snap["runtime_policy"]["delegation_topology"] == "single_agent"
+
+
+def test_build_snapshot_rejects_platform_multi_agent():
+    req = CreateRunRequest(
+        run_id="run-pma",
+        tool_name="foo",
+        delegation_topology="platform_multi_agent",
+    )
+    with pytest.raises(ValueError, match="EXECUTION_TOPOLOGY_NOT_SUPPORTED"):
+        run_service.build_snapshot(req, org_id="org", user_id="user")
 
 
 @pytest.mark.asyncio

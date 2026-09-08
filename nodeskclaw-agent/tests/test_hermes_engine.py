@@ -11,7 +11,9 @@ import pytest
 
 from app.services.hermes_engine import (
     REQUIRED_FEATURES,
+    EXECUTION_TOPOLOGY_NOT_SUPPORTED,
     RUNTIME_CAPABILITY_MISSING,
+    RUNTIME_CAPABILITY_UNAVAILABLE,
     RUNTIME_INTERRUPTED,
     RUNTIME_UNREACHABLE,
     RUNTIME_VERSION_UNSUPPORTED,
@@ -550,6 +552,73 @@ async def test_execute_hermes_missing_capability_fail_closed():
     assert events[-1]["payload"]["error_code"] == RUNTIME_CAPABILITY_MISSING
     assert persist_calls == []
     client.stream.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_execute_hermes_runtime_delegated_unavailable_without_capability():
+    client = _native_client(caps=FLOOR_CAPS)
+    with patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client):
+        events = [
+            event
+            async for event in execute_hermes_run(
+                tool_name="foo",
+                arguments={"prompt": "hi"},
+                route_snapshot={
+                    "gateway_url": "http://hermes:8642",
+                    "delegation_topology": "runtime_delegated",
+                    "runtime_capability_ref": {"name": "hermes.runtime.delegate", "version": "1"},
+                },
+                run_id="run-top",
+                attempt_id="att-top",
+            )
+        ]
+    assert events[-1]["payload"]["error_code"] == RUNTIME_CAPABILITY_UNAVAILABLE
+    assert not any(str(c.args[0]).endswith("/v1/runs") for c in client.post.await_args_list)
+
+
+@pytest.mark.asyncio
+async def test_execute_hermes_platform_multi_agent_not_supported():
+    client = _native_client(caps=FLOOR_CAPS)
+    with patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client):
+        events = [
+            event
+            async for event in execute_hermes_run(
+                tool_name="foo",
+                arguments={"prompt": "hi"},
+                route_snapshot={
+                    "gateway_url": "http://hermes:8642",
+                    "delegation_topology": "platform_multi_agent",
+                },
+                run_id="run-pma",
+                attempt_id="att-pma",
+            )
+        ]
+    assert events[-1]["payload"]["error_code"] == EXECUTION_TOPOLOGY_NOT_SUPPORTED
+    assert not any(str(c.args[0]).endswith("/v1/runs") for c in client.post.await_args_list)
+
+
+@pytest.mark.asyncio
+async def test_execute_hermes_runtime_delegated_matching_capability_starts():
+    features = {name: True for name in REQUIRED_FEATURES}
+    features["hermes.runtime.delegate"] = True
+    client = _native_client(caps={"version": "v2026.8.31", "features": features}, assistant_text="ok")
+    with patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client):
+        events = [
+            event
+            async for event in execute_hermes_run(
+                tool_name="foo",
+                arguments={"prompt": "hi"},
+                route_snapshot={
+                    "gateway_url": "http://hermes:8642",
+                    "delegation_topology": "runtime_delegated",
+                    "runtime_capability_ref": {"name": "hermes.runtime.delegate", "version": "1"},
+                },
+                run_id="run-ok-top",
+                attempt_id="att-ok-top",
+            )
+        ]
+    assert events[-1]["event_type"] == "run.completed"
+    assert any(str(c.args[0]).endswith("/v1/runs") for c in client.post.await_args_list)
 
 
 @pytest.mark.asyncio

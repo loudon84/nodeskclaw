@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nodeskclaw.example.com/contracts/skill-agent/v1.0.0/placement/placement.schema.json",
+  "title": "Placement",
+  "description": "Central/Edge/Hybrid resource placement; orthogonal to delegation_topology.",
+  "type": "object",
+  "properties": {
+    "role": {
+      "type": "string",
+      "enum": [
+        "central",
+        "edge",
+        "hybrid"
+      ]
+    },
+    "engine": {
+      "type": "string",
+      "enum": [
+        "hermes",
+        "connector"
+      ]
+    },
+    "edge_node_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "additionalProperties": true
+}

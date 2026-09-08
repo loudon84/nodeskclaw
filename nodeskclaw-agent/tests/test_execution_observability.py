@@ -188,9 +188,20 @@ def test_apply_runtime_binding_and_trace_log_extra():
     assert extra["runtime_run_id"] == "rr-2"
     assert extra["tool_call_id"] == "tool-1"
     assert extra["correlation_confidence"] == "high"
-    assert "delegation_topology" not in ALLOWED_TRACE_ATTRS
-    observe_stage("execute", outcome="ok", delegation_topology="should-drop")
-    assert "delegation_topology" not in (get_current_trace() or ExecutionTrace()).attrs
+    assert "delegation_topology" in ALLOWED_TRACE_ATTRS
+    observe_stage("execute", outcome="ok", delegation_topology="single_agent")
+    assert (get_current_trace() or ExecutionTrace()).attrs.get("delegation_topology") == "single_agent"
+    observe_stage("execute", outcome="ok", delegation_topology="platform_multi_agent")
+    assert (get_current_trace() or ExecutionTrace()).attrs.get("delegation_topology") == "single_agent"
+
+
+def test_delegation_topology_rejected_as_metric_label():
+    record_metric(
+        "runs_claimed_total",
+        labels={"role": "central", "outcome": "ok", "delegation_topology": "single_agent"},
+    )
+    snapshot = get_registry().snapshot()
+    assert "delegation_topology" not in snapshot["counters"][0]["labels"]
 
 
 def test_runtime_ids_rejected_as_metric_labels():

@@ -1,4 +1,5 @@
 from pathlib import Path
+import shutil
 
 from scripts import contracts as contracts_module
 from scripts.contracts import is_empty_json_schema
@@ -67,4 +68,59 @@ def test_skill_run_v10_public_fixtures_validate_against_their_contract_schemas()
     backend_root = Path(__file__).resolve().parents[2]
 
     contracts_module._validate_skill_run_fixtures(backend_root / "contracts/skill-run/v1.0.0")
+
+
+def test_skill_agent_internal_bundle_exists_and_excludes_public_consumer_paths():
+    backend_root = Path(__file__).resolve().parents[2]
+    root = backend_root / "contracts/skill-agent/v1.0.0"
+    assert (root / "SHA256SUMS").exists()
+    assert (root / "runs/execution-snapshot.schema.json").exists()
+    assert (root / "topology/delegation-topology.schema.json").exists()
+    assert (root / "placement/placement.schema.json").exists()
+    assert (root / "capabilities/runtime-capability-ref.schema.json").exists()
+    assert (root / "openapi.yaml").exists()
+    assert (root / "typescript/skill-agent-contract.d.ts").exists()
+    relatives = {
+        path.relative_to(root).as_posix()
+        for path in root.rglob("*")
+        if path.is_file()
+    }
+    assert not any(rel.startswith("mcp/") or rel.startswith("events/") or rel.startswith("http/") for rel in relatives)
+    assert "runs/public-run.schema.json" not in relatives
+
+
+def test_public_skill_run_sha256sums_exclude_skill_agent_paths():
+    backend_root = Path(__file__).resolve().parents[2]
+    for version in ("1.2.1", "1.3.0", "1.4.0"):
+        text = (backend_root / f"contracts/skill-run/v{version}/SHA256SUMS").read_text(encoding="utf-8")
+        assert "skill-agent/" not in text
+
+
+def test_skill_agent_checksums_reject_crlf(tmp_path):
+    backend_root = Path(__file__).resolve().parents[2]
+    src = backend_root / "contracts/skill-agent/v1.0.0"
+    dest = tmp_path / "v1.0.0"
+    shutil.copytree(src, dest)
+    checksum = dest / "SHA256SUMS"
+    checksum.write_bytes(checksum.read_bytes().replace(b"\n", b"\r\n"))
+    try:
+        contracts_module._validate_skill_run_checksums_exact(dest)
+    except SystemExit as exc:
+        assert "LF-only" in str(exc)
+    else:
+        raise AssertionError("CRLF SHA256SUMS must fail check")
+
+
+def test_skill_agent_checksums_reject_extra_file(tmp_path):
+    backend_root = Path(__file__).resolve().parents[2]
+    src = backend_root / "contracts/skill-agent/v1.0.0"
+    dest = tmp_path / "v1.0.0"
+    shutil.copytree(src, dest)
+    (dest / "extra.json").write_text("{}\n", encoding="utf-8")
+    try:
+        contracts_module._validate_skill_run_checksums_exact(dest)
+    except SystemExit as exc:
+        assert "closure mismatch" in str(exc)
+    else:
+        raise AssertionError("extra file must fail check")
 
