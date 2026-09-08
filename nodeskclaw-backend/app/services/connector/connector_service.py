@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any
+from urllib.parse import urlparse
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +18,28 @@ from app.models.connector.tool import ConnectorTool
 from app.models.hermes_skill.skill_release import HermesSkillRelease, SkillReleaseStatus
 
 logger = logging.getLogger(__name__)
+
+
+def _contains_plaintext_credentials(config: Any, *, key: str = "") -> bool:
+    if isinstance(config, dict):
+        return any(
+            _contains_plaintext_credentials(value, key=str(config_key))
+            for config_key, value in config.items()
+        )
+    if isinstance(config, list):
+        return any(_contains_plaintext_credentials(value) for value in config)
+    if not isinstance(config, str) or not config:
+        return False
+
+    normalized_key = key.lower().replace("-", "_")
+    if normalized_key in {"authorization", "token", "password", "api_key", "apikey", "auth_token"} or normalized_key.endswith(
+        ("_authorization", "_token", "_password", "_api_key", "_apikey")
+    ):
+        return True
+    if normalized_key in {"url", "db_url", "endpoint"}:
+        parsed = urlparse(config)
+        return bool(parsed.username or parsed.password)
+    return False
 
 
 class ConnectorService:
@@ -149,6 +172,14 @@ class ConnectorService:
         if secret_ref_id:
             await self._get_secret_ref(org_id, secret_ref_id)
 
+    @staticmethod
+    def _validate_instance_config(config: dict | None) -> None:
+        if _contains_plaintext_credentials(config or {}):
+            raise BadRequestError(
+                "Connector 配置不允许明文凭证",
+                "errors.connector.plaintext_credentials_forbidden",
+            )
+
     async def is_instance_bound_to_published_release(self, instance_id: str) -> bool:
         result = await self.db.execute(
             select(SkillConnectorBinding.id)
@@ -274,6 +305,7 @@ class ConnectorService:
         is_active: bool = True,
         operator_user_id: str | None = None,
     ) -> ConnectorInstance:
+        self._validate_instance_config(config)
         await self._get_definition(org_id, definition_id)
         await self._assert_instance_name_available(definition_id, name)
         await self._validate_instance_placement(
@@ -323,6 +355,8 @@ class ConnectorService:
         updates: dict[str, Any],
     ) -> ConnectorInstance:
         instance = await self._get_instance(org_id, instance_id)
+        if "config" in updates:
+            self._validate_instance_config(updates["config"])
         connection_fields = {"placement", "edge_node_id", "secret_ref_id", "config"}
         connection_changed = bool(connection_fields & set(updates.keys()))
         if connection_changed and await self.is_instance_bound_to_published_release(instance_id):

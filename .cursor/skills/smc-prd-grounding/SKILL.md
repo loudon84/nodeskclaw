@@ -52,15 +52,48 @@ python tools/agent-skills/evidence_freshness.py <prd> --source-revision <current
 
 Architecture Minimality Guard：新增 Service/Store/Client/Protocol 前必须证明 existing owner/contract 无法承载。
 
+## Acceptance Claim Grounding
+
+Grounding 不只校准代码 Capability，也必须校准前序 proof。对每个 blocking AC/DoD 建立或刷新 `Acceptance Claim Baseline`：
+
+```text
+PROVEN_FRESH          -> REUSE_EVIDENCE
+PROVEN_BUT_AFFECTED   -> TARGETED_RERUN + invalidation reason
+FAILED                -> RESIDUAL_GAP + TARGETED_RERUN/NEW_EVIDENCE
+NOT_TESTED            -> NEW_EVIDENCE
+UNKNOWN               -> 不猜，先取得 source evidence
+```
+
+Claim 至少记录：
+
+```text
+Claim ID
+Requirement
+Observable Fact
+Blocking
+Prior Evidence
+Prior Result
+Evidence Action
+Invalidation Reason
+```
+
+**禁止**：
+
+- 把 prior blocking FAIL 改写成 observation 后继续 closure；
+- 因为进入新 RM 就默认 full rerun；
+- 在 PRD 中绑定具体 Tool/Fixture 名称（除非它本身是产品合同）。
+
+PRD 冻结“需要证明什么”；具体 Scenario/Fixture/Stimulus/Oracle 由 Plan 绑定。
+
 ## Stable Change IDs
 
 新 PRD 的 `Change Classification` 使用稳定 `C01...`。一个 Change ID 对应一个架构原子变更；Plan 继承该 ID。
 
 ## PRD / Plan Boundary
 
-PRD 冻结 Capability、Owner、Boundary、observable Behaviour、Change Classification、AC。
+PRD 冻结 Capability、Owner、Boundary、observable Behaviour、Change Classification、AC，以及 blocking Acceptance Claim Baseline / prior evidence action。
 
-exact file/symbol、root-cause call chain、Ponytail implementation strategy、Todo WRITE_OWNER、test file 交给 `smc-plan-from-approved-prd-ponytail`。
+exact file/symbol、root-cause call chain、Ponytail implementation strategy、Todo WRITE_OWNER、test file、具体 Tool/Fixture/Scenario binding 交给 `smc-plan-from-approved-prd-ponytail`。
 
 ## Exit
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -11,17 +12,41 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.schemas import ArtifactDescriptor, CreateRunRequest, CreateRunResponse, RunEventView, RunView
+from app.services.execution_observability import bind_from_snapshot, normalize_request_trace_id, observe_stage, record_metric
 
 SCHEMA = settings.SKILL_AGENT_SCHEMA
 
+logger = logging.getLogger(__name__)
+
 TERMINAL = {"COMPLETED", "FAILED", "CANCELLED", "TIMED_OUT"}
+
+RUNTIME_BINDING_PUBLIC_OMIT_KEYS = frozenset(
+    {
+        "runtime_run_id",
+        "runtime_session_id",
+        "runtime_idempotency_key",
+        "runtime_capability_snapshot",
+        "runtime_bound_at",
+        "runtime_terminal_at",
+        "runtime_type",
+        "runtime_version",
+        "runtime_profile",
+    }
+)
+
+
+def _omit_runtime_binding_keys(payload: dict[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in payload.items() if k not in RUNTIME_BINDING_PUBLIC_OMIT_KEYS}
 
 
 def _sanitize_sensitive_keys(data: Any) -> Any:
     if isinstance(data, dict):
         sanitized = {}
         for k, v in data.items():
-            if any(s in k.lower() for s in ("token", "secret", "password", "api_key", "authorization", "auth_token")):
+            normalized_key = k.lower()
+            if normalized_key == "secret_ref_id" or normalized_key.endswith("_secret_ref_id"):
+                sanitized[k] = _sanitize_sensitive_keys(v)
+            elif any(s in normalized_key for s in ("token", "secret", "password", "api_key", "authorization", "auth_token")):
                 sanitized[k] = "[REDACTED]"
             else:
                 sanitized[k] = _sanitize_sensitive_keys(v)
@@ -61,14 +86,148 @@ def build_snapshot(request: CreateRunRequest, *, org_id: str, user_id: str) -> d
         "user_id": user_id,
         "output_policy": dict(request.output_policy or {}),
         "client_context": _sanitize_sensitive_keys(dict(request.client_context or {})),
-        "request_trace_id": request.request_trace_id,
+        "request_trace_id": normalize_request_trace_id(request.request_trace_id),
         "run_session_id": request.run_session_id,
     }
+    if request.execution_context is not None:
+        body["execution_context"] = _sanitize_sensitive_keys(dict(request.execution_context))
+    if request.context_version is not None:
+        body["context_version"] = int(request.context_version)
     snapshot_hash = request.snapshot_hash or hashlib.sha256(
         json.dumps(body, sort_keys=True, default=str).encode()
     ).hexdigest()
     body["snapshot_hash"] = snapshot_hash
     return body
+
+
+async def _ensure_run_session(
+    db: AsyncSession,
+    *,
+    run_session_id: str,
+    org_id: str,
+    user_id: str,
+    context_version: int | None = None,
+) -> int:
+    if not run_session_id or len(run_session_id) > 36:
+        raise ValueError("run session id invalid")
+
+    sess_row = (
+        await db.execute(
+            text(
+                f"""
+                SELECT id, org_id, user_id, context_version, deleted_at, expires_at
+                FROM "{SCHEMA}".run_sessions
+                WHERE id = :id
+                LIMIT 1
+                FOR UPDATE
+                """
+            ),
+            {"id": run_session_id},
+        )
+    ).mappings().first()
+
+    now = _utcnow()
+    if sess_row:
+        if sess_row["org_id"] != org_id:
+            raise ValueError("cross-org run session access rejected")
+        if sess_row["user_id"] != user_id:
+            raise ValueError("run session subject mismatch rejected")
+        if sess_row.get("deleted_at") is not None:
+            raise ValueError("run session unrecoverable: soft deleted")
+        expires_at = sess_row.get("expires_at")
+        if expires_at is not None:
+            exp = expires_at
+            if exp.tzinfo is None:
+                exp = exp.replace(tzinfo=timezone.utc)
+            if exp <= now:
+                raise ValueError("run session unrecoverable: expired")
+        current_version = int(sess_row.get("context_version") or 0)
+        if context_version is not None:
+            next_version = current_version + 1
+            await db.execute(
+                text(
+                    f"""
+                    UPDATE "{SCHEMA}".run_sessions
+                    SET context_version = :context_version, updated_at = :now
+                    WHERE id = :id AND org_id = :org_id AND user_id = :user_id AND deleted_at IS NULL
+                    """
+                ),
+                {
+                    "id": run_session_id,
+                    "org_id": org_id,
+                    "user_id": user_id,
+                    "context_version": next_version,
+                    "now": now,
+                },
+            )
+            return next_version
+        return current_version
+
+    await db.execute(
+        text(
+            f"""
+            INSERT INTO "{SCHEMA}".run_sessions (
+                id, org_id, user_id, metadata, context_version, created_at, updated_at
+            ) VALUES (
+                :id, :org_id, :user_id, '{{}}'::jsonb, :context_version, :now, :now
+            )
+            """
+        ),
+        {
+            "id": run_session_id,
+            "org_id": org_id,
+            "user_id": user_id,
+            "context_version": 1 if context_version is not None else 0,
+            "now": now,
+        },
+    )
+    return 1 if context_version is not None else 0
+
+
+async def revalidate_run_session(
+    db: AsyncSession,
+    *,
+    run_session_id: str | None,
+    org_id: str,
+    user_id: str,
+    context_version: int | None,
+    allow_missing: bool = False,
+) -> None:
+    if not run_session_id:
+        return
+
+    sess_row = (
+        await db.execute(
+            text(
+                f"""
+                SELECT id, org_id, user_id, context_version, deleted_at, expires_at
+                FROM "{SCHEMA}".run_sessions
+                WHERE id = :id
+                LIMIT 1
+                """
+            ),
+            {"id": run_session_id},
+        )
+    ).mappings().first()
+    if not sess_row:
+        if allow_missing:
+            return
+        raise ValueError("run session unrecoverable: missing")
+    if sess_row["org_id"] != org_id:
+        raise ValueError("cross-org run session access rejected")
+    if sess_row["user_id"] != user_id:
+        raise ValueError("run session subject mismatch rejected")
+    if sess_row.get("deleted_at") is not None:
+        raise ValueError("run session unrecoverable: soft deleted")
+    expires_at = sess_row.get("expires_at")
+    if expires_at is not None:
+        exp = expires_at
+        if exp.tzinfo is None:
+            exp = exp.replace(tzinfo=timezone.utc)
+        if exp <= _utcnow():
+            raise ValueError("run session unrecoverable: expired")
+    if context_version is not None and int(sess_row.get("context_version") or 0) != int(context_version):
+        raise ValueError("run session context version mismatch")
 
 
 async def create_run(
@@ -81,33 +240,16 @@ async def create_run(
     if not request.run_id:
         raise ValueError("run_id is required")
 
-    # Session cross-org validation and creation
-    if request.run_session_id:
-        try:
-            sess_row = (
-                await db.execute(
-                    text(f'SELECT id, org_id FROM "{SCHEMA}".run_sessions WHERE id = :id LIMIT 1'),
-                    {"id": request.run_session_id},
-                )
-            ).mappings().first()
-            if sess_row:
-                if sess_row["org_id"] != org_id:
-                    raise ValueError("cross-org run session access rejected")
-            else:
-                await db.execute(
-                    text(
-                        f"""
-                        INSERT INTO "{SCHEMA}".run_sessions (id, org_id, user_id, metadata, created_at, updated_at)
-                        VALUES (:id, :org_id, :user_id, '{{}}'::jsonb, :now, :now)
-                        """
-                    ),
-                    {"id": request.run_session_id, "org_id": org_id, "user_id": user_id, "now": _utcnow()},
-                )
-        except Exception as exc:
-            if "cross-org" in str(exc):
-                raise
-
     snapshot = build_snapshot(request, org_id=org_id, user_id=user_id)
+    if request.run_session_id:
+        await revalidate_run_session(
+            db,
+            run_session_id=request.run_session_id,
+            org_id=org_id,
+            user_id=user_id,
+            context_version=None,
+            allow_missing=True,
+        )
     cmd_body = {
         "tool_name": request.tool_name,
         "skill_id": request.skill_id,
@@ -152,6 +294,7 @@ async def create_run(
         if ex_digest and ex_digest != command_digest:
             raise RuntimeError("idempotency conflict: payload digest mismatch")
         ex_snapshot = existing.get("snapshot") or {}
+        bind_from_snapshot(ex_snapshot, run_id=existing["id"])
         return CreateRunResponse(
             run_id=existing["id"],
             status=existing["status"],
@@ -159,6 +302,31 @@ async def create_run(
             org_id=existing.get("org_id") or org_id,
             run_session_id=existing.get("run_session_id") or request.run_session_id,
         )
+
+    if request.context_version is not None and not request.execution_context:
+        raise ValueError("execution context is required when context version is set")
+
+    snapshot_request = request
+    if request.run_session_id:
+        session_context_version = await _ensure_run_session(
+            db,
+            run_session_id=request.run_session_id,
+            org_id=org_id,
+            user_id=user_id,
+            context_version=request.context_version,
+        )
+        if request.context_version is not None:
+            execution_context = dict(request.execution_context or {})
+            execution_context["context_version"] = session_context_version
+            snapshot_request = request.model_copy(
+                update={
+                    "context_version": session_context_version,
+                    "execution_context": execution_context,
+                }
+            )
+
+    snapshot = build_snapshot(snapshot_request, org_id=org_id, user_id=user_id)
+    bind_from_snapshot(snapshot, run_id=request.run_id)
 
     status = "WAITING_APPROVAL" if request.requires_approval else "QUEUED"
     try:
@@ -283,8 +451,11 @@ async def append_event(
     source: str = "agent",
     source_event_id: str | None = None,
     request_trace_id: str | None = None,
+    context_version: int | None = None,
 ) -> RunEventView:
-    payload = payload or {}
+    payload = _omit_runtime_binding_keys(dict(payload or {}))
+    if context_version is not None and "context_version" not in payload:
+        payload["context_version"] = context_version
     now = _utcnow()
 
     # If request_trace_id not explicitly provided, try to fetch from run's snapshot
@@ -592,6 +763,7 @@ async def approve_run(
     org_id: str,
     approval_id: str | None = None,
     evidence: dict[str, Any] | None = None,
+    decision: str | None = None,
 ) -> RunView | None:
     run = await get_run(db, run_id, org_id=org_id)
     if not run:
@@ -600,6 +772,9 @@ async def approve_run(
     if not approval_id:
         raise ValueError("approval_id is required to approve run")
 
+    from app.services.hermes_engine import normalize_hermes_approval_choice
+
+    choice = normalize_hermes_approval_choice(decision or "approve")
     evidence_dict = evidence or {}
 
     try:
@@ -607,22 +782,63 @@ async def approve_run(
             text(
                 f"""
                 INSERT INTO "{SCHEMA}".run_approvals (id, run_id, approval_id, decision, evidence, created_at)
-                VALUES (:id, :run_id, :approval_id, 'APPROVED', CAST(:evidence AS jsonb), NOW())
-                ON CONFLICT (run_id, approval_id) DO UPDATE SET evidence = CAST(:evidence AS jsonb)
+                VALUES (:id, :run_id, :approval_id, :decision, CAST(:evidence AS jsonb), NOW())
+                ON CONFLICT (run_id, approval_id) DO UPDATE SET evidence = CAST(:evidence AS jsonb), decision = :decision
                 """
             ),
             {
                 "id": str(uuid.uuid4()),
                 "run_id": run_id,
                 "approval_id": approval_id,
+                "decision": "DENIED" if choice == "deny" else "APPROVED",
                 "evidence": json.dumps(evidence_dict),
             },
         )
     except Exception:
         pass
 
+    binding = None
+    if run.attempt_id:
+        binding = await get_runtime_binding(db, run.attempt_id)
+    if binding and binding.get("runtime_run_id"):
+        from app.services import hermes_engine
+
+        gateway_url = hermes_engine.gateway_from_snapshot(run.snapshot or {})
+        if not gateway_url:
+            raise ValueError("runtime gateway is not configured")
+        generation = hermes_engine.control_generation(
+            run_generation=int(run.generation or 0),
+            binding=binding,
+        )
+        result = await hermes_engine.respond_runtime_approval(
+            attempt_id=run.attempt_id,
+            generation=generation,
+            choice=choice,
+            gateway_url=gateway_url,
+            runtime_run_id=str(binding.get("runtime_run_id")),
+            snapshot=run.snapshot,
+            org_id=org_id,
+            run_id=run_id,
+        )
+        if result == "fenced":
+            raise ValueError("stale runtime generation")
+        if result:
+            raise ValueError(result)
+        return await get_run(db, run_id, org_id=org_id)
+
     if run.status != "WAITING_APPROVAL":
         return run
+
+    if choice == "deny":
+        await set_status(db, run_id, "FAILED", org_id=org_id, expected_status=["WAITING_APPROVAL"])
+        await append_event(
+            db,
+            run_id,
+            "run.failed",
+            {"status": "FAILED", "approval_id": approval_id, "reason": "denied"},
+            org_id=org_id,
+        )
+        return await get_run(db, run_id, org_id=org_id)
 
     evidence_payload = {"status": "RESUMING", "approval_id": approval_id, "evidence": evidence_dict}
     await set_status(db, run_id, "RESUMING", org_id=org_id, expected_status=["WAITING_APPROVAL"])
@@ -662,13 +878,68 @@ async def cancel_run(db: AsyncSession, run_id: str, *, org_id: str) -> RunView |
         )
         return await aggregate_run_terminal(db, run_id, org_id=org_id)
 
-    # If already CANCELLING or in-flight (RUNNING/PREPARING/RESUMING with worker)
     if run.status in ("PREPARING", "RUNNING", "RESUMING") and run.attempt_id:
-        # Move to CANCELLING state
         ok = await set_status(db, run_id, "CANCELLING", org_id=org_id, expected_status=["PREPARING", "RUNNING", "RESUMING"])
         if ok:
             await append_event(db, run_id, "run.cancelling", {"status": "CANCELLING"}, org_id=org_id)
         return await get_run(db, run_id, org_id=org_id)
+
+    binding = None
+    if run.status == "WAITING_APPROVAL" and run.attempt_id:
+        binding = await get_runtime_binding(db, run.attempt_id)
+    has_runtime = bool(binding and binding.get("runtime_run_id"))
+
+    if run.status == "WAITING_APPROVAL" and has_runtime:
+        ok = await set_status(
+            db,
+            run_id,
+            "CANCELLING",
+            org_id=org_id,
+            expected_status=["WAITING_APPROVAL", "PREPARING", "RUNNING", "RESUMING"],
+        )
+        if ok:
+            await append_event(db, run_id, "run.cancelling", {"status": "CANCELLING"}, org_id=org_id)
+        from app.services import hermes_engine
+
+        gateway_url = hermes_engine.gateway_from_snapshot(run.snapshot or {})
+        generation = hermes_engine.control_generation(
+            run_generation=int(run.generation or 0),
+            binding=binding,
+        )
+        stop_result = None
+        if gateway_url:
+            try:
+                stop_result = await hermes_engine.stop_runtime_attempt(
+                    attempt_id=run.attempt_id,
+                    generation=generation,
+                    gateway_url=gateway_url,
+                    runtime_run_id=str(binding.get("runtime_run_id")),
+                    snapshot=run.snapshot,
+                    org_id=org_id,
+                    run_id=run_id,
+                )
+            except Exception:
+                logger.exception("runtime stop during cancel failed run_id=%s", run_id)
+                stop_result = "RUNTIME_STOP_FAILED"
+            terminal = None
+            try:
+                terminal = await hermes_engine.inspect_runtime_terminal(
+                    attempt_id=run.attempt_id,
+                    generation=generation,
+                    gateway_url=gateway_url,
+                    runtime_run_id=str(binding.get("runtime_run_id")),
+                    snapshot=run.snapshot,
+                    org_id=org_id,
+                    run_id=run_id,
+                )
+            except Exception:
+                logger.exception("runtime reconcile during cancel failed run_id=%s", run_id)
+            if stop_result == "stop_404" or (
+                terminal and terminal.get("event_type") in {"run.cancelled", "run.failed"}
+            ):
+                pass
+            else:
+                return await get_run(db, run_id, org_id=org_id)
 
     # If QUEUED, WAITING_APPROVAL, PAUSED, SUSPENDED (no active in-flight worker execution), cancel immediately
     if run.attempt_id:
@@ -881,6 +1152,35 @@ async def record_event_rejection(
         pass
 
 
+# @lat: [[architecture/skill-agent#Configuration#Gateway Reachability Probe]]
+async def _append_terminal_event(
+    db: AsyncSession,
+    run_id: str,
+    event_type: str,
+    payload: dict[str, Any],
+    *,
+    org_id: str | None = None,
+) -> None:
+    try:
+        await append_event(db, run_id, event_type, payload, org_id=org_id)
+    except RuntimeError:
+        logger.warning(
+            "terminal %s event skipped after status CAS run_id=%s",
+            event_type,
+            run_id,
+        )
+
+
+_AGGREGATE_TERMINAL_FROM = (
+    "RUNNING",
+    "WAITING_EDGE",
+    "PREPARING",
+    "RESUMING",
+    "QUEUED",
+    "WAITING_APPROVAL",
+)
+
+
 async def aggregate_run_terminal(
     db: AsyncSession,
     run_id: str,
@@ -920,7 +1220,9 @@ async def aggregate_run_terminal(
         if all_stopped:
             ok = await set_status(db, run_id, "CANCELLED", org_id=org_id, expected_status=["CANCELLING"])
             if ok:
-                await append_event(db, run_id, "run.cancelled", {"status": "CANCELLED"}, org_id=org_id)
+                await _append_terminal_event(
+                    db, run_id, "run.cancelled", {"status": "CANCELLED"}, org_id=org_id
+                )
             return await get_run(db, run_id, org_id=org_id)
         return run
 
@@ -933,11 +1235,17 @@ async def aggregate_run_terminal(
             run_id,
             "FAILED",
             org_id=org_id,
-            expected_status=["RUNNING", "WAITING_EDGE", "PREPARING", "RESUMING", "QUEUED"],
+            expected_status=list(_AGGREGATE_TERMINAL_FROM),
             result={"error": first_err, "failed_step_id": failed_required[0].get("step_id")},
         )
         if ok:
-            await append_event(db, run_id, "run.failed", {"status": "FAILED", "error": first_err}, org_id=org_id)
+            await _append_terminal_event(
+                db,
+                run_id,
+                "run.failed",
+                {"status": "FAILED", "error": first_err},
+                org_id=org_id,
+            )
         return await get_run(db, run_id, org_id=org_id)
 
     # 3. Required steps success check
@@ -975,11 +1283,11 @@ async def aggregate_run_terminal(
             run_id,
             "COMPLETED",
             org_id=org_id,
-            expected_status=["RUNNING", "WAITING_EDGE", "PREPARING", "RESUMING", "QUEUED"],
+            expected_status=list(_AGGREGATE_TERMINAL_FROM),
             result=combined_result,
         )
         if ok:
-            await append_event(db, run_id, "run.completed", combined_result, org_id=org_id)
+            await _append_terminal_event(db, run_id, "run.completed", combined_result, org_id=org_id)
             content = combined_result.get("content") or combined_result.get("summary") or json.dumps(combined_result)
             raw = content if isinstance(content, (bytes, bytearray)) else str(content).encode("utf-8")
             try:
@@ -1170,7 +1478,7 @@ async def store_artifact_bytes(
         storage_ref = write_res.get("storage_ref") or storage_key
 
         # CAS update to PERSISTED
-        await db.execute(
+        cas = await db.execute(
             text(
                 f"""
                 UPDATE "{SCHEMA}".run_artifacts
@@ -1182,6 +1490,11 @@ async def store_artifact_bytes(
             ),
             {"id": artifact_id, "storage_ref": storage_ref, "now": _utcnow()},
         )
+        cas_rowcount = getattr(cas, "rowcount", None)
+        if isinstance(cas_rowcount, int):
+            persisted = cas_rowcount > 0
+        else:
+            persisted = True
     except Exception as exc:
         await db.execute(
             text(
@@ -1205,6 +1518,24 @@ async def store_artifact_bytes(
         attempt_id=attempt_id,
         generation=generation,
     )
+    record_metric("artifact_stage_total", labels={"stage": "store", "outcome": "ok"})
+    if persisted:
+        await append_event(
+            db,
+            run_id,
+            "artifact.persisted",
+            {
+                "artifact_id": artifact_id,
+                "name": name,
+                "content_type": content_type or "text/plain",
+                "size": len(content),
+                "checksum_sha256": checksum,
+            },
+            org_id=org_id,
+            attempt_id=attempt_id,
+            generation=generation,
+            source_event_id=f"artifact:{artifact_id}:persisted",
+        )
     return ArtifactDescriptor(
         artifact_id=artifact_id,
         name=name,
@@ -1295,3 +1626,137 @@ async def get_artifact_bytes(db: AsyncSession, run_id: str, artifact_id: str) ->
         if path.is_file():
             return dict(row), path.read_bytes()
         return None
+
+
+_RUNTIME_BINDING_COLUMNS = (
+    "runtime_type, runtime_version, runtime_run_id, runtime_session_id, "
+    "runtime_profile, runtime_capability_snapshot, runtime_idempotency_key, "
+    "runtime_bound_at, runtime_terminal_at, generation"
+)
+
+
+def _runtime_binding_from_row(row: Any) -> dict[str, Any]:
+    snapshot = row.get("runtime_capability_snapshot")
+    if snapshot is not None and not isinstance(snapshot, dict):
+        snapshot = dict(snapshot) if snapshot else None
+    return {
+        "runtime_type": row.get("runtime_type"),
+        "runtime_version": row.get("runtime_version"),
+        "runtime_run_id": row.get("runtime_run_id"),
+        "runtime_session_id": row.get("runtime_session_id"),
+        "runtime_profile": row.get("runtime_profile"),
+        "runtime_capability_snapshot": snapshot,
+        "runtime_idempotency_key": row.get("runtime_idempotency_key"),
+        "runtime_bound_at": row.get("runtime_bound_at"),
+        "runtime_terminal_at": row.get("runtime_terminal_at"),
+        "generation": int(row.get("generation") or 0),
+    }
+
+
+async def get_runtime_binding(db: AsyncSession, attempt_id: str) -> dict[str, Any] | None:
+    row = (
+        await db.execute(
+            text(
+                f"""
+                SELECT {_RUNTIME_BINDING_COLUMNS}
+                FROM "{SCHEMA}".run_attempts
+                WHERE id = :attempt_id
+                LIMIT 1
+                """
+            ),
+            {"attempt_id": attempt_id},
+        )
+    ).mappings().first()
+    if not row:
+        return None
+    return _runtime_binding_from_row(row)
+
+
+async def persist_runtime_binding(
+    db: AsyncSession,
+    *,
+    attempt_id: str,
+    generation: int,
+    runtime_run_id: str,
+    runtime_type: str = "hermes",
+    runtime_version: str | None = None,
+    runtime_session_id: str | None = None,
+    runtime_profile: str | None = None,
+    runtime_capability_snapshot: dict[str, Any] | None = None,
+    runtime_idempotency_key: str | None = None,
+) -> dict[str, Any] | None:
+    existing = await get_runtime_binding(db, attempt_id)
+    if existing is None:
+        return None
+    if int(existing["generation"]) != int(generation):
+        return None
+    bound_id = existing.get("runtime_run_id")
+    if bound_id and bound_id != runtime_run_id:
+        return existing
+
+    now = _utcnow()
+    bound_at = existing.get("runtime_bound_at") or now
+    snapshot = runtime_capability_snapshot
+    if snapshot is None:
+        snapshot = existing.get("runtime_capability_snapshot")
+    res = await db.execute(
+        text(
+            f"""
+            UPDATE "{SCHEMA}".run_attempts
+            SET runtime_type = :runtime_type,
+                runtime_version = :runtime_version,
+                runtime_run_id = :runtime_run_id,
+                runtime_session_id = :runtime_session_id,
+                runtime_profile = :runtime_profile,
+                runtime_capability_snapshot = CAST(:runtime_capability_snapshot AS jsonb),
+                runtime_idempotency_key = :runtime_idempotency_key,
+                runtime_bound_at = :runtime_bound_at,
+                updated_at = :now
+            WHERE id = :attempt_id
+              AND generation = :generation
+              AND (runtime_run_id IS NULL OR runtime_run_id = :runtime_run_id)
+            """
+        ),
+        {
+            "attempt_id": attempt_id,
+            "generation": int(generation),
+            "runtime_type": runtime_type,
+            "runtime_version": runtime_version,
+            "runtime_run_id": runtime_run_id,
+            "runtime_session_id": runtime_session_id,
+            "runtime_profile": runtime_profile,
+            "runtime_capability_snapshot": json.dumps(snapshot) if snapshot is not None else None,
+            "runtime_idempotency_key": runtime_idempotency_key or existing.get("runtime_idempotency_key"),
+            "runtime_bound_at": bound_at,
+            "now": now,
+        },
+    )
+    rowcount = getattr(res, "rowcount", 0)
+    if isinstance(rowcount, int) and rowcount <= 0:
+        return existing if bound_id else None
+    refreshed = await get_runtime_binding(db, attempt_id)
+    return refreshed
+
+
+async def mark_runtime_terminal(
+    db: AsyncSession,
+    *,
+    attempt_id: str,
+    generation: int,
+) -> bool:
+    now = _utcnow()
+    res = await db.execute(
+        text(
+            f"""
+            UPDATE "{SCHEMA}".run_attempts
+            SET runtime_terminal_at = :now,
+                updated_at = :now
+            WHERE id = :attempt_id
+              AND generation = :generation
+              AND runtime_run_id IS NOT NULL
+            """
+        ),
+        {"attempt_id": attempt_id, "generation": int(generation), "now": now},
+    )
+    rowcount = getattr(res, "rowcount", 0)
+    return isinstance(rowcount, int) and rowcount > 0

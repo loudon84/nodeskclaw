@@ -18,7 +18,10 @@ from app.schemas.hermes_skill.skill_installation import (
     RoutingTestRequest,
 )
 from app.services.hermes_external.hermes_bound_agent_scope_service import HermesBoundAgentScopeService
-from app.services.hermes_skill.skill_installer import SkillInstaller
+from app.services.hermes_skill.skill_installer import (
+    SkillInstaller,
+    assert_installation_workspace_ref,
+)
 from app.services.hermes_skill.permission_checker import PermissionChecker
 from app.services.hermes_skill.skill_routing_service import SkillRoutingService
 
@@ -118,6 +121,7 @@ async def create_installation(
     user, org = user_org
     if user:
         await PermissionChecker.require_permission(db, user.id, org.id, "skill:install")
+    await assert_installation_workspace_ref(db, body.workspace_id, org.id)
     if body.target_kind == "edge":
         # Edge installation: record desired configuration on control plane without local filesystem side effects
         installation = HermesSkillInstallation(

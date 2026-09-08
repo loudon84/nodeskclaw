@@ -16,6 +16,13 @@ Knowledge 作为兄弟服务包落在仓库根目录 `nodeskclaw-knowledge/`，�
 
 Principal 以 `OrgMembership.id`（`member_id`）为准。Backend `GET /api/v1/auth/knowledge-context` 使用 `get_current_user`（拒绝 `must_change_password`）：[[nodeskclaw-backend/app/api/auth.py#knowledge_context]]。Knowledge 侧：[[nodeskclaw-knowledge/app/core/deps.py#get_member_context]]。可选短 TTL 缓存以 `sha256(token)` 为 key，默认 TTL=0。
 
+## Skill Run Authorization Proofs
+
+RM-06 中 Knowledge ACL Owner 仍为 `permission_service`；Backend Runtime 通过 service-token 路由获取 opaque 授权证明，不复制 ACL 或检索正文。
+
+- **已实现**：[[nodeskclaw-knowledge/app/api/v2/skill_run_auth.py#issue_skill_run_auth_proofs]] 包装 [[nodeskclaw-knowledge/app/services/permission_service.py#has_set_permission]]，返回 `{set_id, allowed, auth_version}`；由 [[nodeskclaw-knowledge/app/core/deps.py#require_knowledge_service_token]] 与成员 Principal 隔离。
+- **KEEP**：[[nodeskclaw-knowledge/app/api/agent_tools.py#tool_search]] 等检索工具仍仅接受成员 Bearer，service token 不得调用检索面。
+
 ## Shared Http Clients
 
 应用 lifespan 托管 Backend / RAGFlow / LLM Proxy 的共享 `httpx.AsyncClient`，shutdown 时 `aclose`，禁止热路径每次新建连接。

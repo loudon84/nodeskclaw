@@ -3,7 +3,7 @@ from __future__ import annotations
 import enum
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, text
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -35,6 +35,14 @@ class EdgeNode(BaseModel):
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default=EdgeNodeStatus.PENDING.value)
     token_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    bootstrap_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    bootstrap_consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    identity_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    public_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    previous_public_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    identity_rotation_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    identity_revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_request_seq: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     last_heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     meta: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)

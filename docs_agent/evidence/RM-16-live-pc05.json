@@ -1,0 +1,10 @@
+{
+  "schema": "smc.rm16.live-conformance.v1",
+  "policy": "REAL_PROCESS",
+  "result": "BLOCKED",
+  "scenario": "pc05",
+  "auth_type": "user_jwt",
+  "blocker": "RM16_WORKER_KILL_UNAVAILABLE",
+  "message": "PC-05 requires RM16_WORKER_KILL_CMD to kill/restart the Agent Worker",
+  "timestamp": "2026-09-06T11:03:20.168747Z"
+}

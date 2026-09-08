@@ -1,0 +1,64 @@
+{
+  "schema": "smc.rm13.recovery-audit.v1",
+  "grounded_at": "2026-09-04T17:11:00.000000Z",
+  "code_origin_commit": "59ebfb6683286dfadd9dad5586adb8feefece148",
+  "prd": "docs_agent/prd-v1.6.11-hermes-native-runtime-bridge.md",
+  "plan": ".cursor/plans/rm-13_hermes-native-runtime-bridge.plan.md",
+  "changes": [
+    {
+      "id": "C01",
+      "state": "EXISTS",
+      "action": "KEEP",
+      "evidence": "hermes_engine.HERMES_VERSION_FLOOR=v2026.8.31; Dockerfile ARG HERMES_VERSION=v2026.8.31; seed image_tag v2026.8.31-20260904; production grep 2026.4.23 empty in agent/startup/artifacts"
+    },
+    {
+      "id": "C02",
+      "state": "EXISTS",
+      "action": "KEEP",
+      "evidence": "execute_hermes_run GET /v1/capabilities per Attempt; missing feature RUNTIME_CAPABILITY_MISSING"
+    },
+    {
+      "id": "C03",
+      "state": "EXISTS",
+      "action": "KEEP",
+      "evidence": "build_native_run_payload uses input not messages; POST /v1/runs with Attempt Idempotency-Key"
+    },
+    {
+      "id": "C04",
+      "state": "EXISTS",
+      "action": "KEEP",
+      "evidence": "run_attempts binding columns; persist_runtime_binding generation CAS; alembic 0007_attempt_runtime_binding"
+    },
+    {
+      "id": "C05",
+      "state": "EXISTS",
+      "action": "KEEP",
+      "evidence": "GET /v1/runs/{id}/events only after persist_native_binding"
+    },
+    {
+      "id": "C06",
+      "state": "EXISTS",
+      "action": "KEEP",
+      "evidence": "_reconcile_status GET /v1/runs/{id}; no resubscribe"
+    },
+    {
+      "id": "C07",
+      "state": "EXISTS",
+      "action": "KEEP",
+      "evidence": "_stop_runtime POST /stop; 404 maps to reconcile; stale generation refused"
+    },
+    {
+      "id": "C08",
+      "state": "EXISTS",
+      "action": "KEEP",
+      "evidence": "stable RUNTIME_* codes; product payload.error is not raw httpx"
+    },
+    {
+      "id": "C09",
+      "state": "EXISTS",
+      "action": "KEEP",
+      "evidence": "nodeskclaw-agent/app has no chat/completions; build_chat_completions_payload removed"
+    }
+  ],
+  "open_exit": "V11 REAL_RUNTIME live Hermes >= v2026.8.31"
+}

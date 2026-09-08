@@ -12,9 +12,10 @@ class RuntimeSkillRegisterGrant(BaseModel):
     can_manage: bool = False
 
 
+# @lat: [[decisions/skill-platform-execution#Enqueue Path#Runtime Skill Workspace Scope]]
 class RuntimeSkillRegisterRequest(BaseModel):
     profile_id: str = "default"
-    workspace_id: str = "default"
+    workspace_id: str | None = None
     tool_name: str | None = None
     is_mcp_exposed: bool = True
     default_execution_mode: Literal["async"] = "async"
@@ -31,7 +32,7 @@ class RuntimeSkillRegisterResponse(BaseModel):
     hermes_agent_instance_id: str
     agent_profile: str
     profile_id: str
-    workspace_id: str
+    workspace_id: str | None = None
     installation_id: str
     is_mcp_exposed: bool
     grant_created: bool

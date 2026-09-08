@@ -11,7 +11,7 @@ from app.models.connector.edge_node import EdgeNode
 from app.models.hermes_skill.skill_release import SkillReleaseStatus
 from app.schemas.connector import EdgeNodeRead, SecretRefRead
 from app.services.connector.connector_service import ConnectorService
-from app.services.connector.edge_node_service import EdgeNodeService, hash_edge_token
+from app.services.connector.edge_node_service import EdgeNodeService, hash_edge_bootstrap, hash_edge_token
 
 
 @pytest.mark.asyncio
@@ -49,6 +49,72 @@ async def test_soft_deleted_definition_name_can_be_recreated():
     assert definition.name == "crm_http"
     assert definition.org_id == "org-1"
     db.add.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_create_instance_rejects_plaintext_connector_credentials():
+    service = ConnectorService(AsyncMock())
+    service._get_definition = AsyncMock()
+    service._assert_instance_name_available = AsyncMock()
+    service._validate_instance_placement = AsyncMock()
+
+    with pytest.raises(BadRequestError) as exc_info:
+        await service.create_instance(
+            org_id="org-1",
+            definition_id="def-1",
+            name="crm",
+            config={"headers": {"Authorization": "Bearer plaintext-token"}},
+        )
+
+    assert exc_info.value.message_key == "errors.connector.plaintext_credentials_forbidden"
+
+
+@pytest.mark.asyncio
+async def test_create_instance_rejects_plaintext_x_api_key_header():
+    service = ConnectorService(AsyncMock())
+    service._get_definition = AsyncMock()
+    service._assert_instance_name_available = AsyncMock()
+    service._validate_instance_placement = AsyncMock()
+
+    with pytest.raises(BadRequestError) as exc_info:
+        await service.create_instance(
+            org_id="org-1",
+            definition_id="def-1",
+            name="crm",
+            config={"headers": {"X-Api-Key": "plaintext-token"}},
+        )
+
+    assert exc_info.value.message_key == "errors.connector.plaintext_credentials_forbidden"
+
+
+@pytest.mark.asyncio
+async def test_update_instance_rejects_url_with_embedded_credentials():
+    db = AsyncMock()
+    service = ConnectorService(db)
+    instance = MagicMock(
+        id="inst-1",
+        org_id="org-1",
+        definition_id="def-1",
+        name="crm",
+        placement="central",
+        edge_node_id=None,
+        secret_ref_id=None,
+        config={"url": "https://api.example.com"},
+    )
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = instance
+    db.execute = AsyncMock(return_value=result)
+    service.is_instance_bound_to_published_release = AsyncMock(return_value=False)
+    service._validate_instance_placement = AsyncMock()
+
+    with pytest.raises(BadRequestError) as exc_info:
+        await service.update_instance(
+            org_id="org-1",
+            instance_id="inst-1",
+            updates={"config": {"url": "https://user:password@example.com"}},
+        )
+
+    assert exc_info.value.message_key == "errors.connector.plaintext_credentials_forbidden"
 
 
 def test_secret_ref_read_excludes_plaintext_fields():
@@ -154,10 +220,11 @@ async def test_register_edge_node_returns_plain_token_once():
     db.add = MagicMock()
     db.flush = AsyncMock()
 
-    node, token = await service.register(org_id="org-1", name="edge-1", operator_user_id="user-1")
-    assert token
-    assert node.token_hash == hash_edge_token(token)
-    assert node.token_hash != token
+    node, bootstrap, expires_at = await service.register(org_id="org-1", name="edge-1", operator_user_id="user-1")
+    assert bootstrap
+    assert expires_at
+    assert node.token_hash == hash_edge_bootstrap(bootstrap)
+    assert node.token_hash != bootstrap
 
 
 @pytest.mark.asyncio

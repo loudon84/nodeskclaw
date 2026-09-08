@@ -4,7 +4,11 @@ import { useI18n } from 'vue-i18n'
 import { Copy, Loader2, Plus, Radio, RefreshCw, X } from 'lucide-vue-next'
 import {
   createEdgeNode,
+  disableEdgeNode,
+  enableEdgeNode,
   listEdgeNodes,
+  revokeEdgeNode,
+  rotateEdgeNode,
   type EdgeNode,
 } from '@/api/hermes/connectors'
 import { resolveApiErrorMessage } from '@/i18n/error'
@@ -19,11 +23,13 @@ const toast = useToast()
 
 const loading = ref(false)
 const nodes = ref<EdgeNode[]>([])
+const actionBusyId = ref<string | null>(null)
 
 const registerOpen = ref(false)
 const registerBusy = ref(false)
 const registerName = ref('')
-const createdToken = ref<string | null>(null)
+const createdBootstrap = ref<string | null>(null)
+const createdBootstrapExpiresAt = ref<string | null>(null)
 const createdNode = ref<EdgeNode | null>(null)
 
 const statusClass = computed(() => ({
@@ -47,14 +53,16 @@ async function fetchNodes() {
 
 function openRegister() {
   registerName.value = ''
-  createdToken.value = null
+  createdBootstrap.value = null
+  createdBootstrapExpiresAt.value = null
   createdNode.value = null
   registerOpen.value = true
 }
 
 function closeRegister() {
   registerOpen.value = false
-  createdToken.value = null
+  createdBootstrap.value = null
+  createdBootstrapExpiresAt.value = null
   createdNode.value = null
 }
 
@@ -67,7 +75,8 @@ async function submitRegister() {
   try {
     const res = await createEdgeNode({ name: registerName.value.trim() })
     createdNode.value = res.node
-    createdToken.value = res.token
+    createdBootstrap.value = res.bootstrap
+    createdBootstrapExpiresAt.value = res.expires_at
     toast.success(t('hermes.edgeNodes.createSuccess'))
     await fetchNodes()
   } catch (e: unknown) {
@@ -77,17 +86,40 @@ async function submitRegister() {
   }
 }
 
-async function copyToken() {
-  if (!createdToken.value) return
+async function copyBootstrap() {
+  if (!createdBootstrap.value) return
   try {
-    await navigator.clipboard.writeText(createdToken.value)
+    await navigator.clipboard.writeText(createdBootstrap.value)
     toast.success(t('hermes.edgeNodes.tokenCopied'))
   } catch {
     toast.error(t('common.copyFailed'))
   }
 }
 
-function formatHeartbeat(value: string | null): string {
+async function runLifecycleAction(
+  node: EdgeNode,
+  action: 'disable' | 'enable' | 'rotate' | 'revoke',
+) {
+  if (action === 'disable' && !window.confirm(t('hermes.edgeNodes.confirmDisable'))) return
+  if (action === 'revoke' && !window.confirm(t('hermes.edgeNodes.confirmRevoke'))) return
+
+  actionBusyId.value = node.id
+  try {
+    if (action === 'disable') await disableEdgeNode(node.id)
+    else if (action === 'enable') await enableEdgeNode(node.id)
+    else if (action === 'rotate') await rotateEdgeNode(node.id)
+    else await revokeEdgeNode(node.id)
+
+    toast.success(t(`hermes.edgeNodes.${action}Success`))
+    await fetchNodes()
+  } catch (e: unknown) {
+    toast.error(resolveApiErrorMessage(e, t('hermes.edgeNodes.actionFailed')))
+  } finally {
+    actionBusyId.value = null
+  }
+}
+
+function formatTimestamp(value: string | null): string {
   if (!value) return '—'
   try {
     return new Date(value).toLocaleString()
@@ -148,6 +180,7 @@ onMounted(() => {
             <TableHead class="text-left px-4 py-3 font-medium text-muted-foreground">{{ t('hermes.edgeNodes.colStatus') }}</TableHead>
             <TableHead class="text-left px-4 py-3 font-medium text-muted-foreground">{{ t('hermes.edgeNodes.colHeartbeat') }}</TableHead>
             <TableHead class="text-left px-4 py-3 font-medium text-muted-foreground">{{ t('hermes.edgeNodes.colCreatedAt') }}</TableHead>
+            <TableHead class="text-left px-4 py-3 font-medium text-muted-foreground">{{ t('hermes.edgeNodes.colActions') }}</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -168,10 +201,48 @@ onMounted(() => {
               </Badge>
             </TableCell>
             <TableCell class="px-4 py-3 text-xs text-muted-foreground">
-              {{ formatHeartbeat(node.last_heartbeat_at) }}
+              {{ formatTimestamp(node.last_heartbeat_at) }}
             </TableCell>
             <TableCell class="px-4 py-3 text-xs text-muted-foreground">
-              {{ formatHeartbeat(node.created_at) }}
+              {{ formatTimestamp(node.created_at) }}
+            </TableCell>
+            <TableCell class="px-4 py-3">
+              <div class="flex flex-wrap gap-1.5">
+                <Button
+                  v-if="node.status !== 'disabled'"
+                  variant="outline"
+                  size="sm"
+                  :disabled="actionBusyId === node.id"
+                  @click="runLifecycleAction(node, 'disable')"
+                >
+                  {{ t('hermes.edgeNodes.disable') }}
+                </Button>
+                <Button
+                  v-if="node.status === 'disabled'"
+                  variant="outline"
+                  size="sm"
+                  :disabled="actionBusyId === node.id"
+                  @click="runLifecycleAction(node, 'enable')"
+                >
+                  {{ t('hermes.edgeNodes.enable') }}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  :disabled="actionBusyId === node.id || node.status === 'disabled'"
+                  @click="runLifecycleAction(node, 'rotate')"
+                >
+                  {{ t('hermes.edgeNodes.rotate') }}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  :disabled="actionBusyId === node.id"
+                  @click="runLifecycleAction(node, 'revoke')"
+                >
+                  {{ t('hermes.edgeNodes.revoke') }}
+                </Button>
+              </div>
             </TableCell>
           </TableRow>
         </TableBody>
@@ -183,14 +254,14 @@ onMounted(() => {
       <div class="relative w-full max-w-lg rounded-xl border border-border bg-card p-5 shadow-xl space-y-4">
         <div class="flex items-start justify-between gap-3">
           <h3 class="text-base font-semibold">
-            {{ createdToken ? t('hermes.edgeNodes.tokenTitle') : t('hermes.edgeNodes.register') }}
+            {{ createdBootstrap ? t('hermes.edgeNodes.tokenTitle') : t('hermes.edgeNodes.register') }}
           </h3>
           <Button variant="ghost" size="icon" @click="closeRegister">
             <X class="w-4 h-4" />
           </Button>
         </div>
 
-        <template v-if="!createdToken">
+        <template v-if="!createdBootstrap">
           <div>
             <label class="text-sm font-medium">{{ t('hermes.edgeNodes.fieldName') }}</label>
             <Input
@@ -215,11 +286,14 @@ onMounted(() => {
           <div v-if="createdNode" class="text-xs text-muted-foreground font-mono">
             {{ createdNode.name }} · {{ createdNode.id }}
           </div>
+          <div v-if="createdBootstrapExpiresAt" class="text-xs text-muted-foreground">
+            {{ t('hermes.edgeNodes.bootstrapExpiresAt') }}: {{ formatTimestamp(createdBootstrapExpiresAt) }}
+          </div>
           <div class="rounded-lg border border-border bg-muted/40 p-3 font-mono text-xs break-all">
-            {{ createdToken }}
+            {{ createdBootstrap }}
           </div>
           <div class="flex justify-end gap-2 pt-2">
-            <Button variant="outline" class="flex items-center gap-2" @click="copyToken">
+            <Button variant="outline" class="flex items-center gap-2" @click="copyBootstrap">
               <Copy class="w-4 h-4" />
               {{ t('hermes.edgeNodes.copyToken') }}
             </Button>

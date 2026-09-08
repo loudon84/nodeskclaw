@@ -1,23 +1,17 @@
-## Summary
+## Governance
 
-<!-- Brief description of the changes -->
+SMC-Feature: FEAT-...
+SMC-Work-Package: WP-...
 
-## Changes
+## Stage PRD
 
-- 
+`path/to/approved-prd.md`
 
-## Type of change
+## Plan
 
-- [ ] Bug fix
-- [ ] New feature
-- [ ] Refactoring
-- [ ] Documentation
-- [ ] Other (describe):
+`.cursor/plans/<plan>.plan.md`
 
-## Checklist
+## Verification
 
-- [ ] Code follows the project coding style
-- [ ] Self-reviewed the code
-- [ ] Added necessary tests (if applicable)
-- [ ] Updated documentation (if applicable)
-- [ ] No breaking changes (or documented in summary)
+- [ ] Acceptance manifest/report generated
+- [ ] Required unit/contract/integration tests PASS

@@ -1,17 +1,26 @@
 ---
-plan_contract: smc.plan.v3.2
+name: <PLAN_NAME>
+overview: <PLAN_OVERVIEW>
+todos:
+  - id: t1-<stable-slug>
+    content: "T1 — <observable slice> [C01]"
+    status: pending
+isProject: false
+plan_contract: smc.plan.v3.4
+plan_id: <PLAN_ID>
 commit_policy: post_review
-source_revision: <prd-work-item@version>
-grounded_commit: <prd-grounded-commit>
+acceptance_contract: smc.acceptance.v1
+source_revision: <SOURCE_REVISION>
+grounded_commit: <GROUNDED_COMMIT>
 grounding_source: committed_baseline
 working_tree_fingerprint: clean
 ---
 
-# <Feature> Implementation Plan
+# <PLAN_NAME> Implementation Plan
 
 ## Approved PRD
 
-[Approved PRD](<repository-or-plan-relative-path>)
+[Approved PRD](<relative-path>)
 
 ## Scope
 
@@ -23,35 +32,43 @@ working_tree_fingerprint: clean
 
 | Change ID | Target | Baseline State | Symbol / Entry Resolution | Caller / Callee Evidence | Existing Reuse Search | Result |
 |---|---|---|---|---|---|---|
-| C01 | `path#symbol` | exists at `grounded_commit` | resolved | `caller -> owner -> callee` | existing helper/schema search result | PASS |
 
 ## Requirement Coverage Ledger
 
 | Requirement | Source | Obligation | Classification | Change IDs | Todo | Verification IDs | Evidence Class | Blocking |
 |---|---|---|---|---|---|---|---|---|
-| AC-01 | AC | <exact PRD requirement> | BEHAVIOR | C01 | T1 | V01 | INTEGRATION | yes |
-| DOD-01 | DOD | <exact PRD requirement> | EVIDENCE | - | - | V02 | DOCUMENT_SEMANTIC | yes |
 
 ## Lifecycle Closure Matrix
 
-<!-- Required when the PRD has State and Concurrency Invariants or LIFECYCLE requirements. -->
-
-| Journey | Requirements | Trigger | Nonterminal State | Success Writer | Failure / Cancel Writer | Evidence IDs |
-|---|---|---|---|---|---|---|
-| <journey> | AC-01 | <trigger> | <state> | <owner> | <owner> | V01 |
+None
 
 ## Contract / Data Flow Closure Matrix
 
-<!-- Use None only when no data crosses an independent owner, process, network, persistence, queue, or generator boundary. -->
-
 None
+
+## Acceptance Claim Ledger
+
+| Claim ID | Requirement | Observable Fact | Blocking | Prior Evidence | Prior Result | Evidence Action | Invalidation Reason | Verification IDs |
+|---|---|---|---|---|---|---|---|---|
+| CLM-01 | AC-01 | <observable fact> | yes | - | UNKNOWN | NEW_EVIDENCE | - | V01 |
+
+## Live Scenario Matrix
+
+| Scenario ID | Claim IDs | Verification IDs | Subject / Fixture | Required Capabilities | Preconditions | Stimulus | Oracle | Environment ID |
+|---|---|---|---|---|---|---|---|---|
+| SCN-01 | CLM-01 | V01 | <fixture-or-None> | <capabilities> | <preconditions> | <stimulus> | <oracle> | ENV-01 |
+
+## Live Environment Matrix
+
+| Environment ID | Required Env Vars | Preflight Command | Fault Driver Env | Candidate Mode | Candidate Probe |
+|---|---|---|---|---|---|
+| ENV-01 | - | - | - | LOCAL_WORKTREE | - |
 
 ## Verification Ledger
 
-| Verification ID | Level | Entry Point / Command | Oracle | Negative / Regression | Evidence Output | Environment | Blocking |
-|---|---|---|---|---|---|---|---|
-| V01 | INTEGRATION | `<command>` | <observable result> | <negative case> | `<artifact path>` | <environment> | yes |
-| V02 | DOCUMENT | `<command>` | <document result> | <stale reference check> | `<artifact path>` | <environment> | yes |
+| Verification ID | Claim IDs | Level | Acceptance Mode | Entry Point / Command | Oracle | Negative / Regression | Evidence Policy | Environment | Evidence Action | Blocking |
+|---|---|---|---|---|---|---|---|---|---|---|
+| V01 | CLM-01 | UNIT | LOCAL | `<command>` | <oracle> | <negative/regression> | LOCAL_TRANSIENT | local | NEW_EVIDENCE | yes |
 
 ## Immediate Read
 
@@ -66,19 +83,16 @@ None
 
 | Change ID | File / Symbol | Kind | Action | Existing Owner | Todo Owner | Target State | PRD Capability | New File? |
 |---|---|---|---|---|---|---|---|---|
-| C01 | `path#symbol` | PROD | MODIFY | `Owner` | T1 | observable target | capability | no |
 
 ## Implementation Decisions
 
 | Change ID | Strategy | Root-Cause / Reuse Evidence | Why This Is Minimum |
 |---|---|---|---|
-| C01 | MODIFY_EXISTING | `path#symbol` is current owner | shared owner can satisfy AC without a new layer |
 
 ## Write Ownership Ledger
 
 | Todo | Owns Changes | Writes | Reads | Depends On | Parallel Safe |
 |---|---|---|---|---|---|
-| T1 | C01 | `path#symbol` | - | - | no |
 
 ## Integration Hotspots
 
@@ -88,29 +102,12 @@ None
 
 None
 
-<!-- Only when New File?=yes
-## New File Justification
-
-| Change ID | File | Necessity | Owner Impact |
-|---|---|---|---|
-| Cxx | `path` | ... | single owner preserved |
--->
-
-<!-- Only when Strategy=NEW_DEPENDENCY
-## New Dependency Justification
-
-| Change ID | Dependency | Necessity | Why Existing / Stdlib / Native / Installed Fails |
-|---|---|---|---|
-| Cxx | package | ... | ... |
--->
-
 ## Todo T1 — <observable slice>
 
 **Owns Changes**
 - C01
 
 **Goal**
-
 ...
 
 **Immediate anchors**
@@ -120,28 +117,20 @@ None
 - ...
 
 **Stop conditions**
-- [ ] observable behaviour
-- [ ] focused verification passes
+- [ ] ...
 
 **Triggered reads**
-- If ...: `path#symbol`
-- Otherwise: none
+- None unless a listed trigger becomes true
 
 ## Verification
 
-```bash
-<focused-command>
-```
-
-- AC mapping: ...
-- Expected: ...
-- Negative/regression case: ...
+Run the Verification Ledger entries through `smc-plan-delivery/scripts/evidence.py`.
 
 ## Completion Gate
 
 | Exit State | Allowed When | Blocking Evidence |
 |---|---|---|
-| IMPLEMENTED_AND_PROVEN | all blocking Verification Ledger rows pass | V01,V02 evidence output retained |
-| IMPLEMENTED_NOT_PROVEN | implementation exists but evidence is incomplete | pending verification named |
-| BLOCKED | environment or dependency prevents proof | blocker recorded |
-| RETURN_PRD | owner or boundary conflicts with APPROVED PRD | revision request recorded |
+| IMPLEMENTED_AND_PROVEN | all Cursor todos completed; completion audit FRESH PASS; implementation review FRESH PASS; all blocking Verification FRESH PASS; durable Evidence Manifest FRESH | V01 via SMC evidence ledger + durable Evidence Manifest |
+| IMPLEMENTED_NOT_PROVEN | implementation exists but proof is pending/stale | pending/stale gate IDs |
+| BLOCKED | environment/dependency prevents proof | blocker record |
+| RETURN_PRD | approved owner/boundary conflicts | PRD revision request |

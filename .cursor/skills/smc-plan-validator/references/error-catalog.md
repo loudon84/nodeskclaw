@@ -70,7 +70,7 @@
 
 | Code | Meaning | Route |
 |---|---|---|
-| `PLAN_PRD_REQUIREMENTS_UNPARSEABLE` | PRD 缺少或无法解析编号 AC/DoD | Fix APPROVED PRD structure |
+| `PLAN_PRD_REQUIREMENTS_UNPARSEABLE` | PRD 缺少或无法解析 AC/DoD（有序列表或显式编号 bullet） | Fix APPROVED PRD structure |
 | `PLAN_REQUIREMENT_ID_INVALID` | requirement ID 非 `AC-nn` / `DOD-nn` | Fix Coverage Ledger |
 | `PLAN_REQUIREMENT_COVERAGE_DUPLICATE` | 同一 requirement 有多行 | Merge Coverage Ledger row |
 | `PLAN_REQUIREMENT_COVERAGE_UNKNOWN` | Plan 引用 PRD 不存在的 requirement | Fix Plan/PRD link |

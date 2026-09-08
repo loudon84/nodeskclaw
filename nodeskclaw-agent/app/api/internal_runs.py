@@ -19,6 +19,9 @@ from app.schemas import (
     MutationResponse,
     ResultResponse,
     RunView,
+    is_control_event_type,
+    is_semantic_event_type,
+    validate_semantic_event_payload,
 )
 from app.services import run_service
 
@@ -56,6 +59,33 @@ async def get_internal_run(
     if not run:
         raise HTTPException(status_code=404, detail="run not found")
     return run
+
+
+@router.post("/runs/{run_id}/session/revalidate", dependencies=[Depends(require_internal_token)])
+async def revalidate_internal_run_session(
+    run_id: str,
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    x_exec_org_id: str = Header(alias="X-Exec-Org-Id"),
+    x_exec_user_id: str = Header(alias="X-Exec-User-Id"),
+):
+    run = await run_service.get_run(db, run_id, org_id=x_exec_org_id)
+    if not run or run.user_id != x_exec_user_id:
+        raise HTTPException(status_code=403, detail="run execution context rejected")
+    context_version = body.get("context_version")
+    if context_version is not None and not isinstance(context_version, int):
+        raise HTTPException(status_code=400, detail="context version invalid")
+    try:
+        await run_service.revalidate_run_session(
+            db,
+            run_session_id=run.run_session_id,
+            org_id=x_exec_org_id,
+            user_id=x_exec_user_id,
+            context_version=context_version,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail="run session revalidation denied") from exc
+    return {"ok": True}
 
 
 @router.get("/runs/{run_id}/events", response_model=EventsResponse, dependencies=[Depends(require_internal_token)])
@@ -283,6 +313,88 @@ async def ingest_internal_events(
             )
             continue
 
+        snap = run.snapshot if isinstance(run.snapshot, dict) else {}
+        if run.status in run_service.TERMINAL:
+            snap_ctx = snap.get("context_version")
+            evt_ctx = payload.get("context_version")
+            if snap_ctx is not None and evt_ctx is not None and int(evt_ctx) != int(snap_ctx):
+                await run_service.record_event_rejection(
+                    db,
+                    run_id,
+                    reason="context_stale",
+                    event_id=event.get("event_id"),
+                    source_event_id=source_event_id,
+                    details={
+                        "event_context_version": evt_ctx,
+                        "snapshot_context_version": snap_ctx,
+                        "event_type": event_type,
+                    },
+                )
+                continue
+
+        semantic = is_semantic_event_type(event_type)
+        control = is_control_event_type(event_type)
+        if not semantic and not control:
+            await run_service.record_event_rejection(
+                db,
+                run_id,
+                reason="unknown_event_type",
+                event_id=event.get("event_id"),
+                source_event_id=source_event_id,
+                details={"event_type": event_type},
+            )
+            continue
+
+        if semantic:
+            reason = validate_semantic_event_payload(event_type, payload if isinstance(payload, dict) else {})
+            if reason:
+                await run_service.record_event_rejection(
+                    db,
+                    run_id,
+                    reason=reason,
+                    event_id=event.get("event_id"),
+                    source_event_id=source_event_id,
+                    details={"event_type": event_type},
+                )
+                continue
+            if event_type == "artifact.persisted":
+                artifacts = await run_service.list_artifacts(db, run_id)
+                matched = next(
+                    (
+                        a
+                        for a in artifacts
+                        if a.artifact_id == payload.get("artifact_id")
+                        and str(getattr(a, "storage_state", "persisted")).lower() == "persisted"
+                    ),
+                    None,
+                )
+                if not matched:
+                    await run_service.record_event_rejection(
+                        db,
+                        run_id,
+                        reason="artifact_not_persisted",
+                        event_id=event.get("event_id"),
+                        source_event_id=source_event_id,
+                        details={"event_type": event_type, "artifact_id": payload.get("artifact_id")},
+                    )
+                    continue
+                expected_descriptor = {
+                    "name": matched.name,
+                    "content_type": matched.content_type,
+                    "size": matched.size_bytes,
+                    "checksum_sha256": matched.checksum_sha256,
+                }
+                if any(payload.get(field) != expected for field, expected in expected_descriptor.items()):
+                    await run_service.record_event_rejection(
+                        db,
+                        run_id,
+                        reason="artifact_descriptor_mismatch",
+                        event_id=event.get("event_id"),
+                        source_event_id=source_event_id,
+                        details={"event_type": event_type, "artifact_id": payload.get("artifact_id")},
+                    )
+                    continue
+
         # 3. Append event
         try:
             await run_service.append_event(
@@ -311,7 +423,9 @@ async def ingest_internal_events(
 
         valid_count += 1
 
-        # 4. Update step state and trigger aggregator on step terminal events
+        # 4. Control events may update step state; semantic events must not.
+        if semantic:
+            continue
         if step_id and step_id in valid_step_ids:
             if event_type in ("run.completed", "step.completed", "edge.job.completed"):
                 await run_service.update_step_state(
@@ -411,7 +525,25 @@ async def approve_internal_run(
     if not run:
         raise HTTPException(status_code=404, detail="run not found")
     evidence = body.get("evidence") if body else None
-    res = await run_service.approve_run(db, run_id, approval_id=approval_id, evidence=evidence, org_id=x_exec_org_id)
+    decision = None
+    if isinstance(body, dict):
+        raw_choice = body.get("choice")
+        raw_decision = body.get("decision")
+        for raw in (raw_choice, raw_decision):
+            if str(raw or "").strip().lower() in {"session", "always"}:
+                raise HTTPException(status_code=400, detail="client must not submit session/always")
+        decision = raw_decision or raw_choice
+    try:
+        res = await run_service.approve_run(
+            db,
+            run_id,
+            approval_id=approval_id,
+            evidence=evidence,
+            org_id=x_exec_org_id,
+            decision=decision,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not res:
         raise HTTPException(status_code=404, detail="run not found")
     return MutationResponse(

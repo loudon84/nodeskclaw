@@ -22,7 +22,7 @@ def upgrade() -> None:
     op.create_table(
         "run_steps",
         sa.Column("id", sa.String(length=36), primary_key=True),
-        sa.Column("run_id", sa.String(length=36), sa.ForeignKey(f'"{SCHEMA}".runs.id'), nullable=False),
+        sa.Column("run_id", sa.String(length=36), sa.ForeignKey(f"{SCHEMA}.runs.id"), nullable=False),
         sa.Column("step_id", sa.String(length=64), nullable=False),
         sa.Column("owner_role", sa.String(length=32), nullable=False),
         sa.Column("engine", sa.String(length=32), nullable=False),
@@ -53,7 +53,7 @@ def upgrade() -> None:
     op.create_table(
         "run_event_rejections",
         sa.Column("id", sa.String(length=36), primary_key=True),
-        sa.Column("run_id", sa.String(length=36), sa.ForeignKey(f'"{SCHEMA}".runs.id'), nullable=False),
+        sa.Column("run_id", sa.String(length=36), sa.ForeignKey(f"{SCHEMA}.runs.id"), nullable=False),
         sa.Column("event_id", sa.String(length=64), nullable=True),
         sa.Column("source_event_id", sa.String(length=128), nullable=True),
         sa.Column("reason", sa.String(length=64), nullable=False),

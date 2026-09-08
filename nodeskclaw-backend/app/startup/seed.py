@@ -43,12 +43,12 @@ LEGACY_REGISTRY_CONFIGS: dict[str, tuple[str, ...]] = {
 DEFAULT_ENGINE_VERSION_SEEDS: tuple[dict[str, str | bool | None], ...] = (
     {
         "runtime": "hermes",
-        "version": "2026.4.23-20260514",
-        "image_tag": "v2026.4.23-20260514",
+        "version": "2026.8.31-20260904",
+        "image_tag": "v2026.8.31-20260904",
         "status": "published",
         "is_default": True,
         "release_notes": (
-            "Hermes 官方 v2026.4.23 基线，NoDeskClaw 于 2026-05-14 打包；"
+            "Hermes 官方 v2026.8.31 基线，NoDeskClaw 于 2026-09-04 打包；"
             "构建 constraints 显式排除 mistralai==2.4.6。"
         ),
     },

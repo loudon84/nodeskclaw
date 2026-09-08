@@ -285,6 +285,42 @@ class ValidatorTests(unittest.TestCase):
             errors = validator.validate_plan(plan)
             self.assertEqual(errors, [], "\n".join(e.line() for e in errors))
 
+    def test_allows_explicit_id_bullet_requirements_in_prd(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            prd = PRD.replace(
+                "## Acceptance Criteria\n1. Normalized state is observable through the public API.",
+                "## Acceptance Criteria\n\n- **AC-01 / C01**：Normalized state is observable through the public API.",
+            ).replace(
+                "## Definition of Done\n1. The integration suite passes.",
+                "## Definition of Done\n\n- **DOD-01**：The integration suite passes.",
+            )
+            root = Path(td)
+            (root / "approved-prd.md").write_text(prd, encoding="utf-8")
+            plan = root / "feature.plan.md"
+            plan.write_text(plan_text(), encoding="utf-8")
+            errors = validator.validate_plan(plan)
+            self.assertEqual(errors, [], "\n".join(e.line() for e in errors))
+
+    def test_explicit_id_bullet_extraction_uses_declared_ids(self) -> None:
+        errors: list = []
+        requirements = validator.extract_prd_requirements(
+            "## Acceptance Criteria\n\n"
+            "- **AC-01 / C01**：First obligation.\n"
+            "- **AC-02 / C02**：Second obligation.\n\n"
+            "## Definition of Done\n\n"
+            "- **DOD-01**：Done obligation.\n",
+            errors,
+        )
+        self.assertEqual(errors, [])
+        self.assertEqual(
+            requirements,
+            {
+                "AC-01": "First obligation.",
+                "AC-02": "Second obligation.",
+                "DOD-01": "Done obligation.",
+            },
+        )
+
     def test_rejects_lifecycle_requirement_without_closure_row(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             text = plan_text().replace("| Run | AC-01 |", "| Run | DOD-01 |")

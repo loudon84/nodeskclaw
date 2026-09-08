@@ -1,4 +1,3 @@
 # SKILL-RUN-CONTRACT v1.0.0
 
-Skill-first employee MCP and Run identity contract.
-Does not modify work-expert v1.0.2.
+Public, authenticated employee Skill Run contract. Approval and attachments are unsupported and fail closed.

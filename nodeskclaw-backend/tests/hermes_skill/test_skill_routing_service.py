@@ -6,6 +6,7 @@ from app.services.hermes_skill.skill_routing_service import (
     ROUTING_REASON_DEFAULT,
     ROUTING_REASON_PRIORITY,
     ROUTING_REASON_EXPLICIT_AGENT,
+    ROUTING_REASON_WORKSPACE,
     ROUTING_REASON_RUNTIME_FIXED_DEFAULT,
     ROUTING_REASON_RUNTIME_FIXED_SINGLE,
 )
@@ -174,3 +175,87 @@ async def test_runtime_fixed_route_invalid_route_config():
                 "org-1",
             )
     assert exc_info.value.message_key == "errors.skill.route_config_invalid"
+
+
+@pytest.mark.asyncio
+async def test_routing_matches_live_workspace_installation():
+    db = AsyncMock()
+    skill = MagicMock()
+    skill.skill_id = "writer"
+    installations = [
+        _installation("agent-a", workspace_id="ws-1"),
+        _installation("agent-b", is_default=True),
+    ]
+    svc = SkillRoutingService(db)
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(svc, "_get_skill_by_tool_name", AsyncMock(return_value=skill))
+        mp.setattr(svc, "_list_installed", AsyncMock(return_value=installations))
+        mp.setattr(svc, "_live_installation_workspace_ids", AsyncMock(return_value={"ws-1"}))
+        result = await svc.resolve_by_tool_name(
+            "writer_tool",
+            "org-1",
+            user_workspace_id="ws-1",
+        )
+    assert result.agent_id == "agent-a"
+    assert result.reason == ROUTING_REASON_WORKSPACE
+
+
+@pytest.mark.asyncio
+async def test_routing_ignores_stale_invalid_installation_workspace():
+    db = AsyncMock()
+    skill = MagicMock()
+    skill.skill_id = "writer"
+    installations = [
+        _installation("agent-stale", workspace_id="ws-stale"),
+        _installation("agent-default", is_default=True),
+    ]
+    svc = SkillRoutingService(db)
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(svc, "_get_skill_by_tool_name", AsyncMock(return_value=skill))
+        mp.setattr(svc, "_list_installed", AsyncMock(return_value=installations))
+        mp.setattr(svc, "_live_installation_workspace_ids", AsyncMock(return_value=set()))
+        result = await svc.resolve_by_tool_name(
+            "writer_tool",
+            "org-1",
+            user_workspace_id="ws-stale",
+        )
+    assert result.agent_id == "agent-default"
+    assert result.reason == ROUTING_REASON_DEFAULT
+
+
+@pytest.mark.asyncio
+async def test_select_installation_does_not_match_solely_on_stale_workspace():
+    skill = MagicMock()
+    skill.skill_id = "writer"
+    stale = _installation("agent-stale", workspace_id="ws-stale")
+    default = _installation("agent-default", is_default=True)
+    svc = SkillRoutingService(AsyncMock())
+
+    result = svc._select_installation(
+        skill,
+        [stale, default],
+        {},
+        "ws-stale",
+        live_workspace_ids=set(),
+    )
+    assert result.agent_id == "agent-default"
+    assert result.reason == ROUTING_REASON_DEFAULT
+
+
+@pytest.mark.asyncio
+async def test_live_installation_workspace_ids_filters_org_and_deleted():
+    db = AsyncMock()
+    query_result = MagicMock()
+    query_result.all.return_value = [("ws-live",)]
+    db.execute = AsyncMock(return_value=query_result)
+    svc = SkillRoutingService(db)
+    installations = [
+        _installation("agent-a", workspace_id="ws-live"),
+        _installation("agent-b", workspace_id="ws-stale"),
+        _installation("agent-c", workspace_id=None),
+    ]
+
+    live = await svc._live_installation_workspace_ids("org-1", installations)
+
+    assert live == {"ws-live"}
+    db.execute.assert_awaited_once()

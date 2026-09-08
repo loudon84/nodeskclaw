@@ -1,0 +1,55 @@
+{
+  "properties": {
+    "event_id": {
+      "title": "Event Id",
+      "type": "string"
+    },
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "event_type": {
+      "title": "Event Type",
+      "type": "string"
+    },
+    "event_seq": {
+      "title": "Event Seq",
+      "type": "integer"
+    },
+    "source": {
+      "default": "agent",
+      "title": "Source",
+      "type": "string"
+    },
+    "source_event_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Source Event Id"
+    },
+    "timestamp": {
+      "title": "Timestamp",
+      "type": "string"
+    },
+    "payload": {
+      "additionalProperties": true,
+      "title": "Payload",
+      "type": "object"
+    }
+  },
+  "required": [
+    "event_id",
+    "run_id",
+    "event_type",
+    "event_seq",
+    "timestamp"
+  ],
+  "title": "RunEvent",
+  "type": "object"
+}

@@ -44,6 +44,8 @@ uv run uvicorn app.main:app --reload --port 4580
 
 先修改下列变量；不要把真实 Token 提交回仓库。
 
+Agent 内部接口不用 Postman 的 Bearer Token（持有者令牌）。集合级 Auth 已设为 API Key，请求选 **Inherit auth from parent**（从父级继承）即可自动带上请求头 `X-Skill-Agent-Token`。把 `agent_internal_token` 改成与 Agent `.env` 中 `SKILL_AGENT_INTERNAL_TOKEN` 完全相同的值；占位符 `REPLACE_WITH_AGENT_INTERNAL_TOKEN` 会返回 HTTP `401`。已打开的旧 Collection 需要重新导入或同步本文件后，Auth 才会变成 API Key。
+
 | 变量 | 必填 | 来源与用途 |
 | --- | --- | --- |
 | `backend_base_url` | 是 | Backend 地址，默认 `http://127.0.0.1:4510` |
@@ -68,6 +70,7 @@ uv run uvicorn app.main:app --reload --port 4580
 | Event 与 Artifact | 20–30 | Artifact 上传并重试返回同一 ID；下载字节和 SHA256（文件摘要）匹配；旧代返回 `409`；跨组织读取返回 `404`；重复事件计数为 `0` |
 | Edge 协议 | 40–53 | Edge Job 可认领并续租；旧 Delivery Generation 返回 `403`；on-demand 请求可签发、拉取、上传及读取；无效 Edge Token 返回 `403` |
 | Installation 代次 | 60–68 | Desired/Actual 代次一致时接受；旧 Actual Generation 返回 `403`；卸载进入 `uninstalling` 后由 `uninstalled` Actual 收敛 |
+| RM-16 live | 70–87 | 员工 JWT 公共面 + Hermes Native 手工复现。按 [../../reports/live手工执行指导.dmd](../../reports/live手工执行指导.dmd) 逐项 Send，不要 Collection Runner |
 
 ## 5. 关键响应断言
 
@@ -76,7 +79,7 @@ Collection 已内置精确断言。遇到失败时先保留请求和响应，再
 | 场景 | 正确结果 | 常见原因 |
 | --- | --- | --- |
 | `/health/ready` | `200`，`status: "ok"` | 数据库、迁移、内部 Token、存储或 Worker 配置未就绪 |
-| 创建 Agent Run | `200`，`WAITING_APPROVAL` 或 `QUEUED` | `X-Skill-Agent-Token`、`X-Exec-Org-Id`、`X-Exec-User-Id` 不匹配 |
+| 创建 / 查询 Agent Run | `200` | `agent_internal_token` 仍是占位符，或与 Agent `SKILL_AGENT_INTERNAL_TOKEN` 不一致；或缺少 `X-Exec-Org-Id` |
 | 审批 Run | `200`，`RESUMING` | Run 不是 `WAITING_APPROVAL`，或 `approval_id` 不一致 |
 | Artifact 旧代上传 | `409`，`errors.artifact.stale_generation` | 这是预期负向结果，不应改为成功断言 |
 | 跨组织读取 Run | `404` | `other_org_id` 与 `org_id` 相同会使负向验证无效 |
@@ -106,3 +109,20 @@ Collection 已内置精确断言。遇到失败时先保留请求和响应，再
 ## 8. 提交问题时应附带的信息
 
 请至少提供请求编号、请求 URL、HTTP 状态码、响应体中的 `error_code`（错误代码）/`message_key`（消息键）、`run_id`、`edge_job_id`、Generation 和 Agent/Backend 日志时间段。不要提交真实 JWT、Internal Token 或 Edge Token。
+
+## 9. RM-16 Live（70 文件夹）
+
+01–68 验证 Agent 内部控制面。**70 - RM-16 Live Conformance** 验证员工 Public 路径是否接到真实 Hermes Native（版本地板 `v2026.8.31`），以及 v1.2.1 投影质量。
+
+完整步骤、Skill 选择、PC-05/PC-08 进程操作和过关表见 [../../reports/live手工执行指导.dmd](../../reports/live手工执行指导.dmd)。
+
+要点：
+
+- 公共请求使用 Bearer `backend_access_token`，不要继承集合默认的 `X-Skill-Agent-Token`。
+- 审批工具必须是 `hermes_marketing__park-waiting-approval`，且 **只用于 PC-03 / PC-04**。
+- PC-01 必须换「纯中文、不调工具」的 Skill；选错会 `COMPLETED` 但没有 `assistant.message`。
+- 每次 Run 的 Runtime 以 Agent 74 snapshot 的 `credential_lease_ref` 为准，`hermes_base_url` 不是权威路由。
+- PC-05 / PC-08 使用 `rm16_running_tool_name` 稳定 RUNNING fixture，不要用 park 工具。PC-08 重启绑定实例的 API_SERVER，不要假设 29401。
+- PC-07 必须在 73 看到 `internal.runtime.trace`；仅 Public 无泄漏不能过关。
+- PC-09 只有真实 Backend-bound 旧 Runtime 才能 PASS；stub / probe-only 不能关闭。
+- Postman 绿勾不能改写 `run_rm16_live_conformance.py` 的 Ledger 证据。

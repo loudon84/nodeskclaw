@@ -1,0 +1,32 @@
+name: SMC Governance
+on:
+  pull_request:
+  push:
+    branches: [main, master, 'work/**']
+  workflow_dispatch:
+
+jobs:
+  governance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install PyYAML jsonschema
+      - name: Validate local governance and ArtifactRef v2
+        run: python .agents/governance/tools/validate_local_governance.py
+      - name: Require governed PR metadata
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          body="${{ github.event.pull_request.body }}"
+          labels='${{ toJson(github.event.pull_request.labels.*.name) }}'
+          if echo "$labels" | grep -q 'gov:managed'; then
+            echo "$body" | grep -q 'SMC-Feature:' || { echo "missing SMC-Feature"; exit 1; }
+            echo "$body" | grep -q 'SMC-Work-Package:' || { echo "missing SMC-Work-Package"; exit 1; }
+            echo "$body" | grep -q 'SMC-PRD:' || { echo "missing SMC-PRD"; exit 1; }
+            echo "$body" | grep -q 'SMC-Plan:' || { echo "missing SMC-Plan"; exit 1; }
+          fi

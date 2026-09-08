@@ -1,0 +1,90 @@
+name: SMC PRD Acceptance
+on:
+  workflow_dispatch:
+  push:
+    paths-ignore:
+      - '.agents/governance/receipts/**'
+
+permissions:
+  contents: read
+
+jobs:
+  acceptance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install PyYAML jsonschema
+      - name: Resolve repository identity
+        id: repo
+        shell: bash
+        run: |
+          rid=$(python - <<'PY'
+          import yaml
+          print(yaml.safe_load(open('.agents/governance/binding.yaml',encoding='utf-8'))['repository_id'])
+          PY
+          )
+          echo "repository_id=$rid" >> "$GITHUB_OUTPUT"
+          echo "artifact_name=smc-acceptance-${GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
+      - name: Execute all declared PRD acceptance manifests
+        id: run
+        shell: bash
+        env:
+          SMC_REPOSITORY_ID: ${{ steps.repo.outputs.repository_id }}
+          SMC_ACCEPTANCE_ARTIFACT_NAME: ${{ steps.repo.outputs.artifact_name }}
+        run: |
+          mkdir -p _governance_acceptance
+          overall=0
+          for manifest in .agents/governance/acceptance/*.yaml; do
+            [ -f "$manifest" ] || continue
+            wp=$(python - <<'PY' "$manifest"
+          import sys,yaml
+          print(yaml.safe_load(open(sys.argv[1],encoding='utf-8'))['work_package_id'])
+          PY
+            )
+            out="_governance_acceptance/${wp}"
+            mkdir -p "$out"
+            cp "$manifest" "$out/manifest.yaml"
+            set +e
+            python .agents/governance/skills/smc-prd-acceptance/scripts/run_acceptance.py \
+              "$manifest" \
+              --repo . \
+              --output "$out/${wp}.report.json" \
+              --attestation-output "$out/${wp}.attestation.json" \
+              --repository-id "$SMC_REPOSITORY_ID" \
+              --artifact-name "$SMC_ACCEPTANCE_ARTIFACT_NAME"
+            code=$?
+            set -e
+            if [ "$code" -ne 0 ]; then overall="$code"; fi
+          done
+          echo "code=$overall" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ${{ steps.repo.outputs.artifact_name }}
+          path: _governance_acceptance/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Notify central attestation verifier
+        if: always()
+        env:
+          CENTRAL_DISPATCH_TOKEN: ${{ secrets.SMC_GOVERNANCE_DISPATCH_TOKEN }}
+        shell: bash
+        run: |
+          [ -n "$CENTRAL_DISPATCH_TOKEN" ] || { echo "SMC_GOVERNANCE_DISPATCH_TOKEN not configured"; exit 1; }
+          curl --fail-with-body -sS -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${CENTRAL_DISPATCH_TOKEN}" \
+            https://api.github.com/repos/loudon84/smc-delivery-governance/dispatches \
+            -d "{\"event_type\":\"smc-governance-acceptance\",\"client_payload\":{\"repository_id\":\"${{ steps.repo.outputs.repository_id }}\",\"run_id\":\"${GITHUB_RUN_ID}\",\"artifact_name\":\"${{ steps.repo.outputs.artifact_name }}\"}}"
+      - name: Preserve acceptance failure
+        if: always()
+        shell: bash
+        run: |
+          code='${{ steps.run.outputs.code }}'
+          [ -z "$code" ] && code=0
+          [ "$code" = "0" ] || exit "$code"

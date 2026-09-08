@@ -129,8 +129,8 @@ async def test_seed_engine_versions_adds_builtin_hermes_default_for_empty_catalo
     seeded = session.added[0]
     expected = DEFAULT_ENGINE_VERSION_SEEDS[0]
     assert seeded.runtime == expected["runtime"] == "hermes"
-    assert seeded.version == expected["version"] == "2026.4.23-20260514"
-    assert seeded.image_tag == expected["image_tag"] == "v2026.4.23-20260514"
+    assert seeded.version == expected["version"] == "2026.8.31-20260904"
+    assert seeded.image_tag == expected["image_tag"] == "v2026.8.31-20260904"
     assert seeded.status == "published"
     assert seeded.is_default is True
     assert session.commit_count == 1

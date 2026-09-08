@@ -1,0 +1,36 @@
+{
+  "schema": "smc.rm13.live-v11.v1",
+  "policy": "REAL_RUNTIME",
+  "result": "PASS",
+  "timestamp": "2026-09-05T01:46:00.954328Z",
+  "code_origin_commit": "59ebfb6683286dfadd9dad5586adb8feefece148",
+  "tool_name": "hermes_marketing__customer-profiling",
+  "org_id": "2be7c618-326d-4a73-91ea-1cfda10f7073",
+  "chat_completions_observed": false,
+  "public_runtime_identity_leak": false,
+  "runtime_binding_present": true,
+  "runtime_bound_before_event_consumption": true,
+  "native_paths_observed": [
+    "/v1/capabilities",
+    "/health",
+    "/v1/runs",
+    "/v1/runs/<id>/events",
+    "/v1/runs/<id>"
+  ],
+  "hermes_runtime_version": "v2026.8.31",
+  "observed_version": "0.21.0",
+  "version_source": "health",
+  "required_features": [
+    "run_submission",
+    "run_status",
+    "run_events_sse",
+    "run_stop",
+    "run_approval_response"
+  ],
+  "run_id": "801af7ef-c4aa-4e8f-8b80-e5f9da6fe419",
+  "attempt_id": "5e7bde87-10e9-41c4-a8bc-915fc919228d",
+  "generation": 1,
+  "runtime_run_id_hash": "sha256:164656eb5acca35f1769694bbe872547fc9279696efc66e76a9b166eb9dbed2e",
+  "hermes_run_status": "running",
+  "public_leaks": []
+}

@@ -1,0 +1,9 @@
+{
+  "slug": "live-old-runtime-probe",
+  "name": "Live Old Runtime Probe",
+  "version": "1.0.0",
+  "description": "RM-16 PC-09 fixture. Must bind to Hermes older than v2026.8.31.",
+  "runtime": "hermes",
+  "enabled": true,
+  "requires_restart": false
+}

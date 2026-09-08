@@ -1,0 +1,40 @@
+{
+  "schema": "smc.rm16.live-conformance.v1",
+  "policy": "REAL_PROCESS",
+  "result": "PASS",
+  "scenario": "pc06",
+  "auth_type": "user_jwt",
+  "timestamp": "2026-09-06T12:14:09.876138Z",
+  "reused_runners": [
+    "tools/acceptance/run_rm12_live_conformance.py",
+    "tools/acceptance/run_rm13_live_native.py",
+    "tools/acceptance/run_rm14_live_semantic.py",
+    "tools/acceptance/run_rm15_live_control.py"
+  ],
+  "chat_completions_observed": false,
+  "native_paths_observed": [
+    "/v1/capabilities",
+    "/v1/runs",
+    "/v1/runs/<id>/events",
+    "/v1/runs/<id>"
+  ],
+  "public_leaks": [],
+  "public_runtime_identity_leak": false,
+  "runtime_binding_verified": true,
+  "backend_health": 200,
+  "tool_name": "hermes_marketing__live-plain-response",
+  "run_id": "bdef4847-41ba-4565-bc68-9ca9138187a0",
+  "attempt_id": "52389b11-cc6e-4c38-82f2-9dfd9a7acc10",
+  "generation": 1,
+  "runtime_run_id_hash": "sha256:e576e2bba599df1f586457c0a79c892c9568bd2769a79b4ae7b7f5454975f37e",
+  "hermes_agent_instance_id": "8ae103db-e441-4bf4-a7bb-d369d2aeb21f",
+  "agent_profile": "marketing",
+  "bound_api_server_url_hash": "sha256:ef510f80bed70bdd185d89dbc37c5d46a2a41700dd00f8e06175d6dd6b362d15",
+  "bound_api_server_port": 29401,
+  "hermes_runtime_version": "0.21.0",
+  "observed_version": "0.21.0",
+  "assistant_message_count": 20,
+  "public_text_chars": 1018,
+  "tiny_fragment_count": 0,
+  "public_status": "COMPLETED"
+}

@@ -1,7 +1,27 @@
 from __future__ import annotations
 
+import re
+import secrets
 from dataclasses import dataclass, field
 from typing import Any
+
+TRACE_ID_MAX_LEN = 64
+_TRACE_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.:-]+$")
+
+
+def normalize_request_trace_id(value: str | None) -> str | None:
+    if value is None:
+        return None
+    stripped = str(value).strip()
+    if not stripped or len(stripped) > TRACE_ID_MAX_LEN:
+        return None
+    if not _TRACE_ID_PATTERN.match(stripped):
+        return None
+    return stripped
+
+
+def generate_request_trace_id() -> str:
+    return f"req_{secrets.token_urlsafe(16)}"
 
 
 @dataclass
@@ -35,6 +55,8 @@ class StartRuntimeSkillRunRequest:
     routing_metadata_extras: dict[str, Any] = field(default_factory=dict)
     sse_token_ttl_seconds: int | None = None
     idempotency_key: str | None = None
+    session_id: str | None = None
+    attachment_refs: list[str] = field(default_factory=list)
 
 
 @dataclass

@@ -32,6 +32,12 @@ PRD 需求提取接受两种稳定编号格式：有序列表项与显式编号 
 
 只有所有阻断验证实际产生约定 evidence output 时，执行结果才可为 `IMPLEMENTED_AND_PROVEN`；实现存在但验证未闭环必须保持 `IMPLEMENTED_NOT_PROVEN`，owner/boundary 冲突则返回 PRD。
 
+### Wrapper Validator Fixtures
+
+`tools/agent-skills` 包装器测试必须使用与 [[.agents/skills/smc-plan-validator/scripts/validate_plan.py#validate_plan]] 相同的 `smc.plan.v3.2` 合同，不能再停留在已退役的 `smc.plan.v3`。
+
+[[tools/agent-skills/tests/test_validators.py#valid_plan]] 必须声明 `plan_contract: smc.plan.v3.2`，并含 Requirement Coverage Ledger、Lifecycle Closure Matrix、Verification Ledger 与 Completion Gate。配对 PRD fixture 的 AC/DoD 必须是编号项或显式 ID bullet，否则 [[.agents/skills/smc-plan-validator/scripts/validate_plan.py#extract_prd_requirements]] 无法解析。
+
 ## Commit Policy
 
 alwaysApply 默认单元提交可被治理例外覆盖：Plan Todo 与未 APPROVED 的 PRD/Architecture/Roadmap 禁止立刻 commit；implementation commit 须在 Review + Verification PASS 之后。

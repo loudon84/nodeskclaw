@@ -147,7 +147,7 @@ Validator 强制这些 label 存在，但 Reads/Writes/Depends On 只在全局 L
 | Requirement | Source | Obligation | Classification | Change IDs | Todo | Verification IDs | Evidence Class | Blocking |
 ```
 
-Validator 从所链接 APPROVED PRD 的 `Acceptance Criteria` 与 `Definition of Done` 提取编号条目，并要求：
+Validator 从所链接 APPROVED PRD 的 `Acceptance Criteria` 与 `Definition of Done` 提取需求条目（支持有序列表 `1. ...` 或显式编号 bullet `- **AC-01 / C01**：...`），并要求：
 
 - `AC-nn`、`DOD-nn` 格式正确且不重复；
 - requirement、source 和 obligation 与 PRD 精确一致；

@@ -13,6 +13,22 @@ from app.models.connector.edge_job import EdgeJob, EdgeJobStatus
 from app.models.connector.edge_node import EdgeNode, EdgeNodeStatus
 
 
+def _mock_request() -> MagicMock:
+    return MagicMock()
+
+
+def _fake_sign_command(_db, *, org_id, node_id, purpose, payload):
+    return {
+        "envelope": {
+            "org_id": org_id,
+            "node_id": node_id,
+            "purpose": purpose,
+            "command_id": f"cmd-{purpose}",
+        },
+        "payload": payload,
+    }
+
+
 @pytest.mark.asyncio
 async def test_post_edge_job_events_rejects_missing_generation():
     db = AsyncMock()
@@ -36,7 +52,7 @@ async def test_post_edge_job_events_rejects_missing_generation():
 
     with patch("app.api.internal_edge._authenticate_edge", AsyncMock(return_value=node)):
         with pytest.raises(ForbiddenError, match="delivery generation"):
-            await post_edge_job_events("job-1", body, db, x_edge_token="tok", x_delivery_generation=None)
+            await post_edge_job_events("job-1", body, _mock_request(), db, x_delivery_generation=None)
 
 
 @pytest.mark.asyncio
@@ -62,7 +78,7 @@ async def test_post_edge_job_events_rejects_stale_generation():
 
     with patch("app.api.internal_edge._authenticate_edge", AsyncMock(return_value=node)):
         with pytest.raises(ForbiddenError, match="stale_delivery_generation"):
-            await post_edge_job_events("job-1", body, db, x_edge_token="tok", x_delivery_generation="2")
+            await post_edge_job_events("job-1", body, _mock_request(), db, x_delivery_generation="2")
 
 
 @pytest.mark.asyncio
@@ -88,7 +104,7 @@ async def test_renew_edge_job_lease_success_and_fencing():
 
     # 1. Matching generation succeeds
     with patch("app.api.internal_edge._authenticate_edge", AsyncMock(return_value=node)):
-        res = await renew_edge_job_lease("job-1", EdgeLeaseRenewBody(delivery_generation=2), db, x_edge_token="tok")
+        res = await renew_edge_job_lease("job-1", _mock_request(), EdgeLeaseRenewBody(delivery_generation=2), db)
     assert res["code"] == 0
     assert res["data"]["delivery_generation"] == 2
     assert res["data"]["lease_until"] is not None
@@ -96,7 +112,7 @@ async def test_renew_edge_job_lease_success_and_fencing():
     # 2. Stale generation rejected
     with patch("app.api.internal_edge._authenticate_edge", AsyncMock(return_value=node)):
         with pytest.raises(ForbiddenError, match="stale_delivery_generation"):
-            await renew_edge_job_lease("job-1", EdgeLeaseRenewBody(delivery_generation=1), db, x_edge_token="tok")
+            await renew_edge_job_lease("job-1", _mock_request(), EdgeLeaseRenewBody(delivery_generation=1), db)
 
 
 @pytest.mark.asyncio
@@ -120,19 +136,22 @@ async def test_edge_job_cancel_check_and_request():
     mock_res.scalar_one_or_none.return_value = job
     db.execute = AsyncMock(return_value=mock_res)
 
-    with patch("app.api.internal_edge._authenticate_edge", AsyncMock(return_value=node)):
+    with (
+        patch("app.api.internal_edge._authenticate_edge", AsyncMock(return_value=node)),
+        patch("app.api.internal_edge._sign_command", _fake_sign_command),
+    ):
         # Initially not cancelled
-        res1 = await check_edge_job_cancel("job-1", db, x_edge_token="tok")
-        assert res1["data"]["cancel_requested"] is False
+        res1 = await check_edge_job_cancel("job-1", _mock_request(), db)
+        assert res1["data"]["payload"]["cancel_requested"] is False
 
         # Request cancel
-        res2 = await request_edge_job_cancel("job-1", db, x_edge_token="tok")
+        res2 = await request_edge_job_cancel("job-1", _mock_request(), db)
         assert res2["data"]["cancel_requested"] is True
         assert job.cancel_requested_at is not None
 
         # Check again
-        res3 = await check_edge_job_cancel("job-1", db, x_edge_token="tok")
-        assert res3["data"]["cancel_requested"] is True
+        res3 = await check_edge_job_cancel("job-1", _mock_request(), db)
+        assert res3["data"]["payload"]["cancel_requested"] is True
 
 
 @pytest.mark.asyncio
@@ -185,7 +204,7 @@ async def test_upload_edge_job_artifact():
         patch("app.api.internal_edge._authenticate_edge", AsyncMock(return_value=node)),
         patch("app.api.internal_edge.httpx.AsyncClient", return_value=mock_client),
     ):
-        res = await upload_edge_job_artifact("job-1", body, db, x_edge_token="tok")
+        res = await upload_edge_job_artifact("job-1", body, _mock_request(), db)
     assert res["code"] == 0
     assert res["data"]["artifact_id"] == "art-1"
     assert res["data"]["checksum_sha256"] == sha
@@ -201,7 +220,7 @@ async def test_upload_edge_job_artifact():
     )
     with patch("app.api.internal_edge._authenticate_edge", AsyncMock(return_value=node)):
         with pytest.raises(BadRequestError, match="checksum_mismatch"):
-            await upload_edge_job_artifact("job-1", bad_body, db, x_edge_token="tok")
+            await upload_edge_job_artifact("job-1", bad_body, _mock_request(), db)
 
 
 @pytest.mark.asyncio
@@ -231,15 +250,156 @@ async def test_get_desired_installations():
     mock_res.scalars.return_value.all.return_value = [inst]
     db.execute = AsyncMock(return_value=mock_res)
 
-    with patch("app.api.internal_edge._authenticate_edge", AsyncMock(return_value=node)):
-        res = await get_desired_installations(db, x_edge_token="tok")
+    with (
+        patch("app.api.internal_edge._authenticate_edge", AsyncMock(return_value=node)),
+        patch("app.api.internal_edge._sign_command", _fake_sign_command),
+    ):
+        res = await get_desired_installations(_mock_request(), db)
     assert res["code"] == 0
     assert len(res["data"]["items"]) == 1
-    item = res["data"]["items"][0]
+    item = res["data"]["items"][0]["payload"]
     assert item["id"] == "inst-1"
     assert item["skill_id"] == "calculator"
     assert item["desired_generation"] == 2
     assert item["actual_generation"] == 1
+
+
+@pytest.mark.asyncio
+async def test_get_desired_installations_pins_bundle(tmp_path, monkeypatch):
+    from app.api.internal_edge import get_desired_installations
+    from app.models.hermes_skill.skill_installation import HermesSkillInstallation
+    from app.models.hermes_skill.skill_release import HermesSkillRelease
+
+    db = AsyncMock()
+    node = EdgeNode()
+    node.id = "node-1"
+    node.org_id = "org-1"
+    node.status = EdgeNodeStatus.ONLINE.value
+
+    inst = HermesSkillInstallation()
+    inst.id = "inst-1"
+    inst.org_id = "org-1"
+    inst.skill_id = "calculator"
+    inst.target_kind = "edge"
+    inst.edge_node_id = "node-1"
+    inst.status = "installed"
+    inst.desired_generation = 2
+    inst.actual_generation = 1
+    inst.install_metadata = {"pkg": "calc"}
+    inst.routing_metadata = {}
+
+    release = HermesSkillRelease()
+    release.id = "rel-1"
+    release.bundle_ref = "11111111-1111-4111-8111-111111111111"
+    release.bundle_sha256 = "abc123"
+    release.bundle_size_bytes = 42
+    release.version = "1.0.0"
+
+    mock_res = MagicMock()
+    mock_res.scalars.return_value.all.return_value = [inst]
+    db.execute = AsyncMock(return_value=mock_res)
+    db.commit = AsyncMock()
+    db.flush = AsyncMock()
+
+    with (
+        patch("app.api.internal_edge._authenticate_edge", AsyncMock(return_value=node)),
+        patch("app.api.internal_edge.SkillReleaseService.get_published", AsyncMock(return_value=release)),
+        patch("app.api.internal_edge._sign_command", _fake_sign_command),
+    ):
+        res = await get_desired_installations(_mock_request(), db)
+
+    item = res["data"]["items"][0]["payload"]
+    assert item["bundle"]["release_id"] == "rel-1"
+    assert item["bundle"]["bundle_ref"] == "11111111-1111-4111-8111-111111111111"
+    assert item["bundle"]["sha256"] == "abc123"
+    assert item["bundle"]["size"] == 42
+    assert "releases/" not in str(item)
+    assert inst.install_metadata["published_bundle"]["generation"] == 2
+
+
+@pytest.mark.asyncio
+async def test_download_installation_bundle_generation_fencing(tmp_path, monkeypatch):
+    from app.api.internal_edge import download_installation_bundle
+    from app.models.hermes_skill.skill_installation import HermesSkillInstallation
+
+    db = AsyncMock()
+    node = EdgeNode()
+    node.id = "node-1"
+    node.org_id = "org-1"
+    node.status = EdgeNodeStatus.ONLINE.value
+
+    inst = HermesSkillInstallation()
+    inst.id = "inst-1"
+    inst.org_id = "org-1"
+    inst.skill_id = "calculator"
+    inst.target_kind = "edge"
+    inst.edge_node_id = "node-1"
+    inst.status = "installed"
+    inst.desired_generation = 2
+    inst.install_metadata = {
+        "published_bundle": {
+            "generation": 2,
+            "release_id": "rel-1",
+            "bundle_ref": "11111111-1111-4111-8111-111111111111",
+            "version": "1.0.0",
+            "size": 5,
+            "sha256": "deadbeef",
+        }
+    }
+
+    mock_res = MagicMock()
+    mock_res.scalar_one_or_none.return_value = inst
+    db.execute = AsyncMock(return_value=mock_res)
+    db.commit = AsyncMock()
+
+    hub_root = tmp_path / "hub"
+    releases_dir = hub_root / "releases"
+    releases_dir.mkdir(parents=True)
+    zip_bytes = b"hello"
+    (releases_dir / "11111111-1111-4111-8111-111111111111.zip").write_bytes(zip_bytes)
+    monkeypatch.setattr(
+        "app.api.internal_edge.settings.HERMES_SKILL_HUB_ROOT",
+        str(hub_root),
+    )
+
+    with patch("app.api.internal_edge._authenticate_edge", AsyncMock(return_value=node)):
+        response = await download_installation_bundle("inst-1", _mock_request(), db, generation=2)
+    chunks: list[bytes] = []
+    async for chunk in response.body_iterator:
+        chunks.append(chunk)
+    assert b"".join(chunks) == zip_bytes
+
+    with patch("app.api.internal_edge._authenticate_edge", AsyncMock(return_value=node)):
+        with pytest.raises(ForbiddenError, match="stale_actual_generation"):
+            await download_installation_bundle("inst-1", _mock_request(), db, generation=1)
+
+
+@pytest.mark.asyncio
+async def test_download_installation_bundle_requires_exact_node_binding():
+    from app.api.internal_edge import download_installation_bundle
+    from app.models.hermes_skill.skill_installation import HermesSkillInstallation
+
+    db = AsyncMock()
+    node = EdgeNode()
+    node.id = "node-1"
+    node.org_id = "org-1"
+    node.status = EdgeNodeStatus.ONLINE.value
+
+    inst = HermesSkillInstallation()
+    inst.id = "inst-1"
+    inst.org_id = "org-1"
+    inst.target_kind = "edge"
+    inst.edge_node_id = None
+    inst.status = "installed"
+    inst.desired_generation = 2
+
+    mock_res = MagicMock()
+    mock_res.scalar_one_or_none.return_value = inst
+    db.execute = AsyncMock(return_value=mock_res)
+
+    with patch("app.api.internal_edge._authenticate_edge", AsyncMock(return_value=node)):
+        with pytest.raises(ForbiddenError, match="org/node"):
+            await download_installation_bundle("inst-1", _mock_request(), db, generation=2)
 
 
 @pytest.mark.asyncio
@@ -274,11 +434,14 @@ async def test_claim_expired_lease_reclaim_with_generation_bump():
     mock_res.scalar_one_or_none.return_value = job
     db.execute = AsyncMock(return_value=mock_res)
 
-    with patch("app.api.internal_edge._authenticate_edge", AsyncMock(return_value=node)):
-        claimed_job = await claim_edge_job(db, x_edge_token="tok")
+    with (
+        patch("app.api.internal_edge._authenticate_edge", AsyncMock(return_value=node)),
+        patch("app.api.internal_edge._sign_command", _fake_sign_command),
+    ):
+        claimed_job = await claim_edge_job(_mock_request(), db)
 
-    assert claimed_job["id"] == "job-expired"
-    assert claimed_job["delivery_generation"] == 2
+    assert claimed_job["payload"]["id"] == "job-expired"
+    assert claimed_job["payload"]["delivery_generation"] == 2
     assert job.delivery_generation == 2
     assert job.lease_until is not None
 
@@ -312,7 +475,7 @@ async def test_post_edge_job_events_rejects_payload_too_large():
 
     with patch("app.api.internal_edge._authenticate_edge", AsyncMock(return_value=node)):
         with pytest.raises(BadRequestError, match="payload_too_large"):
-            await post_edge_job_events("job-large", body, db, x_edge_token="tok", x_delivery_generation="1")
+            await post_edge_job_events("job-large", body, _mock_request(), db, x_delivery_generation="1")
 
 
 @pytest.mark.asyncio
@@ -375,7 +538,7 @@ async def test_upload_edge_job_artifact_relays_and_transmits_error():
          patch("httpx.AsyncClient", return_value=mock_client), \
          patch("app.api.internal_edge.settings.SKILL_AGENT_ENABLED", True), \
          patch("app.api.internal_edge.settings.SKILL_AGENT_BASE_URL", "http://agent:4580"):
-        res = await upload_edge_job_artifact("job-art-1", body, db, x_edge_token="tok", x_delivery_generation="1")
+        res = await upload_edge_job_artifact("job-art-1", body, _mock_request(), db, x_delivery_generation="1")
 
     assert res["code"] == 0
     assert res["data"]["artifact_id"] == "art-101"
@@ -403,7 +566,7 @@ async def test_upload_edge_job_artifact_relays_and_transmits_error():
          patch("app.api.internal_edge.settings.SKILL_AGENT_ENABLED", True), \
          patch("app.api.internal_edge.settings.SKILL_AGENT_BASE_URL", "http://agent:4580"):
         with pytest.raises(ConflictError) as exc_info:
-            await upload_edge_job_artifact("job-art-1", body, db, x_edge_token="tok", x_delivery_generation="1")
+            await upload_edge_job_artifact("job-art-1", body, _mock_request(), db, x_delivery_generation="1")
         assert exc_info.value.message_key == "errors.artifact.idempotency_conflict"
 
 
@@ -441,7 +604,7 @@ async def test_edge_artifact_on_demand_requests_lifecycle():
     # 1. Issue on-demand request
     issue_body = IssueOnDemandRequestBody(name="custom.log", ttl_seconds=600)
     with patch("app.api.internal_edge._authenticate_edge", AsyncMock(return_value=node)):
-        res_issue = await create_edge_job_artifact_on_demand_request("job-od-1", issue_body, db, x_edge_token="tok")
+        res_issue = await create_edge_job_artifact_on_demand_request("job-od-1", issue_body, _mock_request(), db)
 
     assert res_issue["code"] == 0
     assert res_issue["data"]["name"] == "custom.log"
@@ -463,14 +626,17 @@ async def test_edge_artifact_on_demand_requests_lifecycle():
     mock_pull_res.scalars.return_value.all.return_value = [mock_od_req]
     db.execute = AsyncMock(return_value=mock_pull_res)
 
-    with patch("app.api.internal_edge._authenticate_edge", AsyncMock(return_value=node)):
-        res_pull = await pull_edge_artifact_on_demand_requests(db, x_edge_token="tok")
+    with (
+        patch("app.api.internal_edge._authenticate_edge", AsyncMock(return_value=node)),
+        patch("app.api.internal_edge._sign_command", _fake_sign_command),
+    ):
+        res_pull = await pull_edge_artifact_on_demand_requests(_mock_request(), db)
 
     assert res_pull["code"] == 0
     items = res_pull["data"]["items"]
     assert len(items) == 1
-    assert items[0]["name"] == "custom.log"
-    assert items[0]["status"] == "issued"
+    assert items[0]["payload"]["name"] == "custom.log"
+    assert items[0]["payload"]["status"] == "issued"
 
     # 3. Consume on-demand request
     mock_od_res = MagicMock()

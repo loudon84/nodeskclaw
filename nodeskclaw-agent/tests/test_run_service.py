@@ -3,12 +3,50 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.schemas import CreateRunRequest
+from app.schemas import (
+    CreateRunRequest,
+    validate_semantic_event_payload,
+)
 from app.services import run_service
+
+
+def test_validate_semantic_event_payload_shapes():
+    assert validate_semantic_event_payload("assistant.message", {"text": "hi"}) is None
+    assert validate_semantic_event_payload("assistant.message", {}) == "missing_assistant_text"
+    assert (
+        validate_semantic_event_payload(
+            "tool.call",
+            {"tool_name": "t", "call_id": "c1", "status": "started"},
+        )
+        is None
+    )
+    assert (
+        validate_semantic_event_payload(
+            "tool.call",
+            {"tool_name": "t", "call_id": "c1", "status": "running"},
+        )
+        == "invalid_tool_call_status"
+    )
+    assert (
+        validate_semantic_event_payload(
+            "artifact.persisted",
+            {
+                "artifact_id": "a1",
+                "name": "out.txt",
+                "content_type": "text/plain",
+                "size": 3,
+                "checksum_sha256": "abc",
+                "storage_key": "secret",
+            },
+        )
+        == "forbidden_semantic_payload_field"
+    )
+    assert validate_semantic_event_payload("unknown.type", {"text": "x"}) == "unknown_semantic_type"
 
 
 @pytest.mark.asyncio
@@ -281,14 +319,15 @@ async def test_store_and_get_artifact_bytes_local_file(tmp_path, monkeypatch):
     db.execute = AsyncMock(return_value=mock_seq)
 
     # Store
-    desc = await run_service.store_artifact_bytes(
-        db,
-        "run-1",
-        name="output.json",
-        content=b'{"result": "success"}',
-        content_type="application/json",
-        attempt_id="att-1",
-    )
+    with patch("app.services.run_service.append_event", new=AsyncMock()):
+        desc = await run_service.store_artifact_bytes(
+            db,
+            "run-1",
+            name="output.json",
+            content=b'{"result": "success"}',
+            content_type="application/json",
+            attempt_id="att-1",
+        )
     assert desc.name == "output.json"
     assert desc.size_bytes == 21
     assert desc.checksum_sha256 is not None
@@ -486,8 +525,14 @@ async def test_terminal_status_cannot_be_overwritten():
 async def test_create_run_session_cross_org_rejected():
     db = AsyncMock()
     mock_res = MagicMock()
-    # Existing session belonging to another org
-    mock_res.mappings.return_value.first.return_value = {"id": "sess-1", "org_id": "org-other"}
+    mock_res.mappings.return_value.first.return_value = {
+        "id": "sess-1",
+        "org_id": "org-other",
+        "user_id": "user-other",
+        "context_version": 0,
+        "deleted_at": None,
+        "expires_at": None,
+    }
     db.execute = AsyncMock(return_value=mock_res)
 
     req = CreateRunRequest(
@@ -497,6 +542,144 @@ async def test_create_run_session_cross_org_rejected():
     )
     with pytest.raises(ValueError, match="cross-org run session access rejected"):
         await run_service.create_run(db, req, org_id="org-1", user_id="user-1")
+
+
+@pytest.mark.asyncio
+async def test_create_run_session_subject_mismatch_rejected():
+    db = AsyncMock()
+    mock_res = MagicMock()
+    mock_res.mappings.return_value.first.return_value = {
+        "id": "sess-1",
+        "org_id": "org-1",
+        "user_id": "user-other",
+        "context_version": 0,
+        "deleted_at": None,
+        "expires_at": None,
+    }
+    db.execute = AsyncMock(return_value=mock_res)
+
+    req = CreateRunRequest(run_id="run-1", tool_name="test_tool", run_session_id="sess-1")
+    with pytest.raises(ValueError, match="run session subject mismatch rejected"):
+        await run_service.create_run(db, req, org_id="org-1", user_id="user-1")
+
+
+@pytest.mark.asyncio
+async def test_create_run_session_soft_deleted_rejected():
+    from datetime import datetime, timezone
+
+    db = AsyncMock()
+    mock_res = MagicMock()
+    mock_res.mappings.return_value.first.return_value = {
+        "id": "sess-1",
+        "org_id": "org-1",
+        "user_id": "user-1",
+        "context_version": 1,
+        "deleted_at": datetime.now(timezone.utc),
+        "expires_at": None,
+    }
+    db.execute = AsyncMock(return_value=mock_res)
+
+    req = CreateRunRequest(run_id="run-1", tool_name="test_tool", run_session_id="sess-1")
+    with pytest.raises(ValueError, match="run session unrecoverable: soft deleted"):
+        await run_service.create_run(db, req, org_id="org-1", user_id="user-1")
+
+
+@pytest.mark.asyncio
+async def test_ensure_run_session_allocates_monotonic_context_version():
+    db = AsyncMock()
+    select_result = MagicMock()
+    select_result.mappings.return_value.first.return_value = {
+        "id": "sess-1",
+        "org_id": "org-1",
+        "user_id": "user-1",
+        "context_version": 7,
+        "deleted_at": None,
+        "expires_at": None,
+    }
+    db.execute = AsyncMock(side_effect=[select_result, MagicMock()])
+
+    version = await run_service._ensure_run_session(
+        db,
+        run_session_id="sess-1",
+        org_id="org-1",
+        user_id="user-1",
+        context_version=3,
+    )
+
+    assert version == 8
+    assert db.execute.await_args_list[1].args[1]["context_version"] == 8
+
+
+@pytest.mark.asyncio
+async def test_revalidate_run_session_rejects_context_version_mismatch():
+    db = AsyncMock()
+    select_result = MagicMock()
+    select_result.mappings.return_value.first.return_value = {
+        "id": "sess-1",
+        "org_id": "org-1",
+        "user_id": "user-1",
+        "context_version": 8,
+        "deleted_at": None,
+        "expires_at": None,
+    }
+    db.execute = AsyncMock(return_value=select_result)
+
+    with pytest.raises(ValueError, match="run session context version mismatch"):
+        await run_service.revalidate_run_session(
+            db,
+            run_session_id="sess-1",
+            org_id="org-1",
+            user_id="user-1",
+            context_version=7,
+        )
+
+
+@pytest.mark.asyncio
+async def test_create_run_binds_snapshot_context_version_to_session_version():
+    db = AsyncMock()
+    missing = MagicMock()
+    missing.mappings.return_value.first.return_value = None
+    session = MagicMock()
+    session.mappings.return_value.first.return_value = {
+        "id": "sess-1",
+        "org_id": "org-1",
+        "user_id": "user-1",
+        "context_version": 7,
+        "deleted_at": None,
+        "expires_at": None,
+    }
+    db.execute = AsyncMock(side_effect=[missing, missing, session, MagicMock(), MagicMock()])
+    request = CreateRunRequest(
+        run_id="run-1",
+        tool_name="test_tool",
+        run_session_id="sess-1",
+        context_version=999,
+        execution_context={"context_version": 999, "descriptors": []},
+    )
+
+    with patch("app.services.run_service.append_event", new=AsyncMock()):
+        await run_service.create_run(db, request, org_id="org-1", user_id="user-1")
+
+    inserted_snapshot = json.loads(db.execute.await_args_list[4].args[1]["snapshot"])
+    assert inserted_snapshot["context_version"] == 8
+    assert inserted_snapshot["execution_context"]["context_version"] == 8
+
+
+def test_build_snapshot_persists_execution_context_and_version():
+    req = CreateRunRequest(
+        run_id="run-1",
+        tool_name="test_tool",
+        execution_context={
+            "context_version": 2,
+            "descriptors": [
+                {"type": "knowledge", "stable_id": "ks-1", "auth_version": "v1"},
+            ],
+        },
+        context_version=2,
+    )
+    snap = run_service.build_snapshot(req, org_id="org-1", user_id="user-1")
+    assert snap["context_version"] == 2
+    assert snap["execution_context"]["descriptors"][0]["stable_id"] == "ks-1"
 
 
 def test_build_snapshot_sanitizes_sensitive_tokens():
@@ -511,6 +694,22 @@ def test_build_snapshot_sanitizes_sensitive_tokens():
     assert snap["client_context"]["user_email"] == "a@b.com"
     assert snap["runtime_policy"]["api_key"] == "[REDACTED]"
     assert snap["runtime_policy"]["gateway_url"] == "https://api.example.com"
+
+
+def test_build_snapshot_preserves_opaque_connector_secret_ref_id():
+    req = CreateRunRequest(
+        run_id="run-1",
+        tool_name="test_tool",
+        route_snapshot={
+            "connector_secret_ref_id": "secret-ref-1",
+            "authorization": "plaintext-token",
+        },
+    )
+
+    snap = run_service.build_snapshot(req, org_id="org-1", user_id="user-1")
+
+    assert snap["runtime_policy"]["connector_secret_ref_id"] == "secret-ref-1"
+    assert snap["runtime_policy"]["authorization"] == "[REDACTED]"
 
 
 @pytest.mark.asyncio
@@ -535,6 +734,204 @@ async def test_approve_run_requires_approval_id():
 
     with pytest.raises(ValueError, match="approval_id is required"):
         await run_service.approve_run(db, "run-1", org_id="org-1", approval_id=None)
+
+
+@pytest.mark.asyncio
+async def test_approve_run_bound_does_not_queue(monkeypatch):
+    waiting_view = run_service.RunView(
+        run_id="run-bound",
+        org_id="org-1",
+        user_id="user-1",
+        tool_name="test_tool",
+        status="WAITING_APPROVAL",
+        snapshot={"runtime_policy": {"gateway_url": "http://hermes:8642"}},
+        attempt_id="att-1",
+        generation=1,
+        created_at="2026-08-27T00:00:00Z",
+        updated_at="2026-08-27T00:00:00Z",
+    )
+    get_run_mock = AsyncMock(side_effect=[waiting_view, waiting_view])
+    monkeypatch.setattr(run_service, "get_run", get_run_mock)
+    monkeypatch.setattr(run_service, "set_status", AsyncMock(return_value=True))
+    monkeypatch.setattr(run_service, "append_event", AsyncMock())
+    monkeypatch.setattr(
+        run_service,
+        "get_runtime_binding",
+        AsyncMock(return_value={"runtime_run_id": "rr-1", "generation": 1}),
+    )
+    called: dict = {}
+
+    async def _respond(**kwargs):
+        called.update(kwargs)
+        return None
+
+    monkeypatch.setattr("app.services.hermes_engine.respond_runtime_approval", _respond)
+    res = await run_service.approve_run(
+        db=AsyncMock(),
+        run_id="run-bound",
+        org_id="org-1",
+        approval_id="appr-1",
+        decision="approve",
+    )
+    assert res.status == "WAITING_APPROVAL"
+    assert called.get("choice") == "once"
+    queued_calls = [
+        c
+        for c in run_service.set_status.await_args_list
+        if c.args and len(c.args) >= 3 and c.args[2] == "QUEUED"
+    ]
+    assert queued_calls == []
+
+
+@pytest.mark.asyncio
+async def test_cancel_waiting_approval_with_binding_goes_cancelling(monkeypatch):
+    waiting_view = run_service.RunView(
+        run_id="run-wait",
+        org_id="org-1",
+        user_id="user-1",
+        tool_name="test_tool",
+        status="WAITING_APPROVAL",
+        snapshot={"runtime_policy": {"gateway_url": "http://hermes:8642"}},
+        attempt_id="att-1",
+        generation=1,
+        created_at="2026-08-27T00:00:00Z",
+        updated_at="2026-08-27T00:00:00Z",
+    )
+    cancelling_view = run_service.RunView(
+        run_id="run-wait",
+        org_id="org-1",
+        user_id="user-1",
+        tool_name="test_tool",
+        status="CANCELLING",
+        snapshot={"runtime_policy": {"gateway_url": "http://hermes:8642"}},
+        attempt_id="att-1",
+        generation=1,
+        created_at="2026-08-27T00:00:00Z",
+        updated_at="2026-08-27T00:00:00Z",
+    )
+    monkeypatch.setattr(run_service, "get_run", AsyncMock(side_effect=[waiting_view, cancelling_view]))
+    monkeypatch.setattr(run_service, "set_status", AsyncMock(return_value=True))
+    monkeypatch.setattr(run_service, "append_event", AsyncMock())
+    monkeypatch.setattr(
+        run_service,
+        "get_runtime_binding",
+        AsyncMock(return_value={"runtime_run_id": "rr-1", "generation": 1}),
+    )
+    stop_called = {}
+
+    async def _stop(**kwargs):
+        stop_called.update(kwargs)
+        return None
+
+    monkeypatch.setattr("app.services.hermes_engine.stop_runtime_attempt", _stop)
+    inspect_called = {}
+
+    async def _inspect(**kwargs):
+        inspect_called.update(kwargs)
+        return None
+
+    monkeypatch.setattr("app.services.hermes_engine.inspect_runtime_terminal", _inspect)
+    res = await run_service.cancel_run(AsyncMock(), "run-wait", org_id="org-1")
+    assert res.status == "CANCELLING"
+    assert stop_called.get("attempt_id") == "att-1"
+    assert inspect_called.get("attempt_id") == "att-1"
+
+
+@pytest.mark.asyncio
+async def test_cancel_waiting_approval_reconciles_to_cancelled(monkeypatch):
+    waiting_view = run_service.RunView(
+        run_id="run-wait",
+        org_id="org-1",
+        user_id="user-1",
+        tool_name="test_tool",
+        status="WAITING_APPROVAL",
+        snapshot={"runtime_policy": {"gateway_url": "http://hermes:8642"}},
+        attempt_id="att-1",
+        generation=0,
+        created_at="2026-08-27T00:00:00Z",
+        updated_at="2026-08-27T00:00:00Z",
+    )
+    cancelled_view = run_service.RunView(
+        run_id="run-wait",
+        org_id="org-1",
+        user_id="user-1",
+        tool_name="test_tool",
+        status="CANCELLED",
+        snapshot={"runtime_policy": {"gateway_url": "http://hermes:8642"}},
+        attempt_id="att-1",
+        generation=0,
+        created_at="2026-08-27T00:00:00Z",
+        updated_at="2026-08-27T00:00:00Z",
+    )
+    monkeypatch.setattr(run_service, "get_run", AsyncMock(side_effect=[waiting_view, cancelled_view]))
+    monkeypatch.setattr(run_service, "set_status", AsyncMock(return_value=True))
+    monkeypatch.setattr(run_service, "append_event", AsyncMock())
+    monkeypatch.setattr(
+        run_service,
+        "get_runtime_binding",
+        AsyncMock(return_value={"runtime_run_id": "rr-1", "generation": 1}),
+    )
+
+    async def _stop(**kwargs):
+        assert kwargs.get("generation") == 1
+        return None
+
+    async def _inspect(**kwargs):
+        return {"event_type": "run.cancelled", "payload": {"message": "hermes native run cancelled"}}
+
+    monkeypatch.setattr("app.services.hermes_engine.stop_runtime_attempt", _stop)
+    monkeypatch.setattr("app.services.hermes_engine.inspect_runtime_terminal", _inspect)
+    res = await run_service.cancel_run(AsyncMock(), "run-wait", org_id="org-1")
+    assert res.status == "CANCELLED"
+    cancelled_status_calls = [
+        c
+        for c in run_service.set_status.await_args_list
+        if c.args and len(c.args) >= 3 and c.args[2] == "CANCELLED"
+    ]
+    assert cancelled_status_calls
+
+
+@pytest.mark.asyncio
+async def test_approve_run_bound_generation_zero_uses_binding(monkeypatch):
+    waiting_view = run_service.RunView(
+        run_id="run-bound",
+        org_id="org-1",
+        user_id="user-1",
+        tool_name="test_tool",
+        status="WAITING_APPROVAL",
+        snapshot={"runtime_policy": {"gateway_url": "http://hermes:8642", "credential_lease_ref": {"instance_id": "i1"}}},
+        attempt_id="att-1",
+        generation=0,
+        created_at="2026-08-27T00:00:00Z",
+        updated_at="2026-08-27T00:00:00Z",
+    )
+    monkeypatch.setattr(run_service, "get_run", AsyncMock(side_effect=[waiting_view, waiting_view]))
+    monkeypatch.setattr(run_service, "set_status", AsyncMock(return_value=True))
+    monkeypatch.setattr(run_service, "append_event", AsyncMock())
+    monkeypatch.setattr(
+        run_service,
+        "get_runtime_binding",
+        AsyncMock(return_value={"runtime_run_id": "rr-1", "generation": 1}),
+    )
+    called: dict = {}
+
+    async def _respond(**kwargs):
+        called.update(kwargs)
+        return None
+
+    monkeypatch.setattr("app.services.hermes_engine.respond_runtime_approval", _respond)
+    res = await run_service.approve_run(
+        db=AsyncMock(),
+        run_id="run-bound",
+        org_id="org-1",
+        approval_id="appr-1",
+        decision="approve",
+    )
+    assert res.status == "WAITING_APPROVAL"
+    assert called.get("generation") == 1
+    assert called.get("snapshot") == waiting_view.snapshot
+    assert called.get("org_id") == "org-1"
+    assert called.get("run_id") == "run-bound"
 
 
 @pytest.mark.asyncio
@@ -567,13 +964,14 @@ async def test_store_artifact_bytes_and_read_across_restarts(monkeypatch, tmp_pa
     mock_seq.mappings.return_value.first.return_value = {"next_event_seq": 1}
     db.execute = AsyncMock(return_value=mock_seq)
 
-    desc = await run_service.store_artifact_bytes(
-        db,
-        "run-1",
-        name="test_artifact.json",
-        content=b'{"result": 42}',
-        content_type="application/json",
-    )
+    with patch("app.services.run_service.append_event", new=AsyncMock()):
+        desc = await run_service.store_artifact_bytes(
+            db,
+            "run-1",
+            name="test_artifact.json",
+            content=b'{"result": 42}',
+            content_type="application/json",
+        )
     assert desc.size_bytes == len(b'{"result": 42}')
     assert desc.checksum_sha256 is not None
 
@@ -741,6 +1139,54 @@ async def test_aggregate_run_terminal_single_winner():
 
 
 @pytest.mark.asyncio
+# @lat: [[architecture/skill-agent#Configuration#Gateway Reachability Probe]]
+async def test_aggregate_keeps_failed_status_when_terminal_event_write_rejected():
+    db = AsyncMock()
+    dummy_run_running = MagicMock(status="RUNNING", run_id="r-fail", org_id="org-1")
+    dummy_run_failed = MagicMock(status="FAILED", run_id="r-fail", org_id="org-1")
+    steps_with_failure = [
+        {"step_id": "s1", "required": True, "status": "FAILED", "error_message": "gateway unreachable"},
+    ]
+    mock_steps_res = MagicMock()
+    mock_steps_res.mappings.return_value.all.return_value = steps_with_failure
+
+    with patch("app.services.run_service.get_run", side_effect=[dummy_run_running, dummy_run_failed]), \
+         patch("app.services.run_service.set_status", new=AsyncMock(return_value=True)) as mock_set_st, \
+         patch(
+             "app.services.run_service.append_event",
+             new=AsyncMock(side_effect=RuntimeError("stale attempt, invalid generation, or terminal run cannot write events")),
+         ):
+        db.execute = AsyncMock(return_value=mock_steps_res)
+        res = await run_service.aggregate_run_terminal(db, "r-fail", org_id="org-1")
+
+    assert res.status == "FAILED"
+    assert mock_set_st.await_count == 1
+    assert mock_set_st.await_args.args[2] == "FAILED"
+
+
+@pytest.mark.asyncio
+# @lat: [[architecture/skill-agent#RM-17 Public Approval Decision]]
+async def test_aggregate_run_terminal_from_waiting_approval_completes():
+    db = AsyncMock()
+    dummy_waiting = MagicMock(status="WAITING_APPROVAL", run_id="r-wait", org_id="org-1")
+    dummy_completed = MagicMock(status="COMPLETED", run_id="r-wait", org_id="org-1")
+    steps = [
+        {"step_id": "s1", "required": True, "status": "SUCCEEDED", "required_artifacts": [], "result": {"ok": True}},
+    ]
+    mock_steps = MagicMock()
+    mock_steps.mappings.return_value.all.return_value = steps
+    with patch("app.services.run_service.get_run", side_effect=[dummy_waiting, dummy_completed]), \
+         patch("app.services.run_service.set_status", new=AsyncMock(return_value=True)) as mock_set_st, \
+         patch("app.services.run_service.append_event", new=AsyncMock()), \
+         patch("app.services.run_service.store_artifact_bytes", new=AsyncMock()):
+        db.execute = AsyncMock(return_value=mock_steps)
+        res = await run_service.aggregate_run_terminal(db, "r-wait", org_id="org-1")
+    assert res.status == "COMPLETED"
+    assert mock_set_st.await_args.args[2] == "COMPLETED"
+    assert "WAITING_APPROVAL" in mock_set_st.await_args.kwargs["expected_status"]
+
+
+@pytest.mark.asyncio
 async def test_ingest_rejection_is_audited():
     db = AsyncMock()
     db.execute = AsyncMock(return_value=MagicMock())
@@ -765,17 +1211,31 @@ async def test_artifact_lifecycle_state_machine(tmp_path, monkeypatch):
     db.execute = AsyncMock(return_value=mock_seq)
 
     # 1. Store transitions from INIT to PERSISTED
-    desc = await run_service.store_artifact_bytes(
-        db,
-        "run-10",
-        name="test_artifact.txt",
-        content=b"hello-artifact",
-        content_type="text/plain",
-        attempt_id="att-1",
-    )
-    assert desc.name == "test_artifact.txt"
-    assert desc.storage_state == "persisted"
-    assert desc.size_bytes == 14
+    with patch("app.services.run_service.append_event", new=AsyncMock()) as mock_append:
+        desc = await run_service.store_artifact_bytes(
+            db,
+            "run-10",
+            name="test_artifact.txt",
+            content=b"hello-artifact",
+            content_type="text/plain",
+            attempt_id="att-1",
+        )
+        assert desc.name == "test_artifact.txt"
+        assert desc.storage_state == "persisted"
+        assert desc.size_bytes == 14
+        persisted_calls = [
+            call
+            for call in mock_append.await_args_list
+            if call.args[2] == "artifact.persisted"
+        ]
+        assert len(persisted_calls) == 1
+        payload = persisted_calls[0].args[3]
+        assert payload["artifact_id"] == desc.artifact_id
+        assert payload["name"] == "test_artifact.txt"
+        assert payload["size"] == 14
+        assert "checksum_sha256" in payload
+        assert "storage_key" not in payload
+        assert persisted_calls[0].kwargs["source_event_id"] == f"artifact:{desc.artifact_id}:persisted"
 
     # 2. Mark corrupted
     ok_corrupt = await run_service.mark_artifact_corrupted(db, desc.artifact_id, reason="disk read error")
@@ -807,11 +1267,23 @@ async def test_storage_port_sha256_and_size_integrity(tmp_path):
     with pytest.raises(StorageIntegrityError, match="size mismatch"):
         await local_driver.write("r1/a3.bin", content, expected_size=999)
 
-    # 4. S3 driver integrity check
-    s3_driver = S3StorageDriver()
+    # 4. S3 driver integrity check uses isolated client operations
+    from unittest.mock import AsyncMock
+
+    s3_driver = S3StorageDriver(
+        endpoint="http://127.0.0.1:9000",
+        bucket="test-bucket",
+        access_key="test-key",
+        secret_key="test-secret",
+        region="us-east-1",
+    )
+    s3_driver._client.put_object = AsyncMock()
+    s3_driver._client.get_object = AsyncMock(return_value=content)
+    s3_driver._client.head_object = AsyncMock(return_value={"size_bytes": len(content), "sha256": correct_sha256})
     s3_res = await s3_driver.write("r1/s3_a1.bin", content, expected_sha256=correct_sha256, expected_size=len(content))
-    assert s3_res["storage_ref"] == "s3://nodeskclaw-artifacts/r1/s3_a1.bin"
-    assert await s3_driver.read("r1/s3_a1.bin") == content
+    assert s3_res["storage_ref"] == "s3://test-bucket/r1/s3_a1.bin"
+    read_back = await s3_driver.read("r1/s3_a1.bin")
+    assert read_back == content
 
 
 @pytest.mark.asyncio
@@ -823,15 +1295,16 @@ async def test_artifact_idempotency_key_behavior(tmp_path, monkeypatch):
     db.execute = AsyncMock(return_value=mock_seq)
 
     # 1. First upload with idempotency_key
-    desc1 = await run_service.store_artifact_bytes(
-        db,
-        "run-idem-1",
-        name="output.txt",
-        content=b"content-v1",
-        content_type="text/plain",
-        idempotency_key="key-123",
-        step_id="step-1",
-    )
+    with patch("app.services.run_service.append_event", new=AsyncMock()):
+        desc1 = await run_service.store_artifact_bytes(
+            db,
+            "run-idem-1",
+            name="output.txt",
+            content=b"content-v1",
+            content_type="text/plain",
+            idempotency_key="key-123",
+            step_id="step-1",
+        )
     assert desc1.name == "output.txt"
     assert desc1.storage_state == "persisted"
 

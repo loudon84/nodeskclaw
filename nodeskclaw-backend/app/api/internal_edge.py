@@ -6,7 +6,8 @@ import hmac
 from datetime import datetime, timedelta, timezone
 
 import httpx
-from fastapi import APIRouter, Depends, Header, HTTPException, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,8 +20,14 @@ from app.models.connector.edge_artifact_on_demand_request import EdgeArtifactOnD
 from app.models.connector.edge_job import EdgeJob, EdgeJobStatus
 from app.models.connector.edge_node import EdgeNode, EdgeNodeStatus
 from app.models.hermes_skill.skill_installation import HermesSkillInstallation
+from app.services.connector.edge_control_channel import EdgeControlChannel, bind_request_digest
 from app.services.connector.edge_node_service import EdgeNodeService, hash_edge_token
-from app.services.hermes_skill.runtime_skill_run_service import strip_internal_route_secrets
+from app.services.hermes_skill.runtime_skill_run_service import RuntimeSkillRunService, strip_internal_route_secrets
+from app.services.hermes_skill.skill_release_service import (
+    SkillReleaseService,
+    bundle_descriptor_from_release,
+    bundle_zip_path,
+)
 from app.services.runtime.pg_notify import PGNotifyService
 
 router = APIRouter(prefix="/internal/edge", tags=["Internal Edge"])
@@ -75,37 +82,191 @@ class IssueOnDemandRequestBody(BaseModel):
 
 
 
+class EdgeEnrollBody(BaseModel):
+    node_id: str
+    public_key: str
+
+
+class EdgeRotateBody(BaseModel):
+    new_public_key: str
+
+
 async def _authenticate_edge(
     db: AsyncSession,
+    request: Request,
     *,
-    token: str | None,
     node_id: str | None = None,
 ) -> EdgeNode:
-    if not token:
-        raise ForbiddenError("Edge token 无效", "errors.connector.edge_token_invalid")
-    token_hash = hash_edge_token(token)
-    query = select(EdgeNode).where(
-        not_deleted(EdgeNode),
-        EdgeNode.token_hash == token_hash,
+    channel = EdgeControlChannel(db)
+    header_node_id = request.headers.get("X-Edge-Node-Id")
+    resolved_node_id = node_id or header_node_id
+    if not resolved_node_id:
+        raise ForbiddenError("缺少 Edge 节点 ID", "errors.connector.edge_node_id_required")
+    node = await channel.get_node_for_proof(resolved_node_id)
+    if node.org_id and header_node_id and header_node_id != node.id:
+        raise ForbiddenError("伪造 org/node 被拒绝", "errors.connector.edge_org_mismatch")
+    if node_id and node_id != node.id:
+        raise ForbiddenError("伪造 org/node 被拒绝", "errors.connector.edge_org_mismatch")
+    if not node.public_key:
+        raise ForbiddenError("Edge 节点尚未绑定身份", "errors.connector.edge_identity_not_bound")
+    body = await request.body()
+    payload_sha256 = bind_request_digest(body=body, query=request.url.query or "")
+    claimed = request.headers.get("X-Edge-Payload-Sha256")
+    claimed_norm = (claimed or "").strip().lower()
+    digest_norm = payload_sha256.lower()
+    if claimed_norm and (
+        len(claimed_norm) != len(digest_norm) or not hmac.compare_digest(claimed_norm, digest_norm)
+    ):
+        raise ForbiddenError("Edge 请求载荷摘要不匹配", "errors.connector.edge_payload_digest_mismatch")
+    await channel.verify_request_proof(
+        node,
+        method=request.method,
+        path=request.url.path,
+        payload_sha256=payload_sha256,
+        timestamp_raw=request.headers.get("X-Edge-Timestamp"),
+        nonce=request.headers.get("X-Edge-Nonce"),
+        seq_raw=request.headers.get("X-Edge-Seq"),
+        identity_version_raw=request.headers.get("X-Edge-Identity-Version"),
+        signature_b64=request.headers.get("X-Edge-Signature"),
     )
-    if node_id:
-        query = query.where(EdgeNode.id == node_id)
-    result = await db.execute(query.limit(1))
+    return node
+
+
+def _sign_command(
+    db: AsyncSession,
+    *,
+    org_id: str,
+    node_id: str,
+    purpose: str,
+    payload: dict,
+) -> dict:
+    return EdgeControlChannel(db).sign_command_envelope(
+        org_id=org_id,
+        node_id=node_id,
+        purpose=purpose,
+        payload=payload,
+    )
+
+
+ACTUAL_ALIGN_STATUSES = frozenset({"ready", "uninstalled", "removed"})
+ACTUAL_ERROR_STATUSES = frozenset({"error", "failed"})
+
+
+async def _resolve_published_bundle(
+    db: AsyncSession,
+    *,
+    org_id: str,
+    skill_id: str,
+) -> dict | None:
+    release = await SkillReleaseService(db).get_published(org_id, skill_id)
+    if not release:
+        return None
+    return bundle_descriptor_from_release(release)
+
+
+async def _ensure_pinned_bundle(
+    db: AsyncSession,
+    inst: HermesSkillInstallation,
+) -> dict | None:
+    if inst.status == "uninstalling":
+        return None
+    desired_gen = getattr(inst, "desired_generation", 1) or 1
+    metadata = dict(inst.install_metadata or {})
+    pinned = metadata.get("published_bundle")
+    if (
+        isinstance(pinned, dict)
+        and pinned.get("generation") == desired_gen
+        and pinned.get("release_id")
+        and pinned.get("bundle_ref")
+        and pinned.get("sha256")
+        and pinned.get("size") is not None
+    ):
+        return {
+            "release_id": pinned["release_id"],
+            "bundle_ref": pinned["bundle_ref"],
+            "version": pinned.get("version"),
+            "size": pinned["size"],
+            "sha256": pinned["sha256"],
+        }
+    bundle = await _resolve_published_bundle(db, org_id=inst.org_id, skill_id=inst.skill_id)
+    if not bundle:
+        return None
+    metadata["published_bundle"] = {
+        **bundle,
+        "generation": desired_gen,
+    }
+    inst.install_metadata = metadata
+    await db.flush()
+    return bundle
+
+
+def _read_pinned_bundle(inst: HermesSkillInstallation) -> dict | None:
+    desired_gen = getattr(inst, "desired_generation", 1) or 1
+    if inst.status == "uninstalling":
+        return None
+    pinned = (inst.install_metadata or {}).get("published_bundle")
+    if not isinstance(pinned, dict) or pinned.get("generation") != desired_gen:
+        return None
+    if not pinned.get("bundle_ref") or not pinned.get("sha256") or pinned.get("size") is None:
+        return None
+    return {
+        "release_id": pinned.get("release_id"),
+        "bundle_ref": pinned["bundle_ref"],
+        "version": pinned.get("version"),
+        "size": pinned["size"],
+        "sha256": pinned["sha256"],
+    }
+
+
+@router.post("/enroll")
+async def enroll_edge_node(
+    body: EdgeEnrollBody,
+    db: AsyncSession = Depends(get_db),
+    x_edge_bootstrap: str | None = Header(default=None, alias="X-Edge-Bootstrap"),
+):
+    if not x_edge_bootstrap:
+        raise ForbiddenError("缺少引导材料", "errors.connector.edge_bootstrap_missing")
+    result = await db.execute(
+        select(EdgeNode).where(not_deleted(EdgeNode), EdgeNode.id == body.node_id)
+    )
     node = result.scalar_one_or_none()
     if not node:
-        raise ForbiddenError("Edge token 无效", "errors.connector.edge_token_invalid")
-    if node.status == EdgeNodeStatus.DISABLED.value:
-        raise ForbiddenError("Edge 节点已禁用", "errors.connector.edge_node_disabled")
-    return node
+        raise NotFoundError("Edge 节点不存在", "errors.connector.edge_node_not_found")
+    service = EdgeNodeService(db)
+    data = await service.bind_identity(
+        org_id=node.org_id,
+        node_id=body.node_id,
+        bootstrap=x_edge_bootstrap,
+        public_key=body.public_key,
+    )
+    await db.commit()
+    return {"code": 0, "data": data}
+
+
+@router.post("/rotate")
+async def rotate_edge_identity(
+    body: EdgeRotateBody,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    node = await _authenticate_edge(db, request)
+    service = EdgeNodeService(db)
+    data = await service.complete_rotation(
+        org_id=node.org_id,
+        node_id=node.id,
+        new_public_key=body.new_public_key,
+    )
+    await db.commit()
+    return {"code": 0, "data": data}
 
 
 @router.post("/heartbeat")
 async def edge_heartbeat(
     body: EdgeHeartbeatBody,
+    request: Request,
     db: AsyncSession = Depends(get_db),
-    x_edge_token: str | None = Header(default=None, alias="X-Edge-Token"),
 ):
-    node = await _authenticate_edge(db, token=x_edge_token, node_id=body.node_id)
+    node = await _authenticate_edge(db, request, node_id=body.node_id)
     if node.org_id and body.node_id != node.id:
         raise ForbiddenError("伪造 org/node 被拒绝", "errors.connector.edge_org_mismatch")
     now = datetime.now(timezone.utc)
@@ -119,10 +280,10 @@ async def edge_heartbeat(
 
 @router.get("/jobs")
 async def claim_edge_job(
+    request: Request,
     db: AsyncSession = Depends(get_db),
-    x_edge_token: str | None = Header(default=None, alias="X-Edge-Token"),
 ):
-    node = await _authenticate_edge(db, token=x_edge_token)
+    node = await _authenticate_edge(db, request)
     result = await db.execute(
         select(EdgeJob)
         .where(
@@ -165,18 +326,24 @@ async def claim_edge_job(
         "snapshot": strip_internal_route_secrets(job.snapshot or {}),
         "lease_until": job.lease_until.isoformat() if job.lease_until else None,
     }
-    return payload
+    return _sign_command(
+        db,
+        org_id=node.org_id,
+        node_id=node.id,
+        purpose="job.claim",
+        payload=payload,
+    )
 
 
 @router.post("/jobs/{job_id}/lease/renew")
 async def renew_edge_job_lease(
     job_id: str,
+    request: Request,
     body: EdgeLeaseRenewBody | None = None,
     db: AsyncSession = Depends(get_db),
-    x_edge_token: str | None = Header(default=None, alias="X-Edge-Token"),
     x_delivery_generation: str | None = Header(default=None, alias="X-Delivery-Generation"),
 ):
-    node = await _authenticate_edge(db, token=x_edge_token)
+    node = await _authenticate_edge(db, request)
     result = await db.execute(
         select(EdgeJob).where(
             not_deleted(EdgeJob),
@@ -220,10 +387,10 @@ async def renew_edge_job_lease(
 @router.get("/jobs/{job_id}/cancel")
 async def check_edge_job_cancel(
     job_id: str,
+    request: Request,
     db: AsyncSession = Depends(get_db),
-    x_edge_token: str | None = Header(default=None, alias="X-Edge-Token"),
 ):
-    node = await _authenticate_edge(db, token=x_edge_token)
+    node = await _authenticate_edge(db, request)
     result = await db.execute(
         select(EdgeJob).where(
             not_deleted(EdgeJob),
@@ -236,16 +403,24 @@ async def check_edge_job_cancel(
     if not job:
         raise NotFoundError("Edge job 不存在", "errors.connector.edge_job_not_found")
     is_cancelled = bool(job.cancel_requested_at or job.status in (EdgeJobStatus.FAILED.value, "cancelled"))
-    return {"code": 0, "data": {"job_id": job.id, "cancel_requested": is_cancelled}}
+    payload = {"job_id": job.id, "cancel_requested": is_cancelled, "cancelled": is_cancelled}
+    wrapped = _sign_command(
+        db,
+        org_id=node.org_id,
+        node_id=node.id,
+        purpose="job.cancel.check",
+        payload=payload,
+    )
+    return {"code": 0, "data": wrapped}
 
 
 @router.post("/jobs/{job_id}/cancel")
 async def request_edge_job_cancel(
     job_id: str,
+    request: Request,
     db: AsyncSession = Depends(get_db),
-    x_edge_token: str | None = Header(default=None, alias="X-Edge-Token"),
 ):
-    node = await _authenticate_edge(db, token=x_edge_token)
+    node = await _authenticate_edge(db, request)
     result = await db.execute(
         select(EdgeJob).where(
             not_deleted(EdgeJob),
@@ -262,15 +437,59 @@ async def request_edge_job_cancel(
     return {"code": 0, "data": {"job_id": job.id, "status": job.status, "cancel_requested": True}}
 
 
+def _authenticate_internal_skill_agent(token: str | None) -> None:
+    expected_curr = settings.SKILL_AGENT_INTERNAL_TOKEN
+    expected_prev = settings.SKILL_AGENT_INTERNAL_TOKEN_PREVIOUS
+    if not token:
+        raise ForbiddenError("Internal skill agent token 无效", "errors.auth.invalid_token")
+    curr_match = expected_curr and hmac.compare_digest(token, expected_curr)
+    prev_match = expected_prev and hmac.compare_digest(token, expected_prev)
+    if not curr_match and not prev_match:
+        raise ForbiddenError("Internal skill agent token 无效", "errors.auth.invalid_token")
+
+
+@router.post("/jobs/{job_id}/cancel/agent")
+async def request_agent_edge_job_cancel(
+    job_id: str,
+    db: AsyncSession = Depends(get_db),
+    x_skill_agent_token: str | None = Header(default=None, alias="X-Skill-Agent-Token"),
+    x_exec_org_id: str | None = Header(default=None, alias="X-Exec-Org-Id"),
+):
+    _authenticate_internal_skill_agent(x_skill_agent_token)
+    if not x_exec_org_id:
+        raise ForbiddenError("缺少 X-Exec-Org-Id header", "errors.auth.missing_org_header")
+    result = await db.execute(
+        select(EdgeJob).where(
+            not_deleted(EdgeJob),
+            EdgeJob.id == job_id,
+            EdgeJob.org_id == x_exec_org_id,
+        )
+    )
+    job = result.scalar_one_or_none()
+    if not job:
+        raise NotFoundError("Edge job 不存在", "errors.connector.edge_job_not_found")
+    if job.status in (EdgeJobStatus.QUEUED.value, EdgeJobStatus.CLAIMED.value, EdgeJobStatus.RUNNING.value):
+        job.cancel_requested_at = datetime.now(timezone.utc)
+        await db.commit()
+    return {
+        "code": 0,
+        "data": {
+            "job_id": job.id,
+            "status": job.status,
+            "cancel_requested": bool(job.cancel_requested_at),
+        },
+    }
+
+
 @router.post("/jobs/{job_id}/events")
 async def post_edge_job_events(
     job_id: str,
     body: EdgeJobEventsBody,
+    request: Request,
     db: AsyncSession = Depends(get_db),
-    x_edge_token: str | None = Header(default=None, alias="X-Edge-Token"),
     x_delivery_generation: str | None = Header(default=None, alias="X-Delivery-Generation"),
 ):
-    node = await _authenticate_edge(db, token=x_edge_token)
+    node = await _authenticate_edge(db, request)
     result = await db.execute(
         select(EdgeJob).where(
             not_deleted(EdgeJob),
@@ -354,11 +573,11 @@ async def post_edge_job_events(
 async def upload_edge_job_artifact(
     job_id: str,
     body: EdgeArtifactUploadBody,
+    request: Request,
     db: AsyncSession = Depends(get_db),
-    x_edge_token: str | None = Header(default=None, alias="X-Edge-Token"),
     x_delivery_generation: str | None = Header(default=None, alias="X-Delivery-Generation"),
 ):
-    node = await _authenticate_edge(db, token=x_edge_token)
+    node = await _authenticate_edge(db, request)
     result = await db.execute(
         select(EdgeJob).where(
             not_deleted(EdgeJob),
@@ -467,34 +686,43 @@ async def upload_edge_job_artifact(
 
 @router.get("/artifacts/on-demand-requests")
 async def pull_edge_artifact_on_demand_requests(
+    request: Request,
     db: AsyncSession = Depends(get_db),
-    x_edge_token: str | None = Header(default=None, alias="X-Edge-Token"),
 ):
-    node = await _authenticate_edge(db, token=x_edge_token)
+    node = await _authenticate_edge(db, request)
     edge_service = EdgeNodeService(db)
     items = await edge_service.pull_on_demand_requests(org_id=node.org_id, edge_node_id=node.id)
     await db.commit()
+    wrapped_items = []
+    for item in items:
+        payload = {
+            "id": item.id,
+            "org_id": item.org_id,
+            "edge_node_id": item.edge_node_id,
+            "job_id": item.job_id,
+            "run_id": item.run_id,
+            "attempt_id": item.attempt_id,
+            "step_id": item.step_id,
+            "run_generation": item.run_generation,
+            "delivery_generation": item.delivery_generation,
+            "artifact_id": item.artifact_id,
+            "name": item.name,
+            "status": item.status,
+            "expires_at": item.expires_at.isoformat() if item.expires_at else None,
+        }
+        wrapped_items.append(
+            _sign_command(
+                db,
+                org_id=node.org_id,
+                node_id=node.id,
+                purpose="artifact.on_demand",
+                payload=payload,
+            )
+        )
     return {
         "code": 0,
         "data": {
-            "items": [
-                {
-                    "id": item.id,
-                    "org_id": item.org_id,
-                    "edge_node_id": item.edge_node_id,
-                    "job_id": item.job_id,
-                    "run_id": item.run_id,
-                    "attempt_id": item.attempt_id,
-                    "step_id": item.step_id,
-                    "run_generation": item.run_generation,
-                    "delivery_generation": item.delivery_generation,
-                    "artifact_id": item.artifact_id,
-                    "name": item.name,
-                    "status": item.status,
-                    "expires_at": item.expires_at.isoformat() if item.expires_at else None,
-                }
-                for item in items
-            ]
+            "items": wrapped_items,
         },
     }
 
@@ -503,10 +731,10 @@ async def pull_edge_artifact_on_demand_requests(
 async def create_edge_job_artifact_on_demand_request(
     job_id: str,
     body: IssueOnDemandRequestBody,
+    request: Request,
     db: AsyncSession = Depends(get_db),
-    x_edge_token: str | None = Header(default=None, alias="X-Edge-Token"),
 ):
-    node = await _authenticate_edge(db, token=x_edge_token)
+    node = await _authenticate_edge(db, request)
     result = await db.execute(
         select(EdgeJob).where(
             not_deleted(EdgeJob),
@@ -550,11 +778,11 @@ async def create_edge_job_artifact_on_demand_request(
 async def request_edge_job_artifact(
     job_id: str,
     body: EdgeArtifactRequestBody,
+    request: Request,
     db: AsyncSession = Depends(get_db),
-    x_edge_token: str | None = Header(default=None, alias="X-Edge-Token"),
     x_delivery_generation: str | None = Header(default=None, alias="X-Delivery-Generation"),
 ):
-    node = await _authenticate_edge(db, token=x_edge_token)
+    node = await _authenticate_edge(db, request)
     result = await db.execute(
         select(EdgeJob).where(
             not_deleted(EdgeJob),
@@ -642,10 +870,10 @@ async def request_edge_job_artifact(
 
 @router.get("/installations/desired")
 async def get_desired_installations(
+    request: Request,
     db: AsyncSession = Depends(get_db),
-    x_edge_token: str | None = Header(default=None, alias="X-Edge-Token"),
 ):
-    node = await _authenticate_edge(db, token=x_edge_token)
+    node = await _authenticate_edge(db, request)
     result = await db.execute(
         select(HermesSkillInstallation).where(
             not_deleted(HermesSkillInstallation),
@@ -656,7 +884,8 @@ async def get_desired_installations(
     )
     items = []
     for inst in result.scalars().all():
-        items.append({
+        bundle = await _ensure_pinned_bundle(db, inst)
+        item = {
             "id": inst.id,
             "skill_id": inst.skill_id,
             "desired_status": inst.status,
@@ -664,8 +893,67 @@ async def get_desired_installations(
             "actual_generation": getattr(inst, "actual_generation", 0) or 0,
             "install_metadata": inst.install_metadata or {},
             "routing_metadata": inst.routing_metadata or {},
-        })
+        }
+        if bundle:
+            item["bundle"] = bundle
+        items.append(
+            _sign_command(
+                db,
+                org_id=node.org_id,
+                node_id=node.id,
+                purpose="install.desired",
+                payload=item,
+            )
+        )
+    await db.commit()
     return {"code": 0, "data": {"items": items, "node_id": node.id}}
+
+
+@router.get("/installations/{installation_id}/bundle")
+async def download_installation_bundle(
+    installation_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    generation: int = Query(..., ge=1),
+):
+    node = await _authenticate_edge(db, request)
+    result = await db.execute(
+        select(HermesSkillInstallation).where(
+            not_deleted(HermesSkillInstallation),
+            HermesSkillInstallation.id == installation_id,
+            HermesSkillInstallation.org_id == node.org_id,
+        )
+    )
+    installation = result.scalar_one_or_none()
+    if not installation:
+        raise NotFoundError("Installation 不存在", "errors.skill.installation_not_found")
+    if installation.edge_node_id != node.id:
+        raise ForbiddenError("伪造 org/node 被拒绝", "errors.connector.edge_org_mismatch")
+    if installation.target_kind != "edge":
+        raise ForbiddenError("非 Edge Installation", "errors.skill.installation_not_found")
+    if installation.status == "uninstalling":
+        raise BadRequestError("卸载态不可下载 Bundle", "errors.skill.bundle_unavailable")
+    desired_gen = getattr(installation, "desired_generation", 1) or 1
+    if generation != desired_gen:
+        if generation < desired_gen:
+            raise ForbiddenError("过期的 generation 请求已拒绝", "errors.skill.stale_actual_generation")
+        raise BadRequestError("超前的 generation 请求已拒绝", "errors.skill.future_generation")
+    bundle = _read_pinned_bundle(installation)
+    if not bundle:
+        bundle = await _ensure_pinned_bundle(db, installation)
+        await db.commit()
+    if not bundle:
+        raise NotFoundError("Bundle 不可用", "errors.skill.bundle_unavailable")
+    bundle_path = bundle_zip_path(str(bundle["bundle_ref"]))
+    if not bundle_path.is_file():
+        raise NotFoundError("Bundle 不可用", "errors.skill.bundle_unavailable")
+
+    def iterfile():
+        with bundle_path.open("rb") as handle:
+            while chunk := handle.read(65536):
+                yield chunk
+
+    return StreamingResponse(iterfile(), media_type="application/zip")
 
 
 class EdgeActualReportBody(BaseModel):
@@ -678,10 +966,10 @@ class EdgeActualReportBody(BaseModel):
 @router.post("/installations/actual")
 async def report_installation_actual(
     body: EdgeActualReportBody,
+    request: Request,
     db: AsyncSession = Depends(get_db),
-    x_edge_token: str | None = Header(default=None, alias="X-Edge-Token"),
 ):
-    node = await _authenticate_edge(db, token=x_edge_token)
+    node = await _authenticate_edge(db, request)
     result = await db.execute(
         select(HermesSkillInstallation).where(
             not_deleted(HermesSkillInstallation),
@@ -692,8 +980,10 @@ async def report_installation_actual(
     installation = result.scalar_one_or_none()
     if not installation:
         raise NotFoundError("Installation 不存在", "errors.skill.installation_not_found")
-    if installation.edge_node_id and installation.edge_node_id != node.id:
+    if installation.edge_node_id != node.id:
         raise ForbiddenError("伪造 org/node 被拒绝", "errors.connector.edge_org_mismatch")
+    if installation.target_kind != "edge":
+        raise ForbiddenError("非 Edge Installation", "errors.skill.installation_not_found")
 
     if body.generation is None:
         raise BadRequestError("缺少 generation 字段", "errors.skill.missing_generation")
@@ -704,18 +994,109 @@ async def report_installation_actual(
     if body.generation > desired_gen:
         raise BadRequestError("超前的 generation 上报已拒绝", "errors.skill.future_generation")
 
-    installation.actual_generation = body.generation
-    installation.actual_status = body.actual_status
+    status = body.actual_status
+    if status not in ACTUAL_ALIGN_STATUSES and status not in ACTUAL_ERROR_STATUSES:
+        raise BadRequestError("Actual status 无效", "errors.skill.actual_status_invalid")
+    if installation.status == "uninstalling":
+        if status == "ready":
+            raise BadRequestError("Actual status 与 Desired 状态不匹配", "errors.skill.actual_status_invalid")
+    elif status in {"uninstalled", "removed"}:
+        raise BadRequestError("Actual status 与 Desired 状态不匹配", "errors.skill.actual_status_invalid")
+    installation.actual_status = status
     installation.actual_reported_at = datetime.now(timezone.utc)
     if body.meta:
         installation.routing_metadata = {**(installation.routing_metadata or {}), "actual_meta": body.meta}
 
-    if installation.status == "uninstalling" and body.actual_status in ("uninstalled", "removed"):
+    if status in ACTUAL_ALIGN_STATUSES:
+        installation.actual_generation = body.generation
+        installation.error_message = None
+    elif status in ACTUAL_ERROR_STATUSES:
+        error_code = None
+        if body.meta and isinstance(body.meta.get("error_code"), str):
+            error_code = body.meta["error_code"].strip()
+        installation.error_message = (error_code or status)[:1024]
+
+    if installation.status == "uninstalling" and status in ("uninstalled", "removed"):
         installation.status = "removed"
         installation.deleted_at = datetime.now(timezone.utc)
 
     await db.commit()
     return {"code": 0, "data": {"installation_id": installation.id, "actual_status": installation.actual_status}}
+
+
+class RevalidateExecutionContextBody(BaseModel):
+    run_id: str
+    user_id: str
+    context_version: int
+    execution_context: dict = Field(default_factory=dict)
+    attempt_id: str | None = None
+    generation: int | None = None
+    run_session_id: str | None = None
+
+
+def _authenticate_internal_skill_agent(
+    x_skill_agent_token: str | None,
+) -> None:
+    expected_curr = settings.SKILL_AGENT_INTERNAL_TOKEN
+    expected_prev = settings.SKILL_AGENT_INTERNAL_TOKEN_PREVIOUS
+    if not x_skill_agent_token:
+        raise ForbiddenError("Internal skill agent token 无效", "errors.auth.invalid_token")
+    curr_match = expected_curr and hmac.compare_digest(x_skill_agent_token, expected_curr)
+    prev_match = expected_prev and hmac.compare_digest(x_skill_agent_token, expected_prev)
+    if not curr_match and not prev_match:
+        raise ForbiddenError("Internal skill agent token 无效", "errors.auth.invalid_token")
+
+
+async def _revalidate_agent_run_session(
+    *,
+    run_id: str,
+    org_id: str,
+    user_id: str,
+    context_version: int,
+) -> None:
+    if not settings.SKILL_AGENT_ENABLED or not settings.SKILL_AGENT_BASE_URL:
+        raise ForbiddenError("Agent Session 服务不可达", "errors.run.context_revalidation_denied")
+    url = f"{settings.SKILL_AGENT_BASE_URL.rstrip('/')}/internal/v1/runs/{run_id}/session/revalidate"
+    headers = {
+        "X-Skill-Agent-Token": settings.SKILL_AGENT_INTERNAL_TOKEN,
+        "X-Exec-Org-Id": org_id,
+        "X-Exec-User-Id": user_id,
+        "Content-Type": "application/json",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=3.0)) as client:
+            response = await client.post(url, headers=headers, json={"context_version": context_version})
+    except httpx.HTTPError as exc:
+        raise ForbiddenError("Agent Session 服务不可达", "errors.run.context_revalidation_denied") from exc
+    if response.status_code != 200:
+        raise ForbiddenError("Run Session 已失效", "errors.run.context_revalidation_denied")
+
+
+@router.post("/skill-run/revalidate")
+async def revalidate_skill_run_execution_context(
+    body: RevalidateExecutionContextBody,
+    db: AsyncSession = Depends(get_db),
+    x_skill_agent_token: str | None = Header(default=None, alias="X-Skill-Agent-Token"),
+    x_exec_org_id: str | None = Header(default=None, alias="X-Exec-Org-Id"),
+):
+    _authenticate_internal_skill_agent(x_skill_agent_token)
+    if not x_exec_org_id:
+        raise ForbiddenError("缺少 X-Exec-Org-Id header", "errors.auth.missing_org_header")
+    if body.run_session_id:
+        await _revalidate_agent_run_session(
+            run_id=body.run_id,
+            org_id=x_exec_org_id,
+            user_id=body.user_id,
+            context_version=body.context_version,
+        )
+    service = RuntimeSkillRunService(db)
+    await service.revalidate_execution_context(
+        org_id=x_exec_org_id,
+        user_id=body.user_id,
+        execution_context=body.execution_context,
+        context_version=body.context_version,
+    )
+    return {"code": 0, "data": {"run_id": body.run_id, "ok": True}}
 
 
 class EnqueueEdgeJobRequest(BaseModel):
@@ -738,14 +1119,7 @@ async def enqueue_edge_job_endpoint(
     x_skill_agent_token: str | None = Header(default=None, alias="X-Skill-Agent-Token"),
     x_exec_org_id: str | None = Header(default=None, alias="X-Exec-Org-Id"),
 ):
-    expected_curr = settings.SKILL_AGENT_INTERNAL_TOKEN
-    expected_prev = settings.SKILL_AGENT_INTERNAL_TOKEN_PREVIOUS
-    if not x_skill_agent_token:
-        raise ForbiddenError("Internal skill agent token 无效", "errors.auth.invalid_token")
-    curr_match = expected_curr and hmac.compare_digest(x_skill_agent_token, expected_curr)
-    prev_match = expected_prev and hmac.compare_digest(x_skill_agent_token, expected_prev)
-    if not curr_match and not prev_match:
-        raise ForbiddenError("Internal skill agent token 无效", "errors.auth.invalid_token")
+    _authenticate_internal_skill_agent(x_skill_agent_token)
 
     if not x_exec_org_id:
         raise ForbiddenError("缺少 X-Exec-Org-Id header", "errors.auth.missing_org_header")

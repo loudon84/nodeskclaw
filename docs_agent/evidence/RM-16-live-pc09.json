@@ -1,0 +1,40 @@
+{
+  "schema": "smc.rm16.live-conformance.v1",
+  "policy": "REAL_PROCESS",
+  "result": "PASS",
+  "scenario": "pc09",
+  "auth_type": "user_jwt",
+  "timestamp": "2026-09-06T13:19:16.155500Z",
+  "reused_runners": [
+    "tools/acceptance/run_rm12_live_conformance.py",
+    "tools/acceptance/run_rm13_live_native.py",
+    "tools/acceptance/run_rm14_live_semantic.py",
+    "tools/acceptance/run_rm15_live_control.py"
+  ],
+  "chat_completions_observed": false,
+  "native_paths_observed": [
+    "/v1/capabilities",
+    "/v1/runs",
+    "/v1/runs/<id>/events",
+    "/v1/runs/<id>"
+  ],
+  "public_leaks": [],
+  "public_runtime_identity_leak": false,
+  "runtime_binding_verified": true,
+  "backend_health": 200,
+  "tool_name": "hermes_market_profiling__live-old-runtime-probe",
+  "run_id": "a68baf96-8b99-42e8-93dd-b69998697603",
+  "attempt_id": "133af1bf-4e88-445f-aa3a-9ef747cf8eff",
+  "generation": 1,
+  "hermes_agent_instance_id": "a8551289-b35a-486c-b4b9-7a96a09e607f",
+  "agent_profile": "market-profiling",
+  "bound_api_server_url_hash": "sha256:056c156673b3714caa1cc88fc0e5e24c1b9a0fed7362752216864c057ae67bb2",
+  "bound_api_server_port": 29204,
+  "hermes_runtime_version": "0.16.0",
+  "observed_version": "0.16.0",
+  "pc09_mode": "real_bound_old_runtime",
+  "old_runtime_version": "0.16.0",
+  "version_floor_rejected": true,
+  "public_status": "FAILED",
+  "has_runtime_run_id": false
+}

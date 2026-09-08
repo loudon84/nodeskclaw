@@ -27,6 +27,7 @@ from app.services.hermes_external.hermes_docker_binding_service import HermesDoc
 from app.services.hermes_external.hermes_env_parser import parse_env_file
 from app.services.hermes_external.hermes_runtime_skill_executor import DEFAULT_INPUT_SCHEMA
 from app.services.hermes_skill.hermes_skill_authorization_service import HermesSkillAuthorizationService
+from app.services.hermes_skill.skill_installer import assert_installation_workspace_ref
 from app.services.hermes_skill.skill_release_service import SkillReleaseService
 
 logger = logging.getLogger(__name__)
@@ -45,10 +46,26 @@ def _find_runtime_skill(skills: list, runtime_skill_id: str):
     return None
 
 
+# @lat: [[decisions/skill-platform-execution#Enqueue Path#Runtime Skill Workspace Scope]]
+def _normalize_workspace_id(workspace_id: str | None) -> str | None:
+    if workspace_id is None:
+        return None
+    normalized = workspace_id.strip()
+    if not normalized:
+        return None
+    if normalized == "default":
+        raise BadRequestError(
+            "workspace_id 不允许使用 default；组织全局 Skill 请使用 null",
+            "errors.skill.workspace_scope_invalid",
+        )
+    return normalized
+
+
 class RuntimeSkillRegistrationService:
     def __init__(self, db: AsyncSession):
         self.db = db
 
+# @lat: [[decisions/skill-platform-execution#Enqueue Path#Runtime Skill Workspace Scope]]
     async def register_to_org_mcp(
         self,
         org_id: str,
@@ -57,6 +74,8 @@ class RuntimeSkillRegistrationService:
         runtime_skill_id: str,
         request: RuntimeSkillRegisterRequest,
     ) -> RuntimeSkillRegisterResponse:
+        workspace_id = _normalize_workspace_id(request.workspace_id)
+
         binding = HermesDockerBindingService(self.db)
         record = await binding.get_by_profile(org_id, agent_profile)
         if not record:
@@ -125,7 +144,7 @@ class RuntimeSkillRegistrationService:
             "hermes_agent_instance_id": record.id,
             "agent_profile": agent_profile,
             "profile_id": request.profile_id,
-            "workspace_id": request.workspace_id,
+            "workspace_id": workspace_id,
             "runtime_skill_id": runtime_skill.name,
             "api_server_model_name": api_server_model_name,
             "default_execution_mode": request.default_execution_mode,
@@ -152,7 +171,7 @@ class RuntimeSkillRegistrationService:
             skill_id=skill_id,
             instance_id=record.instance_id,
             profile_id=request.profile_id,
-            workspace_id=request.workspace_id,
+            workspace_id=workspace_id,
             route_config=route_config,
             operator_user_id=operator_user_id,
         )
@@ -166,7 +185,7 @@ class RuntimeSkillRegistrationService:
             org_id=org_id,
             skill_id=skill_id,
             skill_db_id=skill.id,
-            workspace_id=request.workspace_id,
+            workspace_id=workspace_id,
             grant_spec=grant_spec,
             subject_id=subject_id,
             operator_user_id=operator_user_id,
@@ -227,7 +246,7 @@ class RuntimeSkillRegistrationService:
             hermes_agent_instance_id=record.id,
             agent_profile=agent_profile,
             profile_id=request.profile_id,
-            workspace_id=request.workspace_id,
+            workspace_id=workspace_id,
             installation_id=installation.id,
             is_mcp_exposed=request.is_mcp_exposed,
             grant_created=grant_created,
@@ -311,10 +330,11 @@ class RuntimeSkillRegistrationService:
         skill_id: str,
         instance_id: str,
         profile_id: str,
-        workspace_id: str,
+        workspace_id: str | None,
         route_config: dict,
         operator_user_id: str,
     ) -> tuple[bool, HermesSkillInstallation]:
+        await assert_installation_workspace_ref(self.db, workspace_id, org_id)
         result = await self.db.execute(
             select(HermesSkillInstallation).where(
                 not_deleted(HermesSkillInstallation),
@@ -356,7 +376,7 @@ class RuntimeSkillRegistrationService:
         org_id: str,
         skill_id: str,
         skill_db_id: str,
-        workspace_id: str,
+        workspace_id: str | None,
         grant_spec: RuntimeSkillRegisterGrant,
         subject_id: str,
         operator_user_id: str,

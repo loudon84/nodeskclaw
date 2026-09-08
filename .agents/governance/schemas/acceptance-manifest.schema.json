@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "manifest_version",
+    "feature_id",
+    "work_package_id",
+    "prd",
+    "requirements",
+    "verifications"
+  ],
+  "properties": {
+    "manifest_version": {
+      "const": "1"
+    },
+    "feature_id": {
+      "type": "string"
+    },
+    "work_package_id": {
+      "type": "string"
+    },
+    "prd": {
+      "type": "object",
+      "required": [
+        "id",
+        "path",
+        "source_revision"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "source_revision": {
+          "type": "string"
+        },
+        "commit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "requirements": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "text",
+          "verification_ids"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^(AC|DOD)-[0-9]{2,}$"
+          },
+          "text": {
+            "type": "string"
+          },
+          "verification_ids": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "verifications": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "type",
+          "command"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^V-[0-9]{2,}$"
+          },
+          "type": {
+            "enum": [
+              "unit",
+              "contract",
+              "integration",
+              "static",
+              "manual"
+            ]
+          },
+          "command": {
+            "type": "string"
+          },
+          "cwd": {
+            "type": "string"
+          },
+          "timeout_seconds": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 3600
+          },
+          "blocking": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

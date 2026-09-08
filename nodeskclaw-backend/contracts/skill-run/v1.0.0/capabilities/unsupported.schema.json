@@ -1,0 +1,21 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "approval": {
+      "const": "unsupported",
+      "title": "Approval",
+      "type": "string"
+    },
+    "attachments": {
+      "const": "unsupported",
+      "title": "Attachments",
+      "type": "string"
+    }
+  },
+  "required": [
+    "approval",
+    "attachments"
+  ],
+  "title": "UnsupportedCapabilities",
+  "type": "object"
+}

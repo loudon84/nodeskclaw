@@ -17,6 +17,7 @@ BANNED_ACTIVE_SKILLS = {"writing-plans", "smc-plan-from-approved-prd"}
 GOVERNED_SKILLS = {
     "brainstorming",
     "executing-plans",
+    "smc-plan-delivery",
     "smc-architecture-decision",
     "smc-architecture-review",
     "smc-plan-from-approved-prd-ponytail",

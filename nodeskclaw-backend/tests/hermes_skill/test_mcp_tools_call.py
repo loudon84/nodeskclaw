@@ -45,10 +45,12 @@ async def test_tools_call_tool_not_found():
     db = AsyncMock()
     mock_result = MagicMock()
     mock_result.scalar_one_or_none.return_value = None
+    mock_result.one_or_none.return_value = None
     db.execute = AsyncMock(return_value=mock_result)
 
     mapper = McpToolMapper(db)
-    with patch.object(PermissionChecker, "require_permission", return_value=None):
+    with patch.object(PermissionChecker, "require_permission", return_value=None), \
+         patch.object(SkillRoutingService, "get_exposed_skill", AsyncMock(return_value=None)):
         with pytest.raises(NotFoundError) as exc_info:
             await mapper.call_tool("nonexistent_tool", {}, "org-1", "user-1")
     assert exc_info.value.message_key == "errors.skill.tool_not_found"
@@ -153,12 +155,14 @@ async def test_tools_call_creates_task_and_events():
     skill.is_mcp_exposed = True
     skill.is_active = True
     skill.input_schema = None
+    skill.extra_metadata = {}
 
     installation = MagicMock()
     installation.agent_id = "agent-1"
     installation.profile_id = None
     installation.workspace_id = "ws-1"
     installation.id = "inst-1"
+    installation.routing_metadata = {}
 
     routing_result = RoutingResult(
         matched=True,
@@ -176,6 +180,9 @@ async def test_tools_call_creates_task_and_events():
     created_task.status = TaskStatus.QUEUED
     created_task.event_url = "/api/v1/hermes/tasks/task-uuid/events"
     created_task.artifact_url = "/api/v1/hermes/tasks/task-uuid/artifacts"
+    created_task.routing_metadata = {}
+    created_task.output_policy = {}
+    created_task.server_artifacts = []
 
     mapper = McpToolMapper(db)
     with patch.object(PermissionChecker, "require_permission", return_value=None), \
@@ -185,7 +192,9 @@ async def test_tools_call_creates_task_and_events():
          patch("app.services.hermes_skill.mcp_tool_mapper.TaskService") as mock_task_svc_cls, \
          patch("app.services.hermes_skill.mcp_tool_mapper.AgentAliasResolver") as mock_alias_cls, \
          patch("app.services.hermes_skill.mcp_tool_mapper.HermesSkillAuthorizationService") as mock_authz_cls, \
-         patch("app.services.hermes_skill.skill_audit_logger.SkillAuditLogger") as mock_audit_cls:
+         patch("app.services.hermes_skill.skill_audit_logger.SkillAuditLogger") as mock_audit_cls, \
+         patch("app.services.hermes_skill.mcp_tool_mapper.settings") as mock_settings:
+        mock_settings.SKILL_AGENT_ENABLED = False
         mock_resolve.return_value = routing_result
         mock_alias_cls.return_value.enrich_routing = AsyncMock(return_value={})
         mock_alias_cls.return_value.resolve = AsyncMock(return_value=None)
@@ -244,7 +253,7 @@ async def test_mcp_router_tools_call_success():
     assert result["jsonrpc"] == "2.0"
     assert result["id"] == 42
     assert "result" in result
-    assert result["result"]["content"][0]["text"] == "任务已创建"
+    assert result["result"]["content"][0]["text"] == "任务 TASK-org1-abc 已提交，状态：queued。"
     assert result["result"]["structuredContent"]["task_id"] == "task-1"
     assert db.commit.await_count >= 1
 
@@ -327,3 +336,68 @@ async def test_mcp_router_missing_params_name():
     result = await mcp_jsonrpc(body, MagicMock(headers={}), user_org=(user, org), db=db)
     assert result["error"]["code"] == -32030
     assert result["error"]["data"]["errorCode"] == "MCP_INVALID_ARGUMENTS"
+
+
+@pytest.mark.asyncio
+async def test_mcp_router_idempotency_conflict_returns_http_409_jsonrpc():
+    import json
+
+    from fastapi.responses import JSONResponse
+
+    from app.api.hermes_skill.mcp_router import mcp_jsonrpc
+    from app.core.exceptions import ConflictError
+
+    user = MagicMock()
+    user.id = "user-1"
+    org = MagicMock()
+    org.id = "org-1"
+    db = AsyncMock()
+    body = {
+        "jsonrpc": "2.0",
+        "id": 77,
+        "method": "tools/call",
+        "params": {"name": "test_tool", "arguments": {"prompt": "b"}},
+    }
+
+    with patch("app.services.mcp_skill_gateway.handler.McpToolMapper") as mock_mapper_cls:
+        mock_mapper = AsyncMock()
+        mock_mapper.call_tool.side_effect = ConflictError(
+            "幂等键与请求参数冲突",
+            "errors.run.idempotency_conflict",
+        )
+        mock_mapper_cls.return_value = mock_mapper
+
+        result = await mcp_jsonrpc(body, MagicMock(headers={}), user_org=(user, org), db=db)
+
+    assert isinstance(result, JSONResponse)
+    assert result.status_code == 409
+    payload = json.loads(result.body)
+    assert payload["jsonrpc"] == "2.0"
+    assert payload["id"] == 77
+    assert payload["error"]["data"]["errorCode"] == "IDEMPOTENCY_CONFLICT"
+    assert payload["error"]["code"] == -32080
+    assert "code" not in payload or payload.get("code") != 40900
+    assert "data" not in payload or "error" in payload
+
+
+@pytest.mark.asyncio
+async def test_gateway_mcp_jsonrpc_idempotency_conflict_returns_http_409():
+    import json
+
+    from fastapi.responses import JSONResponse
+
+    from app.api.mcp_skill_gateway.router import hermes_mcp_jsonrpc, mcp_jsonrpc
+    from app.services.mcp_skill_gateway.errors import IDEMPOTENCY_CONFLICT, mcp_error_v2
+
+    conflict_body = mcp_error_v2(88, IDEMPOTENCY_CONFLICT, "幂等键与请求参数冲突")
+    request = MagicMock()
+    request.headers = {"authorization": "Bearer x"}
+
+    with patch("app.api.mcp_skill_gateway.router.dispatch", new=AsyncMock(return_value=conflict_body)):
+        for handler in (mcp_jsonrpc, hermes_mcp_jsonrpc):
+            result = await handler(request, {"jsonrpc": "2.0", "id": 88, "method": "tools/call"}, db=AsyncMock())
+            assert isinstance(result, JSONResponse)
+            assert result.status_code == 409
+            payload = json.loads(result.body)
+            assert payload["error"]["data"]["errorCode"] == "IDEMPOTENCY_CONFLICT"
+            assert payload.get("code") != 40900

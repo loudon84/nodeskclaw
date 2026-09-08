@@ -138,3 +138,134 @@ async def test_list_tools_empty_for_non_member():
         tools = await mapper.list_tools("org-1", "user-outsider")
 
     assert tools == []
+
+
+@pytest.mark.asyncio
+async def test_skill_to_tool_dict_v11_descriptor():
+    db = AsyncMock()
+    inst_mock = MagicMock()
+    inst_mock.scalar_one_or_none.return_value = None
+    db.execute = AsyncMock(return_value=inst_mock)
+    mapper = McpToolMapper(db)
+
+    skill = MagicMock()
+    skill.id = "skill-db-1"
+    skill.skill_id = "skill-1"
+    skill.tool_name = "chat_skill"
+    skill.title = "Chat Skill"
+    skill.name = "chat-skill"
+    skill.description = "A chat skill"
+    skill.version = "1.0.0"
+    skill.category = "general"
+    skill.source_type = "custom"
+    skill.extra_metadata = {"modified_in_working_copy": True}
+
+    published = MagicMock()
+    published.id = "release-1"
+    published.digest = "digest-12345"
+    published.title = "Chat Skill Published"
+    published.description = "Published desc"
+    published.version = "1.0.0"
+    published.category = "general"
+    published.input_schema = {"type": "object", "properties": {"msg": {"type": "string"}}}
+    published.extra_metadata = {
+        "interactionMode": "chat",
+        "promptField": "msg",
+        "supportsAttachments": True,
+        "annotations": {
+            "riskLevel": "high",
+            "requiresApproval": True,
+            "approvalMode": "server",
+            "streaming": True,
+            "artifacts": False,
+        },
+    }
+
+    with patch("app.services.hermes_skill.mcp_tool_mapper.SkillReleaseService.get_published_by_skill_db_id", new=AsyncMock(return_value=published)), \
+         patch("app.services.hermes_skill.mcp_tool_mapper.HermesSkillAuthorizationService.can_invoke", new=AsyncMock(return_value=True)):
+        tool_dict = await mapper._skill_to_tool_dict(skill, "org-1", "user-1")
+
+    assert tool_dict["capabilityKind"] == "skill"
+    assert tool_dict["interactionMode"] == "chat"
+    assert tool_dict["promptField"] == "msg"
+    assert tool_dict["supportsAttachments"] is True
+    assert tool_dict["skillReleaseId"] == "release-1"
+    assert tool_dict["skillReleaseDigest"] == "digest-12345"
+    assert tool_dict["annotations"]["riskLevel"] == "high"
+    assert tool_dict["annotations"]["requiresApproval"] is True
+    assert tool_dict["requiresApproval"] is True
+    assert "modified_in_working_copy" not in tool_dict
+
+
+@pytest.mark.asyncio
+async def test_skill_to_tool_dict_legacy_release_compatibility_mapping():
+    db = AsyncMock()
+    inst_mock = MagicMock()
+    inst_mock.scalar_one_or_none.return_value = None
+    db.execute = AsyncMock(return_value=inst_mock)
+    mapper = McpToolMapper(db)
+
+    skill = MagicMock()
+    skill.id = "skill-db-2"
+    skill.skill_id = "skill-2"
+    skill.tool_name = "legacy_skill"
+    skill.title = "Legacy Skill"
+    skill.name = "legacy-skill"
+    skill.description = "Legacy desc"
+    skill.version = "1.0.0"
+    skill.category = "general"
+    skill.source_type = "custom"
+    skill.extra_metadata = {}
+
+    published = MagicMock()
+    published.id = "release-legacy"
+    published.digest = "digest-legacy"
+    published.title = "Legacy"
+    published.description = "Legacy"
+    published.version = "1.0.0"
+    published.category = "general"
+    published.input_schema = {"type": "object", "properties": {"prompt": {"type": "string"}}}
+    published.extra_metadata = {}
+
+    with patch("app.services.hermes_skill.mcp_tool_mapper.SkillReleaseService.get_published_by_skill_db_id", new=AsyncMock(return_value=published)), \
+         patch("app.services.hermes_skill.mcp_tool_mapper.HermesSkillAuthorizationService.can_invoke", new=AsyncMock(return_value=True)):
+        tool_dict = await mapper._skill_to_tool_dict(skill, "org-1", "user-1")
+
+    assert tool_dict["capabilityKind"] == "skill"
+    assert tool_dict["interactionMode"] == "chat"
+    assert tool_dict["promptField"] == "prompt"
+    assert tool_dict["supportsAttachments"] is False
+    assert tool_dict["skillReleaseId"] == "release-legacy"
+    assert tool_dict["skillReleaseDigest"] == "digest-legacy"
+
+
+@pytest.mark.asyncio
+async def test_list_public_connector_tools_v11_descriptor():
+    db = AsyncMock()
+    mapper = McpToolMapper(db)
+
+    connector_tool = MagicMock()
+    connector_tool.tool_name = "crm_tool"
+    connector_tool.title = "CRM Tool"
+    connector_tool.description = "CRM description"
+    connector_tool.input_schema = {"type": "object"}
+    connector_tool.extra_metadata = {"requires_approval": False}
+
+    instance = MagicMock()
+    instance.placement = "central"
+
+    mock_result = MagicMock()
+    mock_result.all.return_value = [(connector_tool, instance)]
+    db.execute = AsyncMock(return_value=mock_result)
+
+    tools = await mapper._list_public_connector_tools("org-1")
+    assert len(tools) == 1
+    tool = tools[0]
+    assert tool["name"] == "crm_tool"
+    assert tool["capabilityKind"] == "connector"
+    assert tool["interactionMode"] == "form"
+    assert tool["supportsAttachments"] is False
+    assert "annotations" in tool
+    assert "skillReleaseId" not in tool
+    assert "skillReleaseDigest" not in tool
+

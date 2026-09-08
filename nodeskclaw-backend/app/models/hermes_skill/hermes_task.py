@@ -124,7 +124,6 @@ class HermesTask(BaseModel):
             "uq_hermes_tasks_idempotency_alive",
             "org_id",
             "user_id",
-            "catalog_slug",
             "tool_name",
             "idempotency_key",
             unique=True,

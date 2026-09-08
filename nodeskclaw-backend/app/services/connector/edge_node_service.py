@@ -2,22 +2,56 @@ from __future__ import annotations
 
 import hashlib
 import secrets
+import uuid
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import ConflictError, NotFoundError
+from app.core.exceptions import BadRequestError, ConflictError, ForbiddenError, NotFoundError
 from app.models.base import not_deleted
 from app.models.connector.edge_node import EdgeNode, EdgeNodeStatus
+from app.models.operation_audit_log import OperationAuditLog
+from app.services.connector.edge_control_channel import EdgeControlChannel
 
 
 def hash_edge_token(plain: str) -> str:
     return hashlib.sha256(plain.encode("utf-8")).hexdigest()
 
 
+def hash_edge_bootstrap(plain: str) -> str:
+    return hash_edge_token(plain)
+
+
 class EdgeNodeService:
     def __init__(self, db: AsyncSession):
         self.db = db
+
+    async def _audit(
+        self,
+        *,
+        action: str,
+        target_id: str,
+        org_id: str,
+        actor_type: str,
+        actor_id: str,
+        actor_name: str | None = None,
+        details: dict | None = None,
+    ) -> None:
+        record = OperationAuditLog(
+            id=str(uuid.uuid4()),
+            org_id=org_id,
+            action=action,
+            target_type="edge_node",
+            target_id=target_id,
+            actor_type=actor_type,
+            actor_id=actor_id,
+            actor_name=actor_name,
+            details=details or {},
+            created_at=datetime.now(timezone.utc),
+        )
+        self.db.add(record)
+        await self.db.flush()
 
     async def enqueue_edge_job(
         self,
@@ -121,7 +155,7 @@ class EdgeNodeService:
         org_id: str,
         name: str,
         operator_user_id: str | None = None,
-    ) -> tuple[EdgeNode, str]:
+    ) -> tuple[EdgeNode, str, datetime]:
         existing = await self._get_by_name(org_id, name)
         if existing:
             raise ConflictError(
@@ -129,17 +163,183 @@ class EdgeNodeService:
                 "errors.connector.edge_node_name_conflict",
             )
 
-        plain_token = secrets.token_urlsafe(32)
+        bootstrap = secrets.token_urlsafe(32)
+        now = datetime.now(timezone.utc)
+        ttl = EdgeControlChannel.bootstrap_ttl_seconds()
+        expires_at = now + timedelta(seconds=ttl)
         node = EdgeNode(
             org_id=org_id,
             name=name,
             status=EdgeNodeStatus.PENDING.value,
-            token_hash=hash_edge_token(plain_token),
+            token_hash=hash_edge_bootstrap(bootstrap),
+            bootstrap_expires_at=expires_at,
             created_by=operator_user_id,
         )
         self.db.add(node)
         await self.db.flush()
-        return node, plain_token
+        await self._audit(
+            action="edge_node.register",
+            target_id=node.id,
+            org_id=org_id,
+            actor_type="user",
+            actor_id=operator_user_id or "",
+            details={"node_name": name, "bootstrap_expires_at": expires_at.isoformat()},
+        )
+        return node, bootstrap, expires_at
+
+    async def bind_identity(
+        self,
+        *,
+        org_id: str,
+        node_id: str,
+        bootstrap: str,
+        public_key: str,
+    ) -> dict:
+        node = await self.get(org_id, node_id)
+        if node.bootstrap_consumed_at is not None:
+            raise ForbiddenError("引导材料已使用", "errors.connector.edge_bootstrap_reused")
+        if node.bootstrap_expires_at and node.bootstrap_expires_at < datetime.now(timezone.utc):
+            raise ForbiddenError("引导材料已过期", "errors.connector.edge_bootstrap_expired")
+        if node.token_hash != hash_edge_bootstrap(bootstrap):
+            raise ForbiddenError("引导材料无效", "errors.connector.edge_bootstrap_invalid")
+        if node.identity_revoked_at is not None:
+            raise ForbiddenError("Edge 身份已撤销", "errors.connector.edge_identity_revoked")
+        if node.status == EdgeNodeStatus.DISABLED.value:
+            raise ForbiddenError("Edge 节点已禁用", "errors.connector.edge_node_disabled")
+        now = datetime.now(timezone.utc)
+        node.public_key = public_key
+        node.identity_version = 1
+        node.bootstrap_consumed_at = now
+        node.last_request_seq = 0
+        node.status = EdgeNodeStatus.PENDING.value
+        await self.db.flush()
+        bundle = EdgeControlChannel(self.db).issuer_bundle()
+        await self._audit(
+            action="edge_node.bind",
+            target_id=node.id,
+            org_id=org_id,
+            actor_type="edge_node",
+            actor_id=node.id,
+            details={"identity_version": node.identity_version},
+        )
+        return {
+            "node_id": node.id,
+            "org_id": node.org_id,
+            "identity_version": node.identity_version,
+            "issuer_key_id": bundle.issuer_key_id,
+            "issuer_public_key": bundle.issuer_public_key,
+            "previous_issuer_key_id": bundle.previous_issuer_key_id,
+            "previous_issuer_public_key": bundle.previous_issuer_public_key,
+            "issuer_rotation_expires_at": (
+                bundle.issuer_rotation_expires_at.isoformat()
+                if bundle.issuer_rotation_expires_at
+                else None
+            ),
+        }
+
+    async def disable_node(self, org_id: str, node_id: str, operator_user_id: str) -> EdgeNode:
+        node = await self.get(org_id, node_id)
+        node.status = EdgeNodeStatus.DISABLED.value
+        await self.db.flush()
+        await self._audit(
+            action="edge_node.disable",
+            target_id=node.id,
+            org_id=org_id,
+            actor_type="user",
+            actor_id=operator_user_id,
+        )
+        return node
+
+    async def enable_node(self, org_id: str, node_id: str, operator_user_id: str) -> EdgeNode:
+        node = await self.get(org_id, node_id)
+        if not node.public_key or node.identity_revoked_at is not None:
+            raise BadRequestError("节点身份无效，无法启用", "errors.connector.edge_identity_not_bound")
+        node.status = EdgeNodeStatus.PENDING.value
+        await self.db.flush()
+        await self._audit(
+            action="edge_node.enable",
+            target_id=node.id,
+            org_id=org_id,
+            actor_type="user",
+            actor_id=operator_user_id,
+        )
+        return node
+
+    async def revoke_node(self, org_id: str, node_id: str, operator_user_id: str) -> EdgeNode:
+        node = await self.get(org_id, node_id)
+        now = datetime.now(timezone.utc)
+        node.identity_revoked_at = now
+        node.status = EdgeNodeStatus.DISABLED.value
+        await self.db.flush()
+        await self._audit(
+            action="edge_node.revoke",
+            target_id=node.id,
+            org_id=org_id,
+            actor_type="user",
+            actor_id=operator_user_id,
+        )
+        return node
+
+    async def start_rotation(self, org_id: str, node_id: str, operator_user_id: str) -> EdgeNode:
+        node = await self.get(org_id, node_id)
+        if not node.public_key or node.identity_revoked_at is not None:
+            raise BadRequestError("节点尚未绑定有效身份", "errors.connector.edge_identity_not_bound")
+        now = datetime.now(timezone.utc)
+        window = EdgeControlChannel.rotation_window_seconds()
+        node.identity_rotation_expires_at = now + timedelta(seconds=window)
+        await self.db.flush()
+        await self._audit(
+            action="edge_node.rotate_start",
+            target_id=node.id,
+            org_id=org_id,
+            actor_type="user",
+            actor_id=operator_user_id,
+            details={"rotation_expires_at": node.identity_rotation_expires_at.isoformat()},
+        )
+        return node
+
+    async def complete_rotation(
+        self,
+        *,
+        org_id: str,
+        node_id: str,
+        new_public_key: str,
+    ) -> dict:
+        node = await self.get(org_id, node_id)
+        if not node.identity_rotation_expires_at:
+            raise ForbiddenError("未处于轮换窗口", "errors.connector.edge_rotation_not_active")
+        now = datetime.now(timezone.utc)
+        if node.identity_rotation_expires_at < now:
+            raise ForbiddenError("轮换窗口已结束", "errors.connector.edge_rotation_expired")
+        node.previous_public_key = node.public_key
+        node.public_key = new_public_key
+        node.identity_version = (node.identity_version or 0) + 1
+        node.last_request_seq = 0
+        node.identity_rotation_expires_at = None
+        await self.db.flush()
+        bundle = EdgeControlChannel(self.db).issuer_bundle()
+        await self._audit(
+            action="edge_node.rotate_complete",
+            target_id=node.id,
+            org_id=org_id,
+            actor_type="edge_node",
+            actor_id=node.id,
+            details={"identity_version": node.identity_version},
+        )
+        return {
+            "node_id": node.id,
+            "org_id": node.org_id,
+            "identity_version": node.identity_version,
+            "issuer_key_id": bundle.issuer_key_id,
+            "issuer_public_key": bundle.issuer_public_key,
+            "previous_issuer_key_id": bundle.previous_issuer_key_id,
+            "previous_issuer_public_key": bundle.previous_issuer_public_key,
+            "issuer_rotation_expires_at": (
+                bundle.issuer_rotation_expires_at.isoformat()
+                if bundle.issuer_rotation_expires_at
+                else None
+            ),
+        }
 
     async def issue_on_demand_request(
         self,

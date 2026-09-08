@@ -1,0 +1,21 @@
+{
+  "title": "ApprovalDecisionRequest",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "decision": {
+      "type": "string",
+      "enum": [
+        "allow",
+        "deny"
+      ]
+    },
+    "comment": {
+      "type": "string",
+      "maxLength": 500
+    }
+  },
+  "required": [
+    "decision"
+  ]
+}

@@ -1,0 +1,531 @@
+{
+  "title": "RunEvent",
+  "oneOf": [
+    {
+      "title": "RunEventAssistantMessageV12",
+      "properties": {
+        "event_id": {
+          "title": "Event Id",
+          "type": "string"
+        },
+        "run_id": {
+          "title": "Run Id",
+          "type": "string"
+        },
+        "event_type": {
+          "const": "assistant.message",
+          "title": "Event Type",
+          "type": "string"
+        },
+        "event_seq": {
+          "title": "Event Seq",
+          "type": "integer"
+        },
+        "source": {
+          "default": "agent",
+          "title": "Source",
+          "type": "string"
+        },
+        "source_event_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Event Id"
+        },
+        "timestamp": {
+          "title": "Timestamp",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/AssistantMessagePayload"
+        }
+      },
+      "required": [
+        "event_id",
+        "run_id",
+        "event_type",
+        "event_seq",
+        "timestamp",
+        "payload"
+      ],
+      "type": "object"
+    },
+    {
+      "title": "RunEventReasoningSummaryV12",
+      "properties": {
+        "event_id": {
+          "title": "Event Id",
+          "type": "string"
+        },
+        "run_id": {
+          "title": "Run Id",
+          "type": "string"
+        },
+        "event_type": {
+          "const": "reasoning.summary",
+          "title": "Event Type",
+          "type": "string"
+        },
+        "event_seq": {
+          "title": "Event Seq",
+          "type": "integer"
+        },
+        "source": {
+          "default": "agent",
+          "title": "Source",
+          "type": "string"
+        },
+        "source_event_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Event Id"
+        },
+        "timestamp": {
+          "title": "Timestamp",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/ReasoningSummaryPayload"
+        }
+      },
+      "required": [
+        "event_id",
+        "run_id",
+        "event_type",
+        "event_seq",
+        "timestamp",
+        "payload"
+      ],
+      "type": "object"
+    },
+    {
+      "title": "RunEventToolCallV12",
+      "properties": {
+        "event_id": {
+          "title": "Event Id",
+          "type": "string"
+        },
+        "run_id": {
+          "title": "Run Id",
+          "type": "string"
+        },
+        "event_type": {
+          "const": "tool.call",
+          "title": "Event Type",
+          "type": "string"
+        },
+        "event_seq": {
+          "title": "Event Seq",
+          "type": "integer"
+        },
+        "source": {
+          "default": "agent",
+          "title": "Source",
+          "type": "string"
+        },
+        "source_event_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Event Id"
+        },
+        "timestamp": {
+          "title": "Timestamp",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/ToolCallPayload"
+        }
+      },
+      "required": [
+        "event_id",
+        "run_id",
+        "event_type",
+        "event_seq",
+        "timestamp",
+        "payload"
+      ],
+      "type": "object"
+    },
+    {
+      "title": "RunEventClarifyRequestedV12",
+      "properties": {
+        "event_id": {
+          "title": "Event Id",
+          "type": "string"
+        },
+        "run_id": {
+          "title": "Run Id",
+          "type": "string"
+        },
+        "event_type": {
+          "const": "clarify.requested",
+          "title": "Event Type",
+          "type": "string"
+        },
+        "event_seq": {
+          "title": "Event Seq",
+          "type": "integer"
+        },
+        "source": {
+          "default": "agent",
+          "title": "Source",
+          "type": "string"
+        },
+        "source_event_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Event Id"
+        },
+        "timestamp": {
+          "title": "Timestamp",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/ClarifyRequestedPayload"
+        }
+      },
+      "required": [
+        "event_id",
+        "run_id",
+        "event_type",
+        "event_seq",
+        "timestamp",
+        "payload"
+      ],
+      "type": "object"
+    },
+    {
+      "title": "RunEventApprovalRequestedV12",
+      "properties": {
+        "event_id": {
+          "title": "Event Id",
+          "type": "string"
+        },
+        "run_id": {
+          "title": "Run Id",
+          "type": "string"
+        },
+        "event_type": {
+          "const": "approval.requested",
+          "title": "Event Type",
+          "type": "string"
+        },
+        "event_seq": {
+          "title": "Event Seq",
+          "type": "integer"
+        },
+        "source": {
+          "default": "agent",
+          "title": "Source",
+          "type": "string"
+        },
+        "source_event_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Event Id"
+        },
+        "timestamp": {
+          "title": "Timestamp",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/ApprovalRequestedPayload"
+        }
+      },
+      "required": [
+        "event_id",
+        "run_id",
+        "event_type",
+        "event_seq",
+        "timestamp",
+        "payload"
+      ],
+      "type": "object"
+    },
+    {
+      "title": "RunEventArtifactPersistedV12",
+      "properties": {
+        "event_id": {
+          "title": "Event Id",
+          "type": "string"
+        },
+        "run_id": {
+          "title": "Run Id",
+          "type": "string"
+        },
+        "event_type": {
+          "const": "artifact.persisted",
+          "title": "Event Type",
+          "type": "string"
+        },
+        "event_seq": {
+          "title": "Event Seq",
+          "type": "integer"
+        },
+        "source": {
+          "default": "agent",
+          "title": "Source",
+          "type": "string"
+        },
+        "source_event_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Event Id"
+        },
+        "timestamp": {
+          "title": "Timestamp",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/ArtifactPersistedPayload"
+        }
+      },
+      "required": [
+        "event_id",
+        "run_id",
+        "event_type",
+        "event_seq",
+        "timestamp",
+        "payload"
+      ],
+      "type": "object"
+    },
+    {
+      "title": "RunEventControlV12",
+      "properties": {
+        "event_id": {
+          "title": "Event Id",
+          "type": "string"
+        },
+        "run_id": {
+          "title": "Run Id",
+          "type": "string"
+        },
+        "event_type": {
+          "pattern": "^(run|step|edge\\.job)\\.",
+          "title": "Event Type",
+          "type": "string"
+        },
+        "event_seq": {
+          "title": "Event Seq",
+          "type": "integer"
+        },
+        "source": {
+          "default": "agent",
+          "title": "Source",
+          "type": "string"
+        },
+        "source_event_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Event Id"
+        },
+        "timestamp": {
+          "title": "Timestamp",
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": true,
+          "title": "Payload",
+          "type": "object"
+        }
+      },
+      "required": [
+        "event_id",
+        "run_id",
+        "event_type",
+        "event_seq",
+        "timestamp"
+      ],
+      "type": "object"
+    }
+  ],
+  "$defs": {
+    "AssistantMessagePayload": {
+      "properties": {
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "title": "AssistantMessagePayload",
+      "type": "object"
+    },
+    "ReasoningSummaryPayload": {
+      "properties": {
+        "summary": {
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "summary"
+      ],
+      "title": "ReasoningSummaryPayload",
+      "type": "object"
+    },
+    "ToolCallPayload": {
+      "properties": {
+        "tool_name": {
+          "title": "Tool Name",
+          "type": "string"
+        },
+        "call_id": {
+          "title": "Call Id",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "started",
+            "completed",
+            "failed"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tool_name",
+        "call_id",
+        "status"
+      ],
+      "title": "ToolCallPayload",
+      "type": "object"
+    },
+    "ClarifyRequestedPayload": {
+      "properties": {
+        "question": {
+          "title": "Question",
+          "type": "string"
+        },
+        "options": {
+          "anyOf": [
+            {
+              "items": {},
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Options"
+        }
+      },
+      "required": [
+        "question"
+      ],
+      "title": "ClarifyRequestedPayload",
+      "type": "object"
+    },
+    "ApprovalRequestedPayload": {
+      "properties": {
+        "approval_id": {
+          "title": "Approval Id",
+          "type": "string"
+        },
+        "summary": {
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "approval_id",
+        "summary"
+      ],
+      "title": "ApprovalRequestedPayload",
+      "type": "object"
+    },
+    "ArtifactPersistedPayload": {
+      "properties": {
+        "artifact_id": {
+          "title": "Artifact Id",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "content_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Content Type"
+        },
+        "size": {
+          "title": "Size",
+          "type": "integer"
+        },
+        "checksum_sha256": {
+          "title": "Checksum Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "artifact_id",
+        "name",
+        "size",
+        "checksum_sha256"
+      ],
+      "title": "ArtifactPersistedPayload",
+      "type": "object"
+    }
+  }
+}

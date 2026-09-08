@@ -83,7 +83,7 @@ def upgrade() -> None:
     op.create_table(
         "run_attempts",
         sa.Column("id", sa.String(length=36), primary_key=True),
-        sa.Column("run_id", sa.String(length=36), sa.ForeignKey(f'"{SCHEMA}".runs.id'), nullable=False),
+        sa.Column("run_id", sa.String(length=36), sa.ForeignKey(f"{SCHEMA}.runs.id"), nullable=False),
         sa.Column("attempt_no", sa.Integer(), nullable=False),
         sa.Column("generation", sa.BigInteger(), nullable=False, server_default=sa.text("0")),
         sa.Column("worker_id", sa.String(length=64), nullable=False),
@@ -102,7 +102,7 @@ def upgrade() -> None:
     op.create_table(
         "run_events",
         sa.Column("id", sa.String(length=36), primary_key=True),
-        sa.Column("run_id", sa.String(length=36), sa.ForeignKey(f'"{SCHEMA}".runs.id'), nullable=False),
+        sa.Column("run_id", sa.String(length=36), sa.ForeignKey(f"{SCHEMA}.runs.id"), nullable=False),
         sa.Column("attempt_id", sa.String(length=36), nullable=True),
         sa.Column("event_type", sa.String(length=64), nullable=False),
         sa.Column("event_seq", sa.Integer(), nullable=False),
@@ -117,7 +117,7 @@ def upgrade() -> None:
     op.create_table(
         "run_artifacts",
         sa.Column("id", sa.String(length=36), primary_key=True),
-        sa.Column("run_id", sa.String(length=36), sa.ForeignKey(f'"{SCHEMA}".runs.id'), nullable=False),
+        sa.Column("run_id", sa.String(length=36), sa.ForeignKey(f"{SCHEMA}.runs.id"), nullable=False),
         sa.Column("attempt_id", sa.String(length=36), nullable=True),
         sa.Column("name", sa.String(length=255), nullable=False),
         sa.Column("content_type", sa.String(length=128), nullable=True),
@@ -131,7 +131,7 @@ def upgrade() -> None:
     op.create_table(
         "run_approvals",
         sa.Column("id", sa.String(length=36), primary_key=True),
-        sa.Column("run_id", sa.String(length=36), sa.ForeignKey(f'"{SCHEMA}".runs.id'), nullable=False),
+        sa.Column("run_id", sa.String(length=36), sa.ForeignKey(f"{SCHEMA}.runs.id"), nullable=False),
         sa.Column("approval_id", sa.String(length=64), nullable=False),
         sa.Column("decision", sa.String(length=32), nullable=False),
         sa.Column("evidence", postgresql.JSONB(astext_type=sa.Text()), nullable=False, server_default=sa.text("'{}'::jsonb")),

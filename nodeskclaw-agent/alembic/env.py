@@ -3,7 +3,7 @@ import os
 import sys
 from logging.config import fileConfig
 
-from sqlalchemy import pool
+from sqlalchemy import pool, text
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import create_async_engine
 
@@ -11,7 +11,7 @@ from alembic import context
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from app.config import settings  # noqa: E402
+from app.config import alembic_context_version_options, alembic_schema_name, ALEMBIC_VERSION_NUM_LENGTH, settings  # noqa: E402
 from app.db_metadata import agent_metadata  # noqa: E402
 
 config = context.config
@@ -23,6 +23,16 @@ config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
 target_metadata = agent_metadata
 
 
+def include_object(object_, name, type_, reflected, compare_to):
+    schema = alembic_schema_name()
+    if type_ == "table":
+        return getattr(object_, "schema", None) == schema
+    parent = getattr(object_, "table", None)
+    if parent is not None:
+        return getattr(parent, "schema", None) == schema
+    return True
+
+
 def run_migrations_offline() -> None:
     url = config.get_main_option("sqlalchemy.url")
     context.configure(
@@ -30,14 +40,48 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        include_schemas=True,
+        include_object=include_object,
+        **alembic_context_version_options(),
     )
 
     with context.begin_transaction():
         context.run_migrations()
 
 
+def _ensure_agent_schema_and_version_table(connection: Connection) -> None:
+    schema = alembic_schema_name()
+    connection.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{schema}"'))
+    connection.execute(
+        text(
+            f"""
+            CREATE TABLE IF NOT EXISTS "{schema}".alembic_version (
+                version_num VARCHAR({ALEMBIC_VERSION_NUM_LENGTH}) NOT NULL,
+                CONSTRAINT alembic_version_pkc PRIMARY KEY (version_num)
+            )
+            """
+        )
+    )
+    connection.execute(
+        text(
+            f"""
+            ALTER TABLE "{schema}".alembic_version
+            ALTER COLUMN version_num TYPE VARCHAR({ALEMBIC_VERSION_NUM_LENGTH})
+            """
+        )
+    )
+    connection.commit()
+
+
 def do_run_migrations(connection: Connection) -> None:
-    context.configure(connection=connection, target_metadata=target_metadata)
+    _ensure_agent_schema_and_version_table(connection)
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        include_schemas=True,
+        include_object=include_object,
+        **alembic_context_version_options(),
+    )
 
     with context.begin_transaction():
         context.run_migrations()

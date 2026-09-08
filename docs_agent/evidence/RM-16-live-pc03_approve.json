@@ -1,0 +1,10 @@
+{
+  "schema": "smc.rm16.live-conformance.v1",
+  "policy": "REAL_PROCESS",
+  "result": "BLOCKED",
+  "scenario": "pc03-approve",
+  "auth_type": "user_jwt",
+  "blocker": "RM16_LIVE_CONFORMANCE_BLOCKED",
+  "message": "no WAITING_APPROVAL / approval.requested for park tool",
+  "timestamp": "2026-09-06T12:32:48.460005Z"
+}

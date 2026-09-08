@@ -70,10 +70,35 @@ def test_resolve_mode_mcp_client_token_defaults_wait(monkeypatch):
 
 def test_resolve_mode_user_jwt_defaults_queued(monkeypatch):
     from app.core.config import settings
+    monkeypatch.setattr(settings, "MCP_TASK_SSE_ENABLED", True)
+    monkeypatch.setattr(settings, "MCP_TASK_DEFAULT_EXECUTION_MODE", "async_event")
     monkeypatch.setattr(settings, "MCP_TASK_WAIT_ENABLED", True)
     monkeypatch.setattr(settings, "MCP_TASK_WAIT_FOR_USER_JWT", False)
-    mode = resolve_mcp_execution_mode(_auth_ctx("user_jwt"), _skill(), {"artifact_mode": "pull_only"})
-    assert mode == QUEUED_MODE
+    jwt_mode = resolve_mcp_execution_mode(
+        _auth_ctx("user_jwt"),
+        _skill(),
+        {"artifact_mode": "pull_only"},
+    )
+    token_mode = resolve_mcp_execution_mode(
+        _auth_ctx("mcp_client_token"),
+        _skill(),
+        {"artifact_mode": "pull_only"},
+    )
+    assert jwt_mode == ASYNC_EVENT_MODE
+    assert token_mode == ASYNC_EVENT_MODE
+    assert jwt_mode == token_mode
+
+
+def test_resolve_mode_wait_override_false_runtime_user_jwt_async_event(monkeypatch):
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "MCP_TASK_SSE_ENABLED", True)
+    mode = resolve_mcp_execution_mode(
+        _auth_ctx("user_jwt"),
+        _skill(),
+        {"artifact_mode": "pull_only"},
+        wait_override=False,
+    )
+    assert mode == ASYNC_EVENT_MODE
 
 
 def test_resolve_mode_wait_override_false_runtime_desktop_async_event(monkeypatch):

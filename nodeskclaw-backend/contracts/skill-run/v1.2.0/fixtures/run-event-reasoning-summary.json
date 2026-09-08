@@ -1,0 +1,12 @@
+{
+  "event_id": "evt-4",
+  "run_id": "run-1",
+  "event_type": "reasoning.summary",
+  "event_seq": 5,
+  "source": "agent",
+  "source_event_id": "hermes:run-1:att-1:reasoning:1",
+  "timestamp": "2026-08-31T00:00:03Z",
+  "payload": {
+    "summary": "checked docs"
+  }
+}
