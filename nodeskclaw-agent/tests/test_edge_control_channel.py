@@ -275,3 +275,82 @@ def test_sign_request_headers_binds_query(tmp_path: Path):
         query="generation=9",
     )
     assert headers["X-Edge-Payload-Sha256"] == bind_request_digest(body=b"", query="generation=9")
+
+
+def test_verify_command_envelope_accepts_heartbeat(tmp_path: Path):
+    issuer_key = Ed25519PrivateKey.generate()
+    channel, state = _bound_state(tmp_path, issuer_key)
+    wrapped = _wrap(
+        issuer_key,
+        {"node_id": "node-1", "status": "online", "identity_rotation_expires_at": None},
+        purpose="node.heartbeat",
+        command_id="hb-1",
+        nonce="n-hb-1",
+        command_seq=5,
+    )
+    payload = channel.verify_command_envelope(state, wrapped, expected_purpose="node.heartbeat")
+    assert payload is not None
+    assert payload["status"] == "online"
+
+
+def test_verify_command_envelope_rejects_wrong_node(tmp_path: Path):
+    issuer_key = Ed25519PrivateKey.generate()
+    channel, state = _bound_state(tmp_path, issuer_key)
+    wrapped = _wrap(
+        issuer_key,
+        {"id": "job-1"},
+        purpose="job.claim",
+        command_id="cmd-wrong-node",
+        nonce="n-wrong",
+        command_seq=3,
+    )
+    wrapped["envelope"]["node_id"] = "other-node"
+    assert channel.verify_command_envelope(state, wrapped, expected_purpose="job.claim") is None
+
+
+def test_apply_rotation_response_replaces_keypair_and_persists(tmp_path: Path):
+    issuer_key = Ed25519PrivateKey.generate()
+    channel, state = _bound_state(tmp_path, issuer_key)
+    old_public = state.public_key
+    new_private, new_public = channel.generate_rotation_keypair()
+    updated = channel.apply_rotation_response(
+        state,
+        {
+            "identity_version": 2,
+            "org_id": "org-1",
+            "issuer_key_id": "issuer-1",
+            "issuer_public_key": _b64_public(issuer_key),
+            "previous_issuer_key_id": None,
+            "previous_issuer_public_key": None,
+            "issuer_rotation_expires_at": None,
+        },
+        new_private_key=new_private,
+        new_public_key=new_public,
+    )
+    assert updated.identity_version == 2
+    assert updated.public_key == new_public
+    assert updated.public_key != old_public
+    assert updated.private_key == new_private
+    assert updated.request_seq == 0
+    reloaded = channel.load()
+    assert reloaded is not None
+    assert reloaded.identity_version == 2
+    assert reloaded.public_key == new_public
+
+
+def test_consumed_commands_survive_reload(tmp_path: Path):
+    issuer_key = Ed25519PrivateKey.generate()
+    channel, state = _bound_state(tmp_path, issuer_key)
+    wrapped = _wrap(
+        issuer_key,
+        {"id": "job-1"},
+        purpose="job.claim",
+        command_id="cmd-persist",
+        nonce="n-persist",
+        command_seq=11,
+    )
+    assert channel.verify_command_envelope(state, wrapped, expected_purpose="job.claim") is not None
+    reloaded_channel = EdgeControlChannel(tmp_path)
+    reloaded = reloaded_channel.load()
+    assert reloaded is not None
+    assert reloaded_channel.verify_command_envelope(reloaded, wrapped, expected_purpose="job.claim") is None

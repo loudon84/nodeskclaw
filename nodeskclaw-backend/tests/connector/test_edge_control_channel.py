@@ -276,3 +276,107 @@ def test_sign_command_envelope_rejects_unknown_purpose(issuer_keys):
                 purpose="job.forged",
                 payload={"id": "job-1"},
             )
+
+
+def test_sign_command_envelope_accepts_heartbeat_purpose(issuer_keys):
+    db = AsyncMock()
+    with patch("app.services.connector.edge_control_channel.settings") as mock_settings:
+        mock_settings.EDGE_CONTROL_ISSUER_KEY_ID = issuer_keys["id"]
+        mock_settings.EDGE_CONTROL_ISSUER_PRIVATE_KEY = issuer_keys["private"]
+        mock_settings.EDGE_CONTROL_ISSUER_KEY_ID_PREVIOUS = ""
+        mock_settings.EDGE_CONTROL_ISSUER_PRIVATE_KEY_PREVIOUS = ""
+        mock_settings.EDGE_CONTROL_ISSUER_ROTATION_EXPIRES_AT = ""
+        mock_settings.EDGE_CONTROL_COMMAND_TTL_SECONDS = 300
+        channel = EdgeControlChannel(db)
+        wrapped = channel.sign_command_envelope(
+            org_id="org-1",
+            node_id="node-1",
+            purpose="node.heartbeat",
+            payload={
+                "node_id": "node-1",
+                "status": "online",
+                "identity_rotation_expires_at": None,
+            },
+        )
+    assert wrapped["envelope"]["purpose"] == "node.heartbeat"
+    assert wrapped["payload"]["status"] == "online"
+
+
+@pytest.mark.asyncio
+async def test_bind_identity_rejects_expired_bootstrap():
+    db = AsyncMock()
+    service = EdgeNodeService(db)
+    node = MagicMock()
+    node.id = "node-1"
+    node.org_id = "org-1"
+    node.bootstrap_consumed_at = None
+    node.bootstrap_expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+    node.token_hash = hash_edge_bootstrap("bootstrap-expired")
+    node.identity_revoked_at = None
+    node.status = "pending"
+    service.get = AsyncMock(return_value=node)
+    from app.core.exceptions import ForbiddenError
+
+    with pytest.raises(ForbiddenError):
+        await service.bind_identity(
+            org_id="org-1",
+            node_id="node-1",
+            bootstrap="bootstrap-expired",
+            public_key="pk",
+        )
+
+
+@pytest.mark.asyncio
+async def test_complete_rotation_rejects_inactive_window():
+    db = AsyncMock()
+    service = EdgeNodeService(db)
+    node = MagicMock()
+    node.id = "node-1"
+    node.org_id = "org-1"
+    node.identity_rotation_expires_at = None
+    service.get = AsyncMock(return_value=node)
+    from app.core.exceptions import ForbiddenError
+
+    with pytest.raises(ForbiddenError):
+        await service.complete_rotation(
+            org_id="org-1",
+            node_id="node-1",
+            new_public_key="new-pk",
+        )
+
+
+@pytest.mark.asyncio
+async def test_complete_rotation_updates_identity_version(issuer_keys):
+    db = AsyncMock()
+    service = EdgeNodeService(db)
+    node = MagicMock()
+    node.id = "node-1"
+    node.org_id = "org-1"
+    node.public_key = "old-pk"
+    node.identity_version = 1
+    node.last_request_seq = 9
+    node.identity_rotation_expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
+    service.get = AsyncMock(return_value=node)
+    service._audit = AsyncMock()
+    with patch("app.services.connector.edge_node_service.EdgeControlChannel") as mock_channel_cls:
+        mock_channel = MagicMock()
+        mock_channel.issuer_bundle.return_value = MagicMock(
+            issuer_key_id=issuer_keys["id"],
+            issuer_public_key=issuer_keys["public"],
+            previous_issuer_key_id=None,
+            previous_issuer_public_key=None,
+            issuer_rotation_expires_at=None,
+        )
+        mock_channel_cls.return_value = mock_channel
+        result = await service.complete_rotation(
+            org_id="org-1",
+            node_id="node-1",
+            new_public_key="new-pk",
+        )
+    assert node.public_key == "new-pk"
+    assert node.previous_public_key == "old-pk"
+    assert node.identity_version == 2
+    assert node.last_request_seq == 0
+    assert node.identity_rotation_expires_at is None
+    assert result["identity_version"] == 2
+    assert result["issuer_key_id"] == issuer_keys["id"]
