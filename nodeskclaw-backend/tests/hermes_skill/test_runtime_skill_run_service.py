@@ -257,3 +257,35 @@ async def test_start_expert_mcp_includes_catalog_fields():
     assert content["catalog_slug"] == "call-prep"
     assert content["skill_name"] == "customer-profiling"
     assert content["invocation_id"] == "log-1"
+
+
+def test_build_structured_content_includes_opaque_attachment_refs():
+    task = _task()
+    request = StartRuntimeSkillRunRequest(
+        org_id="org-1",
+        user_id="user-1",
+        tool_name="writer_article_generate",
+        runtime_skill_id="writer",
+        agent_profile="writer",
+        hermes_agent_instance_id="inst-1",
+        agent_id="agent-1",
+        arguments={"prompt": "hi"},
+        client_context={},
+        output_policy={"artifact_mode": "pull_only"},
+        task_source="org_mcp",
+        skill_id="skill-1",
+        entrypoint="mcp_skill_gateway",
+        attachment_refs=["att_ok"],
+    )
+    with patch("app.services.hermes_skill.runtime_skill_run_service.settings") as mock_settings:
+        mock_settings.SKILL_AGENT_ENABLED = True
+        content = RuntimeSkillRunService.build_structured_content(
+            task=task,
+            request=request,
+            event_sse_url="/internal/events",
+            output_policy={"artifact_mode": "pull_only"},
+        )
+    assert content["attachment_refs"] == ["att_ok"]
+    assert "artifact_id" not in content.get("attachment_refs", [])
+    assert content["run_id"] == "task-1"
+

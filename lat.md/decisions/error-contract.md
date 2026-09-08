@@ -4,6 +4,8 @@
 
 只要出现 `error_code` 即视为失败。禁止再把 `detail` 当作前端主展示路径。
 
+Skill Run Public 的 Approval Decision 与 Attachment Input 失败信封是字符串 `error_code`（REST 裸对象；员工 JSON-RPC 嵌在 `error.data`），禁止 Portal `{code,data}`，也不把全局 `AppException` 整形码当作 Public 合同。见 [[architecture/skill-agent#RM-17 Public Approval Decision]] 与 [[architecture/skill-agent#RM-18 Public Attachment Input]]。
+
 ## Message Key Shape
 
 `message_key` 使用小写点分层：`<domain>.<module>.<action_or_reason>`（如 `errors.auth.token_invalid`）。

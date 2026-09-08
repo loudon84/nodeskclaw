@@ -258,3 +258,100 @@ async def test_edge_session_revalidation_proxies_to_agent_runtime(monkeypatch):
 
     assert client.post.await_args.args[0] == "http://agent.test:4580/internal/v1/runs/run-1/session/revalidate"
     assert client.post.await_args.kwargs["json"] == {"context_version": 8}
+
+
+@pytest.mark.asyncio
+# @lat: [[architecture/skill-agent#RM-18 Public Attachment Input]]
+async def test_build_context_accepts_public_attachment_without_workspace():
+    db = AsyncMock()
+    service = RuntimeSkillRunService(db)
+    user = MagicMock(is_active=True)
+    db.get = AsyncMock(return_value=user)
+    row = MagicMock(
+        attachment_ref="att_ok",
+        org_id="org-1",
+        user_id="user-1",
+        checksum_sha256="deadbeef",
+        expires_at=None,
+    )
+    with patch.object(
+        RuntimeSkillRunService,
+        "_resolve_member_id",
+        new=AsyncMock(return_value="member-1"),
+    ), patch(
+        "app.services.workspace_member_service.check_workspace_access",
+        new=AsyncMock(),
+    ) as acl, patch(
+        "app.services.hermes_skill.public_attachment_service.prove_org_user_attachment",
+        new=AsyncMock(return_value=row),
+    ):
+        ctx = await service._build_authorized_execution_context(
+            _request(workspace_id=None, attachment_refs=["att_ok"]),
+            {"knowledge_refs": [], "connector_binding_refs": []},
+        )
+    acl.assert_not_awaited()
+    attachments = [d for d in ctx["descriptors"] if d["type"] == "attachment"]
+    assert len(attachments) == 1
+    assert attachments[0]["stable_id"] == "att_ok"
+    assert all(d.get("type") != "workspace" for d in ctx["descriptors"])
+
+
+@pytest.mark.asyncio
+async def test_assert_attachment_proofs_rejects_invalid_attachment_ref():
+    db = AsyncMock()
+    service = RuntimeSkillRunService(db)
+    user = MagicMock(is_active=True)
+    db.get = AsyncMock(return_value=user)
+    with pytest.raises(BadRequestError) as exc:
+        await service._assert_attachment_proofs(None, "org-1", "user-1", ["chat_attachment:abc"])
+    assert exc.value.message_key == "errors.run.attachment_ref_invalid"
+
+
+@pytest.mark.asyncio
+async def test_assert_attachment_proofs_calls_acl_when_workspace_present():
+    db = AsyncMock()
+    service = RuntimeSkillRunService(db)
+    user = MagicMock(is_active=True)
+    db.get = AsyncMock(return_value=user)
+    row = MagicMock(
+        attachment_ref="att_ok",
+        org_id="org-1",
+        user_id="user-1",
+        checksum_sha256="deadbeef",
+        expires_at=None,
+    )
+    with patch(
+        "app.services.workspace_member_service.check_workspace_access",
+        new=AsyncMock(return_value=None),
+    ) as acl, patch(
+        "app.services.hermes_skill.public_attachment_service.prove_org_user_attachment",
+        new=AsyncMock(return_value=row),
+    ):
+        proofs = await service._assert_attachment_proofs("ws-1", "org-1", "user-1", ["att_ok"])
+    acl.assert_awaited_once()
+    assert proofs[0]["stable_id"] == "att_ok"
+
+
+@pytest.mark.asyncio
+async def test_revalidate_public_attachment_without_workspace():
+    service = RuntimeSkillRunService(AsyncMock())
+    with patch.object(RuntimeSkillRunService, "_resolve_member_id", new=AsyncMock(return_value="member-1")), \
+         patch.object(
+             RuntimeSkillRunService,
+             "_assert_attachment_proofs",
+             new=AsyncMock(return_value=[{"stable_id": "att_ok", "auth_version": "v1"}]),
+         ) as proofs:
+        await service.revalidate_execution_context(
+            org_id="org-1",
+            user_id="user-1",
+            context_version=2,
+            execution_context={
+                "context_version": 2,
+                "descriptors": [
+                    {"type": "attachment", "stable_id": "att_ok", "auth_version": "v1"},
+                ],
+            },
+        )
+    proofs.assert_awaited_once()
+    assert proofs.await_args.args[0] is None
+

@@ -1,0 +1,37 @@
+{
+  "tools": [
+    {
+      "name": "writer.article",
+      "title": "Writer",
+      "description": "Generate an article",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "prompt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "prompt"
+        ]
+      },
+      "version": "1.2.1",
+      "category": "writing",
+      "capabilityKind": "skill",
+      "interactionMode": "chat",
+      "promptField": "prompt",
+      "supportsAttachments": false,
+      "skillReleaseId": "rel-12345",
+      "skillReleaseDigest": "digest-abcdef",
+      "annotations": {
+        "category": "writing",
+        "riskLevel": "low",
+        "requiresApproval": false,
+        "approvalMode": "none",
+        "streaming": true,
+        "artifacts": true,
+        "version": "1.2.1"
+      }
+    }
+  ]
+}

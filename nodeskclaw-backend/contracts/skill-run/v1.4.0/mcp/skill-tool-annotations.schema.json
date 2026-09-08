@@ -1,0 +1,55 @@
+{
+  "properties": {
+    "category": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Category"
+    },
+    "riskLevel": {
+      "default": "low",
+      "title": "Risklevel",
+      "type": "string"
+    },
+    "requiresApproval": {
+      "default": false,
+      "title": "Requiresapproval",
+      "type": "boolean"
+    },
+    "approvalMode": {
+      "default": "none",
+      "title": "Approvalmode",
+      "type": "string"
+    },
+    "streaming": {
+      "default": true,
+      "title": "Streaming",
+      "type": "boolean"
+    },
+    "artifacts": {
+      "default": true,
+      "title": "Artifacts",
+      "type": "boolean"
+    },
+    "version": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Version"
+    }
+  },
+  "title": "SkillToolAnnotationsV11",
+  "type": "object"
+}

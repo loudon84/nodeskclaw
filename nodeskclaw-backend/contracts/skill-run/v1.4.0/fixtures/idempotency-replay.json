@@ -1,0 +1,15 @@
+{
+  "key": "request-1",
+  "first": {
+    "status": 200,
+    "run_id": "run-1"
+  },
+  "replay": {
+    "status": 200,
+    "run_id": "run-1"
+  },
+  "conflict": {
+    "status": 409,
+    "error_code": "IDEMPOTENCY_CONFLICT"
+  }
+}
