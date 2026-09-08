@@ -6,7 +6,7 @@ architecture_decision: docs_agent/architecture/AD-SKILL-AGENT-V16.md
 architecture_addenda:
   - docs_agent/architecture/AD-SKILL-AGENT-V16-v1.6.0-hermes-runtime-native-run.md
 source_revision: AD-SKILL-AGENT-V16@1.7.0
-updated_at: 2026-09-09T00:44:11.092395Z
+updated_at: 2026-09-09T00:58:20.851664Z
 feature_id: FEAT-SKILL-FIRST-001
 work_package_id: WP-SKILL-FIRST-NODESKCLAW
 ---
@@ -40,7 +40,8 @@ Technical Appendix（技术附录）：[AD-SKILL-AGENT-V16-A1 Hermes Runtime Nat
 - `Depends On` 只表示执行 DAG，不表示证据再验证。RM-02 的执行前置是 RM-01（Catalog / Run Control）；RM-16 是 RM-02 Provider Conformance 的再验证来源，见 Revalidation Links，禁止写进 RM-02 的 Depends On。
 - RM-02 状态由 `DONE` 回退为 `BACKLOG`：其 Provider Conformance 出口信号经真实运行判定不足。**已交付且被下游复用的 Event SoT、`event_seq`、Fencing、语义 Schema 与 Public 合同不回滚**，因此 RM-03 / RM-05 / RM-06 / RM-12 的既有 `DONE` 与其自身 Verification Evidence 继续有效——它们依赖的是 RM-02 保留的交付物，而非 RM-02 的 Conformance 出口。RM-02 的重新关闭由 RM-16 的真实 Hermes Conformance 证据驱动（非 DAG）。
 - RM-02 于 2026-09-09 进入 `READY`，启动 Provider Conformance 再验证（对齐 RM-16 v1.6.15 live 包）。禁止在修订后的 Stage PRD 未 APPROVED 时把 RM-02 标 `DONE`。
-- RM-02 Stage PRD v1.6.1.1 于 2026-09-09 以审查 PASS 关闭为 `APPROVED`（docs commit `289091f3`）。本轮进入 `IN_PRD`。无代码缺口，不生成新实施 Plan。禁止与 RM-16 DONE 混标。
+- RM-02 Stage PRD v1.6.1.1 于 2026-09-09 以审查 PASS 关闭为 `APPROVED`（docs commit `289091f3`）。随后进入 `IN_PRD`。无代码缺口，不生成新实施 Plan。
+- RM-02 于 2026-09-09 以 Stage PRD v1.6.1.1 与 RM-16 v1.6.15 live 包重新关闭为 `DONE`。implementation `e3744c4bd73479a32155dcd11d7f8b87c7cc6f2b`（历史 Event SoT）；C01–C04 证据 `docs_agent/evidence/rm02-verification.md`；C05 证据 `docs_agent/evidence/rm16-verification.md`。禁止再测 PC-05 / PC-08 live。与 RM-16 DONE 分 commit。
 - RM-13 至 RM-16 不得并入 RM-01 至 RM-12 任一项；四项各自保留独立可验收结果，不得为减少 Item 数量而合并。
 - RM-13 于 2026-09-05 以真实 Hermes Native Run 证据（V11 / REAL_RUNTIME）关闭为 `DONE`。代码来源 `59ebfb66`；capabilities 无 version 时回读 `/health`，包版本 `0.21.0` 对应日历地板 `v2026.8.31`。
 - RM-14 于 2026-09-05 以真实 Hermes Native Run 证据（V13 / REAL_PROCESS）关闭为 `DONE`。Adapter 代码 `bd7cbbb9`；证据提交 `7afeffcc`；SoT `run.progress` 带 canonical `phase`。
@@ -59,7 +60,7 @@ Technical Appendix（技术附录）：[AD-SKILL-AGENT-V16-A1 Hermes Runtime Nat
 | Item ID | Outcome | Depends On | Status | Exit Criteria | PRD | Plan | Implementation Commit | Verification Evidence |
 |---|---|---|---|---|---|---|---|---|
 | RM-01 | Work（员工端）通过稳定 Catalog v1.1（目录合同）和 Run Control（运行控制）完成发现、调用、恢复与审批 | - | DONE | Resume/Approval 参数链正确；Catalog 能稳定区分能力类型与交互模式；Chat Skill（对话技能）发布门禁生效；v1.0 内容不变且 v1.1 合同校验通过 | docs_agent/prd-v1.6.0-skill-catalog-and-run-control.md | .cursor/plans/skill-catalog-and-run-control-v160.plan.md | 3a9b012ac19835223ce0676b8d94078832c2a982 | docs_agent/evidence/rm01-verification.md |
-| RM-02 | Agent 持久化可回放的结构化 Run Event（运行事件），且控制状态机无绕过 | RM-01 | IN_PRD | 事件仅由**真实 Hermes Runtime 结构化事实**生成；重复、迟到和旧代事件无副作用；Provider Conformance 以 RM-16 v1.6.15 live 包（PC-01/02/03/04/06/07/09 与 PC-12 扫描）证明，禁止再测 PC-05/PC-08 live，禁止 mock OpenAI 字段单独结项。历史交付物（Event SoT、`event_seq`、Fencing、语义 Schema、Public 合同）保留复用，不回滚 | docs_agent/prd-v1.6.1-semantic-run-events.md | .cursor/plans/rm-02_semantic_events_492df3f9.plan.md | e3744c4bd73479a32155dcd11d7f8b87c7cc6f2b（历史交付，Conformance 出口已失效） | docs_agent/evidence/rm02-verification.md（C01–C04 保留；C05 待 Stage PRD v1.6.1.1 批准后引用 RM-16 包） |
+| RM-02 | Agent 持久化可回放的结构化 Run Event（运行事件），且控制状态机无绕过 | RM-01 | DONE | 事件仅由**真实 Hermes Runtime 结构化事实**生成；重复、迟到和旧代事件无副作用；Provider Conformance 以 RM-16 v1.6.15 live 包（PC-01/02/03/04/06/07/09 与 PC-12 扫描）证明，禁止再测 PC-05/PC-08 live，禁止 mock OpenAI 字段单独结项。历史交付物（Event SoT、`event_seq`、Fencing、语义 Schema、Public 合同）保留复用，不回滚 | docs_agent/prd-v1.6.1-semantic-run-events.md | .cursor/plans/rm-02_semantic_events_492df3f9.plan.md | e3744c4bd73479a32155dcd11d7f8b87c7cc6f2b | docs_agent/evidence/rm16-verification.md |
 | RM-03 | Edge（边缘节点）安装不可变 Published Bundle（已发布技能包），并安全完成升级与卸载 | RM-02 | DONE | 授权下载、大小/摘要、路径与符号链接防护、原子切换、失败回滚和同代 Actual（实际状态）全部通过验收 | docs_agent/prd-v1.6.2-edge-published-bundle-lifecycle.md | .cursor/plans/rm-03_bundle_lifecycle_1dec5e37.plan.md | d6e7cb8061be9d2febdb21560638cd8d378a4963 | docs_agent/evidence/rm03-verification.md |
 | RM-04 | Strict Readiness（严格就绪）与分布式 Production Acceptance（生产验收）形成可复现证据 | RM-03 | IN_PRD | 双 Central、单 Edge、真实 PostgreSQL、共享 S3/MinIO（对象存储）、故障注入、Secret 扫描、合同检查和 Newman（接口自动化）两连跑全部通过 | docs_agent/prd-v1.6.3-strict-readiness-production-acceptance.md | - | - | - |
 | RM-05 | Connector Runtime（连接器运行时）通过统一执行入口可靠完成 Central/Edge（中心/边缘）调用 | RM-03 | DONE | REST/MCP/DB Connector 经 AgentEnginePort（执行引擎端口）执行；取消、SecretRef（秘密引用）、审批和受控私网策略可验证；客户端不能覆盖物理路由、目标或凭证 | docs_agent/prd-v1.6.4-connector-runtime-execution-closure.md | .cursor/plans/rm-05_connector_runtime_execution.plan.md | 3611f37147fff25000317cbf1653fb12fb0b4b1b | docs_agent/evidence/rm05-verification.md |
