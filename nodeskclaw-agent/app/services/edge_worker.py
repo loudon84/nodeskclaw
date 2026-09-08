@@ -107,9 +107,15 @@ class EdgeWorker:
                     await self._reconcile_desired_installations(client)
                     await self._pull_and_fulfill_on_demand_requests(client)
                     await self._flush_spool(client)
-                    job = await self._claim_job(client)
+                    try:
+                        job = await self._claim_job(client)
+                    except Exception:
+                        record_metric("edge_jobs_claimed_total", labels={"outcome": "error"})
+                        observe_stage("edge_claim", outcome="error")
+                        raise
                     if job:
                         record_metric("edge_jobs_claimed_total", labels={"outcome": "ok"})
+                        observe_stage("edge_claim", outcome="ok")
                         await self._execute_job(client, job)
                     else:
                         await asyncio.sleep(settings.SKILL_AGENT_EDGE_POLL_SECONDS)
@@ -485,6 +491,7 @@ class EdgeWorker:
                         else:
                             raise
             except Exception:
+                record_metric("spool_replay_total", labels={"outcome": "error"})
                 logger.debug("spool flush retry failed for %s", spool_file.name, exc_info=True)
 
     async def _spool_events(

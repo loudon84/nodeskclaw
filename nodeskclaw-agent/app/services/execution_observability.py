@@ -32,7 +32,22 @@ ALLOWED_TRACE_ATTRS = frozenset(
         "stage",
         "outcome",
         "error_code",
+        "runtime_type",
+        "runtime_version",
+        "runtime_run_id",
+        "runtime_session_id",
+        "runtime_idempotency_key",
+        "tool_call_id",
+        "correlation_confidence",
     }
+)
+
+_RUNTIME_BINDING_KEYS = (
+    "runtime_type",
+    "runtime_version",
+    "runtime_run_id",
+    "runtime_session_id",
+    "runtime_idempotency_key",
 )
 
 ALLOWED_LABEL_KEYS = frozenset({"role", "outcome", "engine", "kind", "stage"})
@@ -59,6 +74,18 @@ METRIC_DEFINITIONS: dict[str, dict[str, Any]] = {
     "lease_renew_total": {"type": "counter", "unit": "1", "labels": ["outcome"]},
     "artifact_stage_total": {"type": "counter", "unit": "1", "labels": ["stage", "outcome"]},
     "observe_errors_total": {"type": "counter", "unit": "1", "labels": ["stage"]},
+    "runtime_start_seconds": {"type": "histogram", "unit": "s", "labels": ["outcome"]},
+    "runtime_stream_seconds": {"type": "histogram", "unit": "s", "labels": ["outcome"]},
+    "runtime_message_delta_total": {"type": "counter", "unit": "1", "labels": ["engine"]},
+    "runtime_assistant_coalesced_total": {"type": "counter", "unit": "1", "labels": ["engine"]},
+    "runtime_tool_start_total": {"type": "counter", "unit": "1", "labels": ["outcome"]},
+    "runtime_tool_complete_total": {"type": "counter", "unit": "1", "labels": ["outcome"]},
+    "runtime_tool_unpaired_total": {"type": "counter", "unit": "1", "labels": ["outcome"]},
+    "runtime_approval_wait_seconds": {"type": "histogram", "unit": "s", "labels": ["outcome"]},
+    "runtime_stop_seconds": {"type": "histogram", "unit": "s", "labels": ["outcome"]},
+    "runtime_disconnect_total": {"type": "counter", "unit": "1", "labels": ["outcome"]},
+    "runtime_reconcile_total": {"type": "counter", "unit": "1", "labels": ["outcome"]},
+    "runtime_interrupted_total": {"type": "counter", "unit": "1", "labels": ["outcome"]},
 }
 
 _current_trace: ContextVar[ExecutionTrace | None] = ContextVar("execution_trace", default=None)
@@ -197,6 +224,54 @@ def _sanitize_labels(labels: dict[str, str] | None) -> dict[str, str]:
     return sanitized
 
 
+def apply_runtime_binding(binding: dict[str, Any] | None) -> ExecutionTrace | None:
+    try:
+        if not binding:
+            return get_current_trace()
+        trace = _current_trace.get()
+        if trace is None:
+            trace = ExecutionTrace()
+            _current_trace.set(trace)
+        for key in _RUNTIME_BINDING_KEYS:
+            sanitized = _sanitize_attr_value(key, binding.get(key))
+            if sanitized is not None:
+                trace.attrs[key] = sanitized
+        return trace
+    except Exception:
+        logger.debug("apply_runtime_binding failed", exc_info=True)
+        record_metric("observe_errors_total", labels={"stage": "bind_runtime"}, increment=1)
+        return get_current_trace()
+
+
+def update_trace_attrs(**attrs: Any) -> ExecutionTrace | None:
+    try:
+        trace = _current_trace.get()
+        if trace is None:
+            trace = ExecutionTrace()
+            _current_trace.set(trace)
+        for key, value in attrs.items():
+            sanitized = _sanitize_attr_value(key, value)
+            if sanitized is not None:
+                trace.attrs[key] = sanitized
+        return trace
+    except Exception:
+        logger.debug("update_trace_attrs failed", exc_info=True)
+        record_metric("observe_errors_total", labels={"stage": "update_trace"}, increment=1)
+        return get_current_trace()
+
+
+def trace_log_extra() -> dict[str, str]:
+    try:
+        trace = _current_trace.get()
+        if trace is None:
+            return {}
+        return {key: value for key, value in trace.attrs.items() if key in ALLOWED_TRACE_ATTRS}
+    except Exception:
+        logger.debug("trace_log_extra failed", exc_info=True)
+        record_metric("observe_errors_total", labels={"stage": "trace_log"}, increment=1)
+        return {}
+
+
 def bind_from_snapshot(
     snapshot: dict[str, Any] | None,
     *,
@@ -206,6 +281,7 @@ def bind_from_snapshot(
     delivery_generation: int | None = None,
     step_id: str | None = None,
     edge_node_id: str | None = None,
+    runtime_binding: dict[str, Any] | None = None,
 ) -> ExecutionTrace | None:
     try:
         snap = snapshot or {}
@@ -223,6 +299,16 @@ def bind_from_snapshot(
         }
         for key, value in candidates.items():
             sanitized = _sanitize_attr_value(key, value)
+            if sanitized is not None:
+                attrs[key] = sanitized
+        binding = runtime_binding or snap.get("runtime_binding")
+        if isinstance(binding, dict):
+            for key in _RUNTIME_BINDING_KEYS:
+                sanitized = _sanitize_attr_value(key, binding.get(key))
+                if sanitized is not None:
+                    attrs[key] = sanitized
+        for key in ("tool_call_id", "correlation_confidence"):
+            sanitized = _sanitize_attr_value(key, snap.get(key))
             if sanitized is not None:
                 attrs[key] = sanitized
         trace = ExecutionTrace(attrs=attrs)

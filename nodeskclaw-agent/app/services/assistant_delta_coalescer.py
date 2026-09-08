@@ -3,6 +3,8 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 
+from app.services.execution_observability import record_metric
+
 
 # @lat: [[architecture/skill-agent#Hermes Engine Adapter#Runtime Semantic Event Fidelity]]
 class AssistantDeltaCoalescer:
@@ -28,7 +30,10 @@ class AssistantDeltaCoalescer:
         text = self.buffered_text()
         self._parts.clear()
         self._first_ms = None
-        return text or None
+        if text:
+            record_metric("runtime_assistant_coalesced_total", labels={"engine": "hermes"})
+            return text
+        return None
 
     def flush_if_stale(self) -> str | None:
         if not self._parts:

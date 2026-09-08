@@ -9,6 +9,11 @@ from typing import Any
 import httpx
 
 from app.config import settings
+from app.services.execution_observability import (
+    apply_runtime_binding,
+    record_metric,
+    update_trace_attrs,
+)
 from app.services.native_event_normalizer import NativeEventNormalizer, progress_payload
 
 logger = logging.getLogger(__name__)
@@ -498,18 +503,25 @@ async def _reconcile_status(
     try:
         resp = await client.get(url, headers=headers)
     except (httpx.TimeoutException, httpx.NetworkError, OSError):
+        record_metric("runtime_reconcile_total", labels={"outcome": "unreachable"})
         return "", None, RUNTIME_UNREACHABLE
     if resp.status_code == 404:
+        record_metric("runtime_reconcile_total", labels={"outcome": "not_found"})
         return "not_found", None, RUNTIME_STATE_UNAVAILABLE
     if resp.status_code in (401, 403):
+        record_metric("runtime_reconcile_total", labels={"outcome": "unauthorized"})
         return "", None, RUNTIME_UNAUTHORIZED
     if resp.status_code >= 400:
+        record_metric("runtime_reconcile_total", labels={"outcome": "error"})
         return "", None, RUNTIME_STATE_UNAVAILABLE
     try:
         data = resp.json()
     except Exception:
+        record_metric("runtime_reconcile_total", labels={"outcome": "invalid"})
         return "", None, RUNTIME_PROTOCOL_INVALID
-    return _extract_status(data), data if isinstance(data, dict) else None, None
+    status = _extract_status(data)
+    record_metric("runtime_reconcile_total", labels={"outcome": status or "ok"})
+    return status, data if isinstance(data, dict) else None, None
 
 
 async def _stop_runtime(
@@ -521,28 +533,49 @@ async def _stop_runtime(
     attempt_id: str,
     generation: int,
 ) -> str | None:
-    binding = await load_runtime_binding(attempt_id)
-    if not binding or int(binding.get("generation") or 0) != int(generation):
-        return None
-    bound_id = binding.get("runtime_run_id")
-    if bound_id and bound_id != runtime_run_id:
-        return None
-    url = f"{gateway_url}/v1/runs/{runtime_run_id}/stop"
+    started = time.monotonic()
+    outcome = "ok"
     try:
-        resp = await client.post(url, headers=headers)
-    except (httpx.TimeoutException, httpx.NetworkError, OSError):
-        return RUNTIME_STOP_FAILED
-    if resp.status_code == 404:
-        return "stop_404"
-    if resp.status_code >= 400:
-        return _map_http_status(resp.status_code, stop=True)
-    return None
+        binding = await load_runtime_binding(attempt_id)
+        if not binding or int(binding.get("generation") or 0) != int(generation):
+            outcome = "fenced"
+            return None
+        bound_id = binding.get("runtime_run_id")
+        if bound_id and bound_id != runtime_run_id:
+            outcome = "fenced"
+            return None
+        url = f"{gateway_url}/v1/runs/{runtime_run_id}/stop"
+        try:
+            resp = await client.post(url, headers=headers)
+        except (httpx.TimeoutException, httpx.NetworkError, OSError):
+            outcome = "error"
+            return RUNTIME_STOP_FAILED
+        if resp.status_code == 404:
+            outcome = "not_found"
+            return "stop_404"
+        if resp.status_code >= 400:
+            outcome = "error"
+            return _map_http_status(resp.status_code, stop=True)
+        return None
+    finally:
+        record_metric(
+            "runtime_stop_seconds",
+            labels={"outcome": outcome},
+            observe_seconds=time.monotonic() - started,
+        )
 
 
-def _terminal_from_status(status: str, error_code: str | None) -> dict[str, Any] | None:
+def _terminal_from_status(
+    status: str,
+    error_code: str | None,
+    *,
+    observe: bool = True,
+) -> dict[str, Any] | None:
     if error_code == RUNTIME_STATE_UNAVAILABLE or status in {"not_found", "run_not_found"}:
         return _failed(RUNTIME_STATE_UNAVAILABLE, "Hermes runtime run state is unavailable")
     if error_code == RUNTIME_INTERRUPTED or status == "interrupted":
+        if observe:
+            record_metric("runtime_interrupted_total", labels={"outcome": "interrupted"})
         return _failed(RUNTIME_INTERRUPTED, "Hermes runtime run was interrupted")
     if error_code:
         return _failed(error_code, "Hermes runtime status reconciliation failed")
@@ -763,6 +796,7 @@ async def execute_hermes_run(
 
             submit_headers = dict(auth_headers)
             submit_headers["Idempotency-Key"] = idempotency_key
+            start_began = time.monotonic()
             try:
                 start_resp = await client.post(
                     f"{gateway_url}/v1/runs",
@@ -770,9 +804,19 @@ async def execute_hermes_run(
                     headers=submit_headers,
                 )
             except (httpx.TimeoutException, httpx.NetworkError, OSError):
+                record_metric(
+                    "runtime_start_seconds",
+                    labels={"outcome": "unreachable"},
+                    observe_seconds=time.monotonic() - start_began,
+                )
                 yield _failed(RUNTIME_UNREACHABLE, "Hermes native run submit unreachable")
                 return
             if start_resp.status_code >= 400:
+                record_metric(
+                    "runtime_start_seconds",
+                    labels={"outcome": "error"},
+                    observe_seconds=time.monotonic() - start_began,
+                )
                 yield _failed(
                     _map_http_status(start_resp.status_code, start=True),
                     "Hermes native run submit failed",
@@ -781,10 +825,20 @@ async def execute_hermes_run(
             try:
                 start_body = start_resp.json()
             except Exception:
+                record_metric(
+                    "runtime_start_seconds",
+                    labels={"outcome": "invalid"},
+                    observe_seconds=time.monotonic() - start_began,
+                )
                 yield _failed(RUNTIME_PROTOCOL_INVALID, "Hermes native run submit returned invalid JSON")
                 return
             runtime_run_id = _extract_runtime_run_id(start_body)
             if not runtime_run_id:
+                record_metric(
+                    "runtime_start_seconds",
+                    labels={"outcome": "invalid"},
+                    observe_seconds=time.monotonic() - start_began,
+                )
                 yield _failed(RUNTIME_PROTOCOL_INVALID, "Hermes native run submit omitted run id")
                 return
             nested = start_body.get("data") if isinstance(start_body.get("data"), dict) else {}
@@ -804,10 +858,17 @@ async def execute_hermes_run(
             polled_code: str | None = None
             idle_ticks = 0
             drain_deadline: float | None = None
+            stream_disconnected = False
             try:
+                stream_began = time.monotonic()
                 async with client.stream("GET", events_url, headers=auth_headers) as response:
                     events_subscribed = True
                     if response.status_code >= 400:
+                        record_metric(
+                            "runtime_start_seconds",
+                            labels={"outcome": "stream_error"},
+                            observe_seconds=time.monotonic() - start_began,
+                        )
                         yield _failed(
                             _map_http_status(response.status_code, stream=True),
                             "Hermes event stream failed",
@@ -825,9 +886,30 @@ async def execute_hermes_run(
                         runtime_idempotency_key=idempotency_key,
                     )
                     if binding is None:
+                        record_metric(
+                            "runtime_start_seconds",
+                            labels={"outcome": "bind_rejected"},
+                            observe_seconds=time.monotonic() - start_began,
+                        )
                         yield _failed(RUNTIME_PROTOCOL_INVALID, "Hermes runtime binding persist was rejected")
                         return
                     runtime_run_id = str(binding.get("runtime_run_id") or runtime_run_id)
+                    record_metric(
+                        "runtime_start_seconds",
+                        labels={"outcome": "ok"},
+                        observe_seconds=time.monotonic() - start_began,
+                    )
+                    apply_runtime_binding(
+                        {
+                            "runtime_type": "hermes",
+                            "runtime_version": binding.get("runtime_version") or version_raw,
+                            "runtime_run_id": runtime_run_id,
+                            "runtime_session_id": binding.get("runtime_session_id") or runtime_session_id,
+                            "runtime_idempotency_key": binding.get("runtime_idempotency_key")
+                            or idempotency_key,
+                        }
+                    )
+                    update_trace_attrs(engine="hermes")
 
                     if cancel_event and cancel_event.is_set():
                         stop_code = await _stop_runtime(
@@ -913,11 +995,12 @@ async def execute_hermes_run(
                                 polled_status, polled_data, polled_code = status, data, rec_code
                                 if _is_wait_status(status):
                                     break
-                                if _terminal_from_status(status, rec_code):
+                                if _terminal_from_status(status, rec_code, observe=False):
                                     drain_deadline = time.monotonic() + STREAM_DRAIN_TIMEOUT_SECONDS
                                 continue
                             except StopAsyncIteration:
                                 pending_line = None
+                                stream_disconnected = True
                                 break
                             idle_ticks = 0
                             if line.startswith("event:"):
@@ -951,10 +1034,20 @@ async def execute_hermes_run(
                     finally:
                         if pending_line is not None and not pending_line.done():
                             pending_line.cancel()
+                        record_metric(
+                            "runtime_stream_seconds",
+                            labels={"outcome": "disconnect" if stream_disconnected else "ok"},
+                            observe_seconds=time.monotonic() - stream_began,
+                        )
             except (httpx.TimeoutException, httpx.NetworkError, OSError):
                 if not events_subscribed:
                     yield _failed(RUNTIME_EVENT_STREAM_FAILED, "Hermes event stream failed")
                     return
+                stream_disconnected = True
+                record_metric("runtime_disconnect_total", labels={"outcome": "network"})
+            else:
+                if stream_disconnected:
+                    record_metric("runtime_disconnect_total", labels={"outcome": "stream_end"})
 
             yield {"event_type": "run.progress", "payload": progress_payload("RECONCILING", "reconciling hermes status")}
             if polled_status is None:
@@ -991,7 +1084,18 @@ async def execute_hermes_run(
             if status not in ALIVE_STATUSES:
                 yield _failed(RUNTIME_STATE_UNAVAILABLE, "Hermes runtime status could not be mapped")
                 return
+            approval_wait_started: float | None = None
             while status in ALIVE_STATUSES:
+                if _is_wait_status(status):
+                    if approval_wait_started is None:
+                        approval_wait_started = time.monotonic()
+                elif approval_wait_started is not None:
+                    record_metric(
+                        "runtime_approval_wait_seconds",
+                        labels={"outcome": "resumed"},
+                        observe_seconds=time.monotonic() - approval_wait_started,
+                    )
+                    approval_wait_started = None
                 if _is_wait_status(status) and not saw_approval:
                     for semantic in _emit_ingested(normalizer, _approval_request_chunk(data, runtime_run_id)):
                         yield semantic
@@ -1003,6 +1107,13 @@ async def execute_hermes_run(
                     "payload": progress_payload(phase, f"hermes runtime status {status}"),
                 }
                 if cancel_event and cancel_event.is_set():
+                    if approval_wait_started is not None:
+                        record_metric(
+                            "runtime_approval_wait_seconds",
+                            labels={"outcome": "cancelled"},
+                            observe_seconds=time.monotonic() - approval_wait_started,
+                        )
+                        approval_wait_started = None
                     stop_code = await _stop_runtime(
                         client,
                         gateway_url=gateway_url,
@@ -1047,6 +1158,13 @@ async def execute_hermes_run(
                 )
                 terminal = _terminal_from_status(status, rec_code)
                 if terminal:
+                    if approval_wait_started is not None:
+                        record_metric(
+                            "runtime_approval_wait_seconds",
+                            labels={"outcome": "ok"},
+                            observe_seconds=time.monotonic() - approval_wait_started,
+                        )
+                        approval_wait_started = None
                     leftovers, saw_assistant = _events_after_status_terminal(
                         normalizer,
                         status=status,

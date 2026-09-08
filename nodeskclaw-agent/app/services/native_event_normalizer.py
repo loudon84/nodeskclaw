@@ -4,6 +4,7 @@ import logging
 from typing import Any
 
 from app.services.assistant_delta_coalescer import AssistantDeltaCoalescer
+from app.services.execution_observability import record_metric, update_trace_attrs
 
 logger = logging.getLogger(__name__)
 
@@ -139,6 +140,7 @@ class NativeEventNormalizer:
         event_type = _event_type(data)
         payload = _payload(data)
         if event_type in DELTA_TYPES:
+            record_metric("runtime_message_delta_total", labels={"engine": "hermes"})
             return self._from_texts(self.coalescer.push(_delta_text(payload)))
         if event_type in INTERNAL_TYPES or event_type.startswith("subagent."):
             self._trace(event_type, payload)
@@ -236,6 +238,7 @@ class NativeEventNormalizer:
                     "closed_as": mapped,
                 }
             )
+            record_metric("runtime_tool_unpaired_total", labels={"outcome": mapped})
             logger.info(
                 "native normalizer unpaired tool start closed attempt=%s tool=%s call_id=%s as=%s",
                 self.attempt_id,
@@ -272,6 +275,8 @@ class NativeEventNormalizer:
             "tool.correlation",
             {"tool_name": tool_name, "call_id": call_id, "correlation_confidence": confidence},
         )
+        update_trace_attrs(tool_call_id=call_id, correlation_confidence=confidence)
+        record_metric("runtime_tool_start_total", labels={"outcome": "started"})
         return [
             self._sot(
                 "tool.call",
@@ -297,6 +302,7 @@ class NativeEventNormalizer:
             return []
         opened = self._open.pop(match_index)
         status = "failed" if failed else "completed"
+        record_metric("runtime_tool_complete_total", labels={"outcome": status})
         return [
             self._sot(
                 "tool.call",

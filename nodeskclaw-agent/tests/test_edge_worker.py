@@ -13,6 +13,21 @@ from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat
 
 from app.services.edge_control_channel import EdgeControlChannel, EdgeIdentityState
 from app.services.edge_worker import EdgeWorker
+from app.services.execution_observability import get_registry
+
+
+@pytest.fixture(autouse=True)
+def reset_metrics_registry():
+    get_registry().reset()
+    yield
+    get_registry().reset()
+
+
+def _counter_value(name: str, **labels: str) -> float:
+    for item in get_registry().snapshot()["counters"]:
+        if item["name"] == name and item["labels"] == labels:
+            return float(item["value"])
+    return 0.0
 
 
 def _b64_private(key: Ed25519PrivateKey) -> str:
@@ -566,6 +581,63 @@ async def test_edge_spool_envelope_completeness_and_drain(tmp_path, monkeypatch)
 
     await worker._flush_spool(client)
     assert len(list(tmp_path.glob("spool_*.json"))) == 0
+    assert _counter_value("spool_replay_total", outcome="discarded") == 1.0
+
+
+@pytest.mark.asyncio
+async def test_edge_claim_job_records_error_outcome(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_CENTRAL_BASE_URL", "http://central.test")
+    monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_INSECURE_MODE", True)
+    monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_EDGE_POLL_SECONDS", 0.01)
+    _install_bound_edge_identity(monkeypatch, tmp_path)
+    worker = EdgeWorker()
+    worker._ensure_enrolled = AsyncMock()
+    worker._heartbeat = AsyncMock()
+    worker._reconcile_desired_installations = AsyncMock()
+    worker._pull_and_fulfill_on_demand_requests = AsyncMock()
+    worker._flush_spool = AsyncMock()
+
+    async def boom_claim(_client):
+        raise RuntimeError("claim failed")
+
+    worker._claim_job = boom_claim  # type: ignore[method-assign]
+
+    client = AsyncMock()
+    client.__aenter__.return_value = client
+    client.__aexit__.return_value = None
+
+    async def stop_after_error():
+        await asyncio.sleep(0.05)
+        worker.stop()
+
+    with patch("app.services.edge_worker.httpx.AsyncClient", return_value=client):
+        stop_task = asyncio.create_task(stop_after_error())
+        await worker.start()
+        await stop_task
+
+    assert _counter_value("edge_jobs_claimed_total", outcome="error") >= 1.0
+
+
+@pytest.mark.asyncio
+async def test_edge_spool_flush_records_error_outcome(tmp_path, monkeypatch):
+    import httpx
+
+    _install_bound_edge_identity(monkeypatch, tmp_path)
+    worker = EdgeWorker()
+    worker._spool_dir = tmp_path
+    await worker._spool_events(
+        "job-err",
+        [{"event_type": "step.running", "payload": {}}],
+        delivery_generation=1,
+    )
+    client = AsyncMock()
+    req = httpx.Request("POST", "http://central.test/api/v1/internal/edge/jobs/job-err/events")
+    resp_500 = httpx.Response(500, request=req)
+    client.post = AsyncMock(side_effect=httpx.HTTPStatusError("server", request=req, response=resp_500))
+
+    await worker._flush_spool(client)
+    assert _counter_value("spool_replay_total", outcome="error") == 1.0
+    assert len(list(tmp_path.glob("spool_*.json"))) == 1
 
 
 @pytest.mark.asyncio

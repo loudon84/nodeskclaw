@@ -12,7 +12,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.schemas import ArtifactDescriptor, CreateRunRequest, CreateRunResponse, RunEventView, RunView
-from app.services.execution_observability import bind_from_snapshot, normalize_request_trace_id, observe_stage, record_metric
+from app.services.execution_observability import (
+    apply_runtime_binding,
+    bind_from_snapshot,
+    normalize_request_trace_id,
+    observe_stage,
+    record_metric,
+)
 
 SCHEMA = settings.SKILL_AGENT_SCHEMA
 
@@ -1352,6 +1358,7 @@ async def add_artifact(
         attempt_id=attempt_id,
         generation=generation,
     )
+    record_metric("artifact_stage_total", labels={"stage": "add", "outcome": "ok"})
     return ArtifactDescriptor(
         artifact_id=artifact_id,
         name=name,
@@ -1507,6 +1514,7 @@ async def store_artifact_bytes(
             ),
             {"id": artifact_id, "reason": str(exc)[:500]},
         )
+        record_metric("artifact_stage_total", labels={"stage": "corrupt", "outcome": "error"})
         raise
 
     await append_event(
@@ -1565,7 +1573,10 @@ async def mark_artifact_corrupted(
         {"id": artifact_id, "reason": reason or "corrupted"},
     )
     rowcount = getattr(res, "rowcount", 1)
-    return rowcount > 0 if isinstance(rowcount, int) else True
+    updated = rowcount > 0 if isinstance(rowcount, int) else True
+    if updated:
+        record_metric("artifact_stage_total", labels={"stage": "corrupt", "outcome": "ok"})
+    return updated
 
 
 async def mark_artifact_expired(
@@ -1587,7 +1598,10 @@ async def mark_artifact_expired(
         {"id": artifact_id, "reason": reason or "expired", "now": _utcnow()},
     )
     rowcount = getattr(res, "rowcount", 1)
-    return rowcount > 0 if isinstance(rowcount, int) else True
+    updated = rowcount > 0 if isinstance(rowcount, int) else True
+    if updated:
+        record_metric("artifact_stage_total", labels={"stage": "expire", "outcome": "ok"})
+    return updated
 
 
 async def get_artifact_bytes(db: AsyncSession, run_id: str, artifact_id: str) -> tuple[dict, bytes] | None:
@@ -1669,7 +1683,9 @@ async def get_runtime_binding(db: AsyncSession, attempt_id: str) -> dict[str, An
     ).mappings().first()
     if not row:
         return None
-    return _runtime_binding_from_row(row)
+    binding = _runtime_binding_from_row(row)
+    apply_runtime_binding(binding)
+    return binding
 
 
 async def persist_runtime_binding(

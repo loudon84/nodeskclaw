@@ -1238,3 +1238,104 @@ async def test_execute_hermes_interrupted_fails_without_new_submit():
     assert events[-1]["event_type"] == "run.failed"
     assert events[-1]["payload"]["error_code"] == RUNTIME_INTERRUPTED
 
+
+@pytest.mark.asyncio
+async def test_execute_hermes_records_runtime_start_and_stream_metrics():
+    from app.services.execution_observability import METRIC_DEFINITIONS, get_registry
+
+    get_registry().reset()
+    client = _native_client()
+    with patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client):
+        events = [
+            event
+            async for event in execute_hermes_run(
+                tool_name="foo",
+                arguments={"prompt": "hi"},
+                route_snapshot={"gateway_url": "http://hermes:8642"},
+                run_id="run-metric",
+                attempt_id="att-metric",
+            )
+        ]
+    assert events[-1]["event_type"] == "run.completed"
+    snapshot = get_registry().snapshot()
+    hist_names = {item["name"] for item in snapshot["histograms"]}
+    counter_names = {item["name"] for item in snapshot["counters"]}
+    assert "runtime_start_seconds" in hist_names
+    assert "runtime_stream_seconds" in hist_names
+    assert "runtime_reconcile_total" in counter_names
+    assert "runtime_assistant_coalesced_total" in counter_names
+    for name in (
+        "runtime_start_seconds",
+        "runtime_stream_seconds",
+        "runtime_message_delta_total",
+        "runtime_assistant_coalesced_total",
+        "runtime_tool_start_total",
+        "runtime_tool_complete_total",
+        "runtime_tool_unpaired_total",
+        "runtime_approval_wait_seconds",
+        "runtime_stop_seconds",
+        "runtime_disconnect_total",
+        "runtime_reconcile_total",
+        "runtime_interrupted_total",
+    ):
+        assert name in METRIC_DEFINITIONS
+
+
+@pytest.mark.asyncio
+async def test_execute_hermes_records_runtime_delta_and_interrupted_metrics():
+    from app.services.execution_observability import get_registry
+
+    get_registry().reset()
+    client = _native_client(
+        event_lines=[
+            "event: message.delta",
+            'data: {"delta": "hi"}',
+            "data: [DONE]",
+        ],
+        status={"id": "rr-1", "status": "interrupted"},
+    )
+    with patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client):
+        events = [
+            event
+            async for event in execute_hermes_run(
+                tool_name="foo",
+                arguments={"prompt": "hi"},
+                route_snapshot={"gateway_url": "http://hermes:8642"},
+                run_id="run-metric-int",
+                attempt_id="att-metric-int",
+            )
+        ]
+    assert events[-1]["payload"]["error_code"] == RUNTIME_INTERRUPTED
+    snapshot = get_registry().snapshot()
+    counters: dict[str, float] = {}
+    for item in snapshot["counters"]:
+        counters[item["name"]] = counters.get(item["name"], 0.0) + float(item["value"])
+    assert counters.get("runtime_message_delta_total", 0) >= 1
+    assert counters.get("runtime_interrupted_total", 0) >= 1
+    assert counters.get("runtime_reconcile_total", 0) >= 1
+
+
+@pytest.mark.asyncio
+async def test_execute_hermes_records_runtime_disconnect_on_stream_end():
+    from app.services.execution_observability import get_registry
+
+    get_registry().reset()
+    client = _native_client(event_lines=['data: {"type": "assistant.message", "text": "partial"}'])
+    with patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client):
+        events = [
+            event
+            async for event in execute_hermes_run(
+                tool_name="foo",
+                arguments={"prompt": "hi"},
+                route_snapshot={"gateway_url": "http://hermes:8642"},
+                run_id="run-metric-disc",
+                attempt_id="att-metric-disc",
+            )
+        ]
+    assert events[-1]["event_type"] == "run.completed"
+    snapshot = get_registry().snapshot()
+    counters: dict[str, float] = {}
+    for item in snapshot["counters"]:
+        counters[item["name"]] = counters.get(item["name"], 0.0) + float(item["value"])
+    assert counters.get("runtime_disconnect_total", 0) >= 1
+

@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.services.execution_observability import get_registry
 from app.services.worker import (
     RunWorker,
     build_edge_step_snapshot,
@@ -14,6 +16,27 @@ from app.services.worker import (
     next_status_after_stale_lease,
     worker_restart_gap_payload,
 )
+
+
+@pytest.fixture(autouse=True)
+def reset_metrics_registry():
+    get_registry().reset()
+    yield
+    get_registry().reset()
+
+
+def _counter_value(name: str, **labels: str) -> float:
+    for item in get_registry().snapshot()["counters"]:
+        if item["name"] == name and item["labels"] == labels:
+            return float(item["value"])
+    return 0.0
+
+
+def _histogram_sum(name: str, **labels: str) -> float | None:
+    for item in get_registry().snapshot()["histograms"]:
+        if item["name"] == name and item["labels"] == labels:
+            return float(item["sum"])
+    return None
 
 
 def test_build_hybrid_step_plan_structure():
@@ -529,6 +552,7 @@ async def test_claim_one_insert_does_not_reuse_bind_for_generation():
 
     worker = RunWorker()
     execute_calls: list[tuple] = []
+    created_at = datetime.now(timezone.utc) - timedelta(seconds=12.5)
 
     class _SelectResult:
         def mappings(self):
@@ -538,8 +562,9 @@ async def test_claim_one_insert_does_not_reuse_bind_for_generation():
                 "org_id": "org-1",
                 "tool_name": "demo_tool",
                 "arguments": {},
-                "snapshot": {},
+                "snapshot": {"placement": {"role": "central"}},
                 "status": "QUEUED",
+                "created_at": created_at,
             }
             return mock
 
@@ -561,6 +586,10 @@ async def test_claim_one_insert_does_not_reuse_bind_for_generation():
 
     assert claimed is not None
     assert claimed["generation"] == 1
+    assert _counter_value("runs_claimed_total", role="central", outcome="ok") == 1.0
+    wait_sum = _histogram_sum("run_queue_wait_seconds", role="central")
+    assert wait_sum is not None
+    assert wait_sum >= 12.0
 
     insert_stmt, insert_params = next(
         (stmt, params)
@@ -579,6 +608,40 @@ async def test_claim_one_insert_does_not_reuse_bind_for_generation():
     assert "attempt_no" in insert_params
     assert "generation" in insert_params
     assert insert_params["attempt_no"] == insert_params["generation"] == 1
+
+
+@pytest.mark.asyncio
+async def test_claim_one_records_error_outcome_on_failure():
+    worker = RunWorker()
+
+    class _SelectResult:
+        def mappings(self):
+            mock = MagicMock()
+            mock.first.return_value = {
+                "id": "run-claim-err",
+                "org_id": "org-1",
+                "tool_name": "demo_tool",
+                "arguments": {},
+                "snapshot": {"placement": {"role": "central"}},
+                "status": "QUEUED",
+                "created_at": datetime.now(timezone.utc),
+            }
+            return mock
+
+        def scalar_one(self):
+            raise RuntimeError("claim boom")
+
+    mock_db = AsyncMock()
+    mock_db.execute = AsyncMock(return_value=_SelectResult())
+    mock_db.commit = AsyncMock()
+    mock_db.__aenter__.return_value = mock_db
+    mock_db.__aexit__.return_value = False
+
+    with patch("app.services.worker.SessionLocal", return_value=mock_db), pytest.raises(RuntimeError, match="claim boom"):
+        await worker._claim_one()
+
+    assert _counter_value("runs_claimed_total", role="central", outcome="error") == 1.0
+    assert _counter_value("runs_claimed_total", role="central", outcome="ok") == 0.0
 
 
 def test_stale_lease_waiting_approval_keeps_waiting():
