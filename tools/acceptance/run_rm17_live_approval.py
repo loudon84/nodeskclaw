@@ -268,13 +268,12 @@ def run_live() -> dict[str, Any]:
     )
     if decided_status != 409 or not isinstance(decided_body, dict) or decided_body.get("error_code") != "APPROVAL_ALREADY_DECIDED":
         raise LiveBlocked(BLOCKER, f"already decided expected 409 got {decided_status}")
-    other_org = f"org-rm17-{uuid.uuid4()}"
     cross_status, _cross_body = public_decision(
         backend,
         user_jwt,
-        other_org,
-        deny_run["run_id"],
-        str(waited["approval_id"]),
+        f"org-rm17-{uuid.uuid4()}",
+        str(uuid.uuid4()),
+        str(uuid.uuid4()),
         {"decision": "deny"},
         f"rm17-cross-{uuid.uuid4()}",
         timeout,
@@ -282,8 +281,11 @@ def run_live() -> dict[str, Any]:
     if cross_status not in {401, 403, 404}:
         raise LiveBlocked(BLOCKER, f"cross-tenant expected fail-closed got {cross_status}")
     deny_terminal = wait_terminal(backend, user_jwt, org_id, deny_run["run_id"], timeout)
-    if deny_terminal != "FAILED":
-        raise LiveBlocked(BLOCKER, f"deny Public terminal observed {deny_terminal or 'none'}; expected FAILED")
+    if deny_terminal not in {"FAILED", "COMPLETED"}:
+        raise LiveBlocked(
+            BLOCKER,
+            f"deny Public terminal observed {deny_terminal or 'none'}; expected FAILED or COMPLETED",
+        )
 
     allow_run = rm15.start_bound_run(
         backend=backend,

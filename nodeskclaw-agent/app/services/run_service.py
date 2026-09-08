@@ -1171,6 +1171,16 @@ async def _append_terminal_event(
         )
 
 
+_AGGREGATE_TERMINAL_FROM = (
+    "RUNNING",
+    "WAITING_EDGE",
+    "PREPARING",
+    "RESUMING",
+    "QUEUED",
+    "WAITING_APPROVAL",
+)
+
+
 async def aggregate_run_terminal(
     db: AsyncSession,
     run_id: str,
@@ -1225,7 +1235,7 @@ async def aggregate_run_terminal(
             run_id,
             "FAILED",
             org_id=org_id,
-            expected_status=["RUNNING", "WAITING_EDGE", "PREPARING", "RESUMING", "QUEUED"],
+            expected_status=list(_AGGREGATE_TERMINAL_FROM),
             result={"error": first_err, "failed_step_id": failed_required[0].get("step_id")},
         )
         if ok:
@@ -1273,7 +1283,7 @@ async def aggregate_run_terminal(
             run_id,
             "COMPLETED",
             org_id=org_id,
-            expected_status=["RUNNING", "WAITING_EDGE", "PREPARING", "RESUMING", "QUEUED"],
+            expected_status=list(_AGGREGATE_TERMINAL_FROM),
             result=combined_result,
         )
         if ok:

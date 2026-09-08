@@ -1165,6 +1165,28 @@ async def test_aggregate_keeps_failed_status_when_terminal_event_write_rejected(
 
 
 @pytest.mark.asyncio
+# @lat: [[architecture/skill-agent#RM-17 Public Approval Decision]]
+async def test_aggregate_run_terminal_from_waiting_approval_completes():
+    db = AsyncMock()
+    dummy_waiting = MagicMock(status="WAITING_APPROVAL", run_id="r-wait", org_id="org-1")
+    dummy_completed = MagicMock(status="COMPLETED", run_id="r-wait", org_id="org-1")
+    steps = [
+        {"step_id": "s1", "required": True, "status": "SUCCEEDED", "required_artifacts": [], "result": {"ok": True}},
+    ]
+    mock_steps = MagicMock()
+    mock_steps.mappings.return_value.all.return_value = steps
+    with patch("app.services.run_service.get_run", side_effect=[dummy_waiting, dummy_completed]), \
+         patch("app.services.run_service.set_status", new=AsyncMock(return_value=True)) as mock_set_st, \
+         patch("app.services.run_service.append_event", new=AsyncMock()), \
+         patch("app.services.run_service.store_artifact_bytes", new=AsyncMock()):
+        db.execute = AsyncMock(return_value=mock_steps)
+        res = await run_service.aggregate_run_terminal(db, "r-wait", org_id="org-1")
+    assert res.status == "COMPLETED"
+    assert mock_set_st.await_args.args[2] == "COMPLETED"
+    assert "WAITING_APPROVAL" in mock_set_st.await_args.kwargs["expected_status"]
+
+
+@pytest.mark.asyncio
 async def test_ingest_rejection_is_audited():
     db = AsyncMock()
     db.execute = AsyncMock(return_value=MagicMock())
