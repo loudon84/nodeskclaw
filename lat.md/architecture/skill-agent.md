@@ -135,6 +135,7 @@ Runtime Delegation 已由 Internal `SKILL-AGENT-CONTRACT v1.0.0` 冻结：`singl
 - **已实现**：[[nodeskclaw-agent/app/services/run_service.py#build_snapshot]] 将 Topology 与 `placement` 分列持久化；[[nodeskclaw-agent/app/services/engine_port.py#execute_engine]] 仍只选择 Hermes/Connector，不出现 `multi_agent` engine。
 - **已实现**：`single_agent` 与 `runtime_delegated` 只描述 Hermes Runtime 内委派；Hybrid Step Plan 仍由 [[nodeskclaw-agent/app/services/worker.py#build_hybrid_step_plan]] 拥有。
 - **已实现**：Hermes `subagent.*` 只作为当前 Attempt 的最小内部事件 `internal.runtime.trace` 进入 Agent SoT；Public 不投影该类型，也不产生 Child Run。见 [[architecture/skill-agent#Hermes Engine Adapter#Runtime Semantic Event Fidelity]]。
+- **已实现**：员工 MCP Catalog（`tools/list`）与 Public Run/SSE 不暴露 Internal Topology、capability reference 或 ExecutionSnapshot；`tools/call` overlay 与 `_routing` 同类拒绝。见 [[nodeskclaw-backend/app/services/hermes_skill/mcp_tool_mapper.py#McpToolMapper#_skill_to_tool_dict]] 与 [[nodeskclaw-backend/app/api/runs.py#_public_run_event]]。
 - **已实现**：[[nodeskclaw-agent/app/services/hermes_engine.py#execute_hermes_run]] 在版本地板之后校验 Topology：非法枚举/`platform_multi_agent` → `EXECUTION_TOPOLOGY_NOT_SUPPORTED`；`runtime_delegated` 且 capability 不匹配 → `RUNTIME_CAPABILITY_UNAVAILABLE`；不得降级 `single_agent` 或 `gateway_sequential`。既有 probe/地板失败仍用 `RUNTIME_CAPABILITY_MISSING`。
 - **边界**：Platform Multi-Agent、Team Run 与 Child Run 需要新的 Architecture Decision。
 

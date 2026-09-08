@@ -7,7 +7,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.exceptions import BadRequestError, ConflictError, ForbiddenError, NotFoundError
-from app.services.hermes_skill.mcp_tool_mapper import McpToolMapper
+from app.services.hermes_skill.mcp_tool_mapper import (
+    McpToolMapper,
+    RUNTIME_SKILL_FORBIDDEN_ARGUMENT_KEYS,
+)
 from app.services.mcp_skill_gateway.builtin_task_tools import is_builtin_task_tool
 from app.services.mcp_skill_gateway.mcp_task_dedup_service import build_mcp_task_dedup_key
 from app.services.mcp_skill_gateway.mcp_execution_mode import strip_mcp_control_args
@@ -84,13 +87,15 @@ def _build_client_context(
 def _copy_frozen_attachment_refs(params: dict | None, context: dict | None) -> dict | None:
     payload = params or {}
     client_ctx = payload.get("client_context")
+    merged = dict(context or {})
+    for key in RUNTIME_SKILL_FORBIDDEN_ARGUMENT_KEYS:
+        merged.pop(key, None)
     if not isinstance(client_ctx, dict):
-        return context
+        return merged or None
     refs = client_ctx.get("attachment_refs")
     if not isinstance(refs, list):
-        return context
+        return merged or None
     copied = [str(item) for item in refs if isinstance(item, str) and str(item).strip()]
-    merged = dict(context or {})
     merged["attachment_refs"] = copied
     return merged
 

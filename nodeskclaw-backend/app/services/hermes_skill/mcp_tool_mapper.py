@@ -40,7 +40,45 @@ from app.services.hermes_skill.task_event_token_service import TaskEventTokenSer
 logger = logging.getLogger(__name__)
 
 RUNTIME_SKILL_ROUTE_TYPE = "hermes_api_server"
-RUNTIME_SKILL_FORBIDDEN_ARGUMENT_KEYS = ("_routing", "_execution", "route_config")
+RUNTIME_SKILL_PUBLIC_FORBIDDEN_ARGUMENT_KEYS = ("_routing", "_execution", "route_config")
+INTERNAL_SOUTHBOUND_FIELD_KEYS = (
+    "delegation_topology",
+    "runtime_capability_ref",
+    "execution_snapshot",
+    "runtime_members",
+    "runtime_profile",
+    "hermes_profile",
+    "hermes_instance_id",
+    "skill_agent_contract",
+)
+RUNTIME_SKILL_FORBIDDEN_ARGUMENT_KEYS = (
+    *RUNTIME_SKILL_PUBLIC_FORBIDDEN_ARGUMENT_KEYS,
+    *INTERNAL_SOUTHBOUND_FIELD_KEYS,
+)
+_INTERNAL_SOUTHBOUND_KEY_SET = frozenset(INTERNAL_SOUTHBOUND_FIELD_KEYS)
+_INTERNAL_PATH_MARKERS = ("skill-agent/", "contracts/skill-agent")
+
+
+def _strip_internal_southbound_fields(value: Any) -> Any:
+    if isinstance(value, dict):
+        out: dict[str, Any] = {}
+        for key, item in value.items():
+            if key in _INTERNAL_SOUTHBOUND_KEY_SET:
+                continue
+            stripped = _strip_internal_southbound_fields(item)
+            if isinstance(stripped, str) and any(marker in stripped for marker in _INTERNAL_PATH_MARKERS):
+                continue
+            out[key] = stripped
+        return out
+    if isinstance(value, list):
+        cleaned: list[Any] = []
+        for item in value:
+            stripped = _strip_internal_southbound_fields(item)
+            if isinstance(stripped, str) and any(marker in stripped for marker in _INTERNAL_PATH_MARKERS):
+                continue
+            cleaned.append(stripped)
+        return cleaned
+    return value
 
 
 def _runtime_session_and_attachment_refs(client_context: dict | None) -> tuple[str | None, list[str]]:
@@ -60,10 +98,11 @@ class McpToolMapper:
 
     @staticmethod
     def _has_explicit_runtime_route_override(raw_args: dict) -> bool:
-        return (
-            "_routing" in raw_args
-            or "_execution" in raw_args
-            or "route_config" in raw_args
+        if any(key in raw_args for key in RUNTIME_SKILL_FORBIDDEN_ARGUMENT_KEYS):
+            return True
+        nested = raw_args.get("client_context")
+        return isinstance(nested, dict) and any(
+            key in nested for key in RUNTIME_SKILL_FORBIDDEN_ARGUMENT_KEYS
         )
 
     async def list_tools(
@@ -150,7 +189,7 @@ class McpToolMapper:
         for skill in skills:
             tools.append(await self._skill_to_tool_dict(skill, org_id, user_id))
         tools.extend(await self._list_public_connector_tools(org_id, keyword=keyword, category=category))
-        return tools
+        return [_strip_internal_southbound_fields(tool) for tool in tools]
 
     async def _list_public_connector_tools(
         self,
@@ -238,7 +277,7 @@ class McpToolMapper:
                     "resultMode": "pull_on_complete",
                     "routeOverrideAllowed": False,
                     "requiresRouteOverride": False,
-                    "forbiddenArgumentKeys": list(RUNTIME_SKILL_FORBIDDEN_ARGUMENT_KEYS),
+                    "forbiddenArgumentKeys": list(RUNTIME_SKILL_PUBLIC_FORBIDDEN_ARGUMENT_KEYS),
                 }
             )
         return tools
@@ -440,7 +479,7 @@ class McpToolMapper:
                     installation,
                 )
             )
-        return tool
+        return _strip_internal_southbound_fields(tool)
 
     async def _build_runtime_skill_tool_metadata(
         self,
@@ -475,7 +514,7 @@ class McpToolMapper:
             "resultMode": "pull_on_complete",
             "routeOverrideAllowed": False,
             "requiresRouteOverride": False,
-            "forbiddenArgumentKeys": list(RUNTIME_SKILL_FORBIDDEN_ARGUMENT_KEYS),
+            "forbiddenArgumentKeys": list(RUNTIME_SKILL_PUBLIC_FORBIDDEN_ARGUMENT_KEYS),
             "routeHealth": {"ok": bool(route_health.get("ok"))},
         }
 
@@ -561,10 +600,15 @@ class McpToolMapper:
 
         try:
             if skill.source_type == "hermes_api_server":
-                if self._has_explicit_runtime_route_override(raw_args):
+                if self._has_explicit_runtime_route_override(raw_args) or (
+                    isinstance(client_context, dict)
+                    and any(key in client_context for key in RUNTIME_SKILL_FORBIDDEN_ARGUMENT_KEYS)
+                ):
                     override_keys = [
-                        key for key in ("_routing", "_execution", "route_config")
+                        key for key in RUNTIME_SKILL_FORBIDDEN_ARGUMENT_KEYS
                         if key in raw_args
+                        or (isinstance(raw_args.get("client_context"), dict) and key in raw_args["client_context"])
+                        or (isinstance(client_context, dict) and key in client_context)
                     ]
                     logger.warning(
                         "MCP runtime skill route override denied tool=%s user=%s keys=%s",
