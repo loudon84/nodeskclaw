@@ -321,7 +321,16 @@ RM-17 把员工 Public 审批升级为 SKILL-RUN-CONTRACT v1.3.0：descriptor �
 - **已实现**：v1.3.0 Bundle 由既有 [[nodeskclaw-backend/scripts/contracts.py#generate_skill_run_contracts]] 分派 [[nodeskclaw-backend/scripts/contracts.py#_generate_skill_run_v130_public_contract]]：从冻结 v1.2.1 copytree 后 overlay，不调用 v1.2.1 generator。[[nodeskclaw-backend/scripts/contracts.py#_check_skill_run_contracts]] 对 1.3.0 走与 1.2.1 相同严格分支并跑 [[nodeskclaw-backend/scripts/contracts.py#_validate_skill_run_v130_decision_artifacts]]；[[nodeskclaw-backend/scripts/contracts.py#_validate_skill_run_release]] 使用 `v1.3.0/` 前缀。`tagName` 为 [[nodeskclaw-backend/app/schemas/skill_run/constants.py#SKILL_RUN_TAG_NAME_V130]]，版本常量 [[nodeskclaw-backend/app/schemas/skill_run/constants.py#SKILL_RUN_CONTRACT_VERSION_V130]]。不改写 v1.2.1。`attachments=unsupported`，`approvalExpiry=unsupported`，`wireBreaking=false`。deny Public terminal：本地无 binding 为 `FAILED`；Hermes binding REAL_PROCESS live 冻结 `COMPLETED`，禁止猜 `CANCELLED`。
 - **已实现**：聚焦自动化 [[nodeskclaw-backend/tests/hermes_skill/test_employee_runs_api.py#test_public_run_event_projects_approval_options]]、[[nodeskclaw-backend/tests/hermes_skill/test_employee_runs_api.py#test_decide_run_approval_returns_bare_receipt]]、[[nodeskclaw-backend/tests/hermes_skill/test_employee_runs_api.py#test_approve_run_and_decision_share_submit_service]]、[[nodeskclaw-backend/tests/hermes_skill/test_employee_runs_api.py#test_idempotency_replay_returns_frozen_receipt_without_second_post]]、[[nodeskclaw-backend/tests/hermes_skill/test_employee_runs_api.py#test_idempotency_conflict_same_key_different_decision]]、[[nodeskclaw-backend/tests/hermes_skill/test_employee_runs_api.py#test_idempotency_already_decided_new_key]]。这些测试不能代替 live Native。
 - **已实现**：live runner [[tools/acceptance/run_rm17_live_approval.py#run_live]] 已在 ENV-01 REAL_PROCESS `user_jwt` 下输出 `SMC_ACCEPTANCE_RESULT` 全 PASS（V10 exit 0）。deny 接受回执仍为 `WAITING_APPROVAL`；Public 终态 live 观测为 `COMPLETED`（非 `CANCELLED`）。annotated tag `skill-run-contract-v1.3.0` 指向 implementation commit `26e1cb5a`；`check --release` PASS。SMC `evidence.py` 因 delivery HEAD drift 不能记 FRESH；出口证据为 `docs_agent/evidence/rm17-verification.md`。Roadmap RM-17 为 `DONE`。
-- **目标状态**：保持该 REAL_PROCESS 证据可复跑。仓外 Work UI 不在本项。Attachment 交 RM-18。
+- **目标状态**：保持该 REAL_PROCESS 证据可复跑。仓外 Work UI 不在本项。Attachment 交 [[architecture/skill-agent#RM-18 Public Attachment Input]]。
+
+## RM-18 Public Attachment Input
+
+RM-18 发布累积 SKILL-RUN-CONTRACT v1.4.0，使员工可在 start-before-run 上传输入文件并以 opaque ref 绑定 `tools/call`，授权为 org/user scoped，不强制 workspace。
+
+Stage PRD：[RM-18 Public Attachment Input Contract v1.4.0](../../docs_agent/prd-v1.6.16-skill-run-public-attachment-input.md)（`APPROVED`）。Architecture 边界见 AD@1.7.0 Option V：`workspace_id=null` 不进 Workspace ACL；Installation workspace 仍禁止进入 Execution Authorization；禁止复用 Artifact download。下一步 `smc-plan-from-approved-prd-ponytail`。
+
+- **部分实现**：Roadmap `IN_PRD`。Grounding 确认现状：[[nodeskclaw-backend/app/services/hermes_skill/runtime_skill_run_service.py#RuntimeSkillRunService#_assert_attachment_proofs]] 仍强制 workspace；员工 [[nodeskclaw-backend/app/services/mcp_skill_gateway/handler.py#_handle_tools_call]] 不从 JSON-RPC body 拷贝 `attachment_refs`；Agent 无输入附件消费。v1.3.0 `attachments=unsupported` KEEP 至本项发布。
+- **目标状态**：`v1.4.0/` + tag `skill-run-contract-v1.4.0`；Public `POST /api/v1/attachments`；`params.client_context.attachment_refs`；REAL_PROCESS `user_jwt` live。不改写 v1.2.1/v1.3.0，不并入 RM-09。
 
 ## Hermes Native Runtime And Employee Public Face
 
