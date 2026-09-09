@@ -1,12 +1,12 @@
 ---
 roadmap_id: ROADMAP-SKILL-AGENT-V16
-version: 1.7.0
+version: 1.8.0
 status: ACTIVE
 architecture_decision: docs_agent/architecture/AD-SKILL-AGENT-V16.md
 architecture_addenda:
   - docs_agent/architecture/AD-SKILL-AGENT-V16-v1.6.0-hermes-runtime-native-run.md
-source_revision: AD-SKILL-AGENT-V16@1.7.0
-updated_at: 2026-09-09T00:58:20.851664Z
+source_revision: AD-SKILL-AGENT-V16@1.8.0
+updated_at: 2026-09-09T02:35:00Z
 feature_id: FEAT-SKILL-FIRST-001
 work_package_id: WP-SKILL-FIRST-NODESKCLAW
 ---
@@ -15,9 +15,9 @@ work_package_id: WP-SKILL-FIRST-NODESKCLAW
 
 ## Architecture Decision
 
-[Approved Architecture（已批准架构）](../architecture/AD-SKILL-AGENT-V16.md)（`1.7.0` / `APPROVED`）——含 Public Contract Release Lane、合同版本策略、Attachment 授权边界，以及已折叠的 A1 规范性内容。
+[Approved Architecture（已批准架构）](../architecture/AD-SKILL-AGENT-V16.md)（`1.8.0` / `APPROVED`）——含 Public Contract Release Lane、合同版本策略、Attachment 授权边界、Public Streaming Delta / Message Segment 生命周期、两提交发布身份，以及已折叠的 A1 规范性内容。
 
-Technical Appendix（技术附录）：[AD-SKILL-AGENT-V16-A1 Hermes Runtime Native Run Integration](../architecture/AD-SKILL-AGENT-V16-v1.6.0-hermes-runtime-native-run.md)（`1.6.0` / `APPROVED`）——PC 编号与 Runtime 协议细节；规范性决策以父 AD@1.7.0 正文为准。
+Technical Appendix（技术附录）：[AD-SKILL-AGENT-V16-A1 Hermes Runtime Native Run Integration](../architecture/AD-SKILL-AGENT-V16-v1.6.0-hermes-runtime-native-run.md)（`1.6.0` / `APPROVED`）——PC 编号与 Runtime 协议细节；规范性决策以父 AD@1.8.0 正文为准。
 
 ## Delivery Invariants
 
@@ -28,9 +28,10 @@ Technical Appendix（技术附录）：[AD-SKILL-AGENT-V16-A1 Hermes Runtime Nat
 - 外部前端的字段、交互或调用语义变更必须先形成新的 APPROVED Contract（已批准合同）；外部前端按合同适配，本项目再从合同反推 Backend 功能、兼容性和验证，禁止从未版本化的前端实现倒灌私有语义。
 - 已发布合同目录、Tag（标签）与 checksum（校验和）不可原地改写；兼容变化必须新增合同版本。
 - 后续 Item（交付项）不得在依赖未完成前进入 `READY`（就绪）或 `IN_PRD`（需求校准中）。
-- **Public Contract Release Lane（AD@1.7.0）**：纯 Public 增量（不依赖 RM-08 Shared Agent Execution Contract 字段）走独立 Item；合同版本策略为新增 capability=minor bump。RM-17 发布 `v1.3.0` Approval Decision；RM-18 发布 `v1.4.0` Attachment（累积 Approval）。禁止把 Approval 与 Attachment 并进同一 Release Gate。
-- **KEEP `RM-09 Depends On RM-08`**：RM-09 不承担 RM-17/RM-18 已发布的纯 Public Capability；禁止靠提前 READY RM-09 交付 Approval/Attachment Bundle。
-- **A1 已折叠进父 AD@1.7.0**：禁止再新建携带独立 `status` 的 addendum；后续架构纠偏一律修订父 AD。A1 文件保留为 APPROVED 技术附录。
+- **Public Contract Release Lane（AD@1.7.0+）**：纯 Public 增量（不依赖 RM-08 Shared Agent Execution Contract 字段）走独立 Item；合同版本策略为新增 capability=minor bump。RM-17 发布 `v1.3.0` Approval Decision；RM-18 发布 `v1.4.0` Attachment（累积 Approval）；RM-19 发布 `v1.5.0` Streaming Delta（累积 Attachment）。禁止把 Approval、Attachment 与 Streaming Delta 并进同一 Release Gate。
+- **KEEP `RM-09 Depends On RM-08`**：RM-09 不承担 RM-17/RM-18/RM-19 已发布的纯 Public Capability；禁止靠提前 READY RM-09 交付纯 Public Bundle。
+- **A1 已折叠进父 AD@1.7.0+**：禁止再新建携带独立 `status` 的 addendum；后续架构纠偏一律修订父 AD。A1 文件保留为 APPROVED 技术附录。
+- **Public Streaming Delta（AD@1.8.0）**：durable `assistant.delta` + 段末 `assistant.message` snapshot；delta ≤64 KiB UTF-8、snapshot ≤1 MiB UTF-8；复用既有 Coalescer / Event SoT / SSE；不可变发布采用两提交模型（行为实现提交 + Bundle-only 发布提交）。RM-19 不得并入 RM-09 / RM-14 / RM-17 / RM-18。
 - RM-12 修复已发布 `SKILL-RUN-CONTRACT v1.2.1` 员工公共面实现符合性，不得并入 RM-04 / RM-09；RM-09 在 RM-08 `DONE` 前保持 `BACKLOG`。
 - RM-12 状态由 `DONE` 回退为 `BACKLOG`：A1 依据 `apps/work` 员工端 live 报告判定其公共面符合性出口信号失效——本 Roadmap 对应 AD 在 Decision Drivers 中已列出的三项漂移（Public Run 仍输出 Portal 信封、SSE 未投影冻结合同全部语义事件、幂等未承载冻结合同语义）在真实 `user_jwt` 路径上仍然成立。**已交付的 Catalog、prompt-first 绑定、Workspace ACL 边界、跨组织 fail-closed 保留且不回滚**；退出条件改由 A1 第 30 节四条不变量与第 25 节 PC-10 至 PC-14 定义。A1 第 30.3 节的 HermesTask 平面降级归入重定义后的 RM-12 范围，不新增 Item。
 - RM-12 于 2026-09-04 以真实 `user_jwt` REAL_PROCESS live 证据（V-R12-LIVE）重新关闭为 `DONE`。PC-13 CANCELLED 由操作者手工验证为 PASS；自动化 runner 曾观察到 `cancel HTTP 500`，该观察保留在 live 证据中，不构成出口阻塞。历史回退叙述保留。
@@ -47,13 +48,14 @@ Technical Appendix（技术附录）：[AD-SKILL-AGENT-V16-A1 Hermes Runtime Nat
 - RM-14 于 2026-09-05 以真实 Hermes Native Run 证据（V13 / REAL_PROCESS）关闭为 `DONE`。Adapter 代码 `bd7cbbb9`；证据提交 `7afeffcc`；SoT `run.progress` 带 canonical `phase`。
 - RM-15 于 2026-09-05 以真实 Hermes Native Run 证据（V13 / REAL_PROCESS）关闭为 `DONE`。控制面代码 `846969d9` / `2c2b007e`；证据提交 `c4210717`；live 工具 `hermes_marketing__park-waiting-approval`。员工 cancel HTTP 500 为观察项，不构成出口阻塞。
 - RM-16 于 2026-09-09 以 Stage PRD v1.6.15 REAL_PROCESS live 证据关闭为 `DONE`。implementation `b9f71a253ce722a69e79272d38cf1dab1b6c2f9c`；出口 `docs_agent/evidence/rm16-verification.md`。live 为 PC-01 / PC-02 / PC-03 / PC-04 / PC-06 / PC-07 / PC-09 与 PC-12 扫描。**禁止再测 PC-05 Worker kill 与 PC-08 Hermes restart**；二者由既有 Worker fencing / `interrupted` 单测证明。禁止 stub、ChatCompletion mock 结项。RM-02 继续 `BACKLOG`，不得在本 commit 标 `DONE`。
-- RM-17 / RM-18 不得并入 RM-09 / RM-04 / RM-16；仓外 Work UI/IPC 不是本仓 DONE 证据。RM-04 本轮保持 `IN_PRD`（Acceptance Execution Binding 延后轨道）。
+- RM-17 / RM-18 / RM-19 不得并入 RM-09 / RM-04 / RM-14 / RM-16；仓外 Work UI/IPC 不是本仓 DONE 证据。RM-04 本轮保持 `IN_PRD`（Acceptance Execution Binding 延后轨道）。
 - RM-17 于 2026-09-08 以真实 `user_jwt` REAL_PROCESS live 证据（V10）关闭为 `DONE`。代码来源 `26e1cb5a`；annotated tag `skill-run-contract-v1.3.0`；`check --release` PASS。deny Public terminal：本地无 binding 为 `FAILED`，Hermes binding live 冻结 `COMPLETED`。SMC `evidence.py` FRESH manifest 因 HEAD drift 未写入，出口证据为 `docs_agent/evidence/rm17-verification.md`。Attachment 仍 `unsupported`。
 - RM-18 于 2026-09-08 以真实 `user_jwt` REAL_PROCESS live 证据（V10）关闭为 `DONE`。代码来源 `5d0e538f`；annotated tag `skill-run-contract-v1.4.0`；`check --release` PASS。SMC `evidence.py` FRESH manifest 因 HEAD drift 未写入，出口证据为 `docs_agent/evidence/rm18-verification.md`。仓外 Work UI/IPC 不是本仓 DONE。
 - RM-10 于 2026-09-08 以自动化 oracle（Agent/Backend 聚焦 pytest、Public 合同空 diff、lat check）与 Implementation Review PASS 关闭为 DONE。代码来源 9faf82c8；SMC evidence.py FRESH manifest 因 V02/V10 Exact Entry Point 不兼容未写入，出口证据为 docs_agent/evidence/rm10-verification.md。
 - RM-07 于 2026-09-08 以自动化 oracle（Backend 20 / Agent 30 / Public 合同空 diff / `lat check`）与 Implementation Review PASS 关闭为 `DONE`。代码来源 `c29411e5`（同 commit 混有 RM-18 夹杂物，观察项）；SMC `evidence.py` FRESH manifest 未写入，出口证据为 `docs_agent/evidence/rm07-verification.md`。
 - RM-08 于 2026-09-08 以 Internal Bundle + Topology freeze + fail-closed oracle 关闭为 `DONE`。代码来源 `ddf8a653`；tag `skill-agent-contract-v1.0.0`。出口证据 `docs_agent/evidence/rm08-verification.md`。
 - RM-09 于 2026-09-08 进入 `IN_PRD`：Stage PRD `docs_agent/prd-v1.6.18-shared-contract-public-isolation.md` 已 `APPROVED`（review PASS）。
+- RM-19 于 2026-09-09 进入 `IN_PRD`：Stage PRD `docs_agent/prd-v1.6.19-skill-run-v150-streaming-delta-provider.md` 已 `APPROVED`（review PASS）。禁止在 canonical Plan 未通过前改生产代码，禁止只生成 schema/fixture 假装 Provider 已交付。
 
 ## Roadmap Items
 
@@ -67,7 +69,7 @@ Technical Appendix（技术附录）：[AD-SKILL-AGENT-V16-A1 Hermes Runtime Nat
 | RM-06 | Session（运行会话）与 ContextBuilder（上下文构建器）形成授权、可恢复的执行上下文 | RM-05 | DONE | Session 成为正式运行对象；Knowledge/Workspace/Attachment（知识/工作区/附件）引用经 Backend 授权并在执行前复核，撤权时 fail-closed（失败关闭） | docs_agent/prd-v1.6.7-session-context-authorized-execution.md | .cursor/plans/rm-06_session-context-authorized-execution.plan.md | d8fee3604be77d4ca330133c36012c721d638621 | docs_agent/evidence/rm06-verification.md |
 | RM-07 | Edge Control Channel（边缘控制通道）具备身份轮换与命令完整性 | RM-05 | DONE | 出站通道验证身份、过期、Nonce（随机数）、签名与序列；重放、错节点和过期命令无副作用 | docs_agent/prd-v1.6.8-edge-control-channel-security-closure.md | .cursor/plans/rm-07_edge_control_channel_601b46f4.plan.md | c29411e54d8357e6976cfc89f4bbee03498ea7ec | docs_agent/evidence/rm07-verification.md |
 | RM-08 | 中立 Shared Agent Execution Contract（共享 Agent 执行合同）可由 Backend 单一生成链发布，并冻结 Hermes（运行时）`single_agent` / `runtime_delegated` Delegation Topology（委派拓扑） | RM-06, RM-07 | DONE | Schema、OpenAPI、TypeScript 类型、Fixture（固定样例）与兼容测试同源；Backend 冻结策略与 capability reference（能力引用），Agent 持久化 ExecutionSnapshot（执行快照），Runtime Capability（运行时能力）缺失时失败关闭；Topology 与 Central/Edge/Hybrid Placement（中心/边缘/混合放置）分列；不实现 Platform Multi-Agent（平台多智能体） | docs_agent/prd-v1.6.17-shared-agent-execution-contract.md | .cursor/plans/rm-08_shared-agent-execution-contract.plan.md | ddf8a6538343f27d23593362a66cc3e1e2d3dc55 | docs_agent/evidence/rm08-verification.md |
-| RM-09 | Backend 在 Shared Contract 稳定后补齐依赖内部南向字段的剩余符合性，以及需要 RM-08 字段的后续 Public 增量；**不承担** RM-17 Approval Decision 与 RM-18 Attachment 已发布 Capability；外部前端只作为仓外 Consumer | RM-08 | DONE | 不首次发布 Work canonical；不改写 v1.2.1/v1.3.0/v1.4.0；不承担已发布 v1.2.1 员工公共面的实现 Hotfix；不承担 RM-17/RM-18 已发布纯 Public Capability；外部前端源码、构建和发布不在范围内 | docs_agent/prd-v1.6.18-shared-contract-public-isolation.md | .cursor/plans/rm-09_shared-contract-public-isolation.plan.md | d705ce7c956ac190fba610148e279318fe73ecc0 | docs_agent/evidence/rm09-verification.md |
+| RM-09 | Backend 在 Shared Contract 稳定后补齐依赖内部南向字段的剩余符合性，以及需要 RM-08 字段的后续 Public 增量；**不承担** RM-17 Approval Decision、RM-18 Attachment 与 RM-19 Streaming Delta 已发布 Capability；外部前端只作为仓外 Consumer | RM-08 | DONE | 不首次发布 Work canonical；不改写 v1.2.1/v1.3.0/v1.4.0/v1.5.0；不承担已发布 v1.2.1 员工公共面的实现 Hotfix；不承担 RM-17/RM-18/RM-19 已发布纯 Public Capability；外部前端源码、构建和发布不在范围内 | docs_agent/prd-v1.6.18-shared-contract-public-isolation.md | .cursor/plans/rm-09_shared-contract-public-isolation.plan.md | d705ce7c956ac190fba610148e279318fe73ecc0 | docs_agent/evidence/rm09-verification.md |
 | RM-10 | Agent 执行面具备统一 Trace（链路追踪）与运行指标 | RM-05 | DONE | Run/Attempt/Session/Edge/Connector/Artifact 可关联；队列、时延、失败、租约和重放指标可观测，且不形成第二事件事实源；**Trace correlation 必须纳入 A1 第 21 节 Runtime 字段**（`runtime_type`、`runtime_version`、`runtime_run_id`、`runtime_session_id`、`runtime_idempotency_key`、`tool_call_id`、`correlation_confidence`）与 Runtime 指标（start latency、event stream duration、delta 计数、coalescing 比、未配对 tool start 计数、approval 等待、stop 时延、disconnect/reconciliation/interrupted 计数） | docs_agent/prd-v1.6.9-agent-observability-trace-and-metrics.md | .cursor/plans/rm-10_agent-observability-trace-and-metrics.plan.md | 9faf82c858204a3b52213cbdd5b2629d5c4c59ca | docs_agent/evidence/rm10-verification.md |
 | RM-11 | 累积 Public Skill Run Consumer Contract v1.2.1 成为外部 Work 可离线导入的当前合同导出项 | RM-01, RM-02 | DONE | 生成并发布 `v1.2.1/` 与 tag `skill-run-contract-v1.2.1`；manifest 纳入 SHA256SUMS；Public 包不含 Internal Southbound；不改写 v1.0.0/v1.1.0/v1.2.0；不含 Work 前端；Internal Agent 合同留给 RM-08 | docs_agent/prd-v1.6.6-cumulative-public-consumer-contract.md | .cursor/plans/rm-11_v121_cumulative_public_contract.plan.md | 10d38f2c97739c4a55df893d1dc954fc8896f1a7 | docs_agent/evidence/rm11-verification.md |
 | RM-12 | 员工 Public Skill Run 面对冻结 `SKILL-RUN-CONTRACT v1.2.1` 可观察符合 | RM-06, RM-11 | DONE | 按 A1 第 30 节四条不变量收敛：公共信封与 `auth_type` 无关（同 Skill/同组织/同调用语义不得因凭证类型返回不同契约）；Catalog 宣告 `executionModes` 等于该调用者实际可达集合且与调用侧共用同一 resolver；HermesTask 平面降级为纯内部投影，A1 第 30.3 节禁止字段与 `/api/v1/hermes/tasks/` 路径不出现在任何公共响应，公共身份字段只有 `run_id`，公共终态不由 `HermesTask.status` 裁决，投影失败不得静默；出口证据必须来自真实 `user_jwt` 员工路径并通过 PC-10 至 PC-14，fixture 通过不构成出口信号。`contracts/skill-run/v1.2.1/` 仍零修改；不发布新合同版本。历史交付物（Catalog、prompt-first 绑定、Workspace ACL 边界、跨组织 fail-closed）保留复用，不回滚 | docs_agent/prd-v1.6.10-skill-run-v121-public-conformance.md | .cursor/plans/rm-12_v121_public_conformance.plan.md | f41e12e01159a1ba461c15b0e3e1e12cddcc7e02 | smc-evidence:RM-12@sha256:67445ab0aa15eb03401252b538b37b832dd3017fbae239044c34f918f967de08 |
@@ -77,6 +79,7 @@ Technical Appendix（技术附录）：[AD-SKILL-AGENT-V16-A1 Hermes Runtime Nat
 | RM-16 | Hermes Provider Conformance & Recovery：真实 Runtime 全链路取得可复现实跑证据 | RM-15 | DONE | PC-01、PC-02、PC-03、PC-04、PC-06、PC-07、PC-09 全部在真实 Hermes API Server（`>= v2026.8.31`）上通过并留存证据；禁止再测 PC-05 Worker kill 与 PC-08 Hermes restart；Worker fencing 与 `interrupted` 由既有单测证明；禁止以 mock OpenAI 字段替代；覆盖长中文 coalescing、真实 Tool、真实 Approval、Cancel、版本地板失败关闭、Runtime Delegation 单一 Public Run；同时承接 RM-02 重新定义后的 Provider Conformance 出口 | docs_agent/prd-v1.6.14-hermes-provider-conformance-recovery.md | .cursor/plans/rm-16_hermes-provider-conformance-recovery.plan.md | b9f71a253ce722a69e79272d38cf1dab1b6c2f9c | docs_agent/evidence/rm16-verification.md |
 | RM-17 | Public Approval Decision Contract v1.3.0：发布不可变 SKILL-RUN-CONTRACT v1.3.0，使 Work 可安全提交 allow/deny；Attachment 继续显式 unsupported | RM-11, RM-12, RM-15 | DONE | 发布 `v1.3.0/` 与 tag `skill-run-contract-v1.3.0`；canonical decision endpoint + 决策回执语义 + 幂等 + options descriptor；不改写 v1.2.1；不依赖 RM-08；不并入 RM-09；REAL_PROCESS user_jwt live 符合；仓外 Work UI/IPC 不是本仓 DONE | docs_agent/prd-v1.6.15-skill-run-v130-public-approval-decision.md | .cursor/plans/rm-17_skill-run-v130-public-approval-decision.plan.md | 26e1cb5aa2aebbb4bdc1a8e1c65617aaa6b6c948 | docs_agent/evidence/rm17-verification.md |
 | RM-18 | Public Attachment Input Contract v1.4.0：发布累积 Attachment upload/ref 合同，支持 start-before-run 用户输入引用；org/user scoped proof；不强制 workspace | RM-06, RM-17 | DONE | 发布 `v1.4.0/` 与 tag `skill-run-contract-v1.4.0`（累积 Approval）；不复用 Artifact download；不依赖 RM-08；不并入 RM-09；REAL_PROCESS user_jwt live 符合；仓外适配不是本仓 DONE | docs_agent/prd-v1.6.16-skill-run-public-attachment-input.md | .cursor/plans/rm-18_skill-run-v140-public-attachment-input.plan.md | 5d0e538fa68655f0084850d5378398f622ed90ba | docs_agent/evidence/rm18-verification.md |
+| RM-19 | Public Streaming Delta Contract v1.5.0：发布累积 durable `assistant.delta` + 段末 snapshot 合同，使 Work 可重放打字机更新并终态对账 | RM-14, RM-16, RM-18 | IN_PRD | 发布 `v1.5.0/` 与 tag `skill-run-contract-v1.5.0`（累积 Approval+Attachment）；真实 `user_jwt` 运行中 delta（非 terminal 批量回放）；snapshot 对账；SSE 重放去重；delta≤64KiB / snapshot≤1MiB；两提交发布；不改写 v1.2.1～v1.4.0；不依赖 RM-08；不并入 RM-09；仓外 Work UI/parser/consumer-lock 不是本仓 DONE | docs_agent/prd-v1.6.19-skill-run-v150-streaming-delta-provider.md | - | - | - |
 
 ## Revalidation Links
 
