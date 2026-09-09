@@ -1,0 +1,68 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "CREATED",
+        "QUEUED",
+        "PREPARING",
+        "RUNNING",
+        "WAITING_APPROVAL",
+        "RESUMING",
+        "CANCELLING",
+        "COMPLETED",
+        "FAILED",
+        "CANCELLED",
+        "TIMED_OUT"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "text": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Text"
+    },
+    "error_code": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Error Code"
+    },
+    "error_message": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Error Message"
+    }
+  },
+  "required": [
+    "run_id",
+    "status"
+  ],
+  "title": "PublicRunResult",
+  "type": "object"
+}
