@@ -55,6 +55,22 @@ REQUIRED_FAULTS = {
     "edge_network_partition",
 }
 
+V04_CLAIM_IDS = (
+    "CLM-06",
+    "CLM-08",
+    "CLM-09",
+    "CLM-10",
+    "CLM-11",
+    "CLM-14",
+    "CLM-15",
+    "CLM-16",
+    "CLM-17",
+    "CLM-19",
+)
+
+TERMINAL_STATUSES = {"COMPLETED", "FAILED", "CANCELLED"}
+EDGE_NODE_ID = "acceptance-edge-node-01"
+
 NATIVE_FEATURES = {
     "run_submission",
     "run_status",
@@ -119,7 +135,135 @@ def validate_execution_report(report: dict[str, Any]) -> list[str]:
     ):
         errors.append("compose teardown missing or failed")
 
+    artifact = scenarios.get("dual_central_minio_artifact") or {}
+    if artifact:
+        errors.extend(evaluate_artifact_oracle(artifact.get("oracle") or {}))
+    spool = scenarios.get("edge_delivery_and_spool_replay") or {}
+    if spool:
+        errors.extend(evaluate_spool_oracle(spool.get("oracle") or {}))
+    bundle = scenarios.get("bundle_lifecycle") or {}
+    if bundle:
+        errors.extend(evaluate_bundle_oracle(bundle.get("oracle") or {}))
+    kill = faults.get("kill_central_a") or {}
+    if kill:
+        errors.extend(evaluate_kill_oracle(kill.get("oracle") or {}))
+
     return errors
+
+
+def evaluate_artifact_oracle(oracle: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    checksum = str(oracle.get("checksum") or "")
+    if len(checksum) != 64:
+        errors.append("dual_central_minio_artifact must observe a SHA-256 checksum")
+    if int(oracle.get("read_status") or 0) != 200:
+        errors.append("dual_central_minio_artifact must read the object from Central B")
+    return errors
+
+
+def evaluate_kill_oracle(oracle: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    first = str(oracle.get("first_attempt") or "")
+    second = str(oracle.get("second_attempt") or "")
+    if not first or not second or first == second:
+        errors.append("kill_central_a successor attempt must differ from the killed attempt")
+    if oracle.get("late_rejected") is not True:
+        errors.append("kill_central_a late ingest must be rejected")
+    terminals = oracle.get("queryable_terminals")
+    count = oracle.get("queryable_terminal_count")
+    if count != 1 or not isinstance(terminals, list) or len(terminals) != 1:
+        errors.append("kill_central_a must observe exactly one queryable terminal")
+    elif str(terminals[0]) not in TERMINAL_STATUSES:
+        errors.append("kill_central_a queryable terminal must be a contract terminal status")
+    if oracle.get("unique_terminal") is True and (
+        count != 1 or not first or not second or first == second
+    ):
+        errors.append("kill_central_a unique_terminal must not be a literal true")
+    return errors
+
+
+def evaluate_spool_oracle(oracle: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    keys = set(oracle.keys())
+    directory_only = {"before", "during", "after"} <= keys and "replay_once" not in keys
+    if directory_only:
+        errors.append("spool oracle must not be directory-set-only")
+    if oracle.get("replay_once") is not True:
+        errors.append("spool must replay each source_event_id exactly once")
+    if oracle.get("stale_generation_no_side_effect") is not True:
+        errors.append("stale delivery generation must have no side effect")
+    counts = oracle.get("replay_counts") or {}
+    if not isinstance(counts, dict) or not counts:
+        errors.append("spool oracle must record replay counts by source_event_id")
+    elif any(int(value) != 1 for value in counts.values()):
+        errors.append("spool replay count must be exactly one per source_event_id")
+    return errors
+
+
+def evaluate_bundle_oracle(oracle: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    if oracle.get("http_status") == 200 and "installed_actual_generation" not in oracle:
+        errors.append("bundle_lifecycle GET 200 is not a lifecycle oracle")
+    installed = int(oracle.get("installed_actual_generation") or 0)
+    digest_kept = int(oracle.get("digest_failure_actual_generation") or 0)
+    upgraded = int(oracle.get("upgrade_actual_generation") or 0)
+    if installed < 1:
+        errors.append("bundle install must advance actual_generation")
+    if digest_kept != installed:
+        errors.append("digest-failure upgrade must keep the previous actual_generation")
+    if upgraded <= installed:
+        errors.append("successful upgrade must advance actual_generation")
+    if oracle.get("uninstalled") is not True:
+        errors.append("bundle uninstall must be observed")
+    if oracle.get("current_kept_on_digest_failure") is not True:
+        errors.append("digest-failure upgrade must keep the previous Current")
+    return errors
+
+
+def _claim_result(passed: bool) -> dict[str, str]:
+    return {"result": "PASS" if passed else "FAIL"}
+
+
+def build_acceptance_claims(report: dict[str, Any]) -> dict[str, dict[str, str]]:
+    scenarios = {item.get("name"): item for item in report.get("scenarios") or []}
+    faults = {item.get("name"): item for item in report.get("faults") or []}
+    artifact = scenarios.get("dual_central_minio_artifact") or {}
+    spool = scenarios.get("edge_delivery_and_spool_replay") or {}
+    bundle = scenarios.get("bundle_lifecycle") or {}
+    kill = faults.get("kill_central_a") or {}
+    newman = ((report.get("child_gates") or {}).get("newman") or {})
+    docker_unavailable = str(report.get("error") or "") == "Docker daemon unavailable"
+    artifact_ok = bool(artifact.get("ok")) and not evaluate_artifact_oracle(artifact.get("oracle") or {})
+    kill_ok = bool(kill.get("ok")) and not evaluate_kill_oracle(kill.get("oracle") or {})
+    spool_ok = bool(spool.get("ok")) and not evaluate_spool_oracle(spool.get("oracle") or {})
+    bundle_ok = bool(bundle.get("ok")) and not evaluate_bundle_oracle(bundle.get("oracle") or {})
+    faults_ok = all(
+        bool((faults.get(name) or {}).get("injected"))
+        and bool((faults.get(name) or {}).get("recovered"))
+        and bool((faults.get(name) or {}).get("ok"))
+        for name in REQUIRED_FAULTS
+    )
+    newman_ok = bool(newman.get("ok"))
+    report_passed = report.get("status") == "PASSED"
+    skipped = bool(report.get("skipped"))
+    clm17 = docker_unavailable or (not skipped and report.get("status") in {"PASSED", "FAILED", "RETURN_PRD"})
+    return {
+        "CLM-06": _claim_result(artifact_ok),
+        "CLM-08": _claim_result(kill_ok),
+        "CLM-09": _claim_result(spool_ok),
+        "CLM-10": _claim_result(bundle_ok),
+        "CLM-11": _claim_result(faults_ok),
+        "CLM-14": _claim_result(newman_ok),
+        "CLM-15": _claim_result(report_passed),
+        "CLM-16": _claim_result(artifact_ok and kill_ok and spool_ok and bundle_ok and newman_ok),
+        "CLM-17": _claim_result(clm17 and not skipped),
+        "CLM-19": _claim_result(artifact_ok),
+    }
+
+
+def emit_acceptance_result(report: dict[str, Any]) -> None:
+    payload = {"claims": {cid: build_acceptance_claims(report)[cid] for cid in V04_CLAIM_IDS}}
+    print("SMC_ACCEPTANCE_RESULT " + json.dumps(payload, separators=(",", ":")))
 
 
 def check_docker_available() -> bool:
@@ -373,8 +517,15 @@ def _agent_headers() -> dict[str, str]:
     }
 
 
-def _create_internal_run(agent_url: str, *, prompt: str, hold: bool = False) -> dict[str, Any]:
+def _create_internal_run(
+    agent_url: str,
+    *,
+    prompt: str,
+    hold: bool = False,
+    placement: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     text = "acceptance-hold" if hold else prompt
+    route = placement or {"role": "central", "engine": "hermes"}
     status, body = _http_request(
         f"{agent_url.rstrip('/')}/internal/v1/runs",
         method="POST",
@@ -382,11 +533,11 @@ def _create_internal_run(agent_url: str, *, prompt: str, hold: bool = False) -> 
         payload={
             "tool_name": "acceptance.native",
             "arguments": {"prompt": text},
-            "placement": {"role": "central", "engine": "hermes"},
+            "placement": route,
             "route_snapshot": {
                 "runtime_skill_id": "acceptance.native",
                 "agent_profile": HERMES_PROFILE,
-                "engine": "hermes",
+                "engine": str(route.get("engine") or "hermes"),
             },
         },
         timeout=20.0,
@@ -445,6 +596,334 @@ def _spool_files(spool_dir: Path) -> list[str]:
     if not spool_dir.is_dir():
         return []
     return [path.name for path in spool_dir.glob("spool_*.json")]
+
+
+def _jwt_headers() -> dict[str, str]:
+    return {
+        "Authorization": f"Bearer {os.environ['JWT_TOKEN']}",
+        "X-Org-Id": os.environ["ACCEPTANCE_ORG_ID"],
+        "Content-Type": "application/json",
+    }
+
+
+def _list_run_events(agent_url: str, run_id: str) -> list[dict[str, Any]]:
+    status, body = _http_request(
+        f"{agent_url.rstrip('/')}/internal/v1/runs/{run_id}/events",
+        headers=_agent_headers(),
+        timeout=15.0,
+    )
+    payload = _json_body(body)
+    items = payload.get("items") if isinstance(payload, dict) else None
+    if not isinstance(items, list):
+        return []
+    return [item for item in items if isinstance(item, dict)]
+
+
+def _source_event_counts(events: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for item in events:
+        source_id = str(item.get("source_event_id") or "")
+        if not source_id:
+            continue
+        counts[source_id] = counts.get(source_id, 0) + 1
+    return counts
+
+
+def _spool_payloads(spool_dir: Path) -> list[dict[str, Any]]:
+    payloads: list[dict[str, Any]] = []
+    if not spool_dir.is_dir():
+        return payloads
+    for path in spool_dir.glob("spool_*.json"):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if isinstance(data, dict):
+            data["_file"] = path.name
+            payloads.append(data)
+    return payloads
+
+
+def _wait_spool_empty(spool_dir: Path, names: set[str], timeout_seconds: int = 30) -> bool:
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        remaining = {path.name for path in spool_dir.glob("spool_*.json")} if spool_dir.is_dir() else set()
+        if not (names & remaining):
+            return True
+        time.sleep(1)
+    return False
+
+
+def _observe_kill_terminal(agent_a: str, agent_b: str, run_id: str) -> dict[str, Any]:
+    if run_id:
+        _http_request(
+            f"{agent_b.rstrip('/')}/internal/v1/runs/{run_id}/cancel",
+            method="POST",
+            headers=_agent_headers(),
+            timeout=15.0,
+        )
+        _wait_run_status(agent_b, run_id, TERMINAL_STATUSES, timeout_seconds=90)
+    observed: list[str] = []
+    for url in (agent_b, agent_a):
+        payload = _get_internal_run(url, run_id) if run_id else {}
+        status = str((payload.get("run") or {}).get("status") or "")
+        if status in TERMINAL_STATUSES:
+            observed.append(status)
+    unique = sorted(set(observed))
+    return {
+        "queryable_terminals": unique,
+        "queryable_terminal_count": len(unique),
+        "unique_terminal": len(unique) == 1,
+        "views": observed,
+    }
+
+
+def _observe_spool_replay(agent_url: str, spool_dir: Path, run_id: str) -> dict[str, Any]:
+    before_events = _list_run_events(agent_url, run_id) if run_id else []
+    before_counts = _source_event_counts(before_events)
+    payloads = _spool_payloads(spool_dir)
+    tracked_ids: list[str] = []
+    generations: list[int] = []
+    files: set[str] = set()
+    job_id = ""
+    for item in payloads:
+        files.add(str(item.get("_file") or ""))
+        generations.append(int(item.get("delivery_generation") or 1))
+        job_id = str(item.get("job_id") or job_id)
+        for event in item.get("events") or []:
+            if isinstance(event, dict) and event.get("source_event_id"):
+                tracked_ids.append(str(event["source_event_id"]))
+    flushed = _wait_spool_empty(spool_dir, files, timeout_seconds=40) if files else False
+    after_events = _list_run_events(agent_url, run_id) if run_id else []
+    after_counts = _source_event_counts(after_events)
+    replay_counts = {sid: int(after_counts.get(sid) or 0) for sid in tracked_ids}
+    replay_once = bool(tracked_ids) and flushed and all(replay_counts.get(sid) == 1 for sid in tracked_ids)
+
+    stale_generation = max((min(generations) - 1 if generations else 0), 0)
+    stale_event_id = f"stale-{uuid.uuid4().hex[:8]}"
+    stale_file = spool_dir / f"spool_{job_id or 'stale'}_{uuid.uuid4().hex[:8]}.json"
+    if job_id:
+        stale_file.write_text(
+            json.dumps(
+                {
+                    "job_id": job_id,
+                    "delivery_generation": stale_generation,
+                    "events": [
+                        {
+                            "event_type": "run.progress",
+                            "source_event_id": stale_event_id,
+                            "payload": {"phase": "stale"},
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        _wait_spool_empty(spool_dir, {stale_file.name}, timeout_seconds=30)
+    after_stale = _list_run_events(agent_url, run_id) if run_id else []
+    stale_counts = _source_event_counts(after_stale)
+    stale_no_side_effect = stale_counts.get(stale_event_id, 0) == 0 and len(after_stale) == len(after_events)
+    return {
+        "replay_once": replay_once,
+        "stale_generation_no_side_effect": stale_no_side_effect,
+        "replay_counts": replay_counts,
+        "tracked_source_event_ids": tracked_ids,
+        "stale_generation": stale_generation,
+        "stale_event_id": stale_event_id,
+        "flushed": flushed,
+        "event_count_before": len(before_events),
+        "event_count_after": len(after_events),
+        "event_count_after_stale": len(after_stale),
+        "before_counts": before_counts,
+        "spool_files": sorted(files),
+    }
+
+
+def _backend_json(method: str, path: str, payload: dict[str, Any] | None = None) -> tuple[int, dict[str, Any]]:
+    status, body = _http_request(
+        f"http://127.0.0.1:4510{path}",
+        method=method,
+        headers=_jwt_headers(),
+        payload=payload,
+        timeout=30.0,
+    )
+    parsed = _json_body(body)
+    data = parsed.get("data") if isinstance(parsed, dict) else None
+    return status, data if isinstance(data, dict) else parsed if isinstance(parsed, dict) else {}
+
+
+def _poll_installation(skill_id: str, timeout_seconds: int = 90) -> dict[str, Any]:
+    deadline = time.time() + timeout_seconds
+    last: dict[str, Any] = {}
+    while time.time() < deadline:
+        status, payload = _backend_json(
+            "GET",
+            f"/api/v1/hermes/skill-installations?skill_id={skill_id}&page=1&page_size=20",
+        )
+        items = payload.get("items") if isinstance(payload, dict) else None
+        if status == 200 and isinstance(items, list) and items:
+            last = items[0] if isinstance(items[0], dict) else {}
+            return last
+        time.sleep(2)
+    return last
+
+
+def _observe_bundle_lifecycle(compose_file: Path) -> dict[str, Any]:
+    skill_id = f"accept-bundle-{uuid.uuid4().hex[:8]}"
+    skill_dir = f"/tmp/{skill_id}"
+    write = subprocess.run(
+        _compose_cmd(
+            compose_file,
+            "exec",
+            "-T",
+            "nodeskclaw-backend",
+            "sh",
+            "-c",
+            (
+                f"mkdir -p {skill_dir} && "
+                f"printf '%s\\n' '---' 'name: {skill_id}' '---' 'acceptance bundle' > {skill_dir}/SKILL.md"
+            ),
+        ),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    create_status, created = _backend_json(
+        "POST",
+        "/api/v1/hermes/skills",
+        {
+            "skill_id": skill_id,
+            "name": skill_id,
+            "tool_name": skill_id,
+            "version": "1.0.0",
+        },
+    )
+    skill_db_id = str(created.get("id") or "")
+    patch_status, _ = _backend_json(
+        "PATCH",
+        f"/api/v1/hermes/skills/{skill_db_id}",
+        {"canonical_path": skill_dir},
+    ) if skill_db_id else (0, {})
+    publish_status, published = _backend_json(
+        "POST",
+        f"/api/v1/hermes/skills/{skill_db_id}/publish",
+        {"version": "1.0.0"},
+    ) if skill_db_id else (0, {})
+    install_status, installed = _backend_json(
+        "POST",
+        "/api/v1/hermes/skill-installations",
+        {
+            "skill_id": skill_id,
+            "agent_id": f"edge-{EDGE_NODE_ID}",
+            "target_kind": "edge",
+            "edge_node_id": EDGE_NODE_ID,
+        },
+    )
+    installation_id = str(installed.get("id") or "")
+    deadline = time.time() + 90
+    current = installed
+    while time.time() < deadline:
+        current = _poll_installation(skill_id)
+        if int(current.get("actual_generation") or 0) >= 1:
+            break
+        time.sleep(3)
+    installed_gen = int(current.get("actual_generation") or 0)
+
+    subprocess.run(
+        _compose_cmd(
+            compose_file,
+            "exec",
+            "-T",
+            "nodeskclaw-backend",
+            "sh",
+            "-c",
+            (
+                "f=$(ls -1t /data/nodeskclaw/skills/releases/*.zip 2>/dev/null | head -n 1); "
+                "if [ -n \"$f\" ]; then cp \"$f\" \"$f.bak\" && printf x >> \"$f\"; echo \"$f\"; fi"
+            ),
+        ),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    sync_status, _ = _backend_json(
+        "POST",
+        f"/api/v1/hermes/skill-installations/{installation_id}/sync",
+        {},
+    ) if installation_id else (0, {})
+    time.sleep(8)
+    after_fail = _poll_installation(skill_id)
+    digest_gen = int(after_fail.get("actual_generation") or 0)
+
+    subprocess.run(
+        _compose_cmd(
+            compose_file,
+            "exec",
+            "-T",
+            "nodeskclaw-backend",
+            "sh",
+            "-c",
+            (
+                "f=$(ls -1t /data/nodeskclaw/skills/releases/*.zip.bak 2>/dev/null | head -n 1); "
+                "if [ -n \"$f\" ]; then mv \"$f\" \"${f%.bak}\"; fi"
+            ),
+        ),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if installation_id:
+        _backend_json("POST", f"/api/v1/hermes/skill-installations/{installation_id}/sync", {})
+    upgrade_deadline = time.time() + 90
+    upgraded = after_fail
+    while time.time() < upgrade_deadline:
+        upgraded = _poll_installation(skill_id)
+        if int(upgraded.get("actual_generation") or 0) > installed_gen:
+            break
+        time.sleep(3)
+    upgrade_gen = int(upgraded.get("actual_generation") or 0)
+
+    delete_status, _ = _backend_json(
+        "DELETE",
+        f"/api/v1/hermes/skill-installations/{installation_id}",
+    ) if installation_id else (0, {})
+    uninstall_deadline = time.time() + 90
+    uninstalled = False
+    final = upgraded
+    while time.time() < uninstall_deadline:
+        final = _poll_installation(skill_id)
+        actual_status = str(final.get("actual_status") or "").lower()
+        desired = str(final.get("status") or "").lower()
+        if actual_status in {"uninstalled", "removed"} or (
+            desired in {"uninstalled", "removed"}
+            and int(final.get("actual_generation") or 0) == int(final.get("desired_generation") or 0)
+        ):
+            uninstalled = True
+            break
+        if delete_status < 300 and not final:
+            uninstalled = True
+            break
+        time.sleep(3)
+
+    oracle = {
+        "installed_actual_generation": installed_gen,
+        "digest_failure_actual_generation": digest_gen,
+        "upgrade_actual_generation": upgrade_gen,
+        "uninstalled": uninstalled,
+        "current_kept_on_digest_failure": digest_gen == installed_gen and installed_gen >= 1,
+        "create_status": create_status,
+        "patch_status": patch_status,
+        "publish_status": publish_status,
+        "install_status": install_status,
+        "sync_status": sync_status,
+        "delete_status": delete_status,
+        "skill_id": skill_id,
+        "installation_id": installation_id,
+        "skill_dir_write": write.returncode == 0,
+        "final": final,
+    }
+    oracle["ok"] = not evaluate_bundle_oracle(oracle)
+    return oracle
 
 
 def _run_child_gate(command: list[str], cwd: Path) -> dict[str, Any]:
@@ -591,53 +1070,52 @@ def run_compose_acceptance(compose_file: Path, reports_dir: Path) -> dict[str, A
         )
 
         spool_dir = Path(spool_root)
-        before = _spool_files(spool_dir)
-        edge_run = _create_internal_run(agent_a, prompt="acceptance-edge")
+        edge_run = _create_internal_run(
+            agent_a,
+            prompt="acceptance-edge",
+            placement={
+                "role": "edge",
+                "engine": "connector",
+                "edge_node_id": EDGE_NODE_ID,
+            },
+        )
+        edge_run_id = str(edge_run.get("run_id") or "")
         subprocess.run(
             _compose_cmd(compose_file, "pause", "acceptance-tls"),
             check=False,
             capture_output=True,
             text=True,
         )
-        time.sleep(4)
-        during = _spool_files(spool_dir)
+        time.sleep(8)
+        during_payloads = _spool_payloads(spool_dir)
         subprocess.run(
             _compose_cmd(compose_file, "unpause", "acceptance-tls"),
             check=False,
             capture_output=True,
             text=True,
         )
-        time.sleep(6)
-        after = _spool_files(spool_dir)
-        spool_ok = True
-        if during and after:
-            spool_ok = len(after) < len(during) or after != during
-        elif during:
-            spool_ok = after != during or not after
+        spool_oracle = _observe_spool_replay(agent_a, spool_dir, edge_run_id)
+        spool_oracle["during_payloads"] = [
+            {"file": item.get("_file"), "delivery_generation": item.get("delivery_generation")}
+            for item in during_payloads
+        ]
+        spool_oracle["edge_run"] = edge_run
+        spool_ok = not evaluate_spool_oracle(spool_oracle)
+        spool_oracle["ok"] = spool_ok
         report["scenarios"].append(
             {
                 "name": "edge_delivery_and_spool_replay",
                 "ok": spool_ok,
-                "oracle": {
-                    "before": before,
-                    "during": during,
-                    "after": after,
-                    "edge_run": edge_run,
-                },
+                "oracle": spool_oracle,
             }
         )
 
-        bundle_status, bundle_body = _http_request(
-            "http://127.0.0.1:4510/api/v1/hermes/skill-installations",
-            headers={"Authorization": f"Bearer {os.environ['JWT_TOKEN']}"},
-            timeout=15.0,
-        )
-        bundle_ok = bundle_status == 200
+        bundle_oracle = _observe_bundle_lifecycle(compose_file)
         report["scenarios"].append(
             {
                 "name": "bundle_lifecycle",
-                "ok": bundle_ok,
-                "oracle": {"http_status": bundle_status, "body": _json_body(bundle_body)},
+                "ok": bool(bundle_oracle.get("ok")),
+                "oracle": bundle_oracle,
             }
         )
 
@@ -740,17 +1218,22 @@ def run_compose_acceptance(compose_file: Path, reports_dir: Path) -> dict[str, A
         late_status = int(kill_during.get("late_ingest_status") or 0)
         late_body = str(kill_during.get("late_body") or "")
         second_attempt = str((after_kill.get("run") or {}).get("attempt_id") or "")
-        terminal = str((after_kill.get("run") or {}).get("status") or "")
-        kill_a["oracle"] = {
+        terminal_view = _observe_kill_terminal(agent_a, agent_b, hold_id)
+        late_rejected = late_status in {409, 403, 400} or "reject" in late_body.lower()
+        kill_oracle = {
             "first_attempt": first_attempt,
             "second_attempt": second_attempt,
             "late_ingest_status": late_status,
-            "late_rejected": late_status in {409, 403, 400} or "reject" in late_body.lower(),
-            "status": terminal,
-            "unique_terminal": True,
+            "late_rejected": late_rejected,
+            "status": str((after_kill.get("run") or {}).get("status") or ""),
+            **terminal_view,
         }
+        kill_errors = evaluate_kill_oracle(kill_oracle)
+        kill_a["oracle"] = kill_oracle
         kill_a["ok"] = bool(
-            kill_a.get("injected") and kill_a.get("recovered") and kill_a["oracle"]["late_rejected"]
+            kill_a.get("injected")
+            and kill_a.get("recovered")
+            and not kill_errors
         )
 
         partition = _run_fault(
@@ -844,9 +1327,11 @@ def main() -> None:
                 "faults": [],
             }
             _write_report(Path(args.reports_dir), report)
+            emit_acceptance_result(report)
             print(json.dumps(report, indent=2))
             sys.exit(1)
         report = run_compose_acceptance(Path(args.compose_file), Path(args.reports_dir))
+        emit_acceptance_result(report)
         print(json.dumps(report, indent=2))
         sys.exit(0 if report.get("status") == "PASSED" else 1)
 

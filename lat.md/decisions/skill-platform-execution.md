@@ -96,7 +96,7 @@ Architecture Closure 与 Acceptance Hardening (v1.5) 确立了 Run 生产执行�
 
 员工 `tools/call` 返回 `run_id` + `/api/v1/runs/*`；当前冻结面是 `v1.2.1`，`v1.0.0`/`v1.1.0`/`v1.2.0` 目录不改写。Expert `task_source=expert_mcp` 仍返回冻结 `task_id` + `/hermes/tasks/*`。
 
-员工验收 Collection 必须走同一 `/api/v1/runs/*` 信封，见 [[architecture/skill-agent#Production Readiness And Security#Public Newman Contract Gate]]。不得把 Expert `/hermes/tasks/*` 写进员工 JWT 旅程。
+员工验收 Collection 必须走同一 `/api/v1/runs/*` 信封，并覆盖已发布 `/decision` 与 `POST /api/v1/attachments` 的可达性（fail-closed 4xx 信封即可，不是 RM-17/RM-18 live 2xx），见 [[architecture/skill-agent#Production Readiness And Security#Public Newman Contract Gate]]。不得把 Expert `/hermes/tasks/*` 写进员工 JWT 旅程。
 
 v1.1.0 在保持 v1.0.0 兼容的同时，扩展了 MCP Tools List 描述符与 Accepted Result 结构：[[nodeskclaw-backend/app/schemas/skill_run/mcp_jsonrpc.py#SkillToolDescriptorV11]]、[[nodeskclaw-backend/app/schemas/skill_run/mcp_jsonrpc.py#SkillRunAcceptedStructuredContentV11]] 与常量 [[nodeskclaw-backend/app/schemas/skill_run/constants.py#SKILL_RUN_CONTRACT_VERSION_V11]]。
 

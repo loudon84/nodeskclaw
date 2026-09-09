@@ -298,7 +298,7 @@ Provider 发布完成后，Work 从本地 Provider repository 读取 tag 与 Bun
 - **AC-16 / C07**：至少一条受控真实 Hermes Runtime + Backend `user_jwt` 端到端场景证明 delta 在运行中到达，而不是只在 terminal 后批量回放；mock-only 不得结项。
 - **AC-17 / C08**：父 AD、Roadmap Item、Stage PRD、Plan、LAT 与发布证据完成治理闭环后，才允许声明 v1.5.0 Provider 完成。
 
-## Definition Of Done
+## Definition of Done
 
 - **DOD-01**：Architecture Revision `AD-SKILL-AGENT-V16@1.8.0` APPROVED（已满足）；独立 Roadmap Item RM-19 存在且 Depends On 满足。
 - **DOD-02**：对应唯一 Stage PRD APPROVED；canonical Plan 静态与语义 Gate 通过。

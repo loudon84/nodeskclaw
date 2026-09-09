@@ -21,6 +21,8 @@ Architecture Source 为 `AD-SKILL-AGENT-V16@1.8.0`。执行 DAG 依赖 RM-03（�
 
 v1.6.3（`6580bc94`，`AD@1.0.0`）已由本修订取代；其 initial review 只作历史记录，不得当作本版批准。
 
+**v1.6 本轮冻结（Acceptance Execution Binding 延后）**：Roadmap RM-04 保持 `IN_PRD`，外表开着，语义是延后。禁止对本项继续 Plan Delivery；禁止 Compose 拓扑实跑；禁止 V04 live。**本轮不执行分布式拓扑实跑，也不再验证 RM-04 Plan（禁止 `evidence.py` / V01–V13）。** 未绑定验收环境、Docker 不可用、未注入验收变量均不得解释为 Product FAIL。不得把 RM-04 标 `READY` / `PLANNED` / `IMPLEMENTING` / `DONE`。解冻须维护者显式解除 Roadmap Delivery Invariant。Stage PRD 能力与 AC 保留为解冻后出口，不是本轮交付清单。
+
 ## 前端表现变化
 
 本次改动无前端表现变化。不改 Portal / Admin / Work 页面、按钮、文案或路由。员工继续消费已发布 Public 合同；本项只让验收拓扑与 Newman 证明同一公共面在双 Central 拓扑中仍然成立。
@@ -94,7 +96,7 @@ Compose `hermes-test` 只是验收夹具：实现 Agent 已调用的 Native Run 
 - **DOD-02**：Acceptance Harness 是唯一发布验收入口；缺 Docker、服务未就绪、故障未注入、场景跳过、报告缺失或任何子门禁失败均非零退出；重复运行不复用不受控残留状态。本地无 Docker 记 `BLOCKED`，不得假绿。
 - **DOD-03**：生产启动继续零 DDL；Readiness 只验证迁移，不自动升级；不新增测试专用生产 API、第二状态机或新的生产 Owner。
 - **DOD-04**：共享 S3/MinIO 证据证明跨 Central 与重启后 Artifact 一致；Storage probe 使用隔离 key 并在成功或失败后清理。
-- **DOD-05**：本 PRD Review PASS 且 converge 为 `APPROVED` 后，才允许 REVISE 既有 canonical Plan（同一路径 `.cursor/plans/rm-04_strict_readiness_7c349609.plan.md`）。既有 Plan 钉在 `AD@1.0.0` / `faadeb00`，**不得**按现状执行。implementation commit 必须等 Review PASS + Verification PASS；Roadmap `DONE` 必须引用真实 implementation commit，且与 implementation 分 commit。
+- **DOD-05**：canonical Plan 路径固定为 `.cursor/plans/rm-04_strict_readiness_7c349609.plan.md`，禁止第二份 `.plan.md`。v1.6 本轮 **不再 REVISE、不再执行、不再验证** 该 Plan。implementation commit 与 Roadmap `DONE` 必须等解冻后 Review PASS + Verification PASS，且分 commit。禁止把 Plan 上已 completed 的 todos 当成已交付。
 - **DOD-06**：`lat.md` 的 Skill Agent readiness、StoragePort、Public Newman Gate 与生产验收边界同步，`lat check` 通过。
 - **DOD-07**：禁止把 RM-17 / RM-18 / RM-19 / RM-12 标进本项范围或混进同一 Roadmap DONE commit。禁止伪造 RM-04 `DONE`。
 
@@ -134,9 +136,10 @@ Compose `hermes-test` 只是验收夹具：实现 Agent 已调用的 Native Run 
 - 不恢复 ChatCompletion parser，不新增 `/test/*`。
 - 不把仓外 Work UI / consumer-lock 纳入本仓 DONE。
 - 不在本 PRD 未 `APPROVED` 时把 RM-04 标 `READY` / `DONE`，也不执行旧 Plan。
+- v1.6 本轮不继续 REVISE / 执行 / 验证 RM-04 Plan；不把「下一步实施」当作当前交付。
 
 ## Dependencies And Handoff
 
-RM-01、RM-02、RM-03 已 DONE。RM-05 至 RM-19 已 DONE，不得回滚。Roadmap 上 RM-04 继续 `IN_PRD`，Plan 列为空，直到维护者显式解除 Delivery Invariant「本轮保持 IN_PRD」。
+RM-01、RM-02、RM-03 已 DONE。RM-05 至 RM-19 已 DONE，不得回滚。Roadmap 上 RM-04 继续 `IN_PRD`，Plan 列为空。
 
-本 PRD 已 `APPROVED`。下一步由 `smc-plan-from-approved-prd-ponytail` **REVISE 同一路径** `.cursor/plans/rm-04_strict_readiness_7c349609.plan.md`。禁止第二份 `.plan.md`。禁止把该 Plan 上已 completed 的 todos 当成已交付。Plan 必须把 C03 oracle 与 C04 公共信封作为 WRITE_OWNER，grounding 相对本 PRD 的 `grounded_commit` 之后的实施基线。Roadmap RM-04 保持 `IN_PRD`，直到维护者显式解除 Delivery Invariant「本轮保持 IN_PRD」后再标 `READY`。
+本 PRD 已 `APPROVED`。**v1.6 本轮无下一步实施。** 禁止再跑 `smc-plan-from-approved-prd-ponytail` REVISE；禁止 `smc-plan-delivery` 对本项跑 Verification / `evidence.py`；禁止 Compose / V04 live。禁止第二份 `.plan.md`。禁止把既有 Plan 上 completed 的 todos 当成已交付。解冻后才允许验证同一 canonical Plan，并把 C03 oracle 与 C04 公共信封作为 WRITE_OWNER。Roadmap RM-04 保持 `IN_PRD`，直到维护者显式解除 Delivery Invariant。
