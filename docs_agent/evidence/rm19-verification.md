@@ -29,7 +29,7 @@
 | CLM-02 rebuild/snapshot | PASS | A01；live A06 snapshot 拼接对账 |
 | CLM-03 projection/auth | PASS | A02；live A06 `auth_type=user_jwt` |
 | CLM-04 SSE dedupe | PASS | live A06：`Last-Event-ID` 只重放 after_seq；客户端按 `event_id` 去重无冲突 |
-| CLM-05 Bundle/tag | PENDING_RELEASE | live PASS 后走两提交：行为 commit A → Bundle-only commit B → tag `skill-run-contract-v1.5.0` |
+| CLM-05 Bundle/tag | PASS | commit B `3a7fa5ac`；tag `skill-run-contract-v1.5.0` → `3a7fa5ac`；`check --release` PASS；`releaseCommit`/`backendCommit`=`e83e39a0` |
 | CLM-06 mid-run delta | PASS | live A06：terminal 前至少一条 public `assistant.delta` |
 
 ## Live Notes
@@ -40,9 +40,9 @@
 
 ## Release Gate
 
-- 两提交模型：`releaseCommit`/`backendCommit` = 行为实现提交；annotated tag 指向仅含 `contracts/skill-run/v1.5.0/` 的后续提交。
-- live A06 PASS 后允许创建 tag 与 Roadmap DONE（独立 status commit）。
+- 两提交模型：`releaseCommit`/`backendCommit` = `e83e39a0883545c35f4c99ba5bbef004c9ffd150`；annotated tag `skill-run-contract-v1.5.0` → Bundle-only `3a7fa5ac32017d41f7191b8221c861b93d7e7f32`。
+- live A06 PASS；tag tree `check --release` PASS；Roadmap RM-19 → DONE（独立 status commit）。
 
 ## Handoff
 
-向 Work 只交付可解析 tag `skill-run-contract-v1.5.0` 与完整 Bundle；不含 Work UI / consumer-lock。
+向 Work 交付：本地可解析 tag `skill-run-contract-v1.5.0` + 完整 Bundle `nodeskclaw-backend/contracts/skill-run/v1.5.0/`。不含 Work UI / consumer-lock。
