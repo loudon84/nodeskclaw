@@ -16,6 +16,9 @@ import yaml
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 CONTRACTS_HOME = BACKEND_ROOT / "contracts" / "work-expert"
 SKILL_RUN_CONTRACTS_HOME = BACKEND_ROOT / "contracts" / "skill-run"
+SKILL_AGENT_CONTRACTS_HOME = BACKEND_ROOT / "contracts" / "skill-agent"
+SKILL_AGENT_CONTRACT_VERSION = "1.0.0"
+SKILL_AGENT_TAG_NAME = "skill-agent-contract-v1.0.0"
 
 P0_TEST_FILES = [
     "tests/expert_gateway/test_mcp_capability_token.py",
@@ -941,6 +944,7 @@ def _validate_skill_run_release(manifest: dict[str, Any], *, version: str) -> No
         raise SystemExit(f"skill-run contract tag '{tag_name}' could not be resolved")
 
     peeled_commit = peeled_tag.stdout.strip()
+    release_commit = str(manifest.get("releaseCommit") or implementation_commit)
     if version == "1.2.1":
         contract_prefix = "nodeskclaw-backend/contracts/skill-run/v1.2.1/"
         release_diff_base = implementation_commit
@@ -950,6 +954,17 @@ def _validate_skill_run_release(manifest: dict[str, Any], *, version: str) -> No
     elif version == "1.4.0":
         contract_prefix = "nodeskclaw-backend/contracts/skill-run/v1.4.0/"
         release_diff_base = implementation_commit
+    elif version == "1.5.0":
+        contract_prefix = "nodeskclaw-backend/contracts/skill-run/v1.5.0/"
+        release_diff_base = release_commit
+        ancestry = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", release_commit, peeled_commit],
+            cwd=repository,
+            capture_output=True,
+            text=True,
+        )
+        if ancestry.returncode != 0:
+            raise SystemExit("skill-run v1.5.0 releaseCommit must be an ancestor of the annotated tag peel")
     else:
         if peeled_commit != _git_head():
             raise SystemExit(f"skill-run contract tag '{tag_name}' must point at the release commit")
@@ -964,6 +979,12 @@ def _validate_skill_run_release(manifest: dict[str, Any], *, version: str) -> No
         check=True,
     )
     changed_paths = [path for path in release_diff.stdout.splitlines() if path]
+    if version == "1.5.0":
+        if not changed_paths or any(not path.startswith(contract_prefix) for path in changed_paths):
+            raise SystemExit(
+                "skill-run v1.5.0 release tag must only contain contracts/skill-run/v1.5.0/ bundle files"
+            )
+        return
     if version in {"1.2.1", "1.3.0", "1.4.0"}:
         if not any(path.startswith(contract_prefix) for path in changed_paths):
             raise SystemExit(f"skill-run v{version} release tag must include contract bundle changes")
@@ -977,7 +998,7 @@ def _check_skill_run_contracts(release: bool = False, version: str = "1.0.0") ->
     skill_run_root = SKILL_RUN_CONTRACTS_HOME / f"v{version}"
     if not skill_run_root.exists():
         raise SystemExit(f"Skill-run contract directory missing: {skill_run_root}")
-    if version in {"1.2.1", "1.3.0", "1.4.0"}:
+    if version in {"1.2.1", "1.3.0", "1.4.0", "1.5.0"}:
         _validate_skill_run_checksums_exact(skill_run_root)
         _validate_skill_run_public_boundary(skill_run_root)
         _validate_skill_run_fixtures(skill_run_root)
@@ -988,6 +1009,8 @@ def _check_skill_run_contracts(release: bool = False, version: str = "1.0.0") ->
             _validate_skill_run_v130_decision_artifacts(skill_run_root)
         if version == "1.4.0":
             _validate_skill_run_v140_attachment_artifacts(skill_run_root)
+        if version == "1.5.0":
+            _validate_skill_run_v150_streaming_artifacts(skill_run_root)
     else:
         _validate_checksums(skill_run_root)
         _validate_skill_run_fixtures(skill_run_root)
@@ -1004,8 +1027,14 @@ def _check_skill_run_contracts(release: bool = False, version: str = "1.0.0") ->
 
 def check_contracts(release: bool = False, family: str = "all", skill_run_version: str | None = None) -> None:
     sys.path.insert(0, str(BACKEND_ROOT))
+    if family == "skill-agent":
+        _check_skill_agent_contracts(
+            release=release,
+            version=skill_run_version or SKILL_AGENT_CONTRACT_VERSION,
+        )
+        return
     if family == "skill-run":
-        versions = [skill_run_version] if skill_run_version else ["1.0.0", "1.1.0", "1.2.0", "1.2.1", "1.3.0", "1.4.0"]
+        versions = [skill_run_version] if skill_run_version else ["1.0.0", "1.1.0", "1.2.0", "1.2.1", "1.3.0", "1.4.0", "1.5.0"]
         for version in versions:
             root = SKILL_RUN_CONTRACTS_HOME / f"v{version}"
             if not root.exists():
@@ -1051,13 +1080,326 @@ def check_contracts(release: bool = False, family: str = "all", skill_run_versio
 
     print("WORK-EXPERT-CONTRACT check passed")
 
-    for version in ("1.0.0", "1.1.0", "1.2.0", "1.2.1", "1.3.0", "1.4.0"):
+    for version in ("1.0.0", "1.1.0", "1.2.0", "1.2.1", "1.3.0", "1.4.0", "1.5.0"):
         root = SKILL_RUN_CONTRACTS_HOME / f"v{version}"
         if not root.exists():
             continue
         _check_skill_run_contracts(release=False, version=version)
 
     print("SKILL-RUN-CONTRACT check passed")
+    _check_skill_agent_contracts(release=False, version=SKILL_AGENT_CONTRACT_VERSION)
+
+
+def _validate_skill_agent_internal_boundary(root: Path) -> None:
+    public_prefixes = ("mcp/", "events/", "http/")
+    public_files = frozenset({"runs/public-run.schema.json"})
+    for relative in _bundle_files_excluding_checksum(root):
+        if relative in public_files:
+            raise SystemExit(f"Public consumer artifact in Internal skill-agent bundle: {relative}")
+        if any(relative.startswith(prefix) for prefix in public_prefixes):
+            raise SystemExit(f"Public consumer artifact in Internal skill-agent bundle: {relative}")
+
+
+def _skill_agent_execution_snapshot_schema() -> dict[str, Any]:
+    return {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "https://nodeskclaw.example.com/contracts/skill-agent/v1.0.0/runs/execution-snapshot.schema.json",
+        "title": "InternalExecutionSnapshot",
+        "type": "object",
+        "required": ["placement", "delegation_topology"],
+        "properties": {
+            "placement": {"$ref": "../placement/placement.schema.json"},
+            "delegation_topology": {"$ref": "../topology/delegation-topology.schema.json"},
+            "runtime_capability_ref": {"$ref": "../capabilities/runtime-capability-ref.schema.json"},
+            "org_id": {"type": "string"},
+            "user_id": {"type": "string"},
+            "execution_context": {"type": "object"},
+            "skill_id": {"type": "string"},
+            "skill_release_id": {"type": ["string", "null"]},
+            "snapshot_hash": {"type": "string"},
+        },
+        "additionalProperties": True,
+        "allOf": [
+            {
+                "if": {
+                    "properties": {"delegation_topology": {"const": "runtime_delegated"}},
+                    "required": ["delegation_topology"],
+                },
+                "then": {"required": ["runtime_capability_ref"]},
+            }
+        ],
+    }
+
+
+def _skill_agent_placement_schema() -> dict[str, Any]:
+    return {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "https://nodeskclaw.example.com/contracts/skill-agent/v1.0.0/placement/placement.schema.json",
+        "title": "Placement",
+        "description": "Central/Edge/Hybrid resource placement; orthogonal to delegation_topology.",
+        "type": "object",
+        "properties": {
+            "role": {"type": "string", "enum": ["central", "edge", "hybrid"]},
+            "engine": {"type": "string", "enum": ["hermes", "connector"]},
+            "edge_node_id": {"type": ["string", "null"]},
+        },
+        "additionalProperties": True,
+    }
+
+
+def _skill_agent_topology_schema() -> dict[str, Any]:
+    return {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "https://nodeskclaw.example.com/contracts/skill-agent/v1.0.0/topology/delegation-topology.schema.json",
+        "title": "DelegationTopology",
+        "description": "Hermes runtime-internal delegation only. Not Platform Multi-Agent.",
+        "type": "string",
+        "enum": ["single_agent", "runtime_delegated"],
+    }
+
+
+def _skill_agent_capability_ref_schema() -> dict[str, Any]:
+    return {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "https://nodeskclaw.example.com/contracts/skill-agent/v1.0.0/capabilities/runtime-capability-ref.schema.json",
+        "title": "RuntimeCapabilityReference",
+        "type": "object",
+        "required": ["name", "version"],
+        "properties": {
+            "name": {"type": "string", "minLength": 1},
+            "version": {"type": "string", "minLength": 1},
+        },
+        "additionalProperties": False,
+    }
+
+
+def _skill_agent_openapi_yaml() -> str:
+    return (
+        "openapi: 3.1.0\n"
+        "info:\n"
+        "  title: SKILL-AGENT-CONTRACT\n"
+        "  version: 1.0.0\n"
+        "  description: Internal Backend-to-Agent execution contract. Not a Public consumer bundle.\n"
+        "paths:\n"
+        "  /internal/execution-snapshot:\n"
+        "    get:\n"
+        "      summary: ExecutionSnapshot shape frozen for Agent persist\n"
+        "      responses:\n"
+        '        "200":\n'
+        "          description: Internal snapshot\n"
+        "          content:\n"
+        "            application/json:\n"
+        "              schema:\n"
+        '                $ref: "./runs/execution-snapshot.schema.json"\n'
+    )
+
+
+def _skill_agent_typescript() -> str:
+    return (
+        'export type DelegationTopology = "single_agent" | "runtime_delegated";\n'
+        "\n"
+        'export type PlacementRole = "central" | "edge" | "hybrid";\n'
+        "\n"
+        'export type PlacementEngine = "hermes" | "connector";\n'
+        "\n"
+        "export interface Placement {\n"
+        "  role?: PlacementRole;\n"
+        "  engine?: PlacementEngine;\n"
+        "  edge_node_id?: string | null;\n"
+        "}\n"
+        "\n"
+        "export interface RuntimeCapabilityRef {\n"
+        "  name: string;\n"
+        "  version: string;\n"
+        "}\n"
+        "\n"
+        "export interface InternalExecutionSnapshot {\n"
+        "  placement: Placement;\n"
+        "  delegation_topology: DelegationTopology;\n"
+        "  runtime_capability_ref?: RuntimeCapabilityRef;\n"
+        "  org_id?: string;\n"
+        "  user_id?: string;\n"
+        "  execution_context?: Record<string, unknown>;\n"
+        "  skill_id?: string;\n"
+        "  skill_release_id?: string | null;\n"
+        "  snapshot_hash?: string;\n"
+        "  [key: string]: unknown;\n"
+        "}\n"
+    )
+
+
+def generate_skill_agent_contracts(*, version: str | None = None) -> None:
+    target_version = version or SKILL_AGENT_CONTRACT_VERSION
+    if target_version != SKILL_AGENT_CONTRACT_VERSION:
+        raise SystemExit(f"skill-agent family only supports version {SKILL_AGENT_CONTRACT_VERSION}")
+    root = SKILL_AGENT_CONTRACTS_HOME / f"v{target_version}"
+    if root.exists():
+        shutil.rmtree(root)
+    root.mkdir(parents=True)
+
+    _write_json_lf(root / "runs" / "execution-snapshot.schema.json", _skill_agent_execution_snapshot_schema())
+    _write_json_lf(root / "placement" / "placement.schema.json", _skill_agent_placement_schema())
+    _write_json_lf(root / "topology" / "delegation-topology.schema.json", _skill_agent_topology_schema())
+    _write_json_lf(
+        root / "capabilities" / "runtime-capability-ref.schema.json",
+        _skill_agent_capability_ref_schema(),
+    )
+    _write_text_lf(root / "openapi.yaml", _skill_agent_openapi_yaml())
+    _write_text_lf(root / "typescript" / "skill-agent-contract.d.ts", _skill_agent_typescript())
+    _write_text_lf(
+        root / "RELEASE.md",
+        "SKILL-AGENT-CONTRACT v1.0.0 is an Internal southbound bundle.\n"
+        "It is not a Public skill-run consumer surface.\n"
+        "Do not copy these files into contracts/skill-run SHA256SUMS.\n",
+    )
+    _write_json_lf(
+        root / "fixtures" / "execution-snapshot-single-agent-hybrid.json",
+        {
+            "org_id": "org_fixture_001",
+            "user_id": "user_fixture_001",
+            "skill_id": "skill_fixture",
+            "placement": {"role": "hybrid", "engine": "hermes"},
+            "delegation_topology": "single_agent",
+            "execution_context": {"context_version": 1},
+            "snapshot_hash": "a" * 64,
+        },
+    )
+    _write_json_lf(
+        root / "fixtures" / "execution-snapshot-runtime-delegated.json",
+        {
+            "org_id": "org_fixture_001",
+            "user_id": "user_fixture_001",
+            "skill_id": "skill_fixture",
+            "placement": {"role": "central", "engine": "hermes"},
+            "delegation_topology": "runtime_delegated",
+            "runtime_capability_ref": {"name": "hermes.runtime.delegate", "version": "1"},
+            "snapshot_hash": "b" * 64,
+        },
+    )
+    _write_json_lf(
+        root / "fixtures" / "invalid-platform-multi-agent.json",
+        {
+            "placement": {"role": "central", "engine": "hermes"},
+            "delegation_topology": "platform_multi_agent",
+        },
+    )
+
+    backend_commit = _git_head()
+    file_hashes: dict[str, str] = {}
+    for path in sorted(root.rglob("*")):
+        if not path.is_file() or path.name == "SHA256SUMS":
+            continue
+        relative = path.relative_to(root).as_posix()
+        file_hashes[relative] = _sha256_file(path)
+    manifest = {
+        "contractName": "SKILL-AGENT-CONTRACT",
+        "contractVersion": target_version,
+        "visibility": "internal",
+        "provider": "nodeskclaw-backend",
+        "consumer": "nodeskclaw-agent",
+        "backendCommit": backend_commit,
+        "tagName": SKILL_AGENT_TAG_NAME,
+        "tagTargetCommit": None,
+        "generatedAt": _skill_run_generated_at(),
+        "artifacts": {key: digest for key, digest in file_hashes.items() if key != "manifest.json"},
+        "capabilities": {
+            "delegationTopology": ["single_agent", "runtime_delegated"],
+            "platformMultiAgent": False,
+        },
+    }
+    _write_json_lf(root / "manifest.json", manifest)
+    file_hashes["manifest.json"] = _sha256_file(root / "manifest.json")
+    checksum_lines = [f"{digest}  {relative}" for relative, digest in sorted(file_hashes.items())]
+    _write_text_lf(root / "SHA256SUMS", "\n".join(checksum_lines) + "\n")
+    print(f"Generated SKILL-AGENT-CONTRACT at {root} (backendCommit={backend_commit})")
+
+
+def _validate_skill_agent_fixtures(root: Path) -> None:
+    import jsonschema
+
+    snapshot_schema = json.loads((root / "runs/execution-snapshot.schema.json").read_text(encoding="utf-8"))
+    snapshot_schema["properties"]["placement"] = json.loads(
+        (root / "placement/placement.schema.json").read_text(encoding="utf-8")
+    )
+    snapshot_schema["properties"]["delegation_topology"] = json.loads(
+        (root / "topology/delegation-topology.schema.json").read_text(encoding="utf-8")
+    )
+    snapshot_schema["properties"]["runtime_capability_ref"] = json.loads(
+        (root / "capabilities/runtime-capability-ref.schema.json").read_text(encoding="utf-8")
+    )
+    validator = jsonschema.Draft202012Validator(snapshot_schema)
+    for rel in (
+        "fixtures/execution-snapshot-single-agent-hybrid.json",
+        "fixtures/execution-snapshot-runtime-delegated.json",
+    ):
+        validator.validate(json.loads((root / rel).read_text(encoding="utf-8")))
+    invalid = json.loads((root / "fixtures/invalid-platform-multi-agent.json").read_text(encoding="utf-8"))
+    errors = list(validator.iter_errors(invalid))
+    if not errors:
+        raise SystemExit("invalid-platform-multi-agent.json unexpectedly passed schema")
+
+
+def _validate_skill_agent_release(manifest: dict[str, Any]) -> None:
+    implementation_commit = str(manifest.get("backendCommit") or "")
+    tag_name = str(manifest.get("tagName") or "")
+    if not implementation_commit or tag_name != SKILL_AGENT_TAG_NAME:
+        raise SystemExit(
+            "skill-agent release manifest requires backendCommit and tagName skill-agent-contract-v1.0.0"
+        )
+    repository = BACKEND_ROOT.parent
+    ancestor_check = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", implementation_commit, "HEAD"],
+        cwd=repository,
+        capture_output=True,
+        text=True,
+    )
+    if ancestor_check.returncode != 0:
+        raise SystemExit("skill-agent manifest.backendCommit must be an ancestor of the release commit")
+    tag_type = subprocess.run(
+        ["git", "cat-file", "-t", f"refs/tags/{tag_name}"],
+        cwd=repository,
+        capture_output=True,
+        text=True,
+    )
+    if tag_type.returncode != 0 or tag_type.stdout.strip() != "tag":
+        raise SystemExit(f"skill-agent contract tag '{tag_name}' must be an annotated tag")
+    peeled_tag = subprocess.run(
+        ["git", "rev-parse", f"refs/tags/{tag_name}^{{}}"],
+        cwd=repository,
+        capture_output=True,
+        text=True,
+    )
+    if peeled_tag.returncode != 0:
+        raise SystemExit(f"skill-agent contract tag '{tag_name}' could not be resolved")
+    contract_prefix = f"nodeskclaw-backend/contracts/skill-agent/v{SKILL_AGENT_CONTRACT_VERSION}/"
+    listed = subprocess.run(
+        ["git", "ls-tree", "-r", "--name-only", peeled_tag.stdout.strip()],
+        cwd=repository,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    if not any(line.startswith(contract_prefix) for line in listed.stdout.splitlines()):
+        raise SystemExit("skill-agent release tag must include Internal contract bundle")
+
+
+def _check_skill_agent_contracts(*, release: bool, version: str) -> None:
+    if version != SKILL_AGENT_CONTRACT_VERSION:
+        raise SystemExit(f"skill-agent family only supports version {SKILL_AGENT_CONTRACT_VERSION}")
+    root = SKILL_AGENT_CONTRACTS_HOME / f"v{version}"
+    if not root.exists():
+        raise SystemExit(f"Skill-agent contract directory missing: {root}")
+    _validate_skill_run_checksums_exact(root)
+    _validate_skill_agent_internal_boundary(root)
+    _validate_skill_agent_fixtures(root)
+    typescript = (root / "typescript" / "skill-agent-contract.d.ts").read_text(encoding="utf-8")
+    if "single_agent" not in typescript or "runtime_delegated" not in typescript:
+        raise SystemExit("skill-agent TypeScript types missing topology enum")
+    if "PlacementRole" not in typescript:
+        raise SystemExit("skill-agent TypeScript types missing placement orthogonality")
+    if release:
+        _validate_skill_agent_release(_read_manifest(root))
+    print(f"SKILL-AGENT-CONTRACT v{version} check passed")
 
 
 def _validate_skill_run_v12_event_fixtures(root: Path) -> None:
@@ -2370,6 +2712,229 @@ def _generate_skill_run_v140_public_contract() -> None:
     print(f"Generated {SKILL_RUN_CONTRACT_NAME} at {root} (backendCommit={backend_commit})")
 
 
+def _validate_skill_run_v150_streaming_artifacts(root: Path) -> None:
+    import jsonschema
+
+    required = (
+        "events/run-event.schema.json",
+        "fixtures/run-event-assistant-delta.json",
+        "fixtures/run-event-assistant-message.json",
+        "fixtures/sse-assistant-delta-replay.json",
+        "RELEASE.md",
+        "manifest.json",
+        "SHA256SUMS",
+    )
+    for relative in required:
+        if not (root / relative).exists():
+            raise SystemExit(f"Missing skill-run v1.5.0 artifact: {relative}")
+
+    schema = json.loads((root / "events/run-event.schema.json").read_text(encoding="utf-8"))
+    delta = json.loads((root / "fixtures/run-event-assistant-delta.json").read_text(encoding="utf-8"))
+    message = json.loads((root / "fixtures/run-event-assistant-message.json").read_text(encoding="utf-8"))
+    replay = json.loads((root / "fixtures/sse-assistant-delta-replay.json").read_text(encoding="utf-8"))
+    jsonschema.validate(delta, schema)
+    jsonschema.validate(message, schema)
+    if delta.get("event_type") != "assistant.delta":
+        raise SystemExit("v1.5.0 delta fixture must use assistant.delta")
+    payload = delta.get("payload") or {}
+    if set(payload) != {"message_id", "delta_seq", "delta"}:
+        raise SystemExit("v1.5.0 delta fixture payload must only include message_id/delta_seq/delta")
+    if message.get("event_type") != "assistant.message":
+        raise SystemExit("v1.5.0 snapshot fixture must use assistant.message")
+    message_payload = message.get("payload") or {}
+    if set(message_payload) != {"message_id", "text"}:
+        raise SystemExit("v1.5.0 snapshot fixture payload must only include message_id/text")
+    if message_payload.get("message_id") != payload.get("message_id"):
+        raise SystemExit("v1.5.0 snapshot message_id must match delta message_id")
+    events = replay.get("events") or []
+    if len(events) < 2:
+        raise SystemExit("v1.5.0 sse delta replay fixture must include delta and snapshot")
+    if events[0].get("event_type") != "assistant.delta" or events[-1].get("event_type") != "assistant.message":
+        raise SystemExit("v1.5.0 sse delta replay must end with assistant.message snapshot")
+    if len({event.get("event_id") for event in events}) != len(events):
+        raise SystemExit("v1.5.0 sse delta replay fixture contains duplicate event identities")
+
+    manifest = _read_manifest(root)
+    capabilities = manifest.get("capabilities") or {}
+    if capabilities.get("streamingDelta") != "supported":
+        raise SystemExit("v1.5.0 manifest must mark streamingDelta=supported")
+    if capabilities.get("assistantMessageSnapshot") != "supported":
+        raise SystemExit("v1.5.0 manifest must mark assistantMessageSnapshot=supported")
+    if capabilities.get("attachments") != "supported" or capabilities.get("approvalDecision") != "supported":
+        raise SystemExit("v1.5.0 manifest must keep Approval and Attachment supported")
+    if manifest.get("compatibility", {}).get("wireBreaking") is not False:
+        raise SystemExit("v1.5.0 manifest wireBreaking must be false")
+    if manifest.get("tagName") != "skill-run-contract-v1.5.0":
+        raise SystemExit("v1.5.0 manifest tagName must be skill-run-contract-v1.5.0")
+    release = (root / "RELEASE.md").read_text(encoding="utf-8")
+    compact = release.replace(" ", "")
+    if "streamingDelta=supported" not in compact:
+        raise SystemExit("v1.5.0 RELEASE.md must declare streamingDelta=supported")
+    if "assistantMessageSnapshot=supported" not in compact:
+        raise SystemExit("v1.5.0 RELEASE.md must declare assistantMessageSnapshot=supported")
+
+
+def _finalize_skill_run_v150_bundle(root: Path, *, backend_commit: str, release_commit: str | None) -> None:
+    from app.schemas.skill_run.constants import (
+        SKILL_RUN_CAPABILITIES,
+        SKILL_RUN_CONTRACT_NAME,
+        SKILL_RUN_CONTRACT_VERSION_V150,
+        SKILL_RUN_TAG_NAME_V150,
+    )
+
+    payload_hashes = {
+        str(path.relative_to(root)).replace("\\", "/"): _sha256_file(path)
+        for path in _public_artifact_files(root)
+    }
+    manifest = {
+        "contractName": SKILL_RUN_CONTRACT_NAME,
+        "contractVersion": SKILL_RUN_CONTRACT_VERSION_V150,
+        "bundleFormatVersion": "1",
+        "provider": "nodeskclaw-backend",
+        "consumer": "external-agent-clients",
+        "primaryConsumer": "smc-copilot/apps/work",
+        "backendCommit": backend_commit,
+        "releaseCommit": release_commit or backend_commit,
+        "tagName": SKILL_RUN_TAG_NAME_V150,
+        "generatedAt": _skill_run_generated_at(),
+        "compatibility": {
+            "supersedesForWork": ["1.0.0", "1.1.0", "1.2.0", "1.2.1", "1.3.0", "1.4.0"],
+            "wireBreaking": False,
+        },
+        "artifacts": payload_hashes,
+        "capabilities": {
+            **SKILL_RUN_CAPABILITIES,
+            "catalogV11": True,
+            "semanticRunEvents": True,
+            "approvalDecision": "supported",
+            "approval": "supported",
+            "attachments": "supported",
+            "approvalExpiry": "unsupported",
+            "streamingDelta": "supported",
+            "assistantMessageSnapshot": "supported",
+        },
+    }
+    _write_json_lf(root / "manifest.json", manifest)
+    bundle_hashes = {
+        str(path.relative_to(root)).replace("\\", "/"): _sha256_file(path)
+        for path in _public_artifact_files(root)
+    }
+    bundle_hashes["manifest.json"] = _sha256_file(root / "manifest.json")
+    lines = [f"{digest}  {relative}" for relative, digest in sorted(bundle_hashes.items())]
+    _write_text_lf(root / "SHA256SUMS", "\n".join(lines) + "\n")
+    _validate_skill_run_checksums_exact(root)
+    _validate_skill_run_public_boundary(root)
+    _validate_skill_run_fixtures(root)
+    _validate_skill_run_v12_event_fixtures(root)
+    _validate_skill_run_v12_negative_fixtures(root)
+    _validate_skill_run_v11_negative_fixtures(root)
+    _validate_skill_run_v150_streaming_artifacts(root)
+
+
+# @lat: [[architecture/skill-agent#RM-19 Public Streaming Delta]]
+def _generate_skill_run_v150_public_contract() -> None:
+    import os
+
+    from app.schemas.skill_run.constants import (
+        SKILL_RUN_CONTRACT_NAME,
+        SKILL_RUN_CONTRACT_VERSION_V140,
+        SKILL_RUN_CONTRACT_VERSION_V150,
+        SKILL_RUN_TAG_NAME_V150,
+    )
+    from app.schemas.skill_run.mcp_jsonrpc import RUN_EVENT_V15_MODELS
+
+    source = SKILL_RUN_CONTRACTS_HOME / f"v{SKILL_RUN_CONTRACT_VERSION_V140}"
+    root = SKILL_RUN_CONTRACTS_HOME / f"v{SKILL_RUN_CONTRACT_VERSION_V150}"
+    if not source.exists():
+        raise SystemExit(f"v1.5.0 generate requires frozen v1.4.0 bundle at {source}")
+    _validate_skill_run_checksums_exact(source)
+    if root.exists():
+        shutil.rmtree(root)
+    shutil.copytree(source, root)
+    (root / "SHA256SUMS").unlink(missing_ok=True)
+    (root / "manifest.json").unlink(missing_ok=True)
+
+    _write_json_lf(root / "events/run-event.schema.json", _run_event_v12_union_schema(RUN_EVENT_V15_MODELS))
+    _write_json_lf(
+        root / "fixtures/run-event-assistant-delta.json",
+        {
+            "event_id": "run_demo:3",
+            "run_id": "run_demo",
+            "event_type": "assistant.delta",
+            "event_seq": 3,
+            "source": "agent",
+            "source_event_id": "hermes:att:1",
+            "timestamp": "2026-09-09T00:00:03Z",
+            "payload": {
+                "message_id": "msg_opaque_001",
+                "delta_seq": 1,
+                "delta": "正在分析",
+            },
+        },
+    )
+    _write_json_lf(
+        root / "fixtures/run-event-assistant-message.json",
+        {
+            "event_id": "run_demo:4",
+            "run_id": "run_demo",
+            "event_type": "assistant.message",
+            "event_seq": 4,
+            "source": "agent",
+            "source_event_id": "hermes:att:2",
+            "timestamp": "2026-09-09T00:00:04Z",
+            "payload": {
+                "message_id": "msg_opaque_001",
+                "text": "正在分析完整结果",
+            },
+        },
+    )
+    _write_json_lf(
+        root / "fixtures/sse-assistant-delta-replay.json",
+        {
+            "last_event_id": "run_demo:2",
+            "events": [
+                {
+                    "event_id": "run_demo:3",
+                    "run_id": "run_demo",
+                    "event_type": "assistant.delta",
+                    "event_seq": 3,
+                    "source": "agent",
+                    "timestamp": "2026-09-09T00:00:03Z",
+                    "payload": {
+                        "message_id": "msg_opaque_001",
+                        "delta_seq": 1,
+                        "delta": "正在分析",
+                    },
+                },
+                {
+                    "event_id": "run_demo:4",
+                    "run_id": "run_demo",
+                    "event_type": "assistant.message",
+                    "event_seq": 4,
+                    "source": "agent",
+                    "timestamp": "2026-09-09T00:00:04Z",
+                    "payload": {
+                        "message_id": "msg_opaque_001",
+                        "text": "正在分析完整结果",
+                    },
+                },
+            ],
+        },
+    )
+    _write_text_lf(
+        root / "RELEASE.md",
+        f"# {SKILL_RUN_CONTRACT_NAME} v{SKILL_RUN_CONTRACT_VERSION_V150}\n\n"
+        "Cumulative Public Skill Run contract. Adds durable assistant.delta and segment-end assistant.message snapshot on frozen v1.4.0.\n"
+        "streamingDelta=supported; assistantMessageSnapshot=supported; approvalDecision=supported; approval=supported; attachments=supported.\n"
+        "wireBreaking=false. Do not rewrite frozen v1.2.1–v1.4.0. Tag name is "
+        f"{SKILL_RUN_TAG_NAME_V150}.\n",
+    )
+    backend_commit = os.environ.get("CONTRACT_BACKEND_COMMIT") or _git_head()
+    release_commit = os.environ.get("CONTRACT_RELEASE_COMMIT") or backend_commit
+    _finalize_skill_run_v150_bundle(root, backend_commit=backend_commit, release_commit=release_commit)
+    print(f"Generated {SKILL_RUN_CONTRACT_NAME} at {root} (backendCommit={backend_commit})")
+
+
 def generate_skill_run_contracts(version: str | None = None) -> None:
     from app.api.internal_edge import (
         EdgeActualReportBody,
@@ -2386,6 +2951,7 @@ def generate_skill_run_contracts(version: str | None = None) -> None:
         SKILL_RUN_CONTRACT_VERSION_V121,
         SKILL_RUN_CONTRACT_VERSION_V130,
         SKILL_RUN_CONTRACT_VERSION_V140,
+        SKILL_RUN_CONTRACT_VERSION_V150,
         SKILL_RUN_TAG_NAME,
     )
     from app.schemas.skill_run.mcp_jsonrpc import (
@@ -2412,6 +2978,9 @@ def generate_skill_run_contracts(version: str | None = None) -> None:
         return
     if version == SKILL_RUN_CONTRACT_VERSION_V140:
         _generate_skill_run_v140_public_contract()
+        return
+    if version == SKILL_RUN_CONTRACT_VERSION_V150:
+        _generate_skill_run_v150_public_contract()
         return
 
     _generate_skill_run_v10_public_contract()
@@ -2926,21 +3495,21 @@ def main() -> None:
     generate_parser = sub.add_parser("generate", help="Generate contract artifacts")
     generate_parser.add_argument(
         "--family",
-        choices=("work-expert", "skill-run", "all"),
+        choices=("work-expert", "skill-run", "skill-agent", "all"),
         default="work-expert",
         help="Contract family to generate",
     )
     generate_parser.add_argument(
         "--version",
-        choices=("1.0.0", "1.1.0", "1.2.0", "1.2.1", "1.3.0", "1.4.0"),
+        choices=("1.0.0", "1.1.0", "1.2.0", "1.2.1", "1.3.0", "1.4.0", "1.5.0"),
         help="Generate only the requested skill-run contract version",
     )
     check_parser = sub.add_parser("check", help="Validate committed contract artifacts")
     check_parser.add_argument("--release", action="store_true")
-    check_parser.add_argument("--family", choices=("work-expert", "skill-run", "all"), default="all")
+    check_parser.add_argument("--family", choices=("work-expert", "skill-run", "skill-agent", "all"), default="all")
     check_parser.add_argument(
         "--version",
-        choices=("1.0.0", "1.1.0", "1.2.0", "1.2.1", "1.3.0", "1.4.0"),
+        choices=("1.0.0", "1.1.0", "1.2.0", "1.2.1", "1.3.0", "1.4.0", "1.5.0"),
         help="Validate only the requested skill-run contract version",
     )
     args = parser.parse_args()
@@ -2951,6 +3520,8 @@ def main() -> None:
             generate_contracts()
         if args.family in ("skill-run", "all"):
             generate_skill_run_contracts(version=args.version)
+        if args.family in ("skill-agent", "all"):
+            generate_skill_agent_contracts(version=args.version if args.family == "skill-agent" else None)
     else:
         check_contracts(
             release=args.release,

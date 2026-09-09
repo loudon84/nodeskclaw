@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 
 SEMANTIC_EVENT_TYPES = frozenset(
     {
+        "assistant.delta",
         "assistant.message",
         "reasoning.summary",
         "tool.call",
@@ -46,8 +47,12 @@ CONTROL_EVENT_TYPES_KEEP = frozenset(
 
 TOOL_CALL_STATUSES = frozenset({"started", "completed", "failed"})
 
+MAX_ASSISTANT_DELTA_UTF8_BYTES = 64 * 1024
+MAX_ASSISTANT_SNAPSHOT_UTF8_BYTES = 1 * 1024 * 1024
+
 _SEMANTIC_PAYLOAD_FIELDS = {
-    "assistant.message": frozenset({"text"}),
+    "assistant.delta": frozenset({"message_id", "delta_seq", "delta"}),
+    "assistant.message": frozenset({"message_id", "text"}),
     "reasoning.summary": frozenset({"summary"}),
     "tool.call": frozenset({"tool_name", "call_id", "status"}),
     "clarify.requested": frozenset({"question", "options"}),
@@ -94,10 +99,29 @@ def validate_semantic_event_payload(event_type: str, payload: dict[str, Any] | N
     if allowed_fields is not None and set(data).difference(allowed_fields):
         return "unexpected_semantic_payload_field"
 
+    if event_type == "assistant.delta":
+        message_id = data.get("message_id")
+        delta_seq = data.get("delta_seq")
+        delta = data.get("delta")
+        if not isinstance(message_id, str) or not message_id:
+            return "missing_assistant_message_id"
+        if not isinstance(delta_seq, int) or isinstance(delta_seq, bool) or delta_seq < 1:
+            return "invalid_assistant_delta_seq"
+        if not isinstance(delta, str) or not delta:
+            return "missing_assistant_delta"
+        if len(delta.encode("utf-8")) > MAX_ASSISTANT_DELTA_UTF8_BYTES:
+            return "assistant_delta_too_large"
+        return None
+
     if event_type == "assistant.message":
+        message_id = data.get("message_id")
         text = data.get("text")
+        if not isinstance(message_id, str) or not message_id:
+            return "missing_assistant_message_id"
         if not isinstance(text, str) or not text:
             return "missing_assistant_text"
+        if len(text.encode("utf-8")) > MAX_ASSISTANT_SNAPSHOT_UTF8_BYTES:
+            return "assistant_snapshot_too_large"
         return None
 
     if event_type == "reasoning.summary":
@@ -181,6 +205,8 @@ class CreateRunRequest(BaseModel):
     run_session_id: str | None = None
     execution_context: dict[str, Any] | None = None
     context_version: int | None = None
+    delegation_topology: str | None = None
+    runtime_capability_ref: dict[str, Any] | None = None
 
 
 class CreateRunResponse(BaseModel):

@@ -8,9 +8,24 @@
 
 本文件以已提交源码和可复现证据描述当前事实；未提交候选实现不能单独把能力提升为完成态。
 
-- **已实现**：唯一 Production Owner、主要行为和聚焦自动化验证均已存在；不代表已经取得多 Pod 或正式发布证据。
-- **部分实现**：已有可复用实现，但接口合同、真实副作用、跨组件链路或生产验收证据至少一项尚未闭环。
+- **已实现**：唯一 Production Owner、主要行为和聚焦自动化验证均已存在。正式分布式 Production Evidence 待 RM-04 时仍写「已实现」，并标注 Pending RM-04。
+- **部分实现**：只表示 Production Owner 的行为、接口合同或跨组件链路存在真实代码缺口。不得用本标签表示「仅缺 RM-04 正式分布式验收」。
 - **目标状态**：架构要求已经冻结，但当前 Production Owner 尚未提供完整实现或阻断证据。
+
+若功能代码与合同已完整，仅缺 RM-04 分布式正式验收：必须写「已实现；Production Evidence Pending RM-04」。Docker 不可用或未绑定 Acceptance Environment 不等价于 Product Failure。
+
+### Public Skill Run Contract Status
+
+本仓 Provider 最新员工合同是 `SKILL-RUN-CONTRACT v1.5.0`；仓外 Work consumer pin 不得从本文件推断。
+
+Released cumulative capabilities：
+
+- v1.2.1：Public Skill Run baseline
+- v1.3.0：Approval Decision（RM-17 `DONE`）
+- v1.4.0：Attachment Input（RM-18 `DONE`）
+- v1.5.0：Streaming Delta + Assistant Snapshot（RM-19 `DONE`）
+
+Consumer pin 在仓外 `smc-copilot` consumer-lock，本仓 LAT 不推断具体版本。
 
 ## Configuration
 
@@ -35,13 +50,13 @@ Hermes 执行前必须探测 snapshot 或 lease 中的 `gateway_url`。超过 `S
 
 ## Role Modes
 
-Agent 的 Central（中心执行）与 Edge（边缘执行）角色已经落地；Compose 验收拓扑已定义，实跑证据仍待 Docker 环境。
+Agent 的 Central（中心执行）与 Edge（边缘执行）角色已经落地；Compose 验收拓扑已实现。正式分布式 Production Evidence 待 RM-04 解冻后执行。
 
 - **已实现**：`SKILL_AGENT_ROLE` 选择 Central 或 Edge；Central 由 [[nodeskclaw-agent/app/services/worker.py#RunWorker]] 认领 Run，并通过 [[nodeskclaw-agent/app/services/engine_port.py#execute_engine]] 分发执行。
 - **已实现**：[[nodeskclaw-agent/app/main.py#lifespan]] 在 `SKILL_AGENT_WORKER_ENABLED` 时按角色构造 Worker：Central 必须导入并实例化 [[nodeskclaw-agent/app/services/worker.py#RunWorker]]，Edge 实例化 [[nodeskclaw-agent/app/services/edge_worker.py#EdgeWorker]]。缺导入会使 uvicorn 在 application startup 以 `NameError` 退出，4580 无法 listen。健康探针测试关闭 Worker 不能替代此启动回归。
 - **已实现**：Edge 由 [[nodeskclaw-agent/app/services/edge_worker.py#EdgeWorker]] 出站访问 Backend，轮询心跳、EdgeJob 和 Desired Installation，无需开放生产入站控制端口。
 - **已实现**：[[nodeskclaw-agent/app/main.py#health_ready]] 比对唯一 Alembic head（[[nodeskclaw-agent/app/services/readiness.py#expected_alembic_heads]]）；Central 执行 StoragePort `probe_isolation`，Edge 只检查 Artifact 目录可达；Central 要求首次成功 Worker loop，Edge 要求首次成功 heartbeat；缺失或过期返回 503 与稳定 `codes`。
-- **部分实现**：`docker-compose.acceptance.yml` 已定义双 Central、单 Edge、PostgreSQL、MinIO 与 Native Hermes test endpoint，见 [[architecture/skill-agent#Production Readiness And Security#Native Acceptance Fixture]]；完整实跑指纹与 Newman 证据仍待 Docker 环境执行。
+- **已实现；Production Evidence Pending RM-04**：`docker-compose.acceptance.yml` 已定义双 Central、单 Edge、PostgreSQL、MinIO 与 Native Hermes test endpoint，见 [[architecture/skill-agent#Production Readiness And Security#Native Acceptance Fixture]]。正式分布式实跑指纹与 Newman 两连跑待 RM-04 解冻后执行；Docker 不可用 ≠ Product Failure。
 
 ### Central Lifespan Constructs RunWorker
 
@@ -55,22 +70,22 @@ Central 且 Worker 开启时，进程 lifespan 必须能构造 `RunWorker` 并�
 
 ## Hybrid Orchestration And Terminal Aggregator
 
-Hybrid 编排的持久化 Step 与唯一终态聚合器已经落地，跨 Edge 与 required Artifact 的生产链路仍缺正式证明。
+Hybrid 编排的持久化 Step 与唯一终态聚合器已经落地。跨 Central / MinIO 的正式分布式实跑证据待 RM-04。
 
 - **已实现**：[[nodeskclaw-agent/app/services/run_service.py#persist_step_plan]] 将 Step Plan 持久化到 `run_steps`，保存 Owner、依赖、必选状态、required Artifact、代次和 EdgeJob 关联。
 - **已实现**：[[nodeskclaw-agent/app/services/run_service.py#aggregate_run_terminal]] 统一裁决 `COMPLETED`、`FAILED` 和 `CANCELLED`；终态事件经 [[nodeskclaw-agent/app/services/run_service.py#_append_terminal_event]] 写入，CAS 成功后事件被拒不回滚状态；[[nodeskclaw-agent/app/services/run_service.py#record_event_rejection]] 审计拒绝非法、过期或重复事件。
-- **部分实现**：required Artifact 的 `PERSISTED` 门禁已有状态机和单元测试，且 Edge Artifact 上传路由与 Backend Relay 合同已对齐；Harness 场景 `dual_central_minio_artifact` 经内部 API 做 A 写 B 读 SHA-256 对照，见 [[architecture/skill-agent#Production Readiness And Security#Native Acceptance Fixture#Harness Oracles And Fail-Closed Report]]。完整实跑证据仍待 Docker 环境执行。
-- **目标状态**：在真实 PostgreSQL、多 Worker 和 Edge 故障条件下证明终态只写入一次，旧 Attempt、旧 Run Generation 和旧 Delivery Generation 均不能推进终态。
+- **已实现**：required Artifact 的 `PERSISTED` 门禁已有状态机和单元测试，且 Edge Artifact 上传路由与 Backend Relay 合同已对齐；Harness 场景 `dual_central_minio_artifact` 经内部 API 做 A 写 B 读 SHA-256 对照，见 [[architecture/skill-agent#Production Readiness And Security#Native Acceptance Fixture#Harness Oracles And Fail-Closed Report]]。
+- **已实现；Production Evidence Pending RM-04**：跨 Central / MinIO 的正式实跑证据尚未归档。终态只写入一次、旧 Attempt / Run Generation / Delivery Generation 不能推进终态，待 RM-04 解冻后取证。
 
 ## Run Lifecycle And Fencing
 
-Run 生命周期的幂等、CAS 状态迁移、Attempt 代次和取消审批分离已经实现，真实双 Worker 接管证据尚未形成。
+Run 生命周期的幂等、CAS 状态迁移、Attempt 代次和取消审批分离已经实现。真实双 Central 故障接管的正式报告待 RM-04。
 
 - **已实现**：[[nodeskclaw-agent/app/services/run_service.py#create_run]] 以幂等键和快照摘要收敛重复创建；认领时创建 Attempt 并递增 Generation。
 - **已实现**：[[nodeskclaw-agent/app/services/run_service.py#set_status]] 与 [[nodeskclaw-agent/app/services/run_service.py#append_event]] 校验 Run、组织、Attempt 和 Generation，并通过原子事件序列及 `source_event_id` 去重阻止迟到写入。终态 Run 拒绝新事件，因此聚合器与 Worker 失败落盘必须先 CAS 到 `FAILED`，事件写入失败不得把状态打回可认领。
 - **已实现**：取消经过 `CANCELLING` 中间态；绑定等待审批同样 `CANCELLING` 后走 Hermes `/stop`，再 [[nodeskclaw-agent/app/services/hermes_engine.py#inspect_runtime_terminal]]，`stop_404` 或合同终态则落到 `CANCELLED`/`FAILED`，不得以 `CANCELLING` 作为出口，见 [[architecture/skill-agent#RM-16 Provider Conformance Grounding]]。Resume 不处理 `WAITING_APPROVAL`；[[nodeskclaw-agent/app/services/run_service.py#approve_run]] 有 Binding 时回写 `/approval`（不得 `QUEUED`），无 Binding 时 approve 才允许 create-time `QUEUED`，deny 记 `FAILED`。
-- **部分实现**：租约续期、过期恢复和 Fencing 已有实现与 Mock 测试；Harness 会 kill Central A，并用旧 Attempt 迟到 ingest 证明拒绝，见 [[architecture/skill-agent#Production Readiness And Security#Native Acceptance Fixture#Harness Oracles And Fail-Closed Report]]。真实 PostgreSQL 双 Central 崩溃接管证据仍待 Docker 实跑。
-- **目标状态**：故障报告证明最多一个有效 Attempt、终态不回退、旧代事件和 Artifact 无副作用地被拒绝。
+- **已实现**：租约续期、过期恢复和 Fencing 已有实现与 Mock 测试；Harness `kill_central_a` 要求后继 Attempt 不同、迟到 ingest 被拒、且该 Run 恰好一个可查询终态，见 [[architecture/skill-agent#Production Readiness And Security#Native Acceptance Fixture#Harness Oracles And Fail-Closed Report]]。
+- **已实现；Production Evidence Pending RM-04**：真实 PostgreSQL 双 Central 崩溃接管正式报告未执行。最多一个有效 Attempt、终态不回退、旧代事件和 Artifact 无副作用，待 RM-04 解冻后取证。
 
 ## Formal Run Session And Execute-Time Revalidation
 
@@ -93,24 +108,18 @@ Installation 的 Desired/Actual Generation 合同已实现，Edge 通过 Backend
 - **已实现**：[[nodeskclaw-agent/app/services/edge_worker.py#EdgeWorker#_reconcile_desired_installations]] 无 bundle 或安装失败时同代上报 `error`；成功路径经 [[nodeskclaw-agent/app/services/edge_worker.py#EdgeWorker#_download_installation_bundle]] 下载真实 ZIP 后由 [[nodeskclaw-agent/app/services/edge_skill_installer.py#EdgeSkillInstaller#install]] 强制 `zip_bytes`、校验 size/sha256，拒绝 zip-slip/符号链接/重复条目，staging 验证后 `os.replace` 并写 `current.json` 指针（不用符号链接）；失败保留旧 Current；卸载由 [[nodeskclaw-agent/app/services/edge_skill_installer.py#EdgeSkillInstaller#uninstall]] 限定托管根。
 - **已实现**：[[nodeskclaw-backend/app/api/internal_edge.py#report_installation_actual]] 接受同代 Actual 并按状态分支：对齐或持久化错误但不推进代次。
 - **已实现**：同代 `ready` / `uninstalled` / `removed` 才对齐 `actual_generation`；同代 `error` / `failed` 由 Backend 接受并持久化 `error_message` 但不推进代次，Desired 保持未对齐以便重试。
+- **已实现**：Harness `bundle_lifecycle` 经既有 JWT `create` / `sync` / `delete` 观察安装、摘要失败保持旧 `actual_generation`、升级与卸载，禁止只认 GET installations 200，见 [[architecture/skill-agent#Production Readiness And Security#Native Acceptance Fixture#Harness Oracles And Fail-Closed Report]]。
+- **已实现；Production Evidence Pending RM-04**：Compose bundle lifecycle 正式报告待 RM-04 解冻后执行。
 
 ## Hermes Engine Adapter
 
-短期凭证租约已经实现；生产南向已切到 Native Run API。Native 事件经 Normalizer 与 Coalescer 进入 Agent Event SoT；流式 `assistant.message` 进 coalescer，全文快照去重。`subagent.*` 排空为最小内部事件。ChatCompletion parser 未恢复。
+短期凭证租约已经实现；生产南向已切到 Native Run API。Native 事件经 Normalizer 与 Coalescer 进入 Agent Event SoT；受控 flush 产出 durable `assistant.delta`，段关闭产出同 `message_id` 的 `assistant.message` snapshot。`subagent.*` 排空为最小内部事件。ChatCompletion parser 未恢复。
 
 - **已实现**：[[nodeskclaw-agent/app/services/hermes_engine.py#execute_hermes_run]] 先 `GET /v1/capabilities`（地板 [[nodeskclaw-agent/app/services/hermes_engine.py#HERMES_VERSION_FLOOR]] `v2026.8.31`，必选 [[nodeskclaw-agent/app/services/hermes_engine.py#REQUIRED_FEATURES]]），再 `POST /v1/runs`（[[nodeskclaw-agent/app/services/hermes_engine.py#build_native_run_payload]]，无 `messages`，`Idempotency-Key` 为 `{run_id}:{attempt_id}:{generation}`）。拿到 `runtime_run_id` 后立刻 `GET /events`（Hermes 无订阅者不入队），立刻 `aiter_lines`，再 persist Binding 与 `RUNTIME_RUNNING` progress，随后读 SSE 行；SSE 仍打开时也按 GET status 侦测 `waiting_for_approval`，驻留当前 Attempt，进度 `phase=WAITING_APPROVAL`，缺 SSE `approval.request` 时从 GET 合成 `approval.requested`；不重订 `/events`；cancel 走 `/stop`；批准走 [[nodeskclaw-agent/app/services/hermes_engine.py#respond_runtime_approval]]。控制面 generation 经 [[nodeskclaw-agent/app/services/hermes_engine.py#control_generation]] 在 `run.generation=0` 时回落到 Binding；`/approval` `/stop` GET reconcile 经 [[nodeskclaw-agent/app/services/hermes_engine.py#runtime_control_headers]] 带租约 Bearer。低版本 `RUNTIME_VERSION_UNSUPPORTED`，缺 feature `RUNTIME_CAPABILITY_MISSING`。实现来源 `59ebfb6683286dfadd9dad5586adb8feefece148`。
 - **已实现**：Hermes Native SSE 可能把类型放在 `event:` 行、把 payload 放在无 `type` / `event_type` / `event` 的 `data:` JSON 里。[[nodeskclaw-agent/app/services/hermes_engine.py#_attach_sse_event_type]] 在 ingest 前把该名字写入 chunk，因此 `event: message.delta` 与 `event: subagent.start` 都能进入 Normalizer。打开 `/events` 后立刻开始 `aiter_lines`，再 persist Binding。空闲 GET 用 `asyncio.shield` 保住当前 SSE 读任务，禁止 `wait_for` 超时把 `aiter_lines` 取消掉。0.1s 空闲 tick 可调用 [[nodeskclaw-agent/app/services/native_event_normalizer.py#NativeEventNormalizer#flush_due_to_latency]]，仅当缓冲已满 1000ms 才落库；不得按字数或 `\n\n` 切开。GET status 到终态时不得立刻弃流，须按 [[nodeskclaw-agent/app/services/hermes_engine.py#STREAM_DRAIN_TIMEOUT_SECONDS]] 继续排空 SSE，才能拿到 `tool.*` / `subagent.*`；`waiting_for_approval` 仍立即驻留。终态 GET `/v1/runs/{id}` 经 [[nodeskclaw-agent/app/services/hermes_engine.py#_status_output_text]] 读取 `output` / `final_response`（含嵌套 `data`）；[[nodeskclaw-agent/app/services/hermes_engine.py#_events_after_status_terminal]] 仅在本轮没有 `assistant.message` 时经 [[nodeskclaw-agent/app/services/native_event_normalizer.py#NativeEventNormalizer#emit_assistant_snapshot]] 单条回填，禁止 `coalescer.push`。流上已有助手文本则丢弃 GET 文本。`subagent.*` 仍只来自真实 SSE，不得用 GET output 伪造 PC-07。回归：[[nodeskclaw-agent/tests/test_hermes_engine.py#test_execute_hermes_ingests_sse_event_line_message_delta]]、[[nodeskclaw-agent/tests/test_hermes_engine.py#test_execute_hermes_backfills_assistant_message_from_status_output]]、[[nodeskclaw-agent/tests/test_hermes_engine.py#test_execute_hermes_does_not_duplicate_status_output_when_stream_has_text]]、[[nodeskclaw-agent/tests/test_hermes_engine.py#test_execute_hermes_coalesces_streaming_assistant_messages]]、[[nodeskclaw-agent/tests/test_hermes_engine.py#test_execute_hermes_drops_duplicate_assistant_snapshot]]、[[nodeskclaw-agent/tests/test_hermes_engine.py#test_execute_hermes_ingests_sse_event_line_subagent]]、[[nodeskclaw-agent/tests/test_hermes_engine.py#test_execute_hermes_drains_sse_after_status_completed]]。
 - **已实现**：语义事件与控制事件共享 `append_event` 序列；Worker 语义路径只落事件不迁终态；`artifact.persisted` 仅在 CAS `PERSISTED` 后由 Agent 发出。
 - **已实现**：[[nodeskclaw-agent/app/services/hermes_engine.py#_emit_ingested]] 在 Native ingest 后排空 [[nodeskclaw-agent/app/services/native_event_normalizer.py#NativeEventNormalizer#drain_internal_traces]]，把 `subagent.*` 写成既有 `run_events` 上的最小 `internal.runtime.trace`；不新建 Event Store 或 Worker 状态机。见 [[architecture/skill-agent#Hermes Engine Adapter#Runtime Semantic Event Fidelity]]。
 - **已实现**：Snapshot 不保存 `gateway_token` 或 `env_file` 明文；Attempt 时领取 Hermes `API_SERVER_KEY`（不是平台 JWT），见 [[architecture/skill-agent#Hermes Engine Adapter#Credential Lease API Server Key]]。
-
-### Runtime Semantic Event Fidelity
-
-RM-14 把 Hermes Native transport 规范成低噪声 Agent Event SoT，并让公共 progress 以 `phase` 为事实字段。
-
-- **已实现**：[[nodeskclaw-agent/app/services/native_event_normalizer.py#normalize_native_event]] 分流 coalescer buffer、durable 语义或 Internal Trace；[[nodeskclaw-agent/app/services/assistant_delta_coalescer.py#AssistantDeltaCoalescer]] 只在 tool / approval / terminal flush，以及满 1000ms 的 [[nodeskclaw-agent/app/services/assistant_delta_coalescer.py#AssistantDeltaCoalescer#flush_if_stale]]。`push()` 不按 80 字或 `\n\n` 落库。流式 `assistant.message` / `message` / `agent.message` 经 [[nodeskclaw-agent/app/services/native_event_normalizer.py#NativeEventNormalizer#_ingest_assistant_text]] 进 coalescer；全文快照等于已发出或已发出+buffer 则丢弃。GET / `run.completed` 的 `output` 经 [[nodeskclaw-agent/app/services/native_event_normalizer.py#NativeEventNormalizer#emit_assistant_snapshot]] 单条回填，禁止 `coalescer.push`。`tool.started/completed` 合成 Attempt 作用域 `call_id`，`correlation_confidence` 只留 Internal。`reasoning.available` 与 `subagent.*` / `run.steered` / `approval.responded` 不进 Public。[[nodeskclaw-backend/app/api/runs.py#_public_run_event]] 读 `phase` 并派生 `stage`。Native `run.completed` 若带 `output` / `final_response` 且尚未有助手文本，会先写成 `assistant.message`；流上已有 coalesced 文本则不得再用终态 `output` 重复。SoT `source_event_id` 为 `hermes:{attempt_id}:{counter}`，不得叠 `run_id` 或 Hermes `call_id`。回归：[[nodeskclaw-agent/tests/test_native_event_normalizer.py#test_run_completed_output_becomes_assistant_message]]、[[nodeskclaw-agent/tests/test_native_event_normalizer.py#test_run_completed_does_not_duplicate_existing_assistant_text]]、[[nodeskclaw-agent/tests/test_native_event_normalizer.py#test_streaming_assistant_message_coalesces_until_close]]、[[nodeskclaw-agent/tests/test_native_event_normalizer.py#test_long_assistant_text_does_not_flush_until_close]]、[[nodeskclaw-agent/tests/test_native_event_normalizer.py#test_assistant_message_snapshot_does_not_duplicate_deltas]]、[[nodeskclaw-agent/tests/test_native_event_normalizer.py#test_emit_assistant_snapshot_is_one_message_and_dedupes]]、[[nodeskclaw-agent/tests/test_native_event_normalizer.py#test_flush_due_to_latency_waits_one_second]]、[[nodeskclaw-agent/tests/test_native_event_normalizer.py#test_source_event_id_is_bounded_without_run_or_call_id]]、[[nodeskclaw-agent/tests/test_assistant_delta_coalescer.py#test_coalescer_does_not_flush_on_size_or_paragraph]]、[[nodeskclaw-agent/tests/test_assistant_delta_coalescer.py#test_coalescer_keeps_tiny_paragraph_in_buffer]]。
-- **已实现**：[[nodeskclaw-agent/app/services/native_event_normalizer.py#NativeEventNormalizer#drain_internal_traces]] 把 `subagent.*` 持久化为 `internal.runtime.trace`，payload 只允许 `runtime_event_type` 与 `category=subagent`；禁止 `child_session_id` / `runtime_run_id` / cost / `output_tail`。`tool.correlation` 仍只留内存 Internal Trace。Public `_public_run_event` 对 `internal.runtime.trace` 返回 `None`，不得把 `subagent.*` 加进 v1.2.1。回归：[[nodeskclaw-agent/tests/test_native_event_normalizer.py#test_subagent_stays_internal_without_sensitive_fields]]、[[nodeskclaw-agent/tests/test_hermes_engine.py#test_execute_hermes_yields_internal_runtime_trace_for_subagent]]、[[nodeskclaw-backend/tests/hermes_skill/test_employee_runs_api.py#test_public_run_event_projects_semantic_types_and_drops_unknown]]。
-- **已实现**：V13 live Native 已打到部署本实现的 Agent，见 [[architecture/skill-agent#RM-14 Live Semantic V13]]。不得恢复 ChatCompletion parser，不得改写 v1.2.1。
 
 ### Credential Lease API Server Key
 
@@ -126,15 +135,37 @@ Hermes `runtime_run_id` 记在当前 Attempt 行上，受 generation 栅栏，�
 - **已实现**：[[nodeskclaw-agent/app/services/run_service.py#append_event]] 经 [[nodeskclaw-agent/app/services/run_service.py#_omit_runtime_binding_keys]] 剥离 `runtime_run_id` 等 Binding 键。Public `WAITING_APPROVAL` 与 `approval.requested` 同样不得带 Binding 键，见 [[architecture/skill-agent#RM-15 Approval Runtime Control]]。`run_events.source_event_id` 与 `run_event_rejections.source_event_id` 为 `varchar(512)`（Alembic `f8ff7575827a`）。Worker INSERT 靠可空 Binding 列共存。
 - **已实现**：RM-16 live 用 Snapshot `credential_lease_ref.instance_id` 作为该 Run 的 HermesAgentInstance，经 mint 得到 API_SERVER；可选 `RM16_EXPECTED_*_INSTANCE_ID` 只校验不路由。禁止与 Knowledge RuntimeBinding 混用，见 [[architecture/skill-agent#RM-16 Live Conformance]]。
 
+### Runtime Semantic Event Fidelity
+
+RM-14 把 Hermes Native transport 规范成低噪声 Agent Event SoT，并让公共 progress 以 `phase` 为事实字段。
+
+- **已实现**：[[nodeskclaw-agent/app/services/native_event_normalizer.py#normalize_native_event]] 分流 coalescer buffer、durable 语义或 Internal Trace；[[nodeskclaw-agent/app/services/assistant_delta_coalescer.py#AssistantDeltaCoalescer]] 只在 tool / approval / terminal flush，以及满 1000ms 的 stale flush，并按 Unicode 安全边界切分 ≤64 KiB UTF-8。`push()` 不按 80 字或 `\n\n` 落库。受控 flush 写入 durable `assistant.delta`（`message_id`/`delta_seq`/`delta`）；段关闭写入同 `message_id` 的完整 `assistant.message` snapshot（≤1 MiB）。流式 `assistant.message` / `message` / `agent.message` 经 [[nodeskclaw-agent/app/services/native_event_normalizer.py#NativeEventNormalizer#_ingest_assistant_text]] 进 coalescer；全文快照等于已发出或已发出+buffer 则丢弃。GET / `run.completed` 的 `output` 经 [[nodeskclaw-agent/app/services/native_event_normalizer.py#NativeEventNormalizer#emit_assistant_snapshot]] 回填。`tool.started/completed` 合成 Attempt 作用域 `call_id`，`correlation_confidence` 只留 Internal。`reasoning.available` 与 `subagent.*` / `run.steered` / `approval.responded` 不进 Public。[[nodeskclaw-backend/app/api/runs.py#_public_run_event]] 对 delta 仅投影三字段，对 snapshot 投影 `message_id`/`text`（旧无 `message_id` 行仍可投影 `text`）。SoT `source_event_id` 为 `hermes:{attempt_id}:{counter}`。RM-19 累积 Public Bundle `v1.5.0` 由单一 `scripts/contracts.py` 生成。回归：[[nodeskclaw-agent/tests/test_native_event_normalizer.py#test_order_flushes_assistant_before_tool_started]]、[[nodeskclaw-agent/tests/test_native_event_normalizer.py#test_flush_due_to_latency_waits_one_second]]、[[nodeskclaw-agent/tests/test_native_event_normalizer.py#test_tool_boundary_opens_new_message_id]]、[[nodeskclaw-agent/tests/test_native_event_normalizer.py#test_oversize_delta_is_split_unicode_safe]]、[[nodeskclaw-backend/tests/hermes_skill/test_employee_runs_api.py#test_public_run_event_projects_assistant_delta_and_snapshot]]。
+- **已实现**：[[nodeskclaw-agent/app/services/native_event_normalizer.py#NativeEventNormalizer#drain_internal_traces]] 把 `subagent.*` 持久化为 `internal.runtime.trace`，payload 只允许 `runtime_event_type` 与 `category=subagent`；禁止 `child_session_id` / `runtime_run_id` / cost / `output_tail`。`tool.correlation` 仍只留内存 Internal Trace。Public `_public_run_event` 对 `internal.runtime.trace` 返回 `None`，不得把 `subagent.*` 加进 v1.2.1。回归：[[nodeskclaw-agent/tests/test_native_event_normalizer.py#test_subagent_stays_internal_without_sensitive_fields]]、[[nodeskclaw-agent/tests/test_hermes_engine.py#test_execute_hermes_yields_internal_runtime_trace_for_subagent]]、[[nodeskclaw-backend/tests/hermes_skill/test_employee_runs_api.py#test_public_run_event_projects_semantic_types_and_drops_unknown]]。
+- **已实现**：V13 live Native 已打到部署本实现的 Agent，见 [[architecture/skill-agent#RM-14 Live Semantic V13]]。不得恢复 ChatCompletion parser，不得改写 v1.2.1。
+
+## RM-19 Public Streaming Delta
+
+RM-19 发布累积 Public Streaming Delta 合同 `v1.5.0`：durable `assistant.delta`、段末 snapshot、allowlist 投影与两提交不可变 Bundle。
+
+- **已实现**：消息段 `OPEN -> assistant.delta* -> assistant.message -> CLOSED`；工具/审批/终态先关段。见 [[architecture/skill-agent#Hermes Engine Adapter#Runtime Semantic Event Fidelity]]。
+- **已实现**：[[nodeskclaw-agent/app/schemas.py#MAX_ASSISTANT_DELTA_UTF8_BYTES]] / [[nodeskclaw-agent/app/schemas.py#MAX_ASSISTANT_SNAPSHOT_UTF8_BYTES]] 与 payload allowlist 校验；冲突 `message_id+delta_seq` 可观察拒绝。[[nodeskclaw-agent/app/services/hermes_engine.py#execute_hermes_run]] `saw_assistant` 含 delta，terminal 晚于未关段。
+- **已实现**：[[nodeskclaw-backend/app/api/runs.py#_public_run_event]] allowlist；[[nodeskclaw-backend/app/schemas/skill_run/mcp_jsonrpc.py#RUN_EVENT_V15_MODELS]] 专用模型不改写旧共享模型。回归：[[nodeskclaw-backend/tests/hermes_skill/test_employee_runs_api.py#test_public_run_event_projects_assistant_delta_and_snapshot]]。
+- **已实现**：[[nodeskclaw-backend/scripts/contracts.py#_generate_skill_run_v150_public_contract]] 生成 `v1.5.0` Bundle；两提交语义（行为 `releaseCommit` + Bundle-only tag 提交）；不改写 v1.2.1～v1.4.0。
+- **已实现**：live runner [[tools/acceptance/run_rm19_live_streaming_delta.py#run_live]] 复用 RM13 helpers，输出 `SMC_ACCEPTANCE_RESULT`；`--preflight-env` / `--probe-candidate` 齐全。
+- **已实现**：真实 `user_jwt` REAL_PROCESS 证明 terminal 前至少一条 public `assistant.delta`、snapshot 对账、SSE `Last-Event-ID` after_seq 重放与 `event_id` 去重；证据见 `docs_agent/evidence/rm19-verification.md`。仓外 Work UI/consumer-lock 不是本仓 DONE。
+
 ## Runtime Delegation Boundary
 
-Runtime Delegation（运行时内部委派）是 v1.6 的目标合同边界，不创建第二 Run、第二事件源或平台级多智能体调度。
+Runtime Delegation 已由 Internal `SKILL-AGENT-CONTRACT v1.0.0` 冻结：`single_agent`/`runtime_delegated` 与 placement 正交，Capability 不匹配失败关闭，不创建 Child Run。
 
-- **目标状态**：[[nodeskclaw-backend/app/services/hermes_skill/runtime_skill_run_service.py#RuntimeSkillRunService]] 冻结已发布 SkillRelease 的 `delegation_topology` 与版本化 Runtime Capability reference（运行时能力引用）；客户端不得提交 Runtime、成员、Profile 或拓扑。
-- **目标状态**：[[nodeskclaw-agent/app/services/run_service.py#build_snapshot]] 继续作为最终 ExecutionSnapshot（执行快照）的持久化 Owner；[[nodeskclaw-agent/app/services/engine_port.py#execute_engine]] 只选择 Adapter，不能把 Topology 变为新的 Engine。
-- **目标状态**：`single_agent` 与 `runtime_delegated` 只描述 Hermes Runtime 内的委派策略；`placement` 继续描述 Central/Edge/Hybrid 资源放置，[[nodeskclaw-agent/app/services/worker.py#build_hybrid_step_plan]] 仍是 Hybrid Step Plan（混合步骤计划）的唯一 Owner。
+- **已实现**：[[nodeskclaw-backend/scripts/contracts.py#generate_skill_agent_contracts]] 发布 `contracts/skill-agent/v1.0.0/`；Public `skill-run` v1.2.1～v1.4.0 不包含 Internal 路径。
+- **已实现**：[[nodeskclaw-backend/app/services/hermes_skill/skill_release_service.py#freeze_delegation_topology]] 与 [[nodeskclaw-backend/app/services/hermes_skill/runtime_skill_run_service.py#RuntimeSkillRunService#_enqueue_agent_run_outbox]] 从 Published SkillRelease 冻结 Topology 与 capability reference；客户端 `client_context` 覆盖被剥离。
+- **已实现**：[[nodeskclaw-agent/app/services/run_service.py#build_snapshot]] 将 Topology 与 `placement` 分列持久化；[[nodeskclaw-agent/app/services/engine_port.py#execute_engine]] 仍只选择 Hermes/Connector，不出现 `multi_agent` engine。
+- **已实现**：`single_agent` 与 `runtime_delegated` 只描述 Hermes Runtime 内委派；Hybrid Step Plan 仍由 [[nodeskclaw-agent/app/services/worker.py#build_hybrid_step_plan]] 拥有。
 - **已实现**：Hermes `subagent.*` 只作为当前 Attempt 的最小内部事件 `internal.runtime.trace` 进入 Agent SoT；Public 不投影该类型，也不产生 Child Run。见 [[architecture/skill-agent#Hermes Engine Adapter#Runtime Semantic Event Fidelity]]。
-- **目标状态**：Capability 缺失或不匹配时失败关闭；Runtime 内部成员不成为 Public Run、Backend 业务对象或公开事件。Platform Multi-Agent、Team Run 与 Child Run 需要新的 Architecture Decision。
+- **已实现**：员工 MCP Catalog（`tools/list`）与 Public Run/SSE 不暴露 Internal Topology、capability reference 或 ExecutionSnapshot；`tools/call` overlay 与 `_routing` 同类拒绝。见 [[nodeskclaw-backend/app/services/hermes_skill/mcp_tool_mapper.py#McpToolMapper#_skill_to_tool_dict]] 与 [[nodeskclaw-backend/app/api/runs.py#_public_run_event]]。
+- **已实现**：[[nodeskclaw-agent/app/services/hermes_engine.py#execute_hermes_run]] 在版本地板之后校验 Topology：非法枚举/`platform_multi_agent` → `EXECUTION_TOPOLOGY_NOT_SUPPORTED`；`runtime_delegated` 且 capability 不匹配 → `RUNTIME_CAPABILITY_UNAVAILABLE`；不得降级 `single_agent` 或 `gateway_sequential`。既有 probe/地板失败仍用 `RUNTIME_CAPABILITY_MISSING`。
+- **边界**：Platform Multi-Agent、Team Run 与 Child Run 需要新的 Architecture Decision。
 
 ## Connector Center Execution
 
@@ -161,8 +192,8 @@ Edge 出站执行、租约续期与磁盘 Spool 已有实现；RM-07 用 `bind_r
 - **已实现**：Spool Envelope 保存 `job_id`、`delivery_generation`、`attempt_id`、`step_id`、`request_trace_id` 和 `idempotency_key`，单元测试覆盖落盘、排空和 403 丢弃旧代信封。
 - **已实现**：Desired Installation 调谐、Bundle 下载与本地安装闭环见 [[architecture/skill-agent#Installation Generation Closed Loop]]。
 - **已实现**：出站拉取并在授权下履约 on-demand Artifact；通过标准 `/artifacts` 路由中继。
-- **部分实现**：Harness `edge_network_partition` 暂停 `acceptance-tls`（不是 Edge 容器），让 Edge 进程在断网时仍可写 Spool；主机挂载 `EDGE_SPOOL_HOST_DIR`，见 [[architecture/skill-agent#Production Readiness And Security#Native Acceptance Fixture#Harness Oracles And Fail-Closed Report]]。跨租约单次重放与旧代拒绝仍待 Docker 实跑证明。
-- **目标状态**：真实断网跨租约、Edge 重启和网络恢复证明事件只重放一次；on-demand Artifact 只能在有效 Backend 授权下履约并校验 SHA256。
+- **已实现**：Harness `edge_delivery_and_spool_replay` 暂停 `acceptance-tls`（不是 Edge 容器）后读 Spool JSON 的 `delivery_generation` 与 `source_event_id`，要求 `replay_once` 且旧代无副作用，禁止只比目录文件集合，见 [[architecture/skill-agent#Production Readiness And Security#Native Acceptance Fixture#Harness Oracles And Fail-Closed Report]]。
+- **已实现；Production Evidence Pending RM-04**：真实断网 + 恢复 + 单次 replay 正式报告待 RM-04 解冻后执行。on-demand Artifact 仍只能在有效 Backend 授权下履约并校验 SHA256。
 
 ## Execution Observability Trace And Metrics
 
@@ -171,9 +202,12 @@ RM-10 在 Agent 执行平面内提供 in-process Execution Trace 关联与低基
 - **已实现**：[[nodeskclaw-agent/app/services/execution_observability.py#ExecutionTrace]] 与 [[nodeskclaw-agent/app/services/execution_observability.py#MetricsRegistry]] 为唯一 Trace/Metrics Owner；[[nodeskclaw-agent/app/services/run_service.py#create_run]] 经 [[nodeskclaw-agent/app/services/execution_observability.py#bind_from_snapshot]] 绑定 allowlisted 关联键（`run_id`、`attempt_id`、`session_id`、`skill_release_id`、`step_id`、`generation`、`delivery_generation`、`edge_node_id`、`request_trace_id`）。
 - **已实现**：[[nodeskclaw-agent/app/main.py#metrics]] 保留 JSON `runs_by_status` 并追加 documented `metrics` 对象（counter/histogram 定义、单位与有限标签）；DB 或 registry 导出失败 fail-open，不阻断执行。
 - **已实现**：[[nodeskclaw-backend/app/schemas/hermes_skill/runtime_skill_run.py#normalize_request_trace_id]] 与 [[nodeskclaw-backend/app/services/hermes_skill/runtime_skill_run_service.py#RuntimeSkillRunService#start]] 在入队前规范化 opaque `request_trace_id`（max 64、charset `[A-Za-z0-9_.:-]`）；缺失时生成 `req_` 前缀 id；无效降级为 `None` 后由 start 补齐，不阻断 enqueue。
-- **已实现**：[[nodeskclaw-agent/app/services/worker.py#RunWorker#_claim_one]]、[[nodeskclaw-agent/app/services/worker.py#RunWorker#_execute]]、[[nodeskclaw-agent/app/services/edge_worker.py#EdgeWorker#_execute_job]]、[[nodeskclaw-agent/app/services/connector_router.py#execute_connector_run]]、[[nodeskclaw-agent/app/services/engine_port.py#execute_engine]] 与 [[nodeskclaw-agent/app/services/run_service.py#store_artifact_bytes]] 插入 observe-only 钩子；观测异常 fail-open，不改变 Run/Event/Job/Artifact 业务状态。
-- **已实现**：Edge live 与 Spool 路径经 [[nodeskclaw-agent/app/services/edge_worker.py#EdgeWorker#_send_or_spool_event]] 传播同一 `request_trace_id`；指标标签禁止 UUID 与高基数 Run/Attempt/Session/Node id；Trace/日志/指标复用 [[nodeskclaw-agent/app/services/run_service.py#_sanitize_sensitive_keys]] 同类 redact 规则。
-- **目标状态**：不产生或推断 `delegation_topology`；Public Skill Run Contract v1.0.0–v1.2.1 不变。v1.3.0 Approval Decision 是独立增量，见 [[architecture/skill-agent#RM-17 Public Approval Decision]]。
+- **已实现**：[[nodeskclaw-agent/app/services/worker.py#RunWorker#_claim_one]] 观测 `run_queue_wait_seconds`（created→claim）；[[nodeskclaw-agent/app/services/worker.py#RunWorker#_execute]]、[[nodeskclaw-agent/app/services/edge_worker.py#EdgeWorker#_execute_job]]、[[nodeskclaw-agent/app/services/connector_router.py#execute_connector_run]]、[[nodeskclaw-agent/app/services/engine_port.py#execute_engine]]、[[nodeskclaw-agent/app/services/run_service.py#add_artifact]] / [[nodeskclaw-agent/app/services/run_service.py#store_artifact_bytes]] 补齐 claim/execute/connector/edge/artifact outcome；观测异常 fail-open，不改变 Run/Event/Job/Artifact 业务状态。
+- **已实现**：Edge live 与 Spool 路径经 [[nodeskclaw-agent/app/services/edge_worker.py#EdgeWorker#_send_or_spool_event]] 传播同一 `request_trace_id`；指标标签禁止 UUID 与高基数 Run/Attempt/Session/Node id；Trace/日志经 [[nodeskclaw-agent/app/services/execution_observability.py#trace_log_extra]] 与 [[nodeskclaw-agent/app/services/run_service.py#_sanitize_sensitive_keys]] 同类 redact。
+- **已实现**：A1 §21 Runtime Binding 经 [[nodeskclaw-agent/app/services/execution_observability.py#ALLOWED_TRACE_ATTRS]] / [[nodeskclaw-agent/app/services/execution_observability.py#apply_runtime_binding]] 进入 Trace（含 `runtime_type` / `runtime_version` / `runtime_run_id` / `runtime_session_id` / `runtime_idempotency_key` / `tool_call_id` / `correlation_confidence`）；[[nodeskclaw-agent/app/services/run_service.py#get_runtime_binding]] 读取后刷新当前 Trace；Hermes Native 在 Binding persist 后再 `apply_runtime_binding`。禁止把 runtime id 放进 metric labels。RM-08 起合同枚举 `delegation_topology` 可作为可选 Trace 属性，不得作为 metric label。
+- **已实现**：Hermes Runtime 指标冻结于 [[nodeskclaw-agent/app/services/execution_observability.py#METRIC_DEFINITIONS]]：`runtime_start_seconds`、`runtime_stream_seconds`、`runtime_message_delta_total`、`runtime_assistant_coalesced_total`、`runtime_tool_start_total`、`runtime_tool_complete_total`、`runtime_tool_unpaired_total`、`runtime_approval_wait_seconds`、`runtime_stop_seconds`、`runtime_disconnect_total`、`runtime_reconcile_total`、`runtime_interrupted_total`；由 [[nodeskclaw-agent/app/services/hermes_engine.py#execute_hermes_run]]、[[nodeskclaw-agent/app/services/native_event_normalizer.py#NativeEventNormalizer]]、[[nodeskclaw-agent/app/services/assistant_delta_coalescer.py#AssistantDeltaCoalescer]] observe-only 写入，标签仅 `role`/`outcome`/`engine`/`kind`/`stage`，不进 Public SSE。
+- **已实现**：Backend 投影失败低基数计数见 [[architecture/backend#C2 Projection Sync#Projection Observability]]；Backend 不是 Agent Trace Owner。
+- **已实现**：RM-08 发布 Internal `SKILL-AGENT-CONTRACT v1.0.0` 后，Trace 可记录合同枚举 `delegation_topology`，仍不得推断或实现 Platform Multi-Agent；Public Skill Run Contract v1.2.1～v1.4.0 不变。v1.3.0 Approval Decision 是独立增量，见 [[architecture/skill-agent#RM-17 Public Approval Decision]]。
 
 ## Artifact StoragePort And State Machine
 
@@ -185,11 +219,13 @@ Artifact StoragePort 与描述符状态机已经存在，跨 Pod 存储、上传
 - **已实现**：[[nodeskclaw-agent/app/services/run_service.py#list_artifacts]] 默认只暴露 `PERSISTED` 描述符，存储路径具有非临时目录和路径穿越防护。
 - **已实现**：[[nodeskclaw-agent/app/api/internal_runs.py#upload_internal_artifact]] 支持 Base64、SHA256 校验、Attempt/Step/Generation/size/idempotency 字段和稳定 `errors.artifact.*` 错误码。
 - **已实现**：Backend 唯一持久化 on-demand 请求事实模型与消费状态；Agent 作为 Artifact 元数据和字节唯一 Owner。
-- **目标状态**：双 Central Pod 经共享 MinIO 读写同一 Artifact 的 Harness 实跑报告与 Newman 两连跑证据归档。
+- **已实现；Production Evidence Pending RM-04**：双 Central Pod 经共享 MinIO 读写同一 Artifact 的正式 Harness 报告与 Newman 两连跑尚未归档。
 
 ## Production Readiness And Security
 
-Agent 已具备严格就绪探针、真实 S3 StoragePort 探针隔离与可执行验收资产，生产验收仍依赖 Docker 实跑证据。
+当前 Production Runtime 与 Acceptance Assets 已实现；RM-04 正式分布式 Production Acceptance 按 Roadmap v1.8.0 处于 Delivery Frozen / Deferred。开发机 Docker 不可用或未绑定 Acceptance Environment 不等价于 Product Failure。
+
+Agent 具备严格就绪探针、真实 S3 StoragePort 探针隔离与可执行验收资产。正式分布式生产验收证据未闭环，不得写成「生产未就绪」。
 
 - **已实现**：Agent 使用独立 PostgreSQL `agent` Schema，Alembic 版本表位于 `agent.alembic_version`（[[nodeskclaw-agent/app/config.py#alembic_context_version_options]]），应用启动不执行 DDL；[[nodeskclaw-agent/app/main.py#health_live]] 与 `/healthz/live` 只返回进程存活，不访问数据库、对象存储、Backend 或 Worker 状态。
 - **已实现**：[[nodeskclaw-agent/app/auth.py#require_internal_token]] 校验内部 Token，并基于组织和用户 Header 实施 fail-closed 隔离；支持 previous Token 双密钥轮换。
@@ -198,20 +234,20 @@ Agent 已具备严格就绪探针、真实 S3 StoragePort 探针隔离与可执�
 - **已实现**：[[tools/acceptance/harness.py#validate_topology]]、[[tools/acceptance/harness.py#run_compose_acceptance]] 对 `docker-compose.acceptance.yml` 做离线/实跑验收：全部服务 `platform: linux/amd64`、Central `SKILL_AGENT_STORAGE_DRIVER=s3`、`SKILL_AGENT_INSECURE_MODE=false`、凭据经 `${VAR:?}` 运行时注入、MinIO、双 Central、Edge HTTPS + Caddy 测试 CA（Edge 经 `SSL_CERT_FILE` 信任内部 CA）、去掉死变量 `HERMES_GATEWAY_URL`、挂载 scan-existing 实例目录与 Edge Spool、`tools/acceptance/Dockerfile.hermes-test` 包装 Native [[tools/acceptance/hermes_test_server.py#HermesHandler]]、故障注入（pause Postgres/MinIO、kill Central A、pause TLS 模拟 Edge 断网）；[[tools/acceptance/harness.py#check_docker_available]] 与 `check-docker` / `run` 在 Docker 不可用或 env 缺失时 fail-closed 非零退出。
 - **已实现**：Newman 公共合同门禁见 [[architecture/skill-agent#Production Readiness And Security#Public Newman Contract Gate]]。
 - **已实现**：验收 Native 夹具边界见 [[architecture/skill-agent#Production Readiness And Security#Native Acceptance Fixture]]。Compose mock 仍不能取代 RM-13 live Runtime。
-- **部分实现**：完整 Harness 实跑与 Newman 两连跑需 Docker 与运行时 JWT/Token 注入；本地无 Docker 时记 `BLOCKED`，不得假绿。
-- **部分实现**：RM-12 员工公共面出口不是 Compose/Newman，见 [[architecture/skill-agent#RM-12 Live Public Conformance]]。
-- **目标状态**：真实 PostgreSQL、多 Pod、故障注入、Postman/Newman 真实环境两连跑、Secret 扫描和合同 release check 全部生成可复现证据后，才允许声明生产验收闭环。
+- **已实现；Production Evidence Pending RM-04**：完整 Harness 实跑与 Newman 两连跑需解冻后注入 JWT/Token 并执行 Compose；当前不跑 V04 live。Docker 不可用记环境未绑定，不得假绿，也不得解释为 Product Failure。
+- **已实现**：RM-12 员工公共面已 DONE；出口不是 Compose/Newman，见 [[architecture/skill-agent#RM-12 Live Public Conformance]]。
+- **已实现；Production Evidence Pending RM-04**：真实 PostgreSQL、多 Pod、故障注入、Newman 两连跑、Secret 扫描和合同 release check 的正式归档待 RM-04 解冻；解冻前不得声明生产验收闭环。
 
 ### Public Newman Contract Gate
 
-RM-04 正式 Collection 只证明冻结 v1.2.1 员工信封；公共 JWT 项不得请求 HermesTask 路径，两连跑必须隔离前缀且不落盘秘密。
+RM-04 正式 Collection 用公共 JWT 证明已发布员工信封，覆盖 Catalog 到 Artifact，含 `/decision` 与 `POST /api/v1/attachments`；合同检查器覆盖 v1.0.0–v1.5.0。
 
-- **已实现**：[[tools/acceptance/check_postman_collection.py#check_collection]] 拒绝 JWT 公共项中的 `/api/v1/hermes/tasks/`，并要求 Catalog/`tools/call`、`GET /api/v1/runs/{run_id}/events`、`/result`、`POST .../approvals/{approval_id}`、`/cancel`、`/resume`、`/artifacts` 与内部 Bundle/`installations` 旅程；禁止空断言、2xx 与 4xx/5xx 混断言。[[tools/acceptance/check_postman_collection.py#scan_acceptance_secrets]] 扫描 compose/env/scripts/reports，禁止仓库固定秘密。
-- **已实现**：正式集合 `tests/postman/nodeskclaw_acceptance_closure.postman_collection.json` 使用 `/api/v1/runs/{run_id}`，不再请求 Task Timeline 或 `/api/v1/hermes/runtime/worker/resume`；内部 Edge/Bundle harness 保留。模板含 `RUN_PREFIX` 与 `APPROVAL_ID`。
+- **已实现**：[[tools/acceptance/check_postman_collection.py#check_collection]] 用 [[tools/acceptance/check_postman_collection.py#PUBLIC_JOURNEY_PATTERNS]] 要求 Catalog/`tools/list`、`tools/call`、`GET /api/v1/runs/{run_id}/events`、`/result`、legacy `/approvals/{id}`、canonical `/approvals/{id}/decision`、`POST /api/v1/attachments`、`/cancel`、`/resume`、`/artifacts` 与内部 Bundle 旅程；拒绝 JWT 公共项中的 `/api/v1/hermes/tasks/`、`X-Skill-Agent-Token` 与 `AGENT_BASE_URL`。禁止空断言、2xx 与 4xx/5xx 混断言。Internal Southbound 不得写入 Public journey。[[tools/acceptance/check_postman_collection.py#scan_acceptance_secrets]] 扫描 compose/env/scripts/reports，禁止仓库固定秘密。
+- **已实现**：正式集合 `tests/postman/nodeskclaw_acceptance_closure.postman_collection.json` 的公共 JWT 文件夹只带 `Authorization: Bearer {{JWT_TOKEN}}`。canonical `/decision` 带 `X-Idempotency-Key` 与已发布 `decision=allow` 体；Attachment 为 `POST /api/v1/attachments`。二者断言 fail-closed 4xx + `error_code`/`message_key`，不是 2xx live 成功，也不与 2xx 混断言。SSE 允许 `assistant.delta`，夹具只出 snapshot 时仍须通过。内部 Edge/Bundle harness 保留，不得冒充员工合同。
 - **已实现**：[[tools/acceptance/run_newman.py#generate_env_file]] 只写入私有临时目录，经 [[tools/acceptance/run_newman.py#assert_private_env_path]] 拒绝 `reports/` 与 `tests/postman/`；要求隔离 org 前缀。[[tools/acceptance/run_newman.py#allocate_run_prefix]] 在两连跑间禁止重复前缀。
-- **已实现**：[[tools/acceptance/run_newman.py#main]] 先跑静态检查，再经 [[tools/acceptance/run_newman.py#run_skill_run_contract_check]] 调用既有 `scripts/contracts.py check --family skill-run`（默认含 v1.0.0–v1.4.0，禁止 `generate`、不改写合同目录）。Newman Collection 仍只证明冻结 v1.2.1 信封，不含 `/decision` 或 Public upload；v1.3.0 见 [[architecture/skill-agent#RM-17 Public Approval Decision]]，v1.4.0 见 [[architecture/skill-agent#RM-18 Public Attachment Input]]。[[tools/acceptance/run_newman.py#construct_newman_command]] 带 `--timeout-request`，避免 SSE `/events` 挂死套件。两次各一份临时 env；[[tools/acceptance/run_newman.py#assert_reports_present]] 缺 JUnit/JSON 失败关闭；[[tools/acceptance/run_newman.py#redact_report_files]] 脱敏报告中的运行时秘密。
-- **已实现**：聚焦回归在 `tests/acceptance/test_postman_checker.py` 与 `tests/acceptance/test_run_newman.py`（公共 HermesTask、缺 Bundle/result、重复前缀、缺报告、reports 目录落盘、合同检查失败关闭）。
-- **部分实现**：真实拓扑两连跑仍需 Docker 与运行时 JWT/Token；离线 checker/runner 通过不等于 RM-04 生产验收闭环。
+- **已实现**：[[tools/acceptance/run_newman.py#main]] 先跑静态检查，再经 [[tools/acceptance/run_newman.py#run_skill_run_contract_check]] 调用既有 `scripts/contracts.py check --family skill-run`（默认含 v1.0.0–v1.5.0，禁止 `generate`、不改写合同目录）。能力 Owner 仍是 [[architecture/skill-agent#RM-17 Public Approval Decision]]、[[architecture/skill-agent#RM-18 Public Attachment Input]] 与 [[architecture/skill-agent#RM-19 Public Streaming Delta]]；RM-04 只证明拓扑可达这些已发布路由。[[tools/acceptance/run_newman.py#construct_newman_command]] 带 `--timeout-request`。两次各一份临时 env；[[tools/acceptance/run_newman.py#assert_reports_present]] 缺 JUnit/JSON 失败关闭；[[tools/acceptance/run_newman.py#redact_report_files]] 脱敏报告中的运行时秘密。
+- **已实现**：聚焦回归在 `tests/acceptance/test_postman_checker.py` 与 `tests/acceptance/test_run_newman.py`（缺 `/decision` 或 attachments、公共项带内部 Token、公共 HermesTask、缺 Bundle/result、重复前缀、缺报告、合同检查失败关闭）。
+- **已实现；Production Evidence Pending RM-04**：真实拓扑两连跑待 RM-04 解冻后执行；离线 checker/runner 通过不等于正式分布式生产验收闭环。Compose 夹具不承担 RM-19 终态前 delta 证明。Docker 不可用 ≠ Product Failure。
 
 ### Native Acceptance Fixture
 
@@ -239,12 +275,12 @@ Native 实例只经既有 scan-existing 绑定；Compose 提供可扫描目录�
 
 #### Harness Oracles And Fail-Closed Report
 
-Harness 总报告必须带齐命名场景、故障 oracle 与 Native 观察；缺项或 ChatCompletion 200 失败关闭。
+Harness 必须用可观察 Attempt、唯一终态、Spool 单次重放和 Bundle 代次关闭 AC-08/09/10；GET 列表 200 或恒真终态不得 PASS。
 
-- **已实现**：[[tools/acceptance/harness.py#validate_execution_report]] 要求场景 `dual_central_minio_artifact`（Central A 上传、B 按 SHA-256 读回）、`edge_delivery_and_spool_replay`（暂停 `acceptance-tls`，主机 Spool 目录对照）、`bundle_lifecycle`（JWT `GET /api/v1/hermes/skill-installations`）；故障 `postgres_unavailable` / `minio_unavailable` / `kill_central_a` / `edge_network_partition` 必须 `injected`、恢复前取样、`recovered` 且 `ok`。PASSED 且已启动时缺 teardown 失败关闭。
-- **已实现**：`kill_central_a` 在 A 被杀后用旧 Attempt 向 B 做迟到 `events/ingest`，拒绝才算 oracle。Newman 作为子门禁调用既有 [[tools/acceptance/run_newman.py#main]]，不改 T4 runner。报告经 `_write_report` 脱敏 `REQUIRED_ENV`（含 `JWT_TOKEN` / `HERMES_TEST_API_KEY`）。
-- **已实现**：聚焦回归 `tests/acceptance/test_harness.py` 覆盖拓扑死变量、ChatCompletion 200、scan `bound=0`、缺 oracle、无 teardown、Native 夹具 404。Docker 不可用时 `check-docker` / `run` 非零退出并记 BLOCKED，不得假绿。
-- **目标状态**：Docker 可用时 V04/V07 必须留下实跑证据；离线测试通过不等于生产验收闭环。
+- **已实现**：[[tools/acceptance/harness.py#validate_execution_report]] 经 [[tools/acceptance/harness.py#evaluate_artifact_oracle]]、[[tools/acceptance/harness.py#evaluate_spool_oracle]]、[[tools/acceptance/harness.py#evaluate_bundle_oracle]]、[[tools/acceptance/harness.py#evaluate_kill_oracle]] 关闭场景 `dual_central_minio_artifact`（A 写 B 读 SHA-256）、`edge_delivery_and_spool_replay`（`replay_once` 与旧 `delivery_generation` 无副作用，禁止只比目录文件集合）、`bundle_lifecycle`（安装/摘要失败保持旧 `actual_generation`/升级/卸载，禁止只认 GET installations 200）；故障 `postgres_unavailable` / `minio_unavailable` / `kill_central_a` / `edge_network_partition` 必须注入并恢复。`kill_central_a` 要求后继 `attempt_id` 不同、迟到 ingest 被拒、且该 Run 恰好一个可查询终态。PASSED 且已启动时缺 teardown 失败关闭。
+- **已实现**：[[tools/acceptance/harness.py#run_compose_acceptance]] 在既有 Compose 上经 [[tools/acceptance/harness.py#_observe_kill_terminal]]、[[tools/acceptance/harness.py#_observe_spool_replay]]、[[tools/acceptance/harness.py#_observe_bundle_lifecycle]] 采集 oracle，再由上列 evaluate 关闭；Newman 作为子门禁调用 [[tools/acceptance/run_newman.py#main]]。[[tools/acceptance/harness.py#emit_acceptance_result]] 经 [[tools/acceptance/harness.py#build_acceptance_claims]] 在 `run` 退出前打印恰好一行 `SMC_ACCEPTANCE_RESULT`，键集为 [[tools/acceptance/harness.py#V04_CLAIM_IDS]]（CLM-06/19 artifact、CLM-08 kill、CLM-09 spool、CLM-10 bundle、CLM-11 故障注入恢复、CLM-14 Newman、CLM-15 报告 PASSED、CLM-16 合取、CLM-17 fail-closed 已记录）。`unique_terminal` 不得写成字面 `true`。报告经 `_write_report` 脱敏 `REQUIRED_ENV`。
+- **已实现**：聚焦回归 `tests/acceptance/test_harness.py` 覆盖恒真终态、目录集合 Spool、Bundle GET 200、拓扑死变量、ChatCompletion 200、scan `bound=0`、无 teardown、Native 夹具 404、以及 harness/newman 不含 `--scenario pc05` / `pc08`。Docker 不可用时 `check-docker` 只非零退出；`run` 非零退出并打印一行 `SMC_ACCEPTANCE_RESULT`（CLM-17 PASS，其余 V04 Claim FAIL），不得假绿。
+- **已实现；Production Evidence Pending RM-04**：Compose 实跑证据待 RM-04 解冻后归档；离线测试通过不等于正式分布式生产验收闭环。禁止把 Compose kill 写成 RM-16 PC-05 live。Docker 不可用 ≠ Product Failure。
 
 ## RM-12 Live Public Conformance
 
@@ -253,7 +289,7 @@ RM-12 员工公共面已用真实 Backend 的 REAL_PROCESS live runner 关闭；
 - **已实现**：[[tools/acceptance/run_rm12_live_conformance.py#run_live]] 只用 `user_jwt` 对 `RM12_TOOL_NAME` 跑 PC-10 至 PC-14。不要求 `mcp_client_token`，不得把 tool 换成仅为历史容器互调 Token 授权的 Skill。证据 `docs_agent/evidence/RM-12-live-conformance.json` 为 `result=PASS`。
 - **已实现**：[[tools/acceptance/run_rm12_live_conformance.py#tool_arguments]] 默认 `{"prompt":"rm12-live-conformance"}` 以满足 Skill `input_schema`；可用 `RM12_TOOL_ARGUMENTS` JSON 覆盖。幂等冲突与 PC-13 变体只在已有 `prompt` 或 `message` 字符串上加后缀。PC-13 在 ingest / cancel 前经 [[tools/acceptance/run_rm12_live_conformance.py#wait_until_agent_has_run]] 等到 Agent 已落到该 `run_id`，避免 Outbox 未投递时 404。
 - **已实现**：PC-10 / PC-11 / PC-12 / PC-14 与 PC-13 COMPLETED / FAILED / TIMED_OUT 为自动化 PASS。PC-13 CANCELLED 的 RM-12 live 观察曾记 `cancel HTTP 500`，出口按操作者手工验证记 PASS，不再重跑 RM-12 live。本地 Adapter 把 Agent 冲突映射为非 HTTP 500。Public cancel 对 Agent HTTP 5xx 现映射为 409，见 [[architecture/skill-agent#RM-16 Provider Conformance Grounding]]。RM-15 V13 仍不把员工 cancel HTTP 500 当作本闸失败条件，见 [[architecture/skill-agent#RM-15 Live Control V13]]。
-- **目标状态**：员工 `user_jwt` 公共信封保持冻结 v1.2.1（`run_id` + `/api/v1/runs/*`）；live 不要求 `mcp_client_token`。v1.3.0 Approval Decision 是后续增量，见 [[architecture/skill-agent#RM-17 Public Approval Decision]]。
+- **已实现**：员工 `user_jwt` 公共信封基线仍为冻结 v1.2.1（`run_id` + `/api/v1/runs/*`）；live 不要求 `mcp_client_token`。Approval Decision 已由 RM-17 发布为 `v1.3.0`，见 [[architecture/skill-agent#RM-17 Public Approval Decision]]。
 
 ## RM-13 Live Native V11
 
@@ -282,26 +318,26 @@ RM-15 已把 Public 批准/拒绝与取消接到同一 Hermes Native Attempt 的
 
 ## RM-16 Provider Conformance Grounding
 
-RM-16 已回退为 Roadmap BACKLOG：PC-01 至 PC-09 未全部 PASS，不新建第二 Adapter，也不把部分 live 当 DONE。
+RM-16 已按 Stage PRD v1.6.15 关闭。live 出口不含 PC-05 / PC-08；Worker fencing 与 interrupted 走单测，禁止再跑 Worker kill 与 Hermes restart。
 
 - **已实现**：[[nodeskclaw-agent/app/services/hermes_engine.py#control_generation]] 在 `run.generation=0` 时回落到 Binding generation，避免控制面被栅栏成 `fenced` 而不 POST `/approval`。[[nodeskclaw-agent/app/services/hermes_engine.py#runtime_control_headers]] 从 snapshot `credential_lease_ref` mint Bearer，供 [[nodeskclaw-agent/app/services/hermes_engine.py#respond_runtime_approval]]、[[nodeskclaw-agent/app/services/hermes_engine.py#stop_runtime_attempt]] 与 [[nodeskclaw-agent/app/services/hermes_engine.py#inspect_runtime_terminal]] 使用。
 - **已实现**：绑定 cancel 在 `/stop` 后 [[nodeskclaw-agent/app/services/hermes_engine.py#inspect_runtime_terminal]]；`stop_404` 或 `run.cancelled`/`run.failed` 则落到合同终态，不得停在 `CANCELLING`。[[nodeskclaw-backend/app/api/runs.py#cancel_run]] 把 Agent HTTP 5xx 映射为 Public 409（`errors.run.agent_error`），不以 500 作为出口。Agent cancel 内部信封是 `MutationResponse`（无 `tool_name`），Public 投影用 HermesTask `tool_name` 补齐，见 [[nodeskclaw-backend/app/api/runs.py#_public_run_view]]。回归：[[nodeskclaw-backend/tests/hermes_skill/test_employee_runs_api.py#test_cancel_run_agent_mutation_without_tool_name_is_not_http_500]]。
 - **已实现**：[[nodeskclaw-agent/app/services/worker.py#worker_restart_gap_payload]] 在 [[nodeskclaw-agent/app/services/worker.py#RunWorker#_recover_stale_runs]] 写入既有 Attempt 可查询 `kind=worker_restart_gap` 与 `observability_gap`，不新建 Event Store。[[nodeskclaw-agent/app/services/worker.py#next_status_after_stale_lease]] 仍禁止 waiting/interrupted 再 `QUEUED`。
 - **已实现**：聚焦自动化：[[nodeskclaw-agent/tests/test_hermes_engine.py#test_respond_runtime_approval_generation_zero_posts]]、[[nodeskclaw-agent/tests/test_hermes_engine.py#test_runtime_control_headers_adds_bearer]]、[[nodeskclaw-agent/tests/test_hermes_engine.py#test_execute_hermes_yields_internal_runtime_trace_for_subagent]]、[[nodeskclaw-agent/tests/test_run_service.py#test_approve_run_bound_generation_zero_uses_binding]]、[[nodeskclaw-agent/tests/test_run_service.py#test_cancel_waiting_approval_reconciles_to_cancelled]]、[[nodeskclaw-agent/tests/test_worker.py#test_worker_restart_gap_payload_is_queryable]]、[[nodeskclaw-backend/tests/hermes_skill/test_employee_runs_api.py#test_cancel_run_agent_500_is_not_http_500]]、[[nodeskclaw-backend/tests/hermes_skill/test_employee_runs_api.py#test_cancel_run_agent_mutation_without_tool_name_is_not_http_500]]、[[nodeskclaw-backend/tests/hermes_skill/test_employee_runs_api.py#test_public_run_event_projects_semantic_types_and_drops_unknown]]。这些测试不能代替 live Native。
-- **部分实现**：Stage PRD `docs_agent/prd-v1.6.14-hermes-provider-conformance-recovery.md` 已 APPROVED；P0 修正子 PRD `reports/PRD-RM16-P0-Live-Conformance-Correction-v1.6.14-p0.1.md` 已 APPROVED。canonical Plan 为 `.cursor/plans/rm-16_hermes-provider-conformance-recovery.plan.md`。Adapter / runner P0 已落地，含 SSE `event:` ingest、GET `output` 单条回填、有界 `source_event_id`，以及 coalescer 仅 tool / approval / terminal / 满 1s stale flush（不按 80 字或 `\n\n` 切开）、流式 `assistant.message`、快照去重，见 [[architecture/skill-agent#Hermes Engine Adapter#Runtime Semantic Event Fidelity]]。live 套件见 [[architecture/skill-agent#RM-16 Live Conformance]]。生产 Native Bridge / 审批驻留仍见 [[architecture/skill-agent#RM-15 Approval Runtime Control]]。
-- **目标状态**：PC-01 至 PC-09 全部 REAL_PROCESS 后才能重开本项；禁止 mock OpenAI 字段结项；不得改写 v1.2.1，不得恢复 ChatCompletion parser。Roadmap 现为 `BACKLOG`，不得标 `DONE`。
+- **已实现**：Stage PRD `docs_agent/prd-v1.6.14-hermes-provider-conformance-recovery.md` 已 APPROVED；P0 修正子 PRD `reports/PRD-RM16-P0-Live-Conformance-Correction-v1.6.14-p0.1.md` 已 APPROVED。canonical Plan 为 `.cursor/plans/rm-16_hermes-provider-conformance-recovery.plan.md`。Adapter / runner P0 已落地，含 SSE `event:` ingest、GET `output` 单条回填、有界 `source_event_id`，以及 coalescer 仅 tool / approval / terminal / 满 1s stale flush（不按 80 字或 `\n\n` 切开）、流式 `assistant.message`、快照去重，见 [[architecture/skill-agent#Hermes Engine Adapter#Runtime Semantic Event Fidelity]]。live 套件见 [[architecture/skill-agent#RM-16 Live Conformance]]。生产 Native Bridge / 审批驻留仍见 [[architecture/skill-agent#RM-15 Approval Runtime Control]]。
+- **目标状态**：implementation `b9f71a253ce722a69e79272d38cf1dab1b6c2f9c`；证据 `docs_agent/evidence/rm16-verification.md`。禁止再测 PC-05 / PC-08 live；禁止 mock OpenAI 字段结项；不得改写 v1.2.1，不得恢复 ChatCompletion parser。RM-02 已由独立 Roadmap commit 关闭。
 
 ## RM-16 Live Conformance
 
-RM-16 live 套件复用 RM-12 至 RM-15 runner 环境，用员工 `user_jwt` 跑 PC-01 至 PC-09，并扫描 PC-12 公共面。
+RM-16 live 套件复用 RM-12 至 RM-15 runner 环境，用员工 `user_jwt` 跑 PC-01、PC-02、PC-03、PC-04、PC-06、PC-07、PC-09 并扫描 PC-12；禁止再跑 PC-05 / PC-08。
 
 - **已实现**：[[tools/acceptance/run_rm16_live_conformance.py#resolve_bound_runtime]] 从该 Run 的 Snapshot `credential_lease_ref` mint 出 [[tools/acceptance/run_rm16_live_conformance.py#BoundRuntimeContext]]，禁止用 `RM13_HERMES_BASE_URL` 作为 Run 事实源。[[tools/acceptance/run_rm16_live_conformance.py#apply_bound_evidence]] 只记 `runtime_binding_verified`、instance id、URL hash、从 URL 解析的 port 与 `runtime_run_id_hash`；禁止 Key、Authorization、完整 `runtime_run_id` 或 lease token。
-- **已实现**：[[tools/acceptance/run_rm16_live_conformance.py#main]] 提供 `--scenario pc01` 至 `pc09`、`pc03-approve` / `pc03-deny`、`pc04`、`pc05`、`pc12-scan`、`--preflight-env`。fixture 规范名是 `LIVE_PLAIN_TOOL_NAME` 等；runner 优先读 `LIVE_*`，并继续接受 `RM16_*` 临时映射。审批工具只用于 PC-03 / PC-04，值为 `hermes_marketing__live-approval-park` 或旧名 `hermes_marketing__park-waiting-approval`。
+- **已实现**：[[tools/acceptance/run_rm16_live_conformance.py#main]] 提供 `--scenario pc01` 至 `pc09`、`pc03-approve` / `pc03-deny`、`pc04`、`pc12-scan`、`--preflight-env`。`--scenario pc05` / `pc08` 在 `env_ctx()` 之前以 `RM16_LIVE_SCENARIO_FORBIDDEN` 拒绝，不作为出口。fixture 规范名是 `LIVE_PLAIN_TOOL_NAME` 等；runner 优先读 `LIVE_*`，并继续接受 `RM16_*` 临时映射。审批工具只用于 PC-03 / PC-04，值为 `hermes_marketing__live-approval-park` 或旧名 `hermes_marketing__park-waiting-approval`。
 - **已实现**：PC-07 要求 Agent SoT 出现最小 `internal.runtime.trace`（生产路径见 [[architecture/skill-agent#Hermes Engine Adapter#Runtime Semantic Event Fidelity]]）；Adapter 可 ingest `event: subagent.*` SSE 帧，见 [[nodeskclaw-agent/tests/test_hermes_engine.py#test_execute_hermes_ingests_sse_event_line_subagent]]。Public `_public_run_event` 对该类型返回 `None`。缺 `LIVE_SUBAGENT_TOOL_NAME` / `RM16_SUBAGENT_TOOL_NAME` 记 `BLOCKED` / `RM16_SUBAGENT_FIXTURE_UNAVAILABLE`，无真实 delegation 不得 PASS，也不得用 GET `output` 伪造 trace。
-- **已实现**：PC-05 / PC-08 使用 [[tools/acceptance/run_rm16_live_conformance.py#start_stable_running_run]]（`LIVE_RUNNING_TOOL_NAME` / `RM16_RUNNING_TOOL_NAME`，禁止 park 工具）。PC-08 缺 `RM16_HERMES_RESTART_CMD` 记 `BLOCKED`；产品 Adapter 禁止 Docker。可选 `RM16_EXPECTED_*_INSTANCE_ID` 只校验不路由。PC-09 缺 `LIVE_OLD_RUNTIME_TOOL_NAME` / `RM16_OLD_RUNTIME_TOOL_NAME` 记 `BLOCKED`；只有 `pc09_mode=real_bound_old_runtime` 且 `runtime_binding_verified` 才能 PASS。[[tools/acceptance/run_rm16_live_conformance.py#run_rm02_package]] 同样强制该闸。stub 禁止正式证据。
+- **已实现**：Stage PRD v1.6.15 禁止 live PC-05 / PC-08。[[tools/acceptance/run_rm16_live_conformance.py#FORBIDDEN_LIVE_SCENARIOS]] 为 `{pc05, pc08}`；[[tools/acceptance/run_rm16_live_conformance.py#run_rm02_package]] 不得要求这两份证据。Worker fencing / gap 见 [[nodeskclaw-agent/tests/test_worker.py#test_stale_lease_interrupted_fails]] 与 [[nodeskclaw-agent/tests/test_worker.py#test_worker_restart_gap_payload_is_queryable]]；`interrupted` 映射见 [[nodeskclaw-agent/tests/test_hermes_engine.py#test_execute_hermes_interrupted_fails_without_new_submit]]。可选 `RM16_EXPECTED_*_INSTANCE_ID` 只校验不路由。PC-09 缺 `LIVE_OLD_RUNTIME_TOOL_NAME` / `RM16_OLD_RUNTIME_TOOL_NAME` 记 `BLOCKED`；只有 `pc09_mode=real_bound_old_runtime` 且 `runtime_binding_verified` 才能 PASS。stub 禁止正式证据。
 - **已实现**：手工复现资产在 `tools/postman/nodeskclaw-agent-full-flow.postman_collection.json` 的文件夹 `70 - RM-16 Live Conformance`；操作指南为 `reports/live手工执行指导.dmd`。Postman 不能替代 runner Ledger。
-- **部分实现**：Roadmap 已回退 `BACKLOG`（2026-09-06）。live 证据 `docs_agent/evidence/RM-16-live-pc01.json`（`2026-09-06T12:28:56Z`）PASS（`assistant_message_count=2`）；`RM-16-live-pc06.json`（`2026-09-06T12:14:09Z`）PASS（`tiny_fragment_count=0`）。PC-09 `docs_agent/evidence/RM-16-live-pc09.json`（`2026-09-06T13:19:16Z`）PASS：`pc09_mode=real_bound_old_runtime`，工具 `hermes_market_profiling__live-old-runtime-probe`，画像 `market-profiling`，Runtime `0.16.0`，Public `FAILED`，`version_floor_rejected=true`，无 `runtime_run_id`。PC-02 / PC-04 / PC-07 / PC-12 仍为 `2026-09-06T11:02Z` PASS；PC-03 / PC-05 / PC-08 BLOCKED。`chat_completions_observed=false`，`runtime_binding_verified=true`。RM-02 继续 `BACKLOG`，Revalidation Link 只引用本套件，不得把 RM-02 标 `DONE`。
-- **目标状态**：PC-01 至 PC-09 可复跑 PASS，且 PC-12 扫描无 HermesTask 禁止字段。
+- **已实现**：2026-09-08 REAL_PROCESS JSON 已跟踪为 `docs_agent/evidence/RM-16-live-*.json`（pc01/pc02/pc03_approve/pc03_deny/pc04/pc06/pc07/pc09/pc12_scan 与 rm02-package 均为 PASS）。PC-03 Native `/approval` 接受。`chat_completions_observed=false`，`runtime_binding_verified=true`。历史 pc05/pc08 `BLOCKED` 文件不是出口。Roadmap `DONE` 与 implementation `b9f71a253ce722a69e79272d38cf1dab1b6c2f9c` 分 commit。RM-02 由后续独立 Roadmap commit 关闭，不与本项混标。
+- **目标状态**：`--scenario pc05` / `pc08` 保持拒绝。
 
 ## RM-15 Live Control V13
 
@@ -347,5 +383,5 @@ Stage PRD：[RM-18 Public Attachment Input Contract v1.4.0](../../docs_agent/prd
 - **已实现**：真实 Hermes Native Run 证据（V11）已关闭；出口 runner 为 [[tools/acceptance/run_rm13_live_native.py#run_live]]，证据 `docs_agent/evidence/RM-13-live-v11.json`。RM-04 Compose 夹具走 Native 表面，见 [[architecture/skill-agent#Production Readiness And Security#Native Acceptance Fixture]]；Compose mock 仍不能取代 RM-13 live Runtime。RM-13 已 DONE。
 - **已实现**：RM-14 Normalizer / Coalescer / canonical `phase` 已在 Adapter 与 Public 投影落地，见 [[architecture/skill-agent#Hermes Engine Adapter#Runtime Semantic Event Fidelity]]。V13 live 出口见 [[architecture/skill-agent#RM-14 Live Semantic V13]]。
 - **已实现**：审批与 cancel 南向见 [[architecture/skill-agent#RM-15 Approval Runtime Control]]。live 出口见 [[architecture/skill-agent#RM-15 Live Control V13]]。Public Approval Decision v1.3.0 见 [[architecture/skill-agent#RM-17 Public Approval Decision]]。
-- **部分实现**：RM-16 生产路径已补 `/approval` 接受条件、cancel 合同终态、Worker gap、最小 `internal.runtime.trace` 与 coalescer 合并规则，见 [[architecture/skill-agent#RM-16 Provider Conformance Grounding]] 与 [[architecture/skill-agent#Hermes Engine Adapter#Runtime Semantic Event Fidelity]]。PC-01 / PC-06 / PC-09 live PASS，其余见 [[architecture/skill-agent#RM-16 Live Conformance]]。Roadmap 为 `BACKLOG`，不得标 `DONE`。
-- **目标状态**：不得恢复 ChatCompletion parser，不得改写 v1.2.1。v1.3.0 / v1.4.0 只作为累积增量，见 [[architecture/skill-agent#RM-17 Public Approval Decision]] 与 [[architecture/skill-agent#RM-18 Public Attachment Input]]。
+- **已实现**：RM-16 Provider Conformance 已关闭。真实 Hermes `>= v2026.8.31` 已覆盖 PC-01 / PC-02 / PC-03 / PC-04 / PC-06 / PC-07 / PC-09 以及 PC-12 Public Isolation Scan。PC-05 / PC-08 不再作为 live Gate，由既有 fencing / interrupted 自动化证明。生产路径含 `/approval` 接受、cancel 合同终态、Worker gap、最小 `internal.runtime.trace` 与 coalescer 规则，见 [[architecture/skill-agent#RM-16 Provider Conformance Grounding]] 与 [[architecture/skill-agent#Hermes Engine Adapter#Runtime Semantic Event Fidelity]]。Roadmap RM-16 = `DONE`。
+- **已实现**：不得恢复 ChatCompletion parser，不得改写 v1.2.1。v1.3.0 / v1.4.0 / v1.5.0 已作为累积增量发布，见 [[architecture/skill-agent#RM-17 Public Approval Decision]]、[[architecture/skill-agent#RM-18 Public Attachment Input]] 与 [[architecture/skill-agent#RM-19 Public Streaming Delta]]。

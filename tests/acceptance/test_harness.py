@@ -30,12 +30,61 @@ def _passing_report(**overrides):
         "chat_completions": {"status": 404, "ok": True},
         "native_observed": {"ok": True},
         "scan_bind": {"ok": True},
+        "child_gates": {"newman": {"ok": True}},
         "scenarios": [
-            {"name": name, "ok": True, "oracle": {"ok": True}}
-            for name in sorted(harness.REQUIRED_SCENARIOS)
+            {
+                "name": "dual_central_minio_artifact",
+                "ok": True,
+                "oracle": {
+                    "ok": True,
+                    "checksum": "a" * 64,
+                    "read_status": 200,
+                    "upload_status": 200,
+                },
+            },
+            {
+                "name": "edge_delivery_and_spool_replay",
+                "ok": True,
+                "oracle": {
+                    "ok": True,
+                    "replay_once": True,
+                    "stale_generation_no_side_effect": True,
+                    "replay_counts": {"evt-1": 1},
+                },
+            },
+            {
+                "name": "bundle_lifecycle",
+                "ok": True,
+                "oracle": {
+                    "ok": True,
+                    "installed_actual_generation": 1,
+                    "digest_failure_actual_generation": 1,
+                    "upgrade_actual_generation": 2,
+                    "uninstalled": True,
+                    "current_kept_on_digest_failure": True,
+                },
+            },
         ],
         "faults": [
-            {"name": name, "injected": True, "recovered": True, "ok": True, "oracle": {"ok": True}}
+            {
+                "name": name,
+                "injected": True,
+                "recovered": True,
+                "ok": True,
+                "oracle": (
+                    {
+                        "ok": True,
+                        "first_attempt": "att-1",
+                        "second_attempt": "att-2",
+                        "late_rejected": True,
+                        "unique_terminal": True,
+                        "queryable_terminal_count": 1,
+                        "queryable_terminals": ["CANCELLED"],
+                    }
+                    if name == "kill_central_a"
+                    else {"ok": True}
+                ),
+            }
             for name in sorted(harness.REQUIRED_FAULTS)
         ],
     }
@@ -146,6 +195,70 @@ def test_execution_report_rejects_passed_without_teardown():
     errors = harness.validate_execution_report(report)
 
     assert any("teardown" in item for item in errors)
+
+
+def test_execution_report_rejects_literal_unique_terminal():
+    report = _passing_report()
+    for item in report["faults"]:
+        if item["name"] == "kill_central_a":
+            item["oracle"] = {
+                "first_attempt": "att-1",
+                "second_attempt": "att-1",
+                "late_rejected": True,
+                "unique_terminal": True,
+            }
+
+    errors = harness.validate_execution_report(report)
+
+    assert any("unique_terminal" in item or "successor attempt" in item for item in errors)
+
+
+def test_execution_report_rejects_directory_set_spool_oracle():
+    report = _passing_report()
+    for item in report["scenarios"]:
+        if item["name"] == "edge_delivery_and_spool_replay":
+            item["oracle"] = {
+                "before": ["spool_a.json"],
+                "during": ["spool_a.json", "spool_b.json"],
+                "after": ["spool_a.json"],
+            }
+
+    errors = harness.validate_execution_report(report)
+
+    assert any("directory-set" in item for item in errors)
+
+
+def test_execution_report_rejects_bundle_get_200_oracle():
+    report = _passing_report()
+    for item in report["scenarios"]:
+        if item["name"] == "bundle_lifecycle":
+            item["oracle"] = {"http_status": 200, "body": {"items": []}}
+
+    errors = harness.validate_execution_report(report)
+
+    assert any("GET 200" in item for item in errors)
+
+
+def test_harness_and_newman_source_forbid_pc05_pc08_live():
+    root = Path(__file__).resolve().parents[2]
+    blob = (root / "tools/acceptance/harness.py").read_text(encoding="utf-8")
+    blob += (root / "tools/acceptance/run_newman.py").read_text(encoding="utf-8")
+    assert "--scenario pc05" not in blob
+    assert "--scenario pc08" not in blob
+
+
+def test_run_emits_acceptance_result_when_docker_unavailable(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(harness, "check_docker_available", lambda: False)
+    with patch.object(sys, "argv", ["harness.py", "run", "--reports-dir", str(tmp_path)]):
+        with pytest.raises(SystemExit) as exc:
+            harness.main()
+    assert exc.value.code == 1
+    lines = [line for line in capsys.readouterr().out.splitlines() if line.startswith("SMC_ACCEPTANCE_RESULT ")]
+    assert len(lines) == 1
+    payload = json.loads(lines[0][len("SMC_ACCEPTANCE_RESULT "):])
+    assert set(payload["claims"]) == set(harness.V04_CLAIM_IDS)
+    assert payload["claims"]["CLM-17"]["result"] == "PASS"
+    assert payload["claims"]["CLM-08"]["result"] == "FAIL"
 
 
 def test_interpret_scan_bind_zero_is_fail_closed():

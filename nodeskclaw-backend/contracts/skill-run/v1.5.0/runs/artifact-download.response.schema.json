@@ -1,0 +1,29 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "content_type": {
+      "title": "Content Type",
+      "type": "string"
+    },
+    "content_disposition": {
+      "title": "Content Disposition",
+      "type": "string"
+    },
+    "content_length": {
+      "title": "Content Length",
+      "type": "integer"
+    },
+    "checksum_sha256": {
+      "title": "Checksum Sha256",
+      "type": "string"
+    }
+  },
+  "required": [
+    "content_type",
+    "content_disposition",
+    "content_length",
+    "checksum_sha256"
+  ],
+  "title": "PublicArtifactDownloadResponse",
+  "type": "object"
+}

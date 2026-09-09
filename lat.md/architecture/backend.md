@@ -40,15 +40,27 @@ RM-07 将 Internal Edge 从长期静态 Token 升级为 Ed25519 双向证明：`
 
 Hermes Skill、任务产物、Agent 绑定与 MCP Skill Gateway 是独立能力域。组织 MCP 契约见 `docs/backend/mcp_skill_gateway.md`；Hermes Task 见 `docs/backend/hermes_skill.md`。
 
+### Public Skill Run Contract Status
+
+本仓 Provider 最新 Public Skill Run 合同是 `SKILL-RUN-CONTRACT v1.5.0`；仓外 Work consumer pin 不得从本文件推断。
+
+已发布累积版本：v1.2.1 baseline → v1.3.0 Approval Decision（RM-17 `DONE`）→ v1.4.0 Attachment Input（RM-18 `DONE`）→ v1.5.0 Streaming Delta + Assistant Snapshot（RM-19 `DONE`）。外部 `smc-copilot/apps/work` 的实际 consumer pin 由其 consumer-lock 决定，本仓 LAT 不推断具体版本。
+
+**Approval Decision Owner**：Backend Public Run API [[nodeskclaw-backend/app/api/runs.py#decide_run_approval]]；Roadmap RM-17 `DONE`，合同 `v1.3.0`。见 [[architecture/skill-agent#RM-17 Public Approval Decision]]。
+
+**Attachment Upload/Proof Owner**：Backend Public Attachment + Runtime Context；Roadmap RM-18 `DONE`，合同 `v1.4.0`。见 [[architecture/skill-agent#RM-18 Public Attachment Input]]。
+
+**Streaming Delta Projection Owner**：Backend Public Run SSE [[nodeskclaw-backend/app/api/runs.py#_public_run_event]]；Roadmap RM-19 `DONE`，合同 `v1.5.0`。见 [[architecture/skill-agent#RM-19 Public Streaming Delta]]。
+
 **员工 Catalog 发布门禁**：`HermesSkill` 是工作副本；员工 `tools/list` 只投影 **已 published** 的 [[nodeskclaw-backend/app/models/hermes_skill/skill_release.py#HermesSkillRelease]]（见 [[decisions/skill-platform-execution]]）。仅 `is_mcp_exposed` 不足以进入 Catalog。Chat 发布须通过 [[nodeskclaw-backend/app/services/hermes_skill/skill_release_service.py#SkillReleaseService#_validate_interaction_contract]]；投影字段含 `capabilityKind` / `interactionMode` / `promptField` / `supportsAttachments` / `annotations`。新 Release 冻结注解时，未要求审批的默认 `approvalMode` 为 `none`，要求审批但未显式指定时为 `server`。Runtime Skill 的 `PATCH extra_metadata` 只 merge Catalog 键进已 published extra，不覆盖其它 extra 键（[[architecture/skill-agent#RM-18 Public Attachment Input]]），不把工作副本直接投影给员工。Runtime Skill 注册到组织 MCP（`register-to-org-mcp`）的 Workspace Scope 契约见 [[decisions/skill-platform-execution#Enqueue Path#Runtime Skill Workspace Scope]]。
 
-**员工 Skill 执行平面**已迁到独立进程 `nodeskclaw-agent`（[[decisions/skill-platform-execution]]）：Gateway 仍在 Backend；入队经 [[nodeskclaw-backend/app/services/hermes_skill/runtime_skill_run_service.py#RuntimeSkillRunService]]（冻结 Release digest + gateway）；对外 Run 投影为 `/api/v1/runs/*`（剥离内部凭证；POST 经 `json_body` 转发，Agent 4xx 经 [[nodeskclaw-backend/app/api/runs.py#_handle_agent_error_response]] 映射）。Hermes 运行时凭证由 [[nodeskclaw-backend/app/api/internal_skill_agent.py#mint_credential_lease]] 在 Attempt 时下发 `API_SERVER_KEY`（见 [[architecture/skill-agent#Hermes Engine Adapter#Credential Lease API Server Key]]）。Agent 南向 Event Source 为 Native Run，不是 ChatCompletion（见 [[architecture/skill-agent#Hermes Native Runtime And Employee Public Face]]）。员工 Catalog 合同基线为 `contracts/skill-run/v1.0.0/`，RM-01 支持 `v1.1.0/`，RM-02 语义事件合同为 `v1.2.0/`。RM-11 已关闭：累积 Public `v1.2.1/` 与 tag `skill-run-contract-v1.2.1` 为外部 Work 当前离线导入项；`v1.0.0`/`v1.1.0`/`v1.2.0` 冻结不改写，不再作为 Work canonical。
+**员工 Skill 执行平面**已迁到独立进程 `nodeskclaw-agent`（[[decisions/skill-platform-execution]]）：Gateway 仍在 Backend；入队经 [[nodeskclaw-backend/app/services/hermes_skill/runtime_skill_run_service.py#RuntimeSkillRunService]]（冻结 Release digest + gateway）；对外 Run 投影为 `/api/v1/runs/*`（剥离内部凭证；POST 经 `json_body` 转发，Agent 4xx 经 [[nodeskclaw-backend/app/api/runs.py#_handle_agent_error_response]] 映射）。Hermes 运行时凭证由 [[nodeskclaw-backend/app/api/internal_skill_agent.py#mint_credential_lease]] 在 Attempt 时下发 `API_SERVER_KEY`（见 [[architecture/skill-agent#Hermes Engine Adapter#Credential Lease API Server Key]]）。Agent 南向 Event Source 为 Native Run，不是 ChatCompletion（见 [[architecture/skill-agent#Hermes Native Runtime And Employee Public Face]]）。员工 Catalog 合同基线为 `contracts/skill-run/v1.0.0/`，RM-01 支持 `v1.1.0/`，RM-02 语义事件合同为 `v1.2.0/`。RM-11 已关闭累积 Public `v1.2.1/` 与 tag `skill-run-contract-v1.2.1`；`v1.0.0`/`v1.1.0`/`v1.2.0` 冻结不改写。Provider latest 为 `v1.5.0`（见 [[architecture/backend#Hermes And MCP#Public Skill Run Contract Status]]）；仓外 Work consumer pin 不在此推断。
 
-**Runtime Delegation Entry（运行时委派入口）**：Backend 在已发布 SkillRelease 上冻结 `delegation_topology` 与版本化 Runtime Capability reference（运行时能力引用），只把服务器决定的策略、Route 和授权 Context（上下文）写入 Agent Outbox（出站箱）。Backend 不持久化第二份 ExecutionSnapshot（执行快照），不调度 Runtime 内部成员，也不把 `runtime_delegated` 暴露到 Public `SKILL-RUN-CONTRACT v1.2.1`；Capability 不可用由 Agent 失败关闭。Agent 可把 Hermes `subagent.*` 写成最小 `internal.runtime.trace`，Public 仍无 Child Run，见 [[architecture/skill-agent#Runtime Delegation Boundary]]。Topology 与 Central/Edge/Hybrid Placement（中心/边缘/混合放置）是正交字段。
+**Runtime Delegation Entry（运行时委派入口）**：RM-08 已发布 Internal `contracts/skill-agent/v1.0.0/`。Backend 经 [[nodeskclaw-backend/app/services/hermes_skill/skill_release_service.py#freeze_delegation_topology]] 在已发布 SkillRelease 上冻结 `delegation_topology` 与版本化 Runtime Capability reference（运行时能力引用），只把服务器决定的策略、Route 和授权 Context（上下文）写入 Agent Outbox（出站箱）。Backend 不持久化第二份 ExecutionSnapshot（执行快照），不调度 Runtime 内部成员，也不把 `runtime_delegated` 暴露到 Public `SKILL-RUN-CONTRACT v1.2.1`～`v1.5.0`；Capability 不可用由 Agent 失败关闭（`RUNTIME_CAPABILITY_UNAVAILABLE`）。Agent 可把 Hermes `subagent.*` 写成最小 `internal.runtime.trace`，Public 仍无 Child Run，见 [[architecture/skill-agent#Runtime Delegation Boundary]]。Topology 与 Central/Edge/Hybrid Placement（中心/边缘/混合放置）是正交字段。
 
 **RM-06 授权执行上下文**：Runtime 入队前在 [[nodeskclaw-backend/app/services/hermes_skill/runtime_skill_run_service.py#RuntimeSkillRunService#start]] 经 [[nodeskclaw-backend/app/services/hermes_skill/runtime_skill_run_service.py#RuntimeSkillRunService#_build_authorized_execution_context]] 消费 Workspace 与 Attachment 证明、以及 Knowledge 服务签发的 opaque 授权证明，冻结最小 Descriptor 到 Agent Outbox/Snapshot；[[nodeskclaw-backend/app/services/hermes_skill/mcp_tool_mapper.py#McpToolMapper#call_tool]] 只转发 `session_id`/`attachment_refs` opaque id，不注入正文。Public Skill Run 输入附件的 org/user proof、`workspace_id=null` 不进 ACL，见 [[architecture/skill-agent#RM-18 Public Attachment Input]]。执行前复核经 [[nodeskclaw-backend/app/api/internal_edge.py#revalidate_skill_run_execution_context]] 委托 [[nodeskclaw-backend/app/services/hermes_skill/runtime_skill_run_service.py#RuntimeSkillRunService#revalidate_execution_context]]；Knowledge 证明只调用 `has_set_permission`，禁止 Backend 按组织字符串本地放行。配置：`KNOWLEDGE_SERVICE_BASE_URL` / `KNOWLEDGE_SERVICE_TOKEN`。Public `ExecutionSnapshot` 字符串引用字段不变。
 
-**Expert MCP 对 apps/work 的冻结契约**为 WORK-EXPERT-CONTRACT（[[decisions/work-expert-contract]]）：当前消费版本 v1.0.2，产物在 `nodeskclaw-backend/contracts/work-expert/v1.0.2/`；v1.0.0 与 v1.0.1 目录与 tag 不可改写。员工 Skill Run 合同由 `scripts/contracts.py` 的 `generate --family skill-run` 生成（含冻结 v1.0.0 / v1.1.0 / v1.2.0 / v1.2.1，以及累积 v1.3.0 / v1.4.0）；work-expert v1.0.2 目录与 checksum 冻结不改写。勿用 `gateway.version`。
+**Expert MCP 对 apps/work 的冻结契约**为 WORK-EXPERT-CONTRACT（[[decisions/work-expert-contract]]）：当前消费版本 v1.0.2，产物在 `nodeskclaw-backend/contracts/work-expert/v1.0.2/`；v1.0.0 与 v1.0.1 目录与 tag 不可改写。员工 Skill Run 合同由 `scripts/contracts.py` 的 `generate --family skill-run` 生成（支持冻结历史版本，并累积生成 v1.3.0 / v1.4.0 / v1.5.0；已发布目录不可改写）；work-expert v1.0.2 目录与 checksum 冻结不改写。勿用 `gateway.version`。
 
 MCP 对外 JSON-RPC 2.0；应用错误以 HTTP 200 + `error.data.errorCode` 返回（Expert MCP 冻结行为）。
 
@@ -59,6 +71,13 @@ P0 实现锚点：Expert 网关 [[nodeskclaw-backend/app/services/expert_gateway
 Backend 把 Agent Run 事实增量写入 HermesTask。轮询 worker 先抽出主键再按条打开 session，禁止在 commit 或 rollback 后再访问同一批 ORM 属性。
 
 Agent 是 Event / Result / Artifact 事实源；[[nodeskclaw-backend/app/services/hermes_skill/run_projection_updater_service.py#RunProjectionUpdaterService]] 按 `after_seq` 单调映射状态、事件、结果与工件。[[nodeskclaw-backend/app/services/hermes_skill/run_projection_updater_service.py#RunProjectionWorker]] 对齐 Outbox worker：批查询只收集 `(id, org_id, user_id)`，每条任务独立 session。SQLAlchemy asyncio 对 expired 属性的隐式刷新会触发 MissingGreenlet，中断整批投影。决策见 [[decisions/skill-platform-execution]]。
+
+### Projection Observability
+
+RM-10（AD 27.3）要求投影失败可观察，但不把 Backend 做成 Agent Trace Owner。
+
+- **已实现**：[[nodeskclaw-backend/app/services/hermes_skill/run_projection_updater_service.py#_inc_projection_sync_failed]] / [[nodeskclaw-backend/app/services/hermes_skill/run_projection_updater_service.py#get_projection_metrics_snapshot]] 维护进程内 `projection_sync_failed_total`，标签仅有限 reason 枚举（`task_not_found`、`agent_run_not_found`、`http_error`、`exception`；`lag` 预留）；计数 fail-open，不得改变 sync 返回值或 Agent SoT。
+- **KEEP**：opaque `request_trace_id` handoff 仍由 [[nodeskclaw-backend/app/schemas/hermes_skill/runtime_skill_run.py#normalize_request_trace_id]] 与 Runtime Skill Run start 路径负责；见 [[architecture/skill-agent#Execution Observability Trace And Metrics]]。
 
 ### Session Isolation After Commit
 

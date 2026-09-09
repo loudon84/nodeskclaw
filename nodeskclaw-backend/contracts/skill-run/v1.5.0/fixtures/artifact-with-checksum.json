@@ -1,0 +1,12 @@
+{
+  "run_id": "run-1",
+  "items": [
+    {
+      "artifact_id": "artifact-1",
+      "name": "result.txt",
+      "content_type": "text/plain",
+      "size_bytes": 12,
+      "checksum_sha256": "4f85f7e7d5d1b8c7a898d0e51fc5de49536c870353302dacfe7d8e6c03e8ad7a"
+    }
+  ]
+}

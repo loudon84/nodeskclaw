@@ -75,14 +75,39 @@ def _public_run_status(value: Any, fallback: str = "FAILED") -> str:
     return normalized if normalized in _PUBLIC_RUN_STATUSES else fallback
 
 
+_INTERNAL_SOUTHBOUND_KEYS = frozenset(
+    {
+        "delegation_topology",
+        "runtime_capability_ref",
+        "execution_snapshot",
+        "runtime_members",
+        "runtime_profile",
+        "hermes_profile",
+        "hermes_instance_id",
+        "skill_agent_contract",
+    }
+)
+
+
+def _without_internal_southbound(payload: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in payload.items() if key not in _INTERNAL_SOUTHBOUND_KEYS}
+
+
+def _finalize_public_event(event: dict[str, Any]) -> dict[str, Any]:
+    payload = event.get("payload")
+    if isinstance(payload, dict):
+        event["payload"] = _without_internal_southbound(payload)
+    return _without_internal_southbound(event)
+
+
 def _public_run_view(data: dict[str, Any]) -> dict[str, Any]:
-    return {
+    return _without_internal_southbound({
         "run_id": str(data.get("run_id") or ""),
         "tool_name": str(data.get("tool_name") or ""),
         "status": _public_run_status(data.get("status")),
         "created_at": data.get("created_at"),
         "updated_at": data.get("updated_at"),
-    }
+    })
 
 
 def _public_run_result(data: dict[str, Any], run_id: str) -> dict[str, Any]:
@@ -95,13 +120,13 @@ def _public_run_result(data: dict[str, Any], run_id: str) -> dict[str, Any]:
         ),
         None,
     )
-    return {
+    return _without_internal_southbound({
         "run_id": run_id,
         "status": _public_run_status(data.get("status"), fallback="QUEUED"),
         "text": text,
         "error_code": data.get("error_code") or error.get("code"),
         "error_message": data.get("error_message") or error.get("message"),
-    }
+    })
 
 
 def _public_artifact_descriptor(data: dict[str, Any]) -> dict[str, Any]:
@@ -115,11 +140,27 @@ def _public_artifact_descriptor(data: dict[str, Any]) -> dict[str, Any]:
 
 
 _TOOL_CALL_STATUSES = frozenset({"started", "completed", "failed"})
+_MAX_ASSISTANT_DELTA_UTF8_BYTES = 64 * 1024
+_MAX_ASSISTANT_SNAPSHOT_UTF8_BYTES = 1 * 1024 * 1024
+_projection_failures: list[dict[str, Any]] = []
+
+
+def drain_projection_failures() -> list[dict[str, Any]]:
+    failures = list(_projection_failures)
+    _projection_failures.clear()
+    return failures
+
+
+def _record_projection_failure(run_id: str, event_type: str, reason: str) -> None:
+    _projection_failures.append({"run_id": run_id, "event_type": event_type, "reason": reason})
+    logger.warning("public run event projection failure run_id=%s type=%s reason=%s", run_id, event_type, reason)
 
 
 # @lat: [[decisions/skill-platform-execution#Employee Contract]]
 def _public_run_event(data: dict[str, Any], run_id: str) -> dict[str, Any] | None:
     event_type = str(data.get("event_type") or "")
+    if event_type.startswith("internal.") or event_type.startswith("subagent."):
+        return None
     event_seq = int(data.get("event_seq") or 0)
     payload = data.get("payload") if isinstance(data.get("payload"), dict) else {}
     event = {
@@ -144,13 +185,51 @@ def _public_run_event(data: dict[str, Any], run_id: str) -> dict[str, Any] | Non
         }
         if "stage" not in event["payload"]:
             event["payload"]["stage"] = event["payload"]["phase"].lower()
-        return event
+        return _finalize_public_event(event)
+    if event_type == "assistant.delta":
+        message_id = payload.get("message_id")
+        delta_seq = payload.get("delta_seq")
+        delta = payload.get("delta")
+        if (
+            isinstance(message_id, str)
+            and message_id
+            and isinstance(delta_seq, int)
+            and not isinstance(delta_seq, bool)
+            and delta_seq >= 1
+            and isinstance(delta, str)
+            and delta
+            and len(delta.encode("utf-8")) <= _MAX_ASSISTANT_DELTA_UTF8_BYTES
+            and set(payload).issubset({"message_id", "delta_seq", "delta"})
+        ):
+            event["payload"] = {
+                "message_id": message_id,
+                "delta_seq": delta_seq,
+                "delta": delta,
+            }
+            return _finalize_public_event(event)
+        _record_projection_failure(run_id, event_type, "invalid_assistant_delta_payload")
+        return None
     if event_type == "assistant.message" and isinstance(payload.get("text"), str):
-        event["payload"] = {"text": payload["text"]}
-        return event
+        text = payload["text"]
+        message_id = payload.get("message_id")
+        if not text:
+            _record_projection_failure(run_id, event_type, "missing_assistant_text")
+            return None
+        if isinstance(message_id, str) and message_id:
+            if len(text.encode("utf-8")) > _MAX_ASSISTANT_SNAPSHOT_UTF8_BYTES:
+                _record_projection_failure(run_id, event_type, "assistant_snapshot_too_large")
+                return None
+            unknown = set(payload) - {"message_id", "text"}
+            if unknown:
+                _record_projection_failure(run_id, event_type, "unexpected_assistant_message_field")
+                return None
+            event["payload"] = {"message_id": message_id, "text": text}
+            return _finalize_public_event(event)
+        event["payload"] = {"text": text}
+        return _finalize_public_event(event)
     if event_type == "reasoning.summary" and isinstance(payload.get("summary"), str):
         event["payload"] = {"summary": payload["summary"]}
-        return event
+        return _finalize_public_event(event)
     if event_type == "tool.call":
         tool_name = payload.get("tool_name")
         call_id = payload.get("call_id")
@@ -167,7 +246,7 @@ def _public_run_event(data: dict[str, Any], run_id: str) -> dict[str, Any] | Non
                 "call_id": call_id,
                 "status": status,
             }
-            return event
+            return _finalize_public_event(event)
         return None
     if event_type == "clarify.requested" and isinstance(payload.get("question"), str):
         projected: dict[str, Any] = {"question": payload["question"]}
@@ -175,7 +254,7 @@ def _public_run_event(data: dict[str, Any], run_id: str) -> dict[str, Any] | Non
         if options is None or isinstance(options, list):
             projected["options"] = options
         event["payload"] = projected
-        return event
+        return _finalize_public_event(event)
     if event_type == "approval.requested":
         approval_id = payload.get("approval_id")
         summary = payload.get("summary")
@@ -185,11 +264,11 @@ def _public_run_event(data: dict[str, Any], run_id: str) -> dict[str, Any] | Non
                 "summary": summary,
                 "options": ["allow", "deny"],
             }
-            return event
+            return _finalize_public_event(event)
         return None
     if event_type == "artifact.persisted":
         event["payload"] = _public_artifact_descriptor(payload)
-        return event
+        return _finalize_public_event(event)
     return None
 
 

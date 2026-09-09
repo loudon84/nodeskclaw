@@ -11,7 +11,9 @@ import pytest
 
 from app.services.hermes_engine import (
     REQUIRED_FEATURES,
+    EXECUTION_TOPOLOGY_NOT_SUPPORTED,
     RUNTIME_CAPABILITY_MISSING,
+    RUNTIME_CAPABILITY_UNAVAILABLE,
     RUNTIME_INTERRUPTED,
     RUNTIME_UNREACHABLE,
     RUNTIME_VERSION_UNSUPPORTED,
@@ -215,9 +217,13 @@ async def test_execute_hermes_uses_minted_credential_lease():
     assert "messages" not in start_call.kwargs["json"]
     assert events[-1]["event_type"] == "run.completed"
     assistant_events = [e for e in events if e["event_type"] == "assistant.message"]
+    delta_events = [e for e in events if e["event_type"] == "assistant.delta"]
     assert len(assistant_events) == 1
     assert assistant_events[0]["payload"]["text"] == "ok from minted lease"
-    assert assistant_events[0]["source_event_id"] == "hermes:att-1:1"
+    if delta_events:
+        assert "".join(e["payload"]["delta"] for e in delta_events) == "ok from minted lease"
+        assert assistant_events[0]["payload"]["message_id"] == delta_events[0]["payload"]["message_id"]
+    assert assistant_events[0]["source_event_id"].startswith("hermes:att-1:")
     assert "run-1" not in assistant_events[0]["source_event_id"]
     assert "token" not in assistant_events[0]["payload"]
     assert "gateway_url" not in assistant_events[0]["payload"]
@@ -550,6 +556,73 @@ async def test_execute_hermes_missing_capability_fail_closed():
     assert events[-1]["payload"]["error_code"] == RUNTIME_CAPABILITY_MISSING
     assert persist_calls == []
     client.stream.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_execute_hermes_runtime_delegated_unavailable_without_capability():
+    client = _native_client(caps=FLOOR_CAPS)
+    with patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client):
+        events = [
+            event
+            async for event in execute_hermes_run(
+                tool_name="foo",
+                arguments={"prompt": "hi"},
+                route_snapshot={
+                    "gateway_url": "http://hermes:8642",
+                    "delegation_topology": "runtime_delegated",
+                    "runtime_capability_ref": {"name": "hermes.runtime.delegate", "version": "1"},
+                },
+                run_id="run-top",
+                attempt_id="att-top",
+            )
+        ]
+    assert events[-1]["payload"]["error_code"] == RUNTIME_CAPABILITY_UNAVAILABLE
+    assert not any(str(c.args[0]).endswith("/v1/runs") for c in client.post.await_args_list)
+
+
+@pytest.mark.asyncio
+async def test_execute_hermes_platform_multi_agent_not_supported():
+    client = _native_client(caps=FLOOR_CAPS)
+    with patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client):
+        events = [
+            event
+            async for event in execute_hermes_run(
+                tool_name="foo",
+                arguments={"prompt": "hi"},
+                route_snapshot={
+                    "gateway_url": "http://hermes:8642",
+                    "delegation_topology": "platform_multi_agent",
+                },
+                run_id="run-pma",
+                attempt_id="att-pma",
+            )
+        ]
+    assert events[-1]["payload"]["error_code"] == EXECUTION_TOPOLOGY_NOT_SUPPORTED
+    assert not any(str(c.args[0]).endswith("/v1/runs") for c in client.post.await_args_list)
+
+
+@pytest.mark.asyncio
+async def test_execute_hermes_runtime_delegated_matching_capability_starts():
+    features = {name: True for name in REQUIRED_FEATURES}
+    features["hermes.runtime.delegate"] = True
+    client = _native_client(caps={"version": "v2026.8.31", "features": features}, assistant_text="ok")
+    with patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client):
+        events = [
+            event
+            async for event in execute_hermes_run(
+                tool_name="foo",
+                arguments={"prompt": "hi"},
+                route_snapshot={
+                    "gateway_url": "http://hermes:8642",
+                    "delegation_topology": "runtime_delegated",
+                    "runtime_capability_ref": {"name": "hermes.runtime.delegate", "version": "1"},
+                },
+                run_id="run-ok-top",
+                attempt_id="att-ok-top",
+            )
+        ]
+    assert events[-1]["event_type"] == "run.completed"
+    assert any(str(c.args[0]).endswith("/v1/runs") for c in client.post.await_args_list)
 
 
 @pytest.mark.asyncio
@@ -1237,4 +1310,105 @@ async def test_execute_hermes_interrupted_fails_without_new_submit():
     assert len(start_posts) == 1
     assert events[-1]["event_type"] == "run.failed"
     assert events[-1]["payload"]["error_code"] == RUNTIME_INTERRUPTED
+
+
+@pytest.mark.asyncio
+async def test_execute_hermes_records_runtime_start_and_stream_metrics():
+    from app.services.execution_observability import METRIC_DEFINITIONS, get_registry
+
+    get_registry().reset()
+    client = _native_client()
+    with patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client):
+        events = [
+            event
+            async for event in execute_hermes_run(
+                tool_name="foo",
+                arguments={"prompt": "hi"},
+                route_snapshot={"gateway_url": "http://hermes:8642"},
+                run_id="run-metric",
+                attempt_id="att-metric",
+            )
+        ]
+    assert events[-1]["event_type"] == "run.completed"
+    snapshot = get_registry().snapshot()
+    hist_names = {item["name"] for item in snapshot["histograms"]}
+    counter_names = {item["name"] for item in snapshot["counters"]}
+    assert "runtime_start_seconds" in hist_names
+    assert "runtime_stream_seconds" in hist_names
+    assert "runtime_reconcile_total" in counter_names
+    assert "runtime_assistant_coalesced_total" in counter_names
+    for name in (
+        "runtime_start_seconds",
+        "runtime_stream_seconds",
+        "runtime_message_delta_total",
+        "runtime_assistant_coalesced_total",
+        "runtime_tool_start_total",
+        "runtime_tool_complete_total",
+        "runtime_tool_unpaired_total",
+        "runtime_approval_wait_seconds",
+        "runtime_stop_seconds",
+        "runtime_disconnect_total",
+        "runtime_reconcile_total",
+        "runtime_interrupted_total",
+    ):
+        assert name in METRIC_DEFINITIONS
+
+
+@pytest.mark.asyncio
+async def test_execute_hermes_records_runtime_delta_and_interrupted_metrics():
+    from app.services.execution_observability import get_registry
+
+    get_registry().reset()
+    client = _native_client(
+        event_lines=[
+            "event: message.delta",
+            'data: {"delta": "hi"}',
+            "data: [DONE]",
+        ],
+        status={"id": "rr-1", "status": "interrupted"},
+    )
+    with patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client):
+        events = [
+            event
+            async for event in execute_hermes_run(
+                tool_name="foo",
+                arguments={"prompt": "hi"},
+                route_snapshot={"gateway_url": "http://hermes:8642"},
+                run_id="run-metric-int",
+                attempt_id="att-metric-int",
+            )
+        ]
+    assert events[-1]["payload"]["error_code"] == RUNTIME_INTERRUPTED
+    snapshot = get_registry().snapshot()
+    counters: dict[str, float] = {}
+    for item in snapshot["counters"]:
+        counters[item["name"]] = counters.get(item["name"], 0.0) + float(item["value"])
+    assert counters.get("runtime_message_delta_total", 0) >= 1
+    assert counters.get("runtime_interrupted_total", 0) >= 1
+    assert counters.get("runtime_reconcile_total", 0) >= 1
+
+
+@pytest.mark.asyncio
+async def test_execute_hermes_records_runtime_disconnect_on_stream_end():
+    from app.services.execution_observability import get_registry
+
+    get_registry().reset()
+    client = _native_client(event_lines=['data: {"type": "assistant.message", "text": "partial"}'])
+    with patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client):
+        events = [
+            event
+            async for event in execute_hermes_run(
+                tool_name="foo",
+                arguments={"prompt": "hi"},
+                route_snapshot={"gateway_url": "http://hermes:8642"},
+                run_id="run-metric-disc",
+                attempt_id="att-metric-disc",
+            )
+        ]
+    assert events[-1]["event_type"] == "run.completed"
+    snapshot = get_registry().snapshot()
+    counters: dict[str, float] = {}
+    for item in snapshot["counters"]:
+        counters[item["name"]] = counters.get(item["name"], 0.0) + float(item["value"])
+    assert counters.get("runtime_disconnect_total", 0) >= 1
 

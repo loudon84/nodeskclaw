@@ -3,7 +3,12 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from app.services.assistant_delta_coalescer import AssistantDeltaCoalescer
+from app.services.assistant_delta_coalescer import (
+    MAX_SNAPSHOT_UTF8_BYTES,
+    AssistantDeltaCoalescer,
+    split_utf8_by_bytes,
+)
+from app.services.execution_observability import record_metric, update_trace_attrs
 
 logger = logging.getLogger(__name__)
 
@@ -124,12 +129,22 @@ class NativeEventNormalizer:
         self.source_prefix = source_prefix
         self.coalescer = coalescer or AssistantDeltaCoalescer()
         self._counter = 0
+        self._message_counter = 0
         self._segment_seq = 0
         self._open: list[dict[str, Any]] = []
-        self._emitted_assistant = ""
+        self._message_id: str | None = None
+        self._delta_seq = 0
+        self._segment_text = ""
+        self._closed_assistant_text = ""
+        self._delta_fingerprints: dict[tuple[str, int], str] = {}
+        self.payload_rejections: list[dict[str, Any]] = []
         self.internal_traces: list[dict[str, Any]] = []
         self.observability_gaps: list[dict[str, Any]] = []
         self._drained_trace_count = 0
+
+    @property
+    def _emitted_assistant(self) -> str:
+        return self._closed_assistant_text + self._segment_text
 
     def ingest(self, data: dict[str, Any]) -> list[dict[str, Any]]:
         if "choices" in data or (
@@ -139,7 +154,8 @@ class NativeEventNormalizer:
         event_type = _event_type(data)
         payload = _payload(data)
         if event_type in DELTA_TYPES:
-            return self._from_texts(self.coalescer.push(_delta_text(payload)))
+            record_metric("runtime_message_delta_total", labels={"engine": "hermes"})
+            return self._emit_delta_chunks(self.coalescer.push(_delta_text(payload)))
         if event_type in INTERNAL_TYPES or event_type.startswith("subagent."):
             self._trace(event_type, payload)
             return []
@@ -153,16 +169,16 @@ class NativeEventNormalizer:
                 events = self.emit_assistant_snapshot(output.strip()) + events
             return events
         if event_type in {"tool.started", "tool.start"}:
-            events = self._from_texts([self.coalescer.flush()] if self.coalescer.buffered_text() else [])
+            events = self._close_message_segment()
             events.extend(self._start_tool(payload))
             return events
         if event_type in {"tool.completed", "tool.complete", "tool.failed"}:
-            events = self._from_texts([self.coalescer.flush()] if self.coalescer.buffered_text() else [])
+            events = self._close_message_segment()
             failed = event_type == "tool.failed" or bool(payload.get("error"))
             events.extend(self._complete_tool(payload, failed=failed))
             return events
         if event_type in {"approval.request", "approval.requested"}:
-            events = self._from_texts([self.coalescer.flush()] if self.coalescer.buffered_text() else [])
+            events = self._close_message_segment()
             events.extend(self._approval(payload))
             return events
         if event_type in {"assistant.message", "message", "agent.message"}:
@@ -176,7 +192,7 @@ class NativeEventNormalizer:
                 return [self._sot("reasoning.summary", {"summary": summary})]
             return []
         if event_type in {"tool.call", "tool_call"}:
-            events = self._from_texts([self.coalescer.flush()] if self.coalescer.buffered_text() else [])
+            events = self._close_message_segment()
             events.extend(self._passthrough_tool_call(payload))
             return events
         if event_type in {"clarify.requested", "clarify"}:
@@ -207,18 +223,28 @@ class NativeEventNormalizer:
         return events
 
     def flush_due_to_latency(self) -> list[dict[str, Any]]:
-        text = self.coalescer.flush_if_stale()
-        return self._from_texts([text] if text else [])
+        return self._emit_delta_chunks(self.coalescer.flush_if_stale_chunks())
 
     def emit_assistant_snapshot(self, text: str) -> list[dict[str, Any]]:
         if not isinstance(text, str) or not text:
             return []
         if self._is_duplicate_assistant(text):
             return []
-        return self._from_texts([text])
+        current = self._segment_text + self.coalescer.buffered_text()
+        if current and text.startswith(current):
+            extension = text[len(current) :]
+            if extension:
+                events = self._emit_delta_chunks(self.coalescer.push(extension))
+                events.extend(self._close_message_segment())
+                return events
+            return self._close_message_segment()
+        if current:
+            self._reject("assistant_snapshot_conflict", {"existing": current, "incoming": text})
+            return self._close_message_segment()
+        return self._emit_direct_snapshot(text)
 
     def close(self, *, terminal_status: str = "failed") -> list[dict[str, Any]]:
-        events = self._from_texts([self.coalescer.flush()] if self.coalescer.buffered_text() else [])
+        events = self._close_message_segment()
         mapped = "completed" if terminal_status in {"completed", "succeeded", "success"} else "failed"
         while self._open:
             opened = self._open.pop(0)
@@ -236,6 +262,7 @@ class NativeEventNormalizer:
                     "closed_as": mapped,
                 }
             )
+            record_metric("runtime_tool_unpaired_total", labels={"outcome": mapped})
             logger.info(
                 "native normalizer unpaired tool start closed attempt=%s tool=%s call_id=%s as=%s",
                 self.attempt_id,
@@ -272,6 +299,8 @@ class NativeEventNormalizer:
             "tool.correlation",
             {"tool_name": tool_name, "call_id": call_id, "correlation_confidence": confidence},
         )
+        update_trace_attrs(tool_call_id=call_id, correlation_confidence=confidence)
+        record_metric("runtime_tool_start_total", labels={"outcome": "started"})
         return [
             self._sot(
                 "tool.call",
@@ -297,6 +326,7 @@ class NativeEventNormalizer:
             return []
         opened = self._open.pop(match_index)
         status = "failed" if failed else "completed"
+        record_metric("runtime_tool_complete_total", labels={"outcome": status})
         return [
             self._sot(
                 "tool.call",
@@ -334,23 +364,110 @@ class NativeEventNormalizer:
             text = text[len(current) :]
             if not text:
                 return []
-        return self._from_texts(self.coalescer.push(text))
+        return self._emit_delta_chunks(self.coalescer.push(text))
 
     def _is_duplicate_assistant(self, text: str) -> bool:
         emitted = self._emitted_assistant
         pending = self.coalescer.buffered_text()
         return text == emitted or text == emitted + pending
 
-    def _from_texts(self, texts: list[str | None]) -> list[dict[str, Any]]:
+    def _emit_delta_chunks(self, texts: list[str]) -> list[dict[str, Any]]:
         events: list[dict[str, Any]] = []
         for text in texts:
             if not isinstance(text, str) or not text:
                 continue
-            if self._is_duplicate_assistant(text):
-                continue
-            self._emitted_assistant += text
-            events.append(self._sot("assistant.message", {"text": text}))
+            for chunk in split_utf8_by_bytes(text, self.coalescer.MAX_DELTA_UTF8_BYTES):
+                event = self._append_delta(chunk)
+                if event is not None:
+                    events.append(event)
         return events
+
+    def _append_delta(self, chunk: str) -> dict[str, Any] | None:
+        if not chunk:
+            return None
+        self._ensure_message_segment()
+        assert self._message_id is not None
+        next_seq = self._delta_seq + 1
+        key = (self._message_id, next_seq)
+        prior = self._delta_fingerprints.get(key)
+        if prior is not None and prior != chunk:
+            self._reject(
+                "delta_seq_conflict",
+                {"message_id": self._message_id, "delta_seq": next_seq, "existing": prior, "incoming": chunk},
+            )
+            return None
+        candidate = self._segment_text + chunk
+        if len(candidate.encode("utf-8")) > MAX_SNAPSHOT_UTF8_BYTES:
+            self._reject(
+                "snapshot_too_large",
+                {"message_id": self._message_id, "size": len(candidate.encode("utf-8"))},
+            )
+            return None
+        self._delta_seq = next_seq
+        self._delta_fingerprints[key] = chunk
+        self._segment_text = candidate
+        return self._sot(
+            "assistant.delta",
+            {"message_id": self._message_id, "delta_seq": self._delta_seq, "delta": chunk},
+        )
+
+    def _close_message_segment(self) -> list[dict[str, Any]]:
+        events = self._emit_delta_chunks(self.coalescer.flush_chunks())
+        if self._message_id is None:
+            return events
+        if not self._segment_text:
+            self._reset_message_segment()
+            return events
+        if len(self._segment_text.encode("utf-8")) > MAX_SNAPSHOT_UTF8_BYTES:
+            self._reject(
+                "snapshot_too_large",
+                {"message_id": self._message_id, "size": len(self._segment_text.encode("utf-8"))},
+            )
+            self._reset_message_segment()
+            return events
+        events.append(
+            self._sot(
+                "assistant.message",
+                {"message_id": self._message_id, "text": self._segment_text},
+            )
+        )
+        self._closed_assistant_text += self._segment_text
+        self._reset_message_segment()
+        return events
+
+    def _emit_direct_snapshot(self, text: str) -> list[dict[str, Any]]:
+        if len(text.encode("utf-8")) > MAX_SNAPSHOT_UTF8_BYTES:
+            self._reject("snapshot_too_large", {"size": len(text.encode("utf-8"))})
+            return []
+        self._ensure_message_segment()
+        assert self._message_id is not None
+        message_id = self._message_id
+        self._segment_text = text
+        self._closed_assistant_text += text
+        self._reset_message_segment()
+        return [self._sot("assistant.message", {"message_id": message_id, "text": text})]
+
+    def _ensure_message_segment(self) -> None:
+        if self._message_id is None:
+            self._message_counter += 1
+            self._message_id = f"msg_{self.attempt_id}_{self._message_counter}"
+            self._delta_seq = 0
+            self._segment_text = ""
+
+    def _reset_message_segment(self) -> None:
+        self._message_id = None
+        self._delta_seq = 0
+        self._segment_text = ""
+
+    def _reject(self, reason: str, details: dict[str, Any]) -> None:
+        record = {"reason": reason, "details": details}
+        self.payload_rejections.append(record)
+        logger.warning(
+            "native normalizer rejection attempt=%s reason=%s details=%s",
+            self.attempt_id,
+            reason,
+            details,
+        )
 
     def _sot(self, event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
         return {

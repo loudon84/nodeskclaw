@@ -1,0 +1,15 @@
+{
+  "org_id": "org_fixture_001",
+  "user_id": "user_fixture_001",
+  "skill_id": "skill_fixture",
+  "placement": {
+    "role": "central",
+    "engine": "hermes"
+  },
+  "delegation_topology": "runtime_delegated",
+  "runtime_capability_ref": {
+    "name": "hermes.runtime.delegate",
+    "version": "1"
+  },
+  "snapshot_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+}

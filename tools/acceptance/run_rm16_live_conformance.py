@@ -40,6 +40,8 @@ SCENARIOS = (
     "pc12-scan",
     "rm02-package",
 )
+FORBIDDEN_LIVE_SCENARIOS = frozenset({"pc05", "pc08"})
+FORBIDDEN_LIVE_CODE = "RM16_LIVE_SCENARIO_FORBIDDEN"
 LONG_CHINESE_PROMPT = (
     "请用中文写一份不少于五百字的市场分析报告，覆盖产品定位、渠道、风险与下一步。"
     "不要调用工具，不要请求审批，不要输出推理摘要，只输出完整正文。"
@@ -1008,61 +1010,16 @@ def run_pc04(ctx: dict[str, Any]) -> dict[str, Any]:
     )
 
 
+def reject_forbidden_live(scenario: str) -> None:
+    fail(
+        "PC-05 Worker kill and PC-08 Hermes restart live are forbidden by RM-16 v1.6.15",
+        FORBIDDEN_LIVE_CODE,
+    )
+
+
 def run_pc05(ctx: dict[str, Any]) -> dict[str, Any]:
-    evidence = base_evidence("pc05")
-    probe_and_health(ctx, evidence)
-    kill_cmd = (os.environ.get("RM16_WORKER_KILL_CMD") or "").strip()
-    if not kill_cmd:
-        fail("PC-05 requires RM16_WORKER_KILL_CMD to kill/restart the Agent Worker", "RM16_WORKER_KILL_UNAVAILABLE")
-    started = start_stable_running_run(ctx, evidence, prefix="rm16-pc05")
-    bound: BoundRuntimeContext = started["bound"]
-    before = query_attempts(started["run_id"])
-    expire_run_lease(started["run_id"])
-    completed = subprocess.run(kill_cmd, shell=True, capture_output=True, text=True, check=False)
-    evidence["worker_kill_exit"] = completed.returncode
-    if completed.returncode != 0:
-        fail(f"RM16_WORKER_KILL_CMD failed: {(completed.stderr or completed.stdout or '')[-400:]}")
-    deadline = time.monotonic() + ctx["timeout"]
-    items: list[dict[str, Any]] = []
-    gap = False
-    while time.monotonic() < deadline:
-        items = rm14.query_sot_events(started["run_id"])
-        gap = gap_from_sot(items)
-        if gap:
-            break
-        time.sleep(0.5)
-    after = query_attempts(started["run_id"])
-    waited = wait_terminal(ctx, started["run_id"])
-    terminals = [item.get("event_type") for item in waited["items"] if item.get("event_type") in SOT_TERMINAL]
-    hermes_after = hermes_status(bound, started["runtime_run_id"], ctx["timeout"])
-    recovered = resolve_bound_runtime(
-        ctx,
-        run_id=started["run_id"],
-        attempt_id=started["attempt_id"],
-        runtime_run_id=started["runtime_run_id"],
-        expected_env="RM16_EXPECTED_RUNNING_INSTANCE_ID",
-    )
-    same_instance = recovered.hermes_agent_instance_id == bound.hermes_agent_instance_id
-    evidence["native_paths_observed"].append("/v1/runs/<id>")
-    evidence["observability_gap"] = gap
-    evidence["attempt_count_before"] = before.get("count")
-    evidence["attempt_count_after"] = after.get("count")
-    evidence["public_terminal_events"] = terminals
-    evidence["hermes_run_status_after"] = hermes_after
-    evidence["public_status"] = waited["status"]
-    evidence["recovered_hermes_agent_instance_id"] = recovered.hermes_agent_instance_id
-    scan_surfaces(ctx, started["run_id"], evidence)
-    ok = (
-        bool(evidence.get("runtime_binding_verified"))
-        and evidence.get("fault_fixture") == "stable_running"
-        and evidence.get("pre_fault_public_status") == "RUNNING"
-        and evidence.get("pre_fault_hermes_status") in HERMES_RUNNING_STATUSES
-        and gap
-        and same_instance
-        and int(after.get("count") or 0) <= int(before.get("count") or 0) + 1
-        and len(set(terminals)) <= 1
-    )
-    return finish(evidence, started["secrets"], ok, None if ok else "PC-05 worker restart gap/fencing failed")
+    reject_forbidden_live("pc05")
+    raise AssertionError("unreachable")
 
 
 def run_pc06(ctx: dict[str, Any]) -> dict[str, Any]:
@@ -1166,43 +1123,8 @@ def run_pc07(ctx: dict[str, Any]) -> dict[str, Any]:
 
 
 def run_pc08(ctx: dict[str, Any]) -> dict[str, Any]:
-    evidence = base_evidence("pc08")
-    probe_and_health(ctx, evidence)
-    restart_cmd = (os.environ.get("RM16_HERMES_RESTART_CMD") or "").strip()
-    if not restart_cmd:
-        fail("PC-08 requires RM16_HERMES_RESTART_CMD", "RM16_HERMES_RESTART_UNAVAILABLE")
-    started = start_stable_running_run(ctx, evidence, prefix="rm16-pc08")
-    bound: BoundRuntimeContext = started["bound"]
-    expected_restart = expected_instance_id("RM16_EXPECTED_RESTART_INSTANCE_ID")
-    if expected_restart and expected_restart != bound.hermes_agent_instance_id:
-        fail(
-            f"restart instance mismatch {bound.hermes_agent_instance_id} != {expected_restart}",
-            "RM16_BOUND_RUNTIME_INSTANCE_MISMATCH",
-        )
-    before = query_attempts(started["run_id"])
-    completed = subprocess.run(restart_cmd, shell=True, capture_output=True, text=True, check=False)
-    evidence["hermes_restart_exit"] = completed.returncode
-    if completed.returncode != 0:
-        fail(f"RM16_HERMES_RESTART_CMD failed: {(completed.stderr or completed.stdout or '')[-400:]}")
-    waited = wait_terminal(ctx, started["run_id"])
-    after = query_attempts(started["run_id"])
-    dumped = json.dumps(waited["items"], ensure_ascii=False)
-    interrupted = "RUNTIME_INTERRUPTED" in dumped
-    evidence["public_status"] = waited["status"]
-    evidence["attempt_count_before"] = before.get("count")
-    evidence["attempt_count_after"] = after.get("count")
-    evidence["runtime_interrupted"] = interrupted
-    scan_surfaces(ctx, started["run_id"], evidence)
-    ok = (
-        bool(evidence.get("runtime_binding_verified"))
-        and evidence.get("fault_fixture") == "stable_running"
-        and evidence.get("pre_fault_public_status") == "RUNNING"
-        and evidence.get("pre_fault_hermes_status") in HERMES_RUNNING_STATUSES
-        and waited["status"] == "FAILED"
-        and interrupted
-        and int(after.get("count") or 0) == int(before.get("count") or 0)
-    )
-    return finish(evidence, started["secrets"], ok, None if ok else "PC-08 interrupted mapping failed")
+    reject_forbidden_live("pc08")
+    raise AssertionError("unreachable")
 
 
 def run_pc09(ctx: dict[str, Any]) -> dict[str, Any]:
@@ -1278,7 +1200,7 @@ def scenario_output_path(scenario: str) -> Path:
 
 
 def run_rm02_package() -> dict[str, Any]:
-    required = [name for name in SCENARIOS if name not in {"pc12-scan", "rm02-package"}]
+    required = [name for name in SCENARIOS if name not in {"pc05", "pc08", "pc12-scan", "rm02-package"}]
     missing: list[str] = []
     failed: list[str] = []
     versions: list[str] = []
@@ -1367,11 +1289,23 @@ def self_check() -> int:
     if "def resolve_bound_runtime" not in src or "def start_stable_running_run" not in src:
         print("self-check failed: bound runtime helpers missing", file=sys.stderr)
         return 1
-    if "park_tool_name()" in src.split("def run_pc05", 1)[-1].split("def run_pc06", 1)[0]:
-        print("self-check failed: PC-05 still uses park tool", file=sys.stderr)
+    if FORBIDDEN_LIVE_SCENARIOS != frozenset({"pc05", "pc08"}):
+        print("self-check failed: forbidden live scenarios", file=sys.stderr)
         return 1
-    if "park_tool_name()" in src.split("def run_pc08", 1)[-1].split("def run_pc09", 1)[0]:
-        print("self-check failed: PC-08 still uses park tool", file=sys.stderr)
+    package_required = [name for name in SCENARIOS if name not in {"pc05", "pc08", "pc12-scan", "rm02-package"}]
+    if "pc05" in package_required or "pc08" in package_required:
+        print("self-check failed: rm02-package still requires pc05/pc08", file=sys.stderr)
+        return 1
+    if FORBIDDEN_LIVE_CODE not in src:
+        print("self-check failed: forbidden live code missing", file=sys.stderr)
+        return 1
+    pc05_body = src.split("def run_pc05", 1)[-1].split("def run_pc06", 1)[0]
+    pc08_body = src.split("def run_pc08", 1)[-1].split("def run_pc09", 1)[0]
+    if "RM16_WORKER_KILL_CMD" in pc05_body or "RM16_HERMES_RESTART_CMD" in pc08_body:
+        print("self-check failed: forbidden live still executes kill/restart", file=sys.stderr)
+        return 1
+    if "park_tool_name()" in pc05_body or "park_tool_name()" in pc08_body:
+        print("self-check failed: PC-05/PC-08 still uses park tool", file=sys.stderr)
         return 1
     print("self-check passed")
     return 0
@@ -1417,6 +1351,13 @@ def main() -> int:
         return preflight_env()
     if not args.scenario:
         parser.error("--scenario is required unless --self-check or --preflight-env")
+    if args.scenario in FORBIDDEN_LIVE_SCENARIOS:
+        print(FORBIDDEN_LIVE_CODE, file=sys.stderr)
+        print(
+            "PC-05 Worker kill and PC-08 Hermes restart live are forbidden by RM-16 v1.6.15",
+            file=sys.stderr,
+        )
+        return 2
     output = Path(args.output) if args.output else scenario_output_path(args.scenario)
     try:
         if args.scenario == "rm02-package":

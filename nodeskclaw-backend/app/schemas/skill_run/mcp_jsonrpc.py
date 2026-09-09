@@ -373,3 +373,48 @@ RUN_EVENT_V12_MODELS = (
     RunEventControlV12,
 )
 
+
+class AssistantDeltaPayloadV15(BaseModel):
+    message_id: str
+    delta_seq: int = Field(ge=1)
+    delta: str
+
+
+class AssistantMessagePayloadV15(BaseModel):
+    message_id: str
+    text: str
+
+
+class RunEventAssistantDeltaV15(BaseModel):
+    event_id: str
+    run_id: str
+    event_type: Literal["assistant.delta"]
+    event_seq: int
+    source: str = "agent"
+    source_event_id: str | None = None
+    timestamp: str
+    payload: AssistantDeltaPayloadV15
+
+
+class RunEventAssistantMessageV15(BaseModel):
+    event_id: str
+    run_id: str
+    event_type: Literal["assistant.message"]
+    event_seq: int
+    source: str = "agent"
+    source_event_id: str | None = None
+    timestamp: str
+    payload: AssistantMessagePayloadV15
+
+
+RUN_EVENT_V15_MODELS = (
+    RunEventAssistantDeltaV15,
+    RunEventAssistantMessageV15,
+    RunEventReasoningSummaryV12,
+    RunEventToolCallV12,
+    RunEventClarifyRequestedV12,
+    RunEventApprovalRequestedV12,
+    RunEventArtifactPersistedV12,
+    RunEventControlV12,
+)
+

@@ -1,6 +1,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from app.core.exceptions import BadRequestError
 from app.services.hermes_skill.runtime_skill_run_service import RuntimeSkillRunService
 from app.schemas.hermes_skill.runtime_skill_run import StartRuntimeSkillRunRequest
 
@@ -110,6 +111,8 @@ async def test_start_delegates_to_skill_agent_and_returns_run_id():
     assert "credential_lease" not in payload["route_snapshot"]
     assert "token" not in str(payload["route_snapshot"].get("credential_lease_ref") or {})
     assert payload["request_trace_id"].startswith("req_")
+    assert payload["delegation_topology"] == "single_agent"
+    assert "runtime_capability_ref" not in payload
 
 
 @pytest.mark.asyncio
@@ -409,3 +412,264 @@ async def test_find_idempotent_task_replays_within_ttl():
 
     assert found is live
     assert live.idempotency_key == "live-key"
+
+# --- RM-10 projection observability (T4) ---
+from unittest.mock import AsyncMock, MagicMock
+
+import httpx
+import pytest
+from fastapi import FastAPI, Header, HTTPException
+from httpx import ASGITransport
+
+from app.models.hermes_skill.hermes_task import HermesTask, TaskStatus
+from app.services.hermes_skill.run_projection_updater_service import (
+    RunProjectionUpdaterService,
+    _inc_projection_sync_failed,
+    get_projection_metrics_snapshot,
+    reset_projection_metrics,
+)
+
+
+@pytest.fixture(autouse=True)
+def _clear_projection_metrics():
+    reset_projection_metrics()
+    yield
+    reset_projection_metrics()
+
+
+def _db_missing_task():
+    db = AsyncMock()
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = None
+    db.execute = AsyncMock(return_value=result)
+    return db
+
+
+def _db_with_task(task: HermesTask):
+    db = AsyncMock()
+    call_count = {"n": 0}
+
+    async def _execute_side_effect(stmt, *a, **kw):
+        call_count["n"] += 1
+        res = MagicMock()
+        if call_count["n"] == 1:
+            res.scalar_one_or_none.return_value = task
+            return res
+        res.scalar_one_or_none.return_value = 0
+        return res
+
+    db.execute.side_effect = _execute_side_effect
+    return db
+
+
+@pytest.mark.asyncio
+async def test_projection_fail_counter_task_not_found():
+    service = RunProjectionUpdaterService(_db_missing_task())
+    ok = await service.sync_task_projection("missing-task", "org-1", "user-1")
+    assert ok is False
+    snap = get_projection_metrics_snapshot()
+    assert snap["projection_sync_failed_total"]["task_not_found"] == 1
+
+
+@pytest.mark.asyncio
+async def test_projection_fail_counter_agent_run_not_found(monkeypatch):
+    task = HermesTask(
+        id="task-404",
+        org_id="org-1",
+        user_id="user-1",
+        status=TaskStatus.RUNNING,
+        projection_cursor=0,
+    )
+    service = RunProjectionUpdaterService(_db_with_task(task))
+
+    mock_agent_app = FastAPI()
+
+    @mock_agent_app.get("/internal/v1/runs/{run_id}")
+    async def get_run_route(run_id: str, x_exec_org_id: str = Header(alias="X-Exec-Org-Id")):
+        raise HTTPException(status_code=404, detail="not found")
+
+    real_transport = ASGITransport(app=mock_agent_app)
+    orig_async_client = httpx.AsyncClient
+
+    def _custom_client(*args, **kwargs):
+        kwargs["transport"] = real_transport
+        kwargs["base_url"] = "http://testserver"
+        return orig_async_client(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", _custom_client)
+
+    ok = await service.sync_task_projection("task-404", "org-1", "user-1")
+    assert ok is False
+    snap = get_projection_metrics_snapshot()
+    assert snap["projection_sync_failed_total"]["agent_run_not_found"] == 1
+    assert "http_error" not in snap["projection_sync_failed_total"]
+
+
+@pytest.mark.asyncio
+async def test_projection_fail_counter_http_error(monkeypatch):
+    task = HermesTask(
+        id="task-500",
+        org_id="org-1",
+        user_id="user-1",
+        status=TaskStatus.RUNNING,
+        projection_cursor=0,
+    )
+    service = RunProjectionUpdaterService(_db_with_task(task))
+
+    mock_agent_app = FastAPI()
+
+    @mock_agent_app.get("/internal/v1/runs/{run_id}")
+    async def get_run_route(run_id: str, x_exec_org_id: str = Header(alias="X-Exec-Org-Id")):
+        raise HTTPException(status_code=500, detail="boom")
+
+    real_transport = ASGITransport(app=mock_agent_app)
+    orig_async_client = httpx.AsyncClient
+
+    def _custom_client(*args, **kwargs):
+        kwargs["transport"] = real_transport
+        kwargs["base_url"] = "http://testserver"
+        return orig_async_client(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", _custom_client)
+
+    ok = await service.sync_task_projection("task-500", "org-1", "user-1")
+    assert ok is False
+    snap = get_projection_metrics_snapshot()
+    assert snap["projection_sync_failed_total"]["http_error"] == 1
+    assert "exception" not in snap["projection_sync_failed_total"]
+
+
+@pytest.mark.asyncio
+async def test_projection_fail_counter_exception(monkeypatch):
+    task = HermesTask(
+        id="task-exc",
+        org_id="org-1",
+        user_id="user-1",
+        status=TaskStatus.RUNNING,
+        projection_cursor=0,
+    )
+    service = RunProjectionUpdaterService(_db_with_task(task))
+
+    class _BoomClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            raise RuntimeError("transport broken")
+
+        async def __aexit__(self, *args):
+            return False
+
+    monkeypatch.setattr(httpx, "AsyncClient", _BoomClient)
+
+    ok = await service.sync_task_projection("task-exc", "org-1", "user-1")
+    assert ok is False
+    snap = get_projection_metrics_snapshot()
+    assert snap["projection_sync_failed_total"]["exception"] == 1
+
+
+@pytest.mark.asyncio
+async def test_projection_metrics_fail_open_does_not_break_sync(monkeypatch):
+    """Broken counter storage must not change sync outcome or raise."""
+
+    class _BrokenDict(dict):
+        def __setitem__(self, key, value):
+            raise RuntimeError("counter store broken")
+
+        def get(self, key, default=None):
+            raise RuntimeError("counter store broken")
+
+    monkeypatch.setattr(
+        "app.services.hermes_skill.run_projection_updater_service._projection_sync_failed_total",
+        _BrokenDict(),
+    )
+    _inc_projection_sync_failed("task_not_found")
+    service = RunProjectionUpdaterService(_db_missing_task())
+    ok = await service.sync_task_projection("missing-task", "org-1", "user-1")
+    assert ok is False
+    assert get_projection_metrics_snapshot() == {"projection_sync_failed_total": {}}
+
+
+def test_projection_unknown_reason_maps_to_exception():
+    _inc_projection_sync_failed("not_a_real_reason")
+    snap = get_projection_metrics_snapshot()
+    assert snap["projection_sync_failed_total"]["exception"] == 1
+    assert "not_a_real_reason" not in snap["projection_sync_failed_total"]
+
+
+@pytest.mark.asyncio
+async def test_enqueue_freezes_server_topology_and_strips_client_overlay():
+    db = AsyncMock()
+    service = RuntimeSkillRunService(db)
+    request = _request(
+        client_context={
+            "delegation_topology": "runtime_delegated",
+            "runtime_capability_ref": {"name": "x", "version": "1"},
+        }
+    )
+    with patch.object(
+        service,
+        "_enrich_route_snapshot",
+        new=AsyncMock(side_effect=lambda request, route: dict(route)),
+    ):
+        outbox = await service._enqueue_agent_run_outbox(
+            request,
+            {},
+            "run-1",
+            release_meta=_release_meta(),
+            execution_context={},
+        )
+    assert outbox.payload["delegation_topology"] == "single_agent"
+    assert "runtime_capability_ref" not in outbox.payload
+    assert "delegation_topology" not in outbox.payload["client_context"]
+    assert "runtime_capability_ref" not in outbox.payload["client_context"]
+
+
+@pytest.mark.asyncio
+async def test_enqueue_persists_runtime_delegated_capability_ref():
+    db = AsyncMock()
+    service = RuntimeSkillRunService(db)
+    meta = {
+        **_release_meta(),
+        "delegation_topology": "runtime_delegated",
+        "runtime_capability_ref": {"name": "hermes.runtime.delegate", "version": "1"},
+    }
+    with patch.object(
+        service,
+        "_enrich_route_snapshot",
+        new=AsyncMock(side_effect=lambda request, route: dict(route)),
+    ):
+        outbox = await service._enqueue_agent_run_outbox(
+            _request(),
+            {},
+            "run-1",
+            release_meta=meta,
+            execution_context={},
+        )
+    assert outbox.payload["delegation_topology"] == "runtime_delegated"
+    assert outbox.payload["runtime_capability_ref"] == {
+        "name": "hermes.runtime.delegate",
+        "version": "1",
+    }
+
+
+@pytest.mark.asyncio
+async def test_enqueue_rejects_illegal_topology():
+    db = AsyncMock()
+    service = RuntimeSkillRunService(db)
+    meta = {**_release_meta(), "delegation_topology": "platform_multi_agent"}
+    with patch.object(
+        service,
+        "_enrich_route_snapshot",
+        new=AsyncMock(side_effect=lambda request, route: dict(route)),
+    ):
+        with pytest.raises(BadRequestError) as exc:
+            await service._enqueue_agent_run_outbox(
+                _request(),
+                {},
+                "run-1",
+                release_meta=meta,
+                execution_context={},
+            )
+    assert exc.value.message_key == "errors.runtime.execution_topology_not_supported"
+

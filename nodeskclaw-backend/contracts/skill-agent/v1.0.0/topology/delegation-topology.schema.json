@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nodeskclaw.example.com/contracts/skill-agent/v1.0.0/topology/delegation-topology.schema.json",
+  "title": "DelegationTopology",
+  "description": "Hermes runtime-internal delegation only. Not Platform Multi-Agent.",
+  "type": "string",
+  "enum": [
+    "single_agent",
+    "runtime_delegated"
+  ]
+}

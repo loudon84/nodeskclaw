@@ -10,6 +10,8 @@ from fastapi.responses import JSONResponse
 from app.api.runs import (
     _agent_post,
     _public_run_event,
+    _public_run_result,
+    _public_run_view,
     approve_run,
     cancel_run,
     decide_run_approval,
@@ -862,6 +864,63 @@ async def test_agent_404_mapped_to_not_found():
         assert exc_info.value.message_key == "errors.run.not_found"
 
 
+# @lat: [[architecture/skill-agent#RM-19 Public Streaming Delta]]
+def test_public_run_event_projects_assistant_delta_and_snapshot():
+    from app.api.runs import drain_projection_failures
+
+    drain_projection_failures()
+    delta = _public_run_event(
+        {
+            "event_type": "assistant.delta",
+            "event_seq": 3,
+            "timestamp": "2026-09-09T00:00:03Z",
+            "payload": {
+                "message_id": "msg_1",
+                "delta_seq": 1,
+                "delta": "正在分析",
+                "runtime_run_id": "secret",
+            },
+        },
+        "run-1",
+    )
+    assert delta is None
+    assert drain_projection_failures()
+    assert _public_run_event(
+        {
+            "event_type": "assistant.delta",
+            "event_seq": 3,
+            "timestamp": "2026-09-09T00:00:03Z",
+            "payload": {"message_id": "msg_1", "delta_seq": 1, "delta": "正在分析"},
+        },
+        "run-1",
+    ) == {
+        "event_id": "run-1:3",
+        "run_id": "run-1",
+        "event_type": "assistant.delta",
+        "event_seq": 3,
+        "timestamp": "2026-09-09T00:00:03Z",
+        "payload": {"message_id": "msg_1", "delta_seq": 1, "delta": "正在分析"},
+    }
+    assert _public_run_event(
+        {
+            "event_type": "assistant.message",
+            "event_seq": 4,
+            "timestamp": "2026-09-09T00:00:04Z",
+            "payload": {"message_id": "msg_1", "text": "正在分析完整结果"},
+        },
+        "run-1",
+    )["payload"] == {"message_id": "msg_1", "text": "正在分析完整结果"}
+    assert _public_run_event(
+        {
+            "event_type": "assistant.message",
+            "event_seq": 1,
+            "timestamp": "2026-09-09T00:00:01Z",
+            "payload": {"text": "legacy"},
+        },
+        "run-1",
+    )["payload"] == {"text": "legacy"}
+
+
 def test_public_run_event_projects_semantic_types_and_drops_unknown():
     assert _public_run_event(
         {
@@ -1207,3 +1266,81 @@ async def test_stream_run_events_honors_last_event_id_resume():
 
     assert captured_after_seq
     assert captured_after_seq[0] == 7
+
+
+def test_public_run_view_result_strips_topology_keys():
+    view = _public_run_view(
+        {
+            "run_id": "run-1",
+            "tool_name": "writer",
+            "status": "RUNNING",
+            "created_at": "2026-09-08T00:00:00Z",
+            "updated_at": "2026-09-08T00:00:01Z",
+            "delegation_topology": "runtime_delegated",
+            "runtime_capability_ref": "cap://x",
+            "execution_snapshot": {"members": []},
+            "runtime_members": [{"id": "child"}],
+        }
+    )
+    assert view["run_id"] == "run-1"
+    assert view["tool_name"] == "writer"
+    assert "delegation_topology" not in view
+    assert "runtime_capability_ref" not in view
+    assert "execution_snapshot" not in view
+    assert "runtime_members" not in view
+
+    result = _public_run_result(
+        {
+            "status": "COMPLETED",
+            "result_content": "ok",
+            "delegation_topology": "runtime_delegated",
+            "runtime_capability_ref": "cap://x",
+            "execution_snapshot": {},
+            "runtime_members": [],
+        },
+        "run-1",
+    )
+    assert result["run_id"] == "run-1"
+    assert result["text"] == "ok"
+    assert "delegation_topology" not in result
+    assert "runtime_capability_ref" not in result
+    assert "execution_snapshot" not in result
+    assert "runtime_members" not in result
+
+
+def test_public_run_sse_drops_internal_runtime_and_subagent_topology():
+    assert _public_run_event(
+        {
+            "event_type": "internal.runtime.trace",
+            "event_seq": 8,
+            "payload": {"runtime_event_type": "subagent.started", "delegation_topology": "runtime_delegated"},
+        },
+        "run-1",
+    ) is None
+    assert _public_run_event(
+        {
+            "event_type": "subagent.started",
+            "event_seq": 9,
+            "payload": {"child_run_id": "child-1"},
+        },
+        "run-1",
+    ) is None
+    projected = _public_run_event(
+        {
+            "event_type": "run.progress",
+            "event_seq": 1,
+            "timestamp": "2026-09-08T00:00:00Z",
+            "payload": {
+                "phase": "RUNTIME_RUNNING",
+                "delegation_topology": "runtime_delegated",
+                "runtime_capability_ref": "cap://x",
+            },
+        },
+        "run-1",
+    )
+    assert projected is not None
+    assert projected["run_id"] == "run-1"
+    assert "delegation_topology" not in projected
+    assert "delegation_topology" not in projected["payload"]
+    assert "runtime_capability_ref" not in projected["payload"]
+    assert "child_run_id" not in str(projected)

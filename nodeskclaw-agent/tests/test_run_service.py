@@ -16,8 +16,23 @@ from app.services import run_service
 
 
 def test_validate_semantic_event_payload_shapes():
-    assert validate_semantic_event_payload("assistant.message", {"text": "hi"}) is None
-    assert validate_semantic_event_payload("assistant.message", {}) == "missing_assistant_text"
+    assert (
+        validate_semantic_event_payload(
+            "assistant.delta",
+            {"message_id": "msg_1", "delta_seq": 1, "delta": "hi"},
+        )
+        is None
+    )
+    assert (
+        validate_semantic_event_payload(
+            "assistant.delta",
+            {"message_id": "msg_1", "delta_seq": 0, "delta": "hi"},
+        )
+        == "invalid_assistant_delta_seq"
+    )
+    assert validate_semantic_event_payload("assistant.message", {"message_id": "msg_1", "text": "hi"}) is None
+    assert validate_semantic_event_payload("assistant.message", {"text": "hi"}) == "missing_assistant_message_id"
+    assert validate_semantic_event_payload("assistant.message", {"message_id": "msg_1"}) == "missing_assistant_text"
     assert (
         validate_semantic_event_payload(
             "tool.call",
@@ -159,6 +174,30 @@ def test_build_snapshot_keeps_connector_refs():
     assert snap["connector_binding_refs"] == ["binding-1"]
     assert snap["knowledge_refs"] == ["kb://doc-1"]
     assert snap["placement"] == {"role": "central", "engine": "connector"}
+    assert snap["delegation_topology"] == "single_agent"
+
+
+def test_build_snapshot_persists_hybrid_placement_with_single_agent_topology():
+    req = CreateRunRequest(
+        run_id="run-hyb",
+        tool_name="foo",
+        placement={"role": "hybrid", "engine": "hermes"},
+        delegation_topology="single_agent",
+    )
+    snap = run_service.build_snapshot(req, org_id="org", user_id="user")
+    assert snap["placement"]["role"] == "hybrid"
+    assert snap["delegation_topology"] == "single_agent"
+    assert snap["runtime_policy"]["delegation_topology"] == "single_agent"
+
+
+def test_build_snapshot_rejects_platform_multi_agent():
+    req = CreateRunRequest(
+        run_id="run-pma",
+        tool_name="foo",
+        delegation_topology="platform_multi_agent",
+    )
+    with pytest.raises(ValueError, match="EXECUTION_TOPOLOGY_NOT_SUPPORTED"):
+        run_service.build_snapshot(req, org_id="org", user_id="user")
 
 
 @pytest.mark.asyncio

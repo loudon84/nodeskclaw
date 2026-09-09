@@ -1,0 +1,14 @@
+{
+  "org_id": "org_fixture_001",
+  "user_id": "user_fixture_001",
+  "skill_id": "skill_fixture",
+  "placement": {
+    "role": "hybrid",
+    "engine": "hermes"
+  },
+  "delegation_topology": "single_agent",
+  "execution_context": {
+    "context_version": 1
+  },
+  "snapshot_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+}

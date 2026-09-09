@@ -1,9 +1,14 @@
+import json
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.core.exceptions import BadRequestError
 from app.models.hermes_skill.hermes_task import TaskStatus
-from app.services.hermes_skill.mcp_tool_mapper import McpToolMapper
+from app.services.hermes_skill.mcp_tool_mapper import (
+    INTERNAL_SOUTHBOUND_FIELD_KEYS,
+    McpToolMapper,
+    _strip_internal_southbound_fields,
+)
 from app.services.hermes_skill.runtime_skill_run_service import RuntimeSkillRunResult
 from app.services.hermes_skill.permission_checker import PermissionChecker
 from app.services.hermes_skill.skill_routing_service import (
@@ -11,6 +16,7 @@ from app.services.hermes_skill.skill_routing_service import (
     RoutingResult,
     SkillRoutingService,
 )
+from app.services.mcp_skill_gateway.handler import _copy_frozen_attachment_refs
 
 
 def _runtime_skill():
@@ -154,6 +160,33 @@ async def test_runtime_skill_explicit_override_denied(arguments):
                 profile_name="default",
             )
     assert exc_info.value.message_key == "errors.skill.route_override_not_allowed"
+
+
+@pytest.mark.asyncio
+async def test_runtime_skill_route_override_forbidden_keys_still_denied():
+    db = AsyncMock()
+    mapper = McpToolMapper(db)
+    skill = _runtime_skill()
+    forbidden_arguments = [
+        {"prompt": "hello", "_routing": {"agent_alias": "other-agent"}},
+        {"prompt": "hello", "_execution": {}},
+        {"prompt": "hello", "route_config": {}},
+    ]
+
+    with patch.object(PermissionChecker, "require_permission", AsyncMock()), \
+         patch.object(SkillRoutingService, "get_exposed_skill", AsyncMock(return_value=skill)), \
+         patch("app.services.hermes_skill.skill_audit_logger.SkillAuditLogger") as mock_audit_cls:
+        mock_audit_cls.return_value = AsyncMock()
+        for arguments in forbidden_arguments:
+            with pytest.raises(BadRequestError) as exc_info:
+                await mapper.call_tool(
+                    "hermes_common_writer__customer-profiling",
+                    arguments,
+                    "org-1",
+                    "user-1",
+                    profile_name="default",
+                )
+            assert exc_info.value.message_key == "errors.skill.route_override_not_allowed"
 
 
 @pytest.mark.asyncio
@@ -532,4 +565,150 @@ def test_map_app_error_nests_canonical_attachment_fields():
     assert data["message_key"] == "errors.run.attachment_ref_invalid"
     assert data["message"] == "附件引用格式无效"
     assert payload["error"]["code"] != 400
+
+
+@pytest.mark.asyncio
+async def test_skill_to_tool_dict_catalog_strips_topology_extra_metadata():
+
+    leaked = {
+        "interactionMode": "chat",
+        "promptField": "prompt",
+        "delegation_topology": "runtime_delegated",
+        "runtime_capability_ref": "cap://x",
+        "execution_snapshot": {"members": []},
+        "runtime_members": [{"id": "a"}],
+        "ui_schema": {
+            "title": "ok",
+            "delegation_topology": "single_agent",
+            "contract": "nodeskclaw-backend/contracts/skill-agent/v1.0.0/foo.json",
+        },
+        "examples": [{"prompt": "hi", "runtime_capability_ref": "nope"}],
+    }
+    stripped = _strip_internal_southbound_fields(leaked)
+    assert "delegation_topology" not in stripped
+    assert "runtime_capability_ref" not in stripped
+    assert "execution_snapshot" not in stripped
+    assert "runtime_members" not in stripped
+    assert stripped["ui_schema"]["title"] == "ok"
+    assert "delegation_topology" not in stripped["ui_schema"]
+    assert "contract" not in stripped["ui_schema"]
+    assert "runtime_capability_ref" not in stripped["examples"][0]
+
+    db = AsyncMock()
+    mapper = McpToolMapper(db)
+    skill = _runtime_skill()
+    skill.title = "Writer"
+    skill.name = "writer"
+    skill.description = "d"
+    skill.version = "1"
+    skill.category = "x"
+    published = MagicMock()
+    published.id = "rel-1"
+    published.digest = "abc"
+    published.title = "Writer"
+    published.description = "d"
+    published.version = "1"
+    published.category = "x"
+    published.input_schema = {"type": "object", "properties": {"prompt": {"type": "string"}}}
+    published.extra_metadata = leaked
+    inst_result = MagicMock()
+    inst_result.scalar_one_or_none.return_value = None
+    db.execute = AsyncMock(return_value=inst_result)
+
+    with patch("app.services.hermes_skill.mcp_tool_mapper.SkillReleaseService") as release_cls, \
+         patch(
+             "app.services.hermes_skill.mcp_tool_mapper.HermesSkillAuthorizationService"
+         ) as authz_cls, \
+         patch.object(
+             mapper,
+             "_build_runtime_skill_tool_metadata",
+             AsyncMock(return_value={"sourceType": "hermes_api_server"}),
+         ):
+        release_cls.return_value.get_published_by_skill_db_id = AsyncMock(return_value=published)
+        authz_cls.return_value.can_invoke = AsyncMock(return_value=True)
+        tool = await mapper._skill_to_tool_dict(skill, "org-1", "user-1")
+    for key in INTERNAL_SOUTHBOUND_FIELD_KEYS:
+        assert key not in tool
+    assert "skill-agent/" not in json.dumps(tool)
+    assert tool["name"] == skill.tool_name
+
+
+@pytest.mark.asyncio
+async def test_list_tools_catalog_strips_connector_topology_extra_metadata():
+    db = AsyncMock()
+    mapper = McpToolMapper(db)
+    empty = MagicMock()
+    empty.scalars.return_value.all.return_value = []
+    db.execute = AsyncMock(return_value=empty)
+    with patch.object(PermissionChecker, "has_permission", AsyncMock(return_value=True)), \
+         patch.object(
+             mapper,
+             "_list_public_connector_tools",
+             AsyncMock(
+                 return_value=[
+                     {
+                         "name": "conn",
+                         "delegation_topology": "runtime_delegated",
+                         "nested": {"runtime_capability_ref": "x", "ok": 1},
+                     }
+                 ]
+             ),
+         ):
+        tools = await mapper.list_tools("org-1", "user-1")
+    assert tools == [{"name": "conn", "nested": {"ok": 1}}]
+
+
+@pytest.mark.parametrize(
+    "arguments,client_context",
+    [
+        ({"prompt": "hello", "delegation_topology": "runtime_delegated"}, None),
+        ({"prompt": "hello", "runtime_capability_ref": "cap://x"}, None),
+        ({"prompt": "hello", "execution_snapshot": {}}, None),
+        ({"prompt": "hello", "client_context": {"delegation_topology": "single_agent"}}, None),
+        ({"prompt": "hello"}, {"delegation_topology": "runtime_delegated"}),
+        ({"prompt": "hello"}, {"runtime_capability_ref": "cap://x"}),
+    ],
+)
+@pytest.mark.asyncio
+async def test_runtime_skill_topology_overlay_denied(arguments, client_context):
+    db = AsyncMock()
+    mapper = McpToolMapper(db)
+    skill = _runtime_skill()
+
+    with patch.object(PermissionChecker, "require_permission", AsyncMock()), \
+         patch.object(SkillRoutingService, "get_exposed_skill", AsyncMock(return_value=skill)), \
+         patch("app.services.hermes_skill.skill_audit_logger.SkillAuditLogger") as mock_audit_cls:
+        mock_audit_cls.return_value = AsyncMock()
+        with pytest.raises(BadRequestError) as exc_info:
+            await mapper.call_tool(
+                "hermes_common_writer__customer-profiling",
+                arguments,
+                "org-1",
+                "user-1",
+                profile_name="default",
+                client_context=client_context,
+            )
+    assert exc_info.value.message_key == "errors.skill.route_override_not_allowed"
+
+
+def test_frozen_attachment_refs_copy_strips_topology_from_client_context():
+
+    copied = _copy_frozen_attachment_refs(
+        {
+            "client_context": {
+                "attachment_refs": ["att_a"],
+                "delegation_topology": "runtime_delegated",
+                "runtime_capability_ref": "cap://x",
+            }
+        },
+        {
+            "desktop_device_id": "dev-1",
+            "delegation_topology": "single_agent",
+            "runtime_capability_ref": "cap://x",
+        },
+    )
+    assert copied["attachment_refs"] == ["att_a"]
+    assert copied["desktop_device_id"] == "dev-1"
+    assert "delegation_topology" not in copied
+    assert "runtime_capability_ref" not in copied
 

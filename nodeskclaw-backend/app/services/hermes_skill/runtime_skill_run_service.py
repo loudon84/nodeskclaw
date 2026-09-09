@@ -35,6 +35,7 @@ from app.services.hermes_external.hermes_env_parser import parse_env_file
 from app.services.hermes_skill.skill_release_service import (
     SkillReleaseService,
     compute_skill_content_digest,
+    freeze_delegation_topology,
     snapshot_hash,
 )
 from app.services.hermes_skill.task_event_token_service import TaskEventTokenService
@@ -243,6 +244,15 @@ class RuntimeSkillRunService:
         if connector_bindings:
             enriched_route["connector_bindings"] = connector_bindings
         requires_approval = bool((request.client_context or {}).get("requires_approval"))
+        client_context = dict(request.client_context or {})
+        client_context.pop("delegation_topology", None)
+        client_context.pop("runtime_capability_ref", None)
+        topology, capability_ref = freeze_delegation_topology(
+            {
+                "delegation_topology": release_meta.get("delegation_topology"),
+                "runtime_capability_ref": release_meta.get("runtime_capability_ref"),
+            }
+        )
         body = {
             "run_id": run_id,
             "tool_name": request.tool_name,
@@ -254,17 +264,20 @@ class RuntimeSkillRunService:
             "connector_binding_refs": list(release_meta.get("connector_binding_refs") or []),
             "knowledge_refs": list(release_meta.get("knowledge_refs") or []),
             "placement": dict(release_meta.get("placement") or {"role": "central"}),
+            "delegation_topology": topology,
             "arguments": request.arguments or {},
             "requires_approval": requires_approval,
             "route_snapshot": enriched_route,
             "output_policy": dict(request.output_policy),
-            "client_context": dict(request.client_context or {}),
+            "client_context": client_context,
             "request_trace_id": request.request_trace_id,
             "idempotency_key": request.idempotency_key,
             "run_session_id": request.session_id,
             "execution_context": execution_context or {},
             "context_version": (execution_context or {}).get("context_version"),
         }
+        if capability_ref is not None:
+            body["runtime_capability_ref"] = capability_ref
         cmd_body = {
             "tool_name": request.tool_name,
             "skill_id": request.skill_id,
@@ -324,6 +337,8 @@ class RuntimeSkillRunService:
                     "engine": "connector",
                     "edge_node_id": connector_snapshot.get("edge_node_id"),
                 },
+                "delegation_topology": "single_agent",
+                "runtime_capability_ref": None,
                 "snapshot_hash": snapshot_hash(
                     skill_release_id=request.tool_name,
                     digest=digest,
@@ -357,6 +372,8 @@ class RuntimeSkillRunService:
                     "Skill 尚未发布 Release，员工无法调用",
                     "errors.skill.release_required",
                 )
+        extra = dict(published.extra_metadata or {}) if published else {}
+        topology, capability_ref = freeze_delegation_topology(extra)
         route_for_hash = {
             "route_type": RUNTIME_SKILL_ROUTE_TYPE,
             "runtime_skill_id": request.runtime_skill_id,
@@ -372,6 +389,8 @@ class RuntimeSkillRunService:
             "connector_binding_refs": list(requirements.get("connector_binding_ids") or []),
             "knowledge_refs": list(requirements.get("knowledge_refs") or []),
             "placement": await self._resolve_placement(org_id=request.org_id, requirements=requirements),
+            "delegation_topology": topology,
+            "runtime_capability_ref": capability_ref,
             "snapshot_hash": snapshot_hash(
                 skill_release_id=release_id or request.skill_id,
                 digest=digest,

@@ -6,7 +6,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
-from tools.acceptance.check_postman_collection import check_collection, scan_acceptance_secrets
+from tools.acceptance.check_postman_collection import (
+    PUBLIC_JOURNEY_PATTERNS,
+    check_collection,
+    scan_acceptance_secrets,
+)
 
 REPO_COLLECTION = Path("tests/postman/nodeskclaw_acceptance_closure.postman_collection.json")
 REPO_ENV_TEMPLATE = Path("tests/postman/nodeskclaw_agent_acceptance.postman_environment.template.json")
@@ -67,6 +71,16 @@ def _valid_collection(*, extra_public: list[dict] | None = None, include_bundle:
             "AC-07 Approve",
             "{{BACKEND_BASE_URL}}/api/v1/runs/{{RUN_ID}}/approvals/{{APPROVAL_ID}}",
             body='{"choice":"once"}',
+        ),
+        _jwt_item(
+            "AC-07b Decision",
+            "{{BACKEND_BASE_URL}}/api/v1/runs/{{RUN_ID}}/approvals/{{APPROVAL_ID}}/decision",
+            body='{"decision":"allow"}',
+        ),
+        _jwt_item(
+            "AC-10 Attachments",
+            "{{BACKEND_BASE_URL}}/api/v1/attachments",
+            body='{"filename":"probe.txt"}',
         ),
         _jwt_item("AC-08 Resume", "{{BACKEND_BASE_URL}}/api/v1/runs/{{RUN_ID}}/resume"),
         _jwt_item("AC-06 Cancel", "{{BACKEND_BASE_URL}}/api/v1/runs/{{RUN_ID}}/cancel"),
@@ -317,6 +331,59 @@ def test_checker_rejects_missing_public_result_journey(tmp_path):
     assert any("result" in error.lower() for error in errors)
 
 
-def test_formal_collection_uses_v121_public_paths():
+def test_checker_rejects_missing_public_decision_journey(tmp_path):
+    coll = _valid_collection()
+    public = coll["item"][0]["item"]
+    coll["item"][0]["item"] = [
+        item for item in public if "/decision" not in str(item["request"]["url"]["raw"])
+    ]
+    c_path = tmp_path / "no_decision.json"
+    e_path = tmp_path / "env.json"
+    c_path.write_text(json.dumps(coll))
+    e_path.write_text(json.dumps(_valid_env()))
+
+    errors = check_collection(c_path, e_path)
+
+    assert any("approval_decision" in error.lower() or "decision" in error.lower() for error in errors)
+
+
+def test_checker_rejects_missing_public_attachments_journey(tmp_path):
+    coll = _valid_collection()
+    public = coll["item"][0]["item"]
+    coll["item"][0]["item"] = [
+        item for item in public if "/api/v1/attachments" not in str(item["request"]["url"]["raw"])
+    ]
+    c_path = tmp_path / "no_attachments.json"
+    e_path = tmp_path / "env.json"
+    c_path.write_text(json.dumps(coll))
+    e_path.write_text(json.dumps(_valid_env()))
+
+    errors = check_collection(c_path, e_path)
+
+    assert any("attachments" in error.lower() for error in errors)
+
+
+def test_checker_rejects_public_item_with_internal_token(tmp_path):
+    coll = _valid_collection()
+    coll["item"][0]["item"][0]["request"]["header"].append(
+        {"key": "X-Skill-Agent-Token", "value": "{{INTERNAL_TOKEN}}"}
+    )
+    c_path = tmp_path / "public_internal.json"
+    e_path = tmp_path / "env.json"
+    c_path.write_text(json.dumps(coll))
+    e_path.write_text(json.dumps(_valid_env()))
+
+    errors = check_collection(c_path, e_path)
+
+    assert any("x-skill-agent-token" in error.lower() for error in errors)
+
+
+def test_formal_collection_covers_public_skill_run_journeys():
     errors = check_collection(REPO_COLLECTION, REPO_ENV_TEMPLATE)
     assert errors == []
+
+
+def test_public_journeys_do_not_include_internal_southbound():
+    blob = " ".join(pattern.pattern for pattern in PUBLIC_JOURNEY_PATTERNS.values())
+    assert "/internal/" not in blob
+    assert "AGENT_BASE_URL" not in blob

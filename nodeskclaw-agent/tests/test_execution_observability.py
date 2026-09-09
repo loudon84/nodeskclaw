@@ -5,8 +5,10 @@ from unittest.mock import MagicMock
 import pytest
 
 from app.services.execution_observability import (
+    ALLOWED_TRACE_ATTRS,
     METRIC_DEFINITIONS,
     ExecutionTrace,
+    apply_runtime_binding,
     bind_from_snapshot,
     fail_open,
     get_current_trace,
@@ -14,6 +16,8 @@ from app.services.execution_observability import (
     normalize_request_trace_id,
     observe_stage,
     record_metric,
+    trace_log_extra,
+    update_trace_attrs,
 )
 
 
@@ -154,3 +158,58 @@ def test_record_metric_registry_failure_is_fail_open(monkeypatch):
 
     monkeypatch.setattr(registry, "increment", broken_increment)
     record_metric("runs_claimed_total", labels={"role": "central", "outcome": "ok"})
+
+
+def test_bind_from_snapshot_includes_runtime_binding_fields():
+    snapshot = {"run_session_id": "sess-1", "request_trace_id": "req_rt-1"}
+    binding = {
+        "runtime_type": "hermes",
+        "runtime_version": "v2026.8.31",
+        "runtime_run_id": "rr-1",
+        "runtime_session_id": "rs-1",
+        "runtime_idempotency_key": "rik-1",
+    }
+    trace = bind_from_snapshot(snapshot, run_id="run-1", attempt_id="att-1", runtime_binding=binding)
+    assert trace is not None
+    assert trace.attrs["runtime_type"] == "hermes"
+    assert trace.attrs["runtime_version"] == "v2026.8.31"
+    assert trace.attrs["runtime_run_id"] == "rr-1"
+    assert trace.attrs["runtime_session_id"] == "rs-1"
+    assert trace.attrs["runtime_idempotency_key"] == "rik-1"
+
+
+def test_apply_runtime_binding_and_trace_log_extra():
+    bind_from_snapshot({"request_trace_id": "req_1"}, run_id="run-1")
+    apply_runtime_binding({"runtime_type": "hermes", "runtime_run_id": "rr-2"})
+    update_trace_attrs(tool_call_id="tool-1", correlation_confidence="high")
+    extra = trace_log_extra()
+    assert extra["run_id"] == "run-1"
+    assert extra["runtime_type"] == "hermes"
+    assert extra["runtime_run_id"] == "rr-2"
+    assert extra["tool_call_id"] == "tool-1"
+    assert extra["correlation_confidence"] == "high"
+    assert "delegation_topology" in ALLOWED_TRACE_ATTRS
+    observe_stage("execute", outcome="ok", delegation_topology="single_agent")
+    assert (get_current_trace() or ExecutionTrace()).attrs.get("delegation_topology") == "single_agent"
+    observe_stage("execute", outcome="ok", delegation_topology="platform_multi_agent")
+    assert (get_current_trace() or ExecutionTrace()).attrs.get("delegation_topology") == "single_agent"
+
+
+def test_delegation_topology_rejected_as_metric_label():
+    record_metric(
+        "runs_claimed_total",
+        labels={"role": "central", "outcome": "ok", "delegation_topology": "single_agent"},
+    )
+    snapshot = get_registry().snapshot()
+    assert "delegation_topology" not in snapshot["counters"][0]["labels"]
+
+
+def test_runtime_ids_rejected_as_metric_labels():
+    record_metric(
+        "runs_claimed_total",
+        labels={"role": "central", "outcome": "ok", "runtime_run_id": "rr-uuid"},
+    )
+    snapshot = get_registry().snapshot()
+    assert len(snapshot["counters"]) == 1
+    assert "runtime_run_id" not in snapshot["counters"][0]["labels"]
+    assert snapshot["counters"][0]["labels"]["role"] == "central"

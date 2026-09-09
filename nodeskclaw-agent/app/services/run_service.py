@@ -12,7 +12,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.schemas import ArtifactDescriptor, CreateRunRequest, CreateRunResponse, RunEventView, RunView
-from app.services.execution_observability import bind_from_snapshot, normalize_request_trace_id, observe_stage, record_metric
+from app.services.execution_observability import (
+    apply_runtime_binding,
+    bind_from_snapshot,
+    normalize_request_trace_id,
+    observe_stage,
+    record_metric,
+)
 
 SCHEMA = settings.SKILL_AGENT_SCHEMA
 
@@ -68,10 +74,39 @@ def _iso(value: datetime | None) -> str:
     return value.isoformat()
 
 
+ALLOWED_DELEGATION_TOPOLOGIES = frozenset({"single_agent", "runtime_delegated"})
+
+
+def _freeze_snapshot_topology(request: CreateRunRequest) -> tuple[str, dict[str, str] | None]:
+    raw = request.delegation_topology
+    if raw in (None, ""):
+        topology = "single_agent"
+    else:
+        topology = str(raw).strip()
+    if topology not in ALLOWED_DELEGATION_TOPOLOGIES:
+        raise ValueError("EXECUTION_TOPOLOGY_NOT_SUPPORTED")
+    if topology == "single_agent":
+        return topology, None
+    ref = request.runtime_capability_ref if isinstance(request.runtime_capability_ref, dict) else None
+    name = str((ref or {}).get("name") or "").strip()
+    version = str((ref or {}).get("version") or "").strip()
+    if not name or not version:
+        raise ValueError("RUNTIME_CAPABILITY_UNAVAILABLE")
+    return topology, {"name": name, "version": version}
+
+
 def build_snapshot(request: CreateRunRequest, *, org_id: str, user_id: str) -> dict[str, Any]:
     digest = request.skill_release_digest or hashlib.sha256(
         f"{request.skill_id}:{request.skill_version}:{request.tool_name}".encode()
     ).hexdigest()
+    topology, capability_ref = _freeze_snapshot_topology(request)
+    runtime_policy = _sanitize_sensitive_keys(dict(request.route_snapshot or {}))
+    if isinstance(runtime_policy, dict):
+        runtime_policy["delegation_topology"] = topology
+        if capability_ref is not None:
+            runtime_policy["runtime_capability_ref"] = capability_ref
+        else:
+            runtime_policy.pop("runtime_capability_ref", None)
     body = {
         "skill_id": request.skill_id or request.tool_name,
         "skill_version": request.skill_version,
@@ -80,8 +115,9 @@ def build_snapshot(request: CreateRunRequest, *, org_id: str, user_id: str) -> d
         "connector_binding_refs": list(request.connector_binding_refs or []),
         "knowledge_refs": list(request.knowledge_refs or []),
         "model_policy": {},
-        "runtime_policy": _sanitize_sensitive_keys(dict(request.route_snapshot or {})),
+        "runtime_policy": runtime_policy,
         "placement": dict(request.placement or {"role": "central"}),
+        "delegation_topology": topology,
         "org_id": org_id,
         "user_id": user_id,
         "output_policy": dict(request.output_policy or {}),
@@ -89,6 +125,8 @@ def build_snapshot(request: CreateRunRequest, *, org_id: str, user_id: str) -> d
         "request_trace_id": normalize_request_trace_id(request.request_trace_id),
         "run_session_id": request.run_session_id,
     }
+    if capability_ref is not None:
+        body["runtime_capability_ref"] = capability_ref
     if request.execution_context is not None:
         body["execution_context"] = _sanitize_sensitive_keys(dict(request.execution_context))
     if request.context_version is not None:
@@ -1352,6 +1390,7 @@ async def add_artifact(
         attempt_id=attempt_id,
         generation=generation,
     )
+    record_metric("artifact_stage_total", labels={"stage": "add", "outcome": "ok"})
     return ArtifactDescriptor(
         artifact_id=artifact_id,
         name=name,
@@ -1507,6 +1546,7 @@ async def store_artifact_bytes(
             ),
             {"id": artifact_id, "reason": str(exc)[:500]},
         )
+        record_metric("artifact_stage_total", labels={"stage": "corrupt", "outcome": "error"})
         raise
 
     await append_event(
@@ -1565,7 +1605,10 @@ async def mark_artifact_corrupted(
         {"id": artifact_id, "reason": reason or "corrupted"},
     )
     rowcount = getattr(res, "rowcount", 1)
-    return rowcount > 0 if isinstance(rowcount, int) else True
+    updated = rowcount > 0 if isinstance(rowcount, int) else True
+    if updated:
+        record_metric("artifact_stage_total", labels={"stage": "corrupt", "outcome": "ok"})
+    return updated
 
 
 async def mark_artifact_expired(
@@ -1587,7 +1630,10 @@ async def mark_artifact_expired(
         {"id": artifact_id, "reason": reason or "expired", "now": _utcnow()},
     )
     rowcount = getattr(res, "rowcount", 1)
-    return rowcount > 0 if isinstance(rowcount, int) else True
+    updated = rowcount > 0 if isinstance(rowcount, int) else True
+    if updated:
+        record_metric("artifact_stage_total", labels={"stage": "expire", "outcome": "ok"})
+    return updated
 
 
 async def get_artifact_bytes(db: AsyncSession, run_id: str, artifact_id: str) -> tuple[dict, bytes] | None:
@@ -1669,7 +1715,9 @@ async def get_runtime_binding(db: AsyncSession, attempt_id: str) -> dict[str, An
     ).mappings().first()
     if not row:
         return None
-    return _runtime_binding_from_row(row)
+    binding = _runtime_binding_from_row(row)
+    apply_runtime_binding(binding)
+    return binding
 
 
 async def persist_runtime_binding(
