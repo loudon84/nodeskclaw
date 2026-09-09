@@ -140,6 +140,20 @@ def _public_artifact_descriptor(data: dict[str, Any]) -> dict[str, Any]:
 
 
 _TOOL_CALL_STATUSES = frozenset({"started", "completed", "failed"})
+_MAX_ASSISTANT_DELTA_UTF8_BYTES = 64 * 1024
+_MAX_ASSISTANT_SNAPSHOT_UTF8_BYTES = 1 * 1024 * 1024
+_projection_failures: list[dict[str, Any]] = []
+
+
+def drain_projection_failures() -> list[dict[str, Any]]:
+    failures = list(_projection_failures)
+    _projection_failures.clear()
+    return failures
+
+
+def _record_projection_failure(run_id: str, event_type: str, reason: str) -> None:
+    _projection_failures.append({"run_id": run_id, "event_type": event_type, "reason": reason})
+    logger.warning("public run event projection failure run_id=%s type=%s reason=%s", run_id, event_type, reason)
 
 
 # @lat: [[decisions/skill-platform-execution#Employee Contract]]
@@ -172,8 +186,46 @@ def _public_run_event(data: dict[str, Any], run_id: str) -> dict[str, Any] | Non
         if "stage" not in event["payload"]:
             event["payload"]["stage"] = event["payload"]["phase"].lower()
         return _finalize_public_event(event)
+    if event_type == "assistant.delta":
+        message_id = payload.get("message_id")
+        delta_seq = payload.get("delta_seq")
+        delta = payload.get("delta")
+        if (
+            isinstance(message_id, str)
+            and message_id
+            and isinstance(delta_seq, int)
+            and not isinstance(delta_seq, bool)
+            and delta_seq >= 1
+            and isinstance(delta, str)
+            and delta
+            and len(delta.encode("utf-8")) <= _MAX_ASSISTANT_DELTA_UTF8_BYTES
+            and set(payload).issubset({"message_id", "delta_seq", "delta"})
+        ):
+            event["payload"] = {
+                "message_id": message_id,
+                "delta_seq": delta_seq,
+                "delta": delta,
+            }
+            return _finalize_public_event(event)
+        _record_projection_failure(run_id, event_type, "invalid_assistant_delta_payload")
+        return None
     if event_type == "assistant.message" and isinstance(payload.get("text"), str):
-        event["payload"] = {"text": payload["text"]}
+        text = payload["text"]
+        message_id = payload.get("message_id")
+        if not text:
+            _record_projection_failure(run_id, event_type, "missing_assistant_text")
+            return None
+        if isinstance(message_id, str) and message_id:
+            if len(text.encode("utf-8")) > _MAX_ASSISTANT_SNAPSHOT_UTF8_BYTES:
+                _record_projection_failure(run_id, event_type, "assistant_snapshot_too_large")
+                return None
+            unknown = set(payload) - {"message_id", "text"}
+            if unknown:
+                _record_projection_failure(run_id, event_type, "unexpected_assistant_message_field")
+                return None
+            event["payload"] = {"message_id": message_id, "text": text}
+            return _finalize_public_event(event)
+        event["payload"] = {"text": text}
         return _finalize_public_event(event)
     if event_type == "reasoning.summary" and isinstance(payload.get("summary"), str):
         event["payload"] = {"summary": payload["summary"]}

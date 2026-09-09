@@ -4,19 +4,19 @@ overview: Publish immutable SKILL-RUN-CONTRACT v1.5.0 with durable public assist
 todos:
   - id: t1-agent-message-segment
     content: "T1 — Agent message segment state machine + coalescer Unicode 64KiB + hermes boundary order [C01, C02]"
-    status: pending
+    status: completed
   - id: t2-agent-event-validation
     content: "T2 — Agent schemas allowlist delta/snapshot fields + conflict fail-closed [C03]"
-    status: pending
+    status: completed
   - id: t3-backend-public-projection
     content: "T3 — Backend _public_run_event allowlist + v1.5 dedicated pydantic models [C04]"
-    status: pending
+    status: completed
   - id: t4-v150-bundle-generator
     content: "T4 — constants + contracts.py generate/check 1.5.0 from frozen v1.4.0 [C05, C06]"
-    status: pending
+    status: completed
   - id: t5-live-and-lat
     content: "T5 — live runner + lat.md sync + evidence [C07, C08]"
-    status: pending
+    status: completed
 isProject: false
 plan_contract: smc.plan.v3.4
 plan_id: RM-19

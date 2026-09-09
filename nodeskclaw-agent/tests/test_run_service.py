@@ -16,8 +16,23 @@ from app.services import run_service
 
 
 def test_validate_semantic_event_payload_shapes():
-    assert validate_semantic_event_payload("assistant.message", {"text": "hi"}) is None
-    assert validate_semantic_event_payload("assistant.message", {}) == "missing_assistant_text"
+    assert (
+        validate_semantic_event_payload(
+            "assistant.delta",
+            {"message_id": "msg_1", "delta_seq": 1, "delta": "hi"},
+        )
+        is None
+    )
+    assert (
+        validate_semantic_event_payload(
+            "assistant.delta",
+            {"message_id": "msg_1", "delta_seq": 0, "delta": "hi"},
+        )
+        == "invalid_assistant_delta_seq"
+    )
+    assert validate_semantic_event_payload("assistant.message", {"message_id": "msg_1", "text": "hi"}) is None
+    assert validate_semantic_event_payload("assistant.message", {"text": "hi"}) == "missing_assistant_message_id"
+    assert validate_semantic_event_payload("assistant.message", {"message_id": "msg_1"}) == "missing_assistant_text"
     assert (
         validate_semantic_event_payload(
             "tool.call",

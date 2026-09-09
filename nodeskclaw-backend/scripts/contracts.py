@@ -944,6 +944,7 @@ def _validate_skill_run_release(manifest: dict[str, Any], *, version: str) -> No
         raise SystemExit(f"skill-run contract tag '{tag_name}' could not be resolved")
 
     peeled_commit = peeled_tag.stdout.strip()
+    release_commit = str(manifest.get("releaseCommit") or implementation_commit)
     if version == "1.2.1":
         contract_prefix = "nodeskclaw-backend/contracts/skill-run/v1.2.1/"
         release_diff_base = implementation_commit
@@ -953,6 +954,17 @@ def _validate_skill_run_release(manifest: dict[str, Any], *, version: str) -> No
     elif version == "1.4.0":
         contract_prefix = "nodeskclaw-backend/contracts/skill-run/v1.4.0/"
         release_diff_base = implementation_commit
+    elif version == "1.5.0":
+        contract_prefix = "nodeskclaw-backend/contracts/skill-run/v1.5.0/"
+        release_diff_base = release_commit
+        ancestry = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", release_commit, peeled_commit],
+            cwd=repository,
+            capture_output=True,
+            text=True,
+        )
+        if ancestry.returncode != 0:
+            raise SystemExit("skill-run v1.5.0 releaseCommit must be an ancestor of the annotated tag peel")
     else:
         if peeled_commit != _git_head():
             raise SystemExit(f"skill-run contract tag '{tag_name}' must point at the release commit")
@@ -967,6 +979,12 @@ def _validate_skill_run_release(manifest: dict[str, Any], *, version: str) -> No
         check=True,
     )
     changed_paths = [path for path in release_diff.stdout.splitlines() if path]
+    if version == "1.5.0":
+        if not changed_paths or any(not path.startswith(contract_prefix) for path in changed_paths):
+            raise SystemExit(
+                "skill-run v1.5.0 release tag must only contain contracts/skill-run/v1.5.0/ bundle files"
+            )
+        return
     if version in {"1.2.1", "1.3.0", "1.4.0"}:
         if not any(path.startswith(contract_prefix) for path in changed_paths):
             raise SystemExit(f"skill-run v{version} release tag must include contract bundle changes")
@@ -980,7 +998,7 @@ def _check_skill_run_contracts(release: bool = False, version: str = "1.0.0") ->
     skill_run_root = SKILL_RUN_CONTRACTS_HOME / f"v{version}"
     if not skill_run_root.exists():
         raise SystemExit(f"Skill-run contract directory missing: {skill_run_root}")
-    if version in {"1.2.1", "1.3.0", "1.4.0"}:
+    if version in {"1.2.1", "1.3.0", "1.4.0", "1.5.0"}:
         _validate_skill_run_checksums_exact(skill_run_root)
         _validate_skill_run_public_boundary(skill_run_root)
         _validate_skill_run_fixtures(skill_run_root)
@@ -991,6 +1009,8 @@ def _check_skill_run_contracts(release: bool = False, version: str = "1.0.0") ->
             _validate_skill_run_v130_decision_artifacts(skill_run_root)
         if version == "1.4.0":
             _validate_skill_run_v140_attachment_artifacts(skill_run_root)
+        if version == "1.5.0":
+            _validate_skill_run_v150_streaming_artifacts(skill_run_root)
     else:
         _validate_checksums(skill_run_root)
         _validate_skill_run_fixtures(skill_run_root)
@@ -1014,7 +1034,7 @@ def check_contracts(release: bool = False, family: str = "all", skill_run_versio
         )
         return
     if family == "skill-run":
-        versions = [skill_run_version] if skill_run_version else ["1.0.0", "1.1.0", "1.2.0", "1.2.1", "1.3.0", "1.4.0"]
+        versions = [skill_run_version] if skill_run_version else ["1.0.0", "1.1.0", "1.2.0", "1.2.1", "1.3.0", "1.4.0", "1.5.0"]
         for version in versions:
             root = SKILL_RUN_CONTRACTS_HOME / f"v{version}"
             if not root.exists():
@@ -1060,7 +1080,7 @@ def check_contracts(release: bool = False, family: str = "all", skill_run_versio
 
     print("WORK-EXPERT-CONTRACT check passed")
 
-    for version in ("1.0.0", "1.1.0", "1.2.0", "1.2.1", "1.3.0", "1.4.0"):
+    for version in ("1.0.0", "1.1.0", "1.2.0", "1.2.1", "1.3.0", "1.4.0", "1.5.0"):
         root = SKILL_RUN_CONTRACTS_HOME / f"v{version}"
         if not root.exists():
             continue
@@ -2692,6 +2712,229 @@ def _generate_skill_run_v140_public_contract() -> None:
     print(f"Generated {SKILL_RUN_CONTRACT_NAME} at {root} (backendCommit={backend_commit})")
 
 
+def _validate_skill_run_v150_streaming_artifacts(root: Path) -> None:
+    import jsonschema
+
+    required = (
+        "events/run-event.schema.json",
+        "fixtures/run-event-assistant-delta.json",
+        "fixtures/run-event-assistant-message.json",
+        "fixtures/sse-assistant-delta-replay.json",
+        "RELEASE.md",
+        "manifest.json",
+        "SHA256SUMS",
+    )
+    for relative in required:
+        if not (root / relative).exists():
+            raise SystemExit(f"Missing skill-run v1.5.0 artifact: {relative}")
+
+    schema = json.loads((root / "events/run-event.schema.json").read_text(encoding="utf-8"))
+    delta = json.loads((root / "fixtures/run-event-assistant-delta.json").read_text(encoding="utf-8"))
+    message = json.loads((root / "fixtures/run-event-assistant-message.json").read_text(encoding="utf-8"))
+    replay = json.loads((root / "fixtures/sse-assistant-delta-replay.json").read_text(encoding="utf-8"))
+    jsonschema.validate(delta, schema)
+    jsonschema.validate(message, schema)
+    if delta.get("event_type") != "assistant.delta":
+        raise SystemExit("v1.5.0 delta fixture must use assistant.delta")
+    payload = delta.get("payload") or {}
+    if set(payload) != {"message_id", "delta_seq", "delta"}:
+        raise SystemExit("v1.5.0 delta fixture payload must only include message_id/delta_seq/delta")
+    if message.get("event_type") != "assistant.message":
+        raise SystemExit("v1.5.0 snapshot fixture must use assistant.message")
+    message_payload = message.get("payload") or {}
+    if set(message_payload) != {"message_id", "text"}:
+        raise SystemExit("v1.5.0 snapshot fixture payload must only include message_id/text")
+    if message_payload.get("message_id") != payload.get("message_id"):
+        raise SystemExit("v1.5.0 snapshot message_id must match delta message_id")
+    events = replay.get("events") or []
+    if len(events) < 2:
+        raise SystemExit("v1.5.0 sse delta replay fixture must include delta and snapshot")
+    if events[0].get("event_type") != "assistant.delta" or events[-1].get("event_type") != "assistant.message":
+        raise SystemExit("v1.5.0 sse delta replay must end with assistant.message snapshot")
+    if len({event.get("event_id") for event in events}) != len(events):
+        raise SystemExit("v1.5.0 sse delta replay fixture contains duplicate event identities")
+
+    manifest = _read_manifest(root)
+    capabilities = manifest.get("capabilities") or {}
+    if capabilities.get("streamingDelta") != "supported":
+        raise SystemExit("v1.5.0 manifest must mark streamingDelta=supported")
+    if capabilities.get("assistantMessageSnapshot") != "supported":
+        raise SystemExit("v1.5.0 manifest must mark assistantMessageSnapshot=supported")
+    if capabilities.get("attachments") != "supported" or capabilities.get("approvalDecision") != "supported":
+        raise SystemExit("v1.5.0 manifest must keep Approval and Attachment supported")
+    if manifest.get("compatibility", {}).get("wireBreaking") is not False:
+        raise SystemExit("v1.5.0 manifest wireBreaking must be false")
+    if manifest.get("tagName") != "skill-run-contract-v1.5.0":
+        raise SystemExit("v1.5.0 manifest tagName must be skill-run-contract-v1.5.0")
+    release = (root / "RELEASE.md").read_text(encoding="utf-8")
+    compact = release.replace(" ", "")
+    if "streamingDelta=supported" not in compact:
+        raise SystemExit("v1.5.0 RELEASE.md must declare streamingDelta=supported")
+    if "assistantMessageSnapshot=supported" not in compact:
+        raise SystemExit("v1.5.0 RELEASE.md must declare assistantMessageSnapshot=supported")
+
+
+def _finalize_skill_run_v150_bundle(root: Path, *, backend_commit: str, release_commit: str | None) -> None:
+    from app.schemas.skill_run.constants import (
+        SKILL_RUN_CAPABILITIES,
+        SKILL_RUN_CONTRACT_NAME,
+        SKILL_RUN_CONTRACT_VERSION_V150,
+        SKILL_RUN_TAG_NAME_V150,
+    )
+
+    payload_hashes = {
+        str(path.relative_to(root)).replace("\\", "/"): _sha256_file(path)
+        for path in _public_artifact_files(root)
+    }
+    manifest = {
+        "contractName": SKILL_RUN_CONTRACT_NAME,
+        "contractVersion": SKILL_RUN_CONTRACT_VERSION_V150,
+        "bundleFormatVersion": "1",
+        "provider": "nodeskclaw-backend",
+        "consumer": "external-agent-clients",
+        "primaryConsumer": "smc-copilot/apps/work",
+        "backendCommit": backend_commit,
+        "releaseCommit": release_commit or backend_commit,
+        "tagName": SKILL_RUN_TAG_NAME_V150,
+        "generatedAt": _skill_run_generated_at(),
+        "compatibility": {
+            "supersedesForWork": ["1.0.0", "1.1.0", "1.2.0", "1.2.1", "1.3.0", "1.4.0"],
+            "wireBreaking": False,
+        },
+        "artifacts": payload_hashes,
+        "capabilities": {
+            **SKILL_RUN_CAPABILITIES,
+            "catalogV11": True,
+            "semanticRunEvents": True,
+            "approvalDecision": "supported",
+            "approval": "supported",
+            "attachments": "supported",
+            "approvalExpiry": "unsupported",
+            "streamingDelta": "supported",
+            "assistantMessageSnapshot": "supported",
+        },
+    }
+    _write_json_lf(root / "manifest.json", manifest)
+    bundle_hashes = {
+        str(path.relative_to(root)).replace("\\", "/"): _sha256_file(path)
+        for path in _public_artifact_files(root)
+    }
+    bundle_hashes["manifest.json"] = _sha256_file(root / "manifest.json")
+    lines = [f"{digest}  {relative}" for relative, digest in sorted(bundle_hashes.items())]
+    _write_text_lf(root / "SHA256SUMS", "\n".join(lines) + "\n")
+    _validate_skill_run_checksums_exact(root)
+    _validate_skill_run_public_boundary(root)
+    _validate_skill_run_fixtures(root)
+    _validate_skill_run_v12_event_fixtures(root)
+    _validate_skill_run_v12_negative_fixtures(root)
+    _validate_skill_run_v11_negative_fixtures(root)
+    _validate_skill_run_v150_streaming_artifacts(root)
+
+
+# @lat: [[architecture/skill-agent#RM-19 Public Streaming Delta]]
+def _generate_skill_run_v150_public_contract() -> None:
+    import os
+
+    from app.schemas.skill_run.constants import (
+        SKILL_RUN_CONTRACT_NAME,
+        SKILL_RUN_CONTRACT_VERSION_V140,
+        SKILL_RUN_CONTRACT_VERSION_V150,
+        SKILL_RUN_TAG_NAME_V150,
+    )
+    from app.schemas.skill_run.mcp_jsonrpc import RUN_EVENT_V15_MODELS
+
+    source = SKILL_RUN_CONTRACTS_HOME / f"v{SKILL_RUN_CONTRACT_VERSION_V140}"
+    root = SKILL_RUN_CONTRACTS_HOME / f"v{SKILL_RUN_CONTRACT_VERSION_V150}"
+    if not source.exists():
+        raise SystemExit(f"v1.5.0 generate requires frozen v1.4.0 bundle at {source}")
+    _validate_skill_run_checksums_exact(source)
+    if root.exists():
+        shutil.rmtree(root)
+    shutil.copytree(source, root)
+    (root / "SHA256SUMS").unlink(missing_ok=True)
+    (root / "manifest.json").unlink(missing_ok=True)
+
+    _write_json_lf(root / "events/run-event.schema.json", _run_event_v12_union_schema(RUN_EVENT_V15_MODELS))
+    _write_json_lf(
+        root / "fixtures/run-event-assistant-delta.json",
+        {
+            "event_id": "run_demo:3",
+            "run_id": "run_demo",
+            "event_type": "assistant.delta",
+            "event_seq": 3,
+            "source": "agent",
+            "source_event_id": "hermes:att:1",
+            "timestamp": "2026-09-09T00:00:03Z",
+            "payload": {
+                "message_id": "msg_opaque_001",
+                "delta_seq": 1,
+                "delta": "正在分析",
+            },
+        },
+    )
+    _write_json_lf(
+        root / "fixtures/run-event-assistant-message.json",
+        {
+            "event_id": "run_demo:4",
+            "run_id": "run_demo",
+            "event_type": "assistant.message",
+            "event_seq": 4,
+            "source": "agent",
+            "source_event_id": "hermes:att:2",
+            "timestamp": "2026-09-09T00:00:04Z",
+            "payload": {
+                "message_id": "msg_opaque_001",
+                "text": "正在分析完整结果",
+            },
+        },
+    )
+    _write_json_lf(
+        root / "fixtures/sse-assistant-delta-replay.json",
+        {
+            "last_event_id": "run_demo:2",
+            "events": [
+                {
+                    "event_id": "run_demo:3",
+                    "run_id": "run_demo",
+                    "event_type": "assistant.delta",
+                    "event_seq": 3,
+                    "source": "agent",
+                    "timestamp": "2026-09-09T00:00:03Z",
+                    "payload": {
+                        "message_id": "msg_opaque_001",
+                        "delta_seq": 1,
+                        "delta": "正在分析",
+                    },
+                },
+                {
+                    "event_id": "run_demo:4",
+                    "run_id": "run_demo",
+                    "event_type": "assistant.message",
+                    "event_seq": 4,
+                    "source": "agent",
+                    "timestamp": "2026-09-09T00:00:04Z",
+                    "payload": {
+                        "message_id": "msg_opaque_001",
+                        "text": "正在分析完整结果",
+                    },
+                },
+            ],
+        },
+    )
+    _write_text_lf(
+        root / "RELEASE.md",
+        f"# {SKILL_RUN_CONTRACT_NAME} v{SKILL_RUN_CONTRACT_VERSION_V150}\n\n"
+        "Cumulative Public Skill Run contract. Adds durable assistant.delta and segment-end assistant.message snapshot on frozen v1.4.0.\n"
+        "streamingDelta=supported; assistantMessageSnapshot=supported; approvalDecision=supported; approval=supported; attachments=supported.\n"
+        "wireBreaking=false. Do not rewrite frozen v1.2.1–v1.4.0. Tag name is "
+        f"{SKILL_RUN_TAG_NAME_V150}.\n",
+    )
+    backend_commit = os.environ.get("CONTRACT_BACKEND_COMMIT") or _git_head()
+    release_commit = os.environ.get("CONTRACT_RELEASE_COMMIT") or backend_commit
+    _finalize_skill_run_v150_bundle(root, backend_commit=backend_commit, release_commit=release_commit)
+    print(f"Generated {SKILL_RUN_CONTRACT_NAME} at {root} (backendCommit={backend_commit})")
+
+
 def generate_skill_run_contracts(version: str | None = None) -> None:
     from app.api.internal_edge import (
         EdgeActualReportBody,
@@ -2708,6 +2951,7 @@ def generate_skill_run_contracts(version: str | None = None) -> None:
         SKILL_RUN_CONTRACT_VERSION_V121,
         SKILL_RUN_CONTRACT_VERSION_V130,
         SKILL_RUN_CONTRACT_VERSION_V140,
+        SKILL_RUN_CONTRACT_VERSION_V150,
         SKILL_RUN_TAG_NAME,
     )
     from app.schemas.skill_run.mcp_jsonrpc import (
@@ -2734,6 +2978,9 @@ def generate_skill_run_contracts(version: str | None = None) -> None:
         return
     if version == SKILL_RUN_CONTRACT_VERSION_V140:
         _generate_skill_run_v140_public_contract()
+        return
+    if version == SKILL_RUN_CONTRACT_VERSION_V150:
+        _generate_skill_run_v150_public_contract()
         return
 
     _generate_skill_run_v10_public_contract()
@@ -3254,7 +3501,7 @@ def main() -> None:
     )
     generate_parser.add_argument(
         "--version",
-        choices=("1.0.0", "1.1.0", "1.2.0", "1.2.1", "1.3.0", "1.4.0"),
+        choices=("1.0.0", "1.1.0", "1.2.0", "1.2.1", "1.3.0", "1.4.0", "1.5.0"),
         help="Generate only the requested skill-run contract version",
     )
     check_parser = sub.add_parser("check", help="Validate committed contract artifacts")
@@ -3262,7 +3509,7 @@ def main() -> None:
     check_parser.add_argument("--family", choices=("work-expert", "skill-run", "skill-agent", "all"), default="all")
     check_parser.add_argument(
         "--version",
-        choices=("1.0.0", "1.1.0", "1.2.0", "1.2.1", "1.3.0", "1.4.0"),
+        choices=("1.0.0", "1.1.0", "1.2.0", "1.2.1", "1.3.0", "1.4.0", "1.5.0"),
         help="Validate only the requested skill-run contract version",
     )
     args = parser.parse_args()

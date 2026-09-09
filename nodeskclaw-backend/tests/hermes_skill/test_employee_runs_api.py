@@ -864,6 +864,62 @@ async def test_agent_404_mapped_to_not_found():
         assert exc_info.value.message_key == "errors.run.not_found"
 
 
+def test_public_run_event_projects_assistant_delta_and_snapshot():
+    from app.api.runs import drain_projection_failures
+
+    drain_projection_failures()
+    delta = _public_run_event(
+        {
+            "event_type": "assistant.delta",
+            "event_seq": 3,
+            "timestamp": "2026-09-09T00:00:03Z",
+            "payload": {
+                "message_id": "msg_1",
+                "delta_seq": 1,
+                "delta": "正在分析",
+                "runtime_run_id": "secret",
+            },
+        },
+        "run-1",
+    )
+    assert delta is None
+    assert drain_projection_failures()
+    assert _public_run_event(
+        {
+            "event_type": "assistant.delta",
+            "event_seq": 3,
+            "timestamp": "2026-09-09T00:00:03Z",
+            "payload": {"message_id": "msg_1", "delta_seq": 1, "delta": "正在分析"},
+        },
+        "run-1",
+    ) == {
+        "event_id": "run-1:3",
+        "run_id": "run-1",
+        "event_type": "assistant.delta",
+        "event_seq": 3,
+        "timestamp": "2026-09-09T00:00:03Z",
+        "payload": {"message_id": "msg_1", "delta_seq": 1, "delta": "正在分析"},
+    }
+    assert _public_run_event(
+        {
+            "event_type": "assistant.message",
+            "event_seq": 4,
+            "timestamp": "2026-09-09T00:00:04Z",
+            "payload": {"message_id": "msg_1", "text": "正在分析完整结果"},
+        },
+        "run-1",
+    )["payload"] == {"message_id": "msg_1", "text": "正在分析完整结果"}
+    assert _public_run_event(
+        {
+            "event_type": "assistant.message",
+            "event_seq": 1,
+            "timestamp": "2026-09-09T00:00:01Z",
+            "payload": {"text": "legacy"},
+        },
+        "run-1",
+    )["payload"] == {"text": "legacy"}
+
+
 def test_public_run_event_projects_semantic_types_and_drops_unknown():
     assert _public_run_event(
         {

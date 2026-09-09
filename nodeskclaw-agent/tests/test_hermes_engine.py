@@ -217,9 +217,13 @@ async def test_execute_hermes_uses_minted_credential_lease():
     assert "messages" not in start_call.kwargs["json"]
     assert events[-1]["event_type"] == "run.completed"
     assistant_events = [e for e in events if e["event_type"] == "assistant.message"]
+    delta_events = [e for e in events if e["event_type"] == "assistant.delta"]
     assert len(assistant_events) == 1
     assert assistant_events[0]["payload"]["text"] == "ok from minted lease"
-    assert assistant_events[0]["source_event_id"] == "hermes:att-1:1"
+    if delta_events:
+        assert "".join(e["payload"]["delta"] for e in delta_events) == "ok from minted lease"
+        assert assistant_events[0]["payload"]["message_id"] == delta_events[0]["payload"]["message_id"]
+    assert assistant_events[0]["source_event_id"].startswith("hermes:att-1:")
     assert "run-1" not in assistant_events[0]["source_event_id"]
     assert "token" not in assistant_events[0]["payload"]
     assert "gateway_url" not in assistant_events[0]["payload"]

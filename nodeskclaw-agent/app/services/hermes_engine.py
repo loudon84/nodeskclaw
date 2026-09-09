@@ -615,7 +615,7 @@ def _events_after_status_terminal(
 ) -> tuple[list[dict[str, Any]], bool]:
     close_status = "completed" if status in {"completed", "succeeded", "success"} else "failed"
     events = list(normalizer.close(terminal_status=close_status))
-    if any(item.get("event_type") == "assistant.message" for item in events):
+    if any(item.get("event_type") in {"assistant.message", "assistant.delta"} for item in events):
         saw_assistant = True
     output = _status_output_text(data)
     if close_status == "completed" and output and not saw_assistant:
@@ -1054,7 +1054,7 @@ async def execute_hermes_run(
                             leave_stream = False
                             for semantic in _emit_ingested(normalizer, chunk):
                                 yield semantic
-                                if semantic.get("event_type") == "assistant.message":
+                                if semantic.get("event_type") in {"assistant.message", "assistant.delta"}:
                                     saw_assistant = True
                                 if semantic.get("event_type") == "approval.requested":
                                     saw_approval = True

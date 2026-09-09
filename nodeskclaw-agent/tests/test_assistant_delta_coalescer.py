@@ -37,6 +37,22 @@ def test_coalescer_does_not_flush_on_size_or_paragraph():
     assert coalescer.flush_if_stale() == long_text + "para\n\nmore"
 
 
+def test_coalescer_splits_utf8_safe_when_buffer_exceeds_max_delta():
+    from app.services.assistant_delta_coalescer import MAX_DELTA_UTF8_BYTES, split_utf8_by_bytes
+
+    coalescer = AssistantDeltaCoalescer(clock_ms=lambda: 0)
+    glyph = "字"
+    count = (MAX_DELTA_UTF8_BYTES // len(glyph.encode("utf-8"))) + 4
+    text = glyph * count
+    immediate = coalescer.push(text)
+    assert immediate
+    assert all(len(part.encode("utf-8")) <= MAX_DELTA_UTF8_BYTES for part in immediate)
+    remainder = coalescer.buffered_text()
+    joined = "".join(immediate) + remainder
+    assert joined == text
+    assert split_utf8_by_bytes(text, MAX_DELTA_UTF8_BYTES)[0] == immediate[0]
+
+
 # @lat: [[architecture/skill-agent#Hermes Engine Adapter#Runtime Semantic Event Fidelity]]
 def test_coalescer_keeps_tiny_paragraph_in_buffer():
     coalescer = AssistantDeltaCoalescer(clock_ms=lambda: 0)
