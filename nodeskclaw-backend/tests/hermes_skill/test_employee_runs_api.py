@@ -864,6 +864,7 @@ async def test_agent_404_mapped_to_not_found():
         assert exc_info.value.message_key == "errors.run.not_found"
 
 
+# @lat: [[architecture/skill-agent#RM-19 Public Streaming Delta]]
 def test_public_run_event_projects_assistant_delta_and_snapshot():
     from app.api.runs import drain_projection_failures
 
