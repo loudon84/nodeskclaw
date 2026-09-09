@@ -221,14 +221,14 @@ Agent 已具备严格就绪探针、真实 S3 StoragePort 探针隔离与可执�
 
 ### Public Newman Contract Gate
 
-RM-04 正式 Collection 只证明冻结 v1.2.1 员工信封；公共 JWT 项不得请求 HermesTask 路径，两连跑必须隔离前缀且不落盘秘密。
+RM-04 正式 Collection 当前仍证明冻结 v1.2.1 员工信封；合同检查器已覆盖 v1.0.0–v1.5.0。Stage PRD v1.6.3.1 要求公共 JWT 补齐 `/decision` 与 Public upload，且不得用内部 Token 冒充员工合同。
 
 - **已实现**：[[tools/acceptance/check_postman_collection.py#check_collection]] 拒绝 JWT 公共项中的 `/api/v1/hermes/tasks/`，并要求 Catalog/`tools/call`、`GET /api/v1/runs/{run_id}/events`、`/result`、`POST .../approvals/{approval_id}`、`/cancel`、`/resume`、`/artifacts` 与内部 Bundle/`installations` 旅程；禁止空断言、2xx 与 4xx/5xx 混断言。[[tools/acceptance/check_postman_collection.py#scan_acceptance_secrets]] 扫描 compose/env/scripts/reports，禁止仓库固定秘密。
 - **已实现**：正式集合 `tests/postman/nodeskclaw_acceptance_closure.postman_collection.json` 使用 `/api/v1/runs/{run_id}`，不再请求 Task Timeline 或 `/api/v1/hermes/runtime/worker/resume`；内部 Edge/Bundle harness 保留。模板含 `RUN_PREFIX` 与 `APPROVAL_ID`。
 - **已实现**：[[tools/acceptance/run_newman.py#generate_env_file]] 只写入私有临时目录，经 [[tools/acceptance/run_newman.py#assert_private_env_path]] 拒绝 `reports/` 与 `tests/postman/`；要求隔离 org 前缀。[[tools/acceptance/run_newman.py#allocate_run_prefix]] 在两连跑间禁止重复前缀。
-- **已实现**：[[tools/acceptance/run_newman.py#main]] 先跑静态检查，再经 [[tools/acceptance/run_newman.py#run_skill_run_contract_check]] 调用既有 `scripts/contracts.py check --family skill-run`（默认含 v1.0.0–v1.4.0，禁止 `generate`、不改写合同目录）。Newman Collection 仍只证明冻结 v1.2.1 信封，不含 `/decision` 或 Public upload；v1.3.0 见 [[architecture/skill-agent#RM-17 Public Approval Decision]]，v1.4.0 见 [[architecture/skill-agent#RM-18 Public Attachment Input]]。[[tools/acceptance/run_newman.py#construct_newman_command]] 带 `--timeout-request`，避免 SSE `/events` 挂死套件。两次各一份临时 env；[[tools/acceptance/run_newman.py#assert_reports_present]] 缺 JUnit/JSON 失败关闭；[[tools/acceptance/run_newman.py#redact_report_files]] 脱敏报告中的运行时秘密。
+- **已实现**：[[tools/acceptance/run_newman.py#main]] 先跑静态检查，再经 [[tools/acceptance/run_newman.py#run_skill_run_contract_check]] 调用既有 `scripts/contracts.py check --family skill-run`（默认含 v1.0.0–v1.5.0，禁止 `generate`、不改写合同目录）。Newman Collection **当前**仍只证明冻结 v1.2.1 信封，不含 `/decision` 或 Public upload；能力 Owner 仍是 [[architecture/skill-agent#RM-17 Public Approval Decision]]、[[architecture/skill-agent#RM-18 Public Attachment Input]] 与 [[architecture/skill-agent#RM-19 Public Streaming Delta]]。Stage PRD v1.6.3.1 把「拓扑必须能服务这些已发布路由」收进 RM-04 C04，而不是重开那三项实现。[[tools/acceptance/run_newman.py#construct_newman_command]] 带 `--timeout-request`，避免 SSE `/events` 挂死套件。两次各一份临时 env；[[tools/acceptance/run_newman.py#assert_reports_present]] 缺 JUnit/JSON 失败关闭；[[tools/acceptance/run_newman.py#redact_report_files]] 脱敏报告中的运行时秘密。
 - **已实现**：聚焦回归在 `tests/acceptance/test_postman_checker.py` 与 `tests/acceptance/test_run_newman.py`（公共 HermesTask、缺 Bundle/result、重复前缀、缺报告、reports 目录落盘、合同检查失败关闭）。
-- **部分实现**：真实拓扑两连跑仍需 Docker 与运行时 JWT/Token；离线 checker/runner 通过不等于 RM-04 生产验收闭环。
+- **部分实现**：真实拓扑两连跑仍需 Docker 与运行时 JWT/Token；离线 checker/runner 通过不等于 RM-04 生产验收闭环。公共 JWT 补齐 `/decision` 与 Public Attachment 仍待 C04；Compose 夹具不承担 RM-19 终态前 delta 证明。
 
 ### Native Acceptance Fixture
 
@@ -258,10 +258,10 @@ Native 实例只经既有 scan-existing 绑定；Compose 提供可扫描目录�
 
 Harness 总报告必须带齐命名场景、故障 oracle 与 Native 观察；缺项或 ChatCompletion 200 失败关闭。
 
-- **已实现**：[[tools/acceptance/harness.py#validate_execution_report]] 要求场景 `dual_central_minio_artifact`（Central A 上传、B 按 SHA-256 读回）、`edge_delivery_and_spool_replay`（暂停 `acceptance-tls`，主机 Spool 目录对照）、`bundle_lifecycle`（JWT `GET /api/v1/hermes/skill-installations`）；故障 `postgres_unavailable` / `minio_unavailable` / `kill_central_a` / `edge_network_partition` 必须 `injected`、恢复前取样、`recovered` 且 `ok`。PASSED 且已启动时缺 teardown 失败关闭。
-- **已实现**：`kill_central_a` 在 A 被杀后用旧 Attempt 向 B 做迟到 `events/ingest`，拒绝才算 oracle。Newman 作为子门禁调用既有 [[tools/acceptance/run_newman.py#main]]，不改 T4 runner。报告经 `_write_report` 脱敏 `REQUIRED_ENV`（含 `JWT_TOKEN` / `HERMES_TEST_API_KEY`）。
+- **已实现**：[[tools/acceptance/harness.py#validate_execution_report]] 要求场景 `dual_central_minio_artifact`（Central A 上传、B 按 SHA-256 读回）、`edge_delivery_and_spool_replay`（暂停 `acceptance-tls`，主机 Spool 目录对照）、`bundle_lifecycle`（JWT `GET /api/v1/hermes/skill-installations`）；故障 `postgres_unavailable` / `minio_unavailable` / `kill_central_a` / `edge_network_partition` 必须 `injected`、恢复前取样、`recovered` 且 `ok`。PASSED 且已启动时缺 teardown 失败关闭。Stage PRD v1.6.3.1 判定当前 Bundle GET 与接管恒真终态**不足以**关闭 AC-08/AC-10。
+- **已实现**：`kill_central_a` 在 A 被杀后用旧 Attempt 向 B 做迟到 `events/ingest`，拒绝才算 oracle。Newman 作为子门禁调用既有 [[tools/acceptance/run_newman.py#main]]。报告经 `_write_report` 脱敏 `REQUIRED_ENV`（含 `JWT_TOKEN` / `HERMES_TEST_API_KEY`）。
 - **已实现**：聚焦回归 `tests/acceptance/test_harness.py` 覆盖拓扑死变量、ChatCompletion 200、scan `bound=0`、缺 oracle、无 teardown、Native 夹具 404。Docker 不可用时 `check-docker` / `run` 非零退出并记 BLOCKED，不得假绿。
-- **目标状态**：Docker 可用时 V04/V07 必须留下实跑证据；离线测试通过不等于生产验收闭环。
+- **目标状态**：C03 MODIFY 必须观察新 Attempt ≠ 被杀 Attempt、唯一可查询终态、Spool 单次重放、以及本拓扑 Bundle 安装/升级/回滚/卸载。GET installations 200 不能关闭生命周期。Docker 可用时必须留下实跑证据；离线测试通过不等于生产验收闭环。
 
 ## RM-12 Live Public Conformance
 

@@ -2,7 +2,7 @@
 
 Skill Platform 把员工 MCP Catalog 与 Skill Run 执行拆开：Gateway 在 Backend，执行内核在独立 `nodeskclaw-agent`。
 
-Approved PRD（v1.6 当前）：[RM-04 Strict Readiness 与 Production Acceptance](../../docs_agent/prd-v1.6.3-strict-readiness-production-acceptance.md)。v1.5 前序包括 `docs_agent/prd-v1.5.3-nodeskclaw-postman-integration-readiness.md`、`docs_agent/prd-v1.5.2-nodeskclaw-postman-acceptance-closure.md`、`docs_agent/prd-v1.5-nodeskclaw-api-acceptance-hardening.md`、`docs_agent/prd-v1.3-skill-run-release-readiness.md`、`docs_agent/prd-skill-platform-v1.0.md`、`docs_agent/prd-skill-run-architecture-closure-v1.1.md` 与 `docs_agent/prd-skill-run-production-hardening-v1.0.md`。work-expert v1.0.2 目录与 checksum 冻结；员工合同基线为 `contracts/skill-run/v1.0.0/`，RM-01 增量在 `v1.1.0/`，RM-02 语义事件增量在 `v1.2.0/`。生成与发布入口：`tools/contracts/release_skill_run_contracts.py` 与 `scripts/contracts.py generate --family skill-run`。
+Current Stage PRD（v1.6 当前）：[RM-04 Strict Readiness 与 Production Acceptance](../../docs_agent/prd-v1.6.3-strict-readiness-production-acceptance.md)（`1.6.3.1` / `APPROVED`；对齐已发布 Public `v1.5.0`）。v1.5 前序包括 `docs_agent/prd-v1.5.3-nodeskclaw-postman-integration-readiness.md`、`docs_agent/prd-v1.5.2-nodeskclaw-postman-acceptance-closure.md`、`docs_agent/prd-v1.5-nodeskclaw-api-acceptance-hardening.md`、`docs_agent/prd-v1.3-skill-run-release-readiness.md`、`docs_agent/prd-skill-platform-v1.0.md`、`docs_agent/prd-skill-run-architecture-closure-v1.1.md` 与 `docs_agent/prd-skill-run-production-hardening-v1.0.md`。work-expert v1.0.2 目录与 checksum 冻结；员工合同基线为 `contracts/skill-run/v1.0.0/`，当前 Work 面上沿为已发布 `v1.5.0/`。生成与发布入口：`tools/contracts/release_skill_run_contracts.py` 与 `scripts/contracts.py generate --family skill-run`。禁止用 generate 作为 RM-04 验收出口。
 
 ## v1.6 Delivery Governance
 
@@ -10,7 +10,7 @@ v1.6 保持既有 Production Owner 与信任边界，以独立 Roadmap Item 关�
 
 - Approved Architecture（已批准架构）：[AD-SKILL-AGENT-V16](../../docs_agent/architecture/AD-SKILL-AGENT-V16.md)（`1.7.0` / `APPROVED`；含 Public Contract Release Lane）。
 - Active Roadmap（活动路线图）：[ROADMAP-SKILL-AGENT-V16](../../docs_agent/roadmaps/ROADMAP-SKILL-AGENT-V16.md)（`1.7.0`）。
-- Current Stage PRD（当前阶段需求）：[RM-04 Strict Readiness 与 Production Acceptance](../../docs_agent/prd-v1.6.3-strict-readiness-production-acceptance.md)（`APPROVED`；Roadmap `IN_PRD`）。Public Contract Lane 已在 RM-17/RM-18 关闭。RM-07 / RM-10 仍为独立 `IN_PRD`。
+- Current Stage PRD（当前阶段需求）：[RM-04 Strict Readiness 与 Production Acceptance](../../docs_agent/prd-v1.6.3-strict-readiness-production-acceptance.md)（`1.6.3.1` / `APPROVED`；Roadmap `IN_PRD`）。Public Contract Lane 已在 RM-17/RM-18/RM-19 关闭（面上沿 `v1.5.0`）。C01/C02/C05 KEEP；C03 MODIFY（Harness oracle）；C04 MODIFY（Newman 公共信封 + 全族冻结）。Plan 须 REVISE 同一路径，禁止按旧 Plan 执行；未解除延后轨道前不得把 RM-04 标 `READY`/`DONE`。
 - RM-01：[Catalog 与 Run Control](../../docs_agent/prd-v1.6.0-skill-catalog-and-run-control.md)（Roadmap `DONE`）。
 - RM-02：[Semantic Run Events](../../docs_agent/prd-v1.6.1-semantic-run-events.md)（PRD `APPROVED` v1.6.1.1；Roadmap `DONE`）。implementation `e3744c4bd73479a32155dcd11d7f8b87c7cc6f2b`；C01–C04 `docs_agent/evidence/rm02-verification.md`；C05 `docs_agent/evidence/rm16-verification.md`。历史交付物保留；Conformance 出口对齐 RM-16 v1.6.15 live 包，不含 PC-05 / PC-08 live。
 - RM-03：[Edge Published Bundle Lifecycle](../../docs_agent/prd-v1.6.2-edge-published-bundle-lifecycle.md)（Roadmap `DONE`）。
