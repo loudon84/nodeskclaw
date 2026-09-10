@@ -3,7 +3,7 @@
 from decimal import Decimal
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.models.enums import (
     AclEffect,
@@ -474,7 +474,8 @@ class EvaluationSetUpdate(BaseModel):
 class EvaluationSetOut(BaseModel):
     id: str
     org_id: str
-    knowledge_set_id: str
+    knowledge_set_id: str | None = None
+    application_id: str | None = None
     name: str
     description: str | None = None
     created_by_member_id: str
@@ -513,15 +514,24 @@ class EvaluationCaseOut(BaseModel):
 
 class EvaluationRunCreate(BaseModel):
     evaluation_set_id: str
-    retrieval_profile_id: str
+    retrieval_profile_id: str | None = None
     release_id: str | None = None
     channel: str | None = None
+
+    @model_validator(mode="after")
+    def retrieval_profile_xor_application_release(self):
+        has_profile = bool(self.retrieval_profile_id)
+        has_release = bool(self.release_id)
+        if has_profile == has_release:
+            raise ValueError("retrieval_profile_id XOR release_id")
+        return self
 
 
 class EvaluationRunOut(BaseModel):
     id: str
     evaluation_set_id: str
-    retrieval_profile_id: str
+    retrieval_profile_id: str | None = None
+    release_id: str | None = None
     status: str
     metrics: dict[str, Any] | None = None
     principal_snapshot: dict[str, Any] | None = None

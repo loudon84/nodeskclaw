@@ -17,9 +17,11 @@ from app.models.knowledge_application_release import KnowledgeApplicationRelease
 from app.models.knowledge_quality_snapshot import KnowledgeQualitySnapshot
 from app.models.retrieval_profile import RetrievalProfile
 from app.runtime.ragflow import RagflowRuntimeAdapter
+from app.core.exceptions import ForbiddenError, NotFoundError
 from app.schemas.principal import KnowledgePrincipal
-from app.services import knowledge_set_service, retrieval_service
+from app.services import knowledge_base_service, knowledge_set_service, retrieval_service
 from app.services.permission_service import build_access_plan
+from app.services.release_runtime_service import resolve_evaluation_release
 from app.services.retrieval_profile_service import merge_profile_config
 from app.workers.job_leasing import utc_now
 
@@ -124,6 +126,10 @@ def _uses_release_path(run: EvaluationRun) -> bool:
     return bool(getattr(run, "release_id", None) or getattr(run, "channel", None))
 
 
+def _is_application_release_target(run: EvaluationRun) -> bool:
+    return bool(getattr(run, "release_id", None)) and not getattr(run, "retrieval_profile_id", None)
+
+
 def _compute_overall_pass(
     *,
     unauthorized_any: bool,
@@ -217,16 +223,6 @@ async def process_evaluation_run(
         run.finished_at = utc_now()
         return
 
-    profile = await db.get(RetrievalProfile, run.retrieval_profile_id)
-    if profile is None or profile.deleted_at is not None:
-        run.status = EvaluationRunStatus.failed.value
-        run.last_error = "retrieval profile missing"
-        run.finished_at = utc_now()
-        return
-
-    config = merge_profile_config(profile.config)
-    k = int(config.get("top_n", DEFAULT_K))
-
     snapshot = run.principal_snapshot if isinstance(getattr(run, "principal_snapshot", None), dict) else None
     if not snapshot:
         run.status = EvaluationRunStatus.failed.value
@@ -263,17 +259,59 @@ async def process_evaluation_run(
         run.finished_at = utc_now()
         return
 
-    use_release_path = _uses_release_path(run)
+    application_release = _is_application_release_target(run)
+    evaluation_context = None
+    k = DEFAULT_K
+    if application_release:
+        try:
+            evaluation_context = await resolve_evaluation_release(
+                db, member, release_id=str(run.release_id)
+            )
+        except Exception as exc:
+            run.status = EvaluationRunStatus.failed.value
+            run.last_error = str(exc)
+            run.finished_at = utc_now()
+            return
+        if not evaluation_context.knowledge_set_ids:
+            run.status = EvaluationRunStatus.failed.value
+            run.last_error = "evaluation release missing knowledge set pins"
+            run.finished_at = utc_now()
+            return
+    else:
+        profile = await db.get(RetrievalProfile, run.retrieval_profile_id)
+        if profile is None or profile.deleted_at is not None:
+            run.status = EvaluationRunStatus.failed.value
+            run.last_error = "retrieval profile missing"
+            run.finished_at = utc_now()
+            return
+        config = merge_profile_config(profile.config)
+        k = int(config.get("top_n", DEFAULT_K))
+
+    use_release_path = application_release or _uses_release_path(run)
     application_id: str | None = None
     resolved_release_id: str | None = getattr(run, "release_id", None)
     gate_result: str | None = None
     manifest_hash: str | None = None
     release_channel = getattr(run, "channel", None) or "stable"
-
-    if use_release_path:
-        application_id = await _resolve_application_id_for_release_run(db, run, eval_set)
-
-    kbs = await knowledge_set_service.list_bound_knowledge_bases(db, member, eval_set.knowledge_set_id)
+    if application_release and evaluation_context is not None:
+        manifest_hash = evaluation_context.manifest_hash
+        resolved_release_id = evaluation_context.release_id
+        application_id = evaluation_context.application_id
+        kbs = []
+        for pin in evaluation_context.knowledge_bases:
+            if not isinstance(pin, dict):
+                continue
+            kb_id = str(pin.get("knowledge_base_id") or "")
+            if not kb_id:
+                continue
+            try:
+                kbs.append(await knowledge_base_service.get_knowledge_base(db, member, kb_id))
+            except (NotFoundError, ForbiddenError):
+                continue
+    else:
+        if use_release_path:
+            application_id = await _resolve_application_id_for_release_run(db, run, eval_set)
+        kbs = await knowledge_set_service.list_bound_knowledge_bases(db, member, eval_set.knowledge_set_id)
     access_plan = await build_access_plan(db, member, kbs)
     allowed_ids = set(access_plan.source_file_ids)
 
@@ -283,7 +321,20 @@ async def process_evaluation_run(
         expected_ids = [str(item) for item in (case.expected_source_file_ids or [])]
         try:
             case_started = utc_now()
-            if use_release_path:
+            if application_release and evaluation_context is not None:
+                payload = await retrieval_service.retrieve(
+                    db,
+                    member,
+                    ragflow,
+                    knowledge_set_id=evaluation_context.knowledge_set_ids[0],
+                    query=case.query,
+                    origin=RetrievalOrigin.evaluation.value,
+                    profile_id=None,
+                    top_k=k,
+                )
+                if gate_result is None and resolved_release_id:
+                    gate_result = await _load_gate_result_for_release(db, resolved_release_id)
+            elif use_release_path:
                 payload = await retrieval_service.retrieve_for_application(
                     db,
                     member,

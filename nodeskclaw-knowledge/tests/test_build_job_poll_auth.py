@@ -32,6 +32,8 @@ def _job(**kwargs):
         build_profile_id=None,
         index_type="release_validation",
         target_kind="release_validation",
+        scope_type=None,
+        scope_id=None,
         trigger_reason="validate",
         status="queued",
         progress=0,
@@ -90,6 +92,35 @@ async def test_get_build_release_validation_allows_application_read(monkeypatch)
 
     assert result.data["id"] == "bj1"
     assert result.data["status"] == "queued"
+    app_perm.assert_awaited_once()
+    kb_perm.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_get_build_uses_persisted_application_scope(monkeypatch):
+    monkeypatch.setattr(settings, "KNOWLEDGE_API_V2_ENABLED", True)
+    monkeypatch.setattr(settings, "KNOWLEDGE_V2_BUILD_ENABLED", True)
+    job = _job(
+        index_type=None,
+        scope_type="application",
+        scope_id="app1",
+        release_candidate_id=None,
+    )
+    member = _member()
+    db = AsyncMock()
+    db.get = AsyncMock(return_value=job)
+    with (
+        patch(
+            "app.api.v2.engineering.permission_service.has_kb_permission",
+            new=AsyncMock(return_value=False),
+        ) as kb_perm,
+        patch(
+            "app.api.v2.engineering.permission_service.has_application_permission",
+            new=AsyncMock(return_value=True),
+        ) as app_perm,
+    ):
+        result = await engineering.get_build("bj1", member, db)
+    assert result.data["id"] == "bj1"
     app_perm.assert_awaited_once()
     kb_perm.assert_not_awaited()
 

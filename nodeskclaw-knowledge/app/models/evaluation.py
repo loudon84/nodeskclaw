@@ -14,7 +14,8 @@ class EvaluationSet(BaseModel):
     __tablename__ = "knowledge_evaluation_sets"
 
     org_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
-    knowledge_set_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    knowledge_set_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    application_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_by_member_id: Mapped[str] = mapped_column(String(36), nullable=False)
@@ -34,7 +35,7 @@ class EvaluationRun(BaseModel):
     __tablename__ = "knowledge_evaluation_runs"
 
     evaluation_set_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
-    retrieval_profile_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    retrieval_profile_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     release_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     channel: Mapped[str | None] = mapped_column(String(32), nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending", index=True)

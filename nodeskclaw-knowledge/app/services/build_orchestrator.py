@@ -35,12 +35,15 @@ async def _resolve_active_model_revision_id(db: AsyncSession, kb) -> str | None:
     return model.active_revision_id
 
 
+KNOWN_BUILD_TARGET_KINDS = {"index", "artifact", "release_validation"}
+
+
 async def enqueue_build(
     db: AsyncSession,
     *,
     org_id: str,
     knowledge_base_id: str | None = None,
-    index_type: str,
+    index_type: str | None = None,
     trigger_reason: str,
     build_profile_id: str | None = None,
     created_by_member_id: str | None = None,
@@ -50,8 +53,11 @@ async def enqueue_build(
     input_manifest_hash: str | None = None,
     knowledge_model_revision_id: str | None = None,
     release_candidate_id: str | None = None,
+    scope_type: str | None = None,
+    scope_id: str | None = None,
 ) -> KnowledgeBuildJob | None:
-    if index_type == IndexType.chunk.value:
+    persisted_index_type = index_type if target_kind == "index" else None
+    if persisted_index_type == IndexType.chunk.value:
         return None
     is_release_validation = target_kind == "release_validation"
     if is_release_validation:
@@ -65,11 +71,23 @@ async def enqueue_build(
                 not_deleted(KnowledgeBuildJob),
             )
         )
+    elif target_kind == "artifact":
+        existing = await db.scalar(
+            select(KnowledgeBuildJob).where(
+                KnowledgeBuildJob.knowledge_base_id == knowledge_base_id,
+                KnowledgeBuildJob.target_kind == "artifact",
+                KnowledgeBuildJob.target_key == (target_key or index_type),
+                KnowledgeBuildJob.status.in_(
+                    [BuildJobStatus.queued.value, BuildJobStatus.running.value]
+                ),
+                not_deleted(KnowledgeBuildJob),
+            )
+        )
     else:
         existing = await db.scalar(
             select(KnowledgeBuildJob).where(
                 KnowledgeBuildJob.knowledge_base_id == knowledge_base_id,
-                KnowledgeBuildJob.index_type == index_type,
+                KnowledgeBuildJob.index_type == persisted_index_type,
                 KnowledgeBuildJob.status.in_(
                     [BuildJobStatus.queued.value, BuildJobStatus.running.value]
                 ),
@@ -86,19 +104,35 @@ async def enqueue_build(
     if delay_seconds > 0:
         next_run = datetime.now(UTC) + timedelta(seconds=delay_seconds)
     pinned_revision_id = knowledge_model_revision_id
-    if not is_release_validation:
+    resolved_scope_type = scope_type
+    resolved_scope_id = scope_id
+    if is_release_validation:
+        from app.models.knowledge_application_release import KnowledgeApplicationRelease
+
+        release = await db.get(KnowledgeApplicationRelease, release_candidate_id) if release_candidate_id else None
+        if resolved_scope_type is None:
+            resolved_scope_type = "application"
+        if resolved_scope_id is None and release is not None:
+            resolved_scope_id = release.application_id
+    else:
         from app.models.knowledge_base import KnowledgeBase
 
-        kb = await db.get(KnowledgeBase, knowledge_base_id)
+        kb = await db.get(KnowledgeBase, knowledge_base_id) if knowledge_base_id else None
         if pinned_revision_id is None and kb is not None:
             pinned_revision_id = await _resolve_active_model_revision_id(db, kb)
+        if resolved_scope_type is None and knowledge_base_id:
+            resolved_scope_type = "knowledge_base"
+        if resolved_scope_id is None:
+            resolved_scope_id = knowledge_base_id
     job = KnowledgeBuildJob(
         org_id=org_id,
         knowledge_base_id=None if is_release_validation else knowledge_base_id,
         build_profile_id=build_profile_id,
-        index_type=index_type,
+        index_type=persisted_index_type,
         target_kind=target_kind,
-        target_key=target_key or index_type,
+        target_key=target_key or persisted_index_type or index_type,
+        scope_type=resolved_scope_type,
+        scope_id=resolved_scope_id,
         input_manifest_hash=input_manifest_hash,
         knowledge_model_revision_id=pinned_revision_id,
         release_candidate_id=release_candidate_id,
@@ -280,6 +314,25 @@ async def process_build_job(db: AsyncSession, job: KnowledgeBuildJob) -> None:
 
     started_at = datetime.now(UTC)
     target_kind = getattr(job, "target_kind", None) or "index"
+    if target_kind not in KNOWN_BUILD_TARGET_KINDS:
+        finished_at = datetime.now(UTC)
+        job.status = BuildJobStatus.failed.value
+        job.error_code = "unsupported_build_target"
+        job.error_message = f"unsupported target_kind {target_kind}"
+        job.finished_at = finished_at
+        job.attempt_count = int(job.max_attempts or job.attempt_count or 1)
+        job.stage_results = _stage_results_payload(
+            index_type=job.target_key or job.index_type or target_kind,
+            status="failed",
+            started_at=started_at,
+            finished_at=finished_at,
+            attempt=int(job.attempt_count or 0),
+            error_code=job.error_code,
+            error_message=job.error_message,
+            output={"retry_scheduled": False},
+        )
+        await db.flush()
+        return
     if target_kind == "release_validation":
         await _process_release_validation_build_job(db, job, started_at=started_at)
         return

@@ -6,8 +6,53 @@ import pytest
 
 from app.integrations.ragflow.client import RagflowClient
 from app.integrations.ragflow.exceptions import RagflowError
-from app.runtime.capabilities import probe_index_capabilities, probe_runtime
-from app.runtime.ragflow_contract import probe_compatibility_profile
+from app.runtime.capabilities import capabilities_from_profile, probe_index_capabilities, probe_runtime
+from app.runtime.ragflow_contract import (
+    CAPABILITY_UNAVAILABLE,
+    CAPABILITY_UNKNOWN,
+    CAPABILITY_UNSUPPORTED,
+    RagflowCompatibilityProfile,
+    probe_compatibility_profile,
+)
+
+
+def test_unreachable_capability_is_unavailable_not_false_bool():
+    caps = capabilities_from_profile(RagflowCompatibilityProfile(reachable=False, runtime_version=None))
+    chunk = caps["supports_chunk"]
+    assert chunk["status"] == CAPABILITY_UNAVAILABLE
+    assert chunk["build_supported"] is True
+    assert chunk["retrieval_supported"] is True
+    assert isinstance(chunk["build_supported"], bool)
+    assert chunk["build_supported"] is not False
+
+
+def test_no_fixture_capability_is_unknown_and_bool_not_false():
+    profile = RagflowCompatibilityProfile(reachable=True, runtime_version="v0.27.0")
+    caps = capabilities_from_profile(profile)
+    chunk = caps["supports_chunk"]
+    graph = caps["supports_graph"]
+    assert chunk["status"] == CAPABILITY_UNKNOWN
+    assert graph["status"] == CAPABILITY_UNKNOWN
+    assert chunk["build_supported"] is True
+    assert graph["retrieval_supported"] is True
+    assert chunk["build_supported"] is not False
+    assert isinstance(chunk["build_supported"], bool)
+    assert chunk["status"] != chunk["build_supported"]
+
+
+def test_contract_reject_projects_false_and_keeps_bool():
+    caps = capabilities_from_profile(RagflowCompatibilityProfile(reachable=True, runtime_version="v0.27.0"))
+    table = caps["supports_table"]
+    assert table["status"] == CAPABILITY_UNSUPPORTED
+    assert table["build_supported"] is False
+    assert isinstance(table["build_supported"], bool)
+
+
+def test_version_string_does_not_rewrite_capability():
+    old = capabilities_from_profile(RagflowCompatibilityProfile(reachable=True, runtime_version="0.17.0"))
+    new = capabilities_from_profile(RagflowCompatibilityProfile(reachable=True, runtime_version="v0.27.0"))
+    assert old["supports_chunk"]["status"] == new["supports_chunk"]["status"] == CAPABILITY_UNKNOWN
+    assert old["supports_graph"]["status"] == new["supports_graph"]["status"]
 
 
 @pytest.mark.asyncio
@@ -17,21 +62,40 @@ async def test_probe_index_capabilities_unreachable():
         reachable=False,
         runtime_version=None,
     )
-    assert caps["supports_chunk"]["build_supported"] is False
+    assert caps["supports_chunk"]["status"] == CAPABILITY_UNAVAILABLE
+    assert caps["supports_chunk"]["build_supported"] is True
     assert caps["supports_chunk"]["reason"] == "ragflow_unreachable"
 
 
 @pytest.mark.asyncio
 async def test_probe_index_capabilities_reachable_validated():
+    profile = RagflowCompatibilityProfile(
+        reachable=True,
+        runtime_version="0.17.0",
+        dataset_api=True,
+        document_api=True,
+        chunk_retrieval=True,
+        dataset_graph=True,
+        feature_status={
+            "dataset_api": "supported",
+            "document_api": "supported",
+            "chunk_retrieval": "supported",
+            "dataset_graph": "supported",
+            "kg_retrieval": "unsupported",
+        },
+    )
     caps = await probe_index_capabilities(
         AsyncMock(),
         reachable=True,
         runtime_version="0.17.0",
+        profile=profile,
     )
     assert caps["supports_chunk"]["build_supported"] is True
     assert caps["supports_chunk"]["retrieval_supported"] is True
-    assert caps["supports_graph"]["build_supported"] is True
+    assert caps["supports_chunk"]["status"] == "supported"
+    assert caps["supports_graph"]["build_supported"] is False
     assert caps["supports_graph"]["retrieval_supported"] is False
+    assert caps["supports_graph"]["status"] == CAPABILITY_UNSUPPORTED
 
 
 @pytest.mark.asyncio
@@ -42,7 +106,8 @@ async def test_probe_runtime_orchestrates_client():
     reachable, version, caps = await probe_runtime(client)
     assert reachable is True
     assert version == "0.24.0"
-    assert caps["supports_chunk"]["validated"] is True
+    assert caps["supports_chunk"]["status"] in {CAPABILITY_UNKNOWN, "supported"}
+    assert isinstance(caps["supports_chunk"]["build_supported"], bool)
 
 
 @pytest.mark.asyncio
@@ -85,3 +150,6 @@ async def test_compatibility_profile_metadata_filter_from_probe_not_hardcoded():
     )
     profile = await probe_compatibility_profile(client, dataset_id="ds-1")
     assert profile.metadata_filter is False
+    assert profile.fact("metadata_filter") == CAPABILITY_UNSUPPORTED
+    assert profile.fact("kg_retrieval") == CAPABILITY_UNSUPPORTED
+    assert profile.fact("knn_top_k") == "supported"

@@ -5,8 +5,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.api.agent_tools import strip_runtime_document_ids
 from app.core.config import settings
 from app.models.enums import AccessPlanKind, ApplicationStatus, KnowledgeSetStatus
+from app.services import retrieval_service
 from app.services.permission_service import AccessPlan
 from app.services.retrieval_planner import RetrievalPlan
 from app.services.retrieval_service import retrieve, retrieve_for_application
@@ -307,3 +309,148 @@ async def test_retrieve_for_set_skips_profile_when_compiled_policy_provided(monk
         )
 
     get_profile.assert_not_awaited()
+
+
+def _provider_ids_present(payload) -> bool:
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            if key in {"dataset_id", "document_id", "chunk_id"} or (
+                str(key).startswith("ragflow_") and key not in {"ragflow_ms", "ragflow_call_count"}
+            ):
+                return True
+            if _provider_ids_present(value):
+                return True
+    elif isinstance(payload, list):
+        return any(_provider_ids_present(item) for item in payload)
+    return False
+
+
+@pytest.mark.asyncio
+async def test_persist_retrieval_evidence_keeps_internal_provider_ids_and_adds_evidence_id(monkeypatch):
+    chunk = SimpleNamespace(
+        id="rf-chunk-1",
+        document_id="rf-doc-1",
+        document_metadata={
+            "nk_source_file_id": "sf1",
+            "nk_file_version_id": "fv1",
+            "nk_knowledge_base_id": "kb1",
+        },
+        document_name="a.md",
+        document_keyword="a",
+        content="hello",
+        similarity=0.9,
+        highlight=None,
+        positions=None,
+        term_similarity=0.1,
+        vector_similarity=0.8,
+    )
+    item = SimpleNamespace(chunk=chunk, weighted_score=0.9, slice_mode="semantic")
+    db = MagicMock()
+    db.get = AsyncMock(return_value=None)
+    db.add = MagicMock()
+
+    async def assign_id() -> None:
+        for call in db.add.call_args_list:
+            obj = call.args[0]
+            if getattr(obj, "id", None) is None:
+                obj.id = "ev-generated"
+
+    db.flush = AsyncMock(side_effect=assign_id)
+    member = SimpleNamespace(member_id="m1", org_id="o1")
+    monkeypatch.setattr(
+        "app.services.evidence_normalizer.classify",
+        lambda *_args, **_kwargs: "chunk",
+    )
+    monkeypatch.setattr(retrieval_service.metrics_service, "observe_evidence_returned", MagicMock())
+
+    chunks, evidence = await retrieval_service._persist_retrieval_evidence(
+        db, member, [item], origin="direct_retrieval"
+    )
+
+    assert chunks[0]["evidence_id"]
+    assert chunks[0]["chunk_id"] == "rf-chunk-1"
+    assert evidence[0]["evidence_id"] == chunks[0]["evidence_id"]
+    citation = db.add.call_args[0][0]
+    assert citation.ragflow_chunk_id == "rf-chunk-1"
+    assert citation.ragflow_document_id == "rf-doc-1"
+    assert citation.runtime_payload["chunk_id"] == "rf-chunk-1"
+
+
+@pytest.mark.asyncio
+async def test_retrieve_for_application_omits_provider_ids_and_keeps_evidence_id(monkeypatch):
+    monkeypatch.setattr(settings, "KNOWLEDGE_V2_APPLICATION_ENABLED", True)
+    monkeypatch.setattr(settings, "KNOWLEDGE_V24_RELEASE_ENABLED", True)
+    db = AsyncMock()
+    member = SimpleNamespace(member_id="m1", org_id="o1")
+    ragflow = AsyncMock()
+    app = SimpleNamespace(
+        id="app1",
+        org_id="o1",
+        status=ApplicationStatus.active.value,
+        answer_model="live-gpt",
+        active_profile_id="profile-live",
+    )
+    ctx = _release_context()
+    ks = SimpleNamespace(id="set_ctx", status=KnowledgeSetStatus.active.value, org_id="o1", deleted_at=None)
+    kb = SimpleNamespace(id="kb_ctx", metadata_schema=None)
+    dirty = {
+        "chunks": [
+            {
+                "evidence_id": "ev-1",
+                "chunk_id": "rf-chunk-1",
+                "document_id": "rf-doc-1",
+                "content": "hello",
+            }
+        ],
+        "evidence": [{"evidence_id": "ev-1", "payload": {"document_id": "rf-doc-1", "page": 1}}],
+        "diagnostics": {"slices": [{"dataset_id": "ds-secret", "knowledge_base_id": "kb_ctx"}]},
+        "execution_plan": {"slices": [{"dataset_id": "ds-secret", "knowledge_base_id": "kb_ctx"}]},
+        "status": "success",
+    }
+
+    with (
+        patch(
+            "app.services.knowledge_application_service.get_application",
+            new=AsyncMock(return_value=app),
+        ),
+        patch(
+            "app.services.retrieval_service.has_application_permission",
+            new=AsyncMock(return_value=True),
+        ),
+        patch(
+            "app.services.release_runtime_service.resolve_application_release",
+            new=AsyncMock(return_value=ctx),
+        ),
+        patch(
+            "app.services.knowledge_base_service.get_knowledge_base",
+            new=AsyncMock(return_value=kb),
+        ),
+        patch(
+            "app.services.retrieval_service.knowledge_set_service.get_knowledge_set",
+            new=AsyncMock(return_value=ks),
+        ),
+        patch(
+            "app.services.retrieval_service.has_set_permission",
+            new=AsyncMock(return_value=True),
+        ),
+        patch(
+            "app.services.retrieval_service._retrieve_for_set",
+            new=AsyncMock(return_value=dirty),
+        ),
+    ):
+        result = await retrieve_for_application(db, member, ragflow, application_id="app1", query="hello")
+
+    assert result["chunks"][0]["evidence_id"] == "ev-1"
+    assert result["evidence"][0]["evidence_id"] == "ev-1"
+    assert not _provider_ids_present(result)
+
+
+def test_agent_strip_consumes_retrieval_projection_not_document_id_only():
+    payload = {
+        "chunks": [{"evidence_id": "ev-1", "chunk_id": "rf-chunk-1", "document_id": "rf-doc-1", "content": "hello"}],
+        "diagnostics": {"slices": [{"dataset_id": "ds-secret"}]},
+        "execution_plan": {"slices": [{"dataset_id": "ds-secret", "ragflow_chunk_id": "rf-chunk-1"}]},
+    }
+    strip_runtime_document_ids(payload)
+    assert payload["chunks"][0]["evidence_id"] == "ev-1"
+    assert not _provider_ids_present(payload)

@@ -490,7 +490,7 @@ async def test_process_build_job_runs_artifact_executor(monkeypatch):
         id="job-1",
         org_id="o1",
         knowledge_base_id="kb1",
-        index_type="outline:file:sf1",
+        index_type=None,
         target_kind="artifact",
         target_key="outline",
         knowledge_model_revision_id=None,

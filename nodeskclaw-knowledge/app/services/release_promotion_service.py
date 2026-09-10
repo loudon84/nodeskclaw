@@ -17,6 +17,7 @@ from app.models.enums import (
     ApplicationStatus,
     AuditAction,
     QualityGateResult,
+    QualitySnapshotScopeType,
     ReleaseChannelName,
 )
 from app.models.knowledge_application_release import (
@@ -118,6 +119,17 @@ async def _assert_release_promotable(
                     "calculated_at": calculated_at.isoformat(),
                     "max_age_seconds": settings.KNOWLEDGE_RELEASE_QUALITY_MAX_AGE_SECONDS,
                 },
+            )
+        if getattr(snapshot, "scope_type", None) != QualitySnapshotScopeType.application_release.value:
+            raise ConflictError(
+                message="stable 推广需要 application_release Quality Snapshot，不能使用 live Application Snapshot",
+                message_key="errors.knowledge.release_quality_snapshot_live_only",
+                details={"scope_type": getattr(snapshot, "scope_type", None)},
+            )
+        if getattr(snapshot, "scope_id", None) != release.id:
+            raise ConflictError(
+                message="Quality Snapshot 与 Release 不一致",
+                message_key="errors.knowledge.snapshot_release_mismatch",
             )
     elif integrity.status == "unavailable":
         raise ConflictError(

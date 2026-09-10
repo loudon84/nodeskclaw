@@ -430,7 +430,7 @@ class RagflowClient:
             return False
 
     async def get_system_version(self) -> str | None:
-        for path in ("/api/v1/system/version", "/v1/system/version"):
+        for path in ("/v2/system/version", "/api/v1/system/version", "/v1/system/version"):
             try:
                 client = await self._ensure_client()
                 resp = await client.get(path, headers=self._headers(), timeout=5.0)

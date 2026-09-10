@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.core.exceptions import BadRequestError
 from app.models.enums import EvaluationRunStatus
 from app.services import evaluation_service
 from app.services.evaluation_runner import (
@@ -484,7 +485,7 @@ async def test_create_run_writes_pending():
 
 
 @pytest.mark.asyncio
-async def test_create_run_writes_release_id_and_channel():
+async def test_create_run_application_release_without_profile():
     db = MagicMock()
     db.add = MagicMock()
     db.commit = AsyncMock()
@@ -502,32 +503,76 @@ async def test_create_run_writes_release_id_and_channel():
         is_active=True,
         is_super_admin=False,
     )
-    eval_set = SimpleNamespace(id="es1", knowledge_set_id="set1", org_id="o1")
-    profile = SimpleNamespace(id="p1", knowledge_set_id="set1", deleted_at=None)
-    release = SimpleNamespace(id="rel-1", org_id="o1", deleted_at=None)
+    eval_set = SimpleNamespace(id="es1", knowledge_set_id="set1", application_id=None, org_id="o1")
 
     class ScalarResult:
         def scalar_one(self):
             return 2
 
-    db.get = AsyncMock(side_effect=[profile, release])
     db.execute = AsyncMock(return_value=ScalarResult())
+    ctx = SimpleNamespace(
+        release_id="rel-1",
+        application_id="app-1",
+        knowledge_set_ids=["set-pinned"],
+        knowledge_bases=[{"knowledge_base_id": "kb1"}],
+        manifest_hash="hash-1",
+    )
 
-    with patch(
-        "app.services.evaluation_service._require_eval_set_manage",
-        new=AsyncMock(return_value=eval_set),
+    with (
+        patch(
+            "app.services.evaluation_service._require_eval_set_manage",
+            new=AsyncMock(return_value=eval_set),
+        ),
+        patch(
+            "app.services.evaluation_service.resolve_evaluation_release",
+            new=AsyncMock(return_value=ctx),
+        ),
     ):
         row = await evaluation_service.create_run(
             db,
             member,
             evaluation_set_id="es1",
-            retrieval_profile_id="p1",
+            retrieval_profile_id=None,
             release_id="rel-1",
-            channel="stable",
         )
 
     assert row.release_id == "rel-1"
-    assert row.channel == "stable"
+    assert row.retrieval_profile_id is None
+    assert row.channel == "evaluation"
+    db.add.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_create_run_rejects_profile_and_release_together():
+    db = MagicMock()
+    member = SimpleNamespace(
+        user_id="u1",
+        member_id="m1",
+        org_id="o1",
+        name="Finance Operator",
+        employee_no=None,
+        department="finance",
+        job_title=None,
+        member_role="operator",
+        supervisor_member_id=None,
+        is_active=True,
+        is_super_admin=False,
+    )
+    eval_set = SimpleNamespace(id="es1", knowledge_set_id="set1", application_id=None, org_id="o1")
+    with (
+        patch(
+            "app.services.evaluation_service._require_eval_set_manage",
+            new=AsyncMock(return_value=eval_set),
+        ),
+        pytest.raises(BadRequestError),
+    ):
+        await evaluation_service.create_run(
+            db,
+            member,
+            evaluation_set_id="es1",
+            retrieval_profile_id="p1",
+            release_id="rel-1",
+        )
 
 
 @pytest.mark.asyncio
@@ -702,3 +747,132 @@ async def test_compare_profiles_delta_from_completed_runs():
     assert result["delta"]["avg_latency_ms"] == pytest.approx(-20.0)
     assert result["delta"]["empty_rate"] == pytest.approx(-0.1)
     assert result["delta"]["degraded_rate"] == pytest.approx(-0.1)
+
+
+@pytest.mark.asyncio
+async def test_process_application_release_run_uses_execution_context_not_live_set():
+    db = MagicMock()
+    db.add = MagicMock()
+    db.get = AsyncMock(
+        side_effect=[
+            SimpleNamespace(id="es1", org_id="o1", knowledge_set_id="live-set", deleted_at=None),
+            SimpleNamespace(id="rel-1", quality_snapshot_id="snap-1", deleted_at=None),
+            SimpleNamespace(id="snap-1", gate_result=QualityGateResult.pass_.value, deleted_at=None),
+        ]
+    )
+    cases = [
+        SimpleNamespace(
+            id="c1",
+            query="q",
+            expected_source_file_ids=["sf_expected"],
+            created_at=None,
+        )
+    ]
+
+    class Scalars:
+        def all(self):
+            return cases
+
+    class Result:
+        def scalars(self):
+            return Scalars()
+
+    db.execute = AsyncMock(return_value=Result())
+    run = SimpleNamespace(
+        id="run1",
+        evaluation_set_id="es1",
+        retrieval_profile_id=None,
+        release_id="rel-1",
+        channel="evaluation",
+        created_by_member_id="m1",
+        principal_snapshot={
+            "user_id": "u1",
+            "member_id": "m1",
+            "org_id": "o1",
+            "name": "Finance Operator",
+            "department": "finance",
+            "member_role": "operator",
+            "is_active": True,
+            "is_super_admin": False,
+        },
+        attempt_count=0,
+        max_attempts=5,
+        status=EvaluationRunStatus.running.value,
+        metrics=None,
+        last_error=None,
+        finished_at=None,
+        lease_owner="w1",
+        lease_until=None,
+        next_run_at=None,
+    )
+    ctx = SimpleNamespace(
+        release_id="rel-1",
+        application_id="app-1",
+        knowledge_set_ids=["pinned-set"],
+        knowledge_bases=[{"knowledge_base_id": "kb-pin"}],
+        manifest_hash="ctx-hash-1",
+        compiled_policy={},
+    )
+    captured: dict = {}
+    list_bound = AsyncMock(side_effect=AssertionError("live set must not be release authority"))
+    retrieve_app = AsyncMock(side_effect=AssertionError("pointer retrieve must not run"))
+
+    async def fake_retrieve(*_args, **kwargs):
+        captured["knowledge_set_id"] = kwargs.get("knowledge_set_id")
+        captured["profile_id"] = kwargs.get("profile_id")
+        return {
+            "chunks": [{"source_file_id": "sf_expected", "chunk_id": "x"}],
+            "status": "success",
+            "latency_ms": 12,
+        }
+
+    with (
+        patch(
+            "app.services.evaluation_runner.resolve_evaluation_release",
+            new=AsyncMock(return_value=ctx),
+        ),
+        patch(
+            "app.services.evaluation_runner.knowledge_base_service.get_knowledge_base",
+            new=AsyncMock(return_value=SimpleNamespace(id="kb-pin", status="active")),
+        ),
+        patch(
+            "app.services.evaluation_runner.knowledge_set_service.list_bound_knowledge_bases",
+            new=list_bound,
+        ),
+        patch(
+            "app.services.evaluation_runner.build_access_plan",
+            new=AsyncMock(return_value=SimpleNamespace(source_file_ids=["sf_expected"])),
+        ),
+        patch(
+            "app.services.evaluation_runner.retrieval_service.retrieve",
+            new=fake_retrieve,
+        ),
+        patch(
+            "app.services.evaluation_runner.retrieval_service.retrieve_for_application",
+            new=retrieve_app,
+        ),
+    ):
+        await process_evaluation_run(db, AsyncMock(), run)
+
+    assert run.status == EvaluationRunStatus.completed.value
+    assert run.metrics["manifest_hash"] == "ctx-hash-1"
+    assert run.metrics["gate_result"] == QualityGateResult.pass_.value
+    assert captured["knowledge_set_id"] == "pinned-set"
+    assert captured["profile_id"] is None
+    list_bound.assert_not_awaited()
+    retrieve_app.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_evaluation_run_create_schema_xor():
+    from pydantic import ValidationError
+
+    from app.schemas.knowledge import EvaluationRunCreate
+
+    with pytest.raises(ValidationError):
+        EvaluationRunCreate(evaluation_set_id="es1", retrieval_profile_id="p1", release_id="rel-1")
+    with pytest.raises(ValidationError):
+        EvaluationRunCreate(evaluation_set_id="es1")
+    body = EvaluationRunCreate(evaluation_set_id="es1", release_id="rel-1")
+    assert body.retrieval_profile_id is None
+    assert body.release_id == "rel-1"

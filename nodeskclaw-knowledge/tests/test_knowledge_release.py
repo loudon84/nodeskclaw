@@ -17,8 +17,10 @@ from app.services import (
     knowledge_application_service,
     knowledge_quality_service,
     release_integrity_service,
+    release_manifest_service,
     release_promotion_service,
 )
+from app.services.release_runtime_service import resolve_application_release, resolve_evaluation_release
 
 
 MEMBER = KnowledgePrincipal(
@@ -87,6 +89,8 @@ def _snapshot(*, gate_result=QualityGateResult.pass_.value, manifest_hash="hash-
         gate_result=gate_result,
         manifest_hash=manifest_hash,
         calculated_at=datetime.now(UTC),
+        scope_type="application_release",
+        scope_id="rel-1",
     )
 
 
@@ -516,3 +520,103 @@ def test_compile_execution_policy_flattens_revision_fields():
     assert policy["allow_outline_artifact"] is False
     assert policy["allow_table_artifact"] is True
     assert policy["allow_question_enrichment"] is False
+
+
+def _runtime_manifest():
+    return {
+        "schema_version": 1,
+        "application_id": "app-1",
+        "release_version": 1,
+        "retrieval_policy_revision_id": "policy-1",
+        "answer_model": "gpt-4",
+        "knowledge_sets": [
+            {
+                "knowledge_set_id": "set-1",
+                "knowledge_bases": [{"knowledge_base_id": "kb-1", "weight": 1.5}],
+            }
+        ],
+    }
+
+
+def _runtime_policy():
+    return SimpleNamespace(
+        id="policy-1",
+        application_id="app-1",
+        org_id="org-1",
+        deleted_at=None,
+        status="active",
+        query_intelligence_policy={"term_expansion": True},
+        provider_policy={"allow_chunk": True, "allow_question": False},
+        provider_weights={"chunk": 2.0, "question": 0.25},
+        candidate_budget={"max_candidates": 512},
+        fanout_budget={"max_kb_fanout": 4},
+        latency_budget={"max_ms": 15000},
+        fallback_policy={"mode": "semantic_only"},
+        artifact_policy={"allow_outline": False, "allow_table": True, "max_artifacts": 32},
+        fusion_policy={"mode": "rrf", "k": 40},
+    )
+
+
+def _runtime_release(*, release_id="rel-candidate", status=ApplicationReleaseStatus.validated.value):
+    manifest = _runtime_manifest()
+    return SimpleNamespace(
+        id=release_id,
+        org_id="org-1",
+        application_id="app-1",
+        version=1,
+        status=status,
+        release_manifest=manifest,
+        manifest_hash=release_manifest_service.manifest_hash(manifest),
+        deleted_at=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_production_pointer_conflict_still_fail_closed(monkeypatch):
+    monkeypatch.setattr(settings, "KNOWLEDGE_V24_RELEASE_ENABLED", True)
+    pointer = _runtime_release(release_id="rel-pointer")
+    db = MagicMock()
+    db.scalar = AsyncMock(
+        return_value=SimpleNamespace(application_id="app-1", channel="stable", active_release_id="rel-pointer", deleted_at=None)
+    )
+    db.get = AsyncMock(return_value=pointer)
+    with pytest.raises(BadRequestError) as exc:
+        await resolve_application_release(
+            db,
+            MEMBER,
+            application_id="app-1",
+            channel="stable",
+            release_id="rel-candidate",
+        )
+    assert exc.value.message_key == "errors.knowledge.release_id_conflict"
+
+
+@pytest.mark.asyncio
+async def test_evaluation_origin_loads_validated_release_without_pointer(monkeypatch):
+    monkeypatch.setattr(settings, "KNOWLEDGE_V24_RELEASE_ENABLED", True)
+    release = _runtime_release(release_id="rel-candidate")
+    policy = _runtime_policy()
+    db = MagicMock()
+    db.scalar = AsyncMock(
+        return_value=SimpleNamespace(application_id="app-1", channel="stable", active_release_id="rel-pointer", deleted_at=None)
+    )
+    db.get = AsyncMock(side_effect=lambda model, obj_id: {"rel-candidate": release, "policy-1": policy}.get(obj_id))
+    with patch(
+        "app.services.release_integrity_service.evaluate",
+        new=AsyncMock(return_value=release_integrity_service.ReleaseIntegrityResult(status="healthy", reasons=[])),
+    ):
+        context = await resolve_evaluation_release(db, MEMBER, release_id="rel-candidate")
+    assert context.release_id == "rel-candidate"
+    assert context.channel == "evaluation"
+    assert context.knowledge_set_ids == ["set-1"]
+
+
+@pytest.mark.asyncio
+async def test_evaluation_origin_rejects_retired_release(monkeypatch):
+    monkeypatch.setattr(settings, "KNOWLEDGE_V24_RELEASE_ENABLED", True)
+    release = _runtime_release(status=ApplicationReleaseStatus.retired.value)
+    db = MagicMock()
+    db.get = AsyncMock(return_value=release)
+    with pytest.raises(BadRequestError) as exc:
+        await resolve_evaluation_release(db, MEMBER, release_id="rel-candidate")
+    assert exc.value.message_key == "errors.knowledge.release_retired"

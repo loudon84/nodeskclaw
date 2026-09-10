@@ -6,6 +6,10 @@ from typing import Any
 
 from app.integrations.ragflow.client import RagflowClient
 from app.runtime.ragflow_contract import (
+    CAPABILITY_SUPPORTED,
+    CAPABILITY_UNAVAILABLE,
+    CAPABILITY_UNKNOWN,
+    CAPABILITY_UNSUPPORTED,
     MINIMUM_SUPPORTED_RAGFLOW_VERSION,
     RagflowCompatibilityProfile,
     probe_compatibility_profile,
@@ -14,19 +18,41 @@ from app.runtime.ragflow_contract import (
 VALIDATED_RAGFLOW_VERSIONS: list[str] = []
 
 
+def _project_bool(status: str, observed: bool) -> bool:
+    if status in {CAPABILITY_UNKNOWN, CAPABILITY_UNAVAILABLE}:
+        return True
+    if status == CAPABILITY_UNSUPPORTED:
+        return False
+    return bool(observed)
+
+
+def _combine_status(*statuses: str) -> str:
+    if any(item == CAPABILITY_UNAVAILABLE for item in statuses):
+        return CAPABILITY_UNAVAILABLE
+    if any(item == CAPABILITY_UNSUPPORTED for item in statuses):
+        return CAPABILITY_UNSUPPORTED
+    if statuses and all(item == CAPABILITY_SUPPORTED for item in statuses):
+        return CAPABILITY_SUPPORTED
+    return CAPABILITY_UNKNOWN
+
+
 def _cap_entry(
     *,
-    build_supported: bool,
-    retrieval_supported: bool,
+    status: str,
+    build_observed: bool = False,
+    retrieval_observed: bool = False,
     runtime_version: str | None,
     validated: bool = False,
     experimental: bool = False,
     requires_reparse: bool = False,
     reason: str | None = None,
 ) -> dict[str, Any]:
+    build_supported = _project_bool(status, build_observed)
+    retrieval_supported = _project_bool(status, retrieval_observed)
     return {
         "build_supported": build_supported,
         "retrieval_supported": retrieval_supported,
+        "status": status,
         "build_mode": "native" if build_supported else None,
         "retrieval_mode": "native" if retrieval_supported else None,
         "requires_reparse": requires_reparse,
@@ -39,12 +65,15 @@ def _cap_entry(
     }
 
 
+def _flag_projection(status: str, observed: bool) -> bool:
+    return _project_bool(status, observed)
+
+
 def capabilities_from_profile(profile: RagflowCompatibilityProfile) -> dict[str, Any]:
     runtime_version = profile.runtime_version
     if not profile.reachable:
         unreachable = _cap_entry(
-            build_supported=False,
-            retrieval_supported=False,
+            status=CAPABILITY_UNAVAILABLE,
             runtime_version=runtime_version,
             reason="ragflow_unreachable",
         )
@@ -53,16 +82,15 @@ def capabilities_from_profile(profile: RagflowCompatibilityProfile) -> dict[str,
             "supports_auto_questions": unreachable,
             "supports_raptor": unreachable,
             "supports_graph": unreachable,
-            "supports_metadata_filter": False,
+            "supports_metadata_filter": True,
+            "supports_toc_enhance": True,
             "supports_table": _cap_entry(
-                build_supported=False,
-                retrieval_supported=False,
+                status=CAPABILITY_UNAVAILABLE,
                 runtime_version=runtime_version,
                 reason="ragflow_unreachable",
             ),
             "supports_outline": _cap_entry(
-                build_supported=False,
-                retrieval_supported=False,
+                status=CAPABILITY_UNAVAILABLE,
                 runtime_version=runtime_version,
                 reason="ragflow_unreachable",
             ),
@@ -70,53 +98,62 @@ def capabilities_from_profile(profile: RagflowCompatibilityProfile) -> dict[str,
             "compat_profile": profile.to_dict(),
         }
 
+    chunk_status = _combine_status(profile.fact("dataset_api"), profile.fact("document_api"), profile.fact("chunk_retrieval"))
+    questions_status = _combine_status(profile.fact("auto_questions_build"), profile.fact("question_fields_visible"))
+    raptor_status = _combine_status(profile.fact("raptor_build"), profile.fact("knowledge_compilation"))
+    graph_status = _combine_status(profile.fact("dataset_graph"), profile.fact("kg_retrieval"))
+    metadata_status = profile.fact("metadata_filter")
+    toc_status = profile.fact("toc_enhance")
+
     chunk = _cap_entry(
-        build_supported=profile.dataset_api and profile.document_api,
-        retrieval_supported=profile.chunk_retrieval,
+        status=chunk_status,
+        build_observed=profile.dataset_api and profile.document_api,
+        retrieval_observed=profile.chunk_retrieval,
         runtime_version=runtime_version,
         validated=profile.chunk_retrieval,
     )
     questions = _cap_entry(
-        build_supported=profile.auto_questions_build,
-        retrieval_supported=profile.question_fields_visible and profile.chunk_retrieval,
+        status=questions_status,
+        build_observed=profile.auto_questions_build,
+        retrieval_observed=profile.question_fields_visible and profile.chunk_retrieval,
         runtime_version=runtime_version,
         validated=profile.question_fields_visible,
         requires_reparse=True,
-        experimental=not profile.question_fields_visible,
-        reason=None if profile.question_fields_visible else "question_fields_not_visible",
+        experimental=questions_status != CAPABILITY_SUPPORTED,
+        reason=None if questions_status == CAPABILITY_SUPPORTED else "question_fields_not_visible",
     )
     raptor = _cap_entry(
-        build_supported=profile.raptor_build or profile.knowledge_compilation,
-        retrieval_supported=profile.knowledge_compilation,
+        status=raptor_status,
+        build_observed=profile.raptor_build or profile.knowledge_compilation,
+        retrieval_observed=profile.knowledge_compilation,
         runtime_version=runtime_version,
         validated=profile.knowledge_compilation,
-        experimental=not profile.knowledge_compilation,
-        reason=None if profile.knowledge_compilation else "knowledge_compilation_unavailable",
+        experimental=raptor_status != CAPABILITY_SUPPORTED,
+        reason=None if raptor_status == CAPABILITY_SUPPORTED else "knowledge_compilation_unavailable",
     )
     graph = _cap_entry(
-        build_supported=profile.dataset_graph,
-        retrieval_supported=profile.kg_retrieval,
+        status=graph_status,
+        build_observed=profile.dataset_graph,
+        retrieval_observed=profile.kg_retrieval,
         runtime_version=runtime_version,
         validated=profile.kg_retrieval,
-        experimental=not profile.kg_retrieval,
-        reason=None if profile.kg_retrieval else "kg_retrieval_unavailable",
+        experimental=graph_status != CAPABILITY_SUPPORTED,
+        reason=None if graph_status == CAPABILITY_SUPPORTED else "kg_retrieval_unavailable",
     )
     return {
         "supports_chunk": chunk,
         "supports_auto_questions": questions,
         "supports_raptor": raptor,
         "supports_graph": graph,
-        "supports_metadata_filter": profile.metadata_filter,
-        "supports_toc_enhance": profile.toc_enhance,
+        "supports_metadata_filter": _flag_projection(metadata_status, profile.metadata_filter),
+        "supports_toc_enhance": _flag_projection(toc_status, profile.toc_enhance),
         "supports_table": _cap_entry(
-            build_supported=False,
-            retrieval_supported=False,
+            status=CAPABILITY_UNSUPPORTED,
             runtime_version=runtime_version,
             reason="table_index_not_implemented",
         ),
         "supports_outline": _cap_entry(
-            build_supported=False,
-            retrieval_supported=False,
+            status=CAPABILITY_UNSUPPORTED,
             runtime_version=runtime_version,
             reason="outline_index_not_implemented",
         ),

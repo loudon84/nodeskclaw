@@ -268,6 +268,14 @@ async def _can_poll_build_job(
     member: KnowledgePrincipal,
     job: KnowledgeBuildJob,
 ) -> bool:
+    if job.scope_type == "knowledge_base" and job.scope_id:
+        return await permission_service.has_kb_permission(
+            db, member, job.scope_id, KbPermission.read.value
+        )
+    if job.scope_type == "application" and job.scope_id:
+        return await permission_service.has_application_permission(
+            db, member, job.scope_id, ApplicationPermission.read.value
+        )
     if job.knowledge_base_id:
         return await permission_service.has_kb_permission(
             db, member, job.knowledge_base_id, KbPermission.read.value

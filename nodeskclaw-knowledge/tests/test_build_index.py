@@ -1040,7 +1040,7 @@ async def test_release_validation_enqueue_without_kb():
     db.scalar = AsyncMock(return_value=None)
     db.add = MagicMock()
     db.flush = AsyncMock()
-    db.get = AsyncMock()
+    db.get = AsyncMock(return_value=SimpleNamespace(id="rel-1", application_id="app-1", deleted_at=None))
 
     job = await build_orchestrator.enqueue_build(
         db,
@@ -1056,10 +1056,12 @@ async def test_release_validation_enqueue_without_kb():
 
     assert job is not None
     assert job.knowledge_base_id is None
+    assert job.index_type is None
+    assert job.scope_type == "application"
+    assert job.scope_id == "app-1"
     assert job.release_candidate_id == "rel-1"
     assert job.target_kind == "release_validation"
     assert job.target_key == "validate_only"
-    db.get.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -1220,3 +1222,40 @@ async def test_release_validation_promote_stable_calls_promote(monkeypatch):
     assert call_kwargs["release_id"] == "rel-1"
     assert job.status == BuildJobStatus.completed.value
     assert job.stage_results["output"]["promoted_channel"] == "stable"
+
+
+@pytest.mark.asyncio
+async def test_enqueue_non_index_job_persists_null_index_type():
+    db = AsyncMock()
+    db.scalar = AsyncMock(return_value=None)
+    db.add = MagicMock()
+    db.flush = AsyncMock()
+    db.get = AsyncMock(return_value=SimpleNamespace(id="kb1", knowledge_model_id=None))
+
+    job = await build_orchestrator.enqueue_build(
+        db,
+        org_id="o1",
+        knowledge_base_id="kb1",
+        index_type="outline:file:sf1",
+        trigger_reason="artifact_build",
+        target_kind="artifact",
+        target_key="outline",
+    )
+    assert job is not None
+    assert job.index_type is None
+    assert job.target_kind == "artifact"
+    assert job.target_key == "outline"
+    assert job.scope_type == "knowledge_base"
+    assert job.scope_id == "kb1"
+
+
+@pytest.mark.asyncio
+async def test_unknown_target_kind_fails_closed_not_retried_as_index():
+    db = AsyncMock()
+    db.flush = AsyncMock()
+    job = _make_job(target_kind="mystery", index_type=None, target_key="x", max_attempts=5, attempt_count=1)
+    await build_orchestrator.process_build_job(db, job)
+    assert job.status == BuildJobStatus.failed.value
+    assert job.error_code == "unsupported_build_target"
+    assert job.attempt_count == 5
+    assert job.stage_results["output"]["retry_scheduled"] is False

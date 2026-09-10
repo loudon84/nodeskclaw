@@ -111,6 +111,7 @@ class QualityGateResult(str, Enum):
 class QualitySnapshotScopeType(str, Enum):
     application = "application"
     knowledge_base = "knowledge_base"
+    application_release = "application_release"
 
 
 class ApplicationRetrievalPolicyStatus(str, Enum):

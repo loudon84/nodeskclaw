@@ -71,6 +71,74 @@ def _flatten_knowledge_bases(manifest: dict[str, Any]) -> list[dict[str, Any]]:
     return flattened
 
 
+async def _execution_context_from_release(
+    db: AsyncSession,
+    release: KnowledgeApplicationRelease,
+    *,
+    channel: str,
+) -> ReleaseExecutionContext:
+    parsed = release_manifest_service.parse(release.release_manifest)
+    computed_hash = release_manifest_service.manifest_hash(parsed)
+    if release.manifest_hash and release.manifest_hash != computed_hash:
+        raise BadRequestError(
+            message="Release Manifest hash 不一致",
+            message_key="errors.knowledge.release_manifest_hash_mismatch",
+        )
+
+    integrity = await release_integrity_service.evaluate(
+        db,
+        parsed,
+        release.manifest_hash,
+    )
+    if integrity.status != "healthy":
+        raise BadRequestError(
+            message="Release Integrity 未通过",
+            message_key="errors.knowledge.release_integrity_unhealthy",
+            details={"status": integrity.status, "reasons": integrity.reasons},
+        )
+
+    policy_revision_id = parsed.get("retrieval_policy_revision_id")
+    revision = (
+        await db.get(ApplicationRetrievalPolicyRevision, policy_revision_id)
+        if policy_revision_id
+        else None
+    )
+    if (
+        revision is None
+        or revision.deleted_at is not None
+        or revision.application_id != release.application_id
+    ):
+        raise BadRequestError(
+            message="缺少 Application Retrieval Policy Revision",
+            message_key="errors.knowledge.retrieval_policy_revision_required",
+        )
+
+    compiled_policy = application_retrieval_policy_service.compile_execution_policy(revision)
+    manifest_hash = release.manifest_hash or computed_hash
+
+    return ReleaseExecutionContext(
+        release_id=release.id,
+        channel=channel,
+        application_id=release.application_id,
+        manifest=parsed,
+        manifest_hash=manifest_hash,
+        answer_model=parsed.get("answer_model"),
+        knowledge_set_ids=_extract_knowledge_set_ids(parsed),
+        knowledge_bases=_flatten_knowledge_bases(parsed),
+        retrieval_policy_revision_id=str(policy_revision_id) if policy_revision_id else None,
+        compiled_policy=compiled_policy,
+        integrity_status=integrity.status,
+    )
+
+
+def _require_release_enabled() -> None:
+    if not settings.KNOWLEDGE_V24_RELEASE_ENABLED:
+        raise BadRequestError(
+            message="Release 运行时未启用",
+            message_key="errors.knowledge.release_disabled",
+        )
+
+
 async def resolve_application_release(
     db: AsyncSession,
     member: KnowledgePrincipal,
@@ -79,11 +147,8 @@ async def resolve_application_release(
     channel: str = "stable",
     release_id: str | None = None,
 ) -> ReleaseExecutionContext:
-    if not settings.KNOWLEDGE_V24_RELEASE_ENABLED:
-        raise BadRequestError(
-            message="Release 运行时未启用",
-            message_key="errors.knowledge.release_disabled",
-        )
+    _ = member
+    _require_release_enabled()
 
     channel_row = await db.scalar(
         select(KnowledgeReleaseChannel).where(
@@ -123,55 +188,38 @@ async def resolve_application_release(
             message_key="errors.knowledge.release_not_validated",
         )
 
-    parsed = release_manifest_service.parse(release.release_manifest)
-    computed_hash = release_manifest_service.manifest_hash(parsed)
-    if release.manifest_hash and release.manifest_hash != computed_hash:
+    return await _execution_context_from_release(db, release, channel=channel)
+
+
+async def resolve_evaluation_release(
+    db: AsyncSession,
+    member: KnowledgePrincipal,
+    *,
+    release_id: str,
+) -> ReleaseExecutionContext:
+    _ = member
+    _require_release_enabled()
+    if not release_id:
         raise BadRequestError(
-            message="Release Manifest hash 不一致",
-            message_key="errors.knowledge.release_manifest_hash_mismatch",
+            message="release_id 必填",
+            message_key="errors.knowledge.release_id_required",
         )
 
-    integrity = await release_integrity_service.evaluate(
-        db,
-        parsed,
-        release.manifest_hash,
-    )
-    if integrity.status != "healthy":
+    release = await db.get(KnowledgeApplicationRelease, release_id)
+    if release is None or release.deleted_at is not None:
+        raise NotFoundError(
+            message="Release 不存在",
+            message_key="errors.knowledge.release_not_found",
+        )
+    if release.status == ApplicationReleaseStatus.retired.value:
         raise BadRequestError(
-            message="Release Integrity 未通过",
-            message_key="errors.knowledge.release_integrity_unhealthy",
-            details={"status": integrity.status, "reasons": integrity.reasons},
+            message="Release 已退役",
+            message_key="errors.knowledge.release_retired",
+        )
+    if release.status != ApplicationReleaseStatus.validated.value:
+        raise BadRequestError(
+            message="Release 未通过校验",
+            message_key="errors.knowledge.release_not_validated",
         )
 
-    policy_revision_id = parsed.get("retrieval_policy_revision_id")
-    revision = (
-        await db.get(ApplicationRetrievalPolicyRevision, policy_revision_id)
-        if policy_revision_id
-        else None
-    )
-    if (
-        revision is None
-        or revision.deleted_at is not None
-        or revision.application_id != application_id
-    ):
-        raise BadRequestError(
-            message="缺少 Application Retrieval Policy Revision",
-            message_key="errors.knowledge.retrieval_policy_revision_required",
-        )
-
-    compiled_policy = application_retrieval_policy_service.compile_execution_policy(revision)
-    manifest_hash = release.manifest_hash or computed_hash
-
-    return ReleaseExecutionContext(
-        release_id=release.id,
-        channel=channel,
-        application_id=application_id,
-        manifest=parsed,
-        manifest_hash=manifest_hash,
-        answer_model=parsed.get("answer_model"),
-        knowledge_set_ids=_extract_knowledge_set_ids(parsed),
-        knowledge_bases=_flatten_knowledge_bases(parsed),
-        retrieval_policy_revision_id=str(policy_revision_id) if policy_revision_id else None,
-        compiled_policy=compiled_policy,
-        integrity_status=integrity.status,
-    )
+    return await _execution_context_from_release(db, release, channel="evaluation")

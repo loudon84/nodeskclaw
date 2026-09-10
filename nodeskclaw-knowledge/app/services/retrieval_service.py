@@ -7,6 +7,7 @@ import time
 import uuid
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -369,7 +370,7 @@ async def retrieve_for_application(
             result["capability_plan"] = capability_planner.build_capability_plan(
                 query, kb_access_scopes={}
             ).to_dict()
-        return result
+        return project_public_retrieval_payload(result)
 
     if release_manifest is not None:
         set_ids = list(release_manifest.get("knowledge_set_ids") or [])
@@ -477,7 +478,43 @@ async def retrieve_for_application(
         result["capability_plan"] = capability_planner.build_capability_plan(
             query, kb_access_scopes={}
         ).to_dict()
-    return result
+    return project_public_retrieval_payload(result)
+
+
+_PROVIDER_RUNTIME_ID_KEYS = frozenset(
+    {
+        "dataset_id",
+        "document_id",
+        "chunk_id",
+        "ragflow_document_id",
+        "ragflow_chunk_id",
+        "ragflow_dataset_id",
+    }
+)
+_PROVIDER_RUNTIME_ID_METRIC_KEYS = frozenset({"ragflow_ms", "ragflow_call_count"})
+
+
+def _is_provider_runtime_id_key(key: str) -> bool:
+    if key in _PROVIDER_RUNTIME_ID_KEYS:
+        return True
+    return key.startswith("ragflow_") and key not in _PROVIDER_RUNTIME_ID_METRIC_KEYS
+
+
+def _redact_provider_runtime_ids(value: Any) -> None:
+    if isinstance(value, dict):
+        for key in list(value.keys()):
+            if _is_provider_runtime_id_key(str(key)):
+                value.pop(key, None)
+            else:
+                _redact_provider_runtime_ids(value[key])
+    elif isinstance(value, list):
+        for item in value:
+            _redact_provider_runtime_ids(item)
+
+
+def project_public_retrieval_payload(payload: dict) -> dict:
+    _redact_provider_runtime_ids(payload)
+    return payload
 
 
 def _evidence_response_payload(citation: ChatCitation, *, highlight: str | None = None) -> dict:
@@ -528,26 +565,6 @@ async def _persist_retrieval_evidence(
             "highlight": chunk.highlight,
             "positions": chunk.positions,
         }
-        chunks_out.append(
-            {
-                "chunk_id": chunk.id,
-                "knowledge_base_id": meta.get("nk_knowledge_base_id"),
-                "source_file_id": meta.get("nk_source_file_id"),
-                "file_version_id": meta.get("nk_file_version_id"),
-                "document_id": chunk.document_id,
-                "file_name": chunk.document_name or chunk.document_keyword,
-                "content": chunk.content,
-                "similarity": chunk.similarity,
-                "weighted_score": item.weighted_score,
-                "page": page,
-                "positions": chunk.positions,
-                "term_similarity": chunk.term_similarity,
-                "vector_similarity": chunk.vector_similarity,
-                "highlight": chunk.highlight,
-                "source_freshness": _compute_source_freshness(source_file),
-                "last_synced_at": last_synced_at.isoformat() if last_synced_at else None,
-            }
-        )
         citation = ChatCitation(
             org_id=member.org_id,
             issued_member_id=member.member_id,
@@ -570,6 +587,27 @@ async def _persist_retrieval_evidence(
         db.add(citation)
         await db.flush()
         metrics_service.observe_evidence_returned(evidence_type=evidence_type)
+        chunks_out.append(
+            {
+                "evidence_id": citation.id,
+                "chunk_id": chunk.id,
+                "knowledge_base_id": meta.get("nk_knowledge_base_id"),
+                "source_file_id": meta.get("nk_source_file_id"),
+                "file_version_id": meta.get("nk_file_version_id"),
+                "document_id": chunk.document_id,
+                "file_name": chunk.document_name or chunk.document_keyword,
+                "content": chunk.content,
+                "similarity": chunk.similarity,
+                "weighted_score": item.weighted_score,
+                "page": page,
+                "positions": chunk.positions,
+                "term_similarity": chunk.term_similarity,
+                "vector_similarity": chunk.vector_similarity,
+                "highlight": chunk.highlight,
+                "source_freshness": _compute_source_freshness(source_file),
+                "last_synced_at": last_synced_at.isoformat() if last_synced_at else None,
+            }
+        )
         evidence_out.append(_evidence_response_payload(citation, highlight=chunk.highlight))
     return chunks_out, evidence_out
 

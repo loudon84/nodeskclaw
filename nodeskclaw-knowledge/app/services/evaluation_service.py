@@ -10,12 +10,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import BadRequestError, ForbiddenError, NotFoundError
 from app.models.base import not_deleted
-from app.models.enums import EvaluationRunStatus, SetPermission
+from app.models.enums import ApplicationPermission, EvaluationRunStatus, SetPermission
 from app.models.evaluation import EvaluationCase, EvaluationResult, EvaluationRun, EvaluationSet
 from app.models.retrieval_profile import RetrievalProfile
 from app.schemas.principal import KnowledgePrincipal
-from app.services import knowledge_set_service
-from app.services.permission_service import has_set_permission
+from app.services import knowledge_application_service, knowledge_set_service
+from app.services.permission_service import has_application_permission, has_set_permission
+from app.services.release_runtime_service import resolve_evaluation_release
 from app.workers.job_leasing import claim_next
 
 LEASE_SECONDS = 120
@@ -49,6 +50,17 @@ async def _require_set_manage(
     return ks
 
 
+async def _require_application_manage(
+    db: AsyncSession,
+    member: KnowledgePrincipal,
+    application_id: str,
+):
+    app = await knowledge_application_service.get_application(db, member, application_id)
+    if not await has_application_permission(db, member, app, ApplicationPermission.manage.value):
+        raise ForbiddenError()
+    return app
+
+
 async def _get_eval_set_or_404(db: AsyncSession, evaluation_set_id: str) -> EvaluationSet:
     row = await db.get(EvaluationSet, evaluation_set_id)
     if row is None or row.deleted_at is not None:
@@ -64,7 +76,15 @@ async def _require_eval_set_manage(
     row = await _get_eval_set_or_404(db, evaluation_set_id)
     if row.org_id != member.org_id and not member.is_super_admin:
         raise NotFoundError(message="评测集不存在", message_key="errors.knowledge.evaluation_set_not_found")
-    await _require_set_manage(db, member, row.knowledge_set_id)
+    if row.knowledge_set_id:
+        await _require_set_manage(db, member, row.knowledge_set_id)
+    elif row.application_id:
+        await _require_application_manage(db, member, row.application_id)
+    else:
+        raise BadRequestError(
+            message="评测集范围必须是 knowledge_set 或 application 之一",
+            message_key="errors.knowledge.evaluation_set_scope_invalid",
+        )
     return row
 
 
@@ -72,14 +92,24 @@ async def create_evaluation_set(
     db: AsyncSession,
     member: KnowledgePrincipal,
     *,
-    knowledge_set_id: str,
+    knowledge_set_id: str | None = None,
+    application_id: str | None = None,
     name: str,
     description: str | None = None,
 ) -> EvaluationSet:
-    await _require_set_manage(db, member, knowledge_set_id)
+    if bool(knowledge_set_id) == bool(application_id):
+        raise BadRequestError(
+            message="评测集范围必须是 knowledge_set 或 application 之一",
+            message_key="errors.knowledge.evaluation_set_scope_invalid",
+        )
+    if knowledge_set_id:
+        await _require_set_manage(db, member, knowledge_set_id)
+    else:
+        await _require_application_manage(db, member, str(application_id))
     row = EvaluationSet(
         org_id=member.org_id,
         knowledge_set_id=knowledge_set_id,
+        application_id=application_id,
         name=name,
         description=description,
         created_by_member_id=member.member_id,
@@ -120,12 +150,21 @@ async def list_evaluation_sets(
     rows = list(result.scalars().all())
     filtered: list[EvaluationSet] = []
     for item in rows:
-        try:
-            ks = await knowledge_set_service.get_knowledge_set(db, member, item.knowledge_set_id)
-        except Exception:
+        if item.knowledge_set_id:
+            try:
+                ks = await knowledge_set_service.get_knowledge_set(db, member, item.knowledge_set_id)
+            except Exception:
+                continue
+            if await has_set_permission(db, member, ks, SetPermission.manage.value):
+                filtered.append(item)
             continue
-        if await has_set_permission(db, member, ks, SetPermission.manage.value):
-            filtered.append(item)
+        if item.application_id:
+            try:
+                app = await knowledge_application_service.get_application(db, member, item.application_id)
+            except Exception:
+                continue
+            if await has_application_permission(db, member, app, ApplicationPermission.manage.value):
+                filtered.append(item)
     total = len(filtered)
     start = (page - 1) * page_size
     return filtered[start : start + page_size], total
@@ -275,19 +314,33 @@ async def create_run(
     member: KnowledgePrincipal,
     *,
     evaluation_set_id: str,
-    retrieval_profile_id: str,
+    retrieval_profile_id: str | None = None,
     release_id: str | None = None,
     channel: str | None = None,
 ) -> EvaluationRun:
     eval_set = await _require_eval_set_manage(db, member, evaluation_set_id)
-    profile = await db.get(RetrievalProfile, retrieval_profile_id)
-    if profile is None or profile.deleted_at is not None:
-        raise NotFoundError(message="检索配置不存在", message_key="errors.knowledge.profile_not_found")
-    if profile.knowledge_set_id != eval_set.knowledge_set_id:
+    has_profile = bool(retrieval_profile_id)
+    has_release = bool(release_id)
+    if has_profile == has_release:
         raise BadRequestError(
-            message="检索配置不属于该知识集合",
-            message_key="errors.knowledge.profile_not_found",
+            message="评测目标必须是 retrieval_profile 或 application_release 之一",
+            message_key="errors.knowledge.evaluation_target_invalid",
         )
+    persisted_profile_id = retrieval_profile_id
+    persisted_channel = channel
+    if has_profile:
+        profile = await db.get(RetrievalProfile, retrieval_profile_id)
+        if profile is None or profile.deleted_at is not None:
+            raise NotFoundError(message="检索配置不存在", message_key="errors.knowledge.profile_not_found")
+        if eval_set.knowledge_set_id and profile.knowledge_set_id != eval_set.knowledge_set_id:
+            raise BadRequestError(
+                message="检索配置不属于该知识集合",
+                message_key="errors.knowledge.profile_not_found",
+            )
+    else:
+        await resolve_evaluation_release(db, member, release_id=str(release_id))
+        persisted_profile_id = None
+        persisted_channel = channel or "evaluation"
     case_count = int(
         (
             await db.execute(
@@ -303,25 +356,11 @@ async def create_run(
             message="评测集没有用例",
             message_key="errors.common.validation_error",
         )
-    if release_id:
-        from app.models.knowledge_application_release import KnowledgeApplicationRelease
-
-        release = await db.get(KnowledgeApplicationRelease, release_id)
-        if release is None or release.deleted_at is not None:
-            raise NotFoundError(
-                message="Release 不存在",
-                message_key="errors.knowledge.release_not_found",
-            )
-        if release.org_id != member.org_id and not member.is_super_admin:
-            raise NotFoundError(
-                message="Release 不存在",
-                message_key="errors.knowledge.release_not_found",
-            )
     row = EvaluationRun(
         evaluation_set_id=evaluation_set_id,
-        retrieval_profile_id=retrieval_profile_id,
+        retrieval_profile_id=persisted_profile_id,
         release_id=release_id,
-        channel=channel,
+        channel=persisted_channel,
         status=EvaluationRunStatus.pending.value,
         metrics=None,
         principal_snapshot=build_principal_snapshot(member),

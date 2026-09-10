@@ -43,12 +43,7 @@ def _require_v2() -> None:
 
 
 def strip_runtime_document_ids(data: dict) -> None:
-    for chunk in data.get("chunks") or []:
-        chunk.pop("document_id", None)
-    for ev in data.get("evidence") or []:
-        payload = ev.get("payload") or {}
-        payload.pop("document_id", None)
-        ev["payload"] = payload
+    retrieval_service.project_public_retrieval_payload(data)
 
 
 async def knowledge_search_or_retrieve(

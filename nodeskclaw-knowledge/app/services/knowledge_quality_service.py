@@ -9,14 +9,18 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.exceptions import NotFoundError
 from app.models.base import not_deleted
 from app.models.enums import IndexStateStatus, QualityGateResult, QualitySnapshotScopeType, RuntimeBindingStatus
 from app.models.knowledge_application import KnowledgeApplication
+from app.models.knowledge_application_release import KnowledgeApplicationRelease
 from app.models.knowledge_artifact import KnowledgeArtifact
 from app.models.knowledge_base import KnowledgeBase
 from app.models.knowledge_quality_snapshot import KnowledgeQualityGatePolicy, KnowledgeQualitySnapshot
 from app.schemas.principal import KnowledgePrincipal
 from app.services import index_state_service, knowledge_application_service, knowledge_set_service, runtime_binding_service
+from app.services.knowledge_base_service import get_knowledge_base
+from app.services.release_runtime_service import ReleaseExecutionContext, resolve_evaluation_release
 
 
 DEFAULT_GATE_POLICY = {
@@ -97,8 +101,6 @@ async def get_kb_quality(
         }
     kb = await db.get(KnowledgeBase, kb_id)
     if kb is None or kb.deleted_at is not None or kb.org_id != member.org_id:
-        from app.core.exceptions import NotFoundError
-
         raise NotFoundError(message="知识库不存在", message_key="errors.knowledge.kb_not_found")
     payload = await _kb_quality(db, kb)
     return payload
@@ -151,6 +153,105 @@ async def _compute_application_quality(
     }
 
 
+def _pin_topology(context: ReleaseExecutionContext) -> list[dict[str, Any]]:
+    topology: list[dict[str, Any]] = []
+    for pin in context.knowledge_bases:
+        if not isinstance(pin, dict):
+            continue
+        kb_id = pin.get("knowledge_base_id")
+        if not kb_id:
+            continue
+        topology.append(
+            {
+                "knowledge_base_id": str(kb_id),
+                "knowledge_set_id": pin.get("knowledge_set_id"),
+            }
+        )
+    return topology
+
+
+async def _compute_release_quality(
+    db: AsyncSession,
+    member: KnowledgePrincipal,
+    context: ReleaseExecutionContext,
+) -> dict[str, Any]:
+    kb_scores: list[dict[str, Any]] = []
+    pin_topology = _pin_topology(context)
+    for pin in pin_topology:
+        kb = await get_knowledge_base(db, member, pin["knowledge_base_id"])
+        kb_scores.append(await _kb_quality(db, kb))
+    subscores = {
+        "runtime_binding": _average([item["subscores"].get("runtime_binding") for item in kb_scores]),
+        "index_readiness": _average([item["subscores"].get("index_readiness") for item in kb_scores]),
+        "artifact_readiness": _average([item["subscores"].get("artifact_readiness") for item in kb_scores]),
+    }
+    issues = sorted({issue for item in kb_scores for issue in item.get("issues") or []})
+    return {
+        "application_id": context.application_id,
+        "release_id": context.release_id,
+        "score_status": _score_status(subscores),
+        "subscores": subscores,
+        "data_coverage": {
+            "knowledge_base_scores": kb_scores,
+            "bound_set_count": len(context.knowledge_set_ids),
+            "knowledge_set_ids": list(context.knowledge_set_ids),
+            "knowledge_bases": pin_topology,
+            "source": "execution_context",
+        },
+        "issues": issues,
+        "calculated_at": datetime.now(UTC).isoformat(),
+    }
+
+
+async def get_release_quality(
+    db: AsyncSession,
+    member: KnowledgePrincipal,
+    release_id: str,
+) -> dict[str, Any]:
+    if not settings.KNOWLEDGE_V23_QUALITY_ENABLED:
+        return {
+            "score_status": "insufficient",
+            "subscores": {},
+            "data_coverage": {},
+            "issues": ["quality_disabled"],
+            "calculated_at": datetime.now(UTC).isoformat(),
+        }
+    context = await resolve_evaluation_release(db, member, release_id=release_id)
+    await knowledge_application_service.get_application(db, member, context.application_id)
+    return await _compute_release_quality(db, member, context)
+
+
+async def persist_release_snapshot(
+    db: AsyncSession,
+    member: KnowledgePrincipal,
+    release_id: str,
+    *,
+    quality_payload: dict[str, Any] | None = None,
+) -> KnowledgeQualitySnapshot:
+    context = await resolve_evaluation_release(db, member, release_id=release_id)
+    await knowledge_application_service.get_application(db, member, context.application_id)
+    payload = quality_payload or await _compute_release_quality(db, member, context)
+    policy = await get_gate_policy(db, member.org_id)
+    gate_result, gate_details = evaluate_gate(payload, policy=policy)
+    snapshot = KnowledgeQualitySnapshot(
+        org_id=member.org_id,
+        scope_type=QualitySnapshotScopeType.application_release.value,
+        scope_id=context.release_id,
+        manifest_hash=context.manifest_hash or None,
+        release_id=context.release_id,
+        subscores=payload.get("subscores") or {},
+        coverage=payload.get("data_coverage") or {},
+        issues=payload.get("issues") or [],
+        overall_status=payload.get("score_status") or "insufficient",
+        gate_result=gate_result,
+        gate_details=gate_details,
+        calculated_at=datetime.now(UTC),
+    )
+    db.add(snapshot)
+    await db.flush()
+    return snapshot
+
+
 async def get_gate_policy(db: AsyncSession, org_id: str) -> dict[str, Any]:
     row = await db.scalar(
         select(KnowledgeQualityGatePolicy).where(
@@ -198,6 +299,15 @@ def evaluate_gate(
         if gate_policy.get("runtime_drift_required") == "in_sync":
             fail_reasons.append("runtime_drift_not_in_sync")
 
+    eval_required = bool(gate_policy.get("evaluation.required") or gate_policy.get("evaluation_required"))
+    if eval_required:
+        evaluation_present = bool(
+            quality_payload.get("evaluation_run_id")
+            or (quality_payload.get("data_coverage") or {}).get("evaluation_run_id")
+        )
+        if not evaluation_present:
+            fail_reasons.append("evaluation_required_missing")
+            issues.append("evaluation_required_missing")
     details["checks"] = {
         "fail_reasons": fail_reasons,
         "warn_reasons": warn_reasons,
@@ -260,8 +370,6 @@ async def persist_kb_snapshot(
     if quality_payload is None:
         kb = await db.get(KnowledgeBase, kb_id)
         if kb is None or kb.deleted_at is not None or kb.org_id != member.org_id:
-            from app.core.exceptions import NotFoundError
-
             raise NotFoundError(message="知识库不存在", message_key="errors.knowledge.kb_not_found")
         payload = await _kb_quality(db, kb)
     else:
@@ -298,11 +406,14 @@ async def get_quality_history(
     if scope_type == QualitySnapshotScopeType.knowledge_base.value:
         kb = await db.get(KnowledgeBase, scope_id)
         if kb is None or kb.deleted_at is not None or kb.org_id != member.org_id:
-            from app.core.exceptions import NotFoundError
-
             raise NotFoundError(message="知识库不存在", message_key="errors.knowledge.kb_not_found")
     elif scope_type == QualitySnapshotScopeType.application.value:
         await knowledge_application_service.get_application(db, member, scope_id)
+    elif scope_type == QualitySnapshotScopeType.application_release.value:
+        release = await db.get(KnowledgeApplicationRelease, scope_id)
+        if release is None or release.deleted_at is not None or release.org_id != member.org_id:
+            raise NotFoundError(message="Release 不存在", message_key="errors.knowledge.release_not_found")
+        await knowledge_application_service.get_application(db, member, release.application_id)
     rows = await db.scalars(
         select(KnowledgeQualitySnapshot)
         .where(
