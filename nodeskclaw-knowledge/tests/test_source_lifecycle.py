@@ -147,6 +147,7 @@ async def test_activate_version_rollback_blue_green():
     member = _member()
     sf = _sf(active_version_id="v3")
     kb = SimpleNamespace(id="kb1", ragflow_dataset_id="ds1", deleted_at=None, org_id="o1")
+    sync = AsyncMock()
 
     with (
         patch(
@@ -166,6 +167,10 @@ async def test_activate_version_rollback_blue_green():
             new=AsyncMock(return_value="ds1"),
         ),
         patch("app.services.source_lifecycle_service.write_audit", new=AsyncMock()),
+        patch(
+            "app.services.source_lifecycle_service.build_executors.sync_chunk_index_after_activation",
+            new=sync,
+        ),
     ):
         result = await source_lifecycle_service.activate_source_file_version(
             db, member, ragflow, "sf1", "v2"
@@ -176,6 +181,7 @@ async def test_activate_version_rollback_blue_green():
     assert old.parse_status == "superseded"
     assert ragflow.set_document_enabled.await_args_list[0].args == ("ds1", "doc-v2", True)
     assert ragflow.set_document_enabled.await_args_list[1].args == ("ds1", "doc-v3", False)
+    sync.assert_awaited_once()
 
 
 @pytest.mark.asyncio

@@ -12,7 +12,7 @@ from app.models.enums import AuditAction, FilePermission, KbPermission, ParseSta
 from app.models.source_file import SourceFile
 from app.models.source_file_version import SourceFileVersion
 from app.schemas.principal import KnowledgePrincipal
-from app.services import knowledge_base_service, runtime_binding_service, source_file_service
+from app.services import build_executors, knowledge_base_service, runtime_binding_service, source_file_service
 from app.services.audit_service import write_audit
 from app.services.permission_service import has_file_permission, has_kb_permission
 from app.services.source_file_service import activate_version
@@ -158,6 +158,16 @@ async def activate_source_file_version(
 
     activate_version(sf, target, old_version)
     from app.services import build_orchestrator
+
+    try:
+        await build_executors.sync_chunk_index_after_activation(db, kb, ragflow)
+    except Exception:
+        logger.exception(
+            "chunk index sync after activation failed kb=%s source=%s version=%s",
+            kb.id,
+            sf.id,
+            target.id,
+        )
 
     try:
         await build_orchestrator.enqueue_after_activation(

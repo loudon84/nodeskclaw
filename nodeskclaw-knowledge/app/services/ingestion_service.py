@@ -23,7 +23,7 @@ from app.models.knowledge_base import KnowledgeBase
 from app.models.source_file import SourceFile
 from app.models.source_file_version import SourceFileVersion
 from app.schemas.principal import KnowledgePrincipal
-from app.services import knowledge_base_service, runtime_binding_service, source_file_service
+from app.services import build_executors, knowledge_base_service, runtime_binding_service, source_file_service
 from app.services.metadata_service import build_meta_fields, validate_metadata_values
 from app.services.permission_service import has_kb_permission
 from app.services.source_file_service import activate_version, next_version_no, sha256_bytes
@@ -511,6 +511,16 @@ async def process_leased_job(
     job.progress = 100
     job.finished_at = _now()
     job.next_run_at = None
+
+    try:
+        await build_executors.sync_chunk_index_after_activation(db, kb, ragflow)
+    except Exception:
+        logger.warning(
+            "chunk index sync after ingestion failed kb=%s job=%s",
+            kb.id,
+            job.id,
+            exc_info=True,
+        )
 
     if old_version and old_version.ragflow_document_id:
         try:

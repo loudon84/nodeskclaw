@@ -14,7 +14,8 @@ from app.core.deps import get_db, get_member_context
 from app.core.exceptions import BadRequestError, ForbiddenError, NotFoundError
 from app.models.base import not_deleted
 from app.models.build_job import KnowledgeBuildJob
-from app.models.enums import BuildJobStatus, IndexStateStatus, IndexType, KbPermission
+from app.models.enums import ApplicationPermission, BuildJobStatus, IndexStateStatus, IndexType, KbPermission
+from app.models.knowledge_application_release import KnowledgeApplicationRelease
 from app.schemas.common import ApiResponse, PageData
 from app.schemas.principal import KnowledgePrincipal
 from app.services import (
@@ -262,6 +263,25 @@ async def list_builds(
     return ApiResponse(data=PageData(items=items, total=total, page=page, page_size=page_size))
 
 
+async def _can_poll_build_job(
+    db: AsyncSession,
+    member: KnowledgePrincipal,
+    job: KnowledgeBuildJob,
+) -> bool:
+    if job.knowledge_base_id:
+        return await permission_service.has_kb_permission(
+            db, member, job.knowledge_base_id, KbPermission.read.value
+        )
+    if job.target_kind == "release_validation" and job.release_candidate_id:
+        release = await db.get(KnowledgeApplicationRelease, job.release_candidate_id)
+        if release is None or release.deleted_at is not None:
+            return False
+        return await permission_service.has_application_permission(
+            db, member, release.application_id, ApplicationPermission.read.value
+        )
+    return False
+
+
 @router.get("/builds/{build_id}")
 async def get_build(
     build_id: str,
@@ -275,9 +295,7 @@ async def get_build(
             message="Build Job 不存在",
             message_key="errors.knowledge.build_job_not_found",
         )
-    if not await permission_service.has_kb_permission(
-        db, member, job.knowledge_base_id, KbPermission.read.value
-    ):
+    if not await _can_poll_build_job(db, member, job):
         raise ForbiddenError()
     return ApiResponse(data=_build_job_out(job))
 

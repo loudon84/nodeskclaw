@@ -177,9 +177,51 @@ async def set_state_status(
     elif status in {IndexStateStatus.failed.value, IndexStateStatus.stale.value}:
         if state.retrieval_status == IndexRetrievalStatus.ready.value:
             state.retrieval_status = IndexRetrievalStatus.degraded.value
+    elif status == IndexStateStatus.not_built.value:
+        if state.retrieval_status == IndexRetrievalStatus.ready.value:
+            state.retrieval_status = IndexRetrievalStatus.unavailable.value
     elif status == IndexStateStatus.unsupported.value:
         state.retrieval_status = IndexRetrievalStatus.unsupported.value
     return state
+
+
+async def apply_chunk_inventory(
+    db: AsyncSession,
+    *,
+    org_id: str,
+    knowledge_base_id: str,
+    inventory_ready: bool,
+    retrieval_ready: bool,
+    summary: dict | None = None,
+) -> IndexState:
+    state = await get_or_create_state(
+        db,
+        org_id=org_id,
+        knowledge_base_id=knowledge_base_id,
+        index_type=IndexType.chunk.value,
+    )
+    if not inventory_ready:
+        if state.status == IndexStateStatus.ready.value:
+            await set_state_status(
+                db,
+                state,
+                IndexStateStatus.not_built.value,
+                error="chunk_inventory_not_ready",
+            )
+        return state
+    capabilities = {
+        "supports_chunk": {
+            "build_supported": True,
+            "retrieval_supported": retrieval_ready,
+        }
+    }
+    return await set_state_status(
+        db,
+        state,
+        IndexStateStatus.ready.value,
+        capabilities=capabilities,
+        input_manifest_summary=summary,
+    )
 
 
 async def persist_validation(

@@ -6,8 +6,15 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from pydantic import ValidationError
 
+from app.core.config import settings
 from app.core.exceptions import BadRequestError, ConflictError
-from app.models.enums import ApplicationStatus
+from app.models.enums import (
+    ApplicationStatus,
+    IndexRetrievalStatus,
+    IndexStateStatus,
+    KnowledgeSetStatus,
+    RuntimeBindingStatus,
+)
 from app.schemas.knowledge import KnowledgeApplicationUpdate
 from app.schemas.principal import KnowledgePrincipal
 from app.services import application_readiness_service, knowledge_application_service
@@ -24,6 +31,7 @@ def _member() -> KnowledgePrincipal:
 
 @pytest.mark.asyncio
 async def test_publish_application_returns_409_when_not_ready(monkeypatch):
+    monkeypatch.setattr(settings, "KNOWLEDGE_V24_RELEASE_ENABLED", False)
     monkeypatch.setattr(
         "app.services.knowledge_application_service.has_application_permission",
         AsyncMock(return_value=True),
@@ -71,6 +79,7 @@ def test_patch_schema_rejects_status_field():
 
 @pytest.mark.asyncio
 async def test_publish_application_sets_active_when_ready(monkeypatch):
+    monkeypatch.setattr(settings, "KNOWLEDGE_V24_RELEASE_ENABLED", False)
     monkeypatch.setattr(
         "app.services.knowledge_application_service.has_application_permission",
         AsyncMock(return_value=True),
@@ -161,6 +170,7 @@ async def test_disable_application_rejects_non_active(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_disabled_application_can_publish_again(monkeypatch):
+    monkeypatch.setattr(settings, "KNOWLEDGE_V24_RELEASE_ENABLED", False)
     monkeypatch.setattr(
         "app.services.knowledge_application_service.has_application_permission",
         AsyncMock(return_value=True),
@@ -216,3 +226,53 @@ def test_build_execution_slices_shape():
     assert rows[0]["knowledge_base_id"] == "kb1"
     assert rows[0]["runtime_mode"] == "semantic"
     assert rows[0]["params_safe_view"]["dataset_id"] == "ds1"
+
+
+@pytest.mark.asyncio
+async def test_check_omits_chunk_unavailable_when_index_ready():
+    member = _member()
+    kb = SimpleNamespace(id="kb1")
+    ks = SimpleNamespace(
+        id="set1",
+        deleted_at=None,
+        status=KnowledgeSetStatus.active.value,
+    )
+    db = AsyncMock()
+    db.get = AsyncMock(return_value=ks)
+    chunk_state = SimpleNamespace(
+        status=IndexStateStatus.ready.value,
+        retrieval_status=IndexRetrievalStatus.ready.value,
+    )
+    binding = SimpleNamespace(status=RuntimeBindingStatus.ready.value, capabilities={})
+
+    with (
+        patch(
+            "app.services.application_readiness_service.knowledge_application_service.get_application",
+            new=AsyncMock(),
+        ),
+        patch(
+            "app.services.application_readiness_service.knowledge_application_service.list_bound_set_ids",
+            new=AsyncMock(return_value=["set1"]),
+        ),
+        patch(
+            "app.services.application_readiness_service.get_active_profile",
+            new=AsyncMock(return_value=SimpleNamespace(config={})),
+        ),
+        patch(
+            "app.services.application_readiness_service.knowledge_set_service.list_bound_knowledge_bases",
+            new=AsyncMock(return_value=[kb]),
+        ),
+        patch(
+            "app.services.application_readiness_service.runtime_binding_service.get_binding",
+            new=AsyncMock(return_value=binding),
+        ),
+        patch(
+            "app.services.application_readiness_service.index_state_service.get_or_create_state",
+            new=AsyncMock(return_value=chunk_state),
+        ),
+    ):
+        result = await application_readiness_service.check(db, member, "app1")
+
+    codes = [item.code for item in result.blocking]
+    assert "runtime_chunk_unavailable" not in codes
+    assert "runtime_chunk_retrieval_unavailable" not in codes

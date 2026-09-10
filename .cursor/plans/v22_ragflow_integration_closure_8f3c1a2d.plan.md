@@ -4,40 +4,40 @@ overview: 将 APPROVED PRD v2.2（RAGFlow Integration Closure & Knowledge Applic
 todos:
   - id: t01-adapter-contract-probe
     content: RAGFlow Adapter 合同模块 + Contract Probe + feature 原语（PRD §A/§B）
-    status: pending
+    status: completed
   - id: t02-binding-desired-observed
     content: RuntimeBinding Desired/Observed + RuntimeConfigCompiler + 生命周期幂等（PRD §C/§D）
-    status: pending
+    status: completed
   - id: t03-config-reconciliation
     content: Config Reconcile 唯一 apply + KB Advisory Lock（PRD §C/§F）
-    status: pending
+    status: completed
   - id: t04-active-runtime-documents
     content: ActiveRuntimeDocumentResolver + 去 50/200 限制（PRD §E）
-    status: pending
+    status: completed
   - id: t05-build-semantic-validation
     content: Build Compile→Reconcile→Execute→Validate + Q/RAPTOR/Graph artifact 验证 + Output 标准化（PRD §F–§I）
-    status: pending
+    status: completed
   - id: t06-perkb-execution-slice
     content: capability_planner per-KB mode/policy + retrieval_planner 唯一 ExecutionSlice 发射 + REMOVE expand_plan_for_indexes（PRD §K）
-    status: pending
+    status: completed
   - id: t07-merge-aggregate-gate
     content: retrieval_merge_service ExecutionSlice 执行 + 聚合安全最终门禁（PRD §K/§O）
-    status: pending
+    status: completed
   - id: t08-evidence-normalizer-cleaner
     content: RuntimeEvidenceNormalizer + Cleaner v2.2 + 移除 nk_* 标签权威（PRD §N）
-    status: pending
+    status: completed
   - id: t09-application-readiness
     content: ApplicationReadinessService + publish 409 gate + readiness API（PRD §L）
-    status: pending
+    status: completed
   - id: t10-runtime-admin-v2-api
     content: Runtime diagnostics/reconcile + indexes 增强 API（PRD §M）
-    status: pending
+    status: completed
   - id: t11-worker-topology
     content: Compose Worker 拆分 + env anchor + heartbeat + Translation 状态修正（PRD §Q/§R）
-    status: pending
+    status: completed
   - id: t12-observability-e2e-freeze
     content: Metrics + Trace v2.2 + Playground 诊断 + Contract/E2E 验收链 + API v2 冻结（PRD §P/§S/§U/§V/§W）
-    status: pending
+    status: completed
 isProject: false
 ---
 

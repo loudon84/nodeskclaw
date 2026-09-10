@@ -40,6 +40,82 @@ class StageResult:
     coverage_payload: dict[str, Any] | None = None
 
 
+@dataclass
+class ChunkDocumentInventory:
+    documents_total: int = 0
+    documents_ready: int = 0
+    chunks_total: int = 0
+    not_ready_ids: list[str] = field(default_factory=list)
+    failed_ids: list[str] = field(default_factory=list)
+
+    def build_ready(self) -> bool:
+        return (
+            self.documents_total > 0
+            and self.documents_ready == self.documents_total
+            and not self.failed_ids
+            and not self.not_ready_ids
+        )
+
+    def as_output(self) -> dict[str, Any]:
+        return {
+            "runtime_operation": "chunk_inventory",
+            "documents_total": self.documents_total,
+            "documents_ready": self.documents_ready,
+            "chunks_total": self.chunks_total,
+            "pending_documents": len(self.not_ready_ids),
+            "failed_documents": len(self.failed_ids),
+            "not_ready_document_ids": self.not_ready_ids[:20],
+            "failed_document_ids": self.failed_ids[:20],
+        }
+
+
+async def inventory_chunk_documents(
+    adapter: RagflowRuntimeAdapter,
+    dataset_id: str,
+) -> ChunkDocumentInventory:
+    page = 1
+    page_size = settings.RAGFLOW_BUILD_BATCH_SIZE
+    inventory = ChunkDocumentInventory()
+    while True:
+        docs = await adapter.list_documents(dataset_id, page=page, page_size=page_size)
+        if not docs:
+            break
+        for doc in docs:
+            inventory.documents_total += 1
+            run = (doc.run or "UNSTART").upper()
+            if run == "DONE" and doc.chunk_count and doc.chunk_count > 0:
+                inventory.documents_ready += 1
+                inventory.chunks_total += int(doc.chunk_count or 0)
+            elif run in {"FAIL", "CANCEL"}:
+                inventory.failed_ids.append(doc.id)
+            else:
+                inventory.not_ready_ids.append(doc.id)
+        if len(docs) < page_size:
+            break
+        page += 1
+    return inventory
+
+
+async def sync_chunk_index_after_activation(
+    db: AsyncSession,
+    kb: KnowledgeBase,
+    adapter: RagflowRuntimeAdapter,
+) -> None:
+    dataset_id = await runtime_binding_service.require_dataset_id(db, kb)
+    inventory = await inventory_chunk_documents(adapter, dataset_id)
+    retrieval_ready = False
+    if inventory.build_ready():
+        retrieval_ready = await adapter.validate_index_retrieval(dataset_id=dataset_id)
+    await index_state_service.apply_chunk_inventory(
+        db,
+        org_id=kb.org_id,
+        knowledge_base_id=kb.id,
+        inventory_ready=inventory.build_ready(),
+        retrieval_ready=retrieval_ready,
+        summary=inventory.as_output(),
+    )
+
+
 async def _validate_input_manifest(
     db: AsyncSession,
     kb: KnowledgeBase,
@@ -354,63 +430,30 @@ async def execute_chunk_stage(
 
     dataset_id = await runtime_binding_service.require_dataset_id(db, kb)
     adapter = RagflowRuntimeAdapter()
-    page = 1
-    page_size = settings.RAGFLOW_BUILD_BATCH_SIZE
-    documents_total = 0
-    documents_ready = 0
-    chunks_total = 0
-    not_ready_ids: list[str] = []
-    failed_ids: list[str] = []
-
     try:
-        while True:
-            docs = await adapter.list_documents(dataset_id, page=page, page_size=page_size)
-            if not docs:
-                break
-            for doc in docs:
-                documents_total += 1
-                run = (doc.run or "UNSTART").upper()
-                if run == "DONE" and doc.chunk_count and doc.chunk_count > 0:
-                    documents_ready += 1
-                    chunks_total += int(doc.chunk_count or 0)
-                elif run in {"FAIL", "CANCEL"}:
-                    failed_ids.append(doc.id)
-                else:
-                    not_ready_ids.append(doc.id)
-            if len(docs) < page_size:
-                break
-            page += 1
+        inventory = await inventory_chunk_documents(adapter, dataset_id)
     except RagflowError:
         raise
     finally:
         await adapter.aclose()
 
-    output = {
-        "runtime_operation": "chunk_inventory",
-        "documents_total": documents_total,
-        "documents_ready": documents_ready,
-        "chunks_total": chunks_total,
-        "pending_documents": len(not_ready_ids),
-        "failed_documents": len(failed_ids),
-        "not_ready_document_ids": not_ready_ids[:20],
-        "failed_document_ids": failed_ids[:20],
-    }
+    output = inventory.as_output()
 
-    if failed_ids:
+    if inventory.failed_ids:
         return StageResult(
             status="failed",
             retryable=False,
             error_code="documents_parse_failed",
-            error_message=f"{len(failed_ids)} document(s) failed parsing",
+            error_message=f"{len(inventory.failed_ids)} document(s) failed parsing",
             output=output,
         )
 
-    if not_ready_ids:
+    if inventory.not_ready_ids:
         return StageResult(
             status="failed",
             retryable=True,
             error_code="documents_not_ready",
-            error_message=f"{len(not_ready_ids)} document(s) not ready",
+            error_message=f"{len(inventory.not_ready_ids)} document(s) not ready",
             output=output,
         )
 

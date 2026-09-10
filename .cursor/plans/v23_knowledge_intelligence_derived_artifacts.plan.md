@@ -4,52 +4,52 @@ overview: 将 APPROVED PRD v2.3（Knowledge Intelligence & Derived Knowledge Art
 todos:
   - id: t01-probe-binding-context
     content: Probe 四态语义 + Binding Dataset 上下文 + metadata_filter 去硬编码（PRD §3.1–3.3）
-    status: pending
+    status: completed
   - id: t02-flag-toc-gate
     content: INDEX/RUNTIME Flag 权威拆分 + toc_enhanced 门控脱离 IndexType.outline（PRD §3.5/§15/R2 门控分支）
-    status: pending
+    status: completed
   - id: t03-application-state-machine
     content: Application 状态机 — PATCH 禁止 ACTIVE + disable 入口（PRD §3.6/§76）
     status: pending
   - id: t04-evidence-normalizer
     content: Evidence Type 权威改为 Runtime Marker/Lineage，slice_mode 降为 hint（PRD §4.6）
-    status: pending
+    status: completed
   - id: t05-build-validators
     content: Validator 分页/Coverage/Summary Lineage/Graph 三态 READY（PRD §4.1–4.5）
-    status: pending
+    status: completed
   - id: t06-reconciliation-revision-r4
     content: Drift 全分页/Cursor + content-addressed revision + R4 禁止 mirror 反向覆盖（PRD §5/R4）
-    status: pending
+    status: completed
   - id: t07-runtime-facade
     content: RagflowClient 仅 runtime/ragflow.py 与 Contract Probe 使用（PRD §3.4）
-    status: pending
+    status: completed
   - id: t08-contract-ci-desktop-v2
     content: Live RAGFlow Contract CI 启用 + Desktop /api/v2 文档冻结（PRD §6/§58/§68）
-    status: pending
+    status: completed
   - id: t09-corpus-manifest
     content: CorpusManifest 替代单版本 watermark（PRD R3/§34）
-    status: pending
+    status: completed
   - id: t10-incremental-build
     content: BuildDelta + 增量 Question/file-RAPTOR + BuildJob target 字段（PRD §35–40/M6）
-    status: pending
+    status: completed
   - id: t11-artifact-spi
     content: KnowledgeArtifact Domain + Provider SPI + RAGFlow Native Artifact Adapter（PRD §9–12）
-    status: pending
+    status: completed
   - id: t12-outline-r2
     content: Outline/PageIndex Artifact + R2 移除占位 Index + Artifact API（PRD §13–15/R2/§52）
-    status: pending
+    status: completed
   - id: t13-table-artifact
     content: Table Artifact Provider + 检索 + ACL Lineage（PRD §16–18）
-    status: pending
+    status: completed
   - id: t14-model-revision
     content: KnowledgeModel Revision Authority + API 迁出（PRD R1/§19–23/§53）
-    status: pending
+    status: completed
   - id: t15-query-intelligence-rrf
     content: Query Intelligence + Policy Gate + EvidenceCandidate Weighted RRF（PRD §24–33）
-    status: pending
+    status: completed
   - id: t16-quality-snapshot-mcp
     content: Quality Plane + ApplicationRuntimeSnapshot + MCP 结构/表格工具（PRD §42–56/§50–51）
-    status: pending
+    status: completed
 isProject: false
 ---
 

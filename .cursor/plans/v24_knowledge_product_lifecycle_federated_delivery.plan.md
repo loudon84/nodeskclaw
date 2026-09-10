@@ -4,49 +4,49 @@ overview: 将 APPROVED PRD v2.4（Knowledge Product Lifecycle, Federated Retriev
 todos:
   - id: t01-quality-binding-status
     content: Quality 使用 RuntimeBindingStatus.ready，消除 active AttributeError（PRD §3.6）
-    status: pending
+    status: completed
   - id: t02-incremental-noop-model-pin
     content: Incremental no-op/removal-only + BuildJob pin knowledge_model_revision_id（PRD §3.11/§3.9）
-    status: pending
+    status: completed
   - id: t03-model-single-active
     content: KnowledgeModel publish 归档旧 ACTIVE + Partial Unique 单 ACTIVE（PRD §3.9）
-    status: pending
+    status: completed
   - id: t04-artifact-identity-revision
     content: Artifact stable identity + KnowledgeArtifactRevision 不覆盖历史（PRD §5.7）
-    status: pending
+    status: completed
   - id: t05-artifact-async-build
     content: Artifact Build API 只入队；process_build_job 按 target_kind dispatch（PRD §3.1/§18）
-    status: pending
+    status: completed
   - id: t06-artifact-security
     content: ArtifactSecurityService 消费 AccessPlan，覆盖 HTTP 与 MCP structure/table（PRD §20）
-    status: pending
+    status: completed
   - id: t07-canonical-table
     content: Table Provider 改为 canonical TableArtifact，REMOVE alteration-as-rows（PRD §25）
-    status: pending
+    status: completed
   - id: t08-buildprofile-artifact-types
     content: BuildProfile 增加 artifact_types 与 artifact_trigger_policy（PRD §19）
-    status: pending
+    status: completed
   - id: t09-release-channel-models
     content: ApplicationRelease + ReleaseManifest + Channel 模型与 create/validate API（PRD §5.1–§8）
-    status: pending
+    status: completed
   - id: t10-promotion-rollback-compat
     content: ReleasePromotionService 唯一写 pointer；publish 兼容入口走同一 Owner（PRD §9/§10/§29/§41）
-    status: pending
+    status: completed
   - id: t11-quality-snapshot-gate
     content: QualitySnapshot 持久化 + GatePolicy；FAIL 不可 promote stable；history 查表（PRD §5.4/§5.5/§27）
-    status: pending
+    status: completed
   - id: t12-app-retrieval-policy
     content: ApplicationRetrievalPolicyRevision 为 Release Runtime 策略权威（PRD §5.6）
-    status: pending
+    status: completed
   - id: t13-federation-planner
     content: FederatedRetrievalPlanner 唯一 Provider Selection；QI 只出 QueryAnalysis（PRD §12/§13）
-    status: pending
+    status: completed
   - id: t14-candidate-rrf
     content: 统一 EvidenceCandidate 形状 + RRF provider identity；Artifact 进入 Fusion（PRD §15/§16）
-    status: pending
+    status: completed
   - id: t15-delivery-channel-resolve
     content: Chat/MCP/Agent Application 产品路径 application_id+channel；禁止读 runtime_snapshot（PRD §30/§35/§36）
-    status: pending
+    status: completed
 isProject: false
 ---
 
