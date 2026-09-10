@@ -77,7 +77,7 @@ super admin（`KnowledgePrincipal.is_super_admin`）可访问 Runtime 健康与 
 
 Knowledge Application 发布前必须 readiness 检查；未就绪返回 409 + blocking/warnings diagnostics。
 
-`ApplicationReadinessService.check` 聚合 bound Set、KB Binding、Chunk IndexState、Retrieval Profile 与 mode 兼容性。`POST /api/v2/applications/{id}/publish`：未启用 Release 时 readiness → `active` + `runtime_snapshot`（审计投影）；启用 `KNOWLEDGE_V24_RELEASE_ENABLED` 时 create Release + enqueue `release_validation`，HTTP **202**，Application **保持 draft**（`promote_on_validated` 只写入 job `target_key`，publish 永不写 `Application.status=active` 也不写 `active_release_id`）。仅 stable `release_promotion_service.promote` 成功事务写 `active`。`POST .../disable` 将 ACTIVE 降为 disabled；`GET /api/v2/applications/{id}/readiness` 供预检。实现：[[nodeskclaw-knowledge/app/services/application_readiness_service.py#check]]、[[nodeskclaw-knowledge/app/services/knowledge_application_service.py#publish_application]]。
+`ApplicationReadinessService.check` 聚合 bound Set、KB Binding、Chunk IndexState、Retrieval Profile 与 mode 兼容性。v2.4.3.1 下 `runtime_chunk_unavailable` / `runtime_chunk_retrieval_unavailable` 跟随本 KB chunk IndexState（this-dataset 探针），不以独立 RAGFlow 诊断或 binding 全局 retrieval flag 为准。`POST /api/v2/applications/{id}/publish`：未启用 Release 时 readiness → `active` + `runtime_snapshot`（审计投影）；启用 `KNOWLEDGE_V24_RELEASE_ENABLED` 时 create Release + enqueue `release_validation`，HTTP **202**，Application **保持 draft**（`promote_on_validated` 只写入 job `target_key`，publish 永不写 `Application.status=active` 也不写 `active_release_id`）。仅 stable `release_promotion_service.promote` 成功事务写 `active`。`POST .../disable` 将 ACTIVE 降为 disabled；`GET /api/v2/applications/{id}/readiness` 供预检。实现：[[nodeskclaw-knowledge/app/services/application_readiness_service.py#check]]、[[nodeskclaw-knowledge/app/services/knowledge_application_service.py#publish_application]]。
 
 ## Knowledge Product Lifecycle V24
 
@@ -122,6 +122,8 @@ v2.3 增加 GitHub Actions workflow（`.github/workflows/knowledge-ragflow-contr
 ## Engineering API
 
 Build 工程面 HTTP：KB indexes 列表（含 build/retrieval status、validation/coverage）、`build-profile` 读写、按 index_types 触发 build、`/builds` 列表/详情/重试。实现：[[nodeskclaw-knowledge/app/api/v2/engineering.py]]；编排 [[nodeskclaw-knowledge/app/services/build_orchestrator.py#enqueue_build]]。
+
+v2.4.3.1：`GET /api/v2/knowledge-bases/{kb_id}/indexes` 读取 [[knowledge-objects#Index State]]，不把 binding 全局 retrieval flag 写成第二套 `retrieval_status` 权威。chunk 合同见 [[knowledge-objects#Index State]]。
 
 ## Evidence Persistence
 

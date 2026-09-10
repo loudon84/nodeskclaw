@@ -74,6 +74,8 @@ Index State 跟踪每 KB×index_type 的 build/retrieval 生命周期与 validat
 
 模型：[[nodeskclaw-knowledge/app/models/index_state.py#IndexState]]。服务：[[nodeskclaw-knowledge/app/services/index_state_service.py]]。v2.3 增加 `input_manifest_hash` / `input_manifest_summary`（CorpusManifest）；Manifest 计算：[[nodeskclaw-knowledge/app/services/build_input_manifest_service.py#compute_manifest]]。Question READY 需 chunk-read 验证 enrichment>0；Summary/Graph READY 需 compiled/graph artifact，Document DONE alone 不足。无稳定 Public API 不得标 READY；Capability Planner 禁用 stale/building/failed/unsupported/query-unavailable index；v2.3 `IndexType.outline` / `table` 占位已从 INDEX_REGISTRY 生产路径移除。
 
+v2.4.3.1：chunk `retrieval_status` 的写权威是本 KB dataset 的 [[nodeskclaw-knowledge/app/runtime/ragflow.py#RagflowRuntimeAdapter#validate_index_retrieval]]，不是 binding 全局 `supports_chunk.retrieval_supported`。[[nodeskclaw-knowledge/app/services/index_state_service.py#ensure_kb_index_states]] 在 chunk `status=ready` 时走 [[nodeskclaw-knowledge/app/services/index_state_service.py#_refresh_chunk_retrieval_from_dataset]]；探针失败且 chunk 受支持时 [[nodeskclaw-knowledge/app/services/index_state_service.py#_sync_retrieval_status]] 写 `unavailable`，`unsupported` 仅表示 index type 本身 runtime-unsupported。`GET /api/v2/knowledge-bases/{kb_id}/indexes` 是读合同。独立 RAGFlow 诊断脚本（`nodeskclaw-knowledge/scripts/ragflow-retrieval-diagnostic.ps1`）只验证 Dataset retrieve，不得替代 IndexState 写权威。
+
 ## Build Job
 
 KnowledgeBuildJob 与 IngestionJob 分表；Build 不修改 `source_file.active_version_id`。v2.4 起 `process_build_job` 先按 `target_kind` 分发 index / artifact / release_validation；v2.4.1 `release_validation` 允许 `knowledge_base_id` 可空。
