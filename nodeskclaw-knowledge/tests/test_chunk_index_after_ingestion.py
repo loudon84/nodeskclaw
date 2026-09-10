@@ -205,3 +205,118 @@ def test_execute_chunk_stage_uses_inventory_chunk_documents_helper():
     source = inspect.getsource(build_executors.execute_chunk_stage)
     assert "inventory_chunk_documents" in source
     assert "documents_total += 1" not in source
+
+
+def _ready_chunk_state(**overrides):
+    state = SimpleNamespace(
+        status=IndexStateStatus.ready.value,
+        retrieval_status=IndexRetrievalStatus.ready.value,
+        index_type=IndexType.chunk.value,
+        last_error=None,
+        validation_payload=None,
+        coverage_payload=None,
+        last_validated_at=None,
+    )
+    for key, value in overrides.items():
+        setattr(state, key, value)
+    return state
+
+
+# @lat: [[knowledge-objects#Index State]]
+@pytest.mark.asyncio
+async def test_ensure_keeps_this_dataset_ready_when_binding_retrieval_unsupported():
+    existing = _ready_chunk_state()
+    db = AsyncMock()
+    db.scalar = AsyncMock(return_value=existing)
+    kb = SimpleNamespace(id="kb1", org_id="o1")
+    adapter = AsyncMock()
+    adapter.validate_index_retrieval = AsyncMock(return_value=True)
+    binding_caps = {
+        "supports_chunk": {"build_supported": True, "retrieval_supported": False},
+    }
+
+    with (
+        patch(
+            "app.services.index_state_service.build_profile_service.resolve_profile_for_kb",
+            new=AsyncMock(return_value=SimpleNamespace(index_types=["chunk"])),
+        ),
+        patch(
+            "app.services.index_state_service.list_index_types",
+            return_value=[IndexType.chunk.value],
+        ),
+        patch(
+            "app.services.index_state_service.runtime_binding_service.get_dataset_id",
+            new=AsyncMock(return_value="ds-this"),
+        ),
+    ):
+        states = await index_state_service.ensure_kb_index_states(
+            db,
+            org_id="o1",
+            kb=kb,
+            capabilities=binding_caps,
+            runtime_adapter=adapter,
+        )
+
+    assert states[0].retrieval_status == IndexRetrievalStatus.ready.value
+    adapter.validate_index_retrieval.assert_awaited_once_with(dataset_id="ds-this")
+
+
+@pytest.mark.asyncio
+async def test_ensure_probe_false_on_supported_ready_chunk_is_unavailable():
+    existing = _ready_chunk_state(retrieval_status=IndexRetrievalStatus.unsupported.value)
+    db = AsyncMock()
+    db.scalar = AsyncMock(return_value=existing)
+    kb = SimpleNamespace(id="kb1", org_id="o1")
+    adapter = AsyncMock()
+    adapter.validate_index_retrieval = AsyncMock(return_value=False)
+
+    with (
+        patch(
+            "app.services.index_state_service.build_profile_service.resolve_profile_for_kb",
+            new=AsyncMock(return_value=SimpleNamespace(index_types=["chunk"])),
+        ),
+        patch(
+            "app.services.index_state_service.list_index_types",
+            return_value=[IndexType.chunk.value],
+        ),
+        patch(
+            "app.services.index_state_service.runtime_binding_service.get_dataset_id",
+            new=AsyncMock(return_value="ds-this"),
+        ),
+    ):
+        states = await index_state_service.ensure_kb_index_states(
+            db,
+            org_id="o1",
+            kb=kb,
+            capabilities={
+                "supports_chunk": {"build_supported": True, "retrieval_supported": False},
+            },
+            runtime_adapter=adapter,
+        )
+
+    assert states[0].retrieval_status == IndexRetrievalStatus.unavailable.value
+
+
+def test_sync_retrieval_status_chunk_supported_not_ready_is_unavailable():
+    state = _ready_chunk_state()
+    caps = {"supports_chunk": {"build_supported": True, "retrieval_supported": False}}
+    index_state_service._sync_retrieval_status(state, IndexType.chunk.value, caps)
+    assert state.retrieval_status == IndexRetrievalStatus.unavailable.value
+
+
+@pytest.mark.asyncio
+async def test_apply_chunk_inventory_probe_false_is_unavailable_not_unsupported():
+    db = AsyncMock()
+    db.add = MagicMock()
+    db.flush = AsyncMock()
+    db.scalar = AsyncMock(return_value=None)
+    state = await index_state_service.apply_chunk_inventory(
+        db,
+        org_id="o1",
+        knowledge_base_id="kb1",
+        inventory_ready=True,
+        retrieval_ready=False,
+        summary={"documents_ready": 1},
+    )
+    assert state.status == IndexStateStatus.ready.value
+    assert state.retrieval_status == IndexRetrievalStatus.unavailable.value

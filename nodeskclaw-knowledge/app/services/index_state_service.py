@@ -10,7 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.base import not_deleted
 from app.models.enums import IndexRetrievalStatus, IndexStateStatus, IndexType
 from app.models.index_state import IndexState
-from app.services import build_profile_service
+from app.runtime.ragflow import RagflowRuntimeAdapter
+from app.services import build_profile_service, runtime_binding_service
 from app.services.index_registry import is_index_retrieval_ready, is_runtime_supported, list_index_types
 
 
@@ -57,6 +58,7 @@ async def ensure_kb_index_states(
     org_id: str,
     kb,
     capabilities: dict | None = None,
+    runtime_adapter: RagflowRuntimeAdapter | None = None,
 ) -> list[IndexState]:
     profile = await build_profile_service.resolve_profile_for_kb(db, kb)
     wanted = set(profile.index_types or [])
@@ -80,10 +82,46 @@ async def ensure_kb_index_states(
             state.status = IndexStateStatus.not_built.value
             state.last_error = None
             state.retrieval_status = IndexRetrievalStatus.unavailable.value
+        elif index_type == IndexType.chunk.value:
+            if state.status == IndexStateStatus.ready.value:
+                await _refresh_chunk_retrieval_from_dataset(
+                    db,
+                    state,
+                    kb,
+                    runtime_adapter=runtime_adapter,
+                )
         else:
             _sync_retrieval_status(state, index_type, capabilities)
         states.append(state)
     return states
+
+
+async def _refresh_chunk_retrieval_from_dataset(
+    db: AsyncSession,
+    state: IndexState,
+    kb,
+    runtime_adapter: RagflowRuntimeAdapter | None = None,
+) -> None:
+    dataset_id = await runtime_binding_service.get_dataset_id(db, kb)
+    if not dataset_id:
+        return
+    adapter = runtime_adapter or RagflowRuntimeAdapter()
+    retrieval_ready = await adapter.validate_index_retrieval(dataset_id=dataset_id)
+    probe_caps = {
+        "supports_chunk": {
+            "build_supported": True,
+            "retrieval_supported": retrieval_ready,
+        }
+    }
+    _sync_retrieval_status(state, IndexType.chunk.value, probe_caps)
+    await persist_validation(
+        state,
+        validation_payload={
+            "runtime_operation": "this_dataset_retrieval",
+            "dataset_id": dataset_id,
+            "retrieval_ready": retrieval_ready,
+        },
+    )
 
 
 def _sync_retrieval_status(
@@ -97,8 +135,11 @@ def _sync_retrieval_status(
         return
     if is_index_retrieval_ready(index_type, capabilities):
         state.retrieval_status = IndexRetrievalStatus.ready.value
-    else:
-        state.retrieval_status = IndexRetrievalStatus.unsupported.value
+        return
+    if index_type == IndexType.chunk.value and is_runtime_supported(index_type, capabilities):
+        state.retrieval_status = IndexRetrievalStatus.unavailable.value
+        return
+    state.retrieval_status = IndexRetrievalStatus.unsupported.value
 
 
 async def mark_indexes_stale(

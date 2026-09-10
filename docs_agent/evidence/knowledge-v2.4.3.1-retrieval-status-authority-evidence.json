@@ -1,0 +1,293 @@
+{
+  "acceptance_contract": "smc.acceptance.v1",
+  "ambient_fingerprint": "sha256:1a9ac539ff100a668af2bba3fa0cbbb2ef14bbe0a0a1345c19cc0467a0ad8987",
+  "blocking_claims": [
+    {
+      "claim_id": "CLM-01",
+      "evidence_action": "TARGETED_RERUN",
+      "prior_evidence": "v2.4.3 V07 live build_status=ready and retrieval_status=unsupported",
+      "requirement": "AC-01",
+      "result": "PASS",
+      "verification_ids": [
+        "V01",
+        "V05"
+      ]
+    },
+    {
+      "claim_id": "CLM-02",
+      "evidence_action": "TARGETED_RERUN",
+      "prior_evidence": "list_kb_indexes passes binding.capabilities into ensure_kb_index_states; live showed unsupported",
+      "requirement": "AC-02",
+      "result": "PASS",
+      "verification_ids": [
+        "V01",
+        "V05"
+      ]
+    },
+    {
+      "claim_id": "CLM-03",
+      "evidence_action": "NEW_EVIDENCE",
+      "prior_evidence": "_sync_retrieval_status else writes unsupported",
+      "requirement": "AC-03",
+      "result": "PASS",
+      "verification_ids": [
+        "V06"
+      ]
+    },
+    {
+      "claim_id": "CLM-04",
+      "evidence_action": "TARGETED_RERUN",
+      "prior_evidence": "v2.4.3 live blocked by CLM-01",
+      "requirement": "AC-04",
+      "result": "PASS",
+      "verification_ids": [
+        "V02",
+        "V05"
+      ]
+    },
+    {
+      "claim_id": "CLM-05",
+      "evidence_action": "TARGETED_RERUN",
+      "prior_evidence": "enqueue_build returns None for chunk at grounded_commit",
+      "requirement": "AC-05",
+      "result": "PASS",
+      "verification_ids": [
+        "V03"
+      ]
+    },
+    {
+      "claim_id": "CLM-06",
+      "evidence_action": "TARGETED_RERUN",
+      "prior_evidence": "v2.4.3 CLM-03 live HTTP 200; those items remain residual",
+      "requirement": "AC-06",
+      "result": "PASS",
+      "verification_ids": [
+        "V04"
+      ]
+    },
+    {
+      "claim_id": "CLM-07",
+      "evidence_action": "TARGETED_RERUN",
+      "prior_evidence": "union of this Stage claims",
+      "requirement": "DOD-01",
+      "result": "PASS",
+      "verification_ids": [
+        "V01",
+        "V02",
+        "V05"
+      ]
+    },
+    {
+      "claim_id": "CLM-08",
+      "evidence_action": "TARGETED_RERUN",
+      "prior_evidence": "v2.4.3 V07 GET indexes retrieval_status=unsupported",
+      "requirement": "DOD-02",
+      "result": "PASS",
+      "verification_ids": [
+        "V05"
+      ]
+    },
+    {
+      "claim_id": "CLM-09",
+      "evidence_action": "TARGETED_RERUN",
+      "prior_evidence": "apply_chunk_inventory plus validate_index_retrieval exist",
+      "requirement": "DOD-03",
+      "result": "PASS",
+      "verification_ids": [
+        "V01"
+      ]
+    }
+  ],
+  "blocking_verifications": [
+    {
+      "acceptance_mode": "LOCAL",
+      "candidate_id": null,
+      "claim_ids": [
+        "CLM-01",
+        "CLM-02",
+        "CLM-07",
+        "CLM-09"
+      ],
+      "claim_results": {
+        "CLM-01": "PASS",
+        "CLM-02": "PASS",
+        "CLM-07": "PASS",
+        "CLM-09": "PASS"
+      },
+      "command": "uv --directory nodeskclaw-knowledge run pytest tests/test_chunk_index_after_ingestion.py -q",
+      "evidence_action": "TARGETED_RERUN",
+      "exit_code": 0,
+      "inherited": false,
+      "policy": "LOCAL_TRANSIENT",
+      "raw_log_ref": ".smc/evidence/knowledge-v2.4.3.1-retrieval-status-authority/logs/20260910T160527.791922Z-V01.log",
+      "raw_log_sha256": "sha256:11f104ceffbfa1a5e5c86169af23e15e3d60be4e49285f3215bb41a59c2ef45d",
+      "result": "PASS",
+      "source_manifest": null,
+      "source_manifest_sha256": null,
+      "source_verification_id": null,
+      "timestamp": "2026-09-10T16:05:27.791922Z",
+      "verification_id": "V01"
+    },
+    {
+      "acceptance_mode": "LOCAL",
+      "candidate_id": null,
+      "claim_ids": [
+        "CLM-04",
+        "CLM-07"
+      ],
+      "claim_results": {
+        "CLM-04": "PASS",
+        "CLM-07": "PASS"
+      },
+      "command": "uv --directory nodeskclaw-knowledge run pytest tests/test_application_readiness.py -q",
+      "evidence_action": "TARGETED_RERUN",
+      "exit_code": 0,
+      "inherited": false,
+      "policy": "LOCAL_TRANSIENT",
+      "raw_log_ref": ".smc/evidence/knowledge-v2.4.3.1-retrieval-status-authority/logs/20260910T160535.738235Z-V02.log",
+      "raw_log_sha256": "sha256:4f364bf3595d54f949d18f1c3c7f0f84c90d3f2ceb20d15f798e8c8de08cdb78",
+      "result": "PASS",
+      "source_manifest": null,
+      "source_manifest_sha256": null,
+      "source_verification_id": null,
+      "timestamp": "2026-09-10T16:05:35.738235Z",
+      "verification_id": "V02"
+    },
+    {
+      "acceptance_mode": "LOCAL",
+      "candidate_id": null,
+      "claim_ids": [
+        "CLM-05"
+      ],
+      "claim_results": {
+        "CLM-05": "PASS"
+      },
+      "command": "git diff --stat --exit-code HEAD -- nodeskclaw-knowledge/app/workers nodeskclaw-knowledge/app/models/index_state.py nodeskclaw-knowledge/app/runtime nodeskclaw-knowledge/app/services/build_orchestrator.py",
+      "evidence_action": "TARGETED_RERUN",
+      "exit_code": 0,
+      "inherited": false,
+      "policy": "LOCAL_TRANSIENT",
+      "raw_log_ref": ".smc/evidence/knowledge-v2.4.3.1-retrieval-status-authority/logs/20260910T160535.819609Z-V03.log",
+      "raw_log_sha256": "sha256:e3bd5ddc5e1eed6ec24b45b0868d96e9c5b2b6d8c771bac1973435ce5c0ee8f2",
+      "result": "PASS",
+      "source_manifest": null,
+      "source_manifest_sha256": null,
+      "source_verification_id": null,
+      "timestamp": "2026-09-10T16:05:35.819609Z",
+      "verification_id": "V03"
+    },
+    {
+      "acceptance_mode": "LOCAL",
+      "candidate_id": null,
+      "claim_ids": [
+        "CLM-06"
+      ],
+      "claim_results": {
+        "CLM-06": "PASS"
+      },
+      "command": "git diff --stat --exit-code HEAD -- nodeskclaw-knowledge/app/api/v2/engineering.py",
+      "evidence_action": "TARGETED_RERUN",
+      "exit_code": 0,
+      "inherited": false,
+      "policy": "LOCAL_TRANSIENT",
+      "raw_log_ref": ".smc/evidence/knowledge-v2.4.3.1-retrieval-status-authority/logs/20260910T160542.562209Z-V04.log",
+      "raw_log_sha256": "sha256:19200a9f658d1b003b3f078505aef0af99f36ffd88216becd543b074487f0f63",
+      "result": "PASS",
+      "source_manifest": null,
+      "source_manifest_sha256": null,
+      "source_verification_id": null,
+      "timestamp": "2026-09-10T16:05:42.562209Z",
+      "verification_id": "V04"
+    },
+    {
+      "acceptance_mode": "LIVE",
+      "candidate_id": "sha256:fe8de84f84c66646707769f42235fe435e18658f8cb5add7902c0b94c2667ee3",
+      "claim_ids": [
+        "CLM-01",
+        "CLM-02",
+        "CLM-04",
+        "CLM-07",
+        "CLM-08"
+      ],
+      "claim_results": {
+        "CLM-01": "PASS",
+        "CLM-02": "PASS",
+        "CLM-04": "PASS",
+        "CLM-07": "PASS",
+        "CLM-08": "PASS"
+      },
+      "command": "python nodeskclaw-knowledge/scripts/smc_v2431_live_indexes.py",
+      "evidence_action": "TARGETED_RERUN",
+      "exit_code": 0,
+      "inherited": false,
+      "policy": "REPO_SUMMARY",
+      "raw_log_ref": ".smc/evidence/knowledge-v2.4.3.1-retrieval-status-authority/logs/20260910T232326.563808Z-V05.log",
+      "raw_log_sha256": "sha256:3d97e4b9e2c92f71b4d37e5278451a9915c5f42c9969a5681fd359909ccc5d99",
+      "result": "PASS",
+      "source_manifest": null,
+      "source_manifest_sha256": null,
+      "source_verification_id": null,
+      "timestamp": "2026-09-10T23:23:26.563808Z",
+      "verification_id": "V05"
+    },
+    {
+      "acceptance_mode": "LOCAL",
+      "candidate_id": null,
+      "claim_ids": [
+        "CLM-03"
+      ],
+      "claim_results": {
+        "CLM-03": "PASS"
+      },
+      "command": "uv --directory nodeskclaw-knowledge run pytest tests/test_chunk_index_after_ingestion.py -q",
+      "evidence_action": "NEW_EVIDENCE",
+      "exit_code": 0,
+      "inherited": false,
+      "policy": "LOCAL_TRANSIENT",
+      "raw_log_ref": ".smc/evidence/knowledge-v2.4.3.1-retrieval-status-authority/logs/20260910T160542.635016Z-V06.log",
+      "raw_log_sha256": "sha256:dcb891f39f4f92fe0f5da2997987e065fe937500b607d8ea66c05866a276016f",
+      "result": "PASS",
+      "source_manifest": null,
+      "source_manifest_sha256": null,
+      "source_verification_id": null,
+      "timestamp": "2026-09-10T16:05:42.635016Z",
+      "verification_id": "V06"
+    }
+  ],
+  "completion_audit": {
+    "changed": 3,
+    "deferred": 0,
+    "done": 5,
+    "scope_drift": 0,
+    "timestamp": "2026-09-10T16:04:26.309118Z",
+    "total_items": 5,
+    "unverifiable": 0,
+    "verdict": "PASS"
+  },
+  "generated_at": "2026-09-10T23:24:07.835726Z",
+  "implementation_review": {
+    "reviewer": "code-review-and-quality",
+    "scope_fingerprint": "sha256:026e20fe90ea456ae7b1566523584e13cd2e772a1b01518bc4d03139194c738c",
+    "timestamp": "2026-09-10T16:04:40.969772Z",
+    "verdict": "PASS"
+  },
+  "payload_sha256": "sha256:2c17e3dd02d794e46672cec20ec02976ed50f1b9892e2a1f1da43d8a83531f89",
+  "plan": ".cursor/plans/v2431_retrieval_status_authority.plan.md",
+  "plan_id": "knowledge-v2.4.3.1-retrieval-status-authority",
+  "plan_review": {
+    "plan_sha256": "sha256:4f6dc465b1d2ffa8ed66bc1d8440d28bbd180500575a4b5f416121c19433f542",
+    "reviewer": "smc-plan-review",
+    "timestamp": "2026-09-10T15:57:30.157453Z",
+    "verdict": "PASS"
+  },
+  "schema": "smc.evidence.manifest.v3",
+  "scope_fingerprint": "sha256:026e20fe90ea456ae7b1566523584e13cd2e772a1b01518bc4d03139194c738c",
+  "verification_candidate": {
+    "candidate_id": "sha256:fe8de84f84c66646707769f42235fe435e18658f8cb5add7902c0b94c2667ee3",
+    "captured_at": "2026-09-10T16:05:16.133010Z",
+    "plan_id": "knowledge-v2.4.3.1-retrieval-status-authority",
+    "schema": "smc.verification.candidate.v1",
+    "scope_fingerprint": "sha256:026e20fe90ea456ae7b1566523584e13cd2e772a1b01518bc4d03139194c738c"
+  },
+  "workspace_base_commit": "8c43da9ca9ca4a891dfcec2d856b06a74839f3e9"
+}
