@@ -209,12 +209,17 @@ chore: 移除 Alembic 依赖，改用 create_all 建表
 
 可以直接在贡献者的分支上 push 修复 commit，这是最简单的方式。原始 commit 天然保留 author。
 
+## Git Author 身份
+
+Agent 创建的 commit 必须使用 `--author="SMC-Copilot <smc-copilot@smart-core.com>"`。细则见 `.cursor/rules/git-author.mdc`。社区 `cherry-pick` 保留原作者，不得改写。
+
 ## 禁止 Co-authored-by 标签
 
 **严禁在 commit message 中出现 `Co-authored-by` 行。**
 
 - 提交时必须使用 `--no-gpg-sign` 以外的方式确保消息干净
-- 如果 Cursor IDE 自动追加了 `Co-authored-by: Cursor <cursoragent@cursor.com>`，必须在提交前手动移除，或使用 HEREDOC 方式传递 commit message 以避免被追加
+- 每次 commit 必须带 `--author="SMC-Copilot <smc-copilot@smart-core.com>"`（社区 cherry-pick 除外）
+- 如果 Cursor IDE 自动追加了 `Co-authored-by: Cursor <cursoragent@cursor.com>`，未 push 时立刻 amend 去掉；已 push 到共享分支则禁止 force push，改为提醒用户
 - 发现历史提交中存在该标签时，应提醒用户并协助清除
 
 ## 注意事项

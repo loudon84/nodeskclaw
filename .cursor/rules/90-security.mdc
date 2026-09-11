@@ -11,4 +11,4 @@ alwaysApply: true
 - 涉及权限、租户隔离、鉴权、审计、账单、额度时，必须保持默认拒绝策略。
 - 不要将 ee/ 私有实现、客户信息、内部部署细节复制到公开文档。
 - 代码中禁止出现真人个人信息（姓名、邮箱、手机号），邮箱占位统一用 user@example.com。
-- .cursor/rules/*.mdc 禁止包含 IP 地址、域名、URL、数据库连接串等基础设施细节。
+- .cursor/rules/*.mdc 禁止包含 IP 地址、域名、URL、数据库连接串等基础设施细节。唯一例外：`git-author.mdc` 允许写死本仓 Git Author `SMC Copilot <smc-copilot@smart-core.com>`。
