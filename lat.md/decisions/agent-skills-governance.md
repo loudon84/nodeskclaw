@@ -30,7 +30,31 @@ Plan 生成 Skill v3.3 在读取 PRD/Plan 前区分 `CREATE`、`REVISE`、`AUDIT
 
 PRD 需求提取接受两种稳定编号格式：有序列表项与显式编号 bullet（如 `- **AC-01 ...**`），由 [[.agents/skills/smc-plan-validator/scripts/validate_plan.py#extract_prd_requirements]] 统一解析为稳定 Requirement ID，禁止通过改写 APPROVED PRD 格式来迁就校验器。
 
+`smc-plan-delivery` 把 [[.agents/skills/smc-plan-delivery/scripts/common.py#CURRENT_PLAN_CONTRACTS]] 视为当前合同：`smc.plan.v3.4` 与 `smc.plan.v3.5`。完成门与 readiness 按合同派发 `validate_plan_v35.py` / `validate_plan_v34.py`，禁止把 v3.5 回落到 v3.3 CLI。v3.2/v3.3 仍迁移到 v3.4；已是 v3.5 的 Plan 视为 current，禁止降级。
+
 只有所有阻断验证实际产生约定 evidence output 时，执行结果才可为 `IMPLEMENTED_AND_PROVEN`；实现存在但验证未闭环必须保持 `IMPLEMENTED_NOT_PROVEN`，owner/boundary 冲突则返回 PRD。
+
+### Current Delivery Contracts
+
+`smc-plan-delivery` treats `smc.plan.v3.4` and `smc.plan.v3.5` as current. Completion and readiness must dispatch the matching validator and must not treat v3.5 as stale.
+
+v3.2/v3.3 remain legacy and migrate to v3.4. An existing v3.5 Plan is already current: [[.agents/skills/smc-plan-delivery/scripts/migrate_legacy_plan.py#main]] exits 0 without rewriting the contract.
+
+#### v3.5 is a current delivery contract
+
+A Plan declaring `plan_contract: smc.plan.v3.5` must not receive `DELIVERY_PLAN_CONTRACT_NOT_CURRENT`. [[.agents/skills/smc-plan-delivery/scripts/common.py#is_current_plan_contract]] returns true for v3.4 and v3.5.
+
+#### Static validator follows the Plan contract
+
+v3.5 maps to `validate_plan_v35.py`, v3.4 to `validate_plan_v34.py`, and v3.3 to `validate_plan_v33.py` via [[.agents/skills/smc-plan-delivery/scripts/common.py#static_validator_name]].
+
+#### Cursor content projection applies to v3.5
+
+v3.5 keeps the v3.4 Cursor `content` projection gate through [[.agents/skills/smc-plan-delivery/scripts/common.py#requires_cursor_content_projection]].
+
+#### Legacy migrate leaves v3.5 unchanged
+
+`migrate_legacy_plan.py` reports `PLAN_ALREADY_CURRENT` and leaves bytes unchanged when the Plan is already v3.4 or v3.5.
 
 ### Wrapper Validator Fixtures
 

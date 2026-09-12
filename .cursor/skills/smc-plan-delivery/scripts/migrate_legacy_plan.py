@@ -6,7 +6,7 @@ import re
 import sys
 from pathlib import Path
 
-from common import atomic_write, frontmatter_end_index, parse_top_level_frontmatter, plan_id_from_text, set_top_level_frontmatter
+from common import atomic_write, frontmatter_end_index, is_current_plan_contract, LEGACY_PLAN_CONTRACTS, parse_top_level_frontmatter, plan_id_from_text, set_top_level_frontmatter
 from plan_state import sync_content
 
 
@@ -52,8 +52,9 @@ def main() -> int:
     args=ap.parse_args(); path=args.plan.resolve()
     if not path.is_file(): print(f"PLAN_NOT_FOUND: {path}", file=sys.stderr); return 2
     text=path.read_text(encoding="utf-8"); fm=parse_top_level_frontmatter(text); current=fm.get("plan_contract", "")
-    if current == "smc.plan.v3.4": print("PLAN_ALREADY_V34"); return 0
-    if current not in {"smc.plan.v3.2", "smc.plan.v3.3", ""}:
+    if is_current_plan_contract(current):
+        print(f"PLAN_ALREADY_CURRENT: {current}"); return 0
+    if current not in LEGACY_PLAN_CONTRACTS:
         print(f"PLAN_MIGRATION_UNSUPPORTED_CONTRACT: {current}", file=sys.stderr); return 1
     pid=plan_id_from_text(path,text)
     text=set_top_level_frontmatter(text,{"plan_contract":"smc.plan.v3.4","plan_id":pid,"commit_policy":"post_review"})

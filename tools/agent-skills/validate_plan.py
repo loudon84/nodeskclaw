@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Canonical wrapper for SMC Plan validators (v3.2 legacy + v3.3 + v3.4 current)."""
+"""Canonical wrapper for SMC Plan validators (v3.2 legacy + v3.3 + current v3.4/v3.5)."""
 from __future__ import annotations
 
 import runpy

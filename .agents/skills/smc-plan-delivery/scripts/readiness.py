@@ -7,7 +7,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from common import find_repo_root, parse_first_table, parse_top_level_frontmatter, plan_id, section, strip_md, repo_relative_path
+from common import find_repo_root, parse_first_table, parse_top_level_frontmatter, plan_id, section, strip_md, repo_relative_path, static_validator_name
 from completion_audit import check as audit_status
 from delivery_state import load as load_run
 from evidence import current_status as evidence_status
@@ -24,7 +24,7 @@ def blocking_verifications(plan: Path) -> list[str]:
 
 def static_status(plan: Path, root: Path) -> tuple[str, str]:
     contract = parse_top_level_frontmatter(plan.read_text(encoding="utf-8")).get("plan_contract", "")
-    validator_name = "validate_plan_v34.py" if contract == "smc.plan.v3.4" else "validate_plan_v33.py"
+    validator_name = static_validator_name(contract) or "validate_plan_unknown.py"
     validator = root / ".agents/skills/smc-plan-validator/scripts" / validator_name
     if not validator.is_file(): return "MISSING", f"validator missing: {validator_name}"
     r = subprocess.run([sys.executable, str(validator), str(plan)], cwd=root, capture_output=True, text=True)

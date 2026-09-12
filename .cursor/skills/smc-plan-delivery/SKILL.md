@@ -140,13 +140,13 @@ ROADMAP_UPDATE_BLOCKED
 python .agents/skills/smc-plan-delivery/scripts/resolve_plan.py --plan "$PLAN_PATH"
 ```
 
-新交付要求 `plan_contract: smc.plan.v3.4`。legacy v3.2/v3.3 必须先迁移：
+新交付接受 `plan_contract: smc.plan.v3.4` 或 `smc.plan.v3.5`。legacy v3.2/v3.3 必须先迁移到 v3.4；**禁止把已是 v3.5 的 Plan 降到 v3.4**。
 
 ```bash
 python .agents/skills/smc-plan-delivery/scripts/migrate_legacy_plan.py "$PLAN_PATH" --in-place
 ```
 
-迁移只允许升级 contract / Cursor projection / evidence policy；Todo runtime status 必须保留，不重规划 implementation。
+迁移只允许升级 contract / Cursor projection / evidence policy；Todo runtime status 必须保留，不重规划 implementation。v3.4 与 v3.5 视为 already current，migrate 直接退出 0。
 
 ## 0.2 Initialize delivery state
 
@@ -158,7 +158,12 @@ python .agents/skills/smc-plan-delivery/scripts/delivery_state.py init "$PLAN_PA
 
 # Phase 1 — Plan Static Gate
 
+按 Plan 合同选择静态校验器，禁止把 v3.5 误派到 `validate_plan_v33.py`：
+
 ```bash
+# smc.plan.v3.5
+python .agents/skills/smc-plan-validator/scripts/validate_plan_v35.py "$PLAN_PATH"
+# smc.plan.v3.4
 python .agents/skills/smc-plan-validator/scripts/validate_plan_v34.py "$PLAN_PATH"
 ```
 

@@ -7,7 +7,7 @@ import re
 import sys
 from pathlib import Path
 
-from common import atomic_write, frontmatter_end_index, parse_top_level_frontmatter
+from common import atomic_write, frontmatter_end_index, parse_top_level_frontmatter, requires_cursor_content_projection
 
 VALID = {"pending", "in_progress", "completed", "blocked"}
 
@@ -121,7 +121,7 @@ def validate(path: Path) -> list[str]:
     text = path.read_text(encoding="utf-8")
     fm = parse_top_level_frontmatter(text)
     contract = fm.get("plan_contract", "").strip()
-    require_content = contract == "smc.plan.v3.4"
+    require_content = requires_cursor_content_projection(contract)
     expected = expected_contents(text)
     curs = cursor_todos(text)
     md = markdown_todos(text)

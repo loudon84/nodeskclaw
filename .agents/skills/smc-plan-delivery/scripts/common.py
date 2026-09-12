@@ -12,6 +12,26 @@ from typing import Iterable
 
 EMPTY = {"", "-", "none", "n/a", "na"}
 
+CURRENT_PLAN_CONTRACTS = ("smc.plan.v3.4", "smc.plan.v3.5")
+LEGACY_PLAN_CONTRACTS = ("smc.plan.v3.2", "smc.plan.v3.3", "")
+STATIC_VALIDATOR_BY_CONTRACT = {
+    "smc.plan.v3.5": "validate_plan_v35.py",
+    "smc.plan.v3.4": "validate_plan_v34.py",
+    "smc.plan.v3.3": "validate_plan_v33.py",
+}
+
+
+def is_current_plan_contract(contract: str | None) -> bool:
+    return str(contract or "").strip() in CURRENT_PLAN_CONTRACTS
+
+
+def requires_cursor_content_projection(contract: str | None) -> bool:
+    return is_current_plan_contract(contract)
+
+
+def static_validator_name(contract: str | None) -> str:
+    return STATIC_VALIDATOR_BY_CONTRACT.get(str(contract or "").strip(), "")
+
 
 def find_repo_root(path: Path | str) -> Path:
     p = Path(path).resolve()
