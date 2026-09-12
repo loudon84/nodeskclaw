@@ -29,7 +29,7 @@ from app.schemas.hermes_skill.runtime_skill_run import (
     generate_request_trace_id,
     normalize_request_trace_id,
 )
-from app.schemas.skill_run.constants import SKILL_RUN_CONTRACT_VERSION_V121
+from app.schemas.skill_run.constants import SKILL_RUN_CONTRACT_VERSION_V150
 from app.services.hermes_external.hermes_docker_binding_service import HermesDockerBindingService
 from app.services.hermes_external.hermes_env_parser import parse_env_file
 from app.services.hermes_skill.skill_release_service import (
@@ -540,8 +540,10 @@ class RuntimeSkillRunService:
             event_sse_url=event_sse_url,
             output_policy=output_policy,
             contract_version=(
-                SKILL_RUN_CONTRACT_VERSION_V121
+                "1.6.0"
                 if request.task_source != "expert_mcp" and settings.SKILL_AGENT_ENABLED
+                else SKILL_RUN_CONTRACT_VERSION_V150
+                if request.task_source != "expert_mcp"
                 else None
             ),
         )

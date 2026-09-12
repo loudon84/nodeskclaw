@@ -1,0 +1,16 @@
+{
+  "event_id": "evt-3",
+  "run_id": "run-1",
+  "event_type": "artifact.persisted",
+  "event_seq": 4,
+  "source": "agent",
+  "source_event_id": "artifact:art-1:persisted",
+  "timestamp": "2026-08-31T00:00:02Z",
+  "payload": {
+    "artifact_id": "art-1",
+    "name": "out.txt",
+    "content_type": "text/plain",
+    "size": 12,
+    "checksum_sha256": "abc123"
+  }
+}

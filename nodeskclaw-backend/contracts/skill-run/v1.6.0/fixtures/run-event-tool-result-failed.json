@@ -1,0 +1,18 @@
+{
+  "event_id": "run_demo:22",
+  "run_id": "run_demo",
+  "event_type": "tool.result",
+  "event_seq": 22,
+  "source": "agent",
+  "source_event_id": "hermes:att:22",
+  "timestamp": "2026-09-12T00:00:22Z",
+  "payload": {
+    "tool_name": "search",
+    "call_id": "call_02",
+    "status": "failed",
+    "error_code": "TOOL_FAILED",
+    "error_message": "upstream timeout",
+    "redacted": false,
+    "truncated": false
+  }
+}

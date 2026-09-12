@@ -1,0 +1,19 @@
+{
+  "event_id": "run_demo:32",
+  "run_id": "run_demo",
+  "event_type": "tool.result",
+  "event_seq": 32,
+  "source": "agent",
+  "source_event_id": "hermes:att:32",
+  "timestamp": "2026-09-12T00:00:32Z",
+  "payload": {
+    "tool_name": "export",
+    "call_id": "call_03",
+    "status": "completed",
+    "artifact_ids": [
+      "artifact-runtime-1"
+    ],
+    "redacted": false,
+    "truncated": false
+  }
+}

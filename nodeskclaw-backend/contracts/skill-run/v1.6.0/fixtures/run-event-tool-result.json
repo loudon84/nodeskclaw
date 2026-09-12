@@ -1,0 +1,21 @@
+{
+  "event_id": "run_demo:12",
+  "run_id": "run_demo",
+  "event_type": "tool.result",
+  "event_seq": 12,
+  "source": "agent",
+  "source_event_id": "hermes:att:12",
+  "timestamp": "2026-09-12T00:00:12Z",
+  "payload": {
+    "tool_name": "search",
+    "call_id": "call_01",
+    "status": "completed",
+    "content": "3 results found",
+    "structured_content": {
+      "result_count": 3
+    },
+    "artifact_ids": [],
+    "redacted": false,
+    "truncated": false
+  }
+}

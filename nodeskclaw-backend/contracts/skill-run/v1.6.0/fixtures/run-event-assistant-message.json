@@ -1,0 +1,13 @@
+{
+  "event_id": "run_demo:4",
+  "run_id": "run_demo",
+  "event_type": "assistant.message",
+  "event_seq": 4,
+  "source": "agent",
+  "source_event_id": "hermes:att:2",
+  "timestamp": "2026-09-09T00:00:04Z",
+  "payload": {
+    "message_id": "msg_opaque_001",
+    "text": "正在分析完整结果"
+  }
+}

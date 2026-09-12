@@ -1,0 +1,12 @@
+{
+  "run_id": "run_demo",
+  "items": [
+    {
+      "artifact_id": "artifact-runtime-1",
+      "name": "report.pdf",
+      "content_type": "application/pdf",
+      "size_bytes": 24,
+      "checksum_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  ]
+}

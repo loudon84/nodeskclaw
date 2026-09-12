@@ -1,10 +1,13 @@
 import asyncio
+import ipaddress
 import json
 import logging
 import re
+import socket
 import time
 from collections.abc import AsyncIterator
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 
@@ -33,6 +36,7 @@ RUNTIME_STOP_FAILED = "RUNTIME_STOP_FAILED"
 RUNTIME_PROTOCOL_INVALID = "RUNTIME_PROTOCOL_INVALID"
 RUNTIME_INTERRUPTED = "RUNTIME_INTERRUPTED"
 RUNTIME_STATE_UNAVAILABLE = "RUNTIME_STATE_UNAVAILABLE"
+ARTIFACT_PERSIST_FAILED = "ARTIFACT_PERSIST_FAILED"
 
 HERMES_VERSION_FLOOR = (2026, 8, 31)
 HERMES_VERSION_FLOOR_LABEL = "v2026.8.31"
@@ -75,6 +79,250 @@ def _status_output_text(data: dict[str, Any] | None) -> str:
     if isinstance(nested, dict):
         return _status_output_text(nested)
     return ""
+
+
+def _safe_output_name(raw: Any) -> str:
+    text = str(raw or "").replace("\\", "/").strip()
+    name = text.rsplit("/", 1)[-1].strip()
+    return name or "output.bin"
+
+
+def _http_output_url(ref: dict[str, Any]) -> str | None:
+    for key in ("url", "uri", "href"):
+        value = ref.get(key)
+        if isinstance(value, str) and value.startswith(("http://", "https://")):
+            return value
+    return None
+
+
+_METADATA_HOSTS = frozenset(
+    {
+        "169.254.169.254",
+        "metadata.google.internal",
+        "instance-data",
+        "100.100.100.200",
+        "fd00:ec2::254",
+    }
+)
+_CREDENTIAL_HEADER_NAMES = frozenset(
+    {
+        "authorization",
+        "cookie",
+        "proxy-authorization",
+        "x-api-key",
+        "api-key",
+        "x-auth-token",
+    }
+)
+
+
+def _is_metadata_host(host: str) -> bool:
+    return host.lower().rstrip(".") in _METADATA_HOSTS
+
+
+def _parse_ip(addr: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    text = addr.split("%", 1)[0]
+    try:
+        return ipaddress.ip_address(text)
+    except ValueError:
+        return None
+
+
+def _ip_is_non_public(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    return bool(
+        ip.is_loopback
+        or ip.is_link_local
+        or ip.is_private
+        or ip.is_multicast
+        or ip.is_reserved
+        or ip.is_unspecified
+    )
+
+
+def _looks_non_public_hostname(host: str) -> bool:
+    low = host.lower().rstrip(".")
+    if low in {"localhost"} or _is_metadata_host(low):
+        return True
+    return low.endswith((".internal", ".local", ".localhost"))
+
+
+def _http_origin(url: str | None) -> tuple[str, str, int] | None:
+    if not url:
+        return None
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return None
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    return parsed.scheme.lower(), parsed.hostname.lower().rstrip("."), port
+
+
+def _headers_without_credentials(headers: dict[str, str] | None) -> dict[str, str]:
+    stripped: dict[str, str] = {}
+    for key, value in (headers or {}).items():
+        if str(key).lower() in _CREDENTIAL_HEADER_NAMES:
+            continue
+        stripped[key] = value
+    return stripped
+
+
+async def _resolve_output_host_ips(host: str, port: int) -> list[str]:
+    literal = _parse_ip(host)
+    if literal is not None:
+        return [str(literal)]
+    try:
+        infos = await asyncio.get_running_loop().getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except OSError:
+        return []
+    addresses: list[str] = []
+    for item in infos:
+        if item and item[4]:
+            addresses.append(str(item[4][0]))
+    return addresses
+
+
+async def _output_url_access(url: str, gateway_url: str | None) -> str:
+    origin = _http_origin(url)
+    if origin is None:
+        return "blocked"
+    _scheme, host, port = origin
+    if _is_metadata_host(host):
+        return "blocked"
+    gateway_origin = _http_origin(gateway_url)
+    if gateway_origin is not None and origin == gateway_origin:
+        return "gateway"
+    if _looks_non_public_hostname(host):
+        return "blocked"
+    ips = await _resolve_output_host_ips(host, port)
+    if not ips:
+        return "blocked"
+    for addr in ips:
+        parsed_ip = _parse_ip(addr)
+        if parsed_ip is None or _is_metadata_host(addr) or _ip_is_non_public(parsed_ip):
+            return "blocked"
+    return "public"
+
+
+def _collect_output_refs(data: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not isinstance(data, dict):
+        return []
+    found: list[dict[str, Any]] = []
+    for key in ("output_refs", "output_manifest"):
+        value = data.get(key)
+        if isinstance(value, dict):
+            items = value.get("items")
+            if isinstance(items, list):
+                found.extend(item for item in items if isinstance(item, dict))
+            elif _http_output_url(value):
+                found.append(value)
+        elif isinstance(value, list):
+            found.extend(item for item in value if isinstance(item, dict))
+    artifacts = data.get("artifacts")
+    if isinstance(artifacts, list):
+        found.extend(item for item in artifacts if isinstance(item, dict) and _http_output_url(item))
+    nested = data.get("data")
+    if isinstance(nested, dict):
+        found.extend(_collect_output_refs(nested))
+    return found
+
+
+async def _persist_declared_outputs(
+    client: httpx.AsyncClient,
+    *,
+    data: dict[str, Any] | None,
+    headers: dict[str, str],
+    org_id: str | None,
+    run_id: str | None,
+    attempt_id: str | None,
+    gateway_url: str | None = None,
+) -> tuple[list[dict[str, Any]], bool]:
+    refs = _collect_output_refs(data)
+    if not refs or not run_id:
+        return [], False
+    from app.db import SessionLocal
+    from app.services.run_service import public_artifact_persisted_event, store_artifact_bytes
+
+    events: list[dict[str, Any]] = []
+    required_failed = False
+    async with SessionLocal() as db:
+        try:
+            for ref in refs:
+                required = bool(ref.get("required"))
+                url = _http_output_url(ref)
+                name = _safe_output_name(ref.get("name") or ref.get("filename") or ref.get("file_name"))
+                content_type = ref.get("content_type") if isinstance(ref.get("content_type"), str) else "application/octet-stream"
+                if url is None:
+                    logger.warning("runtime output ref skipped because it is not an authorized http url name=%s", name)
+                    if required:
+                        required_failed = True
+                    continue
+                access = await _output_url_access(url, gateway_url)
+                if access == "blocked":
+                    logger.warning("runtime output ref blocked by fetch policy name=%s url_host=%s", name, _http_origin(url))
+                    if required:
+                        required_failed = True
+                    continue
+                fetch_headers = headers if access == "gateway" else _headers_without_credentials(headers)
+                try:
+                    response = await client.get(url, headers=fetch_headers)
+                    response.raise_for_status()
+                    content = response.content
+                    descriptor = await store_artifact_bytes(
+                        db,
+                        run_id,
+                        name=name,
+                        content=content,
+                        content_type=content_type,
+                        org_id=org_id,
+                        attempt_id=attempt_id,
+                        idempotency_key=f"{run_id}:{name}",
+                    )
+                except Exception as exc:
+                    logger.warning("runtime output persist failed name=%s required=%s error=%s", name, required, exc)
+                    if required:
+                        required_failed = True
+                    continue
+                if str(descriptor.storage_state or "").lower() != "persisted":
+                    if required:
+                        required_failed = True
+                    continue
+                events.append(public_artifact_persisted_event(descriptor))
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
+    return events, required_failed
+
+
+async def _terminal_events_with_outputs(
+    client: httpx.AsyncClient,
+    terminal: dict[str, Any],
+    *,
+    data: dict[str, Any] | None,
+    headers: dict[str, str],
+    org_id: str | None,
+    run_id: str | None,
+    attempt_id: str | None,
+    gateway_url: str | None = None,
+) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    if terminal.get("event_type") == "run.completed":
+        persist_events, persist_failed = await _persist_declared_outputs(
+            client,
+            data=data,
+            headers=headers,
+            org_id=org_id,
+            run_id=run_id,
+            attempt_id=attempt_id,
+            gateway_url=gateway_url,
+        )
+        events.extend(persist_events)
+        if persist_failed:
+            events.append(
+                _failed(ARTIFACT_PERSIST_FAILED, "required runtime output could not be persisted")
+            )
+            return events
+    events.append(terminal)
+    return events
 
 
 # @lat: [[architecture/skill-agent#Configuration#Gateway Reachability Probe]]
@@ -1107,9 +1355,20 @@ async def execute_hermes_run(
                 )
                 for leftover in leftovers:
                     yield leftover
-                if terminal["event_type"] in {"run.completed", "run.failed", "run.cancelled"}:
+                outgoing = await _terminal_events_with_outputs(
+                    client,
+                    terminal,
+                    data=data,
+                    headers=auth_headers,
+                    org_id=org_id,
+                    run_id=run_id,
+                    attempt_id=attempt_id,
+                    gateway_url=gateway_url,
+                )
+                if outgoing and outgoing[-1]["event_type"] in {"run.completed", "run.failed", "run.cancelled"}:
                     await mark_native_terminal(attempt_id=attempt_id, generation=generation)
-                yield terminal
+                for item in outgoing:
+                    yield item
                 return
             if status not in ALIVE_STATUSES:
                 yield _failed(RUNTIME_STATE_UNAVAILABLE, "Hermes runtime status could not be mapped")
@@ -1203,9 +1462,20 @@ async def execute_hermes_run(
                     )
                     for leftover in leftovers:
                         yield leftover
-                    if terminal["event_type"] in {"run.completed", "run.failed", "run.cancelled"}:
+                    outgoing = await _terminal_events_with_outputs(
+                        client,
+                        terminal,
+                        data=data,
+                        headers=auth_headers,
+                        org_id=org_id,
+                        run_id=run_id,
+                        attempt_id=attempt_id,
+                        gateway_url=gateway_url,
+                    )
+                    if outgoing and outgoing[-1]["event_type"] in {"run.completed", "run.failed", "run.cancelled"}:
                         await mark_native_terminal(attempt_id=attempt_id, generation=generation)
-                    yield terminal
+                    for item in outgoing:
+                        yield item
                     return
             yield _failed(RUNTIME_STATE_UNAVAILABLE, "Hermes runtime status could not be mapped")
     except Exception:

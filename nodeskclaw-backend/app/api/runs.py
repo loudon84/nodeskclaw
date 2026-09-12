@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import httpx
 from fastapi import APIRouter, Depends, Header, Request
@@ -140,8 +142,53 @@ def _public_artifact_descriptor(data: dict[str, Any]) -> dict[str, Any]:
 
 
 _TOOL_CALL_STATUSES = frozenset({"started", "completed", "failed"})
+_TOOL_RESULT_STATUSES = frozenset({"completed", "failed"})
+_TOOL_CALL_FIELDS = frozenset({"tool_name", "call_id", "status", "arguments", "redacted", "truncated"})
+_TOOL_RESULT_FIELDS = frozenset(
+    {
+        "tool_name",
+        "call_id",
+        "status",
+        "content",
+        "structured_content",
+        "artifact_ids",
+        "error_code",
+        "error_message",
+        "redacted",
+        "truncated",
+    }
+)
 _MAX_ASSISTANT_DELTA_UTF8_BYTES = 64 * 1024
 _MAX_ASSISTANT_SNAPSHOT_UTF8_BYTES = 1 * 1024 * 1024
+_MAX_TOOL_EVENT_UTF8_BYTES = 64 * 1024
+_MAX_TOOL_EVENT_JSON_DEPTH = 8
+_SENSITIVE_KEY_RE = re.compile(
+    r"(authorization|cookie|api[_-]?key|token|password|secret|private[_-]?key|"
+    r"credential|access[_-]?key|refresh[_-]?token|signature|chain_of_thought|"
+    r"files_read|files_written|preview|(^|_)signed(_|$))",
+    re.I,
+)
+_SENSITIVE_QUERY = frozenset(
+    {
+        "token",
+        "access_token",
+        "refresh_token",
+        "id_token",
+        "password",
+        "secret",
+        "signature",
+        "sig",
+        "x-amz-signature",
+        "x-amz-credential",
+        "x-amz-security-token",
+        "api_key",
+        "apikey",
+        "authorization",
+        "auth",
+    }
+)
+_ABS_UNIX_RE = re.compile(r"^/(?:home|Users|root|var|opt|tmp|etc|usr|mnt|data)(?:/|$)")
+_ABS_WIN_RE = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\)")
 _projection_failures: list[dict[str, Any]] = []
 
 
@@ -156,8 +203,97 @@ def _record_projection_failure(run_id: str, event_type: str, reason: str) -> Non
     logger.warning("public run event projection failure run_id=%s type=%s reason=%s", run_id, event_type, reason)
 
 
+def _is_sensitive_key(key: str) -> bool:
+    return bool(_SENSITIVE_KEY_RE.search(key))
+
+
+def _looks_like_url(value: str) -> bool:
+    return "://" in value or value.startswith("www.")
+
+
+def _sanitize_public_string(value: str) -> tuple[str, bool]:
+    if _looks_like_url(value):
+        parsed = urlparse(value)
+        kept = []
+        changed = False
+        for key, item in parse_qsl(parsed.query, keep_blank_values=True):
+            if key.lower() in _SENSITIVE_QUERY or _is_sensitive_key(key):
+                changed = True
+                continue
+            kept.append((key, item))
+        fragment = parsed.fragment
+        if fragment and (_is_sensitive_key(fragment) or any(part.lower() in _SENSITIVE_QUERY for part in fragment.split("&"))):
+            fragment = ""
+            changed = True
+        cleaned = urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, urlencode(kept, doseq=True), fragment))
+        return cleaned, changed
+    if _ABS_UNIX_RE.match(value) or _ABS_WIN_RE.match(value):
+        name = value.replace("\\", "/").rstrip("/").split("/")[-1]
+        return name or "redacted-path", True
+    return value, False
+
+
+def _sanitize_public_node(value: Any, *, depth: int) -> tuple[Any, bool, bool]:
+    redacted = False
+    truncated = False
+    if isinstance(value, (dict, list)) and depth >= _MAX_TOOL_EVENT_JSON_DEPTH:
+        return None, False, True
+    if isinstance(value, dict):
+        out: dict[str, Any] = {}
+        for key, item in value.items():
+            if not isinstance(key, str) or _is_sensitive_key(key):
+                redacted = True
+                continue
+            cleaned, child_redacted, child_truncated = _sanitize_public_node(item, depth=depth + 1)
+            redacted = redacted or child_redacted
+            truncated = truncated or child_truncated
+            out[key] = cleaned
+        return out, redacted, truncated
+    if isinstance(value, list):
+        items = []
+        for item in value:
+            cleaned, child_redacted, child_truncated = _sanitize_public_node(item, depth=depth + 1)
+            redacted = redacted or child_redacted
+            truncated = truncated or child_truncated
+            items.append(cleaned)
+        return items, redacted, truncated
+    if isinstance(value, str):
+        cleaned, changed = _sanitize_public_string(value)
+        return cleaned, changed, False
+    if isinstance(value, (int, float, bool)) or value is None:
+        return value, False, False
+    return None, True, False
+
+
+def _tool_payload_size(payload: dict[str, Any]) -> int:
+    return len(json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+
+
+def _fit_public_tool_payload(payload: dict[str, Any], *, redacted: bool, truncated: bool) -> dict[str, Any]:
+    payload = dict(payload)
+    if redacted or "redacted" in payload:
+        payload["redacted"] = True if redacted else bool(payload.get("redacted"))
+    if truncated or "truncated" in payload:
+        payload["truncated"] = True if truncated else bool(payload.get("truncated"))
+    if _tool_payload_size(payload) <= _MAX_TOOL_EVENT_UTF8_BYTES:
+        return payload
+    compact = {
+        key: payload[key]
+        for key in ("tool_name", "call_id", "status", "error_code")
+        if key in payload
+    }
+    compact["redacted"] = bool(redacted or payload.get("redacted"))
+    compact["truncated"] = True
+    return compact
+
+
 # @lat: [[decisions/skill-platform-execution#Employee Contract]]
-def _public_run_event(data: dict[str, Any], run_id: str) -> dict[str, Any] | None:
+def _public_run_event(
+    data: dict[str, Any],
+    run_id: str,
+    *,
+    persisted_artifact_ids: frozenset[str] | set[str] | None = None,
+) -> dict[str, Any] | None:
     event_type = str(data.get("event_type") or "")
     if event_type.startswith("internal.") or event_type.startswith("subagent."):
         return None
@@ -234,20 +370,109 @@ def _public_run_event(data: dict[str, Any], run_id: str) -> dict[str, Any] | Non
         tool_name = payload.get("tool_name")
         call_id = payload.get("call_id")
         status = payload.get("status")
-        if (
+        unknown = set(payload) - _TOOL_CALL_FIELDS
+        if unknown:
+            _record_projection_failure(run_id, event_type, "unexpected_tool_call_field")
+            return None
+        if not (
             isinstance(tool_name, str)
             and tool_name
             and isinstance(call_id, str)
             and call_id
             and status in _TOOL_CALL_STATUSES
         ):
-            event["payload"] = {
-                "tool_name": tool_name,
-                "call_id": call_id,
-                "status": status,
-            }
-            return _finalize_public_event(event)
-        return None
+            return None
+        if "arguments" in payload and payload.get("arguments") is not None and not isinstance(payload.get("arguments"), dict):
+            _record_projection_failure(run_id, event_type, "invalid_tool_arguments")
+            return None
+        projected: dict[str, Any] = {
+            "tool_name": tool_name,
+            "call_id": call_id,
+            "status": status,
+        }
+        redacted = bool(payload.get("redacted")) if isinstance(payload.get("redacted"), bool) else False
+        truncated = bool(payload.get("truncated")) if isinstance(payload.get("truncated"), bool) else False
+        if "arguments" in payload:
+            arguments, arg_redacted, arg_truncated = _sanitize_public_node(payload.get("arguments"), depth=2)
+            if payload.get("arguments") is not None and not isinstance(arguments, dict) and arguments is not None:
+                _record_projection_failure(run_id, event_type, "invalid_tool_arguments")
+                return None
+            projected["arguments"] = arguments if isinstance(arguments, dict) else None
+            redacted = redacted or arg_redacted
+            truncated = truncated or arg_truncated
+        if redacted or isinstance(payload.get("redacted"), bool):
+            projected["redacted"] = redacted
+        if truncated or isinstance(payload.get("truncated"), bool):
+            projected["truncated"] = truncated
+        event["payload"] = _fit_public_tool_payload(projected, redacted=redacted, truncated=truncated)
+        return _finalize_public_event(event)
+    if event_type == "tool.result":
+        tool_name = payload.get("tool_name")
+        call_id = payload.get("call_id")
+        status = payload.get("status")
+        unknown = set(payload) - _TOOL_RESULT_FIELDS
+        if unknown:
+            _record_projection_failure(run_id, event_type, "unexpected_tool_result_field")
+            return None
+        if not (
+            isinstance(tool_name, str)
+            and tool_name
+            and isinstance(call_id, str)
+            and call_id
+            and status in _TOOL_RESULT_STATUSES
+        ):
+            return None
+        if status == "failed":
+            error_code = payload.get("error_code")
+            if not isinstance(error_code, str) or not error_code:
+                _record_projection_failure(run_id, event_type, "missing_tool_result_error_code")
+                return None
+        projected = {
+            "tool_name": tool_name,
+            "call_id": call_id,
+            "status": status,
+        }
+        redacted = bool(payload.get("redacted")) if isinstance(payload.get("redacted"), bool) else False
+        truncated = bool(payload.get("truncated")) if isinstance(payload.get("truncated"), bool) else False
+        if "content" in payload:
+            content, content_redacted, content_truncated = _sanitize_public_node(payload.get("content"), depth=2)
+            if payload.get("content") is not None and not isinstance(content, str) and content is not None:
+                _record_projection_failure(run_id, event_type, "invalid_tool_result_content")
+                return None
+            projected["content"] = content if isinstance(content, str) or content is None else None
+            redacted = redacted or content_redacted
+            truncated = truncated or content_truncated
+        if "structured_content" in payload:
+            structured, struct_redacted, struct_truncated = _sanitize_public_node(
+                payload.get("structured_content"),
+                depth=2,
+            )
+            projected["structured_content"] = structured
+            redacted = redacted or struct_redacted
+            truncated = truncated or struct_truncated
+        if "artifact_ids" in payload:
+            raw_ids = payload.get("artifact_ids")
+            if raw_ids is not None and not isinstance(raw_ids, list):
+                _record_projection_failure(run_id, event_type, "invalid_tool_result_artifact_ids")
+                return None
+            allowed = persisted_artifact_ids or set()
+            projected["artifact_ids"] = [
+                item for item in (raw_ids or []) if isinstance(item, str) and item and item in allowed
+            ]
+        if isinstance(payload.get("error_code"), str) and payload.get("error_code"):
+            projected["error_code"] = payload["error_code"]
+        if "error_message" in payload:
+            message, message_redacted, message_truncated = _sanitize_public_node(payload.get("error_message"), depth=2)
+            if isinstance(message, str):
+                projected["error_message"] = message
+            redacted = redacted or message_redacted
+            truncated = truncated or message_truncated
+        if "redacted" in payload or redacted:
+            projected["redacted"] = redacted
+        if "truncated" in payload or truncated:
+            projected["truncated"] = truncated
+        event["payload"] = _fit_public_tool_payload(projected, redacted=redacted, truncated=truncated)
+        return _finalize_public_event(event)
     if event_type == "clarify.requested" and isinstance(payload.get("question"), str):
         projected: dict[str, Any] = {"question": payload["question"]}
         options = payload.get("options")
@@ -746,6 +971,21 @@ async def stream_run_events(
 
     async def event_generator():
         cursor = after_seq
+        persisted_artifact_ids: set[str] = set()
+        try:
+            artifacts_data = await _agent_get(
+                f"/internal/v1/runs/{run_id}/artifacts",
+                org_id=org.id,
+                user_id=user.id,
+            )
+            if str(artifacts_data.get("run_id") or "") == run_id:
+                for item in artifacts_data.get("items") or []:
+                    artifact_id = item.get("artifact_id") or item.get("id")
+                    state = str(item.get("storage_state") or item.get("state") or "persisted").lower()
+                    if isinstance(artifact_id, str) and artifact_id and state == "persisted":
+                        persisted_artifact_ids.add(artifact_id)
+        except Exception:
+            persisted_artifact_ids = set()
         try:
             while True:
                 if await request.is_disconnected():
@@ -769,9 +1009,17 @@ async def stream_run_events(
                 items = payload.get("items") or []
                 for item in items:
                     cursor = max(cursor, int(item.get("event_seq") or 0))
-                    public_event = _public_run_event(item, run_id)
+                    public_event = _public_run_event(
+                        item,
+                        run_id,
+                        persisted_artifact_ids=persisted_artifact_ids,
+                    )
                     if public_event is None:
                         continue
+                    if public_event["event_type"] == "artifact.persisted":
+                        artifact_id = (public_event.get("payload") or {}).get("artifact_id")
+                        if isinstance(artifact_id, str) and artifact_id:
+                            persisted_artifact_ids.add(artifact_id)
                     data = json.dumps(public_event, ensure_ascii=False)
                     yield f"id: {public_event['event_id']}\nevent: {public_event['event_type']}\ndata: {data}\n\n"
                     if public_event["event_type"] in _PUBLIC_TERMINAL_EVENT_TYPES:
