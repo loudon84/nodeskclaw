@@ -16,7 +16,7 @@
 
 ### Public Skill Run Contract Status
 
-本仓 Provider 最新员工合同是 `SKILL-RUN-CONTRACT v1.5.0`；仓外 Work consumer pin 不得从本文件推断。
+本仓 Provider 最新已发布员工合同是 `SKILL-RUN-CONTRACT v1.6.0`；仓外 Work consumer pin 不得从本文件推断。
 
 Released cumulative capabilities：
 
@@ -24,8 +24,9 @@ Released cumulative capabilities：
 - v1.3.0：Approval Decision（RM-17 `DONE`）
 - v1.4.0：Attachment Input（RM-18 `DONE`）
 - v1.5.0：Streaming Delta + Assistant Snapshot（RM-19 `DONE`）
+- v1.6.0：Rich Runtime Events And Artifacts（tag `skill-run-contract-v1.6.0`）
 
-下一增量（**目标状态**，尚未实现）：RM-20 发布累积 `v1.6.0` Rich Runtime Events And Artifacts。见 [[architecture/skill-agent#RM-20 Public Rich Runtime Events]]。
+RM-20 累积 `v1.6.0` 见 [[architecture/skill-agent#RM-20 Public Rich Runtime Events]]。仓外 Work UI / consumer-lock 不是本仓 DONE。
 
 Consumer pin 在仓外 `smc-copilot` consumer-lock，本仓 LAT 不推断具体版本。
 
@@ -144,6 +145,7 @@ RM-14 把 Hermes Native transport 规范成低噪声 Agent Event SoT，并让公
 - **已实现**：[[nodeskclaw-agent/app/services/native_event_normalizer.py#normalize_native_event]] 分流 coalescer buffer、durable 语义或 Internal Trace；[[nodeskclaw-agent/app/services/assistant_delta_coalescer.py#AssistantDeltaCoalescer]] 只在 tool / approval / terminal flush，以及满 1000ms 的 stale flush，并按 Unicode 安全边界切分 ≤64 KiB UTF-8。`push()` 不按 80 字或 `\n\n` 落库。受控 flush 写入 durable `assistant.delta`（`message_id`/`delta_seq`/`delta`）；段关闭写入同 `message_id` 的完整 `assistant.message` snapshot（≤1 MiB）。流式 `assistant.message` / `message` / `agent.message` 经 [[nodeskclaw-agent/app/services/native_event_normalizer.py#NativeEventNormalizer#_ingest_assistant_text]] 进 coalescer；全文快照等于已发出或已发出+buffer 则丢弃。GET / `run.completed` 的 `output` 经 [[nodeskclaw-agent/app/services/native_event_normalizer.py#NativeEventNormalizer#emit_assistant_snapshot]] 回填。`tool.started/completed` 合成 Attempt 作用域 `call_id`，`correlation_confidence` 只留 Internal。`reasoning.available` 与 `subagent.*` / `run.steered` / `approval.responded` 不进 Public。[[nodeskclaw-backend/app/api/runs.py#_public_run_event]] 对 delta 仅投影三字段，对 snapshot 投影 `message_id`/`text`（旧无 `message_id` 行仍可投影 `text`）。SoT `source_event_id` 为 `hermes:{attempt_id}:{counter}`。RM-19 累积 Public Bundle `v1.5.0` 由单一 `scripts/contracts.py` 生成。回归：[[nodeskclaw-agent/tests/test_native_event_normalizer.py#test_order_flushes_assistant_before_tool_started]]、[[nodeskclaw-agent/tests/test_native_event_normalizer.py#test_flush_due_to_latency_waits_one_second]]、[[nodeskclaw-agent/tests/test_native_event_normalizer.py#test_tool_boundary_opens_new_message_id]]、[[nodeskclaw-agent/tests/test_native_event_normalizer.py#test_oversize_delta_is_split_unicode_safe]]、[[nodeskclaw-backend/tests/hermes_skill/test_employee_runs_api.py#test_public_run_event_projects_assistant_delta_and_snapshot]]。
 - **已实现**：[[nodeskclaw-agent/app/services/native_event_normalizer.py#NativeEventNormalizer#drain_internal_traces]] 把 `subagent.*` 持久化为 `internal.runtime.trace`，payload 只允许 `runtime_event_type` 与 `category=subagent`；禁止 `child_session_id` / `runtime_run_id` / cost / `output_tail`。`tool.correlation` 仍只留内存 Internal Trace。Public `_public_run_event` 对 `internal.runtime.trace` 返回 `None`，不得把 `subagent.*` 加进 v1.2.1。回归：[[nodeskclaw-agent/tests/test_native_event_normalizer.py#test_subagent_stays_internal_without_sensitive_fields]]、[[nodeskclaw-agent/tests/test_hermes_engine.py#test_execute_hermes_yields_internal_runtime_trace_for_subagent]]、[[nodeskclaw-backend/tests/hermes_skill/test_employee_runs_api.py#test_public_run_event_projects_semantic_types_and_drops_unknown]]。
 - **已实现**：V13 live Native 已打到部署本实现的 Agent，见 [[architecture/skill-agent#RM-14 Live Semantic V13]]。不得恢复 ChatCompletion parser，不得改写 v1.2.1。
+- **已实现**：started `tool.call` 携带清洗后的 `arguments`，terminal 省略 arguments，并跟恰好一个 `tool.result`。见 [[architecture/skill-agent#RM-20 Public Rich Runtime Events]]。
 
 ## RM-19 Public Streaming Delta
 
@@ -158,13 +160,15 @@ RM-19 发布累积 Public Streaming Delta 合同 `v1.5.0`：durable `assistant.d
 
 ## RM-20 Public Rich Runtime Events
 
-RM-20 将发布累积 Public `v1.6.0`：安全 tool 参数、独立 tool.result、Runtime 产物 ingest 与 required barrier。当前是已批准架构下的目标状态，不是已实现。
+RM-20 已发布累积 Public v1.6.0：清洗 tool 参数、独立 tool.result、既有 StoragePort 产物与 required 失败关闭。live REAL_PROCESS 与 Roadmap DONE 仍待后半程。
 
-- **目标状态**：`tool.call(started)` 可带清洗后的 `arguments`；每个 terminal tool call 恰好一个 `tool.result`。架构源 `docs_agent/architecture/AD-SKILL-AGENT-V16.md` `@1.9.0`。
-- **目标状态**：Runtime 声明输出须经既有 StoragePort 持久化为 `PERSISTED` 后才可下载；required 未持久化不得 success（`ARTIFACT_PERSIST_FAILED`）。
-- **目标状态**：不公开 `files_read`/`files_written`、永久 download_url 或原始 Runtime 事件；不改写 v1.2.1～v1.5.0。
-- **目标状态**：单一 Item / 单一 tag `skill-run-contract-v1.6.0`；草案 Stage 1–5 是实施切片。Roadmap RM-20 `IN_PRD`。仓外 Work UI 不是本仓 DONE。
-- **边界**：独立 `AD-SKILL-RUN-016` 草案不是规范性 SoT。上游 Hermes 未提供结构化 args/result/output ref 时不得把 capability 标 `supported`。
+- **已实现**：[[nodeskclaw-agent/app/services/native_event_normalizer.py#NativeEventNormalizer#_start_tool]] 在 started `tool.call` 写入清洗后的 `arguments`（缺 structured args 则为 `null`）；terminal `tool.call` 省略 arguments。[[nodeskclaw-agent/app/services/native_event_normalizer.py#_strip_sensitive]] 做第一层脱敏与 64KiB / 深度 8 截断。每个 terminal call 恰好一个 [[nodeskclaw-agent/app/services/native_event_normalizer.py#NativeEventNormalizer]] `tool.result`。回归：[[nodeskclaw-agent/tests/test_rich_runtime_tool_events.py#test_started_arguments_object_or_null]]、[[nodeskclaw-agent/tests/test_rich_runtime_tool_events.py#test_tool_result_exactly_one_per_terminal_and_stable_call_id]]。
+- **已实现**：Agent allowlist 与 Backend v1.6 专用模型分离：[[nodeskclaw-agent/app/schemas.py#validate_semantic_event_payload]] 允许 `arguments`/`tool.result`；[[nodeskclaw-backend/app/schemas/skill_run/mcp_jsonrpc.py#ToolCallPayloadV16]] / [[nodeskclaw-backend/app/schemas/skill_run/mcp_jsonrpc.py#RunEventToolResultV16]] / [[nodeskclaw-backend/app/schemas/skill_run/mcp_jsonrpc.py#RUN_EVENT_V16_MODELS]] 不改写 `RUN_EVENT_V15_MODELS`。回归：[[nodeskclaw-agent/tests/test_rich_runtime_event_schema.py#test_v16_models_exist_without_rewriting_v15_union]]。
+- **已实现**：[[nodeskclaw-backend/app/api/runs.py#_public_run_event]] allowlist 投影 `arguments`/`tool.result`，拒绝未知字段并对 `artifact_ids` 只保留本 Run 已持久化 id。[[nodeskclaw-backend/app/services/hermes_skill/runtime_skill_run_service.py#RuntimeSkillRunService#start]] 在员工 Agent 启用时报告 `contract_version=1.6.0` 且员工 `tools/call` 信封带 `auth_type=user_jwt`，否则 `1.5.0`。回归：[[nodeskclaw-backend/tests/hermes_skill/test_public_rich_runtime_events.py#test_projection_schema_allows_tool_call_arguments_and_tool_result]]、[[nodeskclaw-backend/tests/hermes_skill/test_public_rich_runtime_events.py#test_contract_version_reports_160_when_agent_enabled]]。
+- **已实现**：[[nodeskclaw-agent/app/services/hermes_engine.py#execute_hermes_run]] 只摄入 structured `output_refs` / `output_manifest` / 带 http(s) URL 的 `artifacts`，经 [[nodeskclaw-agent/app/services/run_service.py#store_artifact_bytes]] 走既有 StoragePort；禁止 Markdown/路径猜文件。拉取策略：云 metadata 拒绝；与 Hermes `gateway_url` 同源可带 Runtime 租约；公网 URL 去凭证后拉取；非网关私网拒绝。Adapter persist 会话在循环结束后 `commit`，未捕获异常则 `rollback`。required 失败由 [[nodeskclaw-agent/app/services/run_service.py#aggregate_run_terminal]] 以 `ARTIFACT_PERSIST_FAILED` 关闭，不 stall。Public 下载仍是 [[nodeskclaw-backend/app/api/runs.py#download_run_artifact]]，不公开永久 `download_url`。回归：[[nodeskclaw-agent/tests/test_runtime_output_artifacts.py#test_persist_declared_outputs_uses_store_artifact_bytes]]、[[nodeskclaw-agent/tests/test_runtime_output_artifacts.py#test_persist_gateway_same_origin_sends_authorization]]、[[nodeskclaw-agent/tests/test_runtime_output_artifacts.py#test_output_url_access_blocks_metadata_and_private_non_gateway]]。
+- **已实现**：[[nodeskclaw-backend/scripts/contracts.py#generate_skill_run_contracts]] 分派 [[nodeskclaw-backend/scripts/contracts.py#_generate_skill_run_v160_public_contract]]，从冻结 v1.5.0 copytree overlay。常量 [[nodeskclaw-backend/app/schemas/skill_run/constants.py#SKILL_RUN_CONTRACT_VERSION_V160]] / [[nodeskclaw-backend/app/schemas/skill_run/constants.py#SKILL_RUN_TAG_NAME_V160]]。不改写 v1.2.1～v1.5.0。两提交发布：行为 commit A `09857da3cccdf6b074b76a32c2465892e1d59652`，Bundle-only commit B `6fdf7896b311882a7b2d2c444a45944924bd9c41`，annotated tag `skill-run-contract-v1.6.0` 指向 B；禁止 `git tag -f`。
+- **部分实现**：live runner [[tools/acceptance/run_rm20_live_rich_runtime_events.py#run_live]] 复用 RM13 helpers，输出 `SMC_ACCEPTANCE_RESULT`（CLM-16 / CLM-22），并提供 `--preflight-env` / `--probe-candidate`。夹具不可用时 `VERIFICATION_BLOCKED`，禁止搜 catalog 换 Tool。ENV-01 未绑定前不得把 mock 当 PASS。V10 live 尚未 FRESH PASS。
+- **边界**：独立 `AD-SKILL-RUN-016` 草案不是规范性 SoT。上游 Hermes 未提供结构化 args/result/output ref 时不得把 capability 标 `supported`。仓外 Work UI / consumer-lock 不是本仓 DONE。Roadmap RM-20 在 live 证据齐备前保持非 `DONE`。
 
 ## Runtime Delegation Boundary
 
@@ -396,4 +400,4 @@ Stage PRD：[RM-18 Public Attachment Input Contract v1.4.0](../../docs_agent/prd
 - **已实现**：RM-14 Normalizer / Coalescer / canonical `phase` 已在 Adapter 与 Public 投影落地，见 [[architecture/skill-agent#Hermes Engine Adapter#Runtime Semantic Event Fidelity]]。V13 live 出口见 [[architecture/skill-agent#RM-14 Live Semantic V13]]。
 - **已实现**：审批与 cancel 南向见 [[architecture/skill-agent#RM-15 Approval Runtime Control]]。live 出口见 [[architecture/skill-agent#RM-15 Live Control V13]]。Public Approval Decision v1.3.0 见 [[architecture/skill-agent#RM-17 Public Approval Decision]]。
 - **已实现**：RM-16 Provider Conformance 已关闭。真实 Hermes `>= v2026.8.31` 已覆盖 PC-01 / PC-02 / PC-03 / PC-04 / PC-06 / PC-07 / PC-09 以及 PC-12 Public Isolation Scan。PC-05 / PC-08 不再作为 live Gate，由既有 fencing / interrupted 自动化证明。生产路径含 `/approval` 接受、cancel 合同终态、Worker gap、最小 `internal.runtime.trace` 与 coalescer 规则，见 [[architecture/skill-agent#RM-16 Provider Conformance Grounding]] 与 [[architecture/skill-agent#Hermes Engine Adapter#Runtime Semantic Event Fidelity]]。Roadmap RM-16 = `DONE`。
-- **已实现**：不得恢复 ChatCompletion parser，不得改写 v1.2.1。v1.3.0 / v1.4.0 / v1.5.0 已作为累积增量发布，见 [[architecture/skill-agent#RM-17 Public Approval Decision]]、[[architecture/skill-agent#RM-18 Public Attachment Input]] 与 [[architecture/skill-agent#RM-19 Public Streaming Delta]]。
+- **已实现**：不得恢复 ChatCompletion parser，不得改写 v1.2.1。v1.3.0 / v1.4.0 / v1.5.0 / v1.6.0 已作为累积增量发布，见 [[architecture/skill-agent#RM-17 Public Approval Decision]]、[[architecture/skill-agent#RM-18 Public Attachment Input]]、[[architecture/skill-agent#RM-19 Public Streaming Delta]] 与 [[architecture/skill-agent#RM-20 Public Rich Runtime Events]]。
