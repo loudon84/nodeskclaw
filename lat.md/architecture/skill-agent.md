@@ -25,6 +25,8 @@ Released cumulative capabilities：
 - v1.4.0：Attachment Input（RM-18 `DONE`）
 - v1.5.0：Streaming Delta + Assistant Snapshot（RM-19 `DONE`）
 
+下一增量（**目标状态**，尚未实现）：RM-20 发布累积 `v1.6.0` Rich Runtime Events And Artifacts。见 [[architecture/skill-agent#RM-20 Public Rich Runtime Events]]。
+
 Consumer pin 在仓外 `smc-copilot` consumer-lock，本仓 LAT 不推断具体版本。
 
 ## Configuration
@@ -153,6 +155,16 @@ RM-19 发布累积 Public Streaming Delta 合同 `v1.5.0`：durable `assistant.d
 - **已实现**：[[nodeskclaw-backend/scripts/contracts.py#_generate_skill_run_v150_public_contract]] 生成 `v1.5.0` Bundle；两提交语义（行为 `releaseCommit` + Bundle-only tag 提交）；不改写 v1.2.1～v1.4.0。
 - **已实现**：live runner [[tools/acceptance/run_rm19_live_streaming_delta.py#run_live]] 复用 RM13 helpers，输出 `SMC_ACCEPTANCE_RESULT`；`--preflight-env` / `--probe-candidate` 齐全。
 - **已实现**：真实 `user_jwt` REAL_PROCESS 证明 terminal 前至少一条 public `assistant.delta`、snapshot 对账、SSE `Last-Event-ID` after_seq 重放与 `event_id` 去重；证据见 `docs_agent/evidence/rm19-verification.md`。仓外 Work UI/consumer-lock 不是本仓 DONE。
+
+## RM-20 Public Rich Runtime Events
+
+RM-20 将发布累积 Public `v1.6.0`：安全 tool 参数、独立 tool.result、Runtime 产物 ingest 与 required barrier。当前是已批准架构下的目标状态，不是已实现。
+
+- **目标状态**：`tool.call(started)` 可带清洗后的 `arguments`；每个 terminal tool call 恰好一个 `tool.result`。架构源 `docs_agent/architecture/AD-SKILL-AGENT-V16.md` `@1.9.0`。
+- **目标状态**：Runtime 声明输出须经既有 StoragePort 持久化为 `PERSISTED` 后才可下载；required 未持久化不得 success（`ARTIFACT_PERSIST_FAILED`）。
+- **目标状态**：不公开 `files_read`/`files_written`、永久 download_url 或原始 Runtime 事件；不改写 v1.2.1～v1.5.0。
+- **目标状态**：单一 Item / 单一 tag `skill-run-contract-v1.6.0`；草案 Stage 1–5 是实施切片。Roadmap RM-20 `IN_PRD`。仓外 Work UI 不是本仓 DONE。
+- **边界**：独立 `AD-SKILL-RUN-016` 草案不是规范性 SoT。上游 Hermes 未提供结构化 args/result/output ref 时不得把 capability 标 `supported`。
 
 ## Runtime Delegation Boundary
 
