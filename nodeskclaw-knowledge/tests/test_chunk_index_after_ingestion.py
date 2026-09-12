@@ -259,6 +259,7 @@ async def test_ensure_keeps_this_dataset_ready_when_binding_retrieval_unsupporte
 
     assert states[0].retrieval_status == IndexRetrievalStatus.ready.value
     adapter.validate_index_retrieval.assert_awaited_once_with(dataset_id="ds-this")
+    db.commit.assert_awaited()
 
 
 @pytest.mark.asyncio
@@ -295,6 +296,51 @@ async def test_ensure_probe_false_on_supported_ready_chunk_is_unavailable():
         )
 
     assert states[0].retrieval_status == IndexRetrievalStatus.unavailable.value
+    db.commit.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_ensure_does_not_reprobe_after_fail_closed_writeback():
+    existing = _ready_chunk_state(
+        retrieval_status=IndexRetrievalStatus.unavailable.value,
+        validation_payload={
+            "runtime_operation": "fail_closed_writeback",
+            "retrieval_ready": False,
+        },
+    )
+    db = AsyncMock()
+    db.scalar = AsyncMock(return_value=existing)
+    kb = SimpleNamespace(id="kb1", org_id="o1")
+    adapter = AsyncMock()
+    adapter.validate_index_retrieval = AsyncMock(return_value=True)
+
+    with (
+        patch(
+            "app.services.index_state_service.build_profile_service.resolve_profile_for_kb",
+            new=AsyncMock(return_value=SimpleNamespace(index_types=["chunk"])),
+        ),
+        patch(
+            "app.services.index_state_service.list_index_types",
+            return_value=[IndexType.chunk.value],
+        ),
+        patch(
+            "app.services.index_state_service.runtime_binding_service.get_dataset_id",
+            new=AsyncMock(return_value="ds-this"),
+        ),
+    ):
+        states = await index_state_service.ensure_kb_index_states(
+            db,
+            org_id="o1",
+            kb=kb,
+            capabilities={
+                "supports_chunk": {"build_supported": True, "retrieval_supported": True},
+            },
+            runtime_adapter=adapter,
+        )
+
+    assert states[0].retrieval_status == IndexRetrievalStatus.unavailable.value
+    adapter.validate_index_retrieval.assert_not_awaited()
+    db.commit.assert_not_awaited()
 
 
 def test_sync_retrieval_status_chunk_supported_not_ready_is_unavailable():
@@ -320,3 +366,59 @@ async def test_apply_chunk_inventory_probe_false_is_unavailable_not_unsupported(
     )
     assert state.status == IndexStateStatus.ready.value
     assert state.retrieval_status == IndexRetrievalStatus.unavailable.value
+
+
+@pytest.mark.asyncio
+async def test_validate_index_retrieval_true_when_existing_content_hits():
+    from app.integrations.ragflow.models import RagflowChunk, RagflowRetrievalResult
+    from app.runtime.ragflow import RagflowRuntimeAdapter
+
+    adapter = RagflowRuntimeAdapter(client=MagicMock())
+    adapter.list_documents = AsyncMock(return_value=[SimpleNamespace(id="d1", run="DONE", chunk_count=1)])
+    adapter.read_document_chunks = AsyncMock(return_value=[{"content": "alpha contract clause"}])
+    adapter.retrieve_index = AsyncMock(
+        return_value=RagflowRetrievalResult(chunks=[RagflowChunk(id="c1", content="alpha contract clause")])
+    )
+    assert await adapter.validate_index_retrieval(dataset_id="ds1") is True
+    question = adapter.retrieve_index.await_args.kwargs["question"]
+    assert question != "health check"
+    assert "alpha" in question
+
+
+@pytest.mark.asyncio
+async def test_validate_index_retrieval_false_when_empty_chunks():
+    from app.integrations.ragflow.models import RagflowRetrievalResult
+    from app.runtime.ragflow import RagflowRuntimeAdapter
+
+    adapter = RagflowRuntimeAdapter(client=MagicMock())
+    adapter.retrieve_index = AsyncMock(return_value=RagflowRetrievalResult(chunks=[]))
+    assert await adapter.validate_index_retrieval(dataset_id="ds1", question="existing corpus text") is False
+
+
+@pytest.mark.asyncio
+async def test_validate_index_retrieval_false_when_result_is_not_none_without_chunks():
+    from app.runtime.ragflow import RagflowRuntimeAdapter
+
+    adapter = RagflowRuntimeAdapter(client=MagicMock())
+    adapter.retrieve_index = AsyncMock(return_value=SimpleNamespace(chunks=None))
+    assert await adapter.validate_index_retrieval(dataset_id="ds1", question="existing corpus text") is False
+
+
+@pytest.mark.asyncio
+async def test_validate_index_retrieval_false_on_exception():
+    from app.runtime.ragflow import RagflowRuntimeAdapter
+
+    adapter = RagflowRuntimeAdapter(client=MagicMock())
+    adapter.retrieve_index = AsyncMock(side_effect=RuntimeError("ragflow down"))
+    assert await adapter.validate_index_retrieval(dataset_id="ds1", question="existing corpus text") is False
+
+
+@pytest.mark.asyncio
+async def test_validate_index_retrieval_false_when_no_corpus_to_derive():
+    from app.runtime.ragflow import RagflowRuntimeAdapter
+
+    adapter = RagflowRuntimeAdapter(client=MagicMock())
+    adapter.list_documents = AsyncMock(return_value=[])
+    adapter.retrieve_index = AsyncMock()
+    assert await adapter.validate_index_retrieval(dataset_id="ds1") is False
+    adapter.retrieve_index.assert_not_awaited()

@@ -1,0 +1,512 @@
+{
+  "acceptance_contract": "smc.acceptance.v1",
+  "ambient_fingerprint": "sha256:ca452b0f8d2971dd54ef32f0d7787abb49ddc5292e25c8d8744c9034d8422b56",
+  "blocking_claims": [
+    {
+      "claim_id": "CLM-01",
+      "evidence_action": "NEW_EVIDENCE",
+      "prior_evidence": "LIVE residual ready+unavailable",
+      "requirement": "AC-04",
+      "result": "PASS",
+      "verification_ids": [
+        "V07"
+      ]
+    },
+    {
+      "claim_id": "CLM-02",
+      "evidence_action": "TARGETED_RERUN",
+      "prior_evidence": "旧 run 曾 PASS",
+      "requirement": "AC-05",
+      "result": "PASS",
+      "verification_ids": [
+        "V08"
+      ]
+    },
+    {
+      "claim_id": "CLM-03",
+      "evidence_action": "TARGETED_RERUN",
+      "prior_evidence": "被 V06 阻塞",
+      "requirement": "AC-06",
+      "result": "PASS",
+      "verification_ids": [
+        "V09"
+      ]
+    },
+    {
+      "claim_id": "CLM-04",
+      "evidence_action": "NEW_EVIDENCE",
+      "prior_evidence": "LIVE 503",
+      "requirement": "AC-07",
+      "result": "PASS",
+      "verification_ids": [
+        "V10"
+      ]
+    },
+    {
+      "claim_id": "CLM-05",
+      "evidence_action": "TARGETED_RERUN",
+      "prior_evidence": "Inventory / enums",
+      "requirement": "AC-10",
+      "result": "PASS",
+      "verification_ids": [
+        "V05"
+      ]
+    },
+    {
+      "claim_id": "CLM-06",
+      "evidence_action": "NEW_EVIDENCE",
+      "prior_evidence": "v2.4.3.1 空结果成功 oracle",
+      "requirement": "AC-01",
+      "result": "PASS",
+      "verification_ids": [
+        "V01"
+      ]
+    },
+    {
+      "claim_id": "CLM-07",
+      "evidence_action": "NEW_EVIDENCE",
+      "prior_evidence": "semantic continue 跳过 `_index_usable`",
+      "requirement": "AC-08",
+      "result": "PASS",
+      "verification_ids": [
+        "V03",
+        "V11"
+      ]
+    },
+    {
+      "claim_id": "CLM-08",
+      "evidence_action": "NEW_EVIDENCE",
+      "prior_evidence": "只写 Audit",
+      "requirement": "AC-09",
+      "result": "PASS",
+      "verification_ids": [
+        "V04",
+        "V12"
+      ]
+    },
+    {
+      "claim_id": "CLM-09",
+      "evidence_action": "NEW_EVIDENCE",
+      "prior_evidence": "v2.4.3.1 边界",
+      "requirement": "AC-02",
+      "result": "PASS",
+      "verification_ids": [
+        "V02"
+      ]
+    },
+    {
+      "claim_id": "CLM-10",
+      "evidence_action": "NEW_EVIDENCE",
+      "prior_evidence": "前序空结果成功→ready",
+      "requirement": "AC-03",
+      "result": "PASS",
+      "verification_ids": [
+        "V01",
+        "V02"
+      ]
+    },
+    {
+      "claim_id": "CLM-11",
+      "evidence_action": "NEW_EVIDENCE",
+      "prior_evidence": "union of this Stage claims",
+      "requirement": "DOD-01",
+      "result": "PASS",
+      "verification_ids": [
+        "V01",
+        "V02",
+        "V03",
+        "V04",
+        "V07",
+        "V10",
+        "V11",
+        "V12"
+      ]
+    },
+    {
+      "claim_id": "CLM-12",
+      "evidence_action": "TARGETED_RERUN",
+      "prior_evidence": "residual skipped V06",
+      "requirement": "DOD-02",
+      "result": "PASS",
+      "verification_ids": [
+        "V08",
+        "V09"
+      ]
+    },
+    {
+      "claim_id": "CLM-13",
+      "evidence_action": "NEW_EVIDENCE",
+      "prior_evidence": "capability≠ready boundary",
+      "requirement": "DOD-03",
+      "result": "PASS",
+      "verification_ids": [
+        "V06"
+      ]
+    },
+    {
+      "claim_id": "CLM-14",
+      "evidence_action": "TARGETED_RERUN",
+      "prior_evidence": "prior pointer PASS",
+      "requirement": "DOD-04",
+      "result": "PASS",
+      "verification_ids": [
+        "V08",
+        "V09"
+      ]
+    },
+    {
+      "claim_id": "CLM-15",
+      "evidence_action": "TARGETED_RERUN",
+      "prior_evidence": "PRD rejects new services",
+      "requirement": "DOD-05",
+      "result": "PASS",
+      "verification_ids": [
+        "V05"
+      ]
+    }
+  ],
+  "blocking_verifications": [
+    {
+      "acceptance_mode": "LOCAL",
+      "candidate_id": null,
+      "claim_ids": [
+        "CLM-06",
+        "CLM-10",
+        "CLM-11"
+      ],
+      "claim_results": {
+        "CLM-06": "PASS",
+        "CLM-10": "PASS",
+        "CLM-11": "PASS"
+      },
+      "command": "uv --directory nodeskclaw-knowledge run pytest tests/test_chunk_index_after_ingestion.py -q",
+      "evidence_action": "NEW_EVIDENCE",
+      "exit_code": 0,
+      "inherited": false,
+      "policy": "LOCAL_TRANSIENT",
+      "raw_log_ref": ".smc/evidence/knowledge-v2.4.4-r1-retrieval-runtime-closure/logs/20260912T131415.064078Z-V01.log",
+      "raw_log_sha256": "sha256:237474ab59a59668e0103f6f9175f811016c633f7df7389bc3c1d58110643429",
+      "result": "PASS",
+      "source_manifest": null,
+      "source_manifest_sha256": null,
+      "source_verification_id": null,
+      "timestamp": "2026-09-12T13:14:15.064078Z",
+      "verification_id": "V01"
+    },
+    {
+      "acceptance_mode": "LOCAL",
+      "candidate_id": null,
+      "claim_ids": [
+        "CLM-09",
+        "CLM-10",
+        "CLM-11"
+      ],
+      "claim_results": {
+        "CLM-09": "PASS",
+        "CLM-10": "PASS",
+        "CLM-11": "PASS"
+      },
+      "command": "uv --directory nodeskclaw-knowledge run pytest tests/test_chunk_index_after_ingestion.py -q",
+      "evidence_action": "NEW_EVIDENCE",
+      "exit_code": 0,
+      "inherited": false,
+      "policy": "LOCAL_TRANSIENT",
+      "raw_log_ref": ".smc/evidence/knowledge-v2.4.4-r1-retrieval-runtime-closure/logs/20260912T131416.731479Z-V02.log",
+      "raw_log_sha256": "sha256:4a43ce9a2d6b3d7212694a858c21ee01bd9c1ea461fe568a8de013d1ab3ff614",
+      "result": "PASS",
+      "source_manifest": null,
+      "source_manifest_sha256": null,
+      "source_verification_id": null,
+      "timestamp": "2026-09-12T13:14:16.731479Z",
+      "verification_id": "V02"
+    },
+    {
+      "acceptance_mode": "LOCAL",
+      "candidate_id": null,
+      "claim_ids": [
+        "CLM-07",
+        "CLM-11"
+      ],
+      "claim_results": {
+        "CLM-07": "PASS",
+        "CLM-11": "PASS"
+      },
+      "command": "uv --directory nodeskclaw-knowledge run pytest tests/test_capability_planner.py tests/test_retrieval_planner.py -q",
+      "evidence_action": "NEW_EVIDENCE",
+      "exit_code": 0,
+      "inherited": false,
+      "policy": "LOCAL_TRANSIENT",
+      "raw_log_ref": ".smc/evidence/knowledge-v2.4.4-r1-retrieval-runtime-closure/logs/20260912T131418.300913Z-V03.log",
+      "raw_log_sha256": "sha256:30b736bfec90beee98cc9949a0f1d39849332e999599b027432903496521d5bb",
+      "result": "PASS",
+      "source_manifest": null,
+      "source_manifest_sha256": null,
+      "source_verification_id": null,
+      "timestamp": "2026-09-12T13:14:18.300913Z",
+      "verification_id": "V03"
+    },
+    {
+      "acceptance_mode": "LOCAL",
+      "candidate_id": null,
+      "claim_ids": [
+        "CLM-08",
+        "CLM-11"
+      ],
+      "claim_results": {
+        "CLM-08": "PASS",
+        "CLM-11": "PASS"
+      },
+      "command": "uv --directory nodeskclaw-knowledge run pytest tests/test_retrieval_fail_closed_writeback.py -q",
+      "evidence_action": "NEW_EVIDENCE",
+      "exit_code": 0,
+      "inherited": false,
+      "policy": "LOCAL_TRANSIENT",
+      "raw_log_ref": ".smc/evidence/knowledge-v2.4.4-r1-retrieval-runtime-closure/logs/20260912T131419.871378Z-V04.log",
+      "raw_log_sha256": "sha256:7bdc090a0d88b20a9a76a4309b0a44e6aceec5075baf3b14da9a36a09154e41f",
+      "result": "PASS",
+      "source_manifest": null,
+      "source_manifest_sha256": null,
+      "source_verification_id": null,
+      "timestamp": "2026-09-12T13:14:19.871378Z",
+      "verification_id": "V04"
+    },
+    {
+      "acceptance_mode": "LOCAL",
+      "candidate_id": null,
+      "claim_ids": [
+        "CLM-05",
+        "CLM-15"
+      ],
+      "claim_results": {
+        "CLM-05": "PASS",
+        "CLM-15": "PASS"
+      },
+      "command": "python -c 'import pathlib, subprocess, sys; r = subprocess.run(['\"'\"'git'\"'\"', '\"'\"'diff'\"'\"', '\"'\"'--stat'\"'\"', '\"'\"'--exit-code'\"'\"', '\"'\"'HEAD'\"'\"', '\"'\"'--'\"'\"', '\"'\"'nodeskclaw-knowledge/app/workers'\"'\"', '\"'\"'nodeskclaw-knowledge/app/models/enums.py'\"'\"']); cert = pathlib.Path('\"'\"'nodeskclaw-knowledge/app/services/retrieval_certification_service.py'\"'\"').exists(); enums = pathlib.Path('\"'\"'nodeskclaw-knowledge/app/models/enums.py'\"'\"').read_text(encoding='\"'\"'utf-8'\"'\"'); sys.exit(0 if r.returncode == 0 and not cert and '\"'\"'    checking ='\"'\"' not in enums else 1)'",
+      "evidence_action": "TARGETED_RERUN",
+      "exit_code": 0,
+      "inherited": false,
+      "policy": "LOCAL_TRANSIENT",
+      "raw_log_ref": ".smc/evidence/knowledge-v2.4.4-r1-retrieval-runtime-closure/logs/20260912T131421.520748Z-V05.log",
+      "raw_log_sha256": "sha256:c576ae3058dc6e9702c5857e8a77ed9d9c807fcdffe75344904b25b531b55d30",
+      "result": "PASS",
+      "source_manifest": null,
+      "source_manifest_sha256": null,
+      "source_verification_id": null,
+      "timestamp": "2026-09-12T13:14:21.520748Z",
+      "verification_id": "V05"
+    },
+    {
+      "acceptance_mode": "LOCAL",
+      "candidate_id": null,
+      "claim_ids": [
+        "CLM-13"
+      ],
+      "claim_results": {
+        "CLM-13": "PASS"
+      },
+      "command": "uv --directory nodeskclaw-knowledge run pytest tests/test_chunk_index_after_ingestion.py -q",
+      "evidence_action": "NEW_EVIDENCE",
+      "exit_code": 0,
+      "inherited": false,
+      "policy": "LOCAL_TRANSIENT",
+      "raw_log_ref": ".smc/evidence/knowledge-v2.4.4-r1-retrieval-runtime-closure/logs/20260912T131421.989630Z-V06.log",
+      "raw_log_sha256": "sha256:975649c21d30e5332a3ea2a476ad30f2621597174cdd20cd857cd26f59c8fec1",
+      "result": "PASS",
+      "source_manifest": null,
+      "source_manifest_sha256": null,
+      "source_verification_id": null,
+      "timestamp": "2026-09-12T13:14:21.989630Z",
+      "verification_id": "V06"
+    },
+    {
+      "acceptance_mode": "LIVE",
+      "candidate_id": "sha256:6fe44a17321c67e7e7a42535a543110ad418755d7cff69f8ce7aa69f6872c4e3",
+      "claim_ids": [
+        "CLM-01",
+        "CLM-11"
+      ],
+      "claim_results": {
+        "CLM-01": "PASS",
+        "CLM-11": "PASS"
+      },
+      "command": "python nodeskclaw-knowledge/scripts/smc_v244_r1_live_indexes.py",
+      "evidence_action": "NEW_EVIDENCE",
+      "exit_code": 0,
+      "inherited": false,
+      "policy": "REPO_SUMMARY",
+      "raw_log_ref": ".smc/evidence/knowledge-v2.4.4-r1-retrieval-runtime-closure/logs/20260912T125716.966010Z-V07.log",
+      "raw_log_sha256": "sha256:00859d4df65f0ff32fc2d1175d17a3967a3461166d9cb3fbb006bc29af5ba183",
+      "result": "PASS",
+      "source_manifest": null,
+      "source_manifest_sha256": null,
+      "source_verification_id": null,
+      "timestamp": "2026-09-12T12:57:16.966010Z",
+      "verification_id": "V07"
+    },
+    {
+      "acceptance_mode": "LIVE",
+      "candidate_id": "sha256:6fe44a17321c67e7e7a42535a543110ad418755d7cff69f8ce7aa69f6872c4e3",
+      "claim_ids": [
+        "CLM-02",
+        "CLM-12",
+        "CLM-14"
+      ],
+      "claim_results": {
+        "CLM-02": "PASS",
+        "CLM-12": "PASS",
+        "CLM-14": "PASS"
+      },
+      "command": "python nodeskclaw-knowledge/scripts/smc_v244_r1_live_pointer.py --case conflict",
+      "evidence_action": "TARGETED_RERUN",
+      "exit_code": 0,
+      "inherited": false,
+      "policy": "REPO_SUMMARY",
+      "raw_log_ref": ".smc/evidence/knowledge-v2.4.4-r1-retrieval-runtime-closure/logs/20260912T125721.980585Z-V08.log",
+      "raw_log_sha256": "sha256:2943709d19e870c0b3c4c131d4073bbe5945d9b045ad28a29b1caf527af3850e",
+      "result": "PASS",
+      "source_manifest": null,
+      "source_manifest_sha256": null,
+      "source_verification_id": null,
+      "timestamp": "2026-09-12T12:57:21.980585Z",
+      "verification_id": "V08"
+    },
+    {
+      "acceptance_mode": "LIVE",
+      "candidate_id": "sha256:6fe44a17321c67e7e7a42535a543110ad418755d7cff69f8ce7aa69f6872c4e3",
+      "claim_ids": [
+        "CLM-03",
+        "CLM-12",
+        "CLM-14"
+      ],
+      "claim_results": {
+        "CLM-03": "PASS",
+        "CLM-12": "PASS",
+        "CLM-14": "PASS"
+      },
+      "command": "python nodeskclaw-knowledge/scripts/smc_v244_r1_live_pointer.py --case stable",
+      "evidence_action": "TARGETED_RERUN",
+      "exit_code": 0,
+      "inherited": false,
+      "policy": "REPO_SUMMARY",
+      "raw_log_ref": ".smc/evidence/knowledge-v2.4.4-r1-retrieval-runtime-closure/logs/20260912T125726.074936Z-V09.log",
+      "raw_log_sha256": "sha256:d31288e31cd563ffdae6fcd9910cd462a5768cfc80fe6b42935b5b01bfe13b9d",
+      "result": "PASS",
+      "source_manifest": null,
+      "source_manifest_sha256": null,
+      "source_verification_id": null,
+      "timestamp": "2026-09-12T12:57:26.074936Z",
+      "verification_id": "V09"
+    },
+    {
+      "acceptance_mode": "LIVE",
+      "candidate_id": "sha256:6fe44a17321c67e7e7a42535a543110ad418755d7cff69f8ce7aa69f6872c4e3",
+      "claim_ids": [
+        "CLM-04",
+        "CLM-11"
+      ],
+      "claim_results": {
+        "CLM-04": "PASS",
+        "CLM-11": "PASS"
+      },
+      "command": "python nodeskclaw-knowledge/scripts/smc_v244_r1_live_retrieval.py",
+      "evidence_action": "NEW_EVIDENCE",
+      "exit_code": 0,
+      "inherited": false,
+      "policy": "REPO_SUMMARY",
+      "raw_log_ref": ".smc/evidence/knowledge-v2.4.4-r1-retrieval-runtime-closure/logs/20260912T125730.454503Z-V10.log",
+      "raw_log_sha256": "sha256:4941d3be2c73b1c78ac63fb72a8098f07a649faf9a72f49cac86463ab39426f3",
+      "result": "PASS",
+      "source_manifest": null,
+      "source_manifest_sha256": null,
+      "source_verification_id": null,
+      "timestamp": "2026-09-12T12:57:30.454503Z",
+      "verification_id": "V10"
+    },
+    {
+      "acceptance_mode": "LIVE",
+      "candidate_id": "sha256:6fe44a17321c67e7e7a42535a543110ad418755d7cff69f8ce7aa69f6872c4e3",
+      "claim_ids": [
+        "CLM-07",
+        "CLM-11"
+      ],
+      "claim_results": {
+        "CLM-07": "PASS",
+        "CLM-11": "PASS"
+      },
+      "command": "python nodeskclaw-knowledge/scripts/smc_v244_r1_live_retrieval_gate.py",
+      "evidence_action": "NEW_EVIDENCE",
+      "exit_code": 0,
+      "inherited": false,
+      "policy": "REPO_SUMMARY",
+      "raw_log_ref": ".smc/evidence/knowledge-v2.4.4-r1-retrieval-runtime-closure/logs/20260912T125826.537390Z-V11.log",
+      "raw_log_sha256": "sha256:76839bff7df6ef07139cf03e1c86df0d3a0932ea44fbb9627714f54d7fec70a9",
+      "result": "PASS",
+      "source_manifest": null,
+      "source_manifest_sha256": null,
+      "source_verification_id": null,
+      "timestamp": "2026-09-12T12:58:26.537390Z",
+      "verification_id": "V11"
+    },
+    {
+      "acceptance_mode": "FAULT_INJECTION",
+      "candidate_id": "sha256:6fe44a17321c67e7e7a42535a543110ad418755d7cff69f8ce7aa69f6872c4e3",
+      "claim_ids": [
+        "CLM-08",
+        "CLM-11"
+      ],
+      "claim_results": {
+        "CLM-08": "PASS",
+        "CLM-11": "PASS"
+      },
+      "command": "python nodeskclaw-knowledge/scripts/smc_v244_r1_live_fail_closed_writeback.py",
+      "evidence_action": "NEW_EVIDENCE",
+      "exit_code": 0,
+      "inherited": false,
+      "policy": "REPO_SUMMARY",
+      "raw_log_ref": ".smc/evidence/knowledge-v2.4.4-r1-retrieval-runtime-closure/logs/20260912T125756.033562Z-V12.log",
+      "raw_log_sha256": "sha256:43db373c22682f2aa990ab6f207f4e9bde35d7b5520d53328e858574053d08e3",
+      "result": "PASS",
+      "source_manifest": null,
+      "source_manifest_sha256": null,
+      "source_verification_id": null,
+      "timestamp": "2026-09-12T12:57:56.033562Z",
+      "verification_id": "V12"
+    }
+  ],
+  "completion_audit": {
+    "changed": 14,
+    "deferred": 0,
+    "done": 3,
+    "scope_drift": 0,
+    "timestamp": "2026-09-12T13:15:38.343398Z",
+    "total_items": 3,
+    "unverifiable": 0,
+    "verdict": "PASS"
+  },
+  "generated_at": "2026-09-12T13:17:49.372493Z",
+  "implementation_review": {
+    "reviewer": "code-review-and-quality",
+    "scope_fingerprint": "sha256:b235f21b5ccff2287023b4520a54af048140175ec1e26528f0eab7c695de0093",
+    "timestamp": "2026-09-12T13:17:19.362997Z",
+    "verdict": "PASS"
+  },
+  "payload_sha256": "sha256:9d8adad06053288a00b491c3aa5bc17df48883c2aaeaf158b3039199d741d3f6",
+  "plan": ".cursor/plans/v244_r1_retrieval_runtime_closure.plan.md",
+  "plan_id": "knowledge-v2.4.4-r1-retrieval-runtime-closure",
+  "plan_review": {
+    "plan_sha256": "sha256:2eb66b70efa038d1d4a98810c57cc5eb3379ef681a43ea855994c5ac95036b2b",
+    "reviewer": "smc-plan-review",
+    "timestamp": "2026-09-12T08:29:35.531887Z",
+    "verdict": "PASS"
+  },
+  "schema": "smc.evidence.manifest.v3",
+  "scope_fingerprint": "sha256:b235f21b5ccff2287023b4520a54af048140175ec1e26528f0eab7c695de0093",
+  "verification_candidate": {
+    "candidate_id": "sha256:6fe44a17321c67e7e7a42535a543110ad418755d7cff69f8ce7aa69f6872c4e3",
+    "captured_at": "2026-09-12T12:56:52.128896Z",
+    "plan_id": "knowledge-v2.4.4-r1-retrieval-runtime-closure",
+    "schema": "smc.verification.candidate.v1",
+    "scope_fingerprint": "sha256:b235f21b5ccff2287023b4520a54af048140175ec1e26528f0eab7c695de0093"
+  },
+  "workspace_base_commit": "408b688de88c4739479ee87bd6cf463e7fd7f8ea"
+}

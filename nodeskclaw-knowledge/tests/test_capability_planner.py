@@ -13,6 +13,8 @@ def test_capability_plan_default_semantic():
     plan = capability_planner.build_capability_plan(
         "hello world",
         kb_access_scopes={"kb1": "full"},
+        kb_index_states={"kb1": {"chunk": "ready"}},
+        kb_retrieval_states={"kb1": {"chunk": "ready"}},
     )
     assert "kb1" in plan.kb_capabilities
     assert plan.kb_capabilities["kb1"].selected_mode == RuntimeRetrievalMode.semantic.value
@@ -113,3 +115,16 @@ def test_build_federation_plan_execution_context_excludes_out_of_pin_kbs():
     assert provider_kb_ids == {"kb_pinned"}
     assert "kb_extra" not in plan.kb_capabilities
     assert plan.providers[0].budget == 512
+
+
+def test_capability_plan_unavailable_chunk_denies_semantic():
+    plan = capability_planner.build_capability_plan(
+        "hello world",
+        kb_access_scopes={"kb1": "full"},
+        kb_index_states={"kb1": {"chunk": "ready"}},
+        kb_retrieval_states={"kb1": {"chunk": "unavailable"}},
+    )
+    cap = plan.kb_capabilities["kb1"]
+    assert RuntimeRetrievalMode.semantic.value not in cap.allowed_modes
+    assert RuntimeRetrievalMode.semantic.value in cap.denied_modes
+    assert cap.selected_mode != RuntimeRetrievalMode.semantic.value

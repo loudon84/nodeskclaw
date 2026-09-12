@@ -189,3 +189,29 @@ def test_retrieval_planner_batches_5000_document_ids(monkeypatch):
     assert plan.slices[0].document_ids == doc_ids[:500]
     assert plan.slices[-1].document_ids == doc_ids[4500:]
     assert sum(len(s.document_ids) for s in plan.slices) == 5000
+
+
+def test_retrieval_planner_skips_denied_semantic_capability():
+    access = AccessPlan(
+        kind=AccessPlanKind.full_access,
+        dataset_ids=["ds_a"],
+        full_dataset_ids=["ds_a"],
+        partial_slices=[],
+        source_file_ids=["sf_a1"],
+        knowledge_base_ids=["kb_a"],
+    )
+    denied = KnowledgeBaseExecutionCapability(
+        knowledge_base_id="kb_a",
+        access_scope="full",
+        allowed_modes=[],
+        denied_modes=[RuntimeRetrievalMode.semantic.value],
+        selected_mode=RuntimeRetrievalMode.semantic.value,
+    )
+    plan = build_retrieval_plan(
+        access,
+        [_kb("kb_a", "ds_a")],
+        [_item("kb_a")],
+        kb_capabilities={"kb_a": denied},
+        dataset_id_by_kb_id={"kb_a": "ds_a"},
+    )
+    assert plan.slices == []

@@ -95,6 +95,14 @@ def _build_execution_slice(
     )
 
 
+def _capability_allows_slice(kb_capability: KnowledgeBaseExecutionCapability | None) -> bool:
+    if kb_capability is None:
+        return True
+    if not kb_capability.allowed_modes:
+        return False
+    return kb_capability.selected_mode in kb_capability.allowed_modes
+
+
 def build_metadata_condition(filters: dict[str, list] | None) -> dict[str, Any] | None:
     """Optional RAGFlow metadata_condition; security still relies on local ACL + document_ids."""
     if not filters:
@@ -152,18 +160,19 @@ def build_retrieval_plan(
         kb = kb_by_dataset.get(dataset_id)
         kb_id = kb.id if kb else None
         cap = kb_caps.get(kb_id or "")
-        slices.append(
-            _build_execution_slice(
-                kb_id=kb_id,
-                dataset_id=dataset_id,
-                access_scope="full",
-                document_ids=None,
-                weight=weights.get(kb_id or "", 1.0),
-                kb_capability=cap,
-                metadata_condition=condition,
-                top_k=effective_top_k,
+        if _capability_allows_slice(cap):
+            slices.append(
+                _build_execution_slice(
+                    kb_id=kb_id,
+                    dataset_id=dataset_id,
+                    access_scope="full",
+                    document_ids=None,
+                    weight=weights.get(kb_id or "", 1.0),
+                    kb_capability=cap,
+                    metadata_condition=condition,
+                    top_k=effective_top_k,
+                )
             )
-        )
 
     for partial in access_plan.partial_slices:
         kb_id = partial.get("knowledge_base_id")
@@ -171,6 +180,8 @@ def build_retrieval_plan(
         weight = weights.get(kb_id or "", 1.0)
         dataset_id = partial["dataset_id"]
         cap = kb_caps.get(kb_id or "")
+        if not _capability_allows_slice(cap):
+            continue
         if not document_ids:
             slices.append(
                 _build_execution_slice(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from datetime import UTC, datetime
 
 from sqlalchemy import select
@@ -84,6 +85,10 @@ async def ensure_kb_index_states(
             state.retrieval_status = IndexRetrievalStatus.unavailable.value
         elif index_type == IndexType.chunk.value:
             if state.status == IndexStateStatus.ready.value:
+                payload = state.validation_payload if isinstance(state.validation_payload, dict) else {}
+                if payload.get("runtime_operation") == "fail_closed_writeback":
+                    states.append(state)
+                    continue
                 await _refresh_chunk_retrieval_from_dataset(
                     db,
                     state,
@@ -122,6 +127,7 @@ async def _refresh_chunk_retrieval_from_dataset(
             "retrieval_ready": retrieval_ready,
         },
     )
+    await db.commit()
 
 
 def _sync_retrieval_status(
@@ -224,6 +230,40 @@ async def set_state_status(
     elif status == IndexStateStatus.unsupported.value:
         state.retrieval_status = IndexRetrievalStatus.unsupported.value
     return state
+
+
+async def mark_chunk_retrieval_unavailable(
+    db: AsyncSession,
+    *,
+    knowledge_base_ids: list[str],
+) -> list[IndexState]:
+    updated: list[IndexState] = []
+    seen: set[str] = set()
+    for knowledge_base_id in knowledge_base_ids:
+        if not knowledge_base_id or knowledge_base_id in seen:
+            continue
+        seen.add(knowledge_base_id)
+        fetched = db.scalar(
+            select(IndexState).where(
+                IndexState.knowledge_base_id == knowledge_base_id,
+                IndexState.index_type == IndexType.chunk.value,
+                not_deleted(IndexState),
+            )
+        )
+        if inspect.isawaitable(fetched):
+            fetched = await fetched
+        if not isinstance(fetched, IndexState):
+            continue
+        fetched.retrieval_status = IndexRetrievalStatus.unavailable.value
+        await persist_validation(
+            fetched,
+            validation_payload={
+                "runtime_operation": "fail_closed_writeback",
+                "retrieval_ready": False,
+            },
+        )
+        updated.append(fetched)
+    return updated
 
 
 async def apply_chunk_inventory(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import time
 import uuid
 from datetime import UTC, datetime
@@ -956,7 +957,26 @@ async def _retrieve_for_set(
         }
     )
 
+    if str(os.environ.get("KNOWLEDGE_LIVE_FAULT_SLICE_FAIL") or "").strip() == "1":
+        failed_slice_count = max(failed_slice_count, 1)
+
     if failed_slice_count > 0 and failure_policy != "degraded":
+        failed_kb_ids = sorted(
+            {
+                item.knowledge_base_id
+                for item in slice_results
+                if item.status == "failed" and item.knowledge_base_id
+            }
+        )
+        if not failed_kb_ids:
+            failed_kb_ids = sorted(
+                {slice_.knowledge_base_id for slice_ in plan.slices if slice_.knowledge_base_id}
+            )
+        if failed_kb_ids:
+            await index_state_service.mark_chunk_retrieval_unavailable(
+                db,
+                knowledge_base_ids=failed_kb_ids,
+            )
         audit = RetrievalAudit(
             member_id=member.member_id,
             org_id=member.org_id,

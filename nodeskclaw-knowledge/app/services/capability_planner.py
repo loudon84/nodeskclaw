@@ -202,7 +202,7 @@ def build_kb_execution_capability(
             if idx_ok:
                 retrieval_features = list(matched_rule["retrieval_features"])
 
-    allowed_modes = [RuntimeRetrievalMode.semantic.value]
+    allowed_modes: list[str] = []
     denied_modes: list[str] = []
     degraded: list[str] = []
 
@@ -214,6 +214,18 @@ def build_kb_execution_capability(
     ]
     for mode in candidate_modes:
         if mode == RuntimeRetrievalMode.semantic.value:
+            ok, reason = _index_usable(
+                IndexType.chunk.value,
+                build_states=build_states,
+                retrieval_states=retrieval_map,
+                capabilities=capabilities,
+            )
+            if ok:
+                allowed_modes.append(mode)
+            else:
+                denied_modes.append(mode)
+                if reason:
+                    degraded.append(f"{mode}:{reason}")
             continue
         if access_scope == "filtered" and mode in _FILTERED_DENIED_MODES:
             denied_modes.append(mode)
@@ -266,10 +278,15 @@ def build_kb_execution_capability(
     selected_mode = preferred_mode
     fallback_used = False
     if selected_mode not in allowed_modes:
-        if preferred_mode != RuntimeRetrievalMode.semantic.value:
+        if (
+            RuntimeRetrievalMode.semantic.value in allowed_modes
+            and preferred_mode != RuntimeRetrievalMode.semantic.value
+        ):
             fallback_used = True
             reason_codes = list(reason_codes) + ["fallback_semantic"]
-        selected_mode = RuntimeRetrievalMode.semantic.value
+            selected_mode = RuntimeRetrievalMode.semantic.value
+        else:
+            selected_mode = allowed_modes[0] if allowed_modes else ""
 
     fallback_mode = str(policy.get("fallback_policy") or RuntimeRetrievalMode.semantic.value)
     if fallback_mode not in {m.value for m in RuntimeRetrievalMode}:

@@ -299,6 +299,25 @@ class RagflowRuntimeAdapter:
             document_ids=document_ids,
         )
 
+    async def _existing_content_question(self, dataset_id: str) -> str | None:
+        documents = await self.list_documents(dataset_id, page=1, page_size=20)
+        for document in documents or []:
+            document_id = getattr(document, "id", None)
+            if document_id is None and isinstance(document, dict):
+                document_id = document.get("id")
+            if not document_id:
+                continue
+            chunks = await self.read_document_chunks(dataset_id, str(document_id), page=1, page_size=5)
+            for chunk in chunks or []:
+                if isinstance(chunk, dict):
+                    content = str(chunk.get("content") or chunk.get("content_with_weight") or "")
+                else:
+                    content = str(getattr(chunk, "content", "") or "")
+                text = " ".join(content.split())
+                if text:
+                    return text[:80]
+        return None
+
     async def validate_index_retrieval(
         self,
         *,
@@ -306,8 +325,14 @@ class RagflowRuntimeAdapter:
         question: str = "health check",
     ) -> bool:
         try:
-            result = await self.retrieve_index(dataset_ids=[dataset_id], question=question, top_k=1)
-            return result is not None
+            query = (question or "").strip()
+            if not query or query == "health check":
+                query = await self._existing_content_question(dataset_id) or ""
+            if not query:
+                return False
+            result = await self.retrieve_index(dataset_ids=[dataset_id], question=query, top_k=1)
+            chunks = getattr(result, "chunks", None) if result is not None else None
+            return bool(chunks) and len(chunks) >= 1
         except Exception:
             return False
 
