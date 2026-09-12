@@ -136,6 +136,7 @@ def test_artifact_ids_same_run_only_rejects_cross_run_and_tenant():
     assert "other-tenant" not in projected["payload"]["artifact_ids"]
 
 
+# @lat: [[architecture/skill-agent#RM-20 Public Rich Runtime Events]]
 def test_contract_version_reports_160_when_agent_enabled():
     source = Path(__file__).resolve().parents[2] / "app" / "services" / "hermes_skill" / "runtime_skill_run_service.py"
     text = source.read_text(encoding="utf-8")
@@ -168,6 +169,7 @@ def test_contract_version_reports_160_when_agent_enabled():
             contract_version="1.6.0",
         )
     assert content["contract_version"] == "1.6.0"
+    assert content["auth_type"] == "user_jwt"
     with patch("app.services.hermes_skill.runtime_skill_run_service.settings.SKILL_AGENT_ENABLED", False):
         content_off = RuntimeSkillRunService.build_structured_content(
             task=task,
@@ -177,6 +179,7 @@ def test_contract_version_reports_160_when_agent_enabled():
             contract_version="1.5.0",
         )
     assert content_off["contract_version"] == "1.5.0"
+    assert content_off.get("auth_type") != "user_jwt"
 
 
 def test_no_second_store_or_sse_endpoint():

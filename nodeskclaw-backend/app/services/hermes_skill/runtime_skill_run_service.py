@@ -935,6 +935,8 @@ class RuntimeSkillRunService:
                 "committed": True,
                 "entrypoint": request.entrypoint,
                 "task_source": request.task_source,
+                # @lat: [[architecture/skill-agent#RM-20 Public Rich Runtime Events]]
+                "auth_type": "user_jwt",
             }
             if contract_version:
                 content["contract_version"] = contract_version
