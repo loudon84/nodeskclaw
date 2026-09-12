@@ -60,7 +60,7 @@ Repository-wide clean worktree is NOT required after commit. Original ambient di
 
 ## HEAD Stability
 
-Before implementation commit, repository `HEAD` must remain equal to the frozen workspace `base_commit`. Unrelated dirty files may coexist, but unrelated commits/rebases in the same worktree are not ambient state and return `DELIVERY_HEAD_DRIFT`. After the guarded implementation commit, verification of the commit may allow the expected HEAD change only to that verified commit.
+Before implementation commit, repository `HEAD` must remain equal to the frozen workspace `base_commit`, **or** be a descendant whose `base..HEAD` file list is only governance tooling (`.agents/skills/`, `.cursor/skills/`, `tools/agent-skills/`) plus accompanying `lat.md/` notes. Product files, Plan write-set paths, or any other committed path in that range still return `DELIVERY_HEAD_DRIFT`. Unrelated dirty files may coexist. After the guarded implementation commit, verification of the commit may allow the expected HEAD change only to that verified commit.
 
 ## Dirty-state Identity
 

@@ -290,6 +290,18 @@ class DeliveryToolsTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "DELIVERY_HEAD_DRIFT"):
             workspace.assert_stable(self.plan)
 
+    def test_workspace_tooling_ancestor_commit_is_head_stable(self):
+        # @lat: [[agent-skills-governance#Agent Skills Governance#Plan Closure Contract#Current Delivery Contracts#Tooling ancestor commits are head-stable]]
+        self.init_workspace()
+        skill = self.root / ".agents" / "skills" / "fixture" / "SKILL.md"
+        skill.parent.mkdir(parents=True)
+        skill.write_text("tooling\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(self.root), "add", ".agents/skills/fixture/SKILL.md"], check=True)
+        subprocess.run(["git", "-C", str(self.root), "commit", "-qm", "tooling"], check=True)
+        status = workspace.assert_stable(self.plan)
+        self.assertTrue(status["head_stable"])
+        self.assertNotEqual(status["base_commit"], status["current_head"])
+
     def test_workspace_plan_semantic_drift_blocks(self):
         # @lat: [[ges-tests#GES Tests#Workspace#Plan semantic drift blocks]]
         self.init_workspace()

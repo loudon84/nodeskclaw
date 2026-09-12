@@ -26,6 +26,7 @@ SCHEMA = "smc.delivery.workspace.v1"
 STATUS_SCHEMA = "smc.delivery.workspace.status.v1"
 DEFAULT_EXCLUDES = (".smc/", "docs_agent/evidence/")
 TOOLING_PREFIXES = (".agents/skills/", ".cursor/skills/", "tools/agent-skills/")
+HEAD_STABLE_PREFIXES = TOOLING_PREFIXES + ("lat.md/",)
 
 
 def _norm(rel: str) -> str:
@@ -38,6 +39,25 @@ def _norm(rel: str) -> str:
 def _excluded(rel: str) -> bool:
     rel = _norm(rel)
     return any(rel == prefix.rstrip("/") or rel.startswith(prefix) for prefix in DEFAULT_EXCLUDES)
+
+
+def _under_prefixes(rel: str, prefixes: tuple[str, ...]) -> bool:
+    rel = _norm(rel)
+    return any(rel == prefix.rstrip("/") or rel.startswith(prefix) for prefix in prefixes)
+
+
+def tooling_only_descendant(root: Path, base: str, head: str) -> bool:
+    if not base or not head or base == head:
+        return False
+    ancestor = git(root, "merge-base", "--is-ancestor", base, head, check=False)
+    if ancestor.returncode:
+        return False
+    names = {
+        _norm(raw.strip())
+        for raw in git(root, "diff", "--name-only", base, head, "--").stdout.splitlines()
+        if raw.strip()
+    }
+    return bool(names) and all(_under_prefixes(rel, HEAD_STABLE_PREFIXES) for rel in names)
 
 
 def planned_files(plan: Path) -> set[str]:
@@ -257,7 +277,8 @@ def inspect(plan: Path, *, allow_head_change: bool = False) -> dict:
     current_plan_sha = semantic_plan_sha256(plan)
     plan_semantic_changed = current_plan_sha != data.get("plan_semantic_sha256")
     current_head = git(root, "rev-parse", "HEAD").stdout.strip()
-    head_stable = current_head == data.get("base_commit")
+    base_commit = str(data.get("base_commit") or "")
+    head_stable = current_head == base_commit or tooling_only_descendant(root, base_commit, current_head)
     ambient_fp = _snapshot_fingerprint(current_ambient)
     ambient_stable = not ambient_mutated and ambient_fp == data.get("ambient_baseline_fingerprint")
     current_scope = scope_fingerprint(plan, data)

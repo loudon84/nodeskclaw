@@ -56,6 +56,10 @@ v3.5 keeps the v3.4 Cursor `content` projection gate through [[.agents/skills/sm
 
 `migrate_legacy_plan.py` reports `PLAN_ALREADY_CURRENT` and leaves bytes unchanged when the Plan is already v3.4 or v3.5.
 
+#### Tooling ancestor commits are head-stable
+
+A descendant HEAD stays workspace-stable when every path in `base..HEAD` is under `.agents/skills/`, `.cursor/skills/`, `tools/agent-skills/`, or `lat.md/`. Other committed paths remain `DELIVERY_HEAD_DRIFT`. See [[.agents/skills/smc-plan-delivery/scripts/workspace.py#tooling_only_descendant]].
+
 ### Wrapper Validator Fixtures
 
 `tools/agent-skills` 包装器测试必须使用与 [[.agents/skills/smc-plan-validator/scripts/validate_plan.py#validate_plan]] 相同的 `smc.plan.v3.2` 合同，不能再停留在已退役的 `smc.plan.v3`。
