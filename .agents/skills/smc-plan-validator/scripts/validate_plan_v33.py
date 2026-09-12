@@ -79,7 +79,7 @@ def contract_checks(plan:Path,expected_contract:str)->list[dict[str,str]]:
 def transform_to_v32(text:str)->str:
     lines=text.splitlines();in_ver=False;policy_idx=None;header_seen=False
     for i,line in enumerate(lines):
-        if re.match(r"^plan_contract\s*:\s*smc\.plan\.v3\.[34]\s*$",line):lines[i]="plan_contract: smc.plan.v3.2"
+        if re.match(r"^plan_contract\s*:\s*smc\.plan\.v3\.[345]\s*$",line):lines[i]="plan_contract: smc.plan.v3.2"
         if line.strip()=="## Verification Ledger":in_ver=True;continue
         if in_ver and line.startswith("## "):in_ver=False
         if in_ver and line.strip().startswith("|") and "Verification ID" in line and "Evidence Policy" in line:

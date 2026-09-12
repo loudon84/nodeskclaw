@@ -121,7 +121,7 @@ def validate(path: Path) -> list[str]:
     text = path.read_text(encoding="utf-8")
     fm = parse_top_level_frontmatter(text)
     contract = fm.get("plan_contract", "").strip()
-    require_content = contract == "smc.plan.v3.4"
+    require_content = contract in {"smc.plan.v3.4", "smc.plan.v3.5"}
     expected = expected_contents(text)
     curs = cursor_todos(text)
     md = markdown_todos(text)
