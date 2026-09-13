@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:nodeskclaw:knowledge:frontend:v1:build-profile-view",
+  "title": "BuildProfileView",
+  "type": "object",
+  "properties": {
+    "active_build_profile_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "resolved_profile": {
+      "$ref": "urn:nodeskclaw:knowledge:frontend:v1:build-profile"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "resolved_profile"
+  ]
+}

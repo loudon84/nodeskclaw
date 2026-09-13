@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:nodeskclaw:knowledge:frontend:v1:retrieval-profile",
+  "title": "RetrievalProfile",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "knowledge_set_id": {
+      "type": "string"
+    },
+    "version": {
+      "type": "integer"
+    },
+    "config": {
+      "type": "object"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "active",
+        "archived"
+      ]
+    },
+    "created_by_member_id": {
+      "type": "string"
+    },
+    "activated_at": true,
+    "created_at": true,
+    "updated_at": true
+  },
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "knowledge_set_id",
+    "version",
+    "config",
+    "status",
+    "created_by_member_id"
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "evidence_id": "ev_demo",
+    "citation_id": "cit_demo",
+    "org_id": "org_demo",
+    "issued_member_id": "member_demo",
+    "evidence_type": "chunk",
+    "content": "example evidence",
+    "origin": "application",
+    "knowledge_base_id": "kb_demo",
+    "source_file_id": "sf_demo",
+    "file_version_id": "fv_demo",
+    "page": 1,
+    "score": 0.9,
+    "accessible": true,
+    "reason": "allowed"
+  }
+}

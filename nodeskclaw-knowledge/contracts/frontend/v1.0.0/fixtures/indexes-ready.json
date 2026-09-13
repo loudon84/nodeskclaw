@@ -1,0 +1,14 @@
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "chunk": {
+      "build_status": "ready",
+      "retrieval_status": "ready",
+      "validation": {
+        "runtime_operation": "this_dataset_retrieval",
+        "retrieval_ready": true
+      }
+    }
+  }
+}

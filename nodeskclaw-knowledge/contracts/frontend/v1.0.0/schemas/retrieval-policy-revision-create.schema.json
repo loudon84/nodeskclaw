@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:nodeskclaw:knowledge:frontend:v1:retrieval-policy-revision-create",
+  "title": "RetrievalPolicyRevisionCreate",
+  "type": "object",
+  "properties": {
+    "query_intelligence_policy": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "provider_policy": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "provider_weights": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "candidate_budget": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "fanout_budget": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "latency_budget": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "fallback_policy": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "artifact_policy": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "fusion_policy": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "notes": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "additionalProperties": false
+}

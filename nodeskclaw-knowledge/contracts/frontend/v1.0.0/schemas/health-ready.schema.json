@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:nodeskclaw:knowledge:frontend:v1:health-ready",
+  "title": "HealthReady",
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": [
+        "ok",
+        "not_ready"
+      ]
+    },
+    "checks": {
+      "type": "object",
+      "properties": {
+        "database": {
+          "type": "boolean"
+        },
+        "ragflow": {
+          "type": "boolean"
+        },
+        "backend": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "database",
+        "ragflow",
+        "backend"
+      ]
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "status",
+    "checks"
+  ]
+}

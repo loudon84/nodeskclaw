@@ -1,0 +1,30 @@
+{
+  "code": 0,
+  "error_code": null,
+  "message_key": null,
+  "message": "upload accepted, parsing in background",
+  "data": {
+    "source_file": {
+      "id": "sf_demo",
+      "org_id": "org_demo",
+      "knowledge_base_id": "kb_demo",
+      "file_name": "demo.pdf",
+      "owner_member_id": "member_demo",
+      "status": "pending",
+      "acl_version": 1,
+      "metadata": {},
+      "metadata_revision": 0,
+      "source_kind": "manual"
+    },
+    "file_version_id": "fv_demo",
+    "job": {
+      "id": "ij_demo",
+      "source_file_id": "sf_demo",
+      "file_version_id": "fv_demo",
+      "status": "pending",
+      "progress": 0,
+      "attempt_count": 0,
+      "max_attempts": 5
+    }
+  }
+}

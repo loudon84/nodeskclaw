@@ -1,0 +1,146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:nodeskclaw:knowledge:frontend:v1:evidence",
+  "title": "EvidenceResolve",
+  "type": "object",
+  "properties": {
+    "evidence_id": {
+      "type": "string"
+    },
+    "citation_id": {
+      "type": "string"
+    },
+    "message_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "org_id": {
+      "type": "string"
+    },
+    "issued_member_id": {
+      "type": "string"
+    },
+    "evidence_type": {
+      "type": "string"
+    },
+    "content": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source_refs": {
+      "type": [
+        "array",
+        "null"
+      ]
+    },
+    "origin": {
+      "type": "string"
+    },
+    "knowledge_base_id": {
+      "type": "string"
+    },
+    "source_file_id": {
+      "type": "string"
+    },
+    "file_version_id": {
+      "type": "string"
+    },
+    "page": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "positions": {
+      "type": [
+        "array",
+        "null"
+      ]
+    },
+    "score": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "quote": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "accessible": {
+      "type": "boolean"
+    },
+    "reason": {
+      "type": "string"
+    },
+    "source_kind": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "connector_type": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "connector_name": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source_path": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source_revision": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source_modified_at": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "last_synced_at": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "sync_state": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source_freshness": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "evidence_id",
+    "knowledge_base_id",
+    "source_file_id",
+    "file_version_id",
+    "accessible",
+    "reason"
+  ]
+}

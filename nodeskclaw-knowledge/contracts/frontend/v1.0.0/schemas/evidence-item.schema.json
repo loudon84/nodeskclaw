@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:nodeskclaw:knowledge:frontend:v1:evidence-item",
+  "title": "PublicEvidenceItem",
+  "type": "object",
+  "properties": {
+    "evidence_id": {
+      "type": "string"
+    },
+    "knowledge_base_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source_file_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "file_version_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "file_name": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "content": {
+      "type": "string"
+    },
+    "score": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "similarity": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "weighted_score": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "page": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "highlight": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source_freshness": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "last_synced_at": true
+  },
+  "additionalProperties": false,
+  "required": [
+    "evidence_id"
+  ]
+}

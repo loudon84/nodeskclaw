@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:nodeskclaw:knowledge:frontend:v1:build-job",
+  "title": "BuildJob",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "org_id": {
+      "type": "string"
+    },
+    "knowledge_base_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "build_profile_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "index_type": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "trigger_reason": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "queued",
+        "running",
+        "completed",
+        "partial",
+        "failed",
+        "cancelled"
+      ]
+    },
+    "progress": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "error_code": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "error_message": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "attempt_count": {
+      "type": "integer"
+    },
+    "finished_at": true,
+    "created_at": true
+  },
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "org_id",
+    "status",
+    "progress",
+    "attempt_count"
+  ]
+}

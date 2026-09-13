@@ -1,0 +1,7 @@
+{
+  "code": 40000,
+  "error_code": 40000,
+  "message_key": "errors.knowledge.release_id_conflict",
+  "message": "Release 与 Channel 当前指针不一致",
+  "data": null
+}

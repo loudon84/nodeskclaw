@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:nodeskclaw:knowledge:frontend:v1:error-response",
+  "title": "ErrorResponse",
+  "type": "object",
+  "properties": {
+    "code": {
+      "type": "integer",
+      "minimum": 40000
+    },
+    "error_code": {
+      "type": "integer",
+      "minimum": 40000
+    },
+    "message_key": {
+      "type": "string"
+    },
+    "message": {
+      "type": "string"
+    },
+    "data": {
+      "type": "null"
+    },
+    "details": {
+      "type": "object"
+    },
+    "message_params": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "code",
+    "error_code",
+    "message_key",
+    "message",
+    "data"
+  ]
+}

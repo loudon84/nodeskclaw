@@ -1,0 +1,23 @@
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "application_id": "app_demo",
+    "release_id": "rel_demo",
+    "channel": "stable",
+    "manifest_hash": "sha256-demo",
+    "status": "success",
+    "chunks": [
+      {
+        "evidence_id": "ev_demo",
+        "knowledge_base_id": "kb_demo",
+        "source_file_id": "sf_demo",
+        "file_version_id": "fv_demo",
+        "file_name": "demo.pdf",
+        "content": "example evidence",
+        "score": 0.9,
+        "page": 1
+      }
+    ]
+  }
+}

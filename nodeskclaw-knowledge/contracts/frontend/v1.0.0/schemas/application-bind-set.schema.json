@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:nodeskclaw:knowledge:frontend:v1:application-bind-set",
+  "title": "KnowledgeApplicationBindSet",
+  "type": "object",
+  "properties": {
+    "knowledge_set_id": {
+      "type": "string"
+    },
+    "sort_order": {
+      "type": "integer"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "knowledge_set_id"
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "id": "rel_demo",
+    "application_id": "app_demo",
+    "version": 1,
+    "status": "validating",
+    "release_manifest": {
+      "schema_version": 1
+    },
+    "manifest_hash": "sha256-demo",
+    "validation_job_id": "job_demo",
+    "created_by_member_id": "member_demo"
+  }
+}

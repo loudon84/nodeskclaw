@@ -1,0 +1,17 @@
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "id": "job_demo",
+    "org_id": "org_demo",
+    "knowledge_base_id": null,
+    "build_profile_id": null,
+    "index_type": null,
+    "trigger_reason": "release_validation",
+    "status": "completed",
+    "progress": 100,
+    "error_code": null,
+    "error_message": null,
+    "attempt_count": 1
+  }
+}

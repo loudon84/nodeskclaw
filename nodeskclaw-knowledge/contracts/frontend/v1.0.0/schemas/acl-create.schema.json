@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:nodeskclaw:knowledge:frontend:v1:acl-create",
+  "title": "AclCreate",
+  "type": "object",
+  "properties": {
+    "subject_type": {
+      "type": "string",
+      "enum": [
+        "member",
+        "role",
+        "department",
+        "organization"
+      ]
+    },
+    "subject_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "permission": {
+      "type": "string"
+    },
+    "effect": {
+      "type": "string",
+      "enum": [
+        "allow",
+        "deny"
+      ]
+    },
+    "role": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "subject_type",
+    "subject_id"
+  ]
+}

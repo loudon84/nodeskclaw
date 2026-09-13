@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:nodeskclaw:knowledge:frontend:v1:artifact-content",
+  "title": "ArtifactContent",
+  "type": "object",
+  "properties": {
+    "artifact_type": {
+      "type": "string"
+    },
+    "content": true
+  },
+  "additionalProperties": true,
+  "required": [
+    "artifact_type",
+    "content"
+  ]
+}

@@ -6,7 +6,7 @@ DeskClaw 团队版（NoDeskClaw）是人与 AI 共同经营的实例管理平台
 
 - [[domain]] — 领域概念：组织、集群、实例、工作区、基因、协作消息、知识对象与 AutoTask 对象
 - [[architecture]] — 系统与组件架构：Backend、Skill Agent、Portal、LLM Proxy、Knowledge、Task、Runtime
-- [[decisions]] — 跨组件设计决策：软删除、错误契约、CE/EE、计算 Provider、Knowledge/RAGFlow 边界、WORK-EXPERT-CONTRACT、Skill Platform 执行平面
+- [[decisions]] — 跨组件设计决策：软删除、错误契约、CE/EE、计算 Provider、Knowledge/RAGFlow 边界、WORK-EXPERT-CONTRACT、Skill Platform 执行平面、Knowledge 前端合同
 
 ## Product Mission
 
@@ -14,7 +14,7 @@ DeskClaw 团队版（NoDeskClaw）是人与 AI 共同经营的实例管理平台
 
 对外首次称呼必须是「DeskClaw 团队版」；技术上下文可用 DeskClaw、NoDeskClaw、CE、EE。
 
-实现路径定位仍用 `.cursor/context/*-codemap.md`。Expert MCP 对 apps/work 的消费契约以 [[decisions/work-expert-contract]] 与 `contracts/work-expert/v1.0.2/` 为准；员工 Skill-first 合同与执行平面见 [[decisions/skill-platform-execution]] 与 `contracts/skill-run/v1.0.0/`、`v1.1.0/`。其余 Backend 契约见 `docs/backend/`。本目录描述意图与边界。
+实现路径定位仍用 `.cursor/context/*-codemap.md`。Expert MCP 对 apps/work 的消费契约以 [[decisions/work-expert-contract]] 与 `contracts/work-expert/v1.0.2/` 为准；员工 Skill-first 合同与执行平面见 [[decisions/skill-platform-execution]] 与 `contracts/skill-run/v1.0.0/`、`v1.1.0/`。Knowledge 浏览器合同见 [[decisions/knowledge-frontend-contract]]。其余 Backend 契约见 `docs/backend/`。本目录描述意图与边界。
 
 ## Component Boundaries
 

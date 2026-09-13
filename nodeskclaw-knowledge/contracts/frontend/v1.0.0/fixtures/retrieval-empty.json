@@ -1,0 +1,12 @@
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "application_id": "app_demo",
+    "release_id": "rel_demo",
+    "channel": "stable",
+    "manifest_hash": "sha256-demo",
+    "status": "empty",
+    "chunks": []
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:nodeskclaw:knowledge:frontend:v1:index-state-map",
+  "title": "IndexStateMap",
+  "type": "object",
+  "additionalProperties": {
+    "type": "object",
+    "properties": {
+      "build_status": {
+        "type": "string",
+        "enum": [
+          "not_built",
+          "building",
+          "ready",
+          "stale",
+          "failed",
+          "unsupported"
+        ]
+      },
+      "retrieval_status": {
+        "type": "string",
+        "enum": [
+          "unavailable",
+          "ready",
+          "degraded",
+          "unsupported"
+        ]
+      },
+      "last_error": {
+        "type": "string"
+      },
+      "validation": {
+        "type": "object"
+      },
+      "coverage": {
+        "type": "object"
+      },
+      "last_validated_at": {
+        "type": "string"
+      },
+      "runtime_feature": true
+    },
+    "additionalProperties": false,
+    "required": [
+      "build_status",
+      "retrieval_status"
+    ]
+  }
+}

@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:nodeskclaw:knowledge:frontend:v1:knowledge-set",
+  "title": "KnowledgeSet",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "org_id": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "description": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "owner_member_id": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "active",
+        "disabled"
+      ]
+    },
+    "acl_version": {
+      "type": "integer"
+    },
+    "visibility": {
+      "type": "string",
+      "enum": [
+        "private",
+        "department",
+        "organization"
+      ]
+    },
+    "retrieval_config": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "usage_count": {
+      "type": "integer"
+    },
+    "last_used_at": true,
+    "knowledge_bases": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "object",
+        "properties": {
+          "knowledge_base_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "weight": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "knowledge_base_id"
+        ]
+      }
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "org_id",
+    "name",
+    "owner_member_id",
+    "status",
+    "acl_version",
+    "visibility",
+    "usage_count"
+  ]
+}

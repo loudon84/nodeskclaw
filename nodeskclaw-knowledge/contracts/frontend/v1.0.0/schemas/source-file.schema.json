@@ -1,0 +1,149 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:nodeskclaw:knowledge:frontend:v1:source-file",
+  "title": "SourceFile",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "org_id": {
+      "type": "string"
+    },
+    "knowledge_base_id": {
+      "type": "string"
+    },
+    "file_name": {
+      "type": "string"
+    },
+    "mime_type": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "owner_member_id": {
+      "type": "string"
+    },
+    "active_version_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "active",
+        "updating",
+        "error",
+        "deleting"
+      ]
+    },
+    "acl_version": {
+      "type": "integer"
+    },
+    "last_error": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "metadata": {
+      "type": "object"
+    },
+    "metadata_revision": {
+      "type": "integer"
+    },
+    "archived_at": true,
+    "parse_status": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "chunk_count": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "version_no": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "source_kind": {
+      "type": "string",
+      "enum": [
+        "manual",
+        "connector"
+      ]
+    },
+    "connector_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "external_object_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source_uri": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source_path": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source_revision": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source_etag": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source_modified_at": true,
+    "source_metadata": {
+      "type": "object"
+    },
+    "last_synced_at": true,
+    "sync_state": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "archive_reason": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "org_id",
+    "knowledge_base_id",
+    "file_name",
+    "owner_member_id",
+    "status",
+    "acl_version"
+  ]
+}

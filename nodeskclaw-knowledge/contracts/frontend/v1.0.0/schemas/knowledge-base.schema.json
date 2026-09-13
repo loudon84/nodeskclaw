@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:nodeskclaw:knowledge:frontend:v1:knowledge-base",
+  "title": "KnowledgeBase",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "org_id": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "description": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "embedding_model": {
+      "type": "string"
+    },
+    "chunk_method": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "provisioning",
+        "active",
+        "updating",
+        "degraded",
+        "error",
+        "deleting"
+      ]
+    },
+    "owner_member_id": {
+      "type": "string"
+    },
+    "acl_version": {
+      "type": "integer"
+    },
+    "visibility": {
+      "type": "string",
+      "enum": [
+        "private",
+        "department",
+        "organization"
+      ]
+    },
+    "tags": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "string"
+      }
+    },
+    "active_build_profile_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "knowledge_model_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "build_version": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "org_id",
+    "name",
+    "embedding_model",
+    "chunk_method",
+    "status",
+    "owner_member_id",
+    "acl_version",
+    "visibility",
+    "build_version"
+  ]
+}

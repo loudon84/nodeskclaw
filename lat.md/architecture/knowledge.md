@@ -61,6 +61,12 @@ v2.0–v2.2 将 Knowledge 控制面从 Dataset 身份演进到 Runtime Binding�
 
 内部 Dataset 读路径走 [[nodeskclaw-knowledge/app/services/runtime_binding_service.py#get_dataset_id]] / `require_dataset_id`；启动 lifespan 幂等 backfill。v2.2 Capability Probe：`[[nodeskclaw-knowledge/app/runtime/ragflow_contract.py#RagflowCompatibilityProfile]]` + Adapter `probe_capabilities` 为 `capabilities` 唯一事实来源；`capabilities.py` 仅负责 snapshot 形状持久化。Binding 持有 `desired_config` / `observed_config` / drift；Compiler：[[nodeskclaw-knowledge/app/services/runtime_config_compiler.py#compile_desired_config]]；Config apply 唯一 Owner：[[nodeskclaw-knowledge/app/services/reconciliation_service.py#reconcile_binding_config]]（KB advisory lock：[[nodeskclaw-knowledge/app/services/advisory_lock.py#kb_advisory_xact_lock]]）。Dataset 生命周期写入口：[[nodeskclaw-knowledge/app/services/runtime_binding_service.py#create_dataset_idempotent]]。Active 文档集合：[[nodeskclaw-knowledge/app/services/active_runtime_documents.py#resolve_active_documents]]。v2 Assets 响应不得含 Runtime resource id：[[nodeskclaw-knowledge/app/api/v2/assets.py]]。Application 检索：[[nodeskclaw-knowledge/app/services/retrieval_service.py#retrieve_for_application]]。Facade Owner：[[nodeskclaw-knowledge/app/runtime/ragflow.py#RagflowRuntimeAdapter]]。Build 走 Compile→Reconcile→Execute→Validate；Enhanced=Chunk+Question、Reasoning=+Summary+Graph。Capability Planner 只算 per-KB mode/policy：[[nodeskclaw-knowledge/app/services/capability_planner.py#build_capability_plan]]。ExecutionSlice 唯一发射：[[nodeskclaw-knowledge/app/services/retrieval_planner.py#build_retrieval_plan]]。Evidence Cleaner + Normalizer：[[nodeskclaw-knowledge/app/services/chunk_security_service.py#clean_evidence]]、[[nodeskclaw-knowledge/app/services/evidence_normalizer.py#classify]]。v2 HTTP 域：[[nodeskclaw-knowledge/app/api/v2/router.py]]。Translation：[[nodeskclaw-knowledge/app/services/translation_engine.py]]、[[nodeskclaw-knowledge/app/services/translation_service.py]]；dummy source 不得标 completed。
 
+## Frontend Contract
+
+Browser clients must consume the frozen package at `nodeskclaw-knowledge/contracts/frontend/v1.0.0/`, not the full Knowledge OpenAPI.
+
+合同与校验见 [[decisions/knowledge-frontend-contract]]。生成入口 [[nodeskclaw-knowledge/scripts/frontend_contract.py#generate]]。
+
 ## Feature Flags And Config
 
 v2.1 执行链通过环境变量独立开关；v2.2 增加 runtime mode 灰度与 Build 批大小；多 index 与翻译默认关闭，Capability Probe 默认开启。

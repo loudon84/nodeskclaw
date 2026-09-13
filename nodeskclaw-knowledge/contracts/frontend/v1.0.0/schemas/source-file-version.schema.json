@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:nodeskclaw:knowledge:frontend:v1:source-file-version",
+  "title": "SourceFileVersion",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "source_file_id": {
+      "type": "string"
+    },
+    "version_no": {
+      "type": "integer"
+    },
+    "file_size": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "sha256": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "parse_status": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "parsing",
+        "active",
+        "failed",
+        "superseded"
+      ]
+    },
+    "chunk_count": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "token_count": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "uploaded_by_member_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "activated_at": true,
+    "superseded_at": true,
+    "created_at": true
+  },
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "source_file_id",
+    "version_no",
+    "parse_status"
+  ]
+}

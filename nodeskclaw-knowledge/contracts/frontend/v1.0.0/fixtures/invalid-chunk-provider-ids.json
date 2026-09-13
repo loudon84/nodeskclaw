@@ -1,0 +1,6 @@
+{
+  "evidence_id": "ev_demo",
+  "chunk_id": "forbidden",
+  "document_id": "forbidden",
+  "content": "should fail"
+}
