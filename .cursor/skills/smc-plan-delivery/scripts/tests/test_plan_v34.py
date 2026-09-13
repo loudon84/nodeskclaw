@@ -77,17 +77,17 @@ class PlanV34Test(unittest.TestCase):
         before = common.semantic_plan_sha256(self.plan)
         changed = plan_state.sync_content(self.plan)
         self.assertEqual(1, changed)
-        item = plan_state.cursor_todos(self.plan.read_text())[0]
+        item = plan_state.cursor_todos(self.plan.read_text(encoding="utf-8"))[0]
         self.assertEqual("completed", item["status"])
         self.assertEqual("T1 — legacy display [C01]", item["content"])
-        self.assertIn("customCursorField: keep-me", self.plan.read_text())
+        self.assertIn("customCursorField: keep-me", self.plan.read_text(encoding="utf-8"))
         self.assertEqual(before, common.semantic_plan_sha256(self.plan))
 
     def test_migration_v33_to_v34_preserves_status_unknown_fields(self):
         script = HERE / "migrate_legacy_plan.py"
         result = subprocess.run([sys.executable, str(script), str(self.plan), "--in-place"], capture_output=True, text=True)
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
-        text = self.plan.read_text()
+        text = self.plan.read_text(encoding="utf-8")
         self.assertIn("plan_contract: smc.plan.v3.4", text)
         self.assertIn("content: \"T1 — legacy display [C01]\"", text)
         self.assertIn("status: completed", text)
@@ -130,7 +130,7 @@ grounded_commit: abcdef
             env=env,
         )
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
-        text = out.read_text()
+        text = out.read_text(encoding="utf-8")
         self.assertIn("plan_contract: smc.plan.v3.4", text)
         self.assertRegex(text, r'content: "T1 .+Public routing \[C01\]"')
         self.assertEqual([], plan_state.validate(out))
@@ -140,7 +140,7 @@ grounded_commit: abcdef
         text = text.replace("## Todo T1 — legacy display", '## Todo T1 — route: #public "quoted"')
         self.plan.write_text(text, encoding="utf-8")
         plan_state.sync_content(self.plan)
-        raw = self.plan.read_text()
+        raw = self.plan.read_text(encoding="utf-8")
         self.assertIn('content: "T1 — route: #public \\"quoted\\" [C01]"', raw)
         self.assertEqual([], plan_state.validate(self.plan))
 

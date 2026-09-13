@@ -197,19 +197,19 @@ class DeliveryToolsTest(unittest.TestCase):
 
     def test_cursor_projection_missing_fails_v34(self):
         # @lat: [[ges-tests#GES Tests#Plan contract#Missing content fails v3.4]]
-        self.plan.write_text(self.plan.read_text().replace('    content: "T1 — change app [C01]"\n', ""), encoding="utf-8")
+        self.plan.write_text(self.plan.read_text(encoding="utf-8").replace('    content: "T1 — change app [C01]"\n', ""), encoding="utf-8")
         self.assertTrue(any(x.startswith("PLAN_CURSOR_TODO_CONTENT_MISSING") for x in plan_state.validate(self.plan)))
 
     def test_cursor_projection_drift_fails_v34(self):
         # @lat: [[ges-tests#GES Tests#Plan contract#Content drift fails v3.4]]
-        self.plan.write_text(self.plan.read_text().replace("change app [C01]", "old title [C01]"), encoding="utf-8")
+        self.plan.write_text(self.plan.read_text(encoding="utf-8").replace("change app [C01]", "old title [C01]"), encoding="utf-8")
         self.assertTrue(any(x.startswith("PLAN_CURSOR_TODO_CONTENT_DRIFT") for x in plan_state.validate(self.plan)))
 
     def test_set_status_preserves_content(self):
         # @lat: [[ges-tests#GES Tests#Plan contract#Status update preserves content]]
-        before = plan_state.cursor_todos(self.plan.read_text())[0]["content"]
+        before = plan_state.cursor_todos(self.plan.read_text(encoding="utf-8"))[0]["content"]
         plan_state.set_status(self.plan, "T1", "completed")
-        item = plan_state.cursor_todos(self.plan.read_text())[0]
+        item = plan_state.cursor_todos(self.plan.read_text(encoding="utf-8"))[0]
         self.assertEqual(before, item["content"])
         self.assertEqual("completed", item["status"])
 
@@ -219,10 +219,10 @@ class DeliveryToolsTest(unittest.TestCase):
         plan_state.set_status(self.plan, "T1", "completed")
         b = common.semantic_plan_sha256(self.plan)
         self.assertEqual(a, b)
-        text = self.plan.read_text().replace('content: "T1 — change app [C01]"', 'content: "display-only"')
+        text = self.plan.read_text(encoding="utf-8").replace('content: "T1 — change app [C01]"', 'content: "display-only"')
         self.plan.write_text(text, encoding="utf-8")
         self.assertEqual(a, common.semantic_plan_sha256(self.plan))
-        self.plan.write_text(self.plan.read_text().replace("## Todo T1 — change app", "## Todo T1 — changed semantics"), encoding="utf-8")
+        self.plan.write_text(self.plan.read_text(encoding="utf-8").replace("## Todo T1 — change app", "## Todo T1 — changed semantics"), encoding="utf-8")
         self.assertNotEqual(a, common.semantic_plan_sha256(self.plan))
 
     def test_plan_review_survives_runtime_status(self):
@@ -293,7 +293,7 @@ class DeliveryToolsTest(unittest.TestCase):
     def test_workspace_plan_semantic_drift_blocks(self):
         # @lat: [[ges-tests#GES Tests#Workspace#Plan semantic drift blocks]]
         self.init_workspace()
-        self.plan.write_text(self.plan.read_text().replace("- In: x", "- In: changed"), encoding="utf-8")
+        self.plan.write_text(self.plan.read_text(encoding="utf-8").replace("- In: x", "- In: changed"), encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "DELIVERY_PLAN_SEMANTIC_DRIFT"):
             workspace.assert_stable(self.plan)
 

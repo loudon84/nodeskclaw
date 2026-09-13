@@ -15,6 +15,7 @@ from execution_context import latest as execution_resume
 from plan_state import cursor_todos, smc_todo_id, validate as todo_validate
 from review_record import latest_status as review_status
 from workspace import inspect as workspace_inspect
+from contract_resolver import validator_name
 
 
 def blocking_verifications(plan: Path) -> list[str]:
@@ -24,8 +25,10 @@ def blocking_verifications(plan: Path) -> list[str]:
 
 def static_status(plan: Path, root: Path) -> tuple[str, str]:
     contract = parse_top_level_frontmatter(plan.read_text(encoding="utf-8")).get("plan_contract", "")
-    validator_name = "validate_plan_v34.py" if contract == "smc.plan.v3.4" else "validate_plan_v33.py"
-    validator = root / ".agents/skills/smc-plan-validator/scripts" / validator_name
+    name = validator_name(contract)
+    if not name:
+        return "FAIL", f"unsupported plan contract: {contract or 'missing'}"
+    validator = root / ".agents/skills/smc-plan-validator/scripts" / name
     if not validator.is_file(): return "MISSING", f"validator missing: {validator_name}"
     r = subprocess.run([sys.executable, str(validator), str(plan)], cwd=root, capture_output=True, text=True)
     detail = (r.stdout + r.stderr).strip().replace("\n", " | ")

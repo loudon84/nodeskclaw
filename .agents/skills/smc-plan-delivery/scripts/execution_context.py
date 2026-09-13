@@ -8,9 +8,9 @@ import re
 import sys
 from pathlib import Path
 
-from common import append_jsonl, atomic_write, find_repo_root, plan_id, read_jsonl, semantic_plan_sha256, utc_now
+from common import append_jsonl, atomic_write, find_repo_root, git, plan_id, read_jsonl, section, semantic_plan_sha256, utc_now
 from delivery_state import load as load_delivery_state
-from plan_state import cursor_todos, smc_todo_id
+from plan_state import cursor_todos, markdown_todo_specs, smc_todo_id
 from workspace import inspect as workspace_inspect
 
 EVENTS = {
@@ -41,6 +41,143 @@ def errors_path(plan: Path) -> Path:
 
 def gate_path(plan: Path) -> Path:
     return run_dir(plan) / "continuation-gate.json"
+
+
+def _normalize_todo(todo: str) -> str:
+    value = todo.strip().upper()
+    if not re.fullmatch(r"T\d+", value):
+        raise ValueError(f"EXECUTION_TODO_ID_INVALID: {todo}")
+    return value
+
+
+def brief_path(plan: Path, todo: str) -> Path:
+    return run_dir(plan) / "briefs" / f"{_normalize_todo(todo)}.md"
+
+
+def report_path(plan: Path, todo: str) -> Path:
+    return run_dir(plan) / "reports" / f"{_normalize_todo(todo)}.md"
+
+
+def review_package_path(plan: Path, todo: str) -> Path:
+    return run_dir(plan) / "reviews" / f"{_normalize_todo(todo)}-package.md"
+
+
+def _todo_block(text: str, todo: str) -> str:
+    tid = _normalize_todo(todo)
+    matches = list(re.finditer(r"^##\s+Todo\s+(T\d+)\s*[—-]\s*(.+?)\s*$", text, re.M))
+    for idx, match in enumerate(matches):
+        if match.group(1).upper() != tid:
+            continue
+        end = matches[idx + 1].start() if idx + 1 < len(matches) else len(text)
+        return text[match.start():end].rstrip() + "\n"
+    raise ValueError(f"EXECUTION_TODO_NOT_FOUND: {tid}")
+
+
+def _write_targets(todo_block: str) -> list[str]:
+    """Extract repo paths from the current Todo's **Writes** contract.
+
+    SMC v4.x plans use path#symbol write ownership. Review packages strip the
+    symbol suffix and ask Git only for those owned files, which keeps prior
+    Todo changes out of a task-scoped review without introducing Todo commits.
+    """
+    raw: list[str] = []
+    inline = re.search(r"^\*\*Writes\*\*\s*:\s*(.+?)\s*$", todo_block, re.M | re.I)
+    if inline:
+        raw.extend(re.split(r"[,;]", inline.group(1)))
+    block = re.search(
+        r"^\*\*Writes\*\*\s*:?[ \t]*$\n(.*?)(?=^\*\*|^##\s+|\Z)",
+        todo_block,
+        re.M | re.S | re.I,
+    )
+    if block:
+        for line in block.group(1).splitlines():
+            m = re.match(r"^\s*[-*+]\s+(.+?)\s*$", line)
+            if m:
+                raw.append(m.group(1))
+    paths: list[str] = []
+    for value in raw:
+        value = value.strip().strip("`").strip()
+        value = re.sub(r"^(CREATE|MODIFY|UPDATE|DELETE|REMOVE)\s+", "", value, flags=re.I)
+        value = value.split("#", 1)[0].strip().strip("`")
+        value = value.replace("\\", "/")
+        while value.startswith("./"):
+            value = value[2:]
+        if value and value not in {"-", "none", "n/a"} and value not in paths:
+            paths.append(value)
+    return paths
+
+
+# @lat: [[runtime-cost#GES Runtime Cost Optimization#Task Context Artifacts]]
+def create_task_brief(plan: Path, todo: str) -> Path:
+    tid = _normalize_todo(todo)
+    text = plan.read_text(encoding="utf-8")
+    specs = markdown_todo_specs(text)
+    if tid not in specs:
+        raise ValueError(f"EXECUTION_TODO_NOT_FOUND: {tid}")
+    constraints = section(text, "Global Constraints") or "(none declared)"
+    block = _todo_block(text, tid)
+    body = (
+        "# SMC Task Brief\n\n"
+        f"- Plan ID: `{plan_id(plan)}`\n"
+        f"- Todo: `{tid}`\n"
+        f"- Plan semantic hash: `{semantic_plan_sha256(plan)}`\n"
+        f"- Canonical Plan: `{plan}`\n\n"
+        "This file is a derived execution brief, not a second Plan SOT. "
+        "Implement only this Todo and its declared write ownership.\n\n"
+        "## Global Constraints\n\n"
+        f"{constraints}\n\n"
+        f"{block}"
+    )
+    path = brief_path(plan, tid)
+    atomic_write(path, body.rstrip() + "\n")
+    return path
+
+
+def ensure_report_path(plan: Path, todo: str) -> Path:
+    path = report_path(plan, todo)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+# @lat: [[runtime-cost#GES Runtime Cost Optimization#Task Context Artifacts]]
+def build_task_review_package(plan: Path, todo: str) -> Path:
+    tid = _normalize_todo(todo)
+    block = _todo_block(plan.read_text(encoding="utf-8"), tid)
+    writes = _write_targets(block)
+    if not writes:
+        raise ValueError(f"EXECUTION_TODO_WRITE_SET_MISSING: {tid}")
+    root = find_repo_root(plan)
+    stat = git(root, "diff", "--stat", "--", *writes, check=False).stdout
+    diff = git(root, "diff", "--no-ext-diff", "--unified=10", "--", *writes, check=False).stdout
+    untracked = git(root, "ls-files", "--others", "--exclude-standard", "--", *writes, check=False).stdout.splitlines()
+    extra: list[str] = []
+    for rel in untracked:
+        target = root / rel
+        if not target.is_file():
+            continue
+        data = target.read_bytes()
+        if b"\0" in data:
+            extra.append(f"### Untracked binary file `{rel}`\n\n(binary content omitted)\n")
+            continue
+        text = data.decode("utf-8", "replace")
+        extra.append(f"### Untracked file `{rel}`\n\n```text\n{text}\n```\n")
+    package = (
+        "# SMC Task Review Package\n\n"
+        f"- Plan ID: `{plan_id(plan)}`\n"
+        f"- Todo: `{tid}`\n"
+        f"- Plan semantic hash: `{semantic_plan_sha256(plan)}`\n"
+        f"- Owned write paths: {', '.join(f'`{x}`' for x in writes)}\n\n"
+        "The package is scoped to this Todo's declared Writes. It is derived review input, not evidence or Plan state.\n\n"
+        "## Diff Stat\n\n```text\n"
+        + (stat or "(no tracked diff)\n")
+        + "```\n\n## Tracked Diff\n\n```diff\n"
+        + (diff or "(no tracked diff)\n")
+        + "```\n\n"
+        + "\n".join(extra)
+    )
+    path = review_package_path(plan, tid)
+    atomic_write(path, package.rstrip() + "\n")
+    return path
 
 
 def _all_ledgers(plan: Path) -> list[dict]:
@@ -236,6 +373,9 @@ def main() -> int:
     p = sub.add_parser("show"); p.add_argument("plan", type=Path); p.add_argument("--json", action="store_true")
     p = sub.add_parser("event"); p.add_argument("plan", type=Path); p.add_argument("--event", required=True); p.add_argument("--agent", default="main"); p.add_argument("--todo", default=""); p.add_argument("--summary", default=""); p.add_argument("--file", action="append", default=[])
     p = sub.add_parser("gate"); p.add_argument("plan", type=Path); p.add_argument("--cap", type=int, default=20); p.add_argument("--json", action="store_true")
+    p = sub.add_parser("brief"); p.add_argument("plan", type=Path); p.add_argument("--todo", required=True); p.add_argument("--json", action="store_true")
+    p = sub.add_parser("report-path"); p.add_argument("plan", type=Path); p.add_argument("--todo", required=True); p.add_argument("--json", action="store_true")
+    p = sub.add_parser("review-package"); p.add_argument("plan", type=Path); p.add_argument("--todo", required=True); p.add_argument("--json", action="store_true")
     args = ap.parse_args(); plan = args.plan.resolve()
     if not plan.is_file():
         print(f"PLAN_NOT_FOUND: {plan}", file=sys.stderr); return 2
@@ -243,9 +383,20 @@ def main() -> int:
         if args.cmd == "refresh": data = refresh(plan)
         elif args.cmd == "show": data = latest(plan)
         elif args.cmd == "event": data = append_event(plan, args.event, agent=args.agent, todo=args.todo, summary=args.summary, files=args.file)
-        else: data = continuation_gate(plan, max(1, args.cap))
-    except (ValueError, RuntimeError) as exc:
+        elif args.cmd == "gate": data = continuation_gate(plan, max(1, args.cap))
+        elif args.cmd == "brief": data = {"path": str(create_task_brief(plan, args.todo)), "todo": _normalize_todo(args.todo)}
+        elif args.cmd == "report-path": data = {"path": str(ensure_report_path(plan, args.todo)), "todo": _normalize_todo(args.todo)}
+        else: data = {"path": str(build_task_review_package(plan, args.todo)), "todo": _normalize_todo(args.todo)}
+    except (OSError, ValueError, RuntimeError) as exc:
         print(str(exc), file=sys.stderr); return 1
+
+    if args.cmd in {"brief", "report-path", "review-package"}:
+        if getattr(args, "json", False):
+            print(json.dumps(data, ensure_ascii=False, indent=2))
+        else:
+            print(data["path"])
+        return 0
+
     if getattr(args, "json", False) or args.cmd == "event":
         print(json.dumps(data, ensure_ascii=False, indent=2))
     else:

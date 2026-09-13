@@ -1,10 +1,10 @@
 ---
 name: smc-plan-delivery
-description: SMC canonical Plan 后半程唯一交付编排器。v1.2 在 v1.1 scoped workspace/context 基础上增加 Generic Domain Provider hooks；Domain Pack 只在 engineering/review/verification 阶段扩展能力，不拥有 Delivery state。
-version: 1.2.0
+description: SMC canonical Plan 后半程唯一交付编排器。v1.3 在 Test Asset 生命周期上增加 task brief、worker report 与 write-scoped review package，降低执行上下文成本，仍不拥有 Delivery state。
+version: 1.3.0
 ---
 
-# SMC Plan Delivery v1.2
+# SMC Plan Delivery v1.3
 
 ## Role
 
@@ -14,6 +14,8 @@ v1.1 新增两个 runtime responsibility，但不改变业务规则 owner：
 
 1. **Plan-Scoped Delivery Workspace Controller**：把 Plan identity、允许写集、audit/review/verification/commit scope 对齐到同一个 canonical Plan；
 2. **Persistent Execution Context Controller**：以 `.smc/runs/<plan_id>/` 中的 resume capsule、per-agent ledger、error ledger 保存长任务运行状态，支持 context reset / compaction / session resume。
+
+v1.3 在同一 `.smc/runs/<plan_id>/` working-memory scope 下增加 derived task brief、worker report path 与 write-scoped review package。它们只用于降低 subagent/context 传递成本，不是第二 Plan、Review 或 Evidence SOT，也不改变 Delivery state machine。
 
 它仍然不替代 Plan Author、Plan Review、Implementation Review、Verification、Roadmap Skill。
 
@@ -44,6 +46,7 @@ Canonical Plan -> smc-plan-delivery
 17. LIVE/FAULT/EXTERNAL Verification 必须先通过 Scenario/Environment/Candidate Preflight；
 18. `REUSE_EVIDENCE` Verification 禁止重新执行 command，必须走显式 inheritance；
 19. live 环境的 SUT candidate 必须匹配当前 Plan scope candidate；不匹配返回 `LIVE_SUT_MISMATCH`。
+20. LIVE/FAULT/EXTERNAL 的测试实现必须通过 Test Asset Ledger 绑定；`REUSE` asset 不得被当前 Plan 修改，`EXTEND`/`NEW` 必须同步 manifest 并重新产生 proof。
 
 ## Required References
 
@@ -57,10 +60,11 @@ Canonical Plan -> smc-plan-delivery
 6. [`references/completion-audit-contract.md`](references/completion-audit-contract.md)
 7. [`references/recovery-contract.md`](references/recovery-contract.md)
 8. [`references/acceptance-governance-contract.md`](references/acceptance-governance-contract.md)
+9. [`references/test-asset-contract.md`](references/test-asset-contract.md)
 
 ## Domain Pack Extension Contract (v1.2)
 
-对 `smc.plan.v3.5`，在任何 implementation write 前必须验证 Domain policy binding：
+对 `smc.plan.v3.5+`，在任何 implementation write 前必须验证 Domain policy binding：
 
 ```bash
 python .agents/skills/smc-plan-delivery/scripts/domain_hooks.py validate "$PLAN_PATH"
@@ -140,7 +144,7 @@ ROADMAP_UPDATE_BLOCKED
 python .agents/skills/smc-plan-delivery/scripts/resolve_plan.py --plan "$PLAN_PATH"
 ```
 
-新交付要求 `plan_contract: smc.plan.v3.4`。legacy v3.2/v3.3 必须先迁移：
+新交付要求 `plan_contract: smc.plan.v3.6`。v3.3/v3.4/v3.5 仍可读取和恢复，但不得作为新的 Plan 写入目标：
 
 ```bash
 python .agents/skills/smc-plan-delivery/scripts/migrate_legacy_plan.py "$PLAN_PATH" --in-place
@@ -159,10 +163,10 @@ python .agents/skills/smc-plan-delivery/scripts/delivery_state.py init "$PLAN_PA
 # Phase 1 — Plan Static Gate
 
 ```bash
-python .agents/skills/smc-plan-validator/scripts/validate_plan_v34.py "$PLAN_PATH"
+python .agents/skills/smc-plan-validator/scripts/validate_plan_current.py "$PLAN_PATH"
 ```
 
-必须同时验证：SMC structural contract、Cursor `id/content/status` projection、Todo mapping、Change/ownership/verification ledgers。若 generation integrity script 存在也必须 PASS。
+必须同时验证：SMC structural contract、Cursor `id/content/status` projection、Todo mapping、Change/ownership/verification ledgers、Domain binding，以及 v3.6 Test Asset Ledger。若 generation integrity script 存在也必须 PASS。
 
 治理工具自身 crash/runtime incompatibility：返回 `DELIVERY_TOOLING_BLOCKED`。当前 business Plan 禁止顺手修改 validator/Skill 再继续证明自己 PASS。
 
@@ -324,6 +328,17 @@ IMPLEMENTED_AND_PROVEN
 
 所有 Todo completed 后进入 `IMPLEMENTATION_COMPLETE`。
 
+## 3.5 Test Asset synchronization
+
+对 `smc.plan.v3.6`，在 Completion Audit 前执行：
+
+```bash
+python .agents/skills/smc-plan-delivery/scripts/test_assets.py sync --plan "$PLAN_PATH"
+python .agents/skills/smc-plan-delivery/scripts/workspace.py assert-stable "$PLAN_PATH"
+```
+
+`sync` 仅为 `NEW` / `EXTEND` asset 写入 Plan-owned `docs_agent/test-assets/<asset_id>.json`，并以实际测试文件内容生成 digest。`REUSE` asset 必须保持 manifest 与内容都不变。同步失败是 `COMPLETION_AUDIT_BLOCKED`，不得绕过后继续复用或提交。
+
 # Phase 4 — Plan-Scoped Completion Audit
 
 Deterministic precheck：
@@ -484,6 +499,7 @@ Implementation Review FRESH PASS
 all blocking Verification FRESH PASS
 all blocking Acceptance Claims PASS（acceptance-enabled Plan）
 live proof candidate_id 与当前 captured candidate 一致
+all v3.6 Test Asset manifests ACTIVE and digest-current
 scope fingerprint 一致
 ambient fingerprint 一致且 ambient stable
 no scope drift

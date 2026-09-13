@@ -14,6 +14,8 @@ from acceptance import acceptance_enabled, blocking_claims, candidate_status, ve
 from plan_state import cursor_todos, smc_todo_id, validate as validate_todos
 from review_record import latest_status as review_status
 from workspace import inspect as workspace_inspect
+from contract_resolver import validator_name
+from test_assets import resolved_assets, validate_plan as validate_test_assets
 
 
 def blocking_verifications(plan: Path) -> list[str]:
@@ -23,7 +25,9 @@ def blocking_verifications(plan: Path) -> list[str]:
 
 def static_validator(root: Path, plan: Path) -> Path:
     contract = parse_top_level_frontmatter(plan.read_text(encoding="utf-8")).get("plan_contract", "")
-    name = "validate_plan_v34.py" if contract == "smc.plan.v3.4" else "validate_plan_v33.py"
+    name = validator_name(contract)
+    if not name:
+        raise ValueError(f"DELIVERY_PLAN_CONTRACT_UNSUPPORTED: {contract or 'missing'}")
     return root / ".agents" / "skills" / "smc-plan-validator" / "scripts" / name
 
 
@@ -42,7 +46,10 @@ def validate(plan: Path) -> tuple[list[str], dict]:
 
     contract = parse_top_level_frontmatter(plan.read_text(encoding="utf-8")).get("plan_contract", "")
     details["plan_contract"] = contract
-    if contract != "smc.plan.v3.4": errors.append(f"DELIVERY_PLAN_CONTRACT_NOT_CURRENT: {contract or 'missing'}")
+    if contract != "smc.plan.v3.6": errors.append(f"DELIVERY_PLAN_CONTRACT_NOT_CURRENT: {contract or 'missing'}")
+    asset_errors = validate_test_assets(plan, require_synced=True)
+    details["test_assets"] = resolved_assets(plan)
+    errors.extend(f"DELIVERY_TEST_ASSET_{error['code']}: {error['detail']}" for error in asset_errors)
 
     todo_errors = validate_todos(plan); errors.extend(todo_errors)
     todos = {smc_todo_id(str(x["id"])): x["status"] for x in cursor_todos(plan.read_text(encoding="utf-8")) if smc_todo_id(str(x["id"]))}

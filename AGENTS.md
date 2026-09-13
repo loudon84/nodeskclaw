@@ -218,6 +218,7 @@ fix(deploy): 修复 env_vars 存数据库未序列化的问题
 
 - 禁止 `Co-authored-by` 署名
 - 禁止提交 `.env`、`.venv/`、`node_modules/`
+- Agent 自建 commit 必须 `--author="Loudon <loudonwang@gmail.com>"`；禁止 `git config user.name` / `user.email`
 
 ## 用户偏好
 
