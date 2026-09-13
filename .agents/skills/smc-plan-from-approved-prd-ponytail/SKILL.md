@@ -1,17 +1,17 @@
 ---
 name: smc-plan-from-approved-prd-ponytail
-description: 将 APPROVED SMC PRD 转换为唯一 canonical Cursor Plan；v3.6 生成 smc.plan.v3.5，并通过 Consumer Profile + Change Matrix 绑定 Generic Domain Pack Activation；Domain Pack 只扩展专业能力，不成为第二 workflow owner。
-version: 3.6.0
+description: 将 APPROVED SMC PRD 转换为唯一 canonical Cursor Plan；v3.7 生成 smc.plan.v3.6，并把可复用测试实现绑定为独立 Test Asset；Domain Pack 与 Test Asset 都不成为第二 workflow owner。
+version: 3.7.0
 disable-model-invocation: true
 ---
 
-# SMC Plan From Approved PRD — Ponytail v3.6
+# SMC Plan From Approved PRD — Ponytail v3.7
 
 ## Purpose
 
 把 **APPROVED PRD** 转换为一个且仅一个可执行 canonical Cursor `.plan.md`。
 
-v3.6 新增 `smc.plan.v3.5` Domain Activation Ledger。Plan author 通过通用 Domain Runtime 解析 Consumer Profile + Change Matrix；禁止在本 Skill 中硬编码 frontend/backend/electron/mobile/data 分支。
+v3.7 新增 `smc.plan.v3.6` Test Asset Ledger。Plan author 通过通用 Domain Runtime 解析 Consumer Profile + Change Matrix，并把 reusable test/fixture/driver 绑定为项目级资产；禁止在本 Skill 中硬编码具体 domain 或把测试文件按 RM 重复新建。
 
 v3.6 不改变既有 Ponytail 核心：
 
@@ -45,6 +45,8 @@ v3.5 在既有四个交付合同上增加 Cursor Projection Contract：
 - [`references/plan-contract-v3.md`](references/plan-contract-v3.md)
 - [`references/plan-contract-v35.md`](references/plan-contract-v35.md)
 - [`references/plan-template-v35.md`](references/plan-template-v35.md)
+- [`references/plan-contract-v36.md`](references/plan-contract-v36.md)
+- [`references/plan-template-v36.md`](references/plan-template-v36.md)
 - [`references/plan-template.md`](references/plan-template.md)
 
 作为当前 contract/template。
@@ -120,7 +122,7 @@ python tools/agent-skills/validate_prd.py <prd> --require-approved --require-evi
 新 Plan 必须有稳定：
 
 ```yaml
-plan_contract: smc.plan.v3.4
+plan_contract: smc.plan.v3.6
 plan_id: <stable-roadmap-or-work-item-id>
 commit_policy: post_review
 acceptance_contract: smc.acceptance.v1
@@ -282,7 +284,7 @@ pending | in_progress | completed | blocked
 
 Markdown Todo 是稳定 specification；动态 status 只写 Cursor metadata。
 
-## Gate 6 — Verification Ledger v3.4 + Acceptance Contract
+## Gate 6 — Verification Ledger + Acceptance Contract
 
 Acceptance-enabled Plan 使用：
 
@@ -360,6 +362,19 @@ search catalog -> try tool A -> try tool B -> change prompt until desired behavi
 
 Fixture 不可用或行为与声明不符 -> `PLAN_REVISE_REQUIRED` / `VERIFICATION_BLOCKED`，不得自行替换。
 
+## Gate 6.6 — Test Asset Binding
+
+测试实现是项目级长期资产，不能因为进入新的 RM 就改名复制。对每个 LIVE / FAULT_INJECTION / EXTERNAL Verification：
+
+1. 先运行 `python .agents/skills/smc-plan-delivery/scripts/test_assets.py status --plan <prior-plan>` 或读取 `docs_agent/test-assets/`；
+2. 在 `Test Asset Ledger` 记录唯一 `asset_id`、path、capabilities 与 `REUSE | EXTEND | NEW`；
+3. `REUSE` 只复用 digest 当前的 ACTIVE asset；当前 Plan 不得写 asset 或 manifest；
+4. `EXTEND` / `NEW` 必须把 test file 和 `docs_agent/test-assets/<asset_id>.json` 一并列入 Change Matrix，并提供真实 impact/reason；
+5. 改动或新建 Test Asset 时，关联 Verification 不得使用 `REUSE_EVIDENCE`；
+6. Live Scenario 的 `Subject / Fixture` 必须引用相同 `asset_id`（endpoint/runtime-level `None` 除外）。
+
+Plan 只声明资产决策；Delivery 在 implementation 后、Completion Audit 前执行 `test_assets.py sync` 写入或刷新 manifest。Test Asset 不拥有 Plan、Delivery、Commit 或 Roadmap 状态。
+
 ## Gate 7 — Completion Gate
 
 仍保留四个标准状态：
@@ -408,7 +423,7 @@ python .agents/skills/smc-plan-delivery/scripts/migrate_legacy_plan.py \
 Plan 完成后：
 
 ```bash
-python .agents/skills/smc-plan-validator/scripts/validate_plan_v34.py <plan>
+python .agents/skills/smc-plan-validator/scripts/validate_plan_current.py <plan>
 ```
 
 若 generation integrity script 存在，也必须 PASS。

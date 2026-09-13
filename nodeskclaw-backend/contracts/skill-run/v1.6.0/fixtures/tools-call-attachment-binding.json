@@ -1,0 +1,14 @@
+{
+  "jsonrpc": "2.0",
+  "id": "1",
+  "method": "tools/call",
+  "params": {
+    "name": "writer.article",
+    "arguments": {},
+    "client_context": {
+      "attachment_refs": [
+        "att_live_example"
+      ]
+    }
+  }
+}

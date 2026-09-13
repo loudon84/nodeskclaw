@@ -1,0 +1,14 @@
+{
+  "event_id": "run_demo:3",
+  "run_id": "run_demo",
+  "event_type": "assistant.delta",
+  "event_seq": 3,
+  "source": "agent",
+  "source_event_id": "hermes:att:1",
+  "timestamp": "2026-09-09T00:00:03Z",
+  "payload": {
+    "message_id": "msg_opaque_001",
+    "delta_seq": 1,
+    "delta": "正在分析"
+  }
+}

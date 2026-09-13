@@ -1,3 +1,4 @@
+import json
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -8,6 +9,7 @@ SEMANTIC_EVENT_TYPES = frozenset(
         "assistant.message",
         "reasoning.summary",
         "tool.call",
+        "tool.result",
         "clarify.requested",
         "approval.requested",
         "artifact.persisted",
@@ -46,15 +48,32 @@ CONTROL_EVENT_TYPES_KEEP = frozenset(
 )
 
 TOOL_CALL_STATUSES = frozenset({"started", "completed", "failed"})
+TOOL_RESULT_STATUSES = frozenset({"completed", "failed"})
 
 MAX_ASSISTANT_DELTA_UTF8_BYTES = 64 * 1024
 MAX_ASSISTANT_SNAPSHOT_UTF8_BYTES = 1 * 1024 * 1024
+MAX_TOOL_EVENT_UTF8_BYTES = 64 * 1024
+MAX_TOOL_EVENT_JSON_DEPTH = 8
 
 _SEMANTIC_PAYLOAD_FIELDS = {
     "assistant.delta": frozenset({"message_id", "delta_seq", "delta"}),
     "assistant.message": frozenset({"message_id", "text"}),
     "reasoning.summary": frozenset({"summary"}),
-    "tool.call": frozenset({"tool_name", "call_id", "status"}),
+    "tool.call": frozenset({"tool_name", "call_id", "status", "arguments", "redacted", "truncated"}),
+    "tool.result": frozenset(
+        {
+            "tool_name",
+            "call_id",
+            "status",
+            "content",
+            "structured_content",
+            "artifact_ids",
+            "error_code",
+            "error_message",
+            "redacted",
+            "truncated",
+        }
+    ),
     "clarify.requested": frozenset({"question", "options"}),
     "approval.requested": frozenset({"approval_id", "summary"}),
     "artifact.persisted": frozenset({"artifact_id", "name", "content_type", "size", "checksum_sha256"}),
@@ -68,7 +87,6 @@ _FORBIDDEN_PAYLOAD_KEYS = frozenset(
         "gateway_token",
         "token",
         "authorization",
-        "arguments",
         "raw_arguments",
         "presigned_url",
         "bytes",
@@ -77,6 +95,38 @@ _FORBIDDEN_PAYLOAD_KEYS = frozenset(
         "reasoning",
     }
 )
+
+
+def _json_depth(value: Any, depth: int = 1) -> int:
+    if isinstance(value, dict):
+        if not value:
+            return depth
+        return max(_json_depth(item, depth + 1) for item in value.values())
+    if isinstance(value, list):
+        if not value:
+            return depth
+        return max(_json_depth(item, depth + 1) for item in value)
+    return depth
+
+
+def _tool_event_bounds_reason(data: dict[str, Any]) -> str | None:
+    if _json_depth(data) > MAX_TOOL_EVENT_JSON_DEPTH:
+        return "tool_event_too_deep"
+    try:
+        encoded = json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    except (TypeError, ValueError):
+        return "invalid_semantic_payload"
+    if len(encoded) > MAX_TOOL_EVENT_UTF8_BYTES:
+        return "tool_event_too_large"
+    return None
+
+
+def _optional_bool_reason(data: dict[str, Any], field: str, reason: str) -> str | None:
+    if field not in data:
+        return None
+    if not isinstance(data.get(field), bool):
+        return reason
+    return None
 
 
 def is_semantic_event_type(event_type: str) -> bool:
@@ -140,7 +190,47 @@ def validate_semantic_event_payload(event_type: str, payload: dict[str, Any] | N
             return "missing_call_id"
         if status not in TOOL_CALL_STATUSES:
             return "invalid_tool_call_status"
-        return None
+        if "arguments" in data and data.get("arguments") is not None and not isinstance(data.get("arguments"), dict):
+            return "invalid_tool_arguments"
+        redacted_reason = _optional_bool_reason(data, "redacted", "invalid_tool_redacted")
+        if redacted_reason:
+            return redacted_reason
+        truncated_reason = _optional_bool_reason(data, "truncated", "invalid_tool_truncated")
+        if truncated_reason:
+            return truncated_reason
+        return _tool_event_bounds_reason(data)
+
+    if event_type == "tool.result":
+        tool_name = data.get("tool_name")
+        call_id = data.get("call_id")
+        status = data.get("status")
+        if not isinstance(tool_name, str) or not tool_name:
+            return "missing_tool_name"
+        if not isinstance(call_id, str) or not call_id:
+            return "missing_call_id"
+        if status not in TOOL_RESULT_STATUSES:
+            return "invalid_tool_result_status"
+        if "content" in data and data.get("content") is not None and not isinstance(data.get("content"), str):
+            return "invalid_tool_result_content"
+        if "artifact_ids" in data and data.get("artifact_ids") is not None:
+            artifact_ids = data.get("artifact_ids")
+            if not isinstance(artifact_ids, list) or any(not isinstance(item, str) or not item for item in artifact_ids):
+                return "invalid_tool_result_artifact_ids"
+        if "error_code" in data and data.get("error_code") is not None and not isinstance(data.get("error_code"), str):
+            return "invalid_tool_result_error_code"
+        if "error_message" in data and data.get("error_message") is not None and not isinstance(data.get("error_message"), str):
+            return "invalid_tool_result_error_message"
+        if status == "failed":
+            error_code = data.get("error_code")
+            if not isinstance(error_code, str) or not error_code:
+                return "missing_tool_result_error_code"
+        redacted_reason = _optional_bool_reason(data, "redacted", "invalid_tool_redacted")
+        if redacted_reason:
+            return redacted_reason
+        truncated_reason = _optional_bool_reason(data, "truncated", "invalid_tool_truncated")
+        if truncated_reason:
+            return truncated_reason
+        return _tool_event_bounds_reason(data)
 
     if event_type == "clarify.requested":
         question = data.get("question")

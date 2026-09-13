@@ -1,11 +1,11 @@
 ---
 name: smc-plan-validator
-description: 对 SMC Plan 做确定性静态 Gate。v1.5 新增 smc.plan.v3.5 Domain Pack binding/extension validation；Core 只调用 Domain Contract 与 pack-declared validator，不硬编码具体 domain。
-version: 1.5.0
+description: 对 SMC Plan 做确定性静态 Gate。v1.6 新增 smc.plan.v3.6 Test Asset Ledger validation，并通过单一合同 resolver 分派 v3.3–v3.6。
+version: 1.6.0
 disable-model-invocation: true
 ---
 
-# SMC Plan Validator v1.5
+# SMC Plan Validator v1.6
 
 ## Role
 
@@ -22,6 +22,14 @@ python .agents/skills/smc-plan-validator/scripts/validate_plan_v35.py .cursor/pl
 ```
 
 v3.5 = v3.4 structural/acceptance gates + deterministic Domain Activation binding + dynamically declared Domain Plan extension validator. A Domain policy digest mismatch is `DOMAIN_POLICY_STALE` and fails closed.
+
+## Current v3.6 Usage
+
+```bash
+python .agents/skills/smc-plan-validator/scripts/validate_plan_current.py .cursor/plans/<feature>.plan.md
+```
+
+v3.6 = v3.5 + Test Asset Ledger. Each non-reused live fixture is bound to a durable asset ID; `REUSE` checks the current digest, while `EXTEND`/`NEW` require the asset and manifest in the Change Matrix plus new proof.
 
 ## Current v3.4 Usage
 

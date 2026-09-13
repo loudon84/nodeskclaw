@@ -1,6 +1,6 @@
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class SkillToolAnnotations(BaseModel):
@@ -412,6 +412,69 @@ RUN_EVENT_V15_MODELS = (
     RunEventAssistantMessageV15,
     RunEventReasoningSummaryV12,
     RunEventToolCallV12,
+    RunEventClarifyRequestedV12,
+    RunEventApprovalRequestedV12,
+    RunEventArtifactPersistedV12,
+    RunEventControlV12,
+)
+
+
+class ToolCallPayloadV16(PublicContractModel):
+    tool_name: str
+    call_id: str
+    status: Literal["started", "completed", "failed"]
+    arguments: dict[str, Any] | None = None
+    redacted: bool | None = None
+    truncated: bool | None = None
+
+
+class ToolResultPayloadV16(PublicContractModel):
+    tool_name: str
+    call_id: str
+    status: Literal["completed", "failed"]
+    content: str | None = None
+    structured_content: Any | None = None
+    artifact_ids: list[str] | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+    redacted: bool | None = None
+    truncated: bool | None = None
+
+    @model_validator(mode="after")
+    def _failed_requires_error_code(self) -> "ToolResultPayloadV16":
+        if self.status == "failed" and (not isinstance(self.error_code, str) or not self.error_code):
+            raise ValueError("error_code required when status=failed")
+        return self
+
+
+class RunEventToolCallV16(PublicContractModel):
+    event_id: str
+    run_id: str
+    event_type: Literal["tool.call"]
+    event_seq: int
+    source: str = "agent"
+    source_event_id: str | None = None
+    timestamp: str
+    payload: ToolCallPayloadV16
+
+
+class RunEventToolResultV16(PublicContractModel):
+    event_id: str
+    run_id: str
+    event_type: Literal["tool.result"]
+    event_seq: int
+    source: str = "agent"
+    source_event_id: str | None = None
+    timestamp: str
+    payload: ToolResultPayloadV16
+
+
+RUN_EVENT_V16_MODELS = (
+    RunEventAssistantDeltaV15,
+    RunEventAssistantMessageV15,
+    RunEventReasoningSummaryV12,
+    RunEventToolCallV16,
+    RunEventToolResultV16,
     RunEventClarifyRequestedV12,
     RunEventApprovalRequestedV12,
     RunEventArtifactPersistedV12,

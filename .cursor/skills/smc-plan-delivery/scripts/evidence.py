@@ -221,10 +221,14 @@ def payload_sha256(payload: dict) -> str:
 def build_manifest(plan: Path, output: Path | None = None) -> tuple[Path, dict]:
     from completion_audit import check as audit_check
     from review_record import latest_status as review_status
+    from test_assets import resolved_assets, validate_plan as validate_test_assets
 
     root = find_repo_root(plan); pid = plan_id(plan); ws = workspace_inspect(plan)
     if not ws["pass"]:
         raise ValueError("EVIDENCE_MANIFEST_WORKSPACE_UNSTABLE")
+    asset_errors = validate_test_assets(plan, require_synced=True)
+    if asset_errors:
+        raise ValueError("EVIDENCE_MANIFEST_TEST_ASSET_INVALID: " + asset_errors[0]["code"])
     pstatus, plan_review = review_status(plan, "plan")
     if pstatus != "FRESH_PASS": raise ValueError(f"EVIDENCE_MANIFEST_PLAN_REVIEW_{pstatus}")
     astatus, audit = audit_check(plan)
@@ -290,6 +294,7 @@ def build_manifest(plan: Path, output: Path | None = None) -> tuple[Path, dict]:
         "blocking_verifications": verification_records,
         "acceptance_contract": acceptance_contract,
         "blocking_claims": blocking_claim_records,
+        "test_assets": resolved_assets(plan),
         "verification_candidate": candidate if candidate_state == "FRESH" else None,
     }
     payload["payload_sha256"] = payload_sha256(payload)

@@ -24,6 +24,7 @@ acceptance_mode
 evidence_action
 candidate_id
 inherited/source evidence identity (when reused)
+test_asset_refs (asset ID + manifest path + content digest)
 ```
 
 For LIVE/FAULT_INJECTION/EXTERNAL, `result=PASS` requires both process success and the machine-readable `SMC_ACCEPTANCE_RESULT` for every bound Claim.
@@ -73,7 +74,7 @@ smc.evidence.manifest.v3
 
 Historical `smc.evidence.manifest.v2` remains readable.
 
-The compact manifest records Plan ID/path, workspace base commit, scope/ambient fingerprints, plan review, completion audit, implementation review, blocking Verification summaries, raw-log SHA256, acceptance contract, blocking Claim results, and verification candidate provenance.
+The compact manifest records Plan ID/path, workspace base commit, scope/ambient fingerprints, plan review, completion audit, implementation review, blocking Verification summaries, raw-log SHA256, acceptance contract, blocking Claim results, Test Asset refs/digests, and verification candidate provenance.
 
 Generating the manifest does not enter implementation scope and must not stale the proof it summarizes.
 

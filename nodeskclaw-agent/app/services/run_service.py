@@ -1305,8 +1305,32 @@ async def aggregate_run_terminal(
             persisted_names = {a.name for a in artifacts if a.checksum_sha256 and getattr(a, "storage_state", "persisted") in ("persisted", None)}
             missing = [name for name in all_required_artifacts if name not in persisted_names]
             if missing:
-                # Required artifacts not ready/verified yet, cannot mark COMPLETED
-                return run
+                first_err = "ARTIFACT_PERSIST_FAILED"
+                ok = await set_status(
+                    db,
+                    run_id,
+                    "FAILED",
+                    org_id=org_id,
+                    expected_status=list(_AGGREGATE_TERMINAL_FROM),
+                    result={
+                        "error": first_err,
+                        "error_code": "ARTIFACT_PERSIST_FAILED",
+                        "missing_artifacts": missing,
+                    },
+                )
+                if ok:
+                    await _append_terminal_event(
+                        db,
+                        run_id,
+                        "run.failed",
+                        {
+                            "status": "FAILED",
+                            "error_code": "ARTIFACT_PERSIST_FAILED",
+                            "missing_artifacts": missing,
+                        },
+                        org_id=org_id,
+                    )
+                return await get_run(db, run_id, org_id=org_id)
 
         combined_result: dict[str, Any] = {}
         for s in steps:
@@ -1400,6 +1424,29 @@ async def add_artifact(
         checksum_sha256=checksum_sha256,
         storage_state="persisted",
     )
+
+
+def artifact_persisted_source_event_id(artifact_id: str) -> str:
+    return f"artifact:{artifact_id}:persisted"
+
+
+def artifact_persisted_payload(descriptor: ArtifactDescriptor) -> dict[str, Any]:
+    return {
+        "artifact_id": descriptor.artifact_id,
+        "name": descriptor.name,
+        "content_type": descriptor.content_type or "text/plain",
+        "size": int(descriptor.size_bytes or 0),
+        "checksum_sha256": descriptor.checksum_sha256,
+    }
+
+
+def public_artifact_persisted_event(descriptor: ArtifactDescriptor) -> dict[str, Any]:
+    return {
+        "event_type": "artifact.persisted",
+        "payload": artifact_persisted_payload(descriptor),
+        "source": "agent",
+        "source_event_id": artifact_persisted_source_event_id(descriptor.artifact_id),
+    }
 
 
 async def store_artifact_bytes(
@@ -1559,24 +1606,7 @@ async def store_artifact_bytes(
         generation=generation,
     )
     record_metric("artifact_stage_total", labels={"stage": "store", "outcome": "ok"})
-    if persisted:
-        await append_event(
-            db,
-            run_id,
-            "artifact.persisted",
-            {
-                "artifact_id": artifact_id,
-                "name": name,
-                "content_type": content_type or "text/plain",
-                "size": len(content),
-                "checksum_sha256": checksum,
-            },
-            org_id=org_id,
-            attempt_id=attempt_id,
-            generation=generation,
-            source_event_id=f"artifact:{artifact_id}:persisted",
-        )
-    return ArtifactDescriptor(
+    descriptor = ArtifactDescriptor(
         artifact_id=artifact_id,
         name=name,
         content_type=content_type or "text/plain",
@@ -1585,6 +1615,20 @@ async def store_artifact_bytes(
         checksum_sha256=checksum,
         storage_state="persisted",
     )
+    if persisted:
+        persisted_event = public_artifact_persisted_event(descriptor)
+        await append_event(
+            db,
+            run_id,
+            persisted_event["event_type"],
+            persisted_event["payload"],
+            org_id=org_id,
+            attempt_id=attempt_id,
+            generation=generation,
+            source=persisted_event["source"],
+            source_event_id=persisted_event["source_event_id"],
+        )
+    return descriptor
 
 
 async def mark_artifact_corrupted(

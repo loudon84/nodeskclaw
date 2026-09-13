@@ -1,0 +1,5 @@
+{
+  "error_code": "ATTACHMENT_SCOPE_DENIED",
+  "message_key": "errors.run.attachment_scope_denied",
+  "message": "ATTACHMENT_SCOPE_DENIED"
+}

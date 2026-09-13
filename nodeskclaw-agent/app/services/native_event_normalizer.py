@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import json
 import logging
+import re
+from dataclasses import dataclass
 from typing import Any
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
+from app.schemas import MAX_TOOL_EVENT_JSON_DEPTH, MAX_TOOL_EVENT_UTF8_BYTES
 from app.services.assistant_delta_coalescer import (
     MAX_SNAPSHOT_UTF8_BYTES,
     AssistantDeltaCoalescer,
@@ -61,6 +66,254 @@ SENSITIVE_KEYS = frozenset(
         "preview",
     }
 )
+_SENSITIVE_KEY_RE = re.compile(
+    r"(authorization|cookie|api[_-]?key|token|password|secret|private[_-]?key|"
+    r"credential|access[_-]?key|refresh[_-]?token|signature|set-cookie|(^|_)signed(_|$))",
+    re.I,
+)
+_SENSITIVE_QUERY = frozenset(
+    {
+        "token",
+        "access_token",
+        "refresh_token",
+        "id_token",
+        "password",
+        "secret",
+        "signature",
+        "sig",
+        "x-amz-signature",
+        "x-amz-credential",
+        "x-amz-security-token",
+        "x-amz-signedheaders",
+        "api_key",
+        "apikey",
+        "authorization",
+        "auth",
+    }
+)
+_ABS_UNIX_RE = re.compile(r"^/(?:home|Users|root|var|opt|tmp|etc|usr|mnt|data)(?:/|$)")
+_ABS_WIN_RE = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\)")
+_ARGUMENT_KEYS = ("arguments", "input", "params", "args")
+
+
+@dataclass
+class _SanitizeFlags:
+    redacted: bool = False
+    truncated: bool = False
+
+
+def _is_sensitive_key(key: str) -> bool:
+    if key in SENSITIVE_KEYS:
+        return True
+    return bool(_SENSITIVE_KEY_RE.search(key))
+
+
+def _looks_like_url(value: str) -> bool:
+    return "://" in value or value.startswith("www.")
+
+
+def _looks_like_abs_path(value: str) -> bool:
+    if _looks_like_url(value):
+        return False
+    return bool(_ABS_UNIX_RE.match(value) or _ABS_WIN_RE.match(value))
+
+
+def _safe_basename(value: str) -> str:
+    name = value.replace("\\", "/").rstrip("/").split("/")[-1]
+    return name or "redacted-path"
+
+
+def _strip_sensitive_query(value: str, flags: _SanitizeFlags) -> str:
+    parsed = urlparse(value)
+    if not parsed.query and not parsed.fragment:
+        return value
+    kept = []
+    changed = False
+    for key, item in parse_qsl(parsed.query, keep_blank_values=True):
+        if key.lower() in _SENSITIVE_QUERY or _is_sensitive_key(key):
+            changed = True
+            flags.redacted = True
+            continue
+        kept.append((key, item))
+    query = urlencode(kept, doseq=True)
+    fragment = parsed.fragment
+    if fragment and (_is_sensitive_key(fragment) or any(part.lower() in _SENSITIVE_QUERY for part in fragment.split("&"))):
+        fragment = ""
+        changed = True
+        flags.redacted = True
+    if not changed:
+        return value
+    return urlunparse(
+        (parsed.scheme, parsed.netloc, parsed.path, parsed.params, query, fragment)
+    )
+
+
+def _sanitize_string(value: str, flags: _SanitizeFlags) -> str:
+    if _looks_like_url(value):
+        return _strip_sensitive_query(value, flags)
+    if _looks_like_abs_path(value):
+        flags.redacted = True
+        return _safe_basename(value)
+    return value
+
+
+def _json_depth(value: Any, depth: int = 1) -> int:
+    if isinstance(value, dict):
+        if not value:
+            return depth
+        return max(_json_depth(item, depth + 1) for item in value.values())
+    if isinstance(value, list):
+        if not value:
+            return depth
+        return max(_json_depth(item, depth + 1) for item in value)
+    return depth
+
+
+def _payload_utf8_size(value: Any) -> int:
+    return len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+
+
+def _sanitize_node(value: Any, *, depth: int, flags: _SanitizeFlags) -> Any:
+    if isinstance(value, (dict, list)) and depth >= MAX_TOOL_EVENT_JSON_DEPTH:
+        flags.truncated = True
+        return None
+    if isinstance(value, dict):
+        out: dict[str, Any] = {}
+        for key, item in value.items():
+            if not isinstance(key, str) or _is_sensitive_key(key):
+                flags.redacted = True
+                continue
+            out[key] = _sanitize_node(item, depth=depth + 1, flags=flags)
+        return out
+    if isinstance(value, list):
+        return [_sanitize_node(item, depth=depth + 1, flags=flags) for item in value]
+    if isinstance(value, str):
+        return _sanitize_string(value, flags)
+    if isinstance(value, bytes):
+        flags.redacted = True
+        return None
+    if isinstance(value, (int, float, bool)) or value is None:
+        return value
+    flags.redacted = True
+    return None
+
+
+def _clip_depth(value: Any, *, depth: int, flags: _SanitizeFlags) -> Any:
+    if isinstance(value, (dict, list)) and depth >= MAX_TOOL_EVENT_JSON_DEPTH:
+        flags.truncated = True
+        return None
+    if isinstance(value, dict):
+        return {key: _clip_depth(item, depth=depth + 1, flags=flags) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_clip_depth(item, depth=depth + 1, flags=flags) for item in value]
+    return value
+
+
+def _shrink_to_utf8_limit(value: Any, flags: _SanitizeFlags) -> Any:
+    if _payload_utf8_size(value) <= MAX_TOOL_EVENT_UTF8_BYTES:
+        return value
+    flags.truncated = True
+    if isinstance(value, str):
+        encoded = value.encode("utf-8")
+        return encoded[:MAX_TOOL_EVENT_UTF8_BYTES].decode("utf-8", errors="ignore")
+    if isinstance(value, list):
+        trimmed = list(value)
+        while trimmed and _payload_utf8_size(trimmed) > MAX_TOOL_EVENT_UTF8_BYTES:
+            trimmed.pop()
+        return [_shrink_to_utf8_limit(item, flags) for item in trimmed]
+    if isinstance(value, dict):
+        out = dict(value)
+        keys = list(out)
+        while keys and _payload_utf8_size(out) > MAX_TOOL_EVENT_UTF8_BYTES:
+            key = keys.pop()
+            item = out[key]
+            if isinstance(item, str):
+                budget = max(0, MAX_TOOL_EVENT_UTF8_BYTES - (_payload_utf8_size(out) - _payload_utf8_size(item)))
+                out[key] = item.encode("utf-8")[:budget].decode("utf-8", errors="ignore")
+            elif isinstance(item, (dict, list)):
+                out[key] = _shrink_to_utf8_limit(item, flags)
+            if _payload_utf8_size(out) > MAX_TOOL_EVENT_UTF8_BYTES:
+                del out[key]
+        return out
+    return None
+
+
+def _fit_public_payload(payload: dict[str, Any], flags: _SanitizeFlags) -> dict[str, Any]:
+    fitted = _clip_depth(payload, depth=1, flags=flags)
+    if not isinstance(fitted, dict):
+        fitted = {"redacted": flags.redacted, "truncated": True}
+        flags.truncated = True
+        return fitted
+    if _payload_utf8_size(fitted) > MAX_TOOL_EVENT_UTF8_BYTES:
+        fitted = _shrink_to_utf8_limit(fitted, flags)
+        if not isinstance(fitted, dict):
+            fitted = {"redacted": flags.redacted, "truncated": True}
+    fitted["redacted"] = flags.redacted
+    fitted["truncated"] = flags.truncated
+    if _payload_utf8_size(fitted) > MAX_TOOL_EVENT_UTF8_BYTES:
+        flags.truncated = True
+        compact = {
+            key: fitted[key]
+            for key in ("tool_name", "call_id", "status", "error_code")
+            if key in fitted
+        }
+        compact["redacted"] = flags.redacted
+        compact["truncated"] = True
+        return compact
+    return fitted
+
+
+def _extract_structured_arguments(payload: dict[str, Any]) -> dict[str, Any] | None:
+    for key in _ARGUMENT_KEYS:
+        if key not in payload:
+            continue
+        value = payload[key]
+        if value is None:
+            return None
+        if isinstance(value, dict):
+            return value
+        if isinstance(value, str) and value.strip():
+            try:
+                parsed = json.loads(value)
+            except json.JSONDecodeError:
+                return None
+            if isinstance(parsed, dict):
+                return parsed
+        return None
+    return None
+
+
+def _extract_result_content(payload: dict[str, Any]) -> tuple[str | None, Any]:
+    structured = payload.get("structured_content")
+    if structured is None:
+        structured = payload.get("structuredContent")
+    content = None
+    for key in ("content", "output", "text", "result"):
+        value = payload.get(key)
+        if isinstance(value, str) and value:
+            content = value
+            break
+        if structured is None and isinstance(value, (dict, list)):
+            structured = value
+    return content, structured
+
+
+def _extract_error_fields(payload: dict[str, Any]) -> tuple[str | None, str | None]:
+    error_code = payload.get("error_code")
+    error_message = payload.get("error_message")
+    error = payload.get("error")
+    if isinstance(error, dict):
+        if not isinstance(error_code, str) or not error_code:
+            raw_code = error.get("code") or error.get("error_code")
+            error_code = raw_code if isinstance(raw_code, str) else error_code
+        if not isinstance(error_message, str) or not error_message:
+            raw_message = error.get("message") or error.get("error_message")
+            error_message = raw_message if isinstance(raw_message, str) else error_message
+    elif isinstance(error, str) and error and not isinstance(error_message, str):
+        error_message = error
+    if isinstance(error_code, str) and error_code:
+        return error_code, error_message if isinstance(error_message, str) else None
+    return None, error_message if isinstance(error_message, str) else None
 
 
 def progress_payload(phase: str, message: str) -> dict[str, str]:
@@ -101,8 +354,10 @@ def _tool_name(payload: dict[str, Any]) -> str:
     return ""
 
 
-def _strip_sensitive(payload: dict[str, Any]) -> dict[str, Any]:
-    return {k: v for k, v in payload.items() if k not in SENSITIVE_KEYS}
+def _strip_sensitive(payload: dict[str, Any], flags: _SanitizeFlags | None = None) -> dict[str, Any]:
+    owner = flags or _SanitizeFlags()
+    cleaned = _sanitize_node(payload, depth=1, flags=owner)
+    return cleaned if isinstance(cleaned, dict) else {}
 
 
 # @lat: [[architecture/skill-agent#Hermes Engine Adapter#Runtime Semantic Event Fidelity]]
@@ -254,6 +509,7 @@ class NativeEventNormalizer:
                     {"tool_name": opened["tool_name"], "call_id": opened["call_id"], "status": mapped},
                 )
             )
+            events.append(self._sot("tool.result", self._tool_result_payload(opened, {}, mapped)))
             self.observability_gaps.append(
                 {
                     "kind": "unpaired_tool_start",
@@ -301,12 +557,7 @@ class NativeEventNormalizer:
         )
         update_trace_attrs(tool_call_id=call_id, correlation_confidence=confidence)
         record_metric("runtime_tool_start_total", labels={"outcome": "started"})
-        return [
-            self._sot(
-                "tool.call",
-                {"tool_name": tool_name, "call_id": call_id, "status": "started"},
-            )
-        ]
+        return [self._sot("tool.call", self._started_tool_payload(tool_name, call_id, payload))]
 
     def _complete_tool(self, payload: dict[str, Any], *, failed: bool) -> list[dict[str, Any]]:
         tool_name = _tool_name(payload)
@@ -331,7 +582,8 @@ class NativeEventNormalizer:
             self._sot(
                 "tool.call",
                 {"tool_name": opened["tool_name"], "call_id": opened["call_id"], "status": status},
-            )
+            ),
+            self._sot("tool.result", self._tool_result_payload(opened, payload, status)),
         ]
 
     def _passthrough_tool_call(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -342,8 +594,67 @@ class NativeEventNormalizer:
             return []
         if status not in {"started", "completed", "failed"}:
             status = "started"
-        public = {"tool_name": tool_name, "call_id": call_id, "status": status}
-        return [self._sot("tool.call", public)]
+        if status == "started":
+            return self._start_tool(payload)
+        events: list[dict[str, Any]] = []
+        if not any(item["call_id"] == call_id for item in self._open):
+            events.extend(self._start_tool(payload))
+        failed = status == "failed" or bool(payload.get("error"))
+        events.extend(self._complete_tool(payload, failed=failed))
+        return events
+
+    def _started_tool_payload(self, tool_name: str, call_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        flags = _SanitizeFlags()
+        raw_arguments = _extract_structured_arguments(payload)
+        if raw_arguments is None:
+            arguments: dict[str, Any] | None = None
+        else:
+            cleaned = _sanitize_node(raw_arguments, depth=2, flags=flags)
+            arguments = cleaned if isinstance(cleaned, dict) else None
+            if not isinstance(cleaned, dict):
+                flags.truncated = True
+        public = {
+            "tool_name": tool_name,
+            "call_id": call_id,
+            "status": "started",
+            "arguments": arguments,
+            "redacted": flags.redacted,
+            "truncated": flags.truncated,
+        }
+        return _fit_public_payload(public, flags)
+
+    def _tool_result_payload(self, opened: dict[str, Any], payload: dict[str, Any], status: str) -> dict[str, Any]:
+        flags = _SanitizeFlags()
+        content, structured = _extract_result_content(payload)
+        if isinstance(content, str):
+            content = _sanitize_string(content, flags)
+        if structured is not None:
+            structured = _sanitize_node(structured, depth=2, flags=flags)
+        error_code, error_message = _extract_error_fields(payload)
+        if status == "failed":
+            if not isinstance(error_code, str) or not error_code:
+                error_code = "UNPAIRED_TOOL_START" if not payload else "TOOL_FAILED"
+            if isinstance(error_message, str):
+                error_message = _sanitize_string(error_message, flags)
+        else:
+            error_code = error_code if isinstance(error_code, str) and error_code else None
+            error_message = _sanitize_string(error_message, flags) if isinstance(error_message, str) else None
+        public: dict[str, Any] = {
+            "tool_name": opened["tool_name"],
+            "call_id": opened["call_id"],
+            "status": status,
+            "redacted": flags.redacted,
+            "truncated": flags.truncated,
+        }
+        if content is not None:
+            public["content"] = content
+        if structured is not None:
+            public["structured_content"] = structured
+        if error_code:
+            public["error_code"] = error_code
+        if error_message:
+            public["error_message"] = error_message
+        return _fit_public_payload(public, flags)
 
     def _approval(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
         approval_id = payload.get("approval_id") or payload.get("id")
