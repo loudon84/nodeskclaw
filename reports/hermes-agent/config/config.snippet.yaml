@@ -1,0 +1,40 @@
+# 合并进 Hermes 实例 config.yaml（示例）
+# 推荐：MinIO/S3。bucket 固定为全体 agent runtime 专用 agent-runtime-export。
+
+plugins:
+  output_artifacts:
+    enabled: true
+    upload_mode: s3
+    s3_endpoint: "http://<MINIO-HOST>:9010"
+    s3_bucket: "agent-runtime-export"
+    s3_region: "us-east-1"
+    s3_addressing: path
+    s3_presign: true
+    s3_presign_expires: 3600
+    # 密钥只放环境变量 / Secret，不要写进 yaml
+    # s3_access_key / s3_secret_key
+    public_base_url: "http://<MINIO-HOST>:9010/agent-runtime-export"
+    max_bytes: 10485760
+    required_default: true
+    ext_allow:
+      - .md
+      - .txt
+      - .json
+      - .png
+      - .pdf
+      - .csv
+      - .docx
+      - .pptx
+      - .xlsx
+
+# HTTP 备选（不要与 s3 同时作为主路径）
+# plugins:
+#   output_artifacts:
+#     upload_mode: http
+#     upload_url: "https://files.example.com/api/v1/upload"
+#     public_base_url: "https://files.example.com/objects"
+
+# Native API Server（由你实例已有配置维护；此处仅文档占位）
+# api_server:
+#   host: 0.0.0.0
+#   port: 29401
