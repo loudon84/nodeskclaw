@@ -71,7 +71,7 @@ Browser clients must consume the frozen package at `nodeskclaw-knowledge/contrac
 
 v2.1 执行链通过环境变量独立开关；v2.2 增加 runtime mode 灰度与 Build 批大小；多 index 与翻译默认关闭，Capability Probe 默认开启。
 
-定义于 [[nodeskclaw-knowledge/app/core/config.py#Settings]]。`KNOWLEDGE_API_V2_ENABLED` 总闸 `/api/v2`；`KNOWLEDGE_V2_RUNTIME_BINDING_ENABLED` / `BUILD` / `APPLICATION` 分域启停。Capability：`KNOWLEDGE_V2_CAPABILITY_PLANNER_ENABLED` 仅 diagnostics；`KNOWLEDGE_V2_MULTI_INDEX_RETRIEVAL_ENABLED` 控制 ExecutionSlice 执行路径（关闭则 semantic-only）。按 mode 灰度：`KNOWLEDGE_V2_QUESTION_INDEX_ENABLED` / `SUMMARY_INDEX_ENABLED` / `GRAPH_INDEX_ENABLED`；v2.2 runtime feature：`KNOWLEDGE_V2_SUMMARY_RUNTIME_ENABLED` / `GRAPH_RUNTIME_ENABLED` / `TOC_ENHANCE_ENABLED`（默认 false）。v2.3：`KNOWLEDGE_V23_ARTIFACTS_ENABLED` / `OUTLINE_ENABLED` / `TABLE_ENABLED` / `INCREMENTAL_BUILD_ENABLED` / `TERM_EXPANSION_ENABLED` / `LLM_PLANNER_ENABLED` / `RRF_FUSION_ENABLED`（默认 false）；`KNOWLEDGE_V23_MODEL_REVISION_ENABLED` / `QUALITY_ENABLED`（默认 true）。v2.4：`KNOWLEDGE_V24_RELEASE_ENABLED` / `KNOWLEDGE_V24_FEDERATION_ENABLED`（默认 false）门控 Release Channel resolve 与 FederatedRetrievalPlanner；`KNOWLEDGE_V24_ARTIFACT_ACL_ENABLED`（默认 false）门控 Artifact HTTP/MCP 路径 ACL adapter。stable Promotion Gate 额外读取 `KNOWLEDGE_RELEASE_QUALITY_MAX_AGE_SECONDS`（默认 900），Compose `x-knowledge-environment` 透传到 API 与 Worker。Build 批大小：`RAGFLOW_BUILD_BATCH_SIZE`（默认 50）。Probe：`KNOWLEDGE_RUNTIME_CAPABILITY_PROBE_ENABLED`（默认 true）与 `KNOWLEDGE_RUNTIME_CAPABILITY_CACHE_SECONDS`（默认 300）。翻译：`KNOWLEDGE_TRANSLATION_ENABLED`、`KNOWLEDGE_TRANSLATION_ENGINE`。
+定义于 [[nodeskclaw-knowledge/app/core/config.py#Settings]]。`KNOWLEDGE_API_V2_ENABLED` 总闸 `/api/v2`；`KNOWLEDGE_V2_RUNTIME_BINDING_ENABLED` / `BUILD` / `APPLICATION` 分域启停。Capability：`KNOWLEDGE_V2_CAPABILITY_PLANNER_ENABLED` 仅 diagnostics；`KNOWLEDGE_V2_MULTI_INDEX_RETRIEVAL_ENABLED` 控制 ExecutionSlice 执行路径（关闭则 semantic-only）。按 mode 灰度：`KNOWLEDGE_V2_QUESTION_INDEX_ENABLED` / `SUMMARY_INDEX_ENABLED` / `GRAPH_INDEX_ENABLED`；v2.2 runtime feature：`KNOWLEDGE_V2_SUMMARY_RUNTIME_ENABLED` / `GRAPH_RUNTIME_ENABLED` / `TOC_ENHANCE_ENABLED`（默认 false）。v2.3：`KNOWLEDGE_V23_ARTIFACTS_ENABLED` / `OUTLINE_ENABLED` / `TABLE_ENABLED` / `INCREMENTAL_BUILD_ENABLED` / `TERM_EXPANSION_ENABLED` / `LLM_PLANNER_ENABLED` / `RRF_FUSION_ENABLED`（默认 false）；`KNOWLEDGE_V23_MODEL_REVISION_ENABLED` / `QUALITY_ENABLED`（默认 true）。v2.4：`KNOWLEDGE_V24_RELEASE_ENABLED` / `KNOWLEDGE_V24_FEDERATION_ENABLED`（默认 false）门控 Release Channel resolve 与 FederatedRetrievalPlanner；`KNOWLEDGE_V24_ARTIFACT_ACL_ENABLED`（默认 false）门控 Artifact HTTP/MCP 路径 ACL adapter。stable Promotion Gate 额外读取 `KNOWLEDGE_RELEASE_QUALITY_MAX_AGE_SECONDS`（默认 900），Compose `x-knowledge-environment` 透传到 API 与 Worker。Build 批大小：`RAGFLOW_BUILD_BATCH_SIZE`（默认 50）。Probe：`KNOWLEDGE_RUNTIME_CAPABILITY_PROBE_ENABLED`（默认 true）与 `KNOWLEDGE_RUNTIME_CAPABILITY_CACHE_SECONDS`（默认 300）。翻译：`KNOWLEDGE_TRANSLATION_ENABLED`、`KNOWLEDGE_TRANSLATION_ENGINE`。创建 KB/Set 的 embedding 不由前端选择，读 `KNOWLEDGE_DEFAULT_EMBEDDING_MODEL`（默认 `text-embedding-v4@RAG@Tongyi-Qianwen`，须已在 RAGFlow 配置）；chunk 默认读 `KNOWLEDGE_DEFAULT_CHUNK_METHOD`（`naive`）。解析：[[nodeskclaw-knowledge/app/core/config.py#resolve_embedding_model]]。
 
 ## Runtime Admin API
 
@@ -141,6 +141,12 @@ Knowledge MCP 仅 transport 适配，六工具语义与 HTTP agent tools 一致�
 
 `POST /api/v2/mcp/tools/list` 与 `POST /api/v2/mcp/tools/call` 暴露 `knowledge.search` / `retrieve` / `get_document` / `get_evidence` / `get_structure` / `get_table`。实现：[[nodeskclaw-knowledge/app/mcp_server.py]]、[[nodeskclaw-knowledge/app/api/agent_tools.py]]。
 
+## Hermes Knowledge Plugin
+
+Hermes Agent v0.21 通过目录插件调用同一 HTTP agent tool 面：源码在 `nodeskclaw-knowledge/plugins/hermes-plugin-nodeskclaw-knowledge/`，运行时安装到 `~/.hermes/plugins/`。
+
+插件注册 `knowledge.retrieve`；`SMC_KB_API_URL`（origin）+ `SMC_KB_API_TOKEN`（backend 用户 JWT）经 config 优先 / env 回退读取；Bearer 透传走 [[nodeskclaw-knowledge/app/core/deps.py#get_member_context]]；响应透传 `ApiResponse` 作 Tool Result，不做 Evidence 二次注入。规格：`docs_knowledge/hermes-plugin-nodeskclaw-knowledge-v1.0-PRD.md`；决策见 `docs/adr/0001-hermes-knowledge-plugin-auth-config-passthrough.md`。
+
 ## Knowledge Intelligence V23
 
 v2.3 在 v2.2 之上增加 Derived Artifacts、CorpusManifest 增量 Build、Model Revision、Query Intelligence、RRF 融合、Quality 与 Application runtime_snapshot；由 `KNOWLEDGE_V23_*` flag 门控。
@@ -191,7 +197,7 @@ v1.1 在 v1.0 八域表之上增加 Set ACL、Chat、Audit 与入库/检索运�
 
 ## Ingestion Worker
 
-上传 API 只推进到 `parse_dispatched`；真正的 DONE→ACTIVE 由无 Redis 的 PostgreSQL Job Leasing Worker 完成。
+上传 API 只推进到 `parse_dispatched`；真正的 DONE→ACTIVE 由无 Redis 的 PostgreSQL Job Leasing Worker 完成。本地一键起 API 4530 + ingestion worker：`uv run python launch.py`（[[nodeskclaw-knowledge/launch.py]]）。
 
 v1.3 增加独立 `knowledge-connector-worker`：调度 interval/manual SyncRun、leasing v2 + heartbeat、编排 discover/fetch 并经 Ingestion Facade 入库：[[nodeskclaw-knowledge/app/workers/connector_worker.py]]。v2.2 Compose 拆分：`nodeskclaw-knowledge-api` / `-ingestion-worker` / `-build-worker` / `-maintenance-worker` / `-connector-worker`（共享 `x-knowledge-environment` anchor）；translation worker 可选 profile；移除旧单 `nodeskclaw-knowledge-worker`。各 worker 经 [[nodeskclaw-knowledge/app/services/metrics_service.py#observe_worker_heartbeat]] 上报 heartbeat。`ingestion_worker` 仅处理 IngestionJob；`build_worker` / `translation_worker` / `maintenance_worker` 为独立进程（maintenance 含 Evaluation 与可选 Reconciliation）。
 
@@ -241,10 +247,10 @@ Chat citation（`message_id` 非空）：Session owner 或同 org 且对 SourceF
 
 每个外部请求读或生成 `X-Request-Id`，响应回写；结构化 JSON 日志经 contextvars 附带 `request_id`，可扩展 query/session/message/job/member/org/connector_id/sync_run_id/sync_item_id/source_object_id/ingestion_job_id。
 
-禁止记录 Bearer Token、RAGFlow Key、LLM Service Token、文档全文；敏感键名在 formatter 中脱敏。实现：[[nodeskclaw-knowledge/app/middleware/correlation.py#CorrelationIdMiddleware]]、[[nodeskclaw-knowledge/app/core/request_context.py]]、[[nodeskclaw-knowledge/app/core/logging.py]]。
+4xx/5xx 会额外打 `frontend_api_error`（异常处理：status、error_code、message_key、details）和 `frontend_http_error`（中间件：method/path/status），方便 Work 前端联调。`RequestValidationError` 也归一成契约错误体。禁止记录 Bearer Token、RAGFlow Key、LLM Service Token、文档全文；敏感键名在 formatter 中脱敏。实现：[[nodeskclaw-knowledge/app/core/exceptions.py]]、[[nodeskclaw-knowledge/app/middleware/correlation.py#CorrelationIdMiddleware]]、[[nodeskclaw-knowledge/app/core/request_context.py]]、[[nodeskclaw-knowledge/app/core/logging.py]]。
 
 ## Reconciliation Runs
 
 每轮 Reconciliation 写入 `reconciliation_runs`（checked/drifted/repaired/failed、started/finished、status、error），失败标记 `errors.knowledge.reconciliation_failed`。
 
-模型：[[nodeskclaw-knowledge/app/models/reconciliation_run.py#ReconciliationRun]]。Runner：[[nodeskclaw-knowledge/app/services/reconciliation_service.py#run_reconciliation]]（v2 扩展 Binding / Index / Translation drift；v2.2 `reconcile_binding_config` 为唯一 RAGFlow parser_config apply Owner：Desired→Observed→diff→Adapter apply→read-back，LOCAL WINS；KB advisory lock 串行化 config mutation；禁止自动新建 Dataset 换 ID）。迁移：`alembic/versions/fd64182b8bad_knowledge_v1_2_reconciliation_runs.py`。
+模型：[[nodeskclaw-knowledge/app/models/reconciliation_run.py#ReconciliationRun]]。Runner：[[nodeskclaw-knowledge/app/services/reconciliation_service.py#run_reconciliation]]（v2 扩展 Binding / Index / Translation drift；v2.2 `reconcile_binding_config` 为唯一 RAGFlow parser_config apply Owner：Desired→Observed→diff→Adapter apply→read-back，LOCAL WINS；已有 `RagflowRuntimeAdapter` 不得再包一层当 `client`，见 [[nodeskclaw-knowledge/app/services/reconciliation_service.py#ensure_runtime_adapter]]；KB advisory lock 串行化 config mutation；禁止自动新建 Dataset 换 ID）。迁移：`alembic/versions/fd64182b8bad_knowledge_v1_2_reconciliation_runs.py`。

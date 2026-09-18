@@ -1,0 +1,15 @@
+name: nodeskclaw-knowledge
+
+version: 1.0.0
+
+description: Enterprise KnowledgeSet Retrieval Plugin
+
+tools:
+  - knowledge.retrieve
+
+requires_env:
+  - name: SMC_KB_API_URL
+    description: nodeskclaw-knowledge origin (scheme://host:port), no path
+  - name: SMC_KB_API_TOKEN
+    description: Backend user JWT for Knowledge Authorization Bearer
+    secret: true
