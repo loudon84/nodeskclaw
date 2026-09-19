@@ -6,7 +6,7 @@
   "source": {
     "repository": "loudon84/nodeskclaw",
     "branch": "feat/knowledge-v2.0",
-    "commit": "e149ed2c3bc8f1ecf3c7906fd0cbc69b03ef2dda",
+    "commit": "c030bfd9fd14f7a255ae660863b55e1a6629c0dd",
     "runtime": "RAGFlow v0.27.0"
   },
   "auth": {
@@ -34,7 +34,6 @@
     "forbidden_keys": [
       "dataset_id",
       "document_id",
-      "chunk_id",
       "ragflow_document_id",
       "ragflow_chunk_id",
       "ragflow_dataset_id"
@@ -46,27 +45,27 @@
     "unknown_enum_rule": "frontend must render unknown enum values safely",
     "stable_compat": "semantically frozen on /api/v1; path may move to /api/v2 only with an overlap window"
   },
-  "endpoint_count": 77,
+  "endpoint_count": 79,
   "generated_at": "2026-09-13T07:10:00+00:00",
   "artifacts": {
-    "FRONTEND-INTEGRATION.md": "b72580badeacb4ebf92504378ddf880ca7812cfb70b763c5e515b9e7d09354bc",
+    "FRONTEND-INTEGRATION.md": "50489b46669c5d3a3df5c84f1d9a8f132f6923afe18ade83a5c3e6a107101ca4",
     "README.md": "d1fc7814dfd8c211023d871af40ce5c2da21706924aecba193245cd2d31e3b80",
     "RELEASE.md": "c0ed0c0d38c1ab8e39a0e22ee0be4203ce4122ec04a226161ddeb4b7dbd818b7",
     "STATE-MACHINES.md": "a5f59d913998fe7898d79588fbe1edb242596afd07537928f70230329ad7a2dc",
     "fixtures/build-completed.json": "f7b0146258ca7d2232e5ba66b95d6d4b75696f9b8c081dc8d4ec06d3ddf319fc",
     "fixtures/error-release-conflict.json": "a07335084f604da8392157b84275ec3fbd4e1ee404b3cc36f4a6ff864b71720a",
     "fixtures/error-retrieval-unavailable.json": "60a2d5dfe4de268b89b7bed653336576f46aa040fbe53b37b2f8be98e4000ab9",
-    "fixtures/evidence-resolved.json": "257aa4d15275dcbb5e004cbc3967bdb1ea8cc52c8f0bf0d105f6014e2c9b95bb",
+    "fixtures/evidence-resolved.json": "cace0726c113b829fef9ec26620bea4e1a3cfe342361eaf7b2f215f008c937b5",
     "fixtures/indexes-ready.json": "e983580133f8f02d3b494cd1c5be66248932cc9a2e95acb480ad998c089d1539",
     "fixtures/ingestion-active.json": "c8a93e5b11a41539cfb7da9646688be399ed18e31ceba13685a6082a990a7aa7",
-    "fixtures/invalid-chunk-provider-ids.json": "e0ba45e86b43318e20f2495dce36486a00c5fbab0202bd7bd9f588f935717073",
+    "fixtures/invalid-chunk-provider-ids.json": "e66774c6269839c50f0f69b975b8f740278c60c05679436f51c20251c0763b9e",
     "fixtures/release-validating.json": "b9f30bf8e4a50263716873743cc338df45483805fee4641e28018061b2d052c5",
     "fixtures/retrieval-empty.json": "466426a3cf089f83931f9cdc714e224b021408caa6183525d6a2e2c5742b2e28",
     "fixtures/retrieval-success.json": "760411da1ab20bc37ae4b859342bed40a83e6fe3af2dfa14cf5cc4e61526d941",
     "fixtures/upload-accepted.json": "b314bf087b6b08359dc7f03c9e72b9876bbf2fa5cfa681eebe16800dd7bd3945",
-    "http/endpoint-matrix.json": "271b36ae5985211a1c1a61f67f4481279d987e78faecf1c85a66c6ef3debb668",
-    "manifest.json": "47b857b53ff5cc3c3b169179ee764b4f2d1b9081d84bcbdd8d2dac014af90cec",
-    "openapi.frontend.yaml": "a005a0aa31fc8855e9ca58c769497adffd1b169859543ee580679411fc82d537",
+    "http/endpoint-matrix.json": "970edf0d4ee6e67758036a9a2b06293dc6fefda4d6daa91bbd3476887de14f91",
+    "manifest.json": "360335d7d8190953d0377e03d84aad898245fba7db8e69ba9ab5f3b98f914910",
+    "openapi.frontend.yaml": "b4dd4be730933fdebe4250bfba18ce34a9c36342cd69d169ac1495c7a4fd7f09",
     "schemas/acl-create.schema.json": "00f1b410d318ef21ff7e15fa98040b8844bc8cf90e84c2508cd9efa3af720b04",
     "schemas/acl.schema.json": "3dd53951fda55a689a9e1f187ce781c4d52e0add0fc5b2cecbafd26355ea766d",
     "schemas/api-response.schema.json": "f5963c11918c342a6c114d9f4104f1885a568078b2fea462277010178837530b",
@@ -116,10 +115,14 @@
     "schemas/retrieval-profile-update.schema.json": "a31bbff74d846df94765d6850d4478b8f654b6cd0b3b7c9926c019a1418b153d",
     "schemas/retrieval-profile.schema.json": "6be41d0a92ff24415e8c887b993b7618c83d61731a802bc1028bae10269a4150",
     "schemas/retrieval-response.schema.json": "03bab23c5ca2dfc4e57814f8f6401577477fdf0c812300d8bc94fad194dcbf8d",
+    "schemas/source-file-chunk-availability-patch.schema.json": "d5e6c3ac1922f2a1b099f0ea08b4b1ebc209bb72e529b1f82372a143eaa4823f",
+    "schemas/source-file-chunk-availability-result.schema.json": "f80a86ddef99aa7cfa208f1d991ff17e0d0a9239085edcebdd3be42e1ba7a576",
+    "schemas/source-file-chunk-page.schema.json": "721aecd900238c7c712705abdae6f90d8f3917ba4e80b8157a61813cca94a307",
+    "schemas/source-file-chunk.schema.json": "a17402c7947442316b83fb703ab16321621f6af6d4ff5554f95adbdc763f380c",
     "schemas/source-file-version.schema.json": "2609a89d9134c7be3a616123f5f797a610a803497bd8b3bf169a9be7c0ea558f",
     "schemas/source-file.schema.json": "aa8b26d9ade316cbdea39bde06e7d8073a49fd45613a124e70e0614d3e635b8e",
     "schemas/trigger-builds.schema.json": "2fecb0fc49ea1256ae64ffe3e87e1da0d4fbc32b72b00af3706fba15b116c281",
     "schemas/upload-accepted.schema.json": "1ea6849c7c994519fff494595601a4c685c765761cff609aab05865dfd34a508",
-    "typescript/knowledge-contract.ts": "0c8d61b0e26419a5eae11ae4f8765aff55d2c667dce07bd5373ea74de9509a4f"
+    "typescript/knowledge-contract.ts": "5283aad2e62fe30e89d4c5a6030efd94d8933f131efea1c85164619dbb787bb9"
   }
 }

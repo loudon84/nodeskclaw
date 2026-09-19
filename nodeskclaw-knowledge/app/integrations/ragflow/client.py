@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
@@ -19,6 +20,14 @@ from app.integrations.ragflow.models import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class RagflowChunkPage:
+    chunks: list[dict[str, Any]]
+    total: int
+    page: int
+    page_size: int
 
 
 # @lat: [[knowledge#Isolation From Ragflow]]
@@ -565,6 +574,82 @@ class RagflowClient:
             items = data.get("chunks") or data.get("data") or []
             return items if isinstance(items, list) else []
         return []
+
+    async def list_document_chunks_page(
+        self,
+        dataset_id: str,
+        document_id: str,
+        *,
+        page: int = 1,
+        page_size: int = 50,
+        keywords: str | None = None,
+    ) -> RagflowChunkPage:
+        params: dict[str, Any] = {"page": page, "page_size": page_size}
+        if keywords is not None and keywords != "":
+            params["keywords"] = keywords
+        data = await self._request(
+            "GET",
+            f"/api/v1/datasets/{dataset_id}/documents/{document_id}/chunks",
+            params=params,
+        )
+        if isinstance(data, list):
+            raise RagflowError(
+                "RAGFlow chunk page missing total",
+                message_key="errors.knowledge.chunk_contract_invalid",
+                status_code=502,
+            )
+        if not isinstance(data, dict):
+            raise RagflowError(
+                "RAGFlow chunk page response invalid",
+                message_key="errors.knowledge.chunk_contract_invalid",
+                status_code=502,
+            )
+        if "total" not in data:
+            raise RagflowError(
+                "RAGFlow chunk page missing total",
+                message_key="errors.knowledge.chunk_contract_invalid",
+                status_code=502,
+            )
+        items = data.get("chunks") or data.get("data") or []
+        if not isinstance(items, list):
+            items = []
+        try:
+            total = int(data["total"])
+        except (TypeError, ValueError) as exc:
+            raise RagflowError(
+                "RAGFlow chunk page total invalid",
+                message_key="errors.knowledge.chunk_contract_invalid",
+                status_code=502,
+            ) from exc
+        return RagflowChunkPage(
+            chunks=[c for c in items if isinstance(c, dict)],
+            total=total,
+            page=int(data.get("page") or page),
+            page_size=int(data.get("page_size") or page_size),
+        )
+
+    async def set_document_chunk_available(
+        self,
+        dataset_id: str,
+        document_id: str,
+        chunk_id: str,
+        available: bool,
+    ) -> None:
+        path = f"/api/v1/datasets/{dataset_id}/documents/{document_id}/chunks/{chunk_id}"
+        try:
+            await self._request(
+                "PATCH",
+                path,
+                json={"available": available},
+            )
+        except RagflowError as exc:
+            if exc.message_key == "errors.knowledge.ragflow_unavailable":
+                raise RagflowError(
+                    "RAGFlow chunk update outcome unknown",
+                    message_key="errors.knowledge.chunk_mutation_uncertain",
+                    status_code=503,
+                ) from exc
+            raise
 
     async def probe_retrieval_endpoint(self) -> bool:
         try:

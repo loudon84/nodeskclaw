@@ -1,7 +1,7 @@
 {
   "schema": "knowledge.frontend.endpoint-matrix.v1",
   "version": "1.0.0",
-  "endpoint_count": 77,
+  "endpoint_count": 79,
   "stability_values": [
     "stable",
     "compatibility",
@@ -362,6 +362,36 @@
       "response": null,
       "content_type": "application/json",
       "envelope": "api"
+    },
+    {
+      "id": "F15",
+      "method": "GET",
+      "path": "/api/v1/source-files/{source_file_id}/chunks",
+      "stability": "stable",
+      "surface": "documents",
+      "async": false,
+      "auth": "bearer",
+      "success_status": 200,
+      "request": null,
+      "response": "source-file-chunk-page",
+      "content_type": "application/json",
+      "envelope": "api",
+      "notes": "active version only; page/page_size/keywords; total from provider"
+    },
+    {
+      "id": "F16",
+      "method": "PATCH",
+      "path": "/api/v1/source-files/{source_file_id}/chunks/{chunk_id}",
+      "stability": "stable",
+      "surface": "documents",
+      "async": false,
+      "auth": "bearer",
+      "success_status": 200,
+      "request": "source-file-chunk-availability-patch",
+      "response": "source-file-chunk-availability-result",
+      "content_type": "application/json",
+      "envelope": "api",
+      "notes": "requires file update or kb manage; file_version_id stale guard"
     },
     {
       "id": "J01",

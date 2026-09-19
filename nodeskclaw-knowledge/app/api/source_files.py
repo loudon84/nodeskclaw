@@ -7,19 +7,30 @@ from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_db, get_member_context, get_runtime_adapter
+from app.core.http_headers import content_disposition_attachment
 from app.runtime.ragflow import RagflowRuntimeAdapter
 from app.schemas.common import ApiResponse, PageData
 from app.schemas.knowledge import (
     AclOut,
     FileAclCreate,
     IngestionJobOut,
+    SourceFileChunkAvailabilityPatch,
+    SourceFileChunkAvailabilityResult,
+    SourceFileChunkPageOut,
     SourceFileMetadataOut,
     SourceFileMetadataPatch,
     SourceFileOut,
     SourceFileVersionOut,
 )
 from app.schemas.principal import KnowledgePrincipal
-from app.services import ingestion_facade, ingestion_service, metadata_service, source_file_service, source_lifecycle_service
+from app.services import (
+    ingestion_facade,
+    ingestion_service,
+    metadata_service,
+    source_chunk_service,
+    source_file_service,
+    source_lifecycle_service,
+)
 
 kb_files_router = APIRouter(prefix="/knowledge-bases", tags=["source-files"])
 router = APIRouter(prefix="/source-files", tags=["source-files"])
@@ -143,6 +154,52 @@ async def get_metadata(
 ):
     data = await metadata_service.get_source_file_metadata(db, member, source_file_id)
     return ApiResponse(data=SourceFileMetadataOut.model_validate(data))
+
+
+@router.get("/{source_file_id}/chunks", response_model=ApiResponse[SourceFileChunkPageOut])
+async def list_chunks(
+    source_file_id: str,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=100),
+    keywords: str | None = Query(None, max_length=200),
+    member: KnowledgePrincipal = Depends(get_member_context),
+    db: AsyncSession = Depends(get_db),
+    ragflow: RagflowRuntimeAdapter = Depends(get_runtime_adapter),
+):
+    data = await source_chunk_service.list_source_file_chunks(
+        db,
+        member,
+        ragflow,
+        source_file_id,
+        page=page,
+        page_size=page_size,
+        keywords=keywords,
+    )
+    return ApiResponse(data=data)
+
+
+@router.patch(
+    "/{source_file_id}/chunks/{chunk_id}",
+    response_model=ApiResponse[SourceFileChunkAvailabilityResult],
+)
+async def patch_chunk_availability(
+    source_file_id: str,
+    chunk_id: str,
+    body: SourceFileChunkAvailabilityPatch,
+    member: KnowledgePrincipal = Depends(get_member_context),
+    db: AsyncSession = Depends(get_db),
+    ragflow: RagflowRuntimeAdapter = Depends(get_runtime_adapter),
+):
+    data = await source_chunk_service.set_source_file_chunk_available(
+        db,
+        member,
+        ragflow,
+        source_file_id,
+        chunk_id,
+        file_version_id=body.file_version_id,
+        available=body.available,
+    )
+    return ApiResponse(data=data)
 
 
 @router.patch("/{source_file_id}/metadata", response_model=ApiResponse[SourceFileMetadataOut])
@@ -312,7 +369,7 @@ async def download(
     return Response(
         content=content,
         media_type=sf.mime_type or "application/octet-stream",
-        headers={"Content-Disposition": f'attachment; filename="{sf.file_name}"'},
+        headers={"Content-Disposition": content_disposition_attachment(sf.file_name)},
     )
 
 

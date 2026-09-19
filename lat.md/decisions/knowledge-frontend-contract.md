@@ -2,7 +2,7 @@
 
 Browser clients consume a frozen Knowledge HTTP surface at `contracts/frontend/v1.0.0/`, independent of `/api/v1` versus `/api/v2` path versions.
 
-Frontend identity is domain IDs plus `evidence_id`. Provider runtime IDs (`dataset_id`, `document_id`, `chunk_id`, non-metric `ragflow_*`) are not public. Auth reuses the opaque Backend Bearer token.
+Frontend identity is domain IDs plus `evidence_id`. Provider runtime IDs (`dataset_id`, `document_id`, non-metric `ragflow_*`) are not public. Opaque Chunk Gateway `chunk_id` / ChunkOut `id` are product round-trip tokens for availability updates, not RAGFlow URLs. Auth reuses the opaque Backend Bearer token.
 
 | 项 | 值 |
 |---|---|
@@ -23,4 +23,4 @@ Consumer 必须锁定 **tag name + tag commit SHA + SHA256SUMS**，禁止只锁 
 
 The check gate proves the frozen package is closed: checksums, OpenAPI and TypeScript match the matrix, fixtures validate, and public schemas forbid provider runtime IDs.
 
-[[nodeskclaw-knowledge/scripts/frontend_contract.py#check_contract]] 校验 `SHA256SUMS` 闭环、`manifest.artifacts`、矩阵 77 条与 OpenAPI 操作对齐、fixtures 对照 schema，以及负例 `invalid-chunk-provider-ids.json` 不得通过 `evidence-item`。
+[[nodeskclaw-knowledge/scripts/frontend_contract.py#check_contract]] 校验 `SHA256SUMS` 闭环、`manifest.artifacts`、矩阵与 OpenAPI 操作对齐、fixtures 对照 schema，以及负例 `invalid-chunk-provider-ids.json` 不得通过 `evidence-item`。v1.0.0 additive 含 SourceFile Chunk List/PATCH（F15/F16）。

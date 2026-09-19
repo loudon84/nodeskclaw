@@ -38,8 +38,8 @@ class RuntimeIndexCapability(BaseModel):
 class KnowledgeBaseCreate(BaseModel):
     name: str = Field(min_length=1, max_length=128)
     description: str | None = None
-    embedding_model: str = "bge-m3"
-    chunk_method: str = "naive"
+    embedding_model: str | None = None
+    chunk_method: str | None = None
     parser_config: dict[str, Any] | None = None
     visibility: Visibility = Visibility.private
     tags: list[str] | None = None
@@ -156,7 +156,7 @@ class RetrievalProfileOut(BaseModel):
 class KnowledgeSetCreate(BaseModel):
     name: str = Field(min_length=1, max_length=128)
     description: str | None = None
-    embedding_model: str = "bge-m3"
+    embedding_model: str | None = None
     visibility: Visibility = Visibility.private
     retrieval_config: RetrievalConfig | None = None
 
@@ -330,6 +330,36 @@ class SourceFileMetadataPatch(BaseModel):
 class SourceFileMetadataOut(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
     metadata_revision: int = 0
+
+
+class SourceFileChunkOut(BaseModel):
+    id: str
+    content: str
+    available: bool | None = None
+    positions: list | None = None
+    important_keywords: list[str] = Field(default_factory=list)
+    questions: list[str] = Field(default_factory=list)
+
+
+class SourceFileChunkPageOut(BaseModel):
+    source_file_id: str
+    file_version_id: str
+    items: list[SourceFileChunkOut]
+    total: int
+    page: int
+    page_size: int
+
+
+class SourceFileChunkAvailabilityPatch(BaseModel):
+    file_version_id: str = Field(min_length=1, max_length=36)
+    available: bool
+
+
+class SourceFileChunkAvailabilityResult(BaseModel):
+    source_file_id: str
+    file_version_id: str
+    chunk_id: str
+    available: bool
 
 
 class RetrievalChunkOut(BaseModel):

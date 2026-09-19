@@ -206,6 +206,37 @@ class RagflowRuntimeAdapter:
             page_size=page_size,
         )
 
+    async def read_document_chunks_page(
+        self,
+        dataset_id: str,
+        document_id: str,
+        *,
+        page: int = 1,
+        page_size: int = 50,
+        keywords: str | None = None,
+    ):
+        return await self.client.list_document_chunks_page(
+            dataset_id,
+            document_id,
+            page=page,
+            page_size=page_size,
+            keywords=keywords,
+        )
+
+    async def set_document_chunk_available(
+        self,
+        dataset_id: str,
+        document_id: str,
+        chunk_id: str,
+        available: bool,
+    ) -> None:
+        await self.client.set_document_chunk_available(
+            dataset_id,
+            document_id,
+            chunk_id,
+            available,
+        )
+
     async def iter_document_chunks(
         self,
         dataset_id: str,

@@ -149,6 +149,36 @@ export interface SourceFileVersion {
   created_at?: unknown;
 }
 
+export interface SourceFileChunk {
+  id: string;
+  content: string;
+  available: boolean | null;
+  positions?: unknown[] | null;
+  important_keywords: string[];
+  questions: string[];
+}
+
+export interface SourceFileChunkPage {
+  source_file_id: string;
+  file_version_id: string;
+  items: SourceFileChunk[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface SourceFileChunkAvailabilityPatch {
+  file_version_id: string;
+  available: boolean;
+}
+
+export interface SourceFileChunkAvailabilityResult {
+  source_file_id: string;
+  file_version_id: string;
+  chunk_id: string;
+  available: boolean;
+}
+
 export interface IngestionJob {
   id: string;
   source_file_id: string;

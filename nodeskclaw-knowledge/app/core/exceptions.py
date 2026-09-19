@@ -4,10 +4,37 @@ import logging
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError
 
 logger = logging.getLogger(__name__)
+
+
+def _client_origin(request: Request) -> str:
+    return request.client.host if request.client else "-"
+
+
+def _log_api_error(
+    request: Request,
+    *,
+    status_code: int,
+    error_code: int | None = None,
+    message_key: str | None = None,
+    message: str | None = None,
+    details: Any = None,
+) -> None:
+    logger.error(
+        "frontend_api_error method=%s path=%s status=%s error_code=%s message_key=%s message=%s details=%s client=%s",
+        request.method,
+        request.url.path,
+        status_code,
+        error_code,
+        message_key,
+        message,
+        details,
+        _client_origin(request),
+    )
 
 
 class AppException(Exception):
@@ -130,6 +157,22 @@ class ServiceUnavailableError(AppException):
         )
 
 
+class NotImplementedAppError(AppException):
+    def __init__(
+        self,
+        message: str = "功能暂不支持",
+        message_key: str = "errors.knowledge.not_implemented",
+        details: dict[str, Any] | None = None,
+    ):
+        super().__init__(
+            code=50100,
+            message=message,
+            status_code=501,
+            message_key=message_key,
+            details=details,
+        )
+
+
 HTTP_STATUS_DEFAULT_CODES: dict[int, int] = {
     400: 40000,
     401: 40100,
@@ -138,6 +181,7 @@ HTTP_STATUS_DEFAULT_CODES: dict[int, int] = {
     409: 40900,
     422: 42200,
     500: 50000,
+    501: 50100,
     502: 50200,
     503: 50300,
 }
@@ -161,7 +205,7 @@ def _normalize_http_detail(detail: Any, status_code: int) -> tuple[int, str, str
 
 def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(AppException)
-    async def app_exception_handler(_request: Request, exc: AppException) -> JSONResponse:
+    async def app_exception_handler(request: Request, exc: AppException) -> JSONResponse:
         body: dict[str, Any] = {
             "code": exc.code,
             "error_code": exc.error_code,
@@ -173,11 +217,26 @@ def register_exception_handlers(app: FastAPI) -> None:
             body["message_params"] = exc.message_params
         if exc.details:
             body["details"] = exc.details
+        _log_api_error(
+            request,
+            status_code=exc.status_code,
+            error_code=exc.error_code,
+            message_key=exc.message_key,
+            message=exc.message,
+            details=exc.details,
+        )
         return JSONResponse(status_code=exc.status_code, content=body)
 
     @app.exception_handler(HTTPException)
-    async def http_exception_handler(_request: Request, exc: HTTPException) -> JSONResponse:
+    async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
         error_code, message_key, message = _normalize_http_detail(exc.detail, exc.status_code)
+        _log_api_error(
+            request,
+            status_code=exc.status_code,
+            error_code=error_code,
+            message_key=message_key,
+            message=message,
+        )
         return JSONResponse(
             status_code=exc.status_code,
             content={
@@ -189,9 +248,39 @@ def register_exception_handlers(app: FastAPI) -> None:
             },
         )
 
+    @app.exception_handler(RequestValidationError)
+    async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+        errors = exc.errors()
+        _log_api_error(
+            request,
+            status_code=422,
+            error_code=42200,
+            message_key="errors.common.validation_error",
+            message="请求校验失败",
+            details=errors,
+        )
+        return JSONResponse(
+            status_code=422,
+            content={
+                "code": 42200,
+                "error_code": 42200,
+                "message_key": "errors.common.validation_error",
+                "message": "请求校验失败",
+                "data": None,
+                "details": {"errors": errors},
+            },
+        )
+
     @app.exception_handler(IntegrityError)
-    async def integrity_error_handler(_request: Request, exc: IntegrityError) -> JSONResponse:
+    async def integrity_error_handler(request: Request, exc: IntegrityError) -> JSONResponse:
         logger.warning("Database integrity error: %s", exc)
+        _log_api_error(
+            request,
+            status_code=409,
+            error_code=40900,
+            message_key="errors.common.conflict",
+            message="资源冲突",
+        )
         return JSONResponse(
             status_code=409,
             content={
@@ -204,8 +293,15 @@ def register_exception_handlers(app: FastAPI) -> None:
         )
 
     @app.exception_handler(Exception)
-    async def generic_exception_handler(_request: Request, exc: Exception) -> JSONResponse:
-        logger.exception("Unhandled exception")
+    async def generic_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+        logger.exception("Unhandled exception path=%s method=%s", request.url.path, request.method)
+        _log_api_error(
+            request,
+            status_code=500,
+            error_code=50000,
+            message_key="errors.system.internal_error",
+            message="服务器内部错误",
+        )
         return JSONResponse(
             status_code=500,
             content={

@@ -5,7 +5,6 @@ from __future__ import annotations
 PROVIDER_RUNTIME_ID_KEYS = (
     "dataset_id",
     "document_id",
-    "chunk_id",
     "ragflow_document_id",
     "ragflow_chunk_id",
     "ragflow_dataset_id",
@@ -350,6 +349,67 @@ SCHEMAS: dict[str, dict] = {
                 "created_at": True,
             },
             ["id", "source_file_id", "version_no", "parse_status"],
+        ),
+    ),
+    "source-file-chunk": _schema_doc(
+        "source-file-chunk",
+        "SourceFileChunk",
+        _obj(
+            {
+                "id": {"type": "string"},
+                "content": {"type": "string"},
+                "available": {"type": ["boolean", "null"]},
+                "positions": NULLABLE_ARRAY,
+                "important_keywords": {"type": "array", "items": {"type": "string"}},
+                "questions": {"type": "array", "items": {"type": "string"}},
+            },
+            ["id", "content", "available", "important_keywords", "questions"],
+            extra=False,
+        ),
+    ),
+    "source-file-chunk-page": _schema_doc(
+        "source-file-chunk-page",
+        "SourceFileChunkPage",
+        _obj(
+            {
+                "source_file_id": {"type": "string"},
+                "file_version_id": {"type": "string"},
+                "items": {
+                    "type": "array",
+                    "items": {"$ref": "urn:nodeskclaw:knowledge:frontend:v1:source-file-chunk"},
+                },
+                "total": {"type": "integer", "minimum": 0},
+                "page": {"type": "integer", "minimum": 1},
+                "page_size": {"type": "integer", "minimum": 1},
+            },
+            ["source_file_id", "file_version_id", "items", "total", "page", "page_size"],
+            extra=False,
+        ),
+    ),
+    "source-file-chunk-availability-patch": _schema_doc(
+        "source-file-chunk-availability-patch",
+        "SourceFileChunkAvailabilityPatch",
+        _obj(
+            {
+                "file_version_id": {"type": "string", "minLength": 1, "maxLength": 36},
+                "available": {"type": "boolean"},
+            },
+            ["file_version_id", "available"],
+            extra=False,
+        ),
+    ),
+    "source-file-chunk-availability-result": _schema_doc(
+        "source-file-chunk-availability-result",
+        "SourceFileChunkAvailabilityResult",
+        _obj(
+            {
+                "source_file_id": {"type": "string"},
+                "file_version_id": {"type": "string"},
+                "chunk_id": {"type": "string"},
+                "available": {"type": "boolean"},
+            },
+            ["source_file_id", "file_version_id", "chunk_id", "available"],
+            extra=False,
         ),
     ),
     "ingestion-job": _schema_doc(
@@ -1008,6 +1068,25 @@ MATRIX: list[dict] = [
     _ep("F12", "POST", "/api/v1/source-files/{source_file_id}/acl", stability="compatibility", surface="acl", request="acl-create", response="acl"),
     _ep("F13", "DELETE", "/api/v1/source-files/{source_file_id}/acl/{acl_id}", stability="compatibility", surface="acl", response=None),
     _ep("F14", "DELETE", "/api/v1/source-files/{source_file_id}", stability="compatibility", surface="documents", response=None),
+    _ep(
+        "F15",
+        "GET",
+        "/api/v1/source-files/{source_file_id}/chunks",
+        stability="stable",
+        surface="documents",
+        response="source-file-chunk-page",
+        notes="active version only; page/page_size/keywords; total from provider",
+    ),
+    _ep(
+        "F16",
+        "PATCH",
+        "/api/v1/source-files/{source_file_id}/chunks/{chunk_id}",
+        stability="stable",
+        surface="documents",
+        request="source-file-chunk-availability-patch",
+        response="source-file-chunk-availability-result",
+        notes="requires file update or kb manage; file_version_id stale guard",
+    ),
     _ep("J01", "GET", "/api/v1/ingestion-jobs/{job_id}", stability="stable-compat", surface="ingestion", response="ingestion-job"),
     _ep("J02", "POST", "/api/v1/ingestion-jobs/{job_id}/retry", stability="stable-compat", surface="ingestion", response="ingestion-job", async_op=True, poll="GET /api/v1/ingestion-jobs/{job_id}"),
     _ep("J03", "POST", "/api/v1/ingestion-jobs/{job_id}/cancel", stability="stable-compat", surface="ingestion", response="ingestion-job"),

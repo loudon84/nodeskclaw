@@ -238,6 +238,7 @@ class AuditAction(str, Enum):
     metadata_repaired = "METADATA_REPAIRED"
     metadata_update = "METADATA_UPDATE"
     metadata_schema_update = "METADATA_SCHEMA_UPDATE"
+    chunk_availability_update = "CHUNK_AVAILABILITY_UPDATE"
     chat_create = "CHAT_CREATE"
     chat_query = "CHAT_QUERY"
     connector_create = "CONNECTOR_CREATE"

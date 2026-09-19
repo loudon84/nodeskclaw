@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:nodeskclaw:knowledge:frontend:v1:source-file-chunk-availability-result",
+  "title": "SourceFileChunkAvailabilityResult",
+  "type": "object",
+  "properties": {
+    "source_file_id": {
+      "type": "string"
+    },
+    "file_version_id": {
+      "type": "string"
+    },
+    "chunk_id": {
+      "type": "string"
+    },
+    "available": {
+      "type": "boolean"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "source_file_id",
+    "file_version_id",
+    "chunk_id",
+    "available"
+  ]
+}

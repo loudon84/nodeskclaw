@@ -527,6 +527,98 @@ components:
         - source_file_id
         - version_no
         - parse_status
+    SourceFileChunk:
+      title: SourceFileChunk
+      type: object
+      properties:
+        id:
+          type: string
+        content:
+          type: string
+        available:
+          type:
+            - boolean
+            - "null"
+        positions:
+          type:
+            - array
+            - "null"
+        important_keywords:
+          type: array
+          items:
+            type: string
+        questions:
+          type: array
+          items:
+            type: string
+      additionalProperties: false
+      required:
+        - id
+        - content
+        - available
+        - important_keywords
+        - questions
+    SourceFileChunkPage:
+      title: SourceFileChunkPage
+      type: object
+      properties:
+        source_file_id:
+          type: string
+        file_version_id:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/SourceFileChunk"
+        total:
+          type: integer
+          minimum: 0
+        page:
+          type: integer
+          minimum: 1
+        page_size:
+          type: integer
+          minimum: 1
+      additionalProperties: false
+      required:
+        - source_file_id
+        - file_version_id
+        - items
+        - total
+        - page
+        - page_size
+    SourceFileChunkAvailabilityPatch:
+      title: SourceFileChunkAvailabilityPatch
+      type: object
+      properties:
+        file_version_id:
+          type: string
+          minLength: 1
+          maxLength: 36
+        available:
+          type: boolean
+      additionalProperties: false
+      required:
+        - file_version_id
+        - available
+    SourceFileChunkAvailabilityResult:
+      title: SourceFileChunkAvailabilityResult
+      type: object
+      properties:
+        source_file_id:
+          type: string
+        file_version_id:
+          type: string
+        chunk_id:
+          type: string
+        available:
+          type: boolean
+      additionalProperties: false
+      required:
+        - source_file_id
+        - file_version_id
+        - chunk_id
+        - available
     IngestionJob:
       title: IngestionJob
       type: object
@@ -3400,6 +3492,162 @@ paths:
                     type: string
                   data:
                     type: "null"
+                  details:
+                    type: object
+                  message_params:
+                    type: object
+                additionalProperties: false
+        400:
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        401:
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        403:
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        404:
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        409:
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        503:
+          description: Unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  "/api/v1/source-files/{source_file_id}/chunks":
+    get:
+      operationId: F15
+      summary: "GET /api/v1/source-files/{source_file_id}/chunks"
+      tags:
+        - documents
+      x-stability: stable
+      description: active version only; page/page_size/keywords; total from provider
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - code
+                  - message
+                  - data
+                properties:
+                  code:
+                    type: integer
+                  error_code:
+                    type:
+                      - integer
+                      - "null"
+                  message_key:
+                    type:
+                      - string
+                      - "null"
+                  message:
+                    type: string
+                  data:
+                    $ref: "#/components/schemas/SourceFileChunkPage"
+                  details:
+                    type: object
+                  message_params:
+                    type: object
+                additionalProperties: false
+        400:
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        401:
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        403:
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        404:
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        409:
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        503:
+          description: Unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  "/api/v1/source-files/{source_file_id}/chunks/{chunk_id}":
+    patch:
+      operationId: F16
+      summary: "PATCH /api/v1/source-files/{source_file_id}/chunks/{chunk_id}"
+      tags:
+        - documents
+      x-stability: stable
+      description: requires file update or kb manage; file_version_id stale guard
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SourceFileChunkAvailabilityPatch"
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - code
+                  - message
+                  - data
+                properties:
+                  code:
+                    type: integer
+                  error_code:
+                    type:
+                      - integer
+                      - "null"
+                  message_key:
+                    type:
+                      - string
+                      - "null"
+                  message:
+                    type: string
+                  data:
+                    $ref: "#/components/schemas/SourceFileChunkAvailabilityResult"
                   details:
                     type: object
                   message_params:

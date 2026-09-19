@@ -217,6 +217,16 @@ drop 必须写审计：`METADATA_MISMATCH` 或 `CHUNK_SECURITY_DROP`。实现：
 
 版本回滚：先 RAGFlow 目标 `enabled=1`，再本地事务切 `active_version_id` 并将旧版标 superseded，最后 best-effort 旧版 `enabled=0`；切换窗口即使双 enabled，Cleaner 仍只认 `active_version_id`。激活后 mark Index STALE 并按 Build Policy 入队：[[nodeskclaw-knowledge/app/services/source_lifecycle_service.py#activate_source_file_version]]。
 
+## SourceFile Chunk Thin Gateway
+
+Consumer 仅凭 `source_file_id` 读写当前 Active Version 的 Chunk；RAGFlow 是 Chunk 内容与 `available` 的 SOT，Knowledge 只做权限、Active Version→dataset/document 映射、转发与最小 DTO 投影。
+
+- List：`GET /api/v1/source-files/{source_file_id}/chunks`（`FilePermission.read`）
+- Availability：`PATCH .../chunks/{chunk_id}`（`FilePermission.update` 或 `KbPermission.manage`；body 带 `file_version_id` stale guard）
+- Client：[[nodeskclaw-knowledge/app/integrations/ragflow/client.py#list_document_chunks_page]]、[[nodeskclaw-knowledge/app/integrations/ragflow/client.py#set_document_chunk_available]]（Provider **PATCH**，非 deprecated PUT）
+- Service：[[nodeskclaw-knowledge/app/services/source_chunk_service.py#list_source_file_chunks]]、[[nodeskclaw-knowledge/app/services/source_chunk_service.py#set_source_file_chunk_available]]
+- 禁止本地 Chunk ORM / 二次切分 / 本地 keyword filter / 暴露 `dataset_id`/`document_id`/`available_int`
+
 ## Retrieval Planner
 
 多 KB 不能合并为一个错误的 `dataset_ids+document_ids` 请求；v2.2 由 `build_retrieval_plan` 按 KB 发射语义互异的 `RuntimeExecutionSlice`（mode + access_scope），并行执行后再加权合并。v2.4 输入为 `FederationExecutionPlan`（由 [[nodeskclaw-knowledge/app/services/federated_retrieval_planner.py#build_federation_plan]] 产出），不再由生产路径直接 `build_capability_plan` 驱动 slice 选择。

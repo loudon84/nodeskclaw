@@ -17,7 +17,9 @@ The frontend must not:
 - decode Knowledge authorization locally;
 - call RAGFlow directly;
 - hold a RAGFlow API key;
-- use runtime dataset/document/chunk IDs as UI identity.
+- use RAGFlow dataset/document IDs as UI identity (never accept them as request inputs).
+
+Opaque `chunk_id` values returned by Knowledge Chunk APIs are round-trip tokens for availability updates only — not RAGFlow URLs or dataset identities.
 
 ## 2. Knowledge Base management
 
@@ -111,9 +113,25 @@ GET    /api/v1/source-files/{source_file_id}/acl
 POST   /api/v1/source-files/{source_file_id}/acl
 DELETE /api/v1/source-files/{source_file_id}/acl/{acl_id}
 DELETE /api/v1/source-files/{source_file_id}
+GET    /api/v1/source-files/{source_file_id}/chunks
+PATCH  /api/v1/source-files/{source_file_id}/chunks/{chunk_id}
 ```
 
 The frontend must treat `active_version_id` as the document-version authority.
+
+### Chunk list and availability (Thin Gateway)
+
+```text
+GET  /api/v1/source-files/{source_file_id}/chunks?page=&page_size=&keywords=
+PATCH /api/v1/source-files/{source_file_id}/chunks/{chunk_id}
+```
+
+Rules:
+- List always targets the current `active_version_id` (do not pass historical `file_version_id` as a list filter).
+- Response includes `file_version_id` plus provider `total`/`page`/`page_size`/`items`.
+- PATCH body must include that same `file_version_id` as a stale guard, plus `available: bool`.
+- PATCH requires file `update` permission or Knowledge Base `manage`.
+- Do not cache Chunk content as a second source of truth; refetch after mutation (list may lag briefly).
 
 ## 5. Knowledge Set and retrieval profile
 
