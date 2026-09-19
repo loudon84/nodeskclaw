@@ -245,6 +245,13 @@ async def test_compile_and_persist_skips_revision_when_hash_unchanged(monkeypatc
     assert first_revision == 1
 
 
+def test_ensure_runtime_adapter_keeps_adapter():
+    from app.services.reconciliation_service import ensure_runtime_adapter
+
+    adapter = RagflowRuntimeAdapter(client=SimpleNamespace())
+    assert ensure_runtime_adapter(adapter) is adapter
+
+
 @pytest.mark.asyncio
 async def test_reconcile_binding_config_in_sync(monkeypatch):
     from app.services import reconciliation_service
@@ -301,3 +308,68 @@ async def test_reconcile_binding_config_in_sync(monkeypatch):
     result = await reconciliation_service.reconcile_binding_config(db, "kb1", FakeAdapter())
     assert result["status"] == "success"
     assert result["drift_status"] == "in_sync"
+
+
+@pytest.mark.asyncio
+async def test_reconcile_does_not_wrap_adapter_as_client(monkeypatch):
+    from app.services import reconciliation_service
+
+    kb = SimpleNamespace(id="kb1", org_id="o1", deleted_at=None)
+    binding = SimpleNamespace(
+        resource_id="ds1",
+        capabilities={},
+        desired_config=None,
+        config_revision=0,
+        observed_revision=0,
+        drift_status="unknown",
+        last_error=None,
+        runtime_config=None,
+        observed_config=None,
+    )
+    db = AsyncMock()
+    db.get = AsyncMock(return_value=kb)
+    db.flush = AsyncMock()
+    db.execute = AsyncMock()
+    monkeypatch.setattr(reconciliation_service.advisory_lock, "kb_advisory_xact_lock", AsyncMock())
+    monkeypatch.setattr(runtime_binding_service, "get_binding", AsyncMock(return_value=binding))
+    monkeypatch.setattr(
+        runtime_binding_service,
+        "compile_and_persist_desired_config",
+        AsyncMock(
+            return_value={
+                "embedding_model": "bge-m3",
+                "chunk_method": "naive",
+                "parser_config": {"chunk_token_num": 128},
+                "name": "nk:kb1:demo",
+                "description": "new desc",
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        runtime_binding_service,
+        "persist_observed_config",
+        AsyncMock(),
+    )
+
+    client = SimpleNamespace(
+        update_dataset=AsyncMock(),
+        update_dataset_parser_config=AsyncMock(return_value={}),
+        get_dataset=AsyncMock(
+            return_value={
+                "embedding_model": "bge-m3",
+                "chunk_method": "naive",
+                "parser_config": {},
+                "name": "nk:kb1:demo",
+                "description": "old",
+            }
+        ),
+    )
+    adapter = RagflowRuntimeAdapter(client=client)
+    result = await reconciliation_service.reconcile_binding_config(
+        db,
+        "kb1",
+        adapter,
+        metadata_overrides={"description": "new desc"},
+    )
+    assert result["status"] != "error"
+    client.update_dataset_parser_config.assert_awaited()

@@ -14,7 +14,7 @@ KnowledgeBase 是企业知识资产容器（权限、模型、Build Profile）�
 
 SourceFile 是稳定逻辑源文件；权限挂在 SourceFile 上，不挂在 Chunk 上。
 
-每个实际上传版本是 FileVersion，对应一个 RAGFlow Document；新版本失败不得覆盖旧 ACTIVE。`source_file.active_version_id` 是检索安全 Authority；superseded 版本 Chunk 必须被 Cleaner DROP。删除 RAGFlow 文档失败时保留 `deleting` 并写入 `last_error`：[[nodeskclaw-knowledge/app/models/source_file.py#SourceFile]]。写入 RAGFlow 的 `meta_fields` 必须含 `nk_source_file_id`、`nk_file_version_id`、`nk_knowledge_base_id`、`nk_org_id`、`nk_metadata_revision`，业务字段映射为 `biz_*`：[[nodeskclaw-knowledge/app/services/metadata_service.py#build_meta_fields]]。Version 运行时字段见 [[nodeskclaw-knowledge/app/models/source_file_version.py#SourceFileVersion]]。
+每个实际上传版本是 FileVersion，对应一个 RAGFlow Document；新版本失败不得覆盖旧 ACTIVE。`source_file.active_version_id` 是检索安全 Authority；superseded 版本 Chunk 必须被 Cleaner DROP。删除 RAGFlow 文档失败时保留 `deleting` 并写入 `last_error`：[[nodeskclaw-knowledge/app/models/source_file.py#SourceFile]]。写入 RAGFlow 的 `meta_fields` 必须含 `nk_source_file_id`、`nk_file_version_id`、`nk_knowledge_base_id`、`nk_org_id`、`nk_metadata_revision`，业务字段映射为 `biz_*`：[[nodeskclaw-knowledge/app/services/metadata_service.py#build_meta_fields]]。Version 运行时字段见 [[nodeskclaw-knowledge/app/models/source_file_version.py#SourceFileVersion]]。下载响应头经 [[nodeskclaw-knowledge/app/core/http_headers.py#content_disposition_attachment]] 使用 RFC 5987（`filename` ASCII 兜底 + `filename*=UTF-8''`），避免中文文件名触发 latin-1 `UnicodeEncodeError`。
 
 v1.2 生命周期：`archived_at` 归档后不参与新 Retrieval（AccessPlan 过滤 + RAGFlow `enabled=0`），历史 Citation 仍可追溯；`POST .../versions/{id}/activate` 支持回滚，流程见 [[knowledge#Active Version Security]]：[[nodeskclaw-knowledge/app/services/source_lifecycle_service.py]]。
 

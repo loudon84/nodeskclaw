@@ -8,7 +8,7 @@ import pytest
 from app.api.v2 import assets
 from app.core.config import settings
 from app.core.exceptions import BadRequestError
-from app.schemas.knowledge import KnowledgeBaseV2Out, KnowledgeSetV2Create
+from app.schemas.knowledge import KnowledgeBaseCreate, KnowledgeBaseV2Out, KnowledgeSetV2Create
 from app.schemas.principal import KnowledgePrincipal
 
 
@@ -54,6 +54,14 @@ def test_knowledge_set_v2_create_omits_embedding():
     assert not hasattr(body, "embedding_model") or "embedding_model" not in body.model_fields_set
 
 
+def test_resolve_embedding_model_uses_settings_when_omitted():
+    from app.core.config import resolve_embedding_model
+
+    assert resolve_embedding_model(None) == settings.KNOWLEDGE_DEFAULT_EMBEDDING_MODEL
+    assert resolve_embedding_model("  ") == settings.KNOWLEDGE_DEFAULT_EMBEDDING_MODEL
+    assert resolve_embedding_model("custom@RAG@Provider") == "custom@RAG@Provider"
+
+
 @pytest.mark.asyncio
 async def test_create_kb_v2_disabled(monkeypatch):
     monkeypatch.setattr(settings, "KNOWLEDGE_API_V2_ENABLED", False)
@@ -65,6 +73,40 @@ async def test_create_kb_v2_disabled(monkeypatch):
             ragflow=AsyncMock(),
         )
     assert exc.value.message_key == "errors.knowledge.api_v2_disabled"
+
+
+@pytest.mark.asyncio
+async def test_create_kb_v2_uses_settings_embedding(monkeypatch):
+    monkeypatch.setattr(settings, "KNOWLEDGE_API_V2_ENABLED", True)
+    created = SimpleNamespace(
+        id="kb1",
+        org_id="o1",
+        name="KB",
+        description=None,
+        embedding_model=settings.KNOWLEDGE_DEFAULT_EMBEDDING_MODEL,
+        chunk_method="naive",
+        status="active",
+        owner_member_id="m1",
+        acl_version=1,
+        visibility="private",
+        tags=None,
+        active_build_profile_id=None,
+        knowledge_model_id=None,
+        build_version=0,
+    )
+    with patch(
+        "app.api.v2.assets.knowledge_base_service.create_knowledge_base",
+        new=AsyncMock(return_value=created),
+    ) as create:
+        await assets.create_knowledge_base_v2(
+            KnowledgeBaseCreate(name="KB", embedding_model="bge-m3", chunk_method="naive"),
+            member=_member(),
+            db=AsyncMock(),
+            ragflow=AsyncMock(),
+        )
+    create.assert_awaited_once()
+    assert create.await_args.kwargs["embedding_model"] == settings.KNOWLEDGE_DEFAULT_EMBEDDING_MODEL
+    assert create.await_args.kwargs["chunk_method"] == settings.KNOWLEDGE_DEFAULT_CHUNK_METHOD
 
 
 @pytest.mark.asyncio
@@ -103,7 +145,7 @@ async def test_create_set_v2_defaults_embedding(monkeypatch):
             db=AsyncMock(),
         )
     create.assert_awaited_once()
-    assert create.await_args.kwargs["embedding_model"] == "bge-m3"
+    assert create.await_args.kwargs["embedding_model"] == settings.KNOWLEDGE_DEFAULT_EMBEDDING_MODEL
     assert result.data.name == "set-a"
     blob = str(result.data.model_dump()).lower()
     assert "ragflow" not in blob

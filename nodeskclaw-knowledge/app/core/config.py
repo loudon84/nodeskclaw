@@ -33,6 +33,8 @@ class Settings(BaseSettings):
     KNOWLEDGE_SERVICE_TOKEN: str = ""
 
     KNOWLEDGE_UPLOAD_MAX_MB: int = 200
+    KNOWLEDGE_DEFAULT_EMBEDDING_MODEL: str = "text-embedding-v4@RAG@Tongyi-Qianwen"
+    KNOWLEDGE_DEFAULT_CHUNK_METHOD: str = "naive"
 
     CHAT_HISTORY_MAX_MESSAGES: int = 20
     CHAT_HISTORY_MAX_TOKENS: int = 8000
@@ -125,3 +127,13 @@ def parse_private_network_allowlist(raw: str | None = None) -> set[str]:
 
 
 settings = Settings()
+
+
+def resolve_embedding_model(explicit: str | None = None) -> str:
+    value = (explicit or "").strip()
+    return value or settings.KNOWLEDGE_DEFAULT_EMBEDDING_MODEL
+
+
+def resolve_chunk_method(explicit: str | None = None) -> str:
+    value = (explicit or "").strip()
+    return value or settings.KNOWLEDGE_DEFAULT_CHUNK_METHOD

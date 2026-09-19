@@ -3,6 +3,7 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import resolve_chunk_method, resolve_embedding_model
 from app.core.deps import get_db, get_member_context, get_runtime_adapter
 from app.runtime.ragflow import RagflowRuntimeAdapter
 from app.schemas.common import ApiResponse, PageData
@@ -64,8 +65,8 @@ async def create_kb(
         ragflow,
         name=body.name,
         description=body.description,
-        embedding_model=body.embedding_model,
-        chunk_method=body.chunk_method,
+        embedding_model=resolve_embedding_model(body.embedding_model),
+        chunk_method=resolve_chunk_method(body.chunk_method),
         parser_config=body.parser_config,
         visibility=body.visibility.value,
         tags=body.tags,

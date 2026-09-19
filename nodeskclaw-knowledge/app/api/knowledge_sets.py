@@ -3,6 +3,7 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import resolve_embedding_model
 from app.core.deps import get_db, get_member_context
 from app.schemas.common import ApiResponse, PageData
 from app.schemas.knowledge import (
@@ -60,7 +61,7 @@ async def create_set(
         member,
         name=body.name,
         description=body.description,
-        embedding_model=body.embedding_model,
+        embedding_model=resolve_embedding_model(body.embedding_model),
         visibility=body.visibility.value,
         retrieval_config=retrieval_config,
     )

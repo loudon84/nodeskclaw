@@ -193,5 +193,5 @@ async def test_create_set_v2_defaults_embedding(monkeypatch):
             db=AsyncMock(),
         )
     create.assert_awaited_once()
-    assert create.await_args.kwargs["embedding_model"] == "bge-m3"
+    assert create.await_args.kwargs["embedding_model"] == settings.KNOWLEDGE_DEFAULT_EMBEDDING_MODEL
     assert result.data.name == "set-a"

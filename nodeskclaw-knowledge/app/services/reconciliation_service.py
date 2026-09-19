@@ -11,6 +11,7 @@ from typing import Any
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.integrations.ragflow.client import RagflowClient
 from app.integrations.ragflow.exceptions import RagflowError
 from app.runtime.ragflow import RagflowRuntimeAdapter
 from app.models.base import not_deleted
@@ -51,6 +52,16 @@ def runtime_config_diff(desired: dict[str, Any], observed: dict[str, Any]) -> di
     return diff
 
 
+def ensure_runtime_adapter(adapter):
+    if isinstance(adapter, RagflowRuntimeAdapter):
+        return adapter
+    if isinstance(adapter, RagflowClient):
+        return RagflowRuntimeAdapter(client=adapter)
+    if adapter is not None and hasattr(adapter, "get_dataset_runtime_config"):
+        return adapter
+    return RagflowRuntimeAdapter()
+
+
 async def reconcile_binding_config(
     db: AsyncSession,
     knowledge_base_id: str,
@@ -58,12 +69,7 @@ async def reconcile_binding_config(
     *,
     metadata_overrides: dict[str, str | None] | None = None,
 ) -> dict[str, Any]:
-    from app.runtime.ragflow import RagflowRuntimeAdapter
-
-    if isinstance(adapter, RagflowRuntimeAdapter):
-        adapter = RagflowRuntimeAdapter(client=adapter)
-    elif not hasattr(adapter, "get_dataset_runtime_config"):
-        adapter = RagflowRuntimeAdapter()
+    adapter = ensure_runtime_adapter(adapter)
 
     await advisory_lock.kb_advisory_xact_lock(db, knowledge_base_id)
     kb = await db.get(KnowledgeBase, knowledge_base_id)

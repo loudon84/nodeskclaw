@@ -32,7 +32,7 @@ class KnowledgeBase(BaseModel):
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     ragflow_dataset_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    embedding_model: Mapped[str] = mapped_column(String(128), nullable=False, default="bge-m3")
+    embedding_model: Mapped[str] = mapped_column(String(128), nullable=False)
     chunk_method: Mapped[str] = mapped_column(String(64), nullable=False, default="naive")
     parser_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     owner_member_id: Mapped[str] = mapped_column(String(36), nullable=False)
