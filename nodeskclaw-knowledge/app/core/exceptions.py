@@ -58,8 +58,19 @@ class AppException(Exception):
 
 
 class NotFoundError(AppException):
-    def __init__(self, message: str = "资源不存在", message_key: str = "errors.common.not_found"):
-        super().__init__(code=40400, message=message, status_code=404, message_key=message_key)
+    def __init__(
+        self,
+        message: str = "资源不存在",
+        message_key: str = "errors.common.not_found",
+        details: dict[str, Any] | None = None,
+    ):
+        super().__init__(
+            code=40400,
+            message=message,
+            status_code=404,
+            message_key=message_key,
+            details=details,
+        )
 
 
 class ForbiddenError(AppException):

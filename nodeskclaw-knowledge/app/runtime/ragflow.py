@@ -214,6 +214,7 @@ class RagflowRuntimeAdapter:
         page: int = 1,
         page_size: int = 50,
         keywords: str | None = None,
+        id: str | None = None,
     ):
         return await self.client.list_document_chunks_page(
             dataset_id,
@@ -221,7 +222,11 @@ class RagflowRuntimeAdapter:
             page=page,
             page_size=page_size,
             keywords=keywords,
+            id=id,
         )
+
+    async def get_document_image(self, provider_image_token: str):
+        return await self.client.get_document_image(provider_image_token)
 
     async def set_document_chunk_available(
         self,

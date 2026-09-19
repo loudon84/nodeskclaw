@@ -23,14 +23,24 @@ def test_chunk_out_excludes_provider_runtime_ids():
         "id",
         "content",
         "available",
+        "has_image",
         "positions",
         "important_keywords",
         "questions",
     }
+    assert payload["has_image"] is False
     assert "dataset_id" not in payload
     assert "document_id" not in payload
     assert "available_int" not in payload
     assert "ragflow_document_id" not in payload
+    assert "image_id" not in payload
+    assert "img_id" not in payload
+
+
+def test_chunk_out_has_image_default_false():
+    chunk = SourceFileChunkOut(id="c1", content="")
+    assert chunk.has_image is False
+    assert chunk.model_dump()["has_image"] is False
 
 
 def test_chunk_out_available_may_be_null():

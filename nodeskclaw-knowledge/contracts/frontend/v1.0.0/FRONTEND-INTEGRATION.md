@@ -115,6 +115,7 @@ DELETE /api/v1/source-files/{source_file_id}/acl/{acl_id}
 DELETE /api/v1/source-files/{source_file_id}
 GET    /api/v1/source-files/{source_file_id}/chunks
 PATCH  /api/v1/source-files/{source_file_id}/chunks/{chunk_id}
+GET    /api/v1/source-files/{source_file_id}/chunks/{chunk_id}/image
 ```
 
 The frontend must treat `active_version_id` as the document-version authority.
@@ -124,15 +125,18 @@ The frontend must treat `active_version_id` as the document-version authority.
 ```text
 GET  /api/v1/source-files/{source_file_id}/chunks?page=&page_size=&keywords=
 PATCH /api/v1/source-files/{source_file_id}/chunks/{chunk_id}
+GET  /api/v1/source-files/{source_file_id}/chunks/{chunk_id}/image?file_version_id=
 ```
 
 Rules:
 - List always targets the current `active_version_id` (do not pass historical `file_version_id` as a list filter).
-- Response includes `file_version_id` plus provider `total`/`page`/`page_size`/`items`.
+- Response includes `file_version_id`, provider `total`, request-echo `page`/`page_size`, and `items` with `has_image` (boolean projection; never `image_id`/`img_id`).
 - PATCH body must include that same `file_version_id` as a stale guard, plus `available: bool`.
 - PATCH requires file `update` permission or Knowledge Base `manage`.
-- Do not cache Chunk content as a second source of truth; refetch after mutation (list may lag briefly).
-
+- Image GET requires read permission and `file_version_id` matching active version; returns raw image bytes (`image/png|jpeg|webp|gif`), `Cache-Control: private, max-age=300`, no `Content-Disposition: attachment`, max 20MiB.
+- Image error codes (`details.error_code`): `KNOWLEDGE_CHUNK_NOT_FOUND` (chunk not in active document), `KNOWLEDGE_CHUNK_IMAGE_NOT_FOUND` (chunk has no image), `KNOWLEDGE_CHUNK_VERSION_CONFLICT` (stale `file_version_id`), `KNOWLEDGE_CHUNK_IMAGE_TYPE_UNSUPPORTED` (415), `KNOWLEDGE_CHUNK_IMAGE_TOO_LARGE` (413), `KNOWLEDGE_CHUNK_PROVIDER_UNAVAILABLE` (503).
+- Do not cache Chunk content or images as a second source of truth; refetch after mutation (list may lag briefly).
+- Never accept or send Provider `dataset_id` / `document_id` / `image_id` from the client.
 ## 5. Knowledge Set and retrieval profile
 
 Use v2 for the Set itself:

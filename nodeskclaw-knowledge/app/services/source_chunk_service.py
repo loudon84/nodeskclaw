@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import time
+import uuid
 from dataclasses import dataclass
 from typing import Any
 
@@ -35,8 +36,25 @@ class RuntimeDocumentRef:
     document_id: str
 
 
+@dataclass(frozen=True)
+class SourceFileChunkImage:
+    content: bytes
+    content_type: str
+
+
 def _chunk_id_digest(chunk_id: str) -> str:
     return hashlib.sha256(chunk_id.encode("utf-8")).hexdigest()[:12]
+
+
+def _provider_image_token(raw: dict[str, Any]) -> str | None:
+    for key in ("image_id", "img_id"):
+        value = raw.get(key)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return None
 
 
 def _normalize_chunk(raw: dict[str, Any]) -> SourceFileChunkOut:
@@ -59,6 +77,7 @@ def _normalize_chunk(raw: dict[str, Any]) -> SourceFileChunkOut:
         id=str(raw.get("id") or ""),
         content=str(content),
         available=available if isinstance(available, bool) else None,
+        has_image=_provider_image_token(raw) is not None,
         positions=positions,
         important_keywords=[str(x) for x in keywords],
         questions=[str(x) for x in questions],
@@ -141,9 +160,109 @@ async def list_source_file_chunks(
         file_version_id=ref.file_version_id,
         items=[_normalize_chunk(c) for c in page_data.chunks],
         total=page_data.total,
-        page=page_data.page,
-        page_size=page_data.page_size,
+        page=page,
+        page_size=page_size,
     )
+
+
+async def get_source_file_chunk_image(
+    db: AsyncSession,
+    member: KnowledgePrincipal,
+    ragflow: RagflowRuntimeAdapter,
+    source_file_id: str,
+    chunk_id: str,
+    *,
+    file_version_id: str,
+) -> SourceFileChunkImage:
+    from app.core.exceptions import AppException
+
+    started = time.perf_counter()
+    operation_id = uuid.uuid4().hex
+    ref = await resolve_active_runtime_document(db, member, source_file_id)
+    if file_version_id != ref.file_version_id:
+        logger.info(
+            "chunk_image stage=VERSION_GUARD operation_id=%s source_file_id=%s file_version_id=%s chunk_id_digest=%s error_code=KNOWLEDGE_CHUNK_VERSION_CONFLICT",
+            operation_id,
+            ref.source_file_id,
+            file_version_id,
+            _chunk_id_digest(chunk_id),
+        )
+        raise chunk_errors.chunk_version_conflict()
+
+    digest = _chunk_id_digest(chunk_id)
+    logger.info(
+        "chunk_image stage=RESOLVE_CHUNK operation_id=%s source_file_id=%s file_version_id=%s chunk_id_digest=%s",
+        operation_id,
+        ref.source_file_id,
+        ref.file_version_id,
+        digest,
+    )
+    try:
+        page_data = await ragflow.read_document_chunks_page(
+            ref.dataset_id,
+            ref.document_id,
+            page=1,
+            page_size=1,
+            keywords=None,
+            id=chunk_id,
+        )
+    except RagflowError as exc:
+        if exc.message_key == "errors.knowledge.chunk_contract_invalid":
+            raise chunk_errors.chunk_contract_invalid(exc.message) from exc
+        raise chunk_errors.chunk_provider_unavailable(exc.message) from exc
+    except AppException:
+        raise
+    except Exception as exc:
+        raise chunk_errors.chunk_provider_unavailable() from exc
+
+    matched = next(
+        (c for c in page_data.chunks if isinstance(c, dict) and str(c.get("id") or "") == chunk_id),
+        None,
+    )
+    if matched is None:
+        logger.info(
+            "chunk_image stage=CHUNK_RESOLVED operation_id=%s source_file_id=%s file_version_id=%s chunk_id_digest=%s error_code=KNOWLEDGE_CHUNK_NOT_FOUND",
+            operation_id,
+            ref.source_file_id,
+            ref.file_version_id,
+            digest,
+        )
+        raise chunk_errors.chunk_not_found()
+
+    token = _provider_image_token(matched)
+    if token is None:
+        logger.info(
+            "chunk_image stage=IMAGE_REF_RESOLVED operation_id=%s source_file_id=%s file_version_id=%s chunk_id_digest=%s error_code=KNOWLEDGE_CHUNK_IMAGE_NOT_FOUND",
+            operation_id,
+            ref.source_file_id,
+            ref.file_version_id,
+            digest,
+        )
+        raise chunk_errors.chunk_image_not_found()
+
+    try:
+        image = await ragflow.get_document_image(token)
+    except AppException:
+        raise
+    except RagflowError as exc:
+        if exc.message_key == "errors.knowledge.chunk_contract_invalid":
+            raise chunk_errors.chunk_contract_invalid(exc.message) from exc
+        raise chunk_errors.chunk_provider_unavailable(exc.message) from exc
+    except Exception as exc:
+        raise chunk_errors.chunk_provider_unavailable() from exc
+
+    duration_ms = int((time.perf_counter() - started) * 1000)
+    logger.info(
+        "chunk_image stage=RETURN operation_id=%s source_file_id=%s file_version_id=%s chunk_id_digest=%s mime_type=%s byte_count=%s duration_ms=%s error_code=",
+        operation_id,
+        ref.source_file_id,
+        ref.file_version_id,
+        digest,
+        image.content_type,
+        len(image.content),
+        duration_ms,
+    )
+    return SourceFileChunkImage(content=image.content, content_type=image.content_type)
 
 
 def _map_patch_provider_error(exc: RagflowError) -> Exception:

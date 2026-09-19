@@ -336,6 +336,7 @@ class SourceFileChunkOut(BaseModel):
     id: str
     content: str
     available: bool | None = None
+    has_image: bool = False
     positions: list | None = None
     important_keywords: list[str] = Field(default_factory=list)
     questions: list[str] = Field(default_factory=list)

@@ -73,6 +73,35 @@ def chunk_not_found() -> NotFoundError:
     return NotFoundError(
         message="Chunk 不存在或不属于当前文档",
         message_key="errors.knowledge.chunk_not_found",
+        details={"error_code": "KNOWLEDGE_CHUNK_NOT_FOUND"},
+    )
+
+
+def chunk_image_not_found() -> NotFoundError:
+    return NotFoundError(
+        message="Chunk 没有关联图片",
+        message_key="errors.knowledge.chunk_image_not_found",
+        details={"error_code": "KNOWLEDGE_CHUNK_IMAGE_NOT_FOUND"},
+    )
+
+
+def chunk_image_type_unsupported(message: str = "Chunk 图片类型不受支持") -> AppException:
+    return AppException(
+        code=41500,
+        message=message,
+        status_code=415,
+        message_key="errors.knowledge.chunk_image_type_unsupported",
+        details={"error_code": "KNOWLEDGE_CHUNK_IMAGE_TYPE_UNSUPPORTED"},
+    )
+
+
+def chunk_image_too_large(message: str = "Chunk 图片超过大小限制") -> AppException:
+    return AppException(
+        code=41300,
+        message=message,
+        status_code=413,
+        message_key="errors.knowledge.chunk_image_too_large",
+        details={"error_code": "KNOWLEDGE_CHUNK_IMAGE_TOO_LARGE"},
     )
 
 

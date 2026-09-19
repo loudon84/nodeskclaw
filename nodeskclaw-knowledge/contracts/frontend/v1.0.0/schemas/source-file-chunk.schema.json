@@ -16,6 +16,9 @@
         "null"
       ]
     },
+    "has_image": {
+      "type": "boolean"
+    },
     "positions": {
       "type": [
         "array",
@@ -40,6 +43,7 @@
     "id",
     "content",
     "available",
+    "has_image",
     "important_keywords",
     "questions"
   ]

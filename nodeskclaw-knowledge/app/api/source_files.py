@@ -202,6 +202,30 @@ async def patch_chunk_availability(
     return ApiResponse(data=data)
 
 
+@router.get("/{source_file_id}/chunks/{chunk_id}/image")
+async def get_chunk_image(
+    source_file_id: str,
+    chunk_id: str,
+    file_version_id: str = Query(..., min_length=1, max_length=36),
+    member: KnowledgePrincipal = Depends(get_member_context),
+    db: AsyncSession = Depends(get_db),
+    ragflow: RagflowRuntimeAdapter = Depends(get_runtime_adapter),
+):
+    image = await source_chunk_service.get_source_file_chunk_image(
+        db,
+        member,
+        ragflow,
+        source_file_id,
+        chunk_id,
+        file_version_id=file_version_id,
+    )
+    return Response(
+        content=image.content,
+        media_type=image.content_type,
+        headers={"Cache-Control": "private, max-age=300"},
+    )
+
+
 @router.patch("/{source_file_id}/metadata", response_model=ApiResponse[SourceFileMetadataOut])
 async def patch_metadata(
     source_file_id: str,

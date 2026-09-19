@@ -52,13 +52,14 @@ def test_chunk_routes_registered():
     paths = {getattr(r, "path", "") for r in source_files_api.router.routes}
     assert "/source-files/{source_file_id}/chunks" in paths
     assert "/source-files/{source_file_id}/chunks/{chunk_id}" in paths
+    assert "/source-files/{source_file_id}/chunks/{chunk_id}/image" in paths
 
 
 def test_list_chunks_default_and_hides_provider_ids(client: TestClient):
     page = SourceFileChunkPageOut(
         source_file_id="sf1",
         file_version_id="v1",
-        items=[SourceFileChunkOut(id="c1", content="hello", available=True)],
+        items=[SourceFileChunkOut(id="c1", content="hello", available=True, has_image=False)],
         total=1,
         page=1,
         page_size=50,
@@ -74,9 +75,11 @@ def test_list_chunks_default_and_hides_provider_ids(client: TestClient):
     data = body["data"]
     assert data["total"] == 1
     assert data["file_version_id"] == "v1"
+    assert data["items"][0]["has_image"] is False
     assert "dataset_id" not in data
     assert "document_id" not in data
     assert "available_int" not in data["items"][0]
+    assert "image_id" not in data["items"][0]
     mocked.assert_awaited_once()
     kwargs = mocked.await_args.kwargs
     assert kwargs["page"] == 1
@@ -136,3 +139,54 @@ def test_patch_chunk_success(client: TestClient):
     assert resp.status_code == 200
     assert resp.json()["data"]["available"] is False
     assert resp.json()["data"]["chunk_id"] == "c1"
+
+
+def test_get_chunk_image_success_binary(client: TestClient):
+    from app.services.source_chunk_service import SourceFileChunkImage
+
+    image = SourceFileChunkImage(content=b"\x89PNG", content_type="image/png")
+    with patch(
+        "app.api.source_files.source_chunk_service.get_source_file_chunk_image",
+        new=AsyncMock(return_value=image),
+    ) as mocked:
+        resp = client.get(
+            "/api/v1/source-files/sf1/chunks/c1/image",
+            params={"file_version_id": "v1"},
+        )
+    assert resp.status_code == 200
+    assert resp.content == b"\x89PNG"
+    assert resp.headers["content-type"].startswith("image/png")
+    assert resp.headers["cache-control"] == "private, max-age=300"
+    assert "content-disposition" not in {k.lower() for k in resp.headers.keys()}
+    mocked.assert_awaited_once()
+    assert mocked.await_args.kwargs["file_version_id"] == "v1"
+
+
+def test_get_chunk_image_version_conflict(client: TestClient):
+    with patch(
+        "app.api.source_files.source_chunk_service.get_source_file_chunk_image",
+        new=AsyncMock(
+            side_effect=ConflictError(
+                message="stale",
+                message_key="errors.knowledge.chunk_version_conflict",
+            )
+        ),
+    ):
+        resp = client.get(
+            "/api/v1/source-files/sf1/chunks/c1/image",
+            params={"file_version_id": "v0"},
+        )
+    assert resp.status_code == 409
+    assert resp.json()["message_key"] == "errors.knowledge.chunk_version_conflict"
+
+
+def test_get_chunk_image_forbidden(client: TestClient):
+    with patch(
+        "app.api.source_files.source_chunk_service.get_source_file_chunk_image",
+        new=AsyncMock(side_effect=ForbiddenError()),
+    ):
+        resp = client.get(
+            "/api/v1/source-files/sf1/chunks/c1/image",
+            params={"file_version_id": "v1"},
+        )
+    assert resp.status_code == 403

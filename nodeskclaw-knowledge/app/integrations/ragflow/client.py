@@ -30,6 +30,16 @@ class RagflowChunkPage:
     page_size: int
 
 
+@dataclass
+class RagflowDocumentImage:
+    content: bytes
+    content_type: str
+
+
+_IMAGE_MIME_ALLOWLIST = frozenset({"image/png", "image/jpeg", "image/webp", "image/gif"})
+_IMAGE_MAX_BYTES = 20 * 1024 * 1024
+
+
 # @lat: [[knowledge#Isolation From Ragflow]]
 class RagflowClient:
     def __init__(
@@ -583,10 +593,13 @@ class RagflowClient:
         page: int = 1,
         page_size: int = 50,
         keywords: str | None = None,
+        id: str | None = None,
     ) -> RagflowChunkPage:
         params: dict[str, Any] = {"page": page, "page_size": page_size}
         if keywords is not None and keywords != "":
             params["keywords"] = keywords
+        if id is not None and id != "":
+            params["id"] = id
         data = await self._request(
             "GET",
             f"/api/v1/datasets/{dataset_id}/documents/{document_id}/chunks",
@@ -624,9 +637,84 @@ class RagflowClient:
         return RagflowChunkPage(
             chunks=[c for c in items if isinstance(c, dict)],
             total=total,
-            page=int(data.get("page") or page),
-            page_size=int(data.get("page_size") or page_size),
+            page=page,
+            page_size=page_size,
         )
+
+    async def get_document_image(self, provider_image_token: str) -> RagflowDocumentImage:
+        from app.services.chunk_errors import chunk_image_too_large, chunk_image_type_unsupported
+
+        token = (provider_image_token or "").strip()
+        if (
+            not token
+            or "/" in token
+            or "\\" in token
+            or ".." in token
+            or "://" in token
+            or token.startswith(".")
+        ):
+            raise RagflowError(
+                "Invalid provider image token",
+                message_key="errors.knowledge.chunk_contract_invalid",
+                status_code=502,
+            )
+        path = f"/api/v1/documents/images/{token}"
+        try:
+            client = await self._ensure_client()
+            async with client.stream(
+                "GET",
+                path,
+                headers=self._headers(),
+                timeout=self.timeout,
+                follow_redirects=False,
+            ) as resp:
+                if 300 <= resp.status_code < 400:
+                    raise RagflowError(
+                        "RAGFlow image redirect rejected",
+                        message_key="errors.knowledge.chunk_provider_unavailable",
+                        status_code=503,
+                    )
+                if resp.status_code >= 400:
+                    raise RagflowError(
+                        "RAGFlow image fetch failed",
+                        message_key="errors.knowledge.chunk_provider_unavailable",
+                        status_code=503,
+                    )
+                content_length = resp.headers.get("content-length")
+                if content_length is not None:
+                    try:
+                        declared = int(content_length)
+                    except ValueError:
+                        declared = None
+                    else:
+                        if declared > _IMAGE_MAX_BYTES:
+                            raise chunk_image_too_large()
+                raw_type = resp.headers.get("content-type")
+                if not raw_type:
+                    raise chunk_image_type_unsupported()
+                content_type = raw_type.split(";", 1)[0].strip().lower()
+                if content_type not in _IMAGE_MIME_ALLOWLIST:
+                    raise chunk_image_type_unsupported()
+                buf = bytearray()
+                async for piece in resp.aiter_bytes():
+                    buf.extend(piece)
+                    if len(buf) > _IMAGE_MAX_BYTES:
+                        raise chunk_image_too_large()
+                if not buf:
+                    raise RagflowError(
+                        "RAGFlow image empty body",
+                        message_key="errors.knowledge.chunk_provider_unavailable",
+                        status_code=503,
+                    )
+                return RagflowDocumentImage(content=bytes(buf), content_type=content_type)
+        except (RagflowError, Exception) as exc:
+            from app.core.exceptions import AppException
+
+            if isinstance(exc, AppException):
+                raise
+            if isinstance(exc, RagflowError):
+                raise
+            raise map_transport_error(exc) from exc
 
     async def set_document_chunk_available(
         self,

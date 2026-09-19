@@ -104,8 +104,241 @@ async def test_list_chunks_forwards_keywords_and_preserves_total():
     )
     assert page.total == 137
     assert page.file_version_id == "v1"
+    assert page.page == 1
+    assert page.page_size == 10
     assert page.items[0].id == "c1"
     assert page.items[0].available is True
+    assert page.items[0].has_image is False
+
+
+@pytest.mark.asyncio
+async def test_list_chunks_request_echo_ignores_provider_page():
+    db = MagicMock()
+    db.get = AsyncMock(return_value=_version())
+    member = _member()
+    ragflow = AsyncMock()
+    ragflow.read_document_chunks_page = AsyncMock(
+        return_value=RagflowChunkPage(
+            chunks=[{"id": "c1", "content": "x", "image_id": "img-9"}],
+            total=1,
+            page=99,
+            page_size=999,
+        )
+    )
+    kb = SimpleNamespace(id="kb1", deleted_at=None)
+
+    with (
+        patch(
+            "app.services.source_chunk_service.source_file_service.get_source_file",
+            new=AsyncMock(return_value=_sf()),
+        ),
+        patch(
+            "app.services.source_chunk_service.knowledge_base_service.get_knowledge_base",
+            new=AsyncMock(return_value=kb),
+        ),
+        patch(
+            "app.services.source_chunk_service.runtime_binding_service.get_dataset_id",
+            new=AsyncMock(return_value="ds1"),
+        ),
+    ):
+        page = await source_chunk_service.list_source_file_chunks(
+            db,
+            member,
+            ragflow,
+            "sf1",
+            page=2,
+            page_size=10,
+        )
+
+    assert page.page == 2
+    assert page.page_size == 10
+    assert page.items[0].has_image is True
+    dumped = page.items[0].model_dump()
+    assert "image_id" not in dumped
+
+
+@pytest.mark.asyncio
+async def test_get_chunk_image_success():
+    from app.integrations.ragflow.client import RagflowDocumentImage
+
+    db = MagicMock()
+    db.get = AsyncMock(return_value=_version())
+    member = _member()
+    ragflow = AsyncMock()
+    ragflow.read_document_chunks_page = AsyncMock(
+        return_value=RagflowChunkPage(
+            chunks=[{"id": "c1", "content": "x", "image_id": "img-1"}],
+            total=1,
+            page=1,
+            page_size=1,
+        )
+    )
+    ragflow.get_document_image = AsyncMock(
+        return_value=RagflowDocumentImage(content=b"pngdata", content_type="image/png")
+    )
+    kb = SimpleNamespace(id="kb1", deleted_at=None)
+
+    with (
+        patch(
+            "app.services.source_chunk_service.source_file_service.get_source_file",
+            new=AsyncMock(return_value=_sf()),
+        ),
+        patch(
+            "app.services.source_chunk_service.knowledge_base_service.get_knowledge_base",
+            new=AsyncMock(return_value=kb),
+        ),
+        patch(
+            "app.services.source_chunk_service.runtime_binding_service.get_dataset_id",
+            new=AsyncMock(return_value="ds1"),
+        ),
+    ):
+        image = await source_chunk_service.get_source_file_chunk_image(
+            db,
+            member,
+            ragflow,
+            "sf1",
+            "c1",
+            file_version_id="v1",
+        )
+
+    assert image.content == b"pngdata"
+    assert image.content_type == "image/png"
+    ragflow.read_document_chunks_page.assert_awaited_once_with(
+        "ds1",
+        "doc1",
+        page=1,
+        page_size=1,
+        keywords=None,
+        id="c1",
+    )
+    ragflow.get_document_image.assert_awaited_once_with("img-1")
+
+
+@pytest.mark.asyncio
+async def test_get_chunk_image_stale_version_skips_provider():
+    db = MagicMock()
+    db.get = AsyncMock(return_value=_version(id="v2"))
+    member = _member()
+    ragflow = AsyncMock()
+    kb = SimpleNamespace(id="kb1", deleted_at=None)
+    with (
+        patch(
+            "app.services.source_chunk_service.source_file_service.get_source_file",
+            new=AsyncMock(return_value=_sf(active_version_id="v2")),
+        ),
+        patch(
+            "app.services.source_chunk_service.knowledge_base_service.get_knowledge_base",
+            new=AsyncMock(return_value=kb),
+        ),
+        patch(
+            "app.services.source_chunk_service.runtime_binding_service.get_dataset_id",
+            new=AsyncMock(return_value="ds1"),
+        ),
+    ):
+        with pytest.raises(ConflictError) as ei:
+            await source_chunk_service.get_source_file_chunk_image(
+                db,
+                member,
+                ragflow,
+                "sf1",
+                "c1",
+                file_version_id="v1",
+            )
+    assert ei.value.message_key == "errors.knowledge.chunk_version_conflict"
+    ragflow.read_document_chunks_page.assert_not_called()
+    ragflow.get_document_image.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_get_chunk_image_missing_chunk_skips_image_fetch():
+    from app.core.exceptions import NotFoundError
+
+    db = MagicMock()
+    db.get = AsyncMock(return_value=_version())
+    member = _member()
+    ragflow = AsyncMock()
+    ragflow.read_document_chunks_page = AsyncMock(
+        return_value=RagflowChunkPage(chunks=[], total=0, page=1, page_size=1)
+    )
+    kb = SimpleNamespace(id="kb1", deleted_at=None)
+
+    with (
+        patch(
+            "app.services.source_chunk_service.source_file_service.get_source_file",
+            new=AsyncMock(return_value=_sf()),
+        ),
+        patch(
+            "app.services.source_chunk_service.knowledge_base_service.get_knowledge_base",
+            new=AsyncMock(return_value=kb),
+        ),
+        patch(
+            "app.services.source_chunk_service.runtime_binding_service.get_dataset_id",
+            new=AsyncMock(return_value="ds1"),
+        ),
+    ):
+        with pytest.raises(NotFoundError) as ei:
+            await source_chunk_service.get_source_file_chunk_image(
+                db,
+                member,
+                ragflow,
+                "sf1",
+                "missing",
+                file_version_id="v1",
+            )
+    assert ei.value.message_key == "errors.knowledge.chunk_not_found"
+    ragflow.get_document_image.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_get_chunk_image_no_image_skips_fetch():
+    from app.core.exceptions import NotFoundError
+
+    db = MagicMock()
+    db.get = AsyncMock(return_value=_version())
+    member = _member()
+    ragflow = AsyncMock()
+    ragflow.read_document_chunks_page = AsyncMock(
+        return_value=RagflowChunkPage(
+            chunks=[{"id": "c1", "content": "plain"}],
+            total=1,
+            page=1,
+            page_size=1,
+        )
+    )
+    kb = SimpleNamespace(id="kb1", deleted_at=None)
+
+    with (
+        patch(
+            "app.services.source_chunk_service.source_file_service.get_source_file",
+            new=AsyncMock(return_value=_sf()),
+        ),
+        patch(
+            "app.services.source_chunk_service.knowledge_base_service.get_knowledge_base",
+            new=AsyncMock(return_value=kb),
+        ),
+        patch(
+            "app.services.source_chunk_service.runtime_binding_service.get_dataset_id",
+            new=AsyncMock(return_value="ds1"),
+        ),
+    ):
+        with pytest.raises(NotFoundError) as ei:
+            await source_chunk_service.get_source_file_chunk_image(
+                db,
+                member,
+                ragflow,
+                "sf1",
+                "c1",
+                file_version_id="v1",
+            )
+    assert ei.value.message_key == "errors.knowledge.chunk_image_not_found"
+    assert ei.value.details == {"error_code": "KNOWLEDGE_CHUNK_IMAGE_NOT_FOUND"}
+    ragflow.get_document_image.assert_not_called()
+
+
+def test_normalize_chunk_has_image_from_img_id():
+    out = source_chunk_service._normalize_chunk({"id": "c1", "content": "x", "img_id": "img-2"})
+    assert out.has_image is True
+    assert "img_id" not in out.model_dump()
 
 
 @pytest.mark.asyncio

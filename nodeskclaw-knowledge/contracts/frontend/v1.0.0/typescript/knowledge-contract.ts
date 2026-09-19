@@ -153,6 +153,7 @@ export interface SourceFileChunk {
   id: string;
   content: string;
   available: boolean | null;
+  has_image: boolean;
   positions?: unknown[] | null;
   important_keywords: string[];
   questions: string[];
