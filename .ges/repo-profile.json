@@ -1,0 +1,55 @@
+{
+  "schema": "ges.repo-profile.v2",
+  "repository_lifecycle": "greenfield",
+  "layout": "single",
+  "kind": "greenfield",
+  "repository_kind": "greenfield",
+  "agents": [
+    "cursor"
+  ],
+  "languages": [
+    "typescript"
+  ],
+  "spec_kit": false,
+  "legacy_ges": false,
+  "ci": [
+    "github-actions"
+  ],
+  "package_managers": [],
+  "frameworks": [],
+  "existing": {
+    "AGENTS.md": true,
+    "CLAUDE.md": true,
+    ".agents": true,
+    ".cursor": true,
+    ".codex": false,
+    ".specify": false,
+    ".smc": false,
+    "CONTEXT.md": false,
+    "CONTEXT-MAP.md": false,
+    "docs/adr": false
+  },
+  "source_roots": [],
+  "scripts": {
+    "test": [
+      "nodeskclaw-portal/package.json"
+    ],
+    "build": [
+      "nodeskclaw-portal/package.json"
+    ],
+    "lint": []
+  },
+  "tsconfig_evidence": [
+    "nodeskclaw-portal/tsconfig.app.json",
+    "nodeskclaw-portal/tsconfig.json",
+    "nodeskclaw-portal/tsconfig.node.json"
+  ],
+  "analyzer_version": "6.0.0-alpha.4",
+  "analyzed_at": "2026-09-18T02:44:12.313927+00:00",
+  "git": {
+    "repository": true,
+    "head": "1d29fac6383ce64e0d82dfe4d445b4fd549a14ec",
+    "remote": "git@github.com:loudon84/nodeskclaw.git"
+  },
+  "llm_token_usage": 0
+}

@@ -153,3 +153,13 @@ kubectl get deploy -n <namespace> --context <context-name>
 - **社区 PR 必须保留原作者归属**：cherry-pick 保留 author，修复作为独立 commit 叠加，禁止 `--no-commit` 后重新提交
 
 详见 `.cursor/rules/` 下的规则文件。
+
+## Agent skills
+
+### Issue tracker
+
+Issues live as markdown files under `.scratch/<feature>/` in this repo. See `docs/agents/issue-tracker.md`.
+
+### Domain docs
+
+Single-context: root `CONTEXT.md` plus `docs/adr/`, created lazily by domain-modeling. See `docs/agents/domain.md`.
