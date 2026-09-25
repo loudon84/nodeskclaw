@@ -29,12 +29,13 @@ from app.schemas.hermes_skill.runtime_skill_run import (
     generate_request_trace_id,
     normalize_request_trace_id,
 )
-from app.schemas.skill_run.constants import SKILL_RUN_CONTRACT_VERSION_V121
+from app.schemas.skill_run.constants import SKILL_RUN_CONTRACT_VERSION_V150
 from app.services.hermes_external.hermes_docker_binding_service import HermesDockerBindingService
 from app.services.hermes_external.hermes_env_parser import parse_env_file
 from app.services.hermes_skill.skill_release_service import (
     SkillReleaseService,
     compute_skill_content_digest,
+    freeze_delegation_topology,
     snapshot_hash,
 )
 from app.services.hermes_skill.task_event_token_service import TaskEventTokenService
@@ -243,6 +244,15 @@ class RuntimeSkillRunService:
         if connector_bindings:
             enriched_route["connector_bindings"] = connector_bindings
         requires_approval = bool((request.client_context or {}).get("requires_approval"))
+        client_context = dict(request.client_context or {})
+        client_context.pop("delegation_topology", None)
+        client_context.pop("runtime_capability_ref", None)
+        topology, capability_ref = freeze_delegation_topology(
+            {
+                "delegation_topology": release_meta.get("delegation_topology"),
+                "runtime_capability_ref": release_meta.get("runtime_capability_ref"),
+            }
+        )
         body = {
             "run_id": run_id,
             "tool_name": request.tool_name,
@@ -254,17 +264,20 @@ class RuntimeSkillRunService:
             "connector_binding_refs": list(release_meta.get("connector_binding_refs") or []),
             "knowledge_refs": list(release_meta.get("knowledge_refs") or []),
             "placement": dict(release_meta.get("placement") or {"role": "central"}),
+            "delegation_topology": topology,
             "arguments": request.arguments or {},
             "requires_approval": requires_approval,
             "route_snapshot": enriched_route,
             "output_policy": dict(request.output_policy),
-            "client_context": dict(request.client_context or {}),
+            "client_context": client_context,
             "request_trace_id": request.request_trace_id,
             "idempotency_key": request.idempotency_key,
             "run_session_id": request.session_id,
             "execution_context": execution_context or {},
             "context_version": (execution_context or {}).get("context_version"),
         }
+        if capability_ref is not None:
+            body["runtime_capability_ref"] = capability_ref
         cmd_body = {
             "tool_name": request.tool_name,
             "skill_id": request.skill_id,
@@ -324,6 +337,8 @@ class RuntimeSkillRunService:
                     "engine": "connector",
                     "edge_node_id": connector_snapshot.get("edge_node_id"),
                 },
+                "delegation_topology": "single_agent",
+                "runtime_capability_ref": None,
                 "snapshot_hash": snapshot_hash(
                     skill_release_id=request.tool_name,
                     digest=digest,
@@ -357,6 +372,8 @@ class RuntimeSkillRunService:
                     "Skill 尚未发布 Release，员工无法调用",
                     "errors.skill.release_required",
                 )
+        extra = dict(published.extra_metadata or {}) if published else {}
+        topology, capability_ref = freeze_delegation_topology(extra)
         route_for_hash = {
             "route_type": RUNTIME_SKILL_ROUTE_TYPE,
             "runtime_skill_id": request.runtime_skill_id,
@@ -372,6 +389,8 @@ class RuntimeSkillRunService:
             "connector_binding_refs": list(requirements.get("connector_binding_ids") or []),
             "knowledge_refs": list(requirements.get("knowledge_refs") or []),
             "placement": await self._resolve_placement(org_id=request.org_id, requirements=requirements),
+            "delegation_topology": topology,
+            "runtime_capability_ref": capability_ref,
             "snapshot_hash": snapshot_hash(
                 skill_release_id=release_id or request.skill_id,
                 digest=digest,
@@ -521,8 +540,10 @@ class RuntimeSkillRunService:
             event_sse_url=event_sse_url,
             output_policy=output_policy,
             contract_version=(
-                SKILL_RUN_CONTRACT_VERSION_V121
+                "1.6.0"
                 if request.task_source != "expert_mcp" and settings.SKILL_AGENT_ENABLED
+                else SKILL_RUN_CONTRACT_VERSION_V150
+                if request.task_source != "expert_mcp"
                 else None
             ),
         )
@@ -656,52 +677,64 @@ class RuntimeSkillRunService:
             "expires_at": None,
         }
 
+    def _raise_attachment_contract_error(self, exc: Exception) -> None:
+        from app.services.hermes_skill.public_attachment_service import PublicAttachmentContractError
+
+        if not isinstance(exc, PublicAttachmentContractError):
+            raise exc
+        if exc.status_code == 400:
+            raise BadRequestError(exc.message, exc.message_key) from exc
+        raise ForbiddenError(exc.message, exc.message_key) from exc
+
+    # @lat: [[architecture/skill-agent#RM-18 Public Attachment Input]]
     async def _assert_attachment_proofs(
         self,
-        workspace_id: str,
+        workspace_id: str | None,
         org_id: str,
         user_id: str,
         attachment_refs: list[str],
     ) -> list[dict[str, Any]]:
         from app.models.user import User
-        from app.services import file_reference_service
         from app.services import workspace_member_service as wm_service
+        from app.services.hermes_skill.public_attachment_service import (
+            PublicAttachmentContractError,
+            prove_org_user_attachment,
+        )
 
         user = await self.db.get(User, user_id)
         if user is None or not user.is_active:
             raise ForbiddenError("用户不存在", "errors.auth.user_not_found")
-        await wm_service.check_workspace_access(workspace_id, user, "send_chat", self.db)
+        if workspace_id:
+            await wm_service.check_workspace_access(workspace_id, user, "send_chat", self.db)
 
-        parsed_refs: list[dict[str, str]] = []
-        for ref in attachment_refs:
-            if ":" in ref:
-                source, file_id = ref.split(":", 1)
-                parsed_refs.append({"source": source, "file_id": file_id})
-            else:
-                parsed_refs.append({"source": file_reference_service.SOURCE_CHAT_ATTACHMENT, "file_id": ref})
-
-        resolved = await file_reference_service.resolve_message_file_references(
-            self.db,
-            workspace_id,
-            file_references=parsed_refs,
-        )
-        if len(resolved) != len(parsed_refs):
-            raise ForbiddenError(
-                "附件引用未授权或不可用",
-                "errors.run.attachment_proof_denied",
-            )
         descriptors: list[dict[str, Any]] = []
-        for item in resolved:
-            stable_id = f"{item.get('source')}:{item.get('file_id')}"
+        for ref in attachment_refs:
+            try:
+                row = await prove_org_user_attachment(
+                    self.db,
+                    org_id=org_id,
+                    user_id=user_id,
+                    attachment_ref=ref,
+                )
+            except PublicAttachmentContractError as exc:
+                self._raise_attachment_contract_error(exc)
+                raise
+            payload = {
+                "attachment_ref": row.attachment_ref,
+                "org_id": row.org_id,
+                "user_id": row.user_id,
+                "checksum_sha256": row.checksum_sha256,
+                "expires_at": row.expires_at.isoformat() if row.expires_at else None,
+            }
             auth_version = hashlib.sha256(
-                json.dumps(item, sort_keys=True, default=str).encode()
+                json.dumps(payload, sort_keys=True, default=str).encode()
             ).hexdigest()[:16]
             descriptors.append(
                 {
                     "type": "attachment",
-                    "stable_id": stable_id,
+                    "stable_id": row.attachment_ref,
                     "auth_version": auth_version,
-                    "expires_at": None,
+                    "expires_at": row.expires_at.isoformat() if row.expires_at else None,
                 }
             )
         return descriptors
@@ -752,11 +785,6 @@ class RuntimeSkillRunService:
             )
 
         if request.attachment_refs:
-            if not request.workspace_id:
-                raise BadRequestError(
-                    "附件引用需要 workspace_id",
-                    "errors.run.attachment_workspace_required",
-                )
             descriptors.extend(
                 await self._assert_attachment_proofs(
                     request.workspace_id,
@@ -831,11 +859,6 @@ class RuntimeSkillRunService:
         attachment_refs = [d["stable_id"] for d in descriptors if d.get("type") == "attachment"]
         if attachment_refs:
             workspace_id = workspace_ids[0] if workspace_ids else None
-            if not workspace_id:
-                raise ForbiddenError(
-                    "附件上下文缺少 workspace",
-                    "errors.run.attachment_workspace_required",
-                )
             proofs = await self._assert_attachment_proofs(workspace_id, org_id, user_id, attachment_refs)
             proof_versions = {proof["stable_id"]: proof.get("auth_version") for proof in proofs}
             for descriptor in descriptors:
@@ -912,6 +935,8 @@ class RuntimeSkillRunService:
                 "committed": True,
                 "entrypoint": request.entrypoint,
                 "task_source": request.task_source,
+                # @lat: [[architecture/skill-agent#RM-20 Public Rich Runtime Events]]
+                "auth_type": "user_jwt",
             }
             if contract_version:
                 content["contract_version"] = contract_version
@@ -925,6 +950,8 @@ class RuntimeSkillRunService:
                 content["invocation_id"] = request.invocation_id
             if request.request_trace_id:
                 content["request_trace_id"] = request.request_trace_id
+            if request.attachment_refs:
+                content["attachment_refs"] = list(request.attachment_refs)
             return content
 
         if status in ("queued", "accepted"):
@@ -971,4 +998,6 @@ class RuntimeSkillRunService:
             content["invocation_id"] = request.invocation_id
         if request.request_trace_id:
             content["request_trace_id"] = request.request_trace_id
+        if request.attachment_refs:
+            content["attachment_refs"] = list(request.attachment_refs)
         return content

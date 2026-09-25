@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nodeskclaw.example.com/contracts/skill-agent/v1.0.0/runs/execution-snapshot.schema.json",
+  "title": "InternalExecutionSnapshot",
+  "type": "object",
+  "required": [
+    "placement",
+    "delegation_topology"
+  ],
+  "properties": {
+    "placement": {
+      "$ref": "../placement/placement.schema.json"
+    },
+    "delegation_topology": {
+      "$ref": "../topology/delegation-topology.schema.json"
+    },
+    "runtime_capability_ref": {
+      "$ref": "../capabilities/runtime-capability-ref.schema.json"
+    },
+    "org_id": {
+      "type": "string"
+    },
+    "user_id": {
+      "type": "string"
+    },
+    "execution_context": {
+      "type": "object"
+    },
+    "skill_id": {
+      "type": "string"
+    },
+    "skill_release_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "snapshot_hash": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": true,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "delegation_topology": {
+            "const": "runtime_delegated"
+          }
+        },
+        "required": [
+          "delegation_topology"
+        ]
+      },
+      "then": {
+        "required": [
+          "runtime_capability_ref"
+        ]
+      }
+    }
+  ]
+}

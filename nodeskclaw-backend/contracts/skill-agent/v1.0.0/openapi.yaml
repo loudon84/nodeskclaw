@@ -1,0 +1,16 @@
+openapi: 3.1.0
+info:
+  title: SKILL-AGENT-CONTRACT
+  version: 1.0.0
+  description: Internal Backend-to-Agent execution contract. Not a Public consumer bundle.
+paths:
+  /internal/execution-snapshot:
+    get:
+      summary: ExecutionSnapshot shape frozen for Agent persist
+      responses:
+        "200":
+          description: Internal snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "./runs/execution-snapshot.schema.json"

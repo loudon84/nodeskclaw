@@ -1,0 +1,36 @@
+{
+  "title": "PublicAttachmentUploadReceipt",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "attachment_ref": {
+      "type": "string",
+      "pattern": "^att_[A-Za-z0-9_-]+$"
+    },
+    "name": {
+      "type": "string"
+    },
+    "size_bytes": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "checksum_sha256": {
+      "type": "string"
+    },
+    "content_type": {
+      "type": "string"
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "attachment_ref",
+    "name",
+    "size_bytes",
+    "checksum_sha256",
+    "content_type",
+    "expires_at"
+  ]
+}

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -11,6 +13,21 @@ from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat
 
 from app.services.edge_control_channel import EdgeControlChannel, EdgeIdentityState
 from app.services.edge_worker import EdgeWorker
+from app.services.execution_observability import get_registry
+
+
+@pytest.fixture(autouse=True)
+def reset_metrics_registry():
+    get_registry().reset()
+    yield
+    get_registry().reset()
+
+
+def _counter_value(name: str, **labels: str) -> float:
+    for item in get_registry().snapshot()["counters"]:
+        if item["name"] == name and item["labels"] == labels:
+            return float(item["value"])
+    return 0.0
 
 
 def _b64_private(key: Ed25519PrivateKey) -> str:
@@ -85,6 +102,15 @@ async def test_edge_worker_heartbeat_then_jobs_poll(tmp_path, monkeypatch):
 
     heartbeat_response = MagicMock()
     heartbeat_response.raise_for_status = MagicMock()
+    heartbeat_response.json = MagicMock(
+        return_value={
+            "code": 0,
+            "data": {
+                "envelope": {"purpose": "node.heartbeat"},
+                "payload": {"node_id": "node-1", "status": "online", "identity_rotation_expires_at": None},
+            },
+        }
+    )
     jobs_response = MagicMock()
     jobs_response.status_code = 204
     jobs_response.raise_for_status = MagicMock()
@@ -97,6 +123,9 @@ async def test_edge_worker_heartbeat_then_jobs_poll(tmp_path, monkeypatch):
     client.get = AsyncMock(return_value=jobs_response)
 
     worker = EdgeWorker()
+    worker._channel.verify_command_envelope = MagicMock(  # type: ignore[method-assign]
+        return_value={"node_id": "node-1", "status": "online", "identity_rotation_expires_at": None}
+    )
 
     async def stop_soon():
         await worker._heartbeat(client)
@@ -118,6 +147,125 @@ async def test_edge_worker_heartbeat_then_jobs_poll(tmp_path, monkeypatch):
     jobs_call = client.get.await_args
     assert jobs_call.args[0] == "http://central.test/api/v1/internal/edge/jobs"
     assert jobs_call.kwargs["headers"]["X-Edge-Signature"]
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_completes_rotation_when_window_active(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_CENTRAL_BASE_URL", "http://central.test")
+    _install_bound_edge_identity(monkeypatch, tmp_path)
+    worker = EdgeWorker()
+    old_state = worker._channel.load()
+    assert old_state is not None
+    old_public = old_state.public_key
+
+    expires = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
+    heartbeat_response = MagicMock()
+    heartbeat_response.raise_for_status = MagicMock()
+    heartbeat_response.json = MagicMock(
+        return_value={
+            "code": 0,
+            "data": {
+                "envelope": {"purpose": "node.heartbeat"},
+                "payload": {
+                    "node_id": "node-1",
+                    "status": "online",
+                    "identity_rotation_expires_at": expires,
+                },
+            },
+        }
+    )
+    rotate_response = MagicMock()
+    rotate_response.raise_for_status = MagicMock()
+    rotate_response.json = MagicMock(
+        return_value={
+            "code": 0,
+            "data": {
+                "identity_version": 2,
+                "org_id": "org-1",
+                "issuer_key_id": "issuer-1",
+                "issuer_public_key": old_state.issuer_public_key,
+                "previous_issuer_key_id": None,
+                "previous_issuer_public_key": None,
+                "issuer_rotation_expires_at": None,
+            },
+        }
+    )
+    client = AsyncMock()
+    client.post = AsyncMock(side_effect=[heartbeat_response, rotate_response])
+    worker._channel.verify_command_envelope = MagicMock(  # type: ignore[method-assign]
+        return_value={
+            "node_id": "node-1",
+            "status": "online",
+            "identity_rotation_expires_at": expires,
+        }
+    )
+
+    await worker._heartbeat(client)
+
+    assert client.post.await_count == 2
+    rotate_call = client.post.await_args_list[1]
+    assert rotate_call.args[0] == "http://central.test/api/v1/internal/edge/rotate"
+    assert "new_public_key" in rotate_call.kwargs["json"]
+    updated = worker._channel.load()
+    assert updated is not None
+    assert updated.identity_version == 2
+    assert updated.public_key != old_public
+    assert updated.public_key == rotate_call.kwargs["json"]["new_public_key"]
+
+
+@pytest.mark.asyncio
+async def test_cancel_loop_ignores_unsigned_cancel_payload(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_CENTRAL_BASE_URL", "http://central.test")
+    _install_bound_edge_identity(monkeypatch, tmp_path)
+    worker = EdgeWorker()
+
+    cancel_response = MagicMock()
+    cancel_response.status_code = 200
+    cancel_response.json = MagicMock(return_value={"code": 0, "data": {"cancel_requested": True}})
+    renew_response = MagicMock()
+    renew_response.status_code = 200
+    renew_response.raise_for_status = MagicMock()
+
+    client = AsyncMock()
+    client.get = AsyncMock(return_value=cancel_response)
+    client.post = AsyncMock(return_value=renew_response)
+
+    engine_started = {"value": False}
+
+    async def slow_engine(**_kwargs):
+        engine_started["value"] = True
+        await asyncio.sleep(0.25)
+        yield {"event_type": "run.completed", "payload": {"summary": "ok"}}
+
+    monkeypatch.setattr("app.services.edge_worker.execute_engine", slow_engine)
+    monkeypatch.setattr(
+        "app.services.edge_worker.revalidate_execution_context",
+        AsyncMock(return_value=None),
+    )
+
+    job = {
+        "id": "job-unsigned-cancel",
+        "run_id": "run-1",
+        "tool_name": "test",
+        "arguments": {},
+        "snapshot": {
+            "org_id": "org-1",
+            "user_id": "user-1",
+            "context_version": 1,
+            "execution_context": {"context_version": 1, "descriptors": []},
+        },
+        "delivery_generation": 1,
+    }
+    await worker._execute_job(client, job)
+    assert engine_started["value"] is True
+    failed_calls = [
+        call
+        for call in client.post.call_args_list
+        if call.kwargs.get("json", {}).get("events", [{}])[0].get("event_type") == "run.failed"
+        and call.kwargs.get("json", {}).get("events", [{}])[0].get("payload", {}).get("reason")
+        == "cancel_requested"
+    ]
+    assert not failed_calls
 
 
 @pytest.mark.asyncio
@@ -433,6 +581,63 @@ async def test_edge_spool_envelope_completeness_and_drain(tmp_path, monkeypatch)
 
     await worker._flush_spool(client)
     assert len(list(tmp_path.glob("spool_*.json"))) == 0
+    assert _counter_value("spool_replay_total", outcome="discarded") == 1.0
+
+
+@pytest.mark.asyncio
+async def test_edge_claim_job_records_error_outcome(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_CENTRAL_BASE_URL", "http://central.test")
+    monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_INSECURE_MODE", True)
+    monkeypatch.setattr("app.services.edge_worker.settings.SKILL_AGENT_EDGE_POLL_SECONDS", 0.01)
+    _install_bound_edge_identity(monkeypatch, tmp_path)
+    worker = EdgeWorker()
+    worker._ensure_enrolled = AsyncMock()
+    worker._heartbeat = AsyncMock()
+    worker._reconcile_desired_installations = AsyncMock()
+    worker._pull_and_fulfill_on_demand_requests = AsyncMock()
+    worker._flush_spool = AsyncMock()
+
+    async def boom_claim(_client):
+        raise RuntimeError("claim failed")
+
+    worker._claim_job = boom_claim  # type: ignore[method-assign]
+
+    client = AsyncMock()
+    client.__aenter__.return_value = client
+    client.__aexit__.return_value = None
+
+    async def stop_after_error():
+        await asyncio.sleep(0.05)
+        worker.stop()
+
+    with patch("app.services.edge_worker.httpx.AsyncClient", return_value=client):
+        stop_task = asyncio.create_task(stop_after_error())
+        await worker.start()
+        await stop_task
+
+    assert _counter_value("edge_jobs_claimed_total", outcome="error") >= 1.0
+
+
+@pytest.mark.asyncio
+async def test_edge_spool_flush_records_error_outcome(tmp_path, monkeypatch):
+    import httpx
+
+    _install_bound_edge_identity(monkeypatch, tmp_path)
+    worker = EdgeWorker()
+    worker._spool_dir = tmp_path
+    await worker._spool_events(
+        "job-err",
+        [{"event_type": "step.running", "payload": {}}],
+        delivery_generation=1,
+    )
+    client = AsyncMock()
+    req = httpx.Request("POST", "http://central.test/api/v1/internal/edge/jobs/job-err/events")
+    resp_500 = httpx.Response(500, request=req)
+    client.post = AsyncMock(side_effect=httpx.HTTPStatusError("server", request=req, response=resp_500))
+
+    await worker._flush_spool(client)
+    assert _counter_value("spool_replay_total", outcome="error") == 1.0
+    assert len(list(tmp_path.glob("spool_*.json"))) == 1
 
 
 @pytest.mark.asyncio

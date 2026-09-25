@@ -1,0 +1,9 @@
+{
+  "slug": "live-attachment-ack",
+  "name": "Live Attachment Ack",
+  "version": "1.0.0",
+  "description": "RM-18 live fixture. Catalog must advertise supportsAttachments after publish.",
+  "runtime": "hermes",
+  "enabled": true,
+  "requires_restart": false
+}

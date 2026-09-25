@@ -7,7 +7,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.exceptions import BadRequestError, ConflictError, ForbiddenError, NotFoundError
-from app.services.hermes_skill.mcp_tool_mapper import McpToolMapper
+from app.services.hermes_skill.mcp_tool_mapper import (
+    McpToolMapper,
+    RUNTIME_SKILL_FORBIDDEN_ARGUMENT_KEYS,
+)
 from app.services.mcp_skill_gateway.builtin_task_tools import is_builtin_task_tool
 from app.services.mcp_skill_gateway.mcp_task_dedup_service import build_mcp_task_dedup_key
 from app.services.mcp_skill_gateway.mcp_execution_mode import strip_mcp_control_args
@@ -78,6 +81,23 @@ def _build_client_context(
         })
     cleaned = {key: value for key, value in context.items() if value}
     return cleaned or None
+
+
+# @lat: [[architecture/skill-agent#RM-18 Public Attachment Input]]
+def _copy_frozen_attachment_refs(params: dict | None, context: dict | None) -> dict | None:
+    payload = params or {}
+    client_ctx = payload.get("client_context")
+    merged = dict(context or {})
+    for key in RUNTIME_SKILL_FORBIDDEN_ARGUMENT_KEYS:
+        merged.pop(key, None)
+    if not isinstance(client_ctx, dict):
+        return merged or None
+    refs = client_ctx.get("attachment_refs")
+    if not isinstance(refs, list):
+        return merged or None
+    copied = [str(item) for item in refs if isinstance(item, str) and str(item).strip()]
+    merged["attachment_refs"] = copied
+    return merged
 
 
 _REQUEST_SNAPSHOT_MAX_BYTES = 32 * 1024
@@ -782,6 +802,7 @@ async def _handle_tools_call(
     normalized = _normalize_headers(request_headers)
     profile_name = auth_ctx.profile if auth_ctx and auth_ctx.profile else normalized.get(HEADER_HERMES_PROFILE.lower())
     client_context = _build_client_context(request_headers, auth_ctx)
+    client_context = _copy_frozen_attachment_refs(params, client_context)
     client_context = _inject_request_fingerprint(
         client_context,
         org_id=org_id,

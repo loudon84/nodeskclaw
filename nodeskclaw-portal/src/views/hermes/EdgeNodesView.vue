@@ -37,7 +37,19 @@ const statusClass = computed(() => ({
   stale: 'bg-muted text-muted-foreground',
   disabled: 'bg-red-500/15 text-red-400',
   pending: 'bg-yellow-500/15 text-yellow-400',
+  rotating: 'bg-yellow-500/15 text-yellow-400',
 }))
+
+function isRotationPending(node: EdgeNode): boolean {
+  if (!node.identity_rotation_expires_at) return false
+  const expires = Date.parse(node.identity_rotation_expires_at)
+  return Number.isFinite(expires) && expires > Date.now()
+}
+
+function displayStatus(node: EdgeNode): string {
+  if (isRotationPending(node)) return 'rotating'
+  return node.status
+}
 
 async function fetchNodes() {
   loading.value = true
@@ -178,6 +190,7 @@ onMounted(() => {
             <TableHead class="text-left px-4 py-3 font-medium text-muted-foreground">{{ t('hermes.edgeNodes.colName') }}</TableHead>
             <TableHead class="text-left px-4 py-3 font-medium text-muted-foreground">{{ t('hermes.edgeNodes.colId') }}</TableHead>
             <TableHead class="text-left px-4 py-3 font-medium text-muted-foreground">{{ t('hermes.edgeNodes.colStatus') }}</TableHead>
+            <TableHead class="text-left px-4 py-3 font-medium text-muted-foreground">{{ t('hermes.edgeNodes.colRotationExpires') }}</TableHead>
             <TableHead class="text-left px-4 py-3 font-medium text-muted-foreground">{{ t('hermes.edgeNodes.colHeartbeat') }}</TableHead>
             <TableHead class="text-left px-4 py-3 font-medium text-muted-foreground">{{ t('hermes.edgeNodes.colCreatedAt') }}</TableHead>
             <TableHead class="text-left px-4 py-3 font-medium text-muted-foreground">{{ t('hermes.edgeNodes.colActions') }}</TableHead>
@@ -195,10 +208,13 @@ onMounted(() => {
               <Badge
                 variant="outline"
                 class="text-xs"
-                :class="statusClass[node.status as keyof typeof statusClass] ?? 'bg-muted text-muted-foreground'"
+                :class="statusClass[displayStatus(node) as keyof typeof statusClass] ?? 'bg-muted text-muted-foreground'"
               >
-                {{ t(`hermes.edgeNodes.status.${node.status}`, node.status) }}
+                {{ t(`hermes.edgeNodes.status.${displayStatus(node)}`, displayStatus(node)) }}
               </Badge>
+            </TableCell>
+            <TableCell class="px-4 py-3 text-xs text-muted-foreground">
+              {{ isRotationPending(node) ? formatTimestamp(node.identity_rotation_expires_at ?? null) : '—' }}
             </TableCell>
             <TableCell class="px-4 py-3 text-xs text-muted-foreground">
               {{ formatTimestamp(node.last_heartbeat_at) }}
@@ -229,7 +245,8 @@ onMounted(() => {
                 <Button
                   variant="outline"
                   size="sm"
-                  :disabled="actionBusyId === node.id || node.status === 'disabled'"
+                  :disabled="actionBusyId === node.id || node.status === 'disabled' || isRotationPending(node)"
+                  :title="isRotationPending(node) ? t('hermes.edgeNodes.rotatePendingHint') : undefined"
                   @click="runLifecycleAction(node, 'rotate')"
                 >
                   {{ t('hermes.edgeNodes.rotate') }}

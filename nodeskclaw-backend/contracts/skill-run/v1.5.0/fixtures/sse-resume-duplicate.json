@@ -1,0 +1,25 @@
+{
+  "last_event_id": "evt-1",
+  "events": [
+    {
+      "event_id": "evt-1",
+      "run_id": "run-1",
+      "event_type": "run.progress",
+      "event_seq": 1,
+      "timestamp": "2026-08-31T00:00:00Z",
+      "payload": {
+        "phase": "RUNNING"
+      }
+    },
+    {
+      "event_id": "evt-2",
+      "run_id": "run-1",
+      "event_type": "run.completed",
+      "event_seq": 2,
+      "timestamp": "2026-08-31T00:00:01Z",
+      "payload": {
+        "phase": "COMPLETED"
+      }
+    }
+  ]
+}

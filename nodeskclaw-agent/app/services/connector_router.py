@@ -191,107 +191,123 @@ async def execute_connector_run(
     org_id: str | None = None,
     cancel_event: asyncio.Event | None = None,
 ) -> Any:
-    if cancel_event and cancel_event.is_set():
-        raise asyncio.CancelledError("connector run cancelled before dispatch")
     route = dict(route_snapshot or {})
     connector_kind = route.get("connector_kind")
+    kind_label = str(connector_kind or "unknown")
+    if cancel_event and cancel_event.is_set():
+        record_metric("connector_calls_total", labels={"kind": kind_label, "outcome": "cancelled"})
+        observe_stage("connector", outcome="cancelled", kind=kind_label)
+        raise asyncio.CancelledError("connector run cancelled before dispatch")
     connector_config = _apply_secret_to_config(route, dict(route.get("connector_config") or {}))
     edge_allowlist = _edge_allowlist(route)
-    observe_stage("connector", outcome="started", kind=str(connector_kind or "unknown"))
-    record_metric("connector_calls_total", labels={"kind": str(connector_kind or "unknown"), "outcome": "started"})
+    observe_stage("connector", outcome="started", kind=kind_label)
+    record_metric("connector_calls_total", labels={"kind": kind_label, "outcome": "started"})
     yield {"event_type": "run.progress", "payload": {"stage": "connector", "message": f"calling {connector_kind} connector"}}
 
-    if connector_kind == "rest":
-        method = str(connector_config.get("method") or "POST").upper()
-        # Strictly prefer fixed url from connector config; reject unconfigured dynamic override
-        url = str(connector_config.get("url") or "").strip()
-        if not url:
-            raise RuntimeError("connector REST url missing in binding config")
-        await _validate_ssrf(url, edge_allowlist=edge_allowlist)
-        payload = arguments.get("body")
-        params = arguments.get("params")
-        headers = dict(connector_config.get("headers") or {})
-        async with httpx.AsyncClient(
-            transport=SSRFSafeTransport(edge_allowlist=edge_allowlist),
-            timeout=httpx.Timeout(60.0, connect=10.0),
-            follow_redirects=True,
-        ) as client:
-            response = await _await_cancellable(
-                client.request(method, url, json=payload, params=params, headers=headers),
-                cancel_event,
-            )
-            _raise_if_cancelled(cancel_event)
-            # Re-validate final destination URL after redirects
-            await _validate_ssrf(str(response.url), edge_allowlist=edge_allowlist)
-            response.raise_for_status()
-            data = _safe_json(response)
-        yield {"event_type": "run.completed", "payload": {"summary": "REST connector completed", "content": json.dumps(data, ensure_ascii=False)}}
-        return
-
-    if connector_kind == "mcp":
-        endpoint = str(connector_config.get("url") or "").strip()
-        remote_tool = str(connector_config.get("remote_tool_name") or tool_name).strip()
-        if not endpoint:
-            raise RuntimeError("connector MCP url missing in binding config")
-        await _validate_ssrf(endpoint, edge_allowlist=edge_allowlist)
-        req_body = {
-            "jsonrpc": "2.0",
-            "id": arguments.get("id") or "connector-call",
-            "method": "tools/call",
-            "params": {
-                "name": remote_tool,
-                "arguments": arguments.get("remote_arguments") or arguments.get("arguments") or {},
-            },
-        }
-        async with httpx.AsyncClient(
-            transport=SSRFSafeTransport(edge_allowlist=edge_allowlist),
-            timeout=httpx.Timeout(60.0, connect=10.0),
-            follow_redirects=True,
-        ) as client:
-            response = await _await_cancellable(
-                client.post(endpoint, json=req_body, headers=connector_config.get("headers") or {}),
-                cancel_event,
-            )
-            _raise_if_cancelled(cancel_event)
-            await _validate_ssrf(str(response.url), edge_allowlist=edge_allowlist)
-            response.raise_for_status()
-            data = response.json()
-        yield {"event_type": "run.completed", "payload": {"summary": "MCP connector completed", "content": json.dumps(data, ensure_ascii=False)}}
-        return
-
-    if connector_kind == "db":
-        # Strictly use db_url from connector_config, completely ignore arguments.db_url
-        db_url = str(connector_config.get("db_url") or "").strip()
-        sql = str(arguments.get("sql") or "").strip()
-        if not db_url:
-            raise RuntimeError("connector DB url missing in binding config")
-        _validate_read_only_sql(sql)
-        engine = create_async_engine(db_url)
-        try:
-            async with engine.connect() as conn, conn.begin():
-                await _await_cancellable(conn.execute(text("SET TRANSACTION READ ONLY")), cancel_event)
-                timeout_ms = min(max(int(connector_config.get("statement_timeout_ms") or 30000), 1), 60000)
-                await _await_cancellable(
-                    conn.execute(
-                        text("SELECT set_config('statement_timeout', CAST(:timeout_ms AS text), true)"),
-                        {"timeout_ms": timeout_ms},
-                    ),
-                    cancel_event,
-                )
-                result = await _await_cancellable(
-                    conn.execute(text(sql), arguments.get("params") or {}),
+    terminal = "error"
+    try:
+        if connector_kind == "rest":
+            method = str(connector_config.get("method") or "POST").upper()
+            # Strictly prefer fixed url from connector config; reject unconfigured dynamic override
+            url = str(connector_config.get("url") or "").strip()
+            if not url:
+                raise RuntimeError("connector REST url missing in binding config")
+            await _validate_ssrf(url, edge_allowlist=edge_allowlist)
+            payload = arguments.get("body")
+            params = arguments.get("params")
+            headers = dict(connector_config.get("headers") or {})
+            async with httpx.AsyncClient(
+                transport=SSRFSafeTransport(edge_allowlist=edge_allowlist),
+                timeout=httpx.Timeout(60.0, connect=10.0),
+                follow_redirects=True,
+            ) as client:
+                response = await _await_cancellable(
+                    client.request(method, url, json=payload, params=params, headers=headers),
                     cancel_event,
                 )
                 _raise_if_cancelled(cancel_event)
-                row_limit = min(max(int(connector_config.get("row_limit") or 1000), 1), 1000)
-                rows = [dict(row) for row in result.mappings().fetchmany(row_limit)]
-        finally:
-            await engine.dispose()
-        yield {"event_type": "run.completed", "payload": {"summary": f"DB connector returned {len(rows)} rows", "content": json.dumps(rows, ensure_ascii=False)}}
-        return
+                # Re-validate final destination URL after redirects
+                await _validate_ssrf(str(response.url), edge_allowlist=edge_allowlist)
+                response.raise_for_status()
+                data = _safe_json(response)
+            yield {"event_type": "run.completed", "payload": {"summary": "REST connector completed", "content": json.dumps(data, ensure_ascii=False)}}
+            terminal = "ok"
+            return
 
-    raise RuntimeError(f"unsupported connector kind: {connector_kind}")
+        if connector_kind == "mcp":
+            endpoint = str(connector_config.get("url") or "").strip()
+            remote_tool = str(connector_config.get("remote_tool_name") or tool_name).strip()
+            if not endpoint:
+                raise RuntimeError("connector MCP url missing in binding config")
+            await _validate_ssrf(endpoint, edge_allowlist=edge_allowlist)
+            req_body = {
+                "jsonrpc": "2.0",
+                "id": arguments.get("id") or "connector-call",
+                "method": "tools/call",
+                "params": {
+                    "name": remote_tool,
+                    "arguments": arguments.get("remote_arguments") or arguments.get("arguments") or {},
+                },
+            }
+            async with httpx.AsyncClient(
+                transport=SSRFSafeTransport(edge_allowlist=edge_allowlist),
+                timeout=httpx.Timeout(60.0, connect=10.0),
+                follow_redirects=True,
+            ) as client:
+                response = await _await_cancellable(
+                    client.post(endpoint, json=req_body, headers=connector_config.get("headers") or {}),
+                    cancel_event,
+                )
+                _raise_if_cancelled(cancel_event)
+                await _validate_ssrf(str(response.url), edge_allowlist=edge_allowlist)
+                response.raise_for_status()
+                data = response.json()
+            yield {"event_type": "run.completed", "payload": {"summary": "MCP connector completed", "content": json.dumps(data, ensure_ascii=False)}}
+            terminal = "ok"
+            return
 
+        if connector_kind == "db":
+            # Strictly use db_url from connector_config, completely ignore arguments.db_url
+            db_url = str(connector_config.get("db_url") or "").strip()
+            sql = str(arguments.get("sql") or "").strip()
+            if not db_url:
+                raise RuntimeError("connector DB url missing in binding config")
+            _validate_read_only_sql(sql)
+            engine = create_async_engine(db_url)
+            try:
+                async with engine.connect() as conn, conn.begin():
+                    await _await_cancellable(conn.execute(text("SET TRANSACTION READ ONLY")), cancel_event)
+                    timeout_ms = min(max(int(connector_config.get("statement_timeout_ms") or 30000), 1), 60000)
+                    await _await_cancellable(
+                        conn.execute(
+                            text("SELECT set_config('statement_timeout', CAST(:timeout_ms AS text), true)"),
+                            {"timeout_ms": timeout_ms},
+                        ),
+                        cancel_event,
+                    )
+                    result = await _await_cancellable(
+                        conn.execute(text(sql), arguments.get("params") or {}),
+                        cancel_event,
+                    )
+                    _raise_if_cancelled(cancel_event)
+                    row_limit = min(max(int(connector_config.get("row_limit") or 1000), 1), 1000)
+                    rows = [dict(row) for row in result.mappings().fetchmany(row_limit)]
+            finally:
+                await engine.dispose()
+            yield {"event_type": "run.completed", "payload": {"summary": f"DB connector returned {len(rows)} rows", "content": json.dumps(rows, ensure_ascii=False)}}
+            terminal = "ok"
+            return
+
+        raise RuntimeError(f"unsupported connector kind: {connector_kind}")
+    except asyncio.CancelledError:
+        terminal = "cancelled"
+        raise
+    except Exception:
+        terminal = "error"
+        raise
+    finally:
+        record_metric("connector_calls_total", labels={"kind": kind_label, "outcome": terminal})
+        observe_stage("connector", outcome=terminal, kind=kind_label)
 
 def _safe_json(response: httpx.Response) -> Any:
     try:

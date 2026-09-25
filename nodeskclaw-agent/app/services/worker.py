@@ -351,106 +351,124 @@ class RunWorker:
     async def _claim_one(self) -> dict | None:
         lease_until = datetime.now(timezone.utc) + timedelta(seconds=settings.SKILL_AGENT_LEASE_SECONDS)
         attempt_id = str(uuid.uuid4())
-        async with SessionLocal() as db:
-            row = (
-                await db.execute(
-                    text(
-                        f"""
-                        SELECT id, org_id, tool_name, arguments, snapshot, status
-                        FROM "{SCHEMA}".runs
-                        WHERE status IN ('QUEUED', 'RESUMING')
-                          AND (lease_until IS NULL OR lease_until < NOW())
-                          AND (
-                            snapshot->'placement'->>'role' IS NULL
-                            OR snapshot->'placement'->>'role' != 'edge'
-                          )
-                        ORDER BY created_at ASC
-                        FOR UPDATE SKIP LOCKED
-                        LIMIT 1
-                        """
+        role = "central"
+        try:
+            async with SessionLocal() as db:
+                row = (
+                    await db.execute(
+                        text(
+                            f"""
+                            SELECT id, org_id, tool_name, arguments, snapshot, status, created_at
+                            FROM "{SCHEMA}".runs
+                            WHERE status IN ('QUEUED', 'RESUMING')
+                              AND (lease_until IS NULL OR lease_until < NOW())
+                              AND (
+                                snapshot->'placement'->>'role' IS NULL
+                                OR snapshot->'placement'->>'role' != 'edge'
+                              )
+                            ORDER BY created_at ASC
+                            FOR UPDATE SKIP LOCKED
+                            LIMIT 1
+                            """
+                        )
                     )
-                )
-            ).mappings().first()
-            if not row:
-                await db.commit()
-                return None
+                ).mappings().first()
+                if not row:
+                    await db.commit()
+                    return None
 
-            max_attempt = (
+                snapshot = row["snapshot"] or {}
+                placement = snapshot.get("placement") or {}
+                role = str(placement.get("role") or "central")
+
+                max_attempt = (
+                    await db.execute(
+                        text(
+                            f"""
+                            SELECT COALESCE(MAX(attempt_no), 0)
+                            FROM "{SCHEMA}".run_attempts
+                            WHERE run_id = :run_id
+                            """
+                        ),
+                        {"run_id": row["id"]},
+                    )
+                ).scalar_one()
+                attempt_no = int(max_attempt) + 1
+
                 await db.execute(
                     text(
                         f"""
-                        SELECT COALESCE(MAX(attempt_no), 0)
-                        FROM "{SCHEMA}".run_attempts
-                        WHERE run_id = :run_id
+                        INSERT INTO "{SCHEMA}".run_attempts (
+                            id, run_id, attempt_no, generation, worker_id, status, lease_until, started_at, heartbeat_at
+                        ) VALUES (
+                            :id, :run_id, :attempt_no, :generation, :worker_id, 'PREPARING', :lease_until, NOW(), NOW()
+                        )
                         """
                     ),
-                    {"run_id": row["id"]},
+                    {
+                        "id": attempt_id,
+                        "run_id": row["id"],
+                        "attempt_no": attempt_no,
+                        "generation": attempt_no,
+                        "worker_id": self._worker_id,
+                        "lease_until": lease_until,
+                    },
                 )
-            ).scalar_one()
-            attempt_no = int(max_attempt) + 1
 
-            await db.execute(
-                text(
-                    f"""
-                    INSERT INTO "{SCHEMA}".run_attempts (
-                        id, run_id, attempt_no, generation, worker_id, status, lease_until, started_at, heartbeat_at
-                    ) VALUES (
-                        :id, :run_id, :attempt_no, :generation, :worker_id, 'PREPARING', :lease_until, NOW(), NOW()
+                await db.execute(
+                    text(
+                        f"""
+                        UPDATE "{SCHEMA}".runs
+                        SET status = 'PREPARING',
+                            attempt_id = :attempt_id,
+                            generation = :generation,
+                            worker_id = :worker_id,
+                            lease_until = :lease_until,
+                            updated_at = NOW()
+                        WHERE id = :id
+                        """
+                    ),
+                    {
+                        "id": row["id"],
+                        "attempt_id": attempt_id,
+                        "generation": attempt_no,
+                        "worker_id": self._worker_id,
+                        "lease_until": lease_until,
+                    },
+                )
+                await db.commit()
+                claim_at = datetime.now(timezone.utc)
+                created_at = row.get("created_at")
+                if created_at is not None:
+                    if getattr(created_at, "tzinfo", None) is None:
+                        created_at = created_at.replace(tzinfo=timezone.utc)
+                    wait_seconds = max(0.0, (claim_at - created_at).total_seconds())
+                    record_metric(
+                        "run_queue_wait_seconds",
+                        labels={"role": role},
+                        observe_seconds=wait_seconds,
                     )
-                    """
-                ),
-                {
-                    "id": attempt_id,
-                    "run_id": row["id"],
-                    "attempt_no": attempt_no,
-                    "generation": attempt_no,
-                    "worker_id": self._worker_id,
-                    "lease_until": lease_until,
-                },
-            )
-
-            await db.execute(
-                text(
-                    f"""
-                    UPDATE "{SCHEMA}".runs
-                    SET status = 'PREPARING',
-                        attempt_id = :attempt_id,
-                        generation = :generation,
-                        worker_id = :worker_id,
-                        lease_until = :lease_until,
-                        updated_at = NOW()
-                    WHERE id = :id
-                    """
-                ),
-                {
+                bind_from_snapshot(
+                    snapshot,
+                    run_id=row["id"],
+                    attempt_id=attempt_id,
+                    generation=attempt_no,
+                )
+                record_metric("runs_claimed_total", labels={"role": role, "outcome": "ok"})
+                observe_stage("claim", outcome="ok", role=role)
+                return {
                     "id": row["id"],
+                    "org_id": row.get("org_id"),
+                    "tool_name": row["tool_name"],
+                    "arguments": row["arguments"] or {},
+                    "snapshot": row["snapshot"] or {},
                     "attempt_id": attempt_id,
                     "generation": attempt_no,
-                    "worker_id": self._worker_id,
-                    "lease_until": lease_until,
-                },
-            )
-            await db.commit()
-            snapshot = row["snapshot"] or {}
-            placement = snapshot.get("placement") or {}
-            role = str(placement.get("role") or "central")
-            bind_from_snapshot(
-                snapshot,
-                run_id=row["id"],
-                attempt_id=attempt_id,
-                generation=attempt_no,
-            )
-            record_metric("runs_claimed_total", labels={"role": role, "outcome": "ok"})
-            observe_stage("claim", outcome="ok", role=role)
-            return {
-                "id": row["id"],
-                "org_id": row.get("org_id"),
-                "tool_name": row["tool_name"],
-                "arguments": row["arguments"] or {},
-                "snapshot": row["snapshot"] or {},
-                "attempt_id": attempt_id,
-                "generation": attempt_no,
-            }
+                }
+        except Exception:
+            record_metric("runs_claimed_total", labels={"role": role, "outcome": "error"})
+            observe_stage("claim", outcome="error", role=role)
+            raise
 
     async def _renew_lease(self, run_id: str, attempt_id: str, generation: int | None = None) -> bool:
         lease_until = datetime.now(timezone.utc) + timedelta(seconds=settings.SKILL_AGENT_LEASE_SECONDS)

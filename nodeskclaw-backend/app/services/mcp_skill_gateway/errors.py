@@ -141,6 +141,15 @@ _MESSAGE_KEY_MAP: dict[str, str] = {
     "errors.artifact.not_found": MCP_TOOL_NOT_FOUND,
     "errors.artifact.forbidden": MCP_TOOL_PERMISSION_DENIED,
     "errors.run.idempotency_conflict": IDEMPOTENCY_CONFLICT,
+    "errors.run.attachment_unauthorized": MCP_TOOL_PERMISSION_DENIED,
+    "errors.run.attachment_not_found": MCP_TOOL_NOT_FOUND,
+    "errors.run.attachment_expired": MCP_TOOL_CONSTRAINT_VIOLATION,
+    "errors.run.attachment_scope_denied": MCP_TOOL_PERMISSION_DENIED,
+    "errors.run.attachment_ref_invalid": MCP_INVALID_ARGUMENTS,
+    "errors.run.attachment_too_large": MCP_INVALID_ARGUMENTS,
+    "errors.run.attachment_type_unsupported": MCP_INVALID_ARGUMENTS,
+    "errors.run.attachment_scan_blocked": MCP_TOOL_CONSTRAINT_VIOLATION,
+    "errors.run.attachment_not_supported": MCP_TOOL_CONSTRAINT_VIOLATION,
     MCP_AUTH_REQUIRED: MCP_AUTH_REQUIRED,
     MCP_AUTH_EXPIRED: MCP_AUTH_EXPIRED,
     MCP_ORG_FORBIDDEN: MCP_ORG_FORBIDDEN,
@@ -155,6 +164,18 @@ _MESSAGE_KEY_MAP: dict[str, str] = {
     HERMES_SKILLS_LIST_FAILED: HERMES_SKILLS_LIST_FAILED,
     MCP_INTERNAL_ERROR: MCP_INTERNAL_ERROR,
     MCP_NOT_IMPLEMENTED: MCP_TOOL_DISABLED,
+}
+
+_ATTACHMENT_PUBLIC_ERROR_CODES: dict[str, str] = {
+    "errors.run.attachment_unauthorized": "ATTACHMENT_UNAUTHORIZED",
+    "errors.run.attachment_not_found": "ATTACHMENT_NOT_FOUND",
+    "errors.run.attachment_expired": "ATTACHMENT_EXPIRED",
+    "errors.run.attachment_scope_denied": "ATTACHMENT_SCOPE_DENIED",
+    "errors.run.attachment_ref_invalid": "ATTACHMENT_REF_INVALID",
+    "errors.run.attachment_too_large": "ATTACHMENT_TOO_LARGE",
+    "errors.run.attachment_type_unsupported": "ATTACHMENT_TYPE_UNSUPPORTED",
+    "errors.run.attachment_scan_blocked": "ATTACHMENT_SCAN_BLOCKED",
+    "errors.run.attachment_not_supported": "ATTACHMENT_NOT_SUPPORTED",
 }
 
 
@@ -186,6 +207,7 @@ def mcp_success(jsonrpc_id: Any, result: dict) -> dict:
     return {"jsonrpc": "2.0", "id": jsonrpc_id, "result": result}
 
 
+# @lat: [[architecture/skill-agent#RM-18 Public Attachment Input]]
 def map_app_error(
     jsonrpc_id: Any,
     message_key: str | None,
@@ -195,6 +217,10 @@ def map_app_error(
 ) -> dict:
     error_code = _MESSAGE_KEY_MAP.get(message_key or "", MCP_INTERNAL_ERROR)
     data = dict(extra_data or {})
+    data.setdefault("message_key", message_key or "")
+    data.setdefault("message", message)
+    canonical = _ATTACHMENT_PUBLIC_ERROR_CODES.get(message_key or "")
+    data.setdefault("error_code", canonical or error_code)
     return mcp_error_v2(jsonrpc_id, error_code, message, data=data)
 
 

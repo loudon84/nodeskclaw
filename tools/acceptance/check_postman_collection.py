@@ -60,6 +60,8 @@ PUBLIC_JOURNEY_PATTERNS = {
     "events": re.compile(r"/api/v1/runs/[^/\s]+/events"),
     "result": re.compile(r"/api/v1/runs/[^/\s]+/result"),
     "approval": re.compile(r"/api/v1/runs/[^/\s]+/approvals/"),
+    "approval_decision": re.compile(r"/api/v1/runs/[^/\s]+/approvals/[^/\s]+/decision"),
+    "attachments": re.compile(r"/api/v1/attachments"),
     "cancel": re.compile(r"/api/v1/runs/[^/\s]+/cancel"),
     "resume": re.compile(r"/api/v1/runs/[^/\s]+/resume"),
     "artifacts": re.compile(r"/api/v1/runs/[^/\s]+/artifacts"),
@@ -154,6 +156,14 @@ def check_collection(
                 errors.append(
                     f"Item '{name}' uses public HermesTask path /api/v1/hermes/tasks/"
                 )
+            headers_preview = req.get("header") or []
+            header_preview = {
+                str(h.get("key") or "").lower(): str(h.get("value") or "") for h in headers_preview
+            }
+            if header_preview.get("x-skill-agent-token"):
+                errors.append(f"Item '{name}' is a public JWT request but sets X-Skill-Agent-Token")
+            if "{{AGENT_BASE_URL}}" in surface:
+                errors.append(f"Item '{name}' is a public JWT request but targets AGENT_BASE_URL")
 
         if ".repeat(" in raw_body:
             errors.append(f"Item '{name}' contains raw body with unparsed dynamic JS expression .repeat()")
@@ -213,7 +223,7 @@ def check_collection(
     jwt_blob = "\n".join(jwt_surfaces)
     for journey, pattern in PUBLIC_JOURNEY_PATTERNS.items():
         if not pattern.search(jwt_blob):
-            errors.append(f"Collection missing public v1.2.1 journey '{journey}'")
+            errors.append(f"Collection missing public skill-run journey '{journey}'")
 
     if not BUNDLE_JOURNEY_RE.search("\n".join(all_surfaces)):
         errors.append("Collection missing Bundle journey")

@@ -1,0 +1,6 @@
+{
+  "status": 404,
+  "error_code": "APPROVAL_NOT_FOUND",
+  "message_key": "errors.run.approval_not_found",
+  "message": "APPROVAL_NOT_FOUND"
+}

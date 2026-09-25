@@ -1,0 +1,29 @@
+{
+  "schema": "smc.rm16.revalidation-package.v1",
+  "policy": "REAL_PROCESS",
+  "result": "PASS",
+  "scenario": "rm02-package",
+  "auth_type": "user_jwt",
+  "timestamp": "2026-09-08T23:45:57.057693Z",
+  "pc_scenarios": [
+    "pc01",
+    "pc02",
+    "pc03-approve",
+    "pc03-deny",
+    "pc04",
+    "pc06",
+    "pc07",
+    "pc09"
+  ],
+  "missing": [],
+  "failed": [],
+  "hermes_runtime_versions": [
+    "0.16.0",
+    "0.21.0"
+  ],
+  "auth_types": [
+    "user_jwt"
+  ],
+  "revalidation_link": "RM-02 Provider Conformance",
+  "note": "RM-02 Roadmap status is not rewritten by this package"
+}

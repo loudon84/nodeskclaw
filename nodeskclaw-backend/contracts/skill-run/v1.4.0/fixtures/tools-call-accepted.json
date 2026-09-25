@@ -1,0 +1,23 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "accepted"
+    }
+  ],
+  "structuredContent": {
+    "committed": true,
+    "run_id": "run-1",
+    "status": "QUEUED",
+    "tool_name": "writer.article",
+    "event_stream": "/api/v1/runs/run-1/events",
+    "result_url": "/api/v1/runs/run-1/result",
+    "artifact_url": "/api/v1/runs/run-1/artifacts",
+    "execution_mode": "async_event",
+    "contract_version": "1.4.0",
+    "attachment_refs": [
+      "att_live_example"
+    ]
+  },
+  "isError": false
+}

@@ -1,0 +1,19 @@
+{
+  "title": "CapabilityFlagsV140",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "attachments": {
+      "const": "supported",
+      "type": "string"
+    },
+    "approvalExpiry": {
+      "const": "unsupported",
+      "type": "string"
+    }
+  },
+  "required": [
+    "attachments",
+    "approvalExpiry"
+  ]
+}

@@ -68,6 +68,7 @@ class SkillUpdate(BaseModel):
     agent_type: str | None = None
     category: str | None = None
     runtime: str | None = None
+    canonical_path: str | None = None
     is_mcp_exposed: bool | None = None
     is_active: bool | None = None
     input_schema: dict | None = None

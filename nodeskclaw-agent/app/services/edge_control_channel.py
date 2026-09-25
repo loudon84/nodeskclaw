@@ -16,7 +16,13 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey,
 from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, PublicFormat, NoEncryption
 
 COMMAND_PURPOSES = frozenset(
-    {"job.claim", "install.desired", "artifact.on_demand", "job.cancel.check"}
+    {
+        "job.claim",
+        "install.desired",
+        "artifact.on_demand",
+        "job.cancel.check",
+        "node.heartbeat",
+    }
 )
 
 
@@ -252,6 +258,22 @@ class EdgeControlChannel:
         state.request_seq = 0
         self.save(state)
         return state
+
+    def generate_rotation_keypair(self) -> tuple[str, str]:
+        private_key = Ed25519PrivateKey.generate()
+        return _b64_private_key(private_key), _b64_public_key(private_key.public_key())
+
+    def apply_rotation_response(
+        self,
+        state: EdgeIdentityState,
+        data: dict[str, Any],
+        *,
+        new_private_key: str,
+        new_public_key: str,
+    ) -> EdgeIdentityState:
+        state.private_key = new_private_key
+        state.public_key = new_public_key
+        return self.apply_bind_response(state, data)
 
     def build_request_message(
         self,

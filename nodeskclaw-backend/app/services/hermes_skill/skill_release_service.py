@@ -92,6 +92,41 @@ def bundle_zip_path(bundle_ref: str) -> Path:
     return Path(settings.HERMES_SKILL_HUB_ROOT) / "releases" / f"{normalized_ref}.zip"
 
 
+ALLOWED_DELEGATION_TOPOLOGIES = frozenset({"single_agent", "runtime_delegated"})
+
+
+def freeze_delegation_topology(
+    extra_metadata: dict[str, Any] | None,
+) -> tuple[str, dict[str, str] | None]:
+    extra = dict(extra_metadata or {})
+    raw = extra.get("delegation_topology")
+    if raw in (None, ""):
+        topology = "single_agent"
+    else:
+        topology = str(raw).strip()
+    if topology not in ALLOWED_DELEGATION_TOPOLOGIES:
+        raise BadRequestError(
+            "不支持的 Delegation Topology",
+            "errors.runtime.execution_topology_not_supported",
+        )
+    if topology == "single_agent":
+        return topology, None
+    ref = extra.get("runtime_capability_ref")
+    if not isinstance(ref, dict):
+        raise BadRequestError(
+            "runtime_delegated 需要版本化 Runtime Capability reference",
+            "errors.runtime.runtime_capability_unavailable",
+        )
+    name = str(ref.get("name") or "").strip()
+    version = str(ref.get("version") or "").strip()
+    if not name or not version:
+        raise BadRequestError(
+            "runtime_delegated 需要版本化 Runtime Capability reference",
+            "errors.runtime.runtime_capability_unavailable",
+        )
+    return topology, {"name": name, "version": version}
+
+
 def snapshot_hash(*, skill_release_id: str, digest: str, route_snapshot: dict[str, Any]) -> str:
     raw = json.dumps(
         {
@@ -326,24 +361,33 @@ class SkillReleaseService:
             "streaming": bool(existing_annotations.get("streaming", extra.get("streaming", False))),
             "artifacts": bool(existing_annotations.get("artifacts", extra.get("artifacts", False))),
         }
+        topology, capability_ref = freeze_delegation_topology(extra)
+        extra["delegation_topology"] = topology
+        if capability_ref is None:
+            extra.pop("runtime_capability_ref", None)
+        else:
+            extra["runtime_capability_ref"] = capability_ref
         release.extra_metadata = extra
 
+        # @lat: [[decisions/skill-platform-execution#Publish Gate]]
         if not release.bundle_ref:
-            if not skill.canonical_path:
-                raise BadRequestError(
-                    "Skill 缺少 canonical_path，无法发布 Bundle",
-                    "errors.skill.canonical_path_missing",
-                )
-            skill_dir = Path(skill.canonical_path)
-            zip_bytes = build_bundle_zip_bytes(skill_dir)
-            bundle_ref = str(uuid.uuid4())
-            releases_dir = Path(settings.HERMES_SKILL_HUB_ROOT) / "releases"
-            releases_dir.mkdir(parents=True, exist_ok=True)
-            bundle_path = releases_dir / f"{bundle_ref}.zip"
-            bundle_path.write_bytes(zip_bytes)
-            release.bundle_ref = bundle_ref
-            release.bundle_sha256 = hashlib.sha256(zip_bytes).hexdigest()
-            release.bundle_size_bytes = len(zip_bytes)
+            runtime_without_copy = skill.source_type == "hermes_api_server" and not skill.canonical_path
+            if not runtime_without_copy:
+                if not skill.canonical_path:
+                    raise BadRequestError(
+                        "Skill 缺少 canonical_path，无法发布 Bundle",
+                        "errors.skill.canonical_path_missing",
+                    )
+                skill_dir = Path(skill.canonical_path)
+                zip_bytes = build_bundle_zip_bytes(skill_dir)
+                bundle_ref = str(uuid.uuid4())
+                releases_dir = Path(settings.HERMES_SKILL_HUB_ROOT) / "releases"
+                releases_dir.mkdir(parents=True, exist_ok=True)
+                bundle_path = releases_dir / f"{bundle_ref}.zip"
+                bundle_path.write_bytes(zip_bytes)
+                release.bundle_ref = bundle_ref
+                release.bundle_sha256 = hashlib.sha256(zip_bytes).hexdigest()
+                release.bundle_size_bytes = len(zip_bytes)
 
         current = await self.get_published_by_skill_db_id(skill.id)
         now = datetime.now(timezone.utc)
@@ -357,6 +401,23 @@ class SkillReleaseService:
         release.deprecated_at = None
         await self.db.flush()
         return release
+
+    # @lat: [[architecture/skill-agent#RM-18 Public Attachment Input]]
+    async def sync_runtime_published_catalog_extra(self, skill: HermesSkill) -> HermesSkillRelease | None:
+        if skill.source_type != "hermes_api_server":
+            return None
+        published = await self.get_published_by_skill_db_id(skill.id)
+        if not published:
+            return None
+        extra = dict(published.extra_metadata or {})
+        incoming = dict(skill.extra_metadata or {})
+        for key in ("supportsAttachments", "interactionMode", "promptField"):
+            if key in incoming:
+                extra[key] = incoming[key]
+        extra["supportsAttachments"] = bool(extra.get("supportsAttachments", False))
+        published.extra_metadata = extra
+        await self.db.flush()
+        return published
 
     async def deprecate(self, *, org_id: str, skill_id: str, release_id: str) -> HermesSkillRelease:
         skill = await self.get_skill(org_id, skill_id)

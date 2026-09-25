@@ -209,21 +209,19 @@ uv run python scripts/contracts.py check --family skill-run --version 1.3.0 --re
 
 ## Definition of Done
 
-```text
-[ ] AD@1.7.0 APPROVED（已满足）
-[ ] RM-17 Stage PRD APPROVED
-[ ] canonical /decision 实现且裸对象回执
-[ ] legacy 路径不复制 enforcement
-[ ] options descriptor 可观察
-[ ] 幂等规则 PASS
-[ ] 稳定错误码 PASS
-[ ] deny 终态经 live 冻结进 Bundle
-[ ] v1.2.1 零修改
-[ ] v1.3.0 Bundle generate + release check PASS
-[ ] annotated tag 创建
-[ ] REAL_PROCESS user_jwt live PASS + evidence manifest
-[ ] Roadmap RM-17 → DONE（下一轮 Plan Delivery；本轮止于 PRD APPROVED）
-```
+- **DOD-01**：AD@1.7.0 APPROVED（已满足）
+- **DOD-02**：RM-17 Stage PRD APPROVED
+- **DOD-03**：canonical /decision 实现且裸对象回执
+- **DOD-04**：legacy 路径不复制 enforcement
+- **DOD-05**：options descriptor 可观察
+- **DOD-06**：幂等规则 PASS
+- **DOD-07**：稳定错误码 PASS
+- **DOD-08**：deny 终态经 live 冻结进 Bundle
+- **DOD-09**：v1.2.1 零修改
+- **DOD-10**：v1.3.0 Bundle generate 与 release check PASS
+- **DOD-11**：annotated tag 创建
+- **DOD-12**：REAL_PROCESS user_jwt live PASS 与 evidence manifest
+- **DOD-13**：Roadmap RM-17 在 Review PASS、Verification PASS 与 implementation commit 之后标记 DONE
 
 ## Acceptance Claim Baseline
 
@@ -253,4 +251,4 @@ uv run python scripts/contracts.py check --family skill-run --version 1.3.0 --re
 
 ## Dependencies And Handoff
 
-Depends On 已满足：RM-11、RM-12、RM-15 均为 `DONE`。下一步：`smc-prd-review` → `smc-prd-converge` → `smc-plan-from-approved-prd-ponytail`。Plan 负责 ledger 表设计、双路由共用 service、deny 终态 live 冻结写入 Bundle、contracts.py 四处改点与 focused tests。禁止改写 v1.2.1，禁止新建第二生成脚本，禁止把 Work UI 写入本仓 Todo，禁止并入 RM-09。
+Depends On 已满足：RM-11、RM-12、RM-15 均为 `DONE`。下一步：`smc-plan-from-approved-prd-ponytail` → `smc-plan-delivery`。Plan 负责 ledger 表设计、双路由共用 service、deny 终态 live 冻结写入 Bundle、contracts.py 四处改点与 focused tests。禁止改写 v1.2.1，禁止新建第二生成脚本，禁止把 Work UI 写入本仓 Todo，禁止并入 RM-09。

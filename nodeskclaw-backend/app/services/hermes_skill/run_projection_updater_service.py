@@ -14,6 +14,42 @@ from app.models.hermes_skill.hermes_task import HermesTask, HermesTaskEvent, Tas
 
 logger = logging.getLogger(__name__)
 
+_PROJECTION_FAIL_REASONS: frozenset[str] = frozenset(
+    {"task_not_found", "agent_run_not_found", "exception", "http_error", "lag"}
+)
+
+# Low-cardinality in-process counters (AD 27.3). Not Agent Trace ownership.
+_projection_sync_failed_total: dict[str, int] = {}
+
+
+def reset_projection_metrics() -> None:
+    """Test helper: clear module-level projection counters."""
+    _projection_sync_failed_total.clear()
+
+
+def get_projection_metrics_snapshot() -> dict[str, Any]:
+    """Return a copy of projection fail counters keyed by reason enum."""
+    try:
+        return {
+            "projection_sync_failed_total": {
+                reason: int(_projection_sync_failed_total.get(reason, 0))
+                for reason in sorted(_PROJECTION_FAIL_REASONS)
+                if _projection_sync_failed_total.get(reason, 0)
+            }
+        }
+    except Exception:
+        logger.debug("projection metrics snapshot failed", exc_info=True)
+        return {"projection_sync_failed_total": {}}
+
+
+def _inc_projection_sync_failed(reason: str) -> None:
+    """Fail-open counter bump; must never raise into the sync path."""
+    try:
+        key = reason if reason in _PROJECTION_FAIL_REASONS else "exception"
+        _projection_sync_failed_total[key] = int(_projection_sync_failed_total.get(key, 0)) + 1
+    except Exception:
+        logger.debug("projection metrics increment failed", exc_info=True)
+
 
 class RunProjectionUpdaterService:
     def __init__(self, db: AsyncSession):
@@ -29,6 +65,7 @@ class RunProjectionUpdaterService:
                 task_id,
                 org_id,
             )
+            _inc_projection_sync_failed("task_not_found")
             return False
 
         agent_base = settings.SKILL_AGENT_BASE_URL.rstrip("/")
@@ -48,6 +85,7 @@ class RunProjectionUpdaterService:
                         task_id,
                         org_id,
                     )
+                    _inc_projection_sync_failed("agent_run_not_found")
                     return False
                 resp_run.raise_for_status()
                 run_data = resp_run.json()
@@ -147,12 +185,22 @@ class RunProjectionUpdaterService:
 
                 await self.db.commit()
                 return True
+        except httpx.HTTPStatusError:
+            logger.exception(
+                "skill_run.projection_sync_failed task_id=%s org_id=%s error_code=PROJECTION_SYNC_FAILED reason=http_error",
+                task_id,
+                org_id,
+            )
+            _inc_projection_sync_failed("http_error")
+            await self.db.rollback()
+            return False
         except Exception:
             logger.exception(
                 "skill_run.projection_sync_failed task_id=%s org_id=%s error_code=PROJECTION_SYNC_FAILED reason=exception",
                 task_id,
                 org_id,
             )
+            _inc_projection_sync_failed("exception")
             await self.db.rollback()
             return False
 

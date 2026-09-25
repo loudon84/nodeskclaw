@@ -1,14 +1,22 @@
 import asyncio
+import ipaddress
 import json
 import logging
 import re
+import socket
 import time
 from collections.abc import AsyncIterator
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 
 from app.config import settings
+from app.services.execution_observability import (
+    apply_runtime_binding,
+    record_metric,
+    update_trace_attrs,
+)
 from app.services.native_event_normalizer import NativeEventNormalizer, progress_payload
 
 logger = logging.getLogger(__name__)
@@ -19,6 +27,8 @@ RUNTIME_UNREACHABLE = "RUNTIME_UNREACHABLE"
 RUNTIME_UNAUTHORIZED = "RUNTIME_UNAUTHORIZED"
 RUNTIME_VERSION_UNSUPPORTED = "RUNTIME_VERSION_UNSUPPORTED"
 RUNTIME_CAPABILITY_MISSING = "RUNTIME_CAPABILITY_MISSING"
+RUNTIME_CAPABILITY_UNAVAILABLE = "RUNTIME_CAPABILITY_UNAVAILABLE"
+EXECUTION_TOPOLOGY_NOT_SUPPORTED = "EXECUTION_TOPOLOGY_NOT_SUPPORTED"
 RUNTIME_CAPACITY_EXCEEDED = "RUNTIME_CAPACITY_EXCEEDED"
 RUNTIME_START_FAILED = "RUNTIME_START_FAILED"
 RUNTIME_EVENT_STREAM_FAILED = "RUNTIME_EVENT_STREAM_FAILED"
@@ -26,6 +36,7 @@ RUNTIME_STOP_FAILED = "RUNTIME_STOP_FAILED"
 RUNTIME_PROTOCOL_INVALID = "RUNTIME_PROTOCOL_INVALID"
 RUNTIME_INTERRUPTED = "RUNTIME_INTERRUPTED"
 RUNTIME_STATE_UNAVAILABLE = "RUNTIME_STATE_UNAVAILABLE"
+ARTIFACT_PERSIST_FAILED = "ARTIFACT_PERSIST_FAILED"
 
 HERMES_VERSION_FLOOR = (2026, 8, 31)
 HERMES_VERSION_FLOOR_LABEL = "v2026.8.31"
@@ -68,6 +79,250 @@ def _status_output_text(data: dict[str, Any] | None) -> str:
     if isinstance(nested, dict):
         return _status_output_text(nested)
     return ""
+
+
+def _safe_output_name(raw: Any) -> str:
+    text = str(raw or "").replace("\\", "/").strip()
+    name = text.rsplit("/", 1)[-1].strip()
+    return name or "output.bin"
+
+
+def _http_output_url(ref: dict[str, Any]) -> str | None:
+    for key in ("url", "uri", "href"):
+        value = ref.get(key)
+        if isinstance(value, str) and value.startswith(("http://", "https://")):
+            return value
+    return None
+
+
+_METADATA_HOSTS = frozenset(
+    {
+        "169.254.169.254",
+        "metadata.google.internal",
+        "instance-data",
+        "100.100.100.200",
+        "fd00:ec2::254",
+    }
+)
+_CREDENTIAL_HEADER_NAMES = frozenset(
+    {
+        "authorization",
+        "cookie",
+        "proxy-authorization",
+        "x-api-key",
+        "api-key",
+        "x-auth-token",
+    }
+)
+
+
+def _is_metadata_host(host: str) -> bool:
+    return host.lower().rstrip(".") in _METADATA_HOSTS
+
+
+def _parse_ip(addr: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    text = addr.split("%", 1)[0]
+    try:
+        return ipaddress.ip_address(text)
+    except ValueError:
+        return None
+
+
+def _ip_is_non_public(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    return bool(
+        ip.is_loopback
+        or ip.is_link_local
+        or ip.is_private
+        or ip.is_multicast
+        or ip.is_reserved
+        or ip.is_unspecified
+    )
+
+
+def _looks_non_public_hostname(host: str) -> bool:
+    low = host.lower().rstrip(".")
+    if low in {"localhost"} or _is_metadata_host(low):
+        return True
+    return low.endswith((".internal", ".local", ".localhost"))
+
+
+def _http_origin(url: str | None) -> tuple[str, str, int] | None:
+    if not url:
+        return None
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return None
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    return parsed.scheme.lower(), parsed.hostname.lower().rstrip("."), port
+
+
+def _headers_without_credentials(headers: dict[str, str] | None) -> dict[str, str]:
+    stripped: dict[str, str] = {}
+    for key, value in (headers or {}).items():
+        if str(key).lower() in _CREDENTIAL_HEADER_NAMES:
+            continue
+        stripped[key] = value
+    return stripped
+
+
+async def _resolve_output_host_ips(host: str, port: int) -> list[str]:
+    literal = _parse_ip(host)
+    if literal is not None:
+        return [str(literal)]
+    try:
+        infos = await asyncio.get_running_loop().getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except OSError:
+        return []
+    addresses: list[str] = []
+    for item in infos:
+        if item and item[4]:
+            addresses.append(str(item[4][0]))
+    return addresses
+
+
+async def _output_url_access(url: str, gateway_url: str | None) -> str:
+    origin = _http_origin(url)
+    if origin is None:
+        return "blocked"
+    _scheme, host, port = origin
+    if _is_metadata_host(host):
+        return "blocked"
+    gateway_origin = _http_origin(gateway_url)
+    if gateway_origin is not None and origin == gateway_origin:
+        return "gateway"
+    if _looks_non_public_hostname(host):
+        return "blocked"
+    ips = await _resolve_output_host_ips(host, port)
+    if not ips:
+        return "blocked"
+    for addr in ips:
+        parsed_ip = _parse_ip(addr)
+        if parsed_ip is None or _is_metadata_host(addr) or _ip_is_non_public(parsed_ip):
+            return "blocked"
+    return "public"
+
+
+def _collect_output_refs(data: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not isinstance(data, dict):
+        return []
+    found: list[dict[str, Any]] = []
+    for key in ("output_refs", "output_manifest"):
+        value = data.get(key)
+        if isinstance(value, dict):
+            items = value.get("items")
+            if isinstance(items, list):
+                found.extend(item for item in items if isinstance(item, dict))
+            elif _http_output_url(value):
+                found.append(value)
+        elif isinstance(value, list):
+            found.extend(item for item in value if isinstance(item, dict))
+    artifacts = data.get("artifacts")
+    if isinstance(artifacts, list):
+        found.extend(item for item in artifacts if isinstance(item, dict) and _http_output_url(item))
+    nested = data.get("data")
+    if isinstance(nested, dict):
+        found.extend(_collect_output_refs(nested))
+    return found
+
+
+async def _persist_declared_outputs(
+    client: httpx.AsyncClient,
+    *,
+    data: dict[str, Any] | None,
+    headers: dict[str, str],
+    org_id: str | None,
+    run_id: str | None,
+    attempt_id: str | None,
+    gateway_url: str | None = None,
+) -> tuple[list[dict[str, Any]], bool]:
+    refs = _collect_output_refs(data)
+    if not refs or not run_id:
+        return [], False
+    from app.db import SessionLocal
+    from app.services.run_service import public_artifact_persisted_event, store_artifact_bytes
+
+    events: list[dict[str, Any]] = []
+    required_failed = False
+    async with SessionLocal() as db:
+        try:
+            for ref in refs:
+                required = bool(ref.get("required"))
+                url = _http_output_url(ref)
+                name = _safe_output_name(ref.get("name") or ref.get("filename") or ref.get("file_name"))
+                content_type = ref.get("content_type") if isinstance(ref.get("content_type"), str) else "application/octet-stream"
+                if url is None:
+                    logger.warning("runtime output ref skipped because it is not an authorized http url name=%s", name)
+                    if required:
+                        required_failed = True
+                    continue
+                access = await _output_url_access(url, gateway_url)
+                if access == "blocked":
+                    logger.warning("runtime output ref blocked by fetch policy name=%s url_host=%s", name, _http_origin(url))
+                    if required:
+                        required_failed = True
+                    continue
+                fetch_headers = headers if access == "gateway" else _headers_without_credentials(headers)
+                try:
+                    response = await client.get(url, headers=fetch_headers)
+                    response.raise_for_status()
+                    content = response.content
+                    descriptor = await store_artifact_bytes(
+                        db,
+                        run_id,
+                        name=name,
+                        content=content,
+                        content_type=content_type,
+                        org_id=org_id,
+                        attempt_id=attempt_id,
+                        idempotency_key=f"{run_id}:{name}",
+                    )
+                except Exception as exc:
+                    logger.warning("runtime output persist failed name=%s required=%s error=%s", name, required, exc)
+                    if required:
+                        required_failed = True
+                    continue
+                if str(descriptor.storage_state or "").lower() != "persisted":
+                    if required:
+                        required_failed = True
+                    continue
+                events.append(public_artifact_persisted_event(descriptor))
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
+    return events, required_failed
+
+
+async def _terminal_events_with_outputs(
+    client: httpx.AsyncClient,
+    terminal: dict[str, Any],
+    *,
+    data: dict[str, Any] | None,
+    headers: dict[str, str],
+    org_id: str | None,
+    run_id: str | None,
+    attempt_id: str | None,
+    gateway_url: str | None = None,
+) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    if terminal.get("event_type") == "run.completed":
+        persist_events, persist_failed = await _persist_declared_outputs(
+            client,
+            data=data,
+            headers=headers,
+            org_id=org_id,
+            run_id=run_id,
+            attempt_id=attempt_id,
+            gateway_url=gateway_url,
+        )
+        events.extend(persist_events)
+        if persist_failed:
+            events.append(
+                _failed(ARTIFACT_PERSIST_FAILED, "required runtime output could not be persisted")
+            )
+            return events
+    events.append(terminal)
+    return events
 
 
 # @lat: [[architecture/skill-agent#Configuration#Gateway Reachability Probe]]
@@ -114,6 +369,16 @@ def reported_hermes_version(payload: dict[str, Any] | None) -> str:
         or nested.get("version")
         or ""
     )
+    return str(raw).strip()
+
+
+ALLOWED_DELEGATION_TOPOLOGIES = frozenset({"single_agent", "runtime_delegated"})
+
+
+def _resolved_topology(route_snapshot: dict[str, Any]) -> str:
+    raw = route_snapshot.get("delegation_topology")
+    if raw in (None, ""):
+        return "single_agent"
     return str(raw).strip()
 
 
@@ -498,18 +763,25 @@ async def _reconcile_status(
     try:
         resp = await client.get(url, headers=headers)
     except (httpx.TimeoutException, httpx.NetworkError, OSError):
+        record_metric("runtime_reconcile_total", labels={"outcome": "unreachable"})
         return "", None, RUNTIME_UNREACHABLE
     if resp.status_code == 404:
+        record_metric("runtime_reconcile_total", labels={"outcome": "not_found"})
         return "not_found", None, RUNTIME_STATE_UNAVAILABLE
     if resp.status_code in (401, 403):
+        record_metric("runtime_reconcile_total", labels={"outcome": "unauthorized"})
         return "", None, RUNTIME_UNAUTHORIZED
     if resp.status_code >= 400:
+        record_metric("runtime_reconcile_total", labels={"outcome": "error"})
         return "", None, RUNTIME_STATE_UNAVAILABLE
     try:
         data = resp.json()
     except Exception:
+        record_metric("runtime_reconcile_total", labels={"outcome": "invalid"})
         return "", None, RUNTIME_PROTOCOL_INVALID
-    return _extract_status(data), data if isinstance(data, dict) else None, None
+    status = _extract_status(data)
+    record_metric("runtime_reconcile_total", labels={"outcome": status or "ok"})
+    return status, data if isinstance(data, dict) else None, None
 
 
 async def _stop_runtime(
@@ -521,28 +793,49 @@ async def _stop_runtime(
     attempt_id: str,
     generation: int,
 ) -> str | None:
-    binding = await load_runtime_binding(attempt_id)
-    if not binding or int(binding.get("generation") or 0) != int(generation):
-        return None
-    bound_id = binding.get("runtime_run_id")
-    if bound_id and bound_id != runtime_run_id:
-        return None
-    url = f"{gateway_url}/v1/runs/{runtime_run_id}/stop"
+    started = time.monotonic()
+    outcome = "ok"
     try:
-        resp = await client.post(url, headers=headers)
-    except (httpx.TimeoutException, httpx.NetworkError, OSError):
-        return RUNTIME_STOP_FAILED
-    if resp.status_code == 404:
-        return "stop_404"
-    if resp.status_code >= 400:
-        return _map_http_status(resp.status_code, stop=True)
-    return None
+        binding = await load_runtime_binding(attempt_id)
+        if not binding or int(binding.get("generation") or 0) != int(generation):
+            outcome = "fenced"
+            return None
+        bound_id = binding.get("runtime_run_id")
+        if bound_id and bound_id != runtime_run_id:
+            outcome = "fenced"
+            return None
+        url = f"{gateway_url}/v1/runs/{runtime_run_id}/stop"
+        try:
+            resp = await client.post(url, headers=headers)
+        except (httpx.TimeoutException, httpx.NetworkError, OSError):
+            outcome = "error"
+            return RUNTIME_STOP_FAILED
+        if resp.status_code == 404:
+            outcome = "not_found"
+            return "stop_404"
+        if resp.status_code >= 400:
+            outcome = "error"
+            return _map_http_status(resp.status_code, stop=True)
+        return None
+    finally:
+        record_metric(
+            "runtime_stop_seconds",
+            labels={"outcome": outcome},
+            observe_seconds=time.monotonic() - started,
+        )
 
 
-def _terminal_from_status(status: str, error_code: str | None) -> dict[str, Any] | None:
+def _terminal_from_status(
+    status: str,
+    error_code: str | None,
+    *,
+    observe: bool = True,
+) -> dict[str, Any] | None:
     if error_code == RUNTIME_STATE_UNAVAILABLE or status in {"not_found", "run_not_found"}:
         return _failed(RUNTIME_STATE_UNAVAILABLE, "Hermes runtime run state is unavailable")
     if error_code == RUNTIME_INTERRUPTED or status == "interrupted":
+        if observe:
+            record_metric("runtime_interrupted_total", labels={"outcome": "interrupted"})
         return _failed(RUNTIME_INTERRUPTED, "Hermes runtime run was interrupted")
     if error_code:
         return _failed(error_code, "Hermes runtime status reconciliation failed")
@@ -570,7 +863,7 @@ def _events_after_status_terminal(
 ) -> tuple[list[dict[str, Any]], bool]:
     close_status = "completed" if status in {"completed", "succeeded", "success"} else "failed"
     events = list(normalizer.close(terminal_status=close_status))
-    if any(item.get("event_type") == "assistant.message" for item in events):
+    if any(item.get("event_type") in {"assistant.message", "assistant.delta"} for item in events):
         saw_assistant = True
     output = _status_output_text(data)
     if close_status == "completed" and output and not saw_assistant:
@@ -752,7 +1045,25 @@ async def execute_hermes_run(
                 )
                 return
 
+            topology = _resolved_topology(route_snapshot)
+            if topology not in ALLOWED_DELEGATION_TOPOLOGIES:
+                yield _failed(
+                    EXECUTION_TOPOLOGY_NOT_SUPPORTED,
+                    "Delegation topology is not supported",
+                )
+                return
             present = _feature_set(caps_body)
+            if topology == "runtime_delegated":
+                ref = route_snapshot.get("runtime_capability_ref")
+                name = str((ref or {}).get("name") or "").strip() if isinstance(ref, dict) else ""
+                version = str((ref or {}).get("version") or "").strip() if isinstance(ref, dict) else ""
+                if not name or not version or name not in present:
+                    yield _failed(
+                        RUNTIME_CAPABILITY_UNAVAILABLE,
+                        "Runtime capability reference is unavailable for runtime_delegated topology",
+                    )
+                    return
+
             missing = sorted(required - present)
             if missing:
                 yield _failed(
@@ -763,6 +1074,7 @@ async def execute_hermes_run(
 
             submit_headers = dict(auth_headers)
             submit_headers["Idempotency-Key"] = idempotency_key
+            start_began = time.monotonic()
             try:
                 start_resp = await client.post(
                     f"{gateway_url}/v1/runs",
@@ -770,9 +1082,19 @@ async def execute_hermes_run(
                     headers=submit_headers,
                 )
             except (httpx.TimeoutException, httpx.NetworkError, OSError):
+                record_metric(
+                    "runtime_start_seconds",
+                    labels={"outcome": "unreachable"},
+                    observe_seconds=time.monotonic() - start_began,
+                )
                 yield _failed(RUNTIME_UNREACHABLE, "Hermes native run submit unreachable")
                 return
             if start_resp.status_code >= 400:
+                record_metric(
+                    "runtime_start_seconds",
+                    labels={"outcome": "error"},
+                    observe_seconds=time.monotonic() - start_began,
+                )
                 yield _failed(
                     _map_http_status(start_resp.status_code, start=True),
                     "Hermes native run submit failed",
@@ -781,10 +1103,20 @@ async def execute_hermes_run(
             try:
                 start_body = start_resp.json()
             except Exception:
+                record_metric(
+                    "runtime_start_seconds",
+                    labels={"outcome": "invalid"},
+                    observe_seconds=time.monotonic() - start_began,
+                )
                 yield _failed(RUNTIME_PROTOCOL_INVALID, "Hermes native run submit returned invalid JSON")
                 return
             runtime_run_id = _extract_runtime_run_id(start_body)
             if not runtime_run_id:
+                record_metric(
+                    "runtime_start_seconds",
+                    labels={"outcome": "invalid"},
+                    observe_seconds=time.monotonic() - start_began,
+                )
                 yield _failed(RUNTIME_PROTOCOL_INVALID, "Hermes native run submit omitted run id")
                 return
             nested = start_body.get("data") if isinstance(start_body.get("data"), dict) else {}
@@ -804,10 +1136,17 @@ async def execute_hermes_run(
             polled_code: str | None = None
             idle_ticks = 0
             drain_deadline: float | None = None
+            stream_disconnected = False
             try:
+                stream_began = time.monotonic()
                 async with client.stream("GET", events_url, headers=auth_headers) as response:
                     events_subscribed = True
                     if response.status_code >= 400:
+                        record_metric(
+                            "runtime_start_seconds",
+                            labels={"outcome": "stream_error"},
+                            observe_seconds=time.monotonic() - start_began,
+                        )
                         yield _failed(
                             _map_http_status(response.status_code, stream=True),
                             "Hermes event stream failed",
@@ -825,9 +1164,30 @@ async def execute_hermes_run(
                         runtime_idempotency_key=idempotency_key,
                     )
                     if binding is None:
+                        record_metric(
+                            "runtime_start_seconds",
+                            labels={"outcome": "bind_rejected"},
+                            observe_seconds=time.monotonic() - start_began,
+                        )
                         yield _failed(RUNTIME_PROTOCOL_INVALID, "Hermes runtime binding persist was rejected")
                         return
                     runtime_run_id = str(binding.get("runtime_run_id") or runtime_run_id)
+                    record_metric(
+                        "runtime_start_seconds",
+                        labels={"outcome": "ok"},
+                        observe_seconds=time.monotonic() - start_began,
+                    )
+                    apply_runtime_binding(
+                        {
+                            "runtime_type": "hermes",
+                            "runtime_version": binding.get("runtime_version") or version_raw,
+                            "runtime_run_id": runtime_run_id,
+                            "runtime_session_id": binding.get("runtime_session_id") or runtime_session_id,
+                            "runtime_idempotency_key": binding.get("runtime_idempotency_key")
+                            or idempotency_key,
+                        }
+                    )
+                    update_trace_attrs(engine="hermes")
 
                     if cancel_event and cancel_event.is_set():
                         stop_code = await _stop_runtime(
@@ -913,11 +1273,12 @@ async def execute_hermes_run(
                                 polled_status, polled_data, polled_code = status, data, rec_code
                                 if _is_wait_status(status):
                                     break
-                                if _terminal_from_status(status, rec_code):
+                                if _terminal_from_status(status, rec_code, observe=False):
                                     drain_deadline = time.monotonic() + STREAM_DRAIN_TIMEOUT_SECONDS
                                 continue
                             except StopAsyncIteration:
                                 pending_line = None
+                                stream_disconnected = True
                                 break
                             idle_ticks = 0
                             if line.startswith("event:"):
@@ -941,7 +1302,7 @@ async def execute_hermes_run(
                             leave_stream = False
                             for semantic in _emit_ingested(normalizer, chunk):
                                 yield semantic
-                                if semantic.get("event_type") == "assistant.message":
+                                if semantic.get("event_type") in {"assistant.message", "assistant.delta"}:
                                     saw_assistant = True
                                 if semantic.get("event_type") == "approval.requested":
                                     saw_approval = True
@@ -951,10 +1312,20 @@ async def execute_hermes_run(
                     finally:
                         if pending_line is not None and not pending_line.done():
                             pending_line.cancel()
+                        record_metric(
+                            "runtime_stream_seconds",
+                            labels={"outcome": "disconnect" if stream_disconnected else "ok"},
+                            observe_seconds=time.monotonic() - stream_began,
+                        )
             except (httpx.TimeoutException, httpx.NetworkError, OSError):
                 if not events_subscribed:
                     yield _failed(RUNTIME_EVENT_STREAM_FAILED, "Hermes event stream failed")
                     return
+                stream_disconnected = True
+                record_metric("runtime_disconnect_total", labels={"outcome": "network"})
+            else:
+                if stream_disconnected:
+                    record_metric("runtime_disconnect_total", labels={"outcome": "stream_end"})
 
             yield {"event_type": "run.progress", "payload": progress_payload("RECONCILING", "reconciling hermes status")}
             if polled_status is None:
@@ -984,14 +1355,36 @@ async def execute_hermes_run(
                 )
                 for leftover in leftovers:
                     yield leftover
-                if terminal["event_type"] in {"run.completed", "run.failed", "run.cancelled"}:
+                outgoing = await _terminal_events_with_outputs(
+                    client,
+                    terminal,
+                    data=data,
+                    headers=auth_headers,
+                    org_id=org_id,
+                    run_id=run_id,
+                    attempt_id=attempt_id,
+                    gateway_url=gateway_url,
+                )
+                if outgoing and outgoing[-1]["event_type"] in {"run.completed", "run.failed", "run.cancelled"}:
                     await mark_native_terminal(attempt_id=attempt_id, generation=generation)
-                yield terminal
+                for item in outgoing:
+                    yield item
                 return
             if status not in ALIVE_STATUSES:
                 yield _failed(RUNTIME_STATE_UNAVAILABLE, "Hermes runtime status could not be mapped")
                 return
+            approval_wait_started: float | None = None
             while status in ALIVE_STATUSES:
+                if _is_wait_status(status):
+                    if approval_wait_started is None:
+                        approval_wait_started = time.monotonic()
+                elif approval_wait_started is not None:
+                    record_metric(
+                        "runtime_approval_wait_seconds",
+                        labels={"outcome": "resumed"},
+                        observe_seconds=time.monotonic() - approval_wait_started,
+                    )
+                    approval_wait_started = None
                 if _is_wait_status(status) and not saw_approval:
                     for semantic in _emit_ingested(normalizer, _approval_request_chunk(data, runtime_run_id)):
                         yield semantic
@@ -1003,6 +1396,13 @@ async def execute_hermes_run(
                     "payload": progress_payload(phase, f"hermes runtime status {status}"),
                 }
                 if cancel_event and cancel_event.is_set():
+                    if approval_wait_started is not None:
+                        record_metric(
+                            "runtime_approval_wait_seconds",
+                            labels={"outcome": "cancelled"},
+                            observe_seconds=time.monotonic() - approval_wait_started,
+                        )
+                        approval_wait_started = None
                     stop_code = await _stop_runtime(
                         client,
                         gateway_url=gateway_url,
@@ -1047,6 +1447,13 @@ async def execute_hermes_run(
                 )
                 terminal = _terminal_from_status(status, rec_code)
                 if terminal:
+                    if approval_wait_started is not None:
+                        record_metric(
+                            "runtime_approval_wait_seconds",
+                            labels={"outcome": "ok"},
+                            observe_seconds=time.monotonic() - approval_wait_started,
+                        )
+                        approval_wait_started = None
                     leftovers, saw_assistant = _events_after_status_terminal(
                         normalizer,
                         status=status,
@@ -1055,9 +1462,20 @@ async def execute_hermes_run(
                     )
                     for leftover in leftovers:
                         yield leftover
-                    if terminal["event_type"] in {"run.completed", "run.failed", "run.cancelled"}:
+                    outgoing = await _terminal_events_with_outputs(
+                        client,
+                        terminal,
+                        data=data,
+                        headers=auth_headers,
+                        org_id=org_id,
+                        run_id=run_id,
+                        attempt_id=attempt_id,
+                        gateway_url=gateway_url,
+                    )
+                    if outgoing and outgoing[-1]["event_type"] in {"run.completed", "run.failed", "run.cancelled"}:
                         await mark_native_terminal(attempt_id=attempt_id, generation=generation)
-                    yield terminal
+                    for item in outgoing:
+                        yield item
                     return
             yield _failed(RUNTIME_STATE_UNAVAILABLE, "Hermes runtime status could not be mapped")
     except Exception:

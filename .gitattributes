@@ -3,3 +3,8 @@
 nodeskclaw-backend/contracts/skill-run/**/SHA256SUMS text eol=lf
 nodeskclaw-backend/contracts/skill-run/**/*.json text eol=lf
 nodeskclaw-backend/contracts/skill-run/**/*.md text eol=lf
+nodeskclaw-backend/contracts/skill-agent/**/SHA256SUMS text eol=lf
+nodeskclaw-backend/contracts/skill-agent/**/*.json text eol=lf
+nodeskclaw-backend/contracts/skill-agent/**/*.md text eol=lf
+nodeskclaw-backend/contracts/skill-agent/**/*.yaml text eol=lf
+nodeskclaw-backend/contracts/skill-agent/**/*.d.ts text eol=lf

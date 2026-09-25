@@ -7,6 +7,21 @@ import httpx
 import pytest
 
 from app.services.connector_router import SSRFSafeTransport, execute_connector_run
+from app.services.execution_observability import get_registry
+
+
+@pytest.fixture(autouse=True)
+def reset_metrics_registry():
+    get_registry().reset()
+    yield
+    get_registry().reset()
+
+
+def _counter_value(name: str, **labels: str) -> float:
+    for item in get_registry().snapshot()["counters"]:
+        if item["name"] == name and item["labels"] == labels:
+            return float(item["value"])
+    return 0.0
 
 
 @pytest.mark.asyncio
@@ -31,6 +46,8 @@ async def test_execute_rest_connector_happy_path():
 
     assert events[-1]["event_type"] == "run.completed"
     assert "REST connector completed" in events[-1]["payload"]["summary"]
+    assert _counter_value("connector_calls_total", kind="rest", outcome="started") == 1.0
+    assert _counter_value("connector_calls_total", kind="rest", outcome="ok") == 1.0
 
 
 @pytest.mark.asyncio
@@ -187,6 +204,8 @@ async def test_connector_cancellation_stops_before_http_io():
         ):
             pass
     client_cls.assert_not_called()
+    assert _counter_value("connector_calls_total", kind="rest", outcome="cancelled") == 1.0
+    assert _counter_value("connector_calls_total", kind="rest", outcome="started") == 0.0
 
 
 @pytest.mark.asyncio
@@ -330,3 +349,5 @@ async def test_rest_connector_rejects_missing_config_url():
             route_snapshot=snapshot["runtime_policy"],
         ):
             pass
+    assert _counter_value("connector_calls_total", kind="rest", outcome="started") == 1.0
+    assert _counter_value("connector_calls_total", kind="rest", outcome="error") == 1.0

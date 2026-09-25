@@ -218,7 +218,7 @@ async def test_publish_freezes_bundle_against_working_copy_changes(tmp_path: Pat
 async def test_publish_rejects_missing_canonical_path():
     db = AsyncMock()
     service = SkillReleaseService(db)
-    skill = _skill(canonical_path=None)
+    skill = _skill(canonical_path=None, source_type="central")
     service.get_skill = AsyncMock(return_value=skill)
     draft = SimpleNamespace(
         id="rel-1",
@@ -236,6 +236,57 @@ async def test_publish_rejects_missing_canonical_path():
 
     with pytest.raises(BadRequestError, match="canonical_path"):
         await service.publish(org_id="org-1", skill_id="foo", release_id="rel-1", operator_user_id="user-1")
+
+
+@pytest.mark.asyncio
+# @lat: [[decisions/skill-platform-execution#Publish Gate]]
+async def test_publish_runtime_skill_without_canonical_path_skips_bundle():
+    db = AsyncMock()
+    service = SkillReleaseService(db)
+    skill = _skill(canonical_path=None, source_type="hermes_api_server")
+    service.get_skill = AsyncMock(return_value=skill)
+    service.get_published_by_skill_db_id = AsyncMock(return_value=None)
+    draft = SimpleNamespace(
+        id="rel-1",
+        status=SkillReleaseStatus.DRAFT.value,
+        skill_db_id=skill.id,
+        version="1.0.0",
+        digest=compute_skill_content_digest(skill),
+        bundle_ref=None,
+        bundle_sha256=None,
+        bundle_size_bytes=None,
+        input_schema={"type": "object", "properties": {"prompt": {"type": "string"}}},
+        extra_metadata={"supportsAttachments": True},
+        published_at=None,
+        published_by=None,
+        deprecated_at=None,
+    )
+    service._get_release = AsyncMock(return_value=draft)
+    db.flush = AsyncMock()
+
+    published = await service.publish(org_id="org-1", skill_id="foo", release_id="rel-1", operator_user_id="user-1")
+    assert published.status == SkillReleaseStatus.PUBLISHED.value
+    assert published.bundle_ref is None
+    assert published.extra_metadata["supportsAttachments"] is True
+
+
+@pytest.mark.asyncio
+# @lat: [[architecture/skill-agent#RM-18 Public Attachment Input]]
+async def test_sync_runtime_published_catalog_extra_sets_supports_attachments():
+    db = AsyncMock()
+    service = SkillReleaseService(db)
+    skill = _skill(
+        source_type="hermes_api_server",
+        extra_metadata={"supportsAttachments": True, "runtime_skill_id": "live-attachment-ack"},
+    )
+    published = SimpleNamespace(id="rel-pub", extra_metadata={"registered_from": "runtime_skill"})
+    service.get_published_by_skill_db_id = AsyncMock(return_value=published)
+    db.flush = AsyncMock()
+
+    result = await service.sync_runtime_published_catalog_extra(skill)
+    assert result is published
+    assert published.extra_metadata["supportsAttachments"] is True
+    assert published.extra_metadata["registered_from"] == "runtime_skill"
 
 
 def test_bundle_zip_path_rejects_non_opaque_reference():

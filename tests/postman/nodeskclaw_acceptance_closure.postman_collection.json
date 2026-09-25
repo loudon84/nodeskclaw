@@ -160,6 +160,10 @@
                   "pm.test('Run events endpoint responds', function () {",
                   "    pm.expect(pm.environment.get('RUN_ID')).to.be.a('string').and.to.have.lengthOf.at.least(1);",
                   "    pm.response.to.have.status(200);",
+                  "    const text = pm.response.text() || '';",
+                  "    // assistant.delta is a legal SSE event; snapshot-only streams must still pass.",
+                  "    pm.expect(pm.response.code).to.equal(200);",
+                  "    pm.expect(text).to.be.a('string');",
                   "});"
                 ],
                 "type": "text/javascript"
@@ -329,6 +333,119 @@
             "body": {
               "mode": "raw",
               "raw": "{\"choice\":\"once\"}"
+            }
+          }
+        },
+        {
+          "name": "AC-07b Approval Decision",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Approval decision returns fail-closed envelope', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([400, 401, 403, 404, 409, 422]);",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body).to.have.property('error_code');",
+                  "    pm.expect(body).to.have.property('message_key');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{JWT_TOKEN}}"
+              },
+              {
+                "key": "X-Org-Id",
+                "value": "{{ORG_ID}}"
+              },
+              {
+                "key": "X-Idempotency-Key",
+                "value": "{{RUN_PREFIX}}-approval-decision"
+              }
+            ],
+            "url": {
+              "raw": "{{BACKEND_BASE_URL}}/api/v1/runs/{{RUN_ID}}/approvals/{{APPROVAL_ID}}/decision",
+              "host": [
+                "{{BACKEND_BASE_URL}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "runs",
+                "{{RUN_ID}}",
+                "approvals",
+                "{{APPROVAL_ID}}",
+                "decision"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"decision\":\"allow\"}"
+            }
+          }
+        },
+        {
+          "name": "AC-10 Attachments Upload",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Attachments upload returns fail-closed envelope', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([400, 401, 403, 404, 409, 413, 415, 422, 503]);",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body).to.have.property('error_code');",
+                  "    pm.expect(body).to.have.property('message_key');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{JWT_TOKEN}}"
+              },
+              {
+                "key": "X-Org-Id",
+                "value": "{{ORG_ID}}"
+              }
+            ],
+            "url": {
+              "raw": "{{BACKEND_BASE_URL}}/api/v1/attachments",
+              "host": [
+                "{{BACKEND_BASE_URL}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "attachments"
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "docker-compose.acceptance.yml",
+                  "contentType": "application/x-msdownload"
+                }
+              ]
             }
           }
         },

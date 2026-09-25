@@ -1,0 +1,7 @@
+{
+  "placement": {
+    "role": "central",
+    "engine": "hermes"
+  },
+  "delegation_topology": "platform_multi_agent"
+}

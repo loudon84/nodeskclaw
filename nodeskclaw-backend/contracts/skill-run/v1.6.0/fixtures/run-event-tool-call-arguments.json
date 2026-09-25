@@ -1,0 +1,19 @@
+{
+  "event_id": "run_demo:10",
+  "run_id": "run_demo",
+  "event_type": "tool.call",
+  "event_seq": 10,
+  "source": "agent",
+  "source_event_id": "hermes:att:10",
+  "timestamp": "2026-09-12T00:00:10Z",
+  "payload": {
+    "tool_name": "search",
+    "call_id": "call_01",
+    "status": "started",
+    "arguments": {
+      "query": "example"
+    },
+    "redacted": false,
+    "truncated": false
+  }
+}

@@ -274,8 +274,23 @@ async def edge_heartbeat(
     node.status = EdgeNodeStatus.ONLINE.value
     if body.status_meta is not None:
         node.meta = {**(node.meta or {}), **body.status_meta}
+    rotation_expires = node.identity_rotation_expires_at
     await db.commit()
-    return {"code": 0, "data": {"node_id": node.id, "status": node.status}}
+    payload = {
+        "node_id": node.id,
+        "status": node.status,
+        "identity_rotation_expires_at": (
+            rotation_expires.isoformat() if rotation_expires else None
+        ),
+    }
+    wrapped = _sign_command(
+        db,
+        org_id=node.org_id,
+        node_id=node.id,
+        purpose="node.heartbeat",
+        payload=payload,
+    )
+    return {"code": 0, "data": wrapped}
 
 
 @router.get("/jobs")

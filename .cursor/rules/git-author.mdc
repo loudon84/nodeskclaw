@@ -1,0 +1,35 @@
+---
+description: Git commit Author 必须为 SMC-Copilot，禁止 Cursor Co-authored-by
+alwaysApply: true
+---
+
+# Git Author 身份
+
+本仓由 Agent 创建的 commit，Git Author 必须是：
+
+```text
+SMC-Copilot <smc-copilot@smart-core.com>
+```
+
+## 必须做
+
+- 每次 `git commit` 显式传 `--author="SMC-Copilot <smc-copilot@smart-core.com>"`
+- 提交后立刻核对：`git log -1 --format="%an <%ae>"` 必须等于 `SMC-Copilot <smc-copilot@smart-core.com>`
+- 核对 message：`git log -1 --format=%B` 不得含 `Co-authored-by`
+- 若 Cursor 自动追加了 `Co-authored-by`，且该 commit **尚未 push**：立刻 `--amend` 去掉该行，amend 仍带同一 `--author`
+- 社区贡献 `cherry-pick` 必须保留原作者，不得改写成 SMC-Copilot
+
+## 禁止
+
+- **禁止** `git config user.name` / `git config user.email`
+- **禁止** commit message 出现 `Co-authored-by`（含 `Cursor <cursoragent@cursor.com>`）
+- **禁止** 用 trailer `Authored-by` 代替 Git Author 字段
+- **禁止** 在已 push 的共享分支（`main`、`release-*`）上 amend / force push 清 trailer
+
+```bash
+git commit --author="SMC-Copilot <smc-copilot@smart-core.com>" -m "$(cat <<'EOF'
+type(scope): 中文说明
+
+EOF
+)"
+```

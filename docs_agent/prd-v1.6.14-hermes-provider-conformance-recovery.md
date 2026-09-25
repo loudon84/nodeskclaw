@@ -1,10 +1,10 @@
 ---
 work_item_id: RM-16
-version: 1.6.14
+version: 1.6.15
 status: APPROVED
 target_branch: main
 review_verdict: PASS
-approved_at: 2026-09-05T17:50:00+08:00
+approved_at: 2026-09-09T07:23:00+08:00
 source_revision: AD-SKILL-AGENT-V16-A1@1.6.0/RM-16
 grounded_commit: 1319cf1fd5a56613ca96b8e026c446d10c9b676c
 feature_id: FEAT-SKILL-FIRST-001
@@ -13,13 +13,13 @@ work_package_id: WP-SKILL-FIRST-NODESKCLAW
 
 # DeskClaw 团队版 Hermes Provider Conformance & Recovery PRD v1.6.14
 
-本文定义 RM-16：在真实 Hermes API Server（`>= v2026.8.31`）上取得 PC-01 至 PC-09 可复现实跑证据，并以此作为 RM-02 Provider Conformance 的再验证来源。范围严格止于 A1 Phase D，不吞并 RM-12 的 PC-10 至 PC-14，不把 RM-10 指标仓做成第二事件事实源。
+本文定义 RM-16：在真实 Hermes API Server（`>= v2026.8.31`）上取得 PC-01、PC-02、PC-03、PC-04、PC-06、PC-07、PC-09 可复现实跑证据，并以此作为 RM-02 Provider Conformance 的再验证来源。范围严格止于 A1 Phase D，不吞并 RM-12 的 PC-10 至 PC-14，不把 RM-10 指标仓做成第二事件事实源。**明确禁止再测试 PC-05 Worker kill 与 PC-08 Hermes restart**，二者不得作为本项出口。
 
 Architecture Source 为 `AD-SKILL-AGENT-V16-A1@1.6.0`。本项依赖 RM-15 `DONE`。A1 增补文档 frontmatter 仍为 `PROPOSED`，记为 Note，不回退本 PRD 的 Capability 冻结。`grounded_commit` 是 Grounding 所用仓库 SHA，不是把本文件提交进 Git。
 
 ## Scope
 
-本阶段用真实 Runtime 证明：Skill 调用 Hermes → Hermes 使用 Tool / 审批 / 长文本 / 委派 → Agent 持久化语义事件 → Backend 投影公共 SSE → Work 看到有意义的执行流。覆盖 Worker 重启 fencing、Hermes Runtime `interrupted`、版本地板失败关闭。禁止以 mock OpenAI `choices[].message.tool_calls`、mock reasoning、mock approval 单独结项。
+本阶段用真实 Runtime 证明：Skill 调用 Hermes → Hermes 使用 Tool / 审批 / 长文本 / 委派 → Agent 持久化语义事件 → Backend 投影公共 SSE → Work 看到有意义的执行流。覆盖版本地板失败关闭。Worker stale-lease fencing 与 `interrupted` 映射保留既有单测，**禁止再跑 live PC-05 / PC-08**。禁止以 mock OpenAI `choices[].message.tool_calls`、mock reasoning、mock approval 单独结项。
 
 不改写 `contracts/skill-run/v1.2.1/`，不把 Backend 变成员工路径的 Hermes Native 客户端，不恢复 ChatCompletion parser，不拆除 `HermesTaskWorker`，不上游 `tool_call_id` PR。exact file、live runner 编排与 Todo 归属 Plan。
 
@@ -31,7 +31,7 @@ Public 合同仍为冻结 v1.2.1。`runtime_run_id`、`runtime_session_id`、`co
 
 ### 前端表现变化
 
-本次改动无本仓库前端表现变化。不改 Portal / Admin 页面、按钮、文案或路由。Work 可观察的差异是既有 v1.2.1 SSE 在真实 Runtime 上的内容质量：合并后的中文 `assistant.message`、真实 `tool.call`、完整审批回写、取消终态、Worker/Runtime 中断后的合同失败，而不是新页面。
+本次改动无本仓库前端表现变化。不改 Portal / Admin 页面、按钮、文案或路由。Work 可观察的差异是既有 v1.2.1 SSE 在真实 Runtime 上的内容质量：合并后的中文 `assistant.message`、真实 `tool.call`、完整审批回写、取消终态，而不是新页面。不以 Worker kill 或 Hermes 重启 live 作为本项出口。
 
 ## Current Capability Inventory
 
@@ -44,9 +44,9 @@ Public 合同仍为冻结 v1.2.1。`runtime_run_id`、`runtime_session_id`、`co
 | Dual-track `call_id` / unpaired start 收尾 | EXISTS | Agent Hermes Adapter | RM-14 Normalizer；Hermes 仍无原生 `tool_call_id` | KEEP 双轨；上游 PR 不阻塞 |
 | Approval park + Public 两档 + `/approval` 代码 | EXISTS | Agent Run 域 + Adapter + Backend Skill Run API | RM-15 DONE；代码 `respond_runtime_approval`；live V13 未观察到 Native `/approval`，approve/deny HTTP 400 | PARTIAL：生产路径在，PC-03 live 未闭合 |
 | Cancel → `/stop` + stop 404 | EXISTS | Agent Run 域 + Adapter | RM-15 live 观察到 `/stop`；`cancel_http=500`，公共状态停在 `CANCELLING` | PARTIAL：南向 stop 在，PC-04 合同终态未证明 |
-| Worker stale-lease fencing | EXISTS | Agent Worker | `next_status_after_stale_lease` 不把 waiting/interrupted 再 `QUEUED`；单测在；live kill Worker 无 | KEEP 生产 fencing；PC-05 live 缺 |
-| Worker restart observability gap 记录 | MISSING | Agent Worker / Attempt | Normalizer `observability_gaps` 只覆盖 unpaired tool start；无 Worker kill gap 记录 | ADD 记在既有 Attempt，不新建指标仓 |
-| `interrupted` → `RUNTIME_INTERRUPTED` 且不自动续跑 | EXISTS | Agent Hermes Adapter + Worker | 单测；live Hermes 重启无 | KEEP 映射；PC-08 live 缺 |
+| Worker stale-lease fencing | EXISTS | Agent Worker | `next_status_after_stale_lease` 不把 waiting/interrupted 再 `QUEUED`；单测在 | KEEP 生产 fencing；**禁止 PC-05 live** |
+| Worker restart observability gap 记录 | EXISTS | Agent Worker / Attempt | Attempt `worker_restart_gap` 单测 | KEEP 记在既有 Attempt；**禁止 PC-05 live** |
+| `interrupted` → `RUNTIME_INTERRUPTED` 且不自动续跑 | EXISTS | Agent Hermes Adapter + Worker | 单测 | KEEP 映射；**禁止 PC-08 live** |
 | Version floor fail-closed | EXISTS | Agent Hermes Adapter | 单测 `RUNTIME_VERSION_UNSUPPORTED`；无 ChatCompletion fallback；live 旧 Runtime 无 | KEEP 探测；PC-09 live 缺 |
 | Runtime Delegation isolation | EXISTS | Agent Hermes Adapter | `subagent.*` Internal Trace；单测 | KEEP 映射；PC-07 live 缺 |
 | Public v1.2.1 投影 | EXISTS | Backend Skill Run API | `assistant.message` / `tool.call` / `approval.requested` | KEEP 字节 |
@@ -62,12 +62,12 @@ Public 合同仍为冻结 v1.2.1。`runtime_run_id`、`runtime_session_id`、`co
 | PC-02 Tool Run | 真实 Tool；`tool.started/completed` → Public `tool.call`；`call_id` 稳定；Work SSE 可观察 | Agent Hermes Adapter + Backend 投影 | 继续双轨 `call_id`；不阻塞上游 `tool_call_id` |
 | PC-03 Approval | Work 批准/拒绝到达 Hermes `POST /approval` 且被接受；后续终态由 Runtime 事件 + Agent aggregator 决定；公共面仍只两档 | Agent Hermes Adapter + Backend Skill Run API | 禁止以 HTTP 非 500 代替 Hermes 接受 |
 | PC-04 Cancel | Work cancel → `/stop` → Agent terminal aggregation；覆盖 stop 404；员工路径可观察合同终态 | Agent Run 域 + Adapter | HTTP 500 若挡住终态观察则必须闭合；不得只停在 `CANCELLING` |
-| PC-05 Worker Recovery | 中途 kill/restart NodeSKClaw Worker：旧 Attempt fencing、GET status reconcile、无重复 Public terminal、无旧代副作用、gap 已记录 | Agent Worker + Adapter | gap 记在既有 Attempt/Trace 字段，不新建 Event Store，不提前做完 RM-10 |
+| PC-05 Worker Recovery | 既有 Worker fencing / Attempt gap 由单测证明；**禁止再跑 live kill/restart Worker** | Agent Worker + Adapter | 不作为 RM-16 live 出口 |
 | PC-06 Long Output | 长中文报告 coalescing；无「一两个汉字一条 event」；最终文本无丢失无重复且顺序正确 | Agent Hermes Adapter | 阈值仍由既有 Coalescer 承载 |
 | PC-07 Runtime Delegation | Hermes subagent 仍单一 Public Run；`subagent.*` 不进 Public；敏感字段不外泄；Runtime terminal 映射当前 Attempt | Agent Hermes Adapter | 禁止 Public Child Run |
-| PC-08 Runtime Restart | Hermes 重启得 `interrupted` → FAILED + `RUNTIME_INTERRUPTED`；不自动新 Attempt；用户新提示词可带同一 `runtime_session_id` | Agent Adapter + Run 域 | `runtime_session_id` 不进 Public |
+| PC-08 Runtime Restart | 既有 `interrupted` → FAILED + `RUNTIME_INTERRUPTED` 由单测证明；**禁止再跑 live Hermes 重启** | Agent Adapter + Run 域 | 不作为 RM-16 live 出口 |
 | PC-09 Version Floor | Runtime `< v2026.8.31` 在 Capability Probe 失败关闭 `RUNTIME_VERSION_UNSUPPORTED`；不降级 ChatCompletion | Agent Hermes Adapter | 禁止静默 fallback |
-| RM-02 Conformance 再验证 | PC-01 至 PC-09 真实证据可被 RM-02 引用为出口；不改 RM-02 Depends On，不回滚 Event Store | Roadmap Revalidation Link | 本项 DONE 不等于自动改写 RM-02 行，除非后续独立 Roadmap 更新 |
+| RM-02 Conformance 再验证 | PC-01、PC-02、PC-03、PC-04、PC-06、PC-07、PC-09 真实证据可被 RM-02 引用为出口；不改 RM-02 Depends On，不回滚 Event Store；不得纳入 PC-05 / PC-08 live | Roadmap Revalidation Link | 本项 DONE 不等于自动改写 RM-02 行，除非后续独立 Roadmap 更新 |
 | Live evidence suite | 可复跑 REAL_PROCESS / REAL_RUNTIME 套件，记录 `hermes_runtime_version` 与 `auth_type=user_jwt` | Acceptance tools | 复用 RM-12..15 runner，不另起第二 Adapter |
 
 ## Change Classification
@@ -79,10 +79,10 @@ Public 合同仍为冻结 v1.2.1。`runtime_run_id`、`runtime_session_id`、`co
 | C03 | PC-02 Tool Run live | ADD | Agent Hermes Adapter + Acceptance | 真实 Tool 的 Public `tool.call` 与稳定 `call_id` |
 | C04 | PC-03 Approval southbound live | MODIFY | Agent Hermes Adapter + Backend Skill Run API | Work 批准/拒绝被 Hermes `/approval` 接受；不得以 HTTP 400/非 500 结项 |
 | C05 | PC-04 Cancel terminal live | MODIFY | Agent Run 域 + Adapter + Backend Skill Run API | Work cancel 经 `/stop` 后出现合同终态；覆盖 404 reconcile |
-| C06 | PC-05 Worker restart live + gap | ADD | Agent Worker + Adapter | kill/restart Worker 后 fencing 与单一终态；gap 记在既有 Attempt |
+| C06 | PC-05 Worker fencing 单测（live 禁止） | KEEP | Agent Worker + Adapter | stale-lease fencing 与 Attempt gap 单测；禁止 live kill/restart Worker |
 | C07 | PC-06 Long Chinese coalescing live | ADD | Agent Hermes Adapter + Acceptance | 长中文 Event 数量受控，文本完整顺序正确 |
 | C08 | PC-07 Delegation isolation live | ADD | Agent Hermes Adapter + Acceptance | 单一 Public Run；无 Child Run；无敏感泄漏 |
-| C09 | PC-08 Hermes restart interrupted live | ADD | Agent Hermes Adapter + Run 域 | `interrupted` → FAILED + `RUNTIME_INTERRUPTED`；不自动续跑 |
+| C09 | PC-08 interrupted 单测（live 禁止） | MODIFY | Agent Hermes Adapter + Run 域 + Acceptance | `interrupted` 单测；runner 拒绝 `--scenario pc05` / `pc08` |
 | C10 | PC-09 Version floor live | ADD | Agent Hermes Adapter + Acceptance | 旧 Runtime 失败关闭，无 ChatCompletion |
 | C11 | Worker stale-lease fencing | KEEP | Agent Worker | C06 复用既有 `next_status_after_stale_lease`，不另起恢复状态机 |
 | C12 | Coalescer / Normalizer / dual-track `call_id` | KEEP | Agent Hermes Adapter | C02/C03/C07/C08 复用既有映射 |
@@ -97,7 +97,7 @@ Public 合同仍为冻结 v1.2.1。`runtime_run_id`、`runtime_session_id`、`co
 
 ### Evidence Policy
 
-PC-01 至 PC-09 必须在真实 Hermes API Server `>= v2026.8.31` 上取得。每条证据记录 `hermes_runtime_version` 与员工 `auth_type=user_jwt`。Compose mock、OpenAI `choices` fixture、Catalog `requiresApproval` 不能关闭本项。RM-13/14/15 已有 live 只证明各自出口，不自动等于本项 PC 全绿。
+PC-01、PC-02、PC-03、PC-04、PC-06、PC-07、PC-09 必须在真实 Hermes API Server `>= v2026.8.31` 上取得。每条证据记录 `hermes_runtime_version` 与员工 `auth_type=user_jwt`。Compose mock、OpenAI `choices` fixture、Catalog `requiresApproval` 不能关闭本项。**禁止再执行 PC-05 Worker kill 与 PC-08 Hermes restart live**，缺 `RM16_WORKER_KILL_CMD` / `RM16_HERMES_RESTART_CMD` 不得再作为 BLOCKED 出口理由。RM-13/14/15 已有 live 只证明各自出口，不自动等于本项 PC 全绿。
 
 既有 runner 必须复用环境与 `no_proxy`（含 `192.168.0.0/16`）。审批驻留工具继续显式指定 `RM15_TOOL_NAME=hermes_marketing__park-waiting-approval`，禁止自动挑选 Catalog `requiresApproval`。
 
@@ -117,9 +117,9 @@ Public 仍只暴露批准/拒绝。`session`/`always` 继续拒绝。Backend 仍
 
 ### Recovery
 
-Worker 被 kill/restart 时：旧 generation 命令无 Runtime 副作用；通过 `GET /v1/runs/{id}` reconcile；不得出现重复 Public terminal；必须在既有 Attempt 上留下可查询的 observability gap 记录。禁止为此新建 Metrics Store 或第二 Event Store（RM-10 仍独立）。
+Worker stale-lease fencing 与 Attempt `worker_restart_gap` 保留既有生产路径与单测。**禁止再以 live kill/restart NodeSKClaw Worker（PC-05）取证。**
 
-Hermes Runtime 重启：`interrupted` → FAILED + `RUNTIME_INTERRUPTED`；Agent 不自动新 Attempt。用户主动新提示词允许携带同一 `runtime_session_id`。恢复禁止重订阅 `/events`。
+Hermes `interrupted` → FAILED + `RUNTIME_INTERRUPTED` 保留既有映射与单测；Agent 不自动新 Attempt。**禁止再以 live 重启 Hermes Runtime（PC-08）取证。**
 
 低于版本地板的 Runtime 在 Capability Probe 失败关闭，错误码 `RUNTIME_VERSION_UNSUPPORTED`，不得降级 `/v1/chat/completions`。
 
@@ -138,27 +138,28 @@ live 期间复跑 PC-12 隔离扫描。PC-10 / PC-11 / PC-13 / PC-14 仍属 RM-1
 - **AC-03 / C04**：真实审批驻留后，Public 批准到达 Hermes `/approval` 且被接受（Native 证据含该路径）；Hermes 成功不单独改 Public terminal。
 - **AC-04 / C04**：Public 拒绝到达 Hermes `/approval` 且被接受；客户端 `session`/`always` 仍被拒绝。
 - **AC-05 / C05**：运行中 cancel 调用 Hermes `/stop`，随后出现合同终态 `CANCELLED` 或等价失败事件，而不是只停在 `CANCELLING`；stop 404 走 reconciliation。
-- **AC-06 / C06**：Runtime 执行中 kill/restart NodeSKClaw Worker：旧 Attempt fencing 生效、GET status reconcile、无重复 Public terminal、Attempt 上可查询 gap 记录。
+- **AC-06 / C06**：Worker stale-lease fencing 与 Attempt observability gap 由既有单测证明；禁止再以 live kill/restart NodeSKClaw Worker（PC-05）作为本项出口。
 - **AC-07 / C07**：长中文输出 Event 数量受 coalescing 控制，最终文本无丢失无重复且顺序正确。
 - **AC-08 / C08**：Hermes subagent 不产生 Public Child Run，敏感字段不进 Public，Runtime terminal 仍落在当前 Attempt。
-- **AC-09 / C09**：Hermes Runtime 重启得到 `interrupted` → Public/Agent FAILED + `RUNTIME_INTERRUPTED`，无自动新 Attempt；允许用户新提示词复用同一 `runtime_session_id`（该字段不进 Public）。
+- **AC-09 / C09**：`interrupted` 映射为 FAILED + `RUNTIME_INTERRUPTED` 且不自动续跑由既有单测证明；禁止再以 live 重启 Hermes Runtime（PC-08）作为本项出口。
 - **AC-10 / C10**：指向低于 `v2026.8.31` 的 Runtime 时 Capability Probe 失败关闭 `RUNTIME_VERSION_UNSUPPORTED`，生产路径无 ChatCompletion。
 - **AC-11 / C01/C11/C12**：不新建 Adapter、Event Store、Worker 状态机或 Coalescer。
 - **AC-12 / C13**：`contracts/skill-run/v1.2.1/` 零修改。
 - **AC-13 / C14/C15**：不恢复 ChatCompletion parser；Backend 不成为员工 Native `/v1/runs` 客户端。
 - **AC-14 / C16**：出口证据复用既有 RM-12..15 runner 组合，且记录 `hermes_runtime_version` 与 `auth_type=user_jwt`。
-- **AC-15 / C17**：PC-01 至 PC-09 证据包可被 RM-02 Revalidation Link 引用；mock-only 不得关闭本项或 RM-02。
+- **AC-15 / C17**：PC-01、PC-02、PC-03、PC-04、PC-06、PC-07、PC-09 证据包可被 RM-02 Revalidation Link 引用；mock-only 不得关闭本项或 RM-02；不得把 PC-05 / PC-08 live 纳入出口包。
 - **AC-16 / C18**：live 公共面扫描不出现 HermesTask 禁止字段或 `/api/v1/hermes/tasks/`。
 
 ## Definition of Done
 
-- **DOD-01**：PC-01 至 PC-09 均有真实 Hermes 可复跑证据；C04/C05 不得以 HTTP 非 500 或 `CANCELLING` 中间态代替出口。
+- **DOD-01**：PC-01、PC-02、PC-03、PC-04、PC-06、PC-07、PC-09 均有真实 Hermes 可复跑证据；C04/C05 不得以 HTTP 非 500 或 `CANCELLING` 中间态代替出口。禁止再跑 PC-05 Worker kill 与 PC-08 Hermes restart。
 - **DOD-02**：Backend 仍不直连员工 Native Run；`runtime_run_id` / `runtime_session_id` 不进 Public。
 - **DOD-03**：v1.2.1 未被改写；ChatCompletion parser 未恢复；未新建第二 Adapter / Event Store。
 - **DOD-04**：RM-15 已 DONE 且本项 Review / Verification PASS，真实 implementation commit 与验证证据写入 Roadmap 后，RM-16 才可标记 `DONE`。RM-02 状态变更是独立 Roadmap 更新。
 
 ## Non-Goals
 
+- 不以 live PC-05 Worker kill 或 live PC-08 Hermes restart 作为本项出口。
 - 不以 PC-10 至 PC-14 作为本项出口（RM-12）。
 - 不完成 RM-10 全量 Trace/指标仓。
 - 不改写 v1.2.1，不向 Public 暴露四档审批或 `subagent.*`。
@@ -182,17 +183,17 @@ live 期间复跑 PC-12 隔离扫描。PC-10 / PC-11 / PC-13 / PC-14 仍属 RM-1
 | Approval 代码已落地 | RM-15 `respond_runtime_approval`；Public 两档 | EXISTS 代码：C04 仍要 live 接受 |
 | RM-15 live 未证 `/approval` 接受 | `docs_agent/evidence/RM-15-live-v13.json`：`approve_http=400`、`deny_http=400`、`native_paths_observed` 无 `/approval` | PARTIAL：C04 |
 | RM-15 live cancel 未证合同终态 | 同上：`/stop` 在；`cancel_http=500`；`cancel_public_status=CANCELLING` | PARTIAL：C05 |
-| Worker fencing 单测 | `test_worker.py` stale-lease interrupted / WAITING_APPROVAL | KEEP：C11；live PC-05 缺：C06 |
-| Worker restart gap | Normalizer `observability_gaps` 仅 unpaired tool | MISSING：C06 |
-| Interrupted 映射单测 | `test_hermes_engine.py` `RUNTIME_INTERRUPTED` | KEEP 映射；live PC-08 缺：C09 |
+| Worker fencing 单测 | `test_worker.py` stale-lease interrupted / WAITING_APPROVAL | KEEP：C06；C11；**禁止 PC-05 live** |
+| Worker restart gap | Attempt `worker_restart_gap` 单测 | KEEP：C06；**禁止 PC-05 live** |
+| Interrupted 映射单测 | `test_hermes_engine.py` `RUNTIME_INTERRUPTED` | KEEP：C09；**禁止 PC-08 live** |
 | Version floor 单测 | `test_hermes_engine.py` `RUNTIME_VERSION_UNSUPPORTED` | KEEP 探测；live PC-09 缺：C10 |
 | Subagent Internal Trace | `native_event_normalizer.py` INTERNAL_TYPES | KEEP：C12；live PC-07 缺：C08 |
 | 无 ChatCompletion parser | `hermes_engine.py` 无 `_emit_semantic_from_choice` | KEEP：C14 |
 | 既有 live runners | `tools/acceptance/run_rm12_live_conformance.py` 至 `run_rm15_live_control.py` | KEEP：C16 |
 | RM-02 Conformance 出口失效 | Roadmap RM-02 `BACKLOG`；Revalidated By RM-16 | SOURCE：C17 |
-| Phase D / PC-01 至 PC-09 | A1 第 25.1、28 节 RM-16 | SOURCE：本 PRD Scope |
+| Phase D live 出口 | A1 第 25.1、28 节 RM-16；本 PRD v1.6.15 禁止 PC-05 / PC-08 live | SOURCE：本 PRD Scope |
 | 独立 `tool_call_id` 跟踪 | A1 第 28 节独立跟踪项 | Non-Goal |
 
 ## Dependencies And Handoff
 
-RM-15 必须 `DONE`（已满足）。本项 DONE 前不得声称 RM-02 Provider Conformance 已重新关闭。下一步由 `smc-prd-review` 审查；PASS 后 `smc-prd-converge`，再由 `smc-plan-from-approved-prd-ponytail` 生成 Plan。Plan 负责 runner 组合、Worker kill 取证方式、旧 Runtime 指向方式、C04/C05 若 live 仍失败时的最小生产修补 WRITE_OWNER。禁止另起第二 Hermes Adapter，禁止改写 v1.2.1，禁止恢复 ChatCompletion parser。
+RM-15 必须 `DONE`（已满足）。本项 DONE 前不得声称 RM-02 Provider Conformance 已重新关闭。校验标准以本文件 v1.6.15 为准：live 出口不含 PC-05 / PC-08。Plan 负责 runner 组合、拒绝 `--scenario pc05` / `pc08`、旧 Runtime 指向方式、C04/C05 若 live 仍失败时的最小生产修补 WRITE_OWNER。禁止另起第二 Hermes Adapter，禁止改写 v1.2.1，禁止恢复 ChatCompletion parser。

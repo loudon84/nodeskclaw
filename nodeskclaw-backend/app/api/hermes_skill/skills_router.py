@@ -289,6 +289,10 @@ async def update_skill(
     for field, val in payload.items():
         setattr(skill, field, val)
 
+    if "extra_metadata" in payload:
+        # @lat: [[architecture/skill-agent#RM-18 Public Attachment Input]]
+        await SkillReleaseService(db).sync_runtime_published_catalog_extra(skill)
+
     await db.commit()
     await db.refresh(skill)
     return _ok(await _enrich_skill_read(db, skill))

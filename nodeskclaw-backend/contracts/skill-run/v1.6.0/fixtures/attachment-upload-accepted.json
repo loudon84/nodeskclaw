@@ -1,0 +1,8 @@
+{
+  "attachment_ref": "att_live_example",
+  "name": "report.pdf",
+  "size_bytes": 123456,
+  "checksum_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "content_type": "application/pdf",
+  "expires_at": "2026-09-09T00:00:00Z"
+}

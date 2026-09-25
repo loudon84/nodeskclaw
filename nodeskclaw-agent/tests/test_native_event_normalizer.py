@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from app.services.assistant_delta_coalescer import AssistantDeltaCoalescer
+from app.services.assistant_delta_coalescer import (
+    MAX_DELTA_UTF8_BYTES,
+    AssistantDeltaCoalescer,
+    split_utf8_by_bytes,
+)
 from app.services.native_event_normalizer import NativeEventNormalizer
 
 
@@ -15,11 +19,14 @@ def test_order_flushes_assistant_before_tool_started():
     events.extend(n.ingest({"type": "message.delta", "text": "世界"}))
     events.extend(n.ingest({"event": "tool.started", "tool": "search", "preview": "secret"}))
     types = [e["event_type"] for e in events]
-    assert types[:2] == ["assistant.message", "tool.call"]
-    assert events[0]["payload"]["text"] == "你好世界"
-    assert events[1]["payload"]["status"] == "started"
-    assert "preview" not in events[1]["payload"]
-    assert "correlation_confidence" not in events[1]["payload"]
+    assert types[:3] == ["assistant.delta", "assistant.message", "tool.call"]
+    assert events[0]["payload"]["delta"] == "你好世界"
+    assert events[0]["payload"]["delta_seq"] == 1
+    assert events[1]["payload"]["text"] == "你好世界"
+    assert events[1]["payload"]["message_id"] == events[0]["payload"]["message_id"]
+    assert events[2]["payload"]["status"] == "started"
+    assert "preview" not in events[2]["payload"]
+    assert "correlation_confidence" not in events[2]["payload"]
 
 
 def test_call_id_is_stable_across_started_and_completed():
@@ -140,6 +147,7 @@ def test_run_completed_output_becomes_assistant_message():
     events = n.ingest({"event": "run.completed", "output": "完整中文回复"})
     assert [e["event_type"] for e in events] == ["assistant.message"]
     assert events[0]["payload"]["text"] == "完整中文回复"
+    assert events[0]["payload"]["message_id"].startswith("msg_att-out_")
 
 
 # @lat: [[architecture/skill-agent#Hermes Engine Adapter#Runtime Semantic Event Fidelity]]
@@ -149,6 +157,8 @@ def test_run_completed_does_not_duplicate_existing_assistant_text():
     events = n.ingest({"event": "run.completed", "output": "状态回填文本"})
     messages = [e for e in events if e["event_type"] == "assistant.message"]
     assert [e["payload"]["text"] for e in messages] == ["流上文本"]
+    deltas = [e for e in events if e["event_type"] == "assistant.delta"]
+    assert [e["payload"]["delta"] for e in deltas] == ["流上文本"]
 
 
 # @lat: [[architecture/skill-agent#Hermes Engine Adapter#Runtime Semantic Event Fidelity]]
@@ -159,8 +169,11 @@ def test_streaming_assistant_message_coalesces_until_close():
     events.extend(n.ingest({"type": "assistant.message", "text": "世界"}))
     assert events == []
     closed = n.close(terminal_status="completed")
+    deltas = [e for e in closed if e["event_type"] == "assistant.delta"]
     messages = [e for e in closed if e["event_type"] == "assistant.message"]
+    assert [e["payload"]["delta"] for e in deltas] == ["你好世界"]
     assert [e["payload"]["text"] for e in messages] == ["你好世界"]
+    assert deltas[0]["payload"]["message_id"] == messages[0]["payload"]["message_id"]
 
 
 # @lat: [[architecture/skill-agent#Hermes Engine Adapter#Runtime Semantic Event Fidelity]]
@@ -189,6 +202,7 @@ def test_emit_assistant_snapshot_is_one_message_and_dedupes():
     n = _norm("att-shot")
     long_text = "字" * 200
     first = n.emit_assistant_snapshot(long_text)
+    assert [e["event_type"] for e in first] == ["assistant.message"]
     assert [e["payload"]["text"] for e in first] == [long_text]
     assert n.emit_assistant_snapshot(long_text) == []
 
@@ -206,4 +220,40 @@ def test_flush_due_to_latency_waits_one_second():
     assert n.flush_due_to_latency() == []
     clock["ms"] = 1000
     flushed = n.flush_due_to_latency()
-    assert [e["payload"]["text"] for e in flushed] == ["ab"]
+    assert [e["event_type"] for e in flushed] == ["assistant.delta"]
+    assert [e["payload"]["delta"] for e in flushed] == ["ab"]
+    assert flushed[0]["payload"]["delta_seq"] == 1
+
+
+# @lat: [[architecture/skill-agent#Hermes Engine Adapter#Runtime Semantic Event Fidelity]]
+def test_tool_boundary_opens_new_message_id():
+    n = _norm("att-seg")
+    first = []
+    first.extend(n.ingest({"type": "message.delta", "text": "前段"}))
+    first.extend(n.ingest({"type": "tool.started", "tool": "search"}))
+    first.extend(n.ingest({"type": "tool.completed", "tool": "search"}))
+    second = []
+    second.extend(n.ingest({"type": "message.delta", "text": "后段"}))
+    second.extend(n.close(terminal_status="completed"))
+    first_msg = next(e for e in first if e["event_type"] == "assistant.message")
+    second_msg = next(e for e in second if e["event_type"] == "assistant.message")
+    assert first_msg["payload"]["message_id"] != second_msg["payload"]["message_id"]
+    assert second[0]["payload"]["delta_seq"] == 1
+
+
+# @lat: [[architecture/skill-agent#Hermes Engine Adapter#Runtime Semantic Event Fidelity]]
+def test_oversize_delta_is_split_unicode_safe():
+    n = _norm("att-size")
+    glyph = "字"
+    glyph_bytes = len(glyph.encode("utf-8"))
+    count = (MAX_DELTA_UTF8_BYTES // glyph_bytes) + 8
+    text = glyph * count
+    flushed = n.ingest({"type": "message.delta", "text": text})
+    assert all(e["event_type"] == "assistant.delta" for e in flushed)
+    assert len(flushed) >= 1
+    for event in flushed:
+        assert len(event["payload"]["delta"].encode("utf-8")) <= MAX_DELTA_UTF8_BYTES
+    remainder = n.coalescer.buffered_text()
+    assert "".join(e["payload"]["delta"] for e in flushed) + remainder == text
+    expected_head = split_utf8_by_bytes(text, MAX_DELTA_UTF8_BYTES)[0]
+    assert flushed[0]["payload"]["delta"] == expected_head

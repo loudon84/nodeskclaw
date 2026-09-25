@@ -1,0 +1,17 @@
+{
+  "key": "decision-1",
+  "first": {
+    "run_id": "run-1",
+    "approval_id": "appr-1",
+    "decision": "allow",
+    "status": "WAITING_APPROVAL",
+    "decided_at": "2026-09-07T00:00:00Z"
+  },
+  "replay": {
+    "run_id": "run-1",
+    "approval_id": "appr-1",
+    "decision": "allow",
+    "status": "WAITING_APPROVAL",
+    "decided_at": "2026-09-07T00:00:00Z"
+  }
+}

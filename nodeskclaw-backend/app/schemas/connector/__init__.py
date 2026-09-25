@@ -62,6 +62,7 @@ class EdgeNodeRead(BaseModel):
     name: str
     status: str
     last_heartbeat_at: datetime | None = None
+    identity_rotation_expires_at: datetime | None = None
     created_by: str | None = None
     created_at: datetime | None = None
 
