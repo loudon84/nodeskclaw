@@ -218,6 +218,40 @@ export const useMemberManagementStore = defineStore('memberManagement', () => {
     return res.data.data
   }
 
+  async function fetchMemberTokens(membershipId: string) {
+    const id = orgId()
+    if (!id) return []
+    const res = await api.get(`/orgs/${id}/members/${membershipId}/tokens`)
+    return res.data.data?.items ?? []
+  }
+
+  async function fetchNewApiGroups() {
+    const id = orgId()
+    if (!id) return []
+    const res = await api.get(`/orgs/${id}/new-api/groups`)
+    return res.data.data?.items ?? []
+  }
+
+  async function createMemberToken(membershipId: string, payload: Record<string, unknown>) {
+    const id = orgId()
+    if (!id) return
+    const res = await api.post(`/orgs/${id}/members/${membershipId}/tokens`, payload)
+    return res.data.data
+  }
+
+  async function updateMemberToken(membershipId: string, tokenId: string, payload: Record<string, unknown>) {
+    const id = orgId()
+    if (!id) return
+    const res = await api.patch(`/orgs/${id}/members/${membershipId}/tokens/${tokenId}`, payload)
+    return res.data.data
+  }
+
+  async function deleteMemberToken(membershipId: string, tokenId: string) {
+    const id = orgId()
+    if (!id) return
+    await api.delete(`/orgs/${id}/members/${membershipId}/tokens/${tokenId}`)
+  }
+
   async function replaceMemberSkillGrants(membershipId: string, grants: MemberSkillGrantPayload[]) {
     const id = orgId()
     if (!id) return
@@ -249,6 +283,11 @@ export const useMemberManagementStore = defineStore('memberManagement', () => {
     fetchAvailableMcpSkills,
     searchOaPersons,
     fetchMemberSkillGrants,
+    fetchMemberTokens,
+    fetchNewApiGroups,
+    createMemberToken,
+    updateMemberToken,
+    deleteMemberToken,
     replaceMemberSkillGrants,
   }
 })

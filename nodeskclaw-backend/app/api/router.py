@@ -15,6 +15,7 @@ from app.api.instances import (
     instance_write_router,
 )
 from app.api.llm_keys import router as llm_keys_router
+from app.api.member_tokens import router as member_token_router
 from app.api.organizations import router as org_router
 from app.api.org_settings import router as org_settings_router
 from app.api.registry import router as registry_router
@@ -160,6 +161,7 @@ async def serve_local_file(file_key: str, request: Request, expires: str = "", s
 api_router.include_router(auth_router, prefix="/auth", tags=["认证"])
 api_router.include_router(agent_file_grants_router, tags=["文件授权"])
 api_router.include_router(org_router, prefix="/orgs", tags=["组织"])
+api_router.include_router(member_token_router, prefix="/orgs", tags=["成员模型凭证"])
 api_router.include_router(org_settings_router, prefix="/orgs", tags=["组织设置"])
 api_router.include_router(audit_router, prefix="/orgs", tags=["操作审计"])
 api_router.include_router(portal_cluster_router, prefix="/clusters", tags=["集群"])

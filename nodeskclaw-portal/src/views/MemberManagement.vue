@@ -6,6 +6,7 @@ import { useOrgStore } from '@/stores/org'
 import { useAuthStore } from '@/stores/auth'
 import CreateHumanMemberDialog from '@/components/members/CreateHumanMemberDialog.vue'
 import EditMemberProfileDialog from '@/components/members/EditMemberProfileDialog.vue'
+import MemberModelTokenDialog from '@/components/members/MemberModelTokenDialog.vue'
 import MemberSkillGrantDrawer from '@/components/members/MemberSkillGrantDrawer.vue'
 import CustomSelect from '@/components/shared/CustomSelect.vue'
 import { Button } from '@/components/ui/button'
@@ -36,6 +37,7 @@ const actionLoading = ref<string | null>(null)
 const showCreateDialog = ref(false)
 const showEditDialog = ref(false)
 const showSkillDrawer = ref(false)
+const showTokenDialog = ref(false)
 const showInviteDialog = ref(false)
 const showResetDialog = ref(false)
 const selectedMember = ref<MemberInfo | null>(null)
@@ -138,6 +140,15 @@ function openEdit(member: MemberInfo) {
 function openSkills(member: MemberInfo) {
   selectedMember.value = member
   showSkillDrawer.value = true
+}
+
+function openTokens(member: MemberInfo) {
+  selectedMember.value = member
+  showTokenDialog.value = true
+}
+
+function canViewModelToken(member: MemberInfo) {
+  return isOrgAdmin.value || member.user_id === authStore.user?.id
 }
 
 async function handleRemove(member: MemberInfo) {
@@ -314,7 +325,11 @@ async function handleInvite() {
               </div>
             </div>
 
-            <div v-if="isOrgAdmin && member.user_id !== authStore.user?.id" class="flex flex-wrap gap-2 shrink-0">
+            <div v-if="canViewModelToken(member) || (isOrgAdmin && member.user_id !== authStore.user?.id)" class="flex flex-wrap gap-2 shrink-0">
+              <Button v-if="canViewModelToken(member)" variant="outline" size="sm" @click="openTokens(member)">
+                <KeyRound class="w-3.5 h-3.5 mr-1" />{{ t('memberManagement.modelToken') }}
+              </Button>
+              <template v-if="isOrgAdmin && member.user_id !== authStore.user?.id">
               <Button variant="outline" size="sm" @click="openEdit(member)">
                 <Pencil class="w-3.5 h-3.5 mr-1" />{{ t('memberManagement.editProfile') }}
               </Button>
@@ -327,6 +342,7 @@ async function handleInvite() {
               <Button variant="outline" size="sm" :disabled="actionLoading === member.id" @click="handleRemove(member)">
                 <Trash2 class="w-3.5 h-3.5 mr-1" />{{ t('memberManagement.removeMember') }}
               </Button>
+              </template>
             </div>
           </div>
         </div>
@@ -355,6 +371,12 @@ async function handleInvite() {
       :member="selectedMember"
       @close="showSkillDrawer = false"
       @saved="store.fetchMembers()"
+    />
+    <MemberModelTokenDialog
+      :open="showTokenDialog"
+      :member="selectedMember"
+      :can-manage="isOrgAdmin"
+      @close="showTokenDialog = false"
     />
 
     <div v-if="showInviteDialog" class="fixed inset-0 z-50 flex items-center justify-center">

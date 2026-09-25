@@ -73,3 +73,15 @@ Agent 是 Event / Result / Artifact 事实源；[[nodeskclaw-backend/app/service
 HTTP 响应头只能是 latin-1；含中文的下载文件名必须用 RFC 5987 `filename*=UTF-8''`，禁止把原文写进 `filename="..."`。
 
 共享编码入口：[[nodeskclaw-backend/app/api/file_downloads.py#content_disposition_attachment]]。Hermes 产物字节流下载走同一 helper：[[nodeskclaw-backend/app/api/hermes_skill/artifacts_router.py#download_artifact]]。员工 Skill Run 产物下载走鉴权代理 [[nodeskclaw-backend/app/api/runs.py#download_run_artifact]]（字节 SoT 在 Agent，见 [[decisions/skill-platform-execution]]）。Starlette `FileResponse(filename=...)` 已内置 RFC 5987，本地文件路径下载可直接传原始文件名。
+
+## Member Model Credential
+
+成员模型凭证是挂在组织成员关系上的独立密钥，表为 `member_tokens`，不替代组织级或用户级 LLM Key。
+
+归属以路径 `org_id` 对照该 `org_memberships` 行的 `org_id`；不一致则成员不存在。不用 `users.current_org_id` 当作凭证所属组织。管理员走 `require_org_admin` 做创建、修改、删除；登录成员只能读取自己那条 membership 的列表，响应只有掩码。NEW-API 创建成功时，完整 Key 只在这一次响应里出现。实现：[[nodeskclaw-backend/app/services/member_token_service.py#create_member_token]]、[[nodeskclaw-backend/app/services/member_token_service.py#list_member_tokens]]。模型：[[nodeskclaw-backend/app/models/member_token.py#MemberToken]]。
+
+NEW-API 只读进程环境变量。每个管理请求同时带 `Authorization: Bearer` 和 `New-Api-User`。创建时把当时的 Model URL 写入该行 `base_url`，之后改 `.env` 不回写旧行。停用、删除、改分组使用当前配置；外部失败则保留原来的 `is_active` 与 `provider_group`，`sync_status=error`，不另建外部 Token，也不保存 Admin URL。同名外部 Token 只拒绝，不自动认领。分组名来自实时查询，代码里不写死 `default` 一类名称。客户端：[[nodeskclaw-backend/app/services/model_provider/new_api.py#NewApiClient]]。
+
+密文使用独立的 `MODEL_TOKEN_ENCRYPTION_KEY`（base64 的 32 字节），格式 `enc:v1:`，算法 AES-256-GCM，AAD 含凭证 id、成员 id 与 provider。不复用 KubeConfig 的 `ENCRYPTION_KEY`。加密：[[nodeskclaw-backend/app/services/credential_crypto.py#encrypt_member_token]]。
+
+软删除与活跃行唯一索引见 [[decisions/soft-delete]]。同一成员同一 provider 同时只留一条未删除凭证；NEW-API 的 token 名称在未删除行中也不重复。移除成员时立刻拒绝本地使用，并尝试撤销外部 Token：[[nodeskclaw-backend/app/services/org_service.py#remove_member]] 调用 [[nodeskclaw-backend/app/services/member_token_service.py#revoke_tokens_for_removed_member]]。撤销失败则保留 `external_token_id`，`sync_status=revoke_pending`。`user_llm_configs`、`user_llm_keys`、`org_llm_keys` 都不因这张表改写。[[architecture/llm-proxy]] 与 Agent Runtime 不读它。门户入口见 [[architecture/portal#Page Domains]]。
