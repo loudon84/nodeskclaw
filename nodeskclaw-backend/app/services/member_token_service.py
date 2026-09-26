@@ -6,10 +6,12 @@ llm-proxy and Agent Runtime do not read this table. user_llm_configs is not writ
 from __future__ import annotations
 
 import hashlib
+import hmac
 import logging
 import uuid
 
-from sqlalchemy import select, text, update
+from sqlalchemy import func, select, text, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -44,6 +46,30 @@ def mask_token(plaintext: str) -> str:
     return plaintext[:4] + "**********" + plaintext[-4:]
 
 
+_NAME_CONFLICT = "NEW-API 已存在同名 Token。请修改 Token 名称后重新创建，或切换到手工绑定并输入已有 Token Key。"
+_LOCAL_PERSIST = "本地保存失败，远端 Token 仍保留。请修改名称后重新创建，或改用手工绑定。"
+_MANAGED_NEW_API_SOURCES = {"auto", "bound"}
+
+
+def keys_match(left: str, right: str) -> bool:
+    left_digest = hashlib.sha256(left.encode("utf-8")).digest()
+    right_digest = hashlib.sha256(right.encode("utf-8")).digest()
+    return hmac.compare_digest(left_digest, right_digest)
+
+
+def effective_token_name(submitted: str | None, email: str | None) -> str:
+    if submitted is not None and str(submitted).strip():
+        name = str(submitted).strip()
+        if len(name) > 50:
+            raise MemberTokenError(
+                400,
+                "errors.member_token.name_invalid",
+                "Token 名称需要 1 到 50 个字符",
+            )
+        return name
+    return token_name_from_email(email)
+
+
 def token_name_from_email(email: str | None) -> str:
     if not email or "@" not in email:
         raise MemberTokenError(
@@ -75,9 +101,12 @@ def assert_membership_org_including_removed(
     return membership
 
 
-async def list_new_api_groups() -> list[dict]:
+async def list_new_api_groups() -> dict:
     client = NewApiClient()
-    return normalize_groups(await client.list_groups())
+    return {
+        "items": normalize_groups(await client.list_groups()),
+        "model_base_url": (settings.NEW_API_MODEL_BASE_URL or "").strip(),
+    }
 
 
 async def list_member_tokens(
@@ -122,6 +151,7 @@ async def create_member_token(
     models: dict | None,
     is_default: bool,
     fields_set: set[str] | None = None,
+    token_name: str | None = None,
 ) -> dict:
     if provider not in PROVIDERS:
         raise MemberTokenError(400, "errors.member_token.provider_unsupported", "不支持的模型 Provider")
@@ -142,6 +172,7 @@ async def create_member_token(
             plaintext=plaintext,
             document=document,
             is_default=is_default,
+            token_name=token_name,
             fields_set=present,
         )
     if "token" not in present or "base_url" not in present or plaintext is None or not base_url:
@@ -189,11 +220,11 @@ async def update_member_token(
     membership = await _load_membership(db, membership_id)
     assert_membership_org(membership, org_id)
     row = await _get_row(db, membership.id, token_id)
-    if row.provider == "new-api" and row.source == "auto" and fields.get("models") is not None:
+    if row.provider == "new-api" and row.source in _MANAGED_NEW_API_SOURCES and fields.get("models") is not None:
         raise MemberTokenError(
             400,
             "errors.member_token.models_managed_by_policy_api",
-            "自动 NEW-API 的模型请使用模型策略保存，不能在这里直接提交模型清单",
+            "自动创建或绑定的 NEW-API 模型请使用模型策略保存，不能在这里直接提交模型清单",
         )
     if "models" in fields and fields["models"] is not None:
         document = normalize_models_document(fields["models"])
@@ -431,6 +462,7 @@ async def _create_new_api(
     plaintext: str | None,
     document: dict,
     is_default: bool,
+    token_name: str | None,
     fields_set: set[str],
 ) -> dict:
     token_present = "token" in fields_set
@@ -451,8 +483,9 @@ async def _create_new_api(
             actor=actor,
             existing=existing,
             provider_group=group_value,
-            document=document,
+            document=dict(EMPTY_MODELS),
             is_default=is_default,
+            token_name=token_name,
         )
 
     if token_present or base_url_present:
@@ -508,6 +541,7 @@ async def _provision_new_api(
     provider_group: str,
     document: dict,
     is_default: bool,
+    token_name: str | None = None,
 ) -> dict:
     model_url = (settings.NEW_API_MODEL_BASE_URL or "").strip()
     if not model_url:
@@ -517,7 +551,7 @@ async def _provision_new_api(
             "NEW_API_MODEL_BASE_URL 未配置，请检查 backend 配置",
         )
     load_model_token_key()
-    name = token_name_from_email(membership.user.email if membership.user else None)
+    name = effective_token_name(token_name, membership.user.email if membership.user else None)
     if existing is not None:
         if existing.provider_group == provider_group:
             return {**_public(existing), "created": False, "plaintext_token": None}
@@ -526,50 +560,187 @@ async def _provision_new_api(
             "errors.member_token.provider_exists",
             "该成员已有 NEW-API 凭证且分组不同，请使用修改而不是重新创建",
         )
+    if await _new_api_name_taken(db, name):
+        raise MemberTokenError(409, "errors.member_token.name_conflict", _NAME_CONFLICT)
     client = NewApiClient()
     groups = normalize_groups(await client.list_groups())
     if provider_group not in {item["value"] for item in groups}:
         raise MemberTokenError(400, "errors.member_token.group_invalid", "所选分组在 NEW-API 中不存在")
     matches = await client.search_exact(name)
     if matches:
-        raise MemberTokenError(
-            409,
-            "errors.member_token.name_conflict",
-            "NEW-API 上已有同名 Token，系统不会自动认领，请更换成员邮箱或清理该 Token",
-        )
+        raise MemberTokenError(409, "errors.member_token.name_conflict", _NAME_CONFLICT)
     await client.create_token(name, provider_group)
     created = await client.search_exact(name)
     if len(created) != 1 or created[0].get("id") is None:
-        raise MemberTokenError(
-            409,
-            "errors.member_token.name_conflict",
-            "创建后未能确认唯一的 NEW-API Token，请检查后重试，系统不会自动认领",
-        )
+        raise MemberTokenError(409, "errors.member_token.name_conflict", _NAME_CONFLICT)
     external_id = str(created[0]["id"])
     plaintext = await client.fetch_key(external_id)
-    row = await _insert_local(
-        db,
-        membership=membership,
-        actor_id=actor.id,
-        provider="new-api",
-        base_url=model_url,
-        plaintext=plaintext,
-        provider_group=provider_group,
-        token_name=name,
-        external_token_id=external_id,
-        source="auto",
-        sync_status="synced",
-        document=document,
-        is_default=is_default,
-    )
+    row = None
     try:
+        row = await _insert_local(
+            db,
+            membership=membership,
+            actor_id=actor.id,
+            provider="new-api",
+            base_url=model_url,
+            plaintext=plaintext,
+            provider_group=provider_group,
+            token_name=name,
+            external_token_id=external_id,
+            source="auto",
+            sync_status="synced",
+            document=document,
+            is_default=is_default,
+        )
         await db.commit()
+    except MemberTokenError:
+        raise
+    except IntegrityError:
+        await db.rollback()
+        raise MemberTokenError(409, "errors.member_token.name_conflict", _NAME_CONFLICT) from None
     except Exception:
         await db.rollback()
-        raise
+        await _audit(
+            actor.id,
+            membership.org_id,
+            "member_token.local_persist_failed",
+            row.id if row is not None else external_id,
+            provider="new-api",
+            source="auto",
+        )
+        raise MemberTokenError(500, "errors.member_token.local_persist_failed", _LOCAL_PERSIST) from None
     await db.refresh(row)
     await _audit(actor.id, membership.org_id, "member_token.created", row.id, provider="new-api", source="auto")
     return {**_public(row), "created": True, "plaintext_token": plaintext}
+
+
+def _group_from_remote(payload: dict) -> str | None:
+    group = payload.get("group")
+    if isinstance(group, str) and group.strip():
+        return group.strip()
+    return None
+
+
+async def bind_existing_new_api(
+    db: AsyncSession,
+    *,
+    org_id: str,
+    membership_id: str,
+    actor: User,
+    provider: str,
+    token_name: str,
+    plaintext: str,
+    is_default: bool,
+) -> dict:
+    if provider != "new-api":
+        raise MemberTokenError(400, "errors.member_token.provider_unsupported", "只有 NEW-API 可以绑定已有 Token")
+    name = effective_token_name(token_name, None)
+    entered = plaintext.strip()
+    if not entered:
+        raise MemberTokenError(400, "errors.member_token.token_required", "模型凭证不能为空")
+    membership = await _load_membership(db, membership_id)
+    assert_membership_org(membership, org_id)
+    model_url = (settings.NEW_API_MODEL_BASE_URL or "").strip()
+    if not model_url:
+        raise MemberTokenError(
+            503,
+            "errors.member_token.new_api_not_configured",
+            "NEW_API_MODEL_BASE_URL 未配置，请检查 backend 配置",
+        )
+    load_model_token_key()
+    await _lock(db, membership.id, "new-api")
+    existing = await _find_provider_row(db, membership.id, "new-api")
+    if existing is not None:
+        raise MemberTokenError(
+            409,
+            "errors.member_token.provider_exists",
+            "该成员已有未删除的 NEW-API 凭证。只停用仍占名额，请先删除后再绑定。",
+        )
+    if await _new_api_name_taken(db, name):
+        raise MemberTokenError(409, "errors.member_token.name_conflict", _NAME_CONFLICT)
+    await _audit(
+        actor.id,
+        membership.org_id,
+        "member_token.bind_requested",
+        membership.id,
+        provider="new-api",
+        token_name=name,
+    )
+    client = NewApiClient()
+    matches = await client.search_exact(name)
+    if len(matches) == 0:
+        await _audit(actor.id, membership.org_id, "member_token.bind_failed", membership.id, provider="new-api", error_code="bind_not_found")
+        raise MemberTokenError(404, "errors.member_token.bind_not_found", "NEW-API 上没有这个名称的 Token")
+    if len(matches) != 1 or matches[0].get("id") is None:
+        await _audit(actor.id, membership.org_id, "member_token.bind_failed", membership.id, provider="new-api", error_code="bind_ambiguous")
+        raise MemberTokenError(409, "errors.member_token.bind_ambiguous", "NEW-API 上有多条同名 Token，无法确定要绑定哪一条")
+    external_id = str(matches[0]["id"])
+    group = _group_from_remote(matches[0])
+    if group is None:
+        group = _group_from_remote(await client.get_token(external_id))
+    if group is None:
+        raise MemberTokenError(502, "errors.member_token.new_api_search_failed", "NEW-API 未返回分组，绑定未保存")
+    remote_key = await client.fetch_key(external_id)
+    if not keys_match(entered, remote_key):
+        await _audit(
+            actor.id,
+            membership.org_id,
+            "member_token.bind_failed",
+            external_id,
+            provider="new-api",
+            token_name=name,
+            error_code="bind_key_mismatch",
+        )
+        raise MemberTokenError(409, "errors.member_token.bind_key_mismatch", "Token Key 与 NEW-API 上的记录不一致，绑定未保存")
+    row = None
+    try:
+        row = await _insert_local(
+            db,
+            membership=membership,
+            actor_id=actor.id,
+            provider="new-api",
+            base_url=model_url,
+            plaintext=entered,
+            provider_group=group,
+            token_name=name,
+            external_token_id=external_id,
+            source="bound",
+            sync_status="synced",
+            document=dict(EMPTY_MODELS),
+            is_default=is_default,
+        )
+        await db.commit()
+    except MemberTokenError:
+        raise
+    except IntegrityError:
+        await db.rollback()
+        raise MemberTokenError(409, "errors.member_token.name_conflict", _NAME_CONFLICT) from None
+    except Exception:
+        await db.rollback()
+        await _audit(
+            actor.id,
+            membership.org_id,
+            "member_token.local_persist_failed",
+            row.id if row is not None else external_id,
+            provider="new-api",
+            source="bound",
+        )
+        raise MemberTokenError(500, "errors.member_token.local_persist_failed", _LOCAL_PERSIST) from None
+    await db.refresh(row)
+    await _audit(
+        actor.id,
+        membership.org_id,
+        "member_token.bound",
+        row.id,
+        provider="new-api",
+        source="bound",
+        token_name=name,
+        external_token_id=external_id,
+    )
+    public = _public(row)
+    public["plaintext_token"] = None
+    public["created"] = True
+    return public
 
 
 async def _update_new_api(db: AsyncSession, membership: OrgMembership, row: MemberToken, fields: dict) -> None:
@@ -646,11 +817,22 @@ async def refresh_member_token_models(
     org_id: str,
     membership_id: str,
     token_id: str,
+    actor: User | None = None,
 ) -> dict:
     membership = await _load_membership(db, membership_id)
     assert_membership_org(membership, org_id)
     row = await _get_row(db, membership.id, token_id)
     model_ids = await _discover_auto_model_ids(row)
+    if actor is not None:
+        await _audit(
+            actor.id,
+            membership.org_id,
+            "member_token.models_refreshed",
+            row.id,
+            provider=row.provider,
+            source=row.source,
+            model_count=len(model_ids),
+        )
     return {"items": [{"id": model_id} for model_id in model_ids]}
 
 
@@ -693,11 +875,11 @@ async def save_member_token_runtime_models(
 
 
 async def _discover_auto_model_ids(row: MemberToken) -> list[str]:
-    if row.provider != "new-api" or row.source != "auto":
+    if row.provider != "new-api" or row.source not in _MANAGED_NEW_API_SOURCES:
         raise MemberTokenError(
             400,
             "errors.member_token.model_refresh_unsupported",
-            "只有自动创建的 NEW-API 凭证可以刷新模型目录",
+            "只有自动创建或已绑定的 NEW-API 凭证可以刷新模型目录",
         )
     base_url = assert_auto_discovery_base(row.base_url)
     plaintext = decrypt_member_token(
@@ -850,6 +1032,18 @@ async def _active_rows(db: AsyncSession, member_id: str) -> list[MemberToken]:
         .order_by(MemberToken.created_at.asc())
     )
     return list(result.scalars().all())
+
+
+async def _new_api_name_taken(db: AsyncSession, name: str) -> bool:
+    result = await db.execute(
+        select(MemberToken.id).where(
+            MemberToken.provider == "new-api",
+            MemberToken.token_name.is_not(None),
+            func.lower(MemberToken.token_name) == name.lower(),
+            not_deleted(MemberToken),
+        )
+    )
+    return result.scalar_one_or_none() is not None
 
 
 async def _find_provider_row(db: AsyncSession, member_id: str, provider: str) -> MemberToken | None:

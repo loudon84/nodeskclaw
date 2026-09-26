@@ -65,6 +65,15 @@ def test_bootstrap_states_hide_key_until_ready():
     empty = _ready_row()
     empty.models = dict(EMPTY_MODELS)
     assert _evaluate(empty)["state"] == "MODEL_LIST_EMPTY"
+    bound_empty = _ready_row()
+    bound_empty.source = "bound"
+    bound_empty.models = dict(EMPTY_MODELS)
+    assert _evaluate(bound_empty)["state"] == "MODEL_LIST_EMPTY"
+    bound_ready = _ready_row()
+    bound_ready.source = "bound"
+    ready_bound = _evaluate(bound_ready)
+    assert ready_bound["state"] == "READY"
+    assert ready_bound["api_key"] == "bootstrap-key-12345678"
     ready = _evaluate(_ready_row())
     assert ready["state"] == "READY"
     assert ready["api_key"] == "bootstrap-key-12345678"

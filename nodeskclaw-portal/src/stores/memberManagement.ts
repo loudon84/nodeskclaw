@@ -227,15 +227,26 @@ export const useMemberManagementStore = defineStore('memberManagement', () => {
 
   async function fetchNewApiGroups() {
     const id = orgId()
-    if (!id) return []
+    if (!id) return { items: [], modelBaseUrl: '' }
     const res = await api.get(`/orgs/${id}/new-api/groups`)
-    return res.data.data?.items ?? []
+    const data = res.data.data ?? {}
+    return {
+      items: data.items ?? [],
+      modelBaseUrl: data.model_base_url ?? '',
+    }
   }
 
   async function createMemberToken(membershipId: string, payload: Record<string, unknown>) {
     const id = orgId()
     if (!id) return
     const res = await api.post(`/orgs/${id}/members/${membershipId}/tokens`, payload)
+    return res.data.data
+  }
+
+  async function bindMemberToken(membershipId: string, payload: Record<string, unknown>) {
+    const id = orgId()
+    if (!id) return
+    const res = await api.post(`/orgs/${id}/members/${membershipId}/tokens/bind`, payload)
     return res.data.data
   }
 
@@ -336,6 +347,7 @@ export const useMemberManagementStore = defineStore('memberManagement', () => {
     fetchMemberTokens,
     fetchNewApiGroups,
     createMemberToken,
+    bindMemberToken,
     updateMemberToken,
     deleteMemberToken,
     revealMemberToken,

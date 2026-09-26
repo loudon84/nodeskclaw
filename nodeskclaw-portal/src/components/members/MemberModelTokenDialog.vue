@@ -49,8 +49,11 @@ const loading = ref(false)
 const saving = ref(false)
 const groupsError = ref('')
 const provider = ref('new-api')
-const newApiMode = ref<'auto' | 'manual'>('auto')
+const newApiMode = ref<'auto' | 'bind'>('auto')
 const providerGroup = ref<string | null>(null)
+const tokenName = ref('')
+const modelBaseUrl = ref('')
+const nameConflict = ref(false)
 const baseUrl = ref('')
 const apiKey = ref('')
 const modelsText = ref('')
@@ -67,7 +70,7 @@ const providerOptions = [
 
 const newApiModeOptions = computed(() => [
   { value: 'auto', label: t('memberManagement.modelTokenEntryAuto') },
-  { value: 'manual', label: t('memberManagement.modelTokenEntryManual') },
+  { value: 'bind', label: t('memberManagement.modelTokenEntryBind') },
 ])
 
 const groupOptions = computed(() =>
@@ -78,33 +81,36 @@ const groupOptions = computed(() =>
 )
 
 const showNewApiAuto = computed(() => provider.value === 'new-api' && newApiMode.value === 'auto')
-const showManualFields = computed(
-  () => provider.value !== 'new-api' || newApiMode.value === 'manual',
-)
+const showNewApiBind = computed(() => provider.value === 'new-api' && newApiMode.value === 'bind')
+const showManualFields = computed(() => provider.value !== 'new-api')
 
 watch(provider, (value) => {
   if (value !== 'new-api') newApiMode.value = 'auto'
-  if (props.open && props.canManage && value === 'new-api' && newApiMode.value === 'auto') {
+  if (props.open && props.canManage && value === 'new-api') {
     void loadGroups()
   }
 })
 
 watch(newApiMode, (value) => {
-  if (props.open && props.canManage && provider.value === 'new-api' && value === 'auto') {
+  nameConflict.value = false
+  if (props.open && props.canManage && provider.value === 'new-api' && (value === 'auto' || value === 'bind')) {
     void loadGroups()
   }
 })
 
-const tokenNamePreview = computed(() => {
+function emailPrefix() {
   const email = props.member?.user_email || ''
-  const local = email.split('@')[0]?.trim().toLowerCase() || ''
-  return local
-})
+  return email.split('@')[0]?.trim().toLowerCase() || ''
+}
 
 const createDisabled = computed(() => {
   if (!props.canManage || saving.value) return true
+  const name = tokenName.value.trim()
   if (showNewApiAuto.value) {
-    return !providerGroup.value || !!groupsError.value || groupOptions.value.length === 0
+    return !providerGroup.value || !!groupsError.value || groupOptions.value.length === 0 || !name || name.length > 50
+  }
+  if (showNewApiBind.value) {
+    return !name || name.length > 50 || !apiKey.value.trim()
   }
   return !baseUrl.value.trim() || !apiKey.value.trim()
 })
@@ -130,6 +136,8 @@ async function reload() {
   groupsError.value = ''
   plaintext.value = ''
   revealedById.value = {}
+  tokenName.value = emailPrefix()
+  nameConflict.value = false
   try {
     tokens.value = await store.fetchMemberTokens(props.member.id)
     const drafts = { ...groupDraft.value }
@@ -137,7 +145,7 @@ async function reload() {
       if (!(item.id in drafts)) drafts[item.id] = item.provider_group || ''
     }
     groupDraft.value = drafts
-    if (props.canManage && showNewApiAuto.value) {
+    if (props.canManage && provider.value === 'new-api') {
       await loadGroups()
     }
   } catch (error) {
@@ -150,7 +158,9 @@ async function reload() {
 async function loadGroups() {
   groupsError.value = ''
   try {
-    groups.value = await store.fetchNewApiGroups()
+    const result = await store.fetchNewApiGroups()
+    groups.value = result.items
+    modelBaseUrl.value = result.modelBaseUrl
     if (!groups.value.length) groupsError.value = t('memberManagement.modelTokenGroupsEmpty')
     else if (!groups.value.some(item => item.value === providerGroup.value)) providerGroup.value = groups.value[0].value
   } catch (error) {
@@ -185,18 +195,34 @@ async function handleCreate() {
     }
     if (showNewApiAuto.value) {
       payload.provider_group = providerGroup.value
+      payload.token_name = tokenName.value.trim()
+      const created = await store.createMemberToken(props.member.id, payload)
+      plaintext.value = created?.plaintext_token || ''
+      toast.success(t('memberManagement.modelTokenCreated'))
+    } else if (showNewApiBind.value) {
+      await store.bindMemberToken(props.member.id, {
+        provider: 'new-api',
+        token_name: tokenName.value.trim(),
+        token: apiKey.value.trim(),
+        is_default: tokens.value.length === 0,
+      })
+      plaintext.value = ''
+      toast.success(t('memberManagement.modelTokenBound'))
     } else {
       payload.base_url = baseUrl.value.trim()
       payload.token = apiKey.value.trim()
       payload.models = modelsDocument()
+      const created = await store.createMemberToken(props.member.id, payload)
+      plaintext.value = created?.plaintext_token || ''
+      toast.success(t('memberManagement.modelTokenCreated'))
     }
-    const created = await store.createMemberToken(props.member.id, payload)
-    plaintext.value = created?.plaintext_token || ''
     apiKey.value = ''
-    toast.success(t('memberManagement.modelTokenCreated'))
+    nameConflict.value = false
     tokens.value = await store.fetchMemberTokens(props.member.id)
   } catch (error) {
-    toast.error(resolveApiErrorMessage(error, t('memberManagement.modelTokenGroupsFailed')))
+    const data = (error as { response?: { data?: { message_key?: string } } })?.response?.data
+    nameConflict.value = data?.message_key === 'errors.member_token.name_conflict'
+    toast.error(resolveApiErrorMessage(error, t('memberManagement.modelTokenActionFailed')))
   } finally {
     saving.value = false
   }
@@ -216,8 +242,12 @@ async function toggleActive(item: TokenItem) {
   }
 }
 
-function isAutoToken(item: TokenItem) {
-  return item.provider === 'new-api' && item.source === 'auto'
+function isManagedNewApi(item: TokenItem) {
+  return item.provider === 'new-api' && (item.source === 'auto' || item.source === 'bound')
+}
+
+function isLegacyManualNewApi(item: TokenItem) {
+  return item.provider === 'new-api' && item.source === 'manual'
 }
 
 function selectedModels(item: TokenItem) {
@@ -419,25 +449,31 @@ function close() {
         <div v-if="provider === 'new-api'">
           <Label>{{ t('memberManagement.modelTokenEntryMode') }}</Label>
           <CustomSelect v-model="newApiMode" :options="newApiModeOptions" class="mt-1" />
-          <p v-if="newApiMode === 'manual'" class="text-xs text-muted-foreground mt-1">
-            {{ t('memberManagement.modelTokenManualHint') }}
-          </p>
         </div>
-        <template v-if="showNewApiAuto">
+        <template v-if="showNewApiAuto || showNewApiBind">
           <div>
             <Label>{{ t('memberManagement.modelTokenBaseUrl') }}</Label>
-            <Input disabled class="mt-1" :placeholder="t('memberManagement.modelTokenBaseUrlHint')" />
+            <Input :model-value="modelBaseUrl" disabled class="mt-1" />
             <p class="text-xs text-muted-foreground mt-1">{{ t('memberManagement.modelTokenBaseUrlHint') }}</p>
           </div>
           <div>
             <Label>{{ t('memberManagement.modelTokenName') }}</Label>
-            <Input :model-value="tokenNamePreview" disabled class="mt-1" />
+            <Input v-model="tokenName" class="mt-1" />
             <p class="text-xs text-muted-foreground mt-1">{{ t('memberManagement.modelTokenNameHint') }}</p>
           </div>
+        </template>
+        <template v-if="showNewApiAuto">
           <div>
             <Label>{{ t('memberManagement.modelTokenGroup') }}</Label>
             <CustomSelect v-model="providerGroup" :options="groupOptions" :disabled="!groupOptions.length" class="mt-1" />
           </div>
+        </template>
+        <template v-if="showNewApiBind">
+          <div>
+            <Label>{{ t('memberManagement.modelTokenApiKey') }}</Label>
+            <Input v-model="apiKey" type="password" class="mt-1" />
+          </div>
+          <p class="text-xs text-muted-foreground">{{ t('memberManagement.modelTokenBindWarning') }}</p>
         </template>
         <template v-if="showManualFields">
           <div>
@@ -448,15 +484,16 @@ function close() {
             <Label>{{ t('memberManagement.modelTokenApiKey') }}</Label>
             <Input v-model="apiKey" type="password" class="mt-1" />
           </div>
+          <div>
+            <Label>{{ t('memberManagement.modelTokenModels') }}</Label>
+            <Input v-model="modelsText" class="mt-1" :placeholder="t('memberManagement.modelTokenModelsHint')" />
+          </div>
         </template>
-        <div v-if="showManualFields">
-          <Label>{{ t('memberManagement.modelTokenModels') }}</Label>
-          <Input v-model="modelsText" class="mt-1" :placeholder="t('memberManagement.modelTokenModelsHint')" />
-        </div>
+        <p v-if="nameConflict" class="text-sm text-destructive">{{ t('errors.member_token.name_conflict') }}</p>
         <p v-if="groupsError && showNewApiAuto" class="text-sm text-destructive">{{ groupsError }}</p>
         <Button :disabled="createDisabled" @click="handleCreate">
           <Loader2 v-if="saving" class="w-4 h-4 animate-spin mr-1" />
-          {{ showNewApiAuto ? t('memberManagement.modelTokenCreate') : t('memberManagement.modelTokenEntryManual') }}
+          {{ showNewApiAuto ? t('memberManagement.modelTokenCreate') : showNewApiBind ? t('memberManagement.modelTokenBind') : t('memberManagement.modelTokenManualCreate') }}
         </Button>
       </div>
 
@@ -476,6 +513,7 @@ function close() {
         <div>{{ t('memberManagement.modelTokenProvider') }}: {{ item.provider }}</div>
         <div class="break-all">{{ t('memberManagement.modelTokenBaseUrl') }}: {{ item.base_url }}</div>
         <div v-if="item.token_name">{{ t('memberManagement.modelTokenName') }}: {{ item.token_name }}</div>
+        <p v-if="isLegacyManualNewApi(item)" class="text-xs text-muted-foreground">{{ t('memberManagement.modelTokenLegacyManual') }}</p>
         <div v-if="item.provider_group">{{ t('memberManagement.modelTokenGroup') }}: {{ item.provider_group }}</div>
         <div>{{ t('memberManagement.modelTokenMasked') }}: {{ item.token_masked }}</div>
         <div v-if="revealedById[item.id]" class="space-y-2 pt-1">
@@ -487,7 +525,7 @@ function close() {
             </Button>
           </div>
         </div>
-        <div v-if="canManage && isAutoToken(item)" class="space-y-2 pt-2">
+        <div v-if="canManage && isManagedNewApi(item)" class="space-y-2 pt-2">
           <Label>{{ t('memberManagement.modelTokenGroup') }}</Label>
           <CustomSelect
             :model-value="groupDraft[item.id] || item.provider_group || ''"

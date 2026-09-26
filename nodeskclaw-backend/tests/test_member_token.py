@@ -18,9 +18,12 @@ from app.services import member_token_service
 from app.services.member_token_models import EMPTY_MODELS, normalize_models_document
 from app.services.member_token_service import (
     assert_membership_org,
+    bind_existing_new_api,
     close_local_member_token,
     create_member_token,
     delete_member_token,
+    effective_token_name,
+    keys_match,
     mask_token,
     refresh_member_token_models,
     reveal_member_token,
@@ -172,13 +175,15 @@ async def test_local_commit_failure_does_not_compensate_external_delete():
     db.flush = AsyncMock()
     db.add = MagicMock()
     db.get_bind = MagicMock(return_value=SimpleNamespace(dialect=SimpleNamespace(name="sqlite")))
+    audit = AsyncMock()
 
     with (
         patch.object(member_token_service, "NewApiClient", return_value=client),
+        patch.object(member_token_service, "_new_api_name_taken", new=AsyncMock(return_value=False)),
         patch.object(member_token_service, "_insert_local", new=AsyncMock(return_value=SimpleNamespace(id="t1"))),
-        patch.object(member_token_service, "_audit", new=AsyncMock()),
+        patch.object(member_token_service, "_audit", new=audit),
     ):
-        with pytest.raises(RuntimeError, match="db down"):
+        with pytest.raises(MemberTokenError) as exc:
             await _provision_new_api(
                 db,
                 membership=membership,
@@ -188,8 +193,10 @@ async def test_local_commit_failure_does_not_compensate_external_delete():
                 document={"schema_version": "1.0", "default_model": None, "items": []},
                 is_default=False,
             )
+    assert exc.value.message_key == "errors.member_token.local_persist_failed"
     client.delete_token.assert_not_called()
     db.rollback.assert_awaited()
+    assert audit.await_args.args[2] == "member_token.local_persist_failed"
 
 
 @pytest.mark.asyncio
@@ -647,6 +654,321 @@ async def test_revoke_pending_cannot_enable_and_patch_models_rejected():
     assert closing.value.message_key == "errors.member_token.credential_closing"
     client.set_status.assert_not_called()
     with patches[0], patches[1]:
+        with pytest.raises(MemberTokenError) as managed:
+            await update_member_token(
+                db,
+                org_id="org-1",
+                membership_id="m1",
+                token_id="t1",
+                actor=SimpleNamespace(id="admin"),
+                fields={"models": {"schema_version": "1.0", "default_model": None, "items": []}},
+            )
+    assert managed.value.message_key == "errors.member_token.models_managed_by_policy_api"
+
+
+def test_effective_token_name_uses_explicit_value_without_email():
+    assert effective_token_name("  Custom-Name  ", None) == "Custom-Name"
+    with pytest.raises(MemberTokenError) as exc:
+        effective_token_name("x" * 51, "alice@example.com")
+    assert exc.value.message_key == "errors.member_token.name_invalid"
+    assert keys_match("same-key", "same-key") is True
+    assert keys_match("same-key", "other-key") is False
+
+
+@pytest.mark.asyncio
+async def test_custom_token_name_is_used_for_search_and_create():
+    membership = SimpleNamespace(id="m1", org_id="org-1", user=SimpleNamespace(email="alice@example.com"))
+    actor = SimpleNamespace(id="u1")
+    client = MagicMock()
+    client.list_groups = AsyncMock(return_value={"vip": {"desc": "v"}})
+    client.search_exact = AsyncMock(side_effect=[[], [{"id": 9, "name": "alice-smc"}]])
+    client.create_token = AsyncMock()
+    client.fetch_key = AsyncMock(return_value="sk-live-abcdefghabcdefgh")
+    client.delete_token = AsyncMock()
+    inserted = {}
+
+    async def fake_insert(db, **kwargs):
+        inserted.update(kwargs)
+        return SimpleNamespace(
+            id="t1",
+            member_id="m1",
+            provider="new-api",
+            base_url=kwargs["base_url"],
+            token=encrypt_member_token(kwargs["plaintext"], token_id="t1", member_id="m1", provider="new-api"),
+            token_name=kwargs["token_name"],
+            provider_group=kwargs["provider_group"],
+            models=kwargs["document"],
+            source=kwargs["source"],
+            is_active=True,
+            is_default=False,
+            sync_status=kwargs["sync_status"],
+            last_sync_error=None,
+            external_token_id=kwargs["external_token_id"],
+        )
+
+    db = AsyncMock()
+    db.get_bind = MagicMock(return_value=SimpleNamespace(dialect=SimpleNamespace(name="sqlite")))
+    with (
+        patch.object(member_token_service, "NewApiClient", return_value=client),
+        patch.object(member_token_service, "_new_api_name_taken", new=AsyncMock(return_value=False)),
+        patch.object(member_token_service, "_insert_local", new=fake_insert),
+        patch.object(member_token_service, "_audit", new=AsyncMock()),
+    ):
+        result = await _provision_new_api(
+            db,
+            membership=membership,
+            actor=actor,
+            existing=None,
+            provider_group="vip",
+            document=dict(EMPTY_MODELS),
+            is_default=False,
+            token_name="alice-smc",
+        )
+    client.search_exact.assert_any_await("alice-smc")
+    client.create_token.assert_awaited_once_with("alice-smc", "vip")
+    assert inserted["token_name"] == "alice-smc"
+    assert inserted["document"]["items"] == []
+    assert result["plaintext_token"] == "sk-live-abcdefghabcdefgh"
+    client.delete_token.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_name_conflict_does_not_create_or_write():
+    membership = SimpleNamespace(id="m1", org_id="org-1", user=SimpleNamespace(email="alice@example.com"))
+    client = MagicMock()
+    client.list_groups = AsyncMock(return_value={"vip": {}})
+    client.search_exact = AsyncMock(return_value=[{"id": 1, "name": "alice"}])
+    client.create_token = AsyncMock()
+    db = AsyncMock()
+    insert = AsyncMock()
+    with (
+        patch.object(member_token_service, "NewApiClient", return_value=client),
+        patch.object(member_token_service, "_new_api_name_taken", new=AsyncMock(return_value=False)),
+        patch.object(member_token_service, "_insert_local", new=insert),
+    ):
+        with pytest.raises(MemberTokenError) as exc:
+            await _provision_new_api(
+                db,
+                membership=membership,
+                actor=SimpleNamespace(id="u1"),
+                existing=None,
+                provider_group="vip",
+                document=dict(EMPTY_MODELS),
+                is_default=False,
+            )
+    assert exc.value.message_key == "errors.member_token.name_conflict"
+    client.create_token.assert_not_called()
+    insert.assert_not_called()
+
+
+def _public_row_from_insert(kwargs):
+    return SimpleNamespace(
+        id="t-bound",
+        member_id="m1",
+        provider="new-api",
+        base_url=kwargs["base_url"],
+        token=encrypt_member_token(kwargs["plaintext"], token_id="t-bound", member_id="m1", provider="new-api"),
+        token_name=kwargs["token_name"],
+        provider_group=kwargs["provider_group"],
+        models=kwargs["document"],
+        source=kwargs["source"],
+        is_active=True,
+        is_default=False,
+        sync_status=kwargs["sync_status"],
+        last_sync_error=None,
+        external_token_id=kwargs["external_token_id"],
+    )
+
+
+@pytest.mark.asyncio
+async def test_bind_snapshots_group_auto_and_hides_plaintext():
+    membership = SimpleNamespace(id="m1", org_id="org-1", deleted_at=None, user=SimpleNamespace(email="alice@example.com"))
+    client = MagicMock()
+    client.search_exact = AsyncMock(return_value=[{"id": 4, "name": "alice", "group": "auto"}])
+    client.fetch_key = AsyncMock(return_value="sk-remote-abcdefghabcd")
+    client.create_token = AsyncMock()
+    client.update_group = AsyncMock()
+    client.set_status = AsyncMock()
+    client.get_token = AsyncMock()
+    inserted = {}
+
+    async def fake_insert(db, **kwargs):
+        inserted.update(kwargs)
+        return _public_row_from_insert(kwargs)
+
+    db = AsyncMock()
+    db.get_bind = MagicMock(return_value=SimpleNamespace(dialect=SimpleNamespace(name="sqlite")))
+    with (
+        patch.object(member_token_service, "_load_membership", new=AsyncMock(return_value=membership)),
+        patch.object(member_token_service, "_find_provider_row", new=AsyncMock(return_value=None)),
+        patch.object(member_token_service, "_new_api_name_taken", new=AsyncMock(return_value=False)),
+        patch.object(member_token_service, "_insert_local", new=fake_insert),
+        patch.object(member_token_service, "_audit", new=AsyncMock()) as audit,
+        patch.object(member_token_service, "NewApiClient", return_value=client),
+    ):
+        result = await bind_existing_new_api(
+            db,
+            org_id="org-1",
+            membership_id="m1",
+            actor=SimpleNamespace(id="admin"),
+            provider="new-api",
+            token_name="alice",
+            plaintext="sk-remote-abcdefghabcd",
+            is_default=False,
+        )
+    assert inserted["source"] == "bound"
+    assert inserted["provider_group"] == "auto"
+    assert inserted["external_token_id"] == "4"
+    assert inserted["document"]["items"] == []
+    assert result["plaintext_token"] is None
+    assert "sk-remote" not in str(result)
+    client.create_token.assert_not_called()
+    client.update_group.assert_not_called()
+    client.get_token.assert_not_called()
+    client.set_status.assert_not_called()
+    actions = [call.args[2] for call in audit.await_args_list]
+    assert "member_token.bound" in actions
+    assert all("sk-remote" not in str(call) for call in audit.await_args_list)
+
+
+@pytest.mark.asyncio
+async def test_bind_rejects_key_mismatch_without_write():
+    membership = SimpleNamespace(id="m1", org_id="org-1", deleted_at=None, user=SimpleNamespace(email="alice@example.com"))
+    client = MagicMock()
+    client.search_exact = AsyncMock(return_value=[{"id": 4, "name": "alice", "group": "vip"}])
+    client.fetch_key = AsyncMock(return_value="sk-remote-abcdefghabcd")
+    client.create_token = AsyncMock()
+    db = AsyncMock()
+    db.get_bind = MagicMock(return_value=SimpleNamespace(dialect=SimpleNamespace(name="sqlite")))
+    insert = AsyncMock()
+    with (
+        patch.object(member_token_service, "_load_membership", new=AsyncMock(return_value=membership)),
+        patch.object(member_token_service, "_find_provider_row", new=AsyncMock(return_value=None)),
+        patch.object(member_token_service, "_new_api_name_taken", new=AsyncMock(return_value=False)),
+        patch.object(member_token_service, "_insert_local", new=insert),
+        patch.object(member_token_service, "_audit", new=AsyncMock()),
+        patch.object(member_token_service, "NewApiClient", return_value=client),
+    ):
+        with pytest.raises(MemberTokenError) as exc:
+            await bind_existing_new_api(
+                db,
+                org_id="org-1",
+                membership_id="m1",
+                actor=SimpleNamespace(id="admin"),
+                provider="new-api",
+                token_name="alice",
+                plaintext="sk-wrong-value-000000",
+                is_default=False,
+            )
+    assert exc.value.message_key == "errors.member_token.bind_key_mismatch"
+    insert.assert_not_called()
+    db.commit.assert_not_called()
+    client.create_token.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_bind_not_found_ambiguous_and_existing_row():
+    membership = SimpleNamespace(id="m1", org_id="org-1", deleted_at=None, user=SimpleNamespace(email="alice@example.com"))
+    client = MagicMock()
+    client.create_token = AsyncMock()
+    db = AsyncMock()
+    db.get_bind = MagicMock(return_value=SimpleNamespace(dialect=SimpleNamespace(name="sqlite")))
+    inactive = SimpleNamespace(id="old", is_active=False, deleted_at=None)
+    with (
+        patch.object(member_token_service, "_load_membership", new=AsyncMock(return_value=membership)),
+        patch.object(member_token_service, "_find_provider_row", new=AsyncMock(return_value=inactive)),
+        patch.object(member_token_service, "NewApiClient", return_value=client),
+        patch.object(member_token_service, "_audit", new=AsyncMock()),
+    ):
+        with pytest.raises(MemberTokenError) as exists:
+            await bind_existing_new_api(
+                db,
+                org_id="org-1",
+                membership_id="m1",
+                actor=SimpleNamespace(id="admin"),
+                provider="new-api",
+                token_name="alice",
+                plaintext="sk-remote-abcdefghabcd",
+                is_default=False,
+            )
+    assert exists.value.message_key == "errors.member_token.provider_exists"
+    client.search_exact.assert_not_called()
+
+    client.search_exact = AsyncMock(return_value=[])
+    with (
+        patch.object(member_token_service, "_load_membership", new=AsyncMock(return_value=membership)),
+        patch.object(member_token_service, "_find_provider_row", new=AsyncMock(return_value=None)),
+        patch.object(member_token_service, "_new_api_name_taken", new=AsyncMock(return_value=False)),
+        patch.object(member_token_service, "NewApiClient", return_value=client),
+        patch.object(member_token_service, "_audit", new=AsyncMock()),
+    ):
+        with pytest.raises(MemberTokenError) as missing:
+            await bind_existing_new_api(
+                db,
+                org_id="org-1",
+                membership_id="m1",
+                actor=SimpleNamespace(id="admin"),
+                provider="new-api",
+                token_name="alice",
+                plaintext="sk-remote-abcdefghabcd",
+                is_default=False,
+            )
+    assert missing.value.message_key == "errors.member_token.bind_not_found"
+
+    client.search_exact = AsyncMock(return_value=[{"id": 1, "name": "alice"}, {"id": 2, "name": "alice"}])
+    with (
+        patch.object(member_token_service, "_load_membership", new=AsyncMock(return_value=membership)),
+        patch.object(member_token_service, "_find_provider_row", new=AsyncMock(return_value=None)),
+        patch.object(member_token_service, "_new_api_name_taken", new=AsyncMock(return_value=False)),
+        patch.object(member_token_service, "NewApiClient", return_value=client),
+        patch.object(member_token_service, "_audit", new=AsyncMock()),
+    ):
+        with pytest.raises(MemberTokenError) as ambiguous:
+            await bind_existing_new_api(
+                db,
+                org_id="org-1",
+                membership_id="m1",
+                actor=SimpleNamespace(id="admin"),
+                provider="new-api",
+                token_name="alice",
+                plaintext="sk-remote-abcdefghabcd",
+                is_default=False,
+            )
+    assert ambiguous.value.message_key == "errors.member_token.bind_ambiguous"
+    client.create_token.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_bound_refresh_does_not_commit_and_manual_refresh_is_rejected(monkeypatch):
+    class _GetHttp:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def get(self, url, headers=None):
+            return httpx.Response(
+                200,
+                json={"data": [{"id": "zeta"}]},
+                request=httpx.Request("GET", url),
+            )
+
+    monkeypatch.setattr(httpx, "AsyncClient", lambda *args, **kwargs: _GetHttp())
+    row = _auto_row(source="bound", models={"schema_version": "1.0", "default_model": "keep", "items": [{"id": "keep", "enabled": True}]})
+    db = AsyncMock()
+    with _bound(row)[0], _bound(row)[1]:
+        data = await refresh_member_token_models(db, org_id="org-1", membership_id="m1", token_id="t1")
+    assert data["items"] == [{"id": "zeta"}]
+    assert row.models["default_model"] == "keep"
+    db.commit.assert_not_called()
+    manual = _auto_row(source="manual")
+    with _bound(manual)[0], _bound(manual)[1]:
+        with pytest.raises(MemberTokenError) as exc:
+            await refresh_member_token_models(db, org_id="org-1", membership_id="m1", token_id="t1")
+    assert exc.value.message_key == "errors.member_token.model_refresh_unsupported"
+    bound = _auto_row(source="bound")
+    with _bound(bound)[0], _bound(bound)[1]:
         with pytest.raises(MemberTokenError) as managed:
             await update_member_token(
                 db,

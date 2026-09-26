@@ -21,6 +21,16 @@ class CreateMemberTokenRequest(BaseModel):
     base_url: str | None = None
     token: str | None = None
     models: dict | None = None
+    token_name: str | None = None
+    is_default: bool = False
+
+
+class BindMemberTokenRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    provider: Literal["new-api"]
+    token_name: str = Field(min_length=1, max_length=128)
+    token: str = Field(min_length=1, max_length=4096)
     is_default: bool = False
 
 
@@ -47,8 +57,8 @@ async def list_new_api_groups(
     org_id: str,
     _org_ctx: tuple = Depends(require_org_admin),
 ):
-    items = await member_token_service.list_new_api_groups()
-    return ApiResponse(data={"items": items})
+    data = await member_token_service.list_new_api_groups()
+    return ApiResponse(data=data)
 
 
 @router.get("/{org_id}/member-tokens/pending-close", response_model=ApiResponse)
@@ -96,7 +106,29 @@ async def create_token(
         plaintext=body.token,
         models=body.models,
         is_default=body.is_default,
+        token_name=body.token_name,
         fields_set=set(body.model_fields_set),
+    )
+    return ApiResponse(data=data)
+
+
+@router.post("/{org_id}/members/{membership_id}/tokens/bind", response_model=ApiResponse)
+async def bind_token(
+    org_id: str,
+    membership_id: str,
+    body: BindMemberTokenRequest,
+    db: AsyncSession = Depends(get_db),
+    org_ctx: tuple = Depends(require_org_admin),
+):
+    data = await member_token_service.bind_existing_new_api(
+        db,
+        org_id=org_id,
+        membership_id=membership_id,
+        actor=org_ctx[0],
+        provider=body.provider,
+        token_name=body.token_name,
+        plaintext=body.token,
+        is_default=body.is_default,
     )
     return ApiResponse(data=data)
 
@@ -148,13 +180,14 @@ async def refresh_token_models(
     membership_id: str,
     token_id: str,
     db: AsyncSession = Depends(get_db),
-    _org_ctx: tuple = Depends(require_org_admin),
+    org_ctx: tuple = Depends(require_org_admin),
 ):
     data = await member_token_service.refresh_member_token_models(
         db,
         org_id=org_id,
         membership_id=membership_id,
         token_id=token_id,
+        actor=org_ctx[0],
     )
     return ApiResponse(data=data)
 

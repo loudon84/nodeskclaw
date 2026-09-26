@@ -149,6 +149,21 @@ class NewApiClient:
             failure_message="创建 NEW-API Token 失败",
         )
 
+    async def get_token(self, external_id: str) -> dict:
+        data = await self._request(
+            "GET",
+            f"/api/token/{external_id}",
+            failure_key="errors.member_token.new_api_search_failed",
+            failure_message="读取 NEW-API Token 失败",
+        )
+        if not isinstance(data, dict):
+            raise MemberTokenError(
+                502,
+                "errors.member_token.new_api_search_failed",
+                "NEW-API Token 响应格式不正确",
+            )
+        return {key: value for key, value in data.items() if key != "key"}
+
     async def fetch_key(self, external_id: str) -> str:
         data = await self._request(
             "POST",

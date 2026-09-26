@@ -103,7 +103,7 @@ HTTP 响应头只能是 latin-1；含中文的下载文件名必须用 RFC 5987 
 
 归属以路径 `org_id` 对照该 `org_memberships` 行的 `org_id`；不一致则成员不存在。不用 `users.current_org_id` 当作凭证所属组织。管理员走 `require_org_admin` 做创建、修改、删除、重试撤销和只关闭本地。列表与普通读取只返回掩码。完整 Key 只从 `reveal_member_token` 返回，调用者必须是该成员本人或本组织管理员，审计不记录 Key。实现：[[nodeskclaw-backend/app/services/member_token_service.py#create_member_token]]、[[nodeskclaw-backend/app/services/member_token_service.py#reveal_member_token]]。模型：[[nodeskclaw-backend/app/models/member_token.py#MemberToken]]。
 
-NEW-API 自动创建只读进程环境变量。每个管理请求同时带 `Authorization: Bearer` 和 `New-Api-User`。创建时把当时的 Model URL 写入该行 `base_url`，之后改 `.env` 不回写旧行。自动行改分组或启停时，外部失败则保留原来的 `is_active` 与 `provider_group`。撤销外部 Token 失败则 `is_active=false` 且 `sync_status=revoke_pending`，保留外部 id；当前 NEW-API 找不到该 id 时重试仍不软删。只关闭本地记录不调用 NEW-API。本地提交失败只回滚，不删除已经创建的外部 Token。手工 new-api 只保存管理员填写的 Base URL 和 Key，不写 `external_token_id` 或 `token_name`，后续启停也不调用 NEW-API。同名外部 Token 只拒绝，不自动认领。客户端：[[nodeskclaw-backend/app/services/model_provider/new_api.py#NewApiClient]]。
+NEW-API 自动创建使用管理员提交的 Token 名称；省略时仍取邮箱前缀。每个管理请求同时带 `Authorization: Bearer` 和 `New-Api-User`。创建时把当时的 Model URL 写入该行 `base_url`，之后改 `.env` 不回写旧行。自动行或已绑定行改分组或启停时，外部失败则保留原来的 `is_active` 与 `provider_group`。撤销外部 Token 失败则 `is_active=false` 且 `sync_status=revoke_pending`，保留外部 id；当前 NEW-API 找不到该 id 时重试仍不软删。只关闭本地记录不调用 NEW-API。本地提交失败只回滚，不删除已经创建的外部 Token。绑定已有 Token 写入 `source=bound`，分组按远端原样保存，包括 `auto`，响应不返回明文。Key 不一致不写本地。历史手工 new-api 仍可被旧接口录入，没有 `external_token_id`；门户不再调用这条路径。同名外部 Token 只拒绝，不自动认领。客户端：[[nodeskclaw-backend/app/services/model_provider/new_api.py#NewApiClient]]。绑定：[[nodeskclaw-backend/app/services/member_token_service.py#bind_existing_new_api]]。
 
 密文使用独立的 `MODEL_TOKEN_ENCRYPTION_KEY`（base64 的 32 字节），格式 `enc:v1:`，算法 AES-256-GCM，AAD 含凭证 id、成员 id 与 provider。不复用 KubeConfig 的 `ENCRYPTION_KEY`。加密：[[nodeskclaw-backend/app/services/credential_crypto.py#encrypt_member_token]]。
 
@@ -113,7 +113,7 @@ NEW-API 自动创建只读进程环境变量。每个管理请求同时带 `Auth
 
 当前登录用户只用自己的默认模型凭证取得 NEW-API 地址和 Key，Backend 不转发模型请求。
 
-目录发现只对自动创建的 NEW-API 凭证解密成员 Key，请求 `GET {base_url}/models`，请求头只有 `Authorization: Bearer`。不带系统访问令牌，也不带 `New-Api-User`。已保存的地址规范化后必须等于当前 `NEW_API_MODEL_BASE_URL`，否则拒绝且不发请求。实现：[[nodeskclaw-backend/app/services/model_provider/member_model_discovery.py#discover_model_ids]]。管理员刷新 [[nodeskclaw-backend/app/services/member_token_service.py#refresh_member_token_models]] 只返回按 id 排序的目录，不写 `member_tokens`。保存 [[nodeskclaw-backend/app/services/member_token_service.py#save_member_token_runtime_models]] 会再发现一次：所选 id 必须属于这次目录，至少一个，默认模型必须在其中。已有条目的能力和上下文窗口保留，新模型不猜测这些字段。自动 NEW-API 的通用 PATCH 若带 `models` 则拒绝。
+目录发现对 `source` 为 `auto` 或 `bound` 的 NEW-API 凭证解密成员 Key，请求 `GET {base_url}/models`，请求头只有 `Authorization: Bearer`。不带系统访问令牌，也不带 `New-Api-User`。历史 `manual` 不能刷新，且不发请求。已保存的地址规范化后必须等于当前 `NEW_API_MODEL_BASE_URL`，否则拒绝且不发请求。实现：[[nodeskclaw-backend/app/services/model_provider/member_model_discovery.py#discover_model_ids]]。管理员刷新 [[nodeskclaw-backend/app/services/member_token_service.py#refresh_member_token_models]] 只返回按 id 排序的目录，不写 `member_tokens`。保存 [[nodeskclaw-backend/app/services/member_token_service.py#save_member_token_runtime_models]] 会再发现一次：所选 id 必须属于这次目录，至少一个，默认模型必须在其中。已有条目的能力和上下文窗口保留，新模型不猜测这些字段。自动创建或绑定的 NEW-API 通用 PATCH 若带 `models` 则拒绝。
 
 改分组仍先调用 NEW-API。成功后同一次本地提交写入新分组，并把 `models` 设为空文档。本地提交失败则回滚本地，不反向修改 NEW-API 分组。`revoke_pending` 不能把 `is_active` 改回 true，也不调用 NEW-API 启用。
 
