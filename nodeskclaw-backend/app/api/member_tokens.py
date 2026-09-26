@@ -44,6 +44,16 @@ async def list_new_api_groups(
     return ApiResponse(data={"items": items})
 
 
+@router.get("/{org_id}/member-tokens/pending-close", response_model=ApiResponse)
+async def list_pending_close(
+    org_id: str,
+    db: AsyncSession = Depends(get_db),
+    _org_ctx: tuple = Depends(require_org_admin),
+):
+    items = await member_token_service.list_pending_close_tokens(db, org_id=org_id)
+    return ApiResponse(data={"items": items})
+
+
 @router.get("/{org_id}/members/{membership_id}/tokens", response_model=ApiResponse)
 async def list_tokens(
     org_id: str,
@@ -79,6 +89,7 @@ async def create_token(
         plaintext=body.token,
         models=body.models,
         is_default=body.is_default,
+        fields_set=set(body.model_fields_set),
     )
     return ApiResponse(data=data)
 
@@ -137,3 +148,66 @@ async def delete_token(
         actor=org_ctx[0],
     )
     return ApiResponse(message="deleted")
+
+
+@router.post(
+    "/{org_id}/members/{membership_id}/tokens/{token_id}/reveal",
+    response_model=ApiResponse,
+)
+async def reveal_token(
+    org_id: str,
+    membership_id: str,
+    token_id: str,
+    db: AsyncSession = Depends(get_db),
+    org_ctx: tuple = Depends(require_org_member),
+):
+    data = await member_token_service.reveal_member_token(
+        db,
+        org_id=org_id,
+        membership_id=membership_id,
+        token_id=token_id,
+        caller=org_ctx[0],
+    )
+    return ApiResponse(data=data)
+
+
+@router.post(
+    "/{org_id}/members/{membership_id}/tokens/{token_id}/retry-revoke",
+    response_model=ApiResponse,
+)
+async def retry_revoke_token(
+    org_id: str,
+    membership_id: str,
+    token_id: str,
+    db: AsyncSession = Depends(get_db),
+    org_ctx: tuple = Depends(require_org_admin),
+):
+    data = await member_token_service.retry_revoke_member_token(
+        db,
+        org_id=org_id,
+        membership_id=membership_id,
+        token_id=token_id,
+        actor=org_ctx[0],
+    )
+    return ApiResponse(data=data)
+
+
+@router.post(
+    "/{org_id}/members/{membership_id}/tokens/{token_id}/close-local",
+    response_model=ApiResponse,
+)
+async def close_local_token(
+    org_id: str,
+    membership_id: str,
+    token_id: str,
+    db: AsyncSession = Depends(get_db),
+    org_ctx: tuple = Depends(require_org_admin),
+):
+    data = await member_token_service.close_local_member_token(
+        db,
+        org_id=org_id,
+        membership_id=membership_id,
+        token_id=token_id,
+        actor=org_ctx[0],
+    )
+    return ApiResponse(data=data)

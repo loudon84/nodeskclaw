@@ -19,6 +19,7 @@ interface TokenItem {
   token_name: string | null
   provider_group: string | null
   model_count: number
+  source?: string
   is_active: boolean
   is_default: boolean
   sync_status: string
@@ -44,18 +45,26 @@ const loading = ref(false)
 const saving = ref(false)
 const groupsError = ref('')
 const provider = ref('new-api')
+const newApiMode = ref<'auto' | 'manual'>('auto')
 const providerGroup = ref<string | null>(null)
 const baseUrl = ref('')
 const apiKey = ref('')
 const modelsText = ref('')
 const plaintext = ref('')
+const revealedById = ref<Record<string, string>>({})
 const copied = ref(false)
+const revealedCopiedId = ref<string | null>(null)
 
 const providerOptions = [
   { value: 'new-api', label: 'new-api' },
   { value: 'deepseek', label: 'deepseek' },
   { value: 'custom', label: 'custom' },
 ]
+
+const newApiModeOptions = computed(() => [
+  { value: 'auto', label: t('memberManagement.modelTokenEntryAuto') },
+  { value: 'manual', label: t('memberManagement.modelTokenEntryManual') },
+])
 
 const groupOptions = computed(() =>
   groups.value.map(item => ({
@@ -64,8 +73,22 @@ const groupOptions = computed(() =>
   })),
 )
 
+const showNewApiAuto = computed(() => provider.value === 'new-api' && newApiMode.value === 'auto')
+const showManualFields = computed(
+  () => provider.value !== 'new-api' || newApiMode.value === 'manual',
+)
+
 watch(provider, (value) => {
-  if (props.open && props.canManage && value === 'new-api') void loadGroups()
+  if (value !== 'new-api') newApiMode.value = 'auto'
+  if (props.open && props.canManage && value === 'new-api' && newApiMode.value === 'auto') {
+    void loadGroups()
+  }
+})
+
+watch(newApiMode, (value) => {
+  if (props.open && props.canManage && provider.value === 'new-api' && value === 'auto') {
+    void loadGroups()
+  }
 })
 
 const tokenNamePreview = computed(() => {
@@ -76,7 +99,9 @@ const tokenNamePreview = computed(() => {
 
 const createDisabled = computed(() => {
   if (!props.canManage || saving.value) return true
-  if (provider.value === 'new-api') return !providerGroup.value || !!groupsError.value || groupOptions.value.length === 0
+  if (showNewApiAuto.value) {
+    return !providerGroup.value || !!groupsError.value || groupOptions.value.length === 0
+  }
   return !baseUrl.value.trim() || !apiKey.value.trim()
 })
 
@@ -85,7 +110,9 @@ watch(
   ([open]) => {
     if (!open) {
       plaintext.value = ''
+      revealedById.value = {}
       copied.value = false
+      revealedCopiedId.value = null
       return
     }
     void reload()
@@ -98,9 +125,10 @@ async function reload() {
   loading.value = true
   groupsError.value = ''
   plaintext.value = ''
+  revealedById.value = {}
   try {
     tokens.value = await store.fetchMemberTokens(props.member.id)
-    if (props.canManage && provider.value === 'new-api') {
+    if (props.canManage && showNewApiAuto.value) {
       await loadGroups()
     }
   } catch (error) {
@@ -147,8 +175,9 @@ async function handleCreate() {
       is_default: tokens.value.length === 0,
       models: modelsDocument(),
     }
-    if (provider.value === 'new-api') payload.provider_group = providerGroup.value
-    else {
+    if (showNewApiAuto.value) {
+      payload.provider_group = providerGroup.value
+    } else {
       payload.base_url = baseUrl.value.trim()
       payload.token = apiKey.value.trim()
     }
@@ -190,9 +219,65 @@ async function handleDelete(item: TokenItem) {
   try {
     await store.deleteMemberToken(props.member.id, item.id)
     toast.success(t('memberManagement.modelTokenDeleted'))
+    delete revealedById.value[item.id]
     tokens.value = await store.fetchMemberTokens(props.member.id)
   } catch (error) {
     toast.error(resolveApiErrorMessage(error, t('memberManagement.modelTokenDeleted')))
+    tokens.value = await store.fetchMemberTokens(props.member.id)
+  } finally {
+    saving.value = false
+  }
+}
+
+async function handleReveal(item: TokenItem) {
+  if (!props.member) return
+  if (revealedById.value[item.id]) {
+    const next = { ...revealedById.value }
+    delete next[item.id]
+    revealedById.value = next
+    return
+  }
+  saving.value = true
+  try {
+    const value = await store.revealMemberToken(props.member.id, item.id)
+    if (value) revealedById.value = { ...revealedById.value, [item.id]: value }
+  } catch (error) {
+    toast.error(resolveApiErrorMessage(error, t('memberManagement.modelTokenView')))
+  } finally {
+    saving.value = false
+  }
+}
+
+async function handleRetryRevoke(item: TokenItem) {
+  if (!props.member || !props.canManage) return
+  saving.value = true
+  try {
+    await store.retryRevokeMemberToken(props.member.id, item.id)
+    toast.success(t('memberManagement.modelTokenRevokeRetried'))
+    tokens.value = await store.fetchMemberTokens(props.member.id)
+  } catch (error) {
+    toast.error(resolveApiErrorMessage(error, t('memberManagement.modelTokenRetryRevoke')))
+    tokens.value = await store.fetchMemberTokens(props.member.id)
+  } finally {
+    saving.value = false
+  }
+}
+
+async function handleCloseLocal(item: TokenItem) {
+  if (!props.member || !props.canManage) return
+  const ok = await confirm({
+    description: t('memberManagement.modelTokenConfirmCloseLocal'),
+    variant: 'danger',
+  })
+  if (!ok) return
+  saving.value = true
+  try {
+    await store.closeLocalMemberToken(props.member.id, item.id)
+    toast.success(t('memberManagement.modelTokenClosedLocal'))
+    delete revealedById.value[item.id]
+    tokens.value = await store.fetchMemberTokens(props.member.id)
+  } catch (error) {
+    toast.error(resolveApiErrorMessage(error, t('memberManagement.modelTokenCloseLocal')))
     tokens.value = await store.fetchMemberTokens(props.member.id)
   } finally {
     saving.value = false
@@ -205,8 +290,16 @@ async function copyPlaintext() {
   copied.value = true
 }
 
+async function copyRevealed(itemId: string) {
+  const value = revealedById.value[itemId]
+  if (!value) return
+  await navigator.clipboard.writeText(value)
+  revealedCopiedId.value = itemId
+}
+
 function close() {
   plaintext.value = ''
+  revealedById.value = {}
   emit('close')
 }
 </script>
@@ -230,7 +323,14 @@ function close() {
           <Label>{{ t('memberManagement.modelTokenProvider') }}</Label>
           <CustomSelect v-model="provider" :options="providerOptions" class="mt-1" />
         </div>
-        <template v-if="provider === 'new-api'">
+        <div v-if="provider === 'new-api'">
+          <Label>{{ t('memberManagement.modelTokenEntryMode') }}</Label>
+          <CustomSelect v-model="newApiMode" :options="newApiModeOptions" class="mt-1" />
+          <p v-if="newApiMode === 'manual'" class="text-xs text-muted-foreground mt-1">
+            {{ t('memberManagement.modelTokenManualHint') }}
+          </p>
+        </div>
+        <template v-if="showNewApiAuto">
           <div>
             <Label>{{ t('memberManagement.modelTokenBaseUrl') }}</Label>
             <Input disabled class="mt-1" :placeholder="t('memberManagement.modelTokenBaseUrlHint')" />
@@ -246,7 +346,7 @@ function close() {
             <CustomSelect v-model="providerGroup" :options="groupOptions" :disabled="!groupOptions.length" class="mt-1" />
           </div>
         </template>
-        <template v-else>
+        <template v-if="showManualFields">
           <div>
             <Label>{{ t('memberManagement.modelTokenBaseUrl') }}</Label>
             <Input v-model="baseUrl" class="mt-1" />
@@ -260,10 +360,10 @@ function close() {
           <Label>{{ t('memberManagement.modelTokenModels') }}</Label>
           <Input v-model="modelsText" class="mt-1" :placeholder="t('memberManagement.modelTokenModelsHint')" />
         </div>
-        <p v-if="groupsError && provider === 'new-api'" class="text-sm text-destructive">{{ groupsError }}</p>
+        <p v-if="groupsError && showNewApiAuto" class="text-sm text-destructive">{{ groupsError }}</p>
         <Button :disabled="createDisabled" @click="handleCreate">
           <Loader2 v-if="saving" class="w-4 h-4 animate-spin mr-1" />
-          {{ t('memberManagement.modelTokenCreate') }}
+          {{ showNewApiAuto ? t('memberManagement.modelTokenCreate') : t('memberManagement.modelTokenEntryManual') }}
         </Button>
       </div>
 
@@ -285,17 +385,59 @@ function close() {
         <div v-if="item.token_name">{{ t('memberManagement.modelTokenName') }}: {{ item.token_name }}</div>
         <div v-if="item.provider_group">{{ t('memberManagement.modelTokenGroup') }}: {{ item.provider_group }}</div>
         <div>{{ t('memberManagement.modelTokenMasked') }}: {{ item.token_masked }}</div>
+        <div v-if="revealedById[item.id]" class="space-y-2 pt-1">
+          <div class="flex gap-2">
+            <Input :model-value="revealedById[item.id]" readonly />
+            <Button variant="outline" size="sm" @click="copyRevealed(item.id)">
+              <Copy class="w-4 h-4 mr-1" />
+              {{ revealedCopiedId === item.id ? t('memberManagement.modelTokenCopied') : t('memberManagement.modelTokenCopy') }}
+            </Button>
+          </div>
+        </div>
         <div>{{ t('memberManagement.modelTokenModelCount') }}: {{ item.model_count }}</div>
         <div>{{ t('memberManagement.modelTokenDefault') }}: {{ item.is_default ? t('common.yes') : t('common.no') }}</div>
         <div>{{ t('memberManagement.modelTokenActive') }}: {{ item.is_active ? t('common.yes') : t('common.no') }}</div>
         <div>{{ t('memberManagement.modelTokenSync') }}: {{ item.sync_status }}</div>
-        <div v-if="canManage" class="flex gap-2 pt-2">
-          <Button variant="outline" size="sm" :disabled="saving" @click="toggleActive(item)">
-            {{ item.is_active ? t('memberManagement.modelTokenDisable') : t('memberManagement.modelTokenEnable') }}
+        <div class="flex flex-wrap gap-2 pt-2">
+          <Button variant="outline" size="sm" :disabled="saving" @click="handleReveal(item)">
+            {{ revealedById[item.id] ? t('memberManagement.modelTokenHide') : t('memberManagement.modelTokenView') }}
           </Button>
-          <Button variant="outline" size="sm" :disabled="saving" @click="handleDelete(item)">
-            {{ t('memberManagement.modelTokenDelete') }}
-          </Button>
+          <template v-if="canManage">
+            <Button
+              v-if="item.sync_status === 'revoke_pending'"
+              variant="outline"
+              size="sm"
+              :disabled="saving"
+              @click="handleRetryRevoke(item)"
+            >
+              {{ t('memberManagement.modelTokenRetryRevoke') }}
+            </Button>
+            <Button
+              v-if="item.sync_status === 'revoke_pending'"
+              variant="outline"
+              size="sm"
+              :disabled="saving"
+              @click="handleCloseLocal(item)"
+            >
+              {{ t('memberManagement.modelTokenCloseLocal') }}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              :disabled="saving"
+              @click="toggleActive(item)"
+            >
+              {{ item.is_active ? t('memberManagement.modelTokenDisable') : t('memberManagement.modelTokenEnable') }}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              :disabled="saving"
+              @click="handleDelete(item)"
+            >
+              {{ t('memberManagement.modelTokenDelete') }}
+            </Button>
+          </template>
         </div>
       </div>
 

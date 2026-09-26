@@ -101,9 +101,9 @@ HTTP 响应头只能是 latin-1；含中文的下载文件名必须用 RFC 5987 
 
 成员模型凭证是挂在组织成员关系上的独立密钥，表为 `member_tokens`，不替代组织级或用户级 LLM Key。
 
-归属以路径 `org_id` 对照该 `org_memberships` 行的 `org_id`；不一致则成员不存在。不用 `users.current_org_id` 当作凭证所属组织。管理员走 `require_org_admin` 做创建、修改、删除；登录成员只能读取自己那条 membership 的列表，响应只有掩码。NEW-API 创建成功时，完整 Key 只在这一次响应里出现。实现：[[nodeskclaw-backend/app/services/member_token_service.py#create_member_token]]、[[nodeskclaw-backend/app/services/member_token_service.py#list_member_tokens]]。模型：[[nodeskclaw-backend/app/models/member_token.py#MemberToken]]。
+归属以路径 `org_id` 对照该 `org_memberships` 行的 `org_id`；不一致则成员不存在。不用 `users.current_org_id` 当作凭证所属组织。管理员走 `require_org_admin` 做创建、修改、删除、重试撤销和只关闭本地。列表与普通读取只返回掩码。完整 Key 只从 `reveal_member_token` 返回，调用者必须是该成员本人或本组织管理员，审计不记录 Key。实现：[[nodeskclaw-backend/app/services/member_token_service.py#create_member_token]]、[[nodeskclaw-backend/app/services/member_token_service.py#reveal_member_token]]。模型：[[nodeskclaw-backend/app/models/member_token.py#MemberToken]]。
 
-NEW-API 只读进程环境变量。每个管理请求同时带 `Authorization: Bearer` 和 `New-Api-User`。创建时把当时的 Model URL 写入该行 `base_url`，之后改 `.env` 不回写旧行。停用、删除、改分组使用当前配置；外部失败则保留原来的 `is_active` 与 `provider_group`，`sync_status=error`，不另建外部 Token，也不保存 Admin URL。同名外部 Token 只拒绝，不自动认领。分组名来自实时查询，代码里不写死 `default` 一类名称。客户端：[[nodeskclaw-backend/app/services/model_provider/new_api.py#NewApiClient]]。
+NEW-API 自动创建只读进程环境变量。每个管理请求同时带 `Authorization: Bearer` 和 `New-Api-User`。创建时把当时的 Model URL 写入该行 `base_url`，之后改 `.env` 不回写旧行。自动行改分组或启停时，外部失败则保留原来的 `is_active` 与 `provider_group`。撤销外部 Token 失败则 `is_active=false` 且 `sync_status=revoke_pending`，保留外部 id；当前 NEW-API 找不到该 id 时重试仍不软删。只关闭本地记录不调用 NEW-API。本地提交失败只回滚，不删除已经创建的外部 Token。手工 new-api 只保存管理员填写的 Base URL 和 Key，不写 `external_token_id` 或 `token_name`，后续启停也不调用 NEW-API。同名外部 Token 只拒绝，不自动认领。客户端：[[nodeskclaw-backend/app/services/model_provider/new_api.py#NewApiClient]]。
 
 密文使用独立的 `MODEL_TOKEN_ENCRYPTION_KEY`（base64 的 32 字节），格式 `enc:v1:`，算法 AES-256-GCM，AAD 含凭证 id、成员 id 与 provider。不复用 KubeConfig 的 `ENCRYPTION_KEY`。加密：[[nodeskclaw-backend/app/services/credential_crypto.py#encrypt_member_token]]。
 

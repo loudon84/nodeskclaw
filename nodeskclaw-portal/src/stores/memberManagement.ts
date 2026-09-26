@@ -252,6 +252,34 @@ export const useMemberManagementStore = defineStore('memberManagement', () => {
     await api.delete(`/orgs/${id}/members/${membershipId}/tokens/${tokenId}`)
   }
 
+  async function revealMemberToken(membershipId: string, tokenId: string) {
+    const id = orgId()
+    if (!id) return
+    const res = await api.post(`/orgs/${id}/members/${membershipId}/tokens/${tokenId}/reveal`)
+    return res.data.data?.plaintext_token as string | undefined
+  }
+
+  async function retryRevokeMemberToken(membershipId: string, tokenId: string) {
+    const id = orgId()
+    if (!id) return
+    const res = await api.post(`/orgs/${id}/members/${membershipId}/tokens/${tokenId}/retry-revoke`)
+    return res.data.data
+  }
+
+  async function closeLocalMemberToken(membershipId: string, tokenId: string) {
+    const id = orgId()
+    if (!id) return
+    const res = await api.post(`/orgs/${id}/members/${membershipId}/tokens/${tokenId}/close-local`)
+    return res.data.data
+  }
+
+  async function fetchPendingCloseTokens() {
+    const id = orgId()
+    if (!id) return []
+    const res = await api.get(`/orgs/${id}/member-tokens/pending-close`)
+    return res.data.data?.items ?? []
+  }
+
   async function replaceMemberSkillGrants(membershipId: string, grants: MemberSkillGrantPayload[]) {
     const id = orgId()
     if (!id) return
@@ -288,6 +316,10 @@ export const useMemberManagementStore = defineStore('memberManagement', () => {
     createMemberToken,
     updateMemberToken,
     deleteMemberToken,
+    revealMemberToken,
+    retryRevokeMemberToken,
+    closeLocalMemberToken,
+    fetchPendingCloseTokens,
     replaceMemberSkillGrants,
   }
 })

@@ -52,6 +52,20 @@ const resetResultName = ref('')
 const resetResultPassword = ref('')
 const resetCopied = ref(false)
 
+interface PendingCloseItem {
+  id: string
+  member_id: string
+  provider: string
+  token_masked: string
+  sync_status: string
+  membership_deleted?: boolean
+  user_name?: string | null
+  user_email?: string | null
+}
+
+const pendingCloseTokens = ref<PendingCloseItem[]>([])
+const pendingCloseLoading = ref(false)
+
 const isOrgAdmin = computed(() => authStore.user?.portal_org_role === 'admin')
 
 const departments = computed(() => {
@@ -114,10 +128,60 @@ onMounted(async () => {
       store.fetchMembers(),
       store.fetchPendingInvitations(),
       fetchRoles(),
+      loadPendingClose(),
     ])
   }
   loading.value = false
 })
+
+async function loadPendingClose() {
+  if (!isOrgAdmin.value) {
+    pendingCloseTokens.value = []
+    return
+  }
+  pendingCloseLoading.value = true
+  try {
+    pendingCloseTokens.value = await store.fetchPendingCloseTokens()
+  } catch (e) {
+    pendingCloseTokens.value = []
+    toast.error(resolveApiErrorMessage(e, t('memberManagement.pendingCloseLoadFailed')))
+  } finally {
+    pendingCloseLoading.value = false
+  }
+}
+
+async function handlePendingRetry(item: PendingCloseItem) {
+  actionLoading.value = item.id
+  try {
+    await store.retryRevokeMemberToken(item.member_id, item.id)
+    toast.success(t('memberManagement.modelTokenRevokeRetried'))
+    await loadPendingClose()
+  } catch (e) {
+    toast.error(resolveApiErrorMessage(e, t('memberManagement.modelTokenRetryRevoke')))
+    await loadPendingClose()
+  } finally {
+    actionLoading.value = null
+  }
+}
+
+async function handlePendingCloseLocal(item: PendingCloseItem) {
+  const ok = await confirm({
+    description: t('memberManagement.modelTokenConfirmCloseLocal'),
+    variant: 'danger',
+  })
+  if (!ok) return
+  actionLoading.value = item.id
+  try {
+    await store.closeLocalMemberToken(item.member_id, item.id)
+    toast.success(t('memberManagement.modelTokenClosedLocal'))
+    await loadPendingClose()
+  } catch (e) {
+    toast.error(resolveApiErrorMessage(e, t('memberManagement.modelTokenCloseLocal')))
+    await loadPendingClose()
+  } finally {
+    actionLoading.value = null
+  }
+}
 
 async function fetchRoles() {
   if (!orgStore.currentOrgId) return
@@ -280,6 +344,49 @@ async function handleInvite() {
         <CustomSelect v-model="roleFilter" :options="roleFilterOptions" class="w-full md:w-40" />
         <CustomSelect v-model="departmentFilter" :options="departmentFilterOptions" class="w-full md:w-40" />
         <CustomSelect v-model="skillFilter" :options="skillFilterOptions" class="w-full md:w-44" />
+      </div>
+
+      <div v-if="isOrgAdmin" class="rounded-xl border border-border bg-card p-4 mb-4 space-y-3">
+        <div>
+          <h2 class="text-sm font-semibold">{{ t('memberManagement.modelTokenPendingCloseTitle') }}</h2>
+        </div>
+        <div v-if="pendingCloseLoading" class="text-sm text-muted-foreground">{{ t('common.loading') }}</div>
+        <p v-else-if="!pendingCloseTokens.length" class="text-sm text-muted-foreground">
+          {{ t('memberManagement.modelTokenPendingCloseEmpty') }}
+        </p>
+        <div
+          v-for="item in pendingCloseTokens"
+          :key="item.id"
+          class="rounded-lg border border-border p-3 text-sm space-y-2"
+        >
+          <div class="font-medium">
+            {{ item.user_name || item.user_email || '-' }}
+            <span v-if="item.membership_deleted" class="text-xs text-muted-foreground ml-2">
+              {{ t('memberManagement.modelTokenMemberRemoved') }}
+            </span>
+          </div>
+          <div class="text-muted-foreground">{{ item.user_email || '-' }}</div>
+          <div>{{ t('memberManagement.modelTokenMasked') }}: {{ item.token_masked }}</div>
+          <div>{{ t('memberManagement.modelTokenSync') }}: {{ item.sync_status }}</div>
+          <div class="flex flex-wrap gap-2 pt-1">
+            <Button
+              variant="outline"
+              size="sm"
+              :disabled="actionLoading === item.id"
+              @click="handlePendingRetry(item)"
+            >
+              {{ t('memberManagement.modelTokenRetryRevoke') }}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              :disabled="actionLoading === item.id"
+              @click="handlePendingCloseLocal(item)"
+            >
+              {{ t('memberManagement.modelTokenCloseLocal') }}
+            </Button>
+          </div>
+        </div>
       </div>
 
       <div class="space-y-3">

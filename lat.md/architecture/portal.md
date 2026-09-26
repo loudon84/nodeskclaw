@@ -14,7 +14,7 @@ Hermes Connectors（`/hermes/connectors`）与 Edge 节点（`/hermes/edge-nodes
 
 Hermes Installations（`/hermes/installations`）页选择 remote / edge 安装目标（edge 需选定节点），并展示边缘回报的 `actual_status` 漂移状态。
 
-成员页 `/members` 由 `MemberManagement.vue` 与 store `memberManagement.ts` 管理。组织管理员的成员卡片多一个「模型凭证」入口，弹窗组件是 `MemberModelTokenDialog.vue`：可以创建、停用和删除；NEW-API 的完整 Key 只在创建成功后出现一次，关闭后只剩掩码。非管理员只能打开自己那一行的只读弹窗，里面没有创建、停用、删除，也不提供复制完整 Key。分组使用项目里的自定义下拉，不使用原生 `select`。文案在 `zh-CN` / `en-US` 的 `memberManagement`，失败用 `errors.member_token.*`。后端契约见 [[architecture/backend#Member Model Credential]]。
+成员页 `/members` 由 `MemberManagement.vue` 与 store `memberManagement.ts` 管理。组织管理员可以在成员卡片打开「模型凭证」：自动创建，或手工录入只保存在本地的 NEW-API Key。列表仍是掩码，点「查看」才展开完整 Key。撤销未完成的行可以重试撤销，或只关闭本地记录。成员列表上方还有「待关闭凭证」，包含已经不在成员列表中的人。非管理员只能打开自己的弹窗，可以查看自己的完整 Key，没有创建、停用、删除和关闭。分组使用自定义下拉。文案在 `zh-CN` / `en-US` 的 `memberManagement`，失败用 `errors.member_token.*`。后端契约见 [[architecture/backend#Member Model Credential]]。
 
 标准触及链：`router` → `views` → `components` → `services` → `stores` → `i18n` → `types`。跨页状态用 Pinia（`useXxxStore`），局部状态留在组件内。
 

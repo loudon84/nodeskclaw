@@ -46,6 +46,7 @@ class NewApiClient:
         params: dict | None = None,
         failure_key: str,
         failure_message: str,
+        not_found_key: str | None = None,
     ) -> object:
         self.require_configured()
         url = f"{self.base_url}{path}"
@@ -66,6 +67,12 @@ class NewApiClient:
                 502,
                 "errors.member_token.new_api_auth_failed",
                 "NEW-API 鉴权失败，请检查系统访问令牌和 NEW_API_USER_ID",
+            )
+        if response.status_code == 404 and not_found_key:
+            raise MemberTokenError(
+                502,
+                not_found_key,
+                "当前 NEW-API 上找不到该 Token，本地记录保持待关闭",
             )
         try:
             body = response.json()
@@ -198,6 +205,7 @@ class NewApiClient:
             f"/api/token/{external_id}",
             failure_key="errors.member_token.new_api_delete_failed",
             failure_message="删除 NEW-API Token 失败",
+            not_found_key="errors.member_token.new_api_token_missing",
         )
 
 

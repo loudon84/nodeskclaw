@@ -34,17 +34,6 @@ logger = logging.getLogger(__name__)
 PROVIDERS = {"new-api", "deepseek", "custom"}
 
 
-async def _compensate_external_token(client: NewApiClient, external_id: str) -> None:
-    try:
-        await client.delete_token(external_id)
-    except MemberTokenError as exc:
-        raise MemberTokenError(
-            502,
-            "errors.member_token.new_api_compensation_failed",
-            "本地保存失败，且未能删除刚创建的 NEW-API Token，请检查后重试",
-        ) from exc
-
-
 def mask_token(plaintext: str) -> str:
     length = len(plaintext)
     if length <= 8:
@@ -73,6 +62,14 @@ def token_name_from_email(email: str | None) -> str:
 
 def assert_membership_org(membership: OrgMembership | None, org_id: str) -> OrgMembership:
     if membership is None or membership.org_id != org_id or membership.deleted_at is not None:
+        raise MemberTokenError(404, "errors.member_token.member_not_found", "成员不存在于该组织")
+    return membership
+
+
+def assert_membership_org_including_removed(
+    membership: OrgMembership | None, org_id: str
+) -> OrgMembership:
+    if membership is None or membership.org_id != org_id:
         raise MemberTokenError(404, "errors.member_token.member_not_found", "成员不存在于该组织")
     return membership
 
@@ -123,6 +120,7 @@ async def create_member_token(
     plaintext: str | None,
     models: dict | None,
     is_default: bool,
+    fields_set: set[str] | None = None,
 ) -> dict:
     if provider not in PROVIDERS:
         raise MemberTokenError(400, "errors.member_token.provider_unsupported", "不支持的模型 Provider")
@@ -131,18 +129,21 @@ async def create_member_token(
     document = normalize_models_document(models)
     await _lock(db, membership.id, provider)
     existing = await _find_provider_row(db, membership.id, provider)
+    present = fields_set or set()
     if provider == "new-api":
-        return await _provision_new_api(
+        return await _create_new_api(
             db,
             membership=membership,
             actor=actor,
             existing=existing,
             provider_group=provider_group,
+            base_url=base_url,
+            plaintext=plaintext,
             document=document,
             is_default=is_default,
-            supplied_plaintext=plaintext,
+            fields_set=present,
         )
-    if plaintext is None or not base_url:
+    if "token" not in present or "base_url" not in present or plaintext is None or not base_url:
         raise MemberTokenError(
             400,
             "errors.member_token.manual_fields_required",
@@ -191,7 +192,7 @@ async def update_member_token(
         document = normalize_models_document(fields["models"])
     else:
         document = None
-    if row.provider == "new-api":
+    if row.provider == "new-api" and row.external_token_id:
         await _update_new_api(db, membership, row, fields)
     else:
         await _update_manual(row, fields)
@@ -218,12 +219,12 @@ async def delete_member_token(
     membership = await _load_membership(db, membership_id)
     assert_membership_org(membership, org_id)
     row = await _get_row(db, membership.id, token_id)
-    manual = row.provider != "new-api"
-    if row.provider == "new-api" and row.external_token_id:
+    managed_remote = bool(row.external_token_id)
+    if managed_remote:
         try:
             await NewApiClient().delete_token(row.external_token_id)
         except MemberTokenError as exc:
-            await _mark_control_error(db, row, exc)
+            await _mark_revoke_pending(db, row, exc)
             raise
     row_id = row.id
     provider = row.provider
@@ -236,8 +237,143 @@ async def delete_member_token(
         "member_token.deleted",
         row_id,
         provider=provider,
-        external_revoke_supported=not manual,
+        external_revoke_supported=managed_remote,
     )
+
+
+async def retry_revoke_member_token(
+    db: AsyncSession,
+    *,
+    org_id: str,
+    membership_id: str,
+    token_id: str,
+    actor: User,
+) -> dict:
+    membership = await _load_membership(db, membership_id)
+    assert_membership_org_including_removed(membership, org_id)
+    row = await _get_row(db, membership.id, token_id)
+    if row.sync_status != "revoke_pending":
+        raise MemberTokenError(
+            409,
+            "errors.member_token.close_not_pending",
+            "只有撤销未完成的凭证可以重试撤销",
+        )
+    if not row.external_token_id:
+        raise MemberTokenError(
+            409,
+            "errors.member_token.external_missing",
+            "缺少外部 Token，无法重试撤销",
+        )
+    try:
+        await NewApiClient().delete_token(row.external_token_id)
+    except MemberTokenError as exc:
+        row.sync_status = "revoke_pending"
+        row.is_active = False
+        row.last_sync_error = exc.message_key
+        await db.commit()
+        raise
+    row_id = row.id
+    provider = row.provider
+    row.is_active = False
+    row.sync_status = "synced"
+    row.last_sync_error = None
+    row.soft_delete()
+    await db.commit()
+    await _audit(actor.id, org_id, "member_token.deleted", row_id, provider=provider, retry_revoke=True)
+    return {"id": row_id, "closed": True}
+
+
+async def close_local_member_token(
+    db: AsyncSession,
+    *,
+    org_id: str,
+    membership_id: str,
+    token_id: str,
+    actor: User,
+) -> dict:
+    membership = await _load_membership(db, membership_id)
+    assert_membership_org_including_removed(membership, org_id)
+    row = await _get_row(db, membership.id, token_id)
+    if row.sync_status != "revoke_pending":
+        raise MemberTokenError(
+            409,
+            "errors.member_token.close_not_pending",
+            "只有撤销未完成的凭证可以只关闭本地记录",
+        )
+    row_id = row.id
+    provider = row.provider
+    row.is_active = False
+    row.soft_delete()
+    await db.commit()
+    await _audit(
+        actor.id,
+        org_id,
+        "member_token.closed_local",
+        row_id,
+        provider=provider,
+        external_revoke_confirmed=False,
+    )
+    return {"id": row_id, "closed": True}
+
+
+async def list_pending_close_tokens(
+    db: AsyncSession,
+    *,
+    org_id: str,
+) -> list[dict]:
+    result = await db.execute(
+        select(MemberToken, OrgMembership, User)
+        .join(OrgMembership, MemberToken.member_id == OrgMembership.id)
+        .outerjoin(User, OrgMembership.user_id == User.id)
+        .where(
+            OrgMembership.org_id == org_id,
+            MemberToken.sync_status == "revoke_pending",
+            MemberToken.deleted_at.is_(None),
+        )
+        .order_by(MemberToken.updated_at.desc())
+    )
+    items = []
+    for row, membership, user in result.all():
+        public = _public(row)
+        items.append(
+            {
+                **public,
+                "member_id": membership.id,
+                "membership_deleted": membership.deleted_at is not None,
+                "user_name": user.name if user else None,
+                "user_email": user.email if user else None,
+            }
+        )
+    return items
+
+
+async def reveal_member_token(
+    db: AsyncSession,
+    *,
+    org_id: str,
+    membership_id: str,
+    token_id: str,
+    caller: User,
+) -> dict:
+    membership = await _load_membership(db, membership_id)
+    assert_membership_org(membership, org_id)
+    await _assert_can_reveal(db, caller, membership)
+    row = await _get_row(db, membership.id, token_id)
+    plaintext = decrypt_member_token(
+        row.token,
+        token_id=row.id,
+        member_id=row.member_id,
+        provider=row.provider,
+    )
+    await _audit(
+        caller.id,
+        org_id,
+        "member_token.revealed",
+        row.id,
+        provider=row.provider,
+        member_id=membership.id,
+    )
+    return {"plaintext_token": plaintext}
 
 
 async def revoke_tokens_for_removed_member(
@@ -250,7 +386,7 @@ async def revoke_tokens_for_removed_member(
     client = NewApiClient()
     for row in rows:
         row.is_active = False
-        if row.provider != "new-api" or not row.external_token_id:
+        if not row.external_token_id:
             row.soft_delete()
             continue
         try:
@@ -273,25 +409,95 @@ async def revoke_tokens_for_removed_member(
     return len(rows)
 
 
-async def _provision_new_api(
+async def _create_new_api(
     db: AsyncSession,
     *,
     membership: OrgMembership,
     actor: User,
     existing: MemberToken | None,
     provider_group: str | None,
+    base_url: str | None,
+    plaintext: str | None,
     document: dict,
     is_default: bool,
-    supplied_plaintext: str | None,
+    fields_set: set[str],
 ) -> dict:
-    if supplied_plaintext:
-        raise MemberTokenError(
-            400,
-            "errors.member_token.managed_field_forbidden",
-            "NEW-API 凭证由系统签发，不能手工填写 Key",
+    token_present = "token" in fields_set
+    base_url_present = "base_url" in fields_set
+    group_value = (provider_group or "").strip() if provider_group else ""
+    group_present = bool(group_value) and group_value != "auto"
+
+    if group_present:
+        if token_present or base_url_present:
+            raise MemberTokenError(
+                400,
+                "errors.member_token.managed_field_forbidden",
+                "NEW-API 自动创建不能提交 Base URL 或 API Key",
+            )
+        return await _provision_new_api(
+            db,
+            membership=membership,
+            actor=actor,
+            existing=existing,
+            provider_group=group_value,
+            document=document,
+            is_default=is_default,
         )
-    if not provider_group or provider_group == "auto":
-        raise MemberTokenError(400, "errors.member_token.group_required", "请选择 NEW-API 分组")
+
+    if token_present or base_url_present:
+        if not plaintext or not str(plaintext).strip() or not base_url or not str(base_url).strip():
+            raise MemberTokenError(
+                400,
+                "errors.member_token.manual_fields_required",
+                "手工录入 NEW-API 需要填写 Base URL 和 API Key",
+            )
+        if existing is not None:
+            raise MemberTokenError(
+                409,
+                "errors.member_token.provider_exists",
+                "该成员已有 NEW-API 凭证，请先关闭后再手工录入",
+            )
+        load_model_token_key()
+        row = await _insert_local(
+            db,
+            membership=membership,
+            actor_id=actor.id,
+            provider="new-api",
+            base_url=base_url.strip(),
+            plaintext=str(plaintext).strip(),
+            provider_group=None,
+            token_name=None,
+            external_token_id=None,
+            source="manual",
+            sync_status="manual",
+            document=document,
+            is_default=is_default,
+        )
+        await db.commit()
+        await db.refresh(row)
+        await _audit(
+            actor.id,
+            membership.org_id,
+            "member_token.created",
+            row.id,
+            provider="new-api",
+            source="manual",
+        )
+        return {**_public(row), "created": True, "plaintext_token": None}
+
+    raise MemberTokenError(400, "errors.member_token.group_required", "请选择 NEW-API 分组")
+
+
+async def _provision_new_api(
+    db: AsyncSession,
+    *,
+    membership: OrgMembership,
+    actor: User,
+    existing: MemberToken | None,
+    provider_group: str,
+    document: dict,
+    is_default: bool,
+) -> dict:
     model_url = (settings.NEW_API_MODEL_BASE_URL or "").strip()
     if not model_url:
         raise MemberTokenError(
@@ -349,7 +555,6 @@ async def _provision_new_api(
         await db.commit()
     except Exception:
         await db.rollback()
-        await _compensate_external_token(client, external_id)
         raise
     await db.refresh(row)
     await _audit(actor.id, membership.org_id, "member_token.created", row.id, provider="new-api", source="auto")
@@ -357,7 +562,7 @@ async def _provision_new_api(
 
 
 async def _update_new_api(db: AsyncSession, membership: OrgMembership, row: MemberToken, fields: dict) -> None:
-    if fields.get("base_url") or fields.get("token"):
+    if "base_url" in fields or "token" in fields:
         raise MemberTokenError(
             400,
             "errors.member_token.managed_field_forbidden",
@@ -473,6 +678,13 @@ async def _mark_control_error(db: AsyncSession, row: MemberToken, exc: MemberTok
     await db.commit()
 
 
+async def _mark_revoke_pending(db: AsyncSession, row: MemberToken, exc: MemberTokenError) -> None:
+    row.is_active = False
+    row.sync_status = "revoke_pending"
+    row.last_sync_error = exc.message_key
+    await db.commit()
+
+
 async def _clear_default(db: AsyncSession, member_id: str, except_id: str | None) -> None:
     stmt = (
         update(MemberToken)
@@ -518,6 +730,25 @@ async def _assert_can_read(db: AsyncSession, caller: User, membership: OrgMember
     )
     if result.scalar_one_or_none() is None:
         raise MemberTokenError(403, "errors.member_token.forbidden", "只能查看本人的模型凭证")
+
+
+async def _assert_can_reveal(db: AsyncSession, caller: User, membership: OrgMembership) -> None:
+    if caller.is_super_admin or caller.id == membership.user_id:
+        return
+    result = await db.execute(
+        select(OrgMembership).where(
+            OrgMembership.user_id == caller.id,
+            OrgMembership.org_id == membership.org_id,
+            OrgMembership.role == OrgRole.admin,
+            not_deleted(OrgMembership),
+        )
+    )
+    if result.scalar_one_or_none() is None:
+        raise MemberTokenError(
+            403,
+            "errors.member_token.reveal_forbidden",
+            "只能查看本人或本组织成员的完整 Key",
+        )
 
 
 async def _active_rows(db: AsyncSession, member_id: str) -> list[MemberToken]:
@@ -587,7 +818,11 @@ def _public(row: MemberToken) -> dict:
 
 
 async def _audit(actor_id: str, org_id: str, action: str, target_id: str, **details) -> None:
-    safe = {key: value for key, value in details.items() if key not in {"token", "plaintext", "plaintext_token"}}
+    safe = {
+        key: value
+        for key, value in details.items()
+        if key not in {"token", "plaintext", "plaintext_token"}
+    }
     await hooks.emit(
         "operation_audit",
         action=action,
