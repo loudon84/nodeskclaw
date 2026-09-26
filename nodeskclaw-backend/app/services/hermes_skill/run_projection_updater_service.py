@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -10,7 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.deps import async_session_factory
+from app.models.base import not_deleted
 from app.models.hermes_skill.hermes_task import HermesTask, HermesTaskEvent, TaskStatus, EventType
+from app.models.hermes_skill.run_dispatch_outbox import RunDispatchOutbox, RunDispatchStatus
 
 logger = logging.getLogger(__name__)
 
@@ -80,12 +83,21 @@ class RunProjectionUpdaterService:
                 # 1. Fetch Run details
                 resp_run = await client.get(f"/internal/v1/runs/{task_id}")
                 if resp_run.status_code == 404:
+                    if await self._dispatch_still_open(task_id):
+                        logger.info(
+                            "skill_run.projection_waiting_dispatch task_id=%s org_id=%s",
+                            task_id,
+                            org_id,
+                        )
+                        return False
+                    await self._stop_missing_agent_run(task)
                     logger.error(
                         "skill_run.projection_sync_failed task_id=%s org_id=%s error_code=PROJECTION_SYNC_FAILED reason=agent_run_not_found",
                         task_id,
                         org_id,
                     )
                     _inc_projection_sync_failed("agent_run_not_found")
+                    await self.db.commit()
                     return False
                 resp_run.raise_for_status()
                 run_data = resp_run.json()
@@ -203,6 +215,24 @@ class RunProjectionUpdaterService:
             _inc_projection_sync_failed("exception")
             await self.db.rollback()
             return False
+
+    async def _dispatch_still_open(self, run_id: str) -> bool:
+        result = await self.db.execute(
+            select(RunDispatchOutbox.status).where(
+                RunDispatchOutbox.run_id == run_id,
+                not_deleted(RunDispatchOutbox),
+                RunDispatchOutbox.status.in_(
+                    [RunDispatchStatus.PENDING.value, RunDispatchStatus.DELIVERING.value]
+                ),
+            )
+        )
+        return result.first() is not None
+
+    async def _stop_missing_agent_run(self, task: HermesTask) -> None:
+        task.status = TaskStatus.FAILED
+        task.error_code = "errors.skill_run.agent_run_not_found"
+        task.error_message = "Agent 上没有这条 Run，投递已停止，投影不再重试"
+        task.completed_at = datetime.now(timezone.utc)
 
     async def _next_local_seq(self, task_id: str) -> int:
         max_seq_result = await self.db.execute(

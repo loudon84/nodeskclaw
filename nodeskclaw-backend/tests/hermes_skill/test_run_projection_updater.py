@@ -400,6 +400,79 @@ def test_map_event_type_run_timed_out():
     assert mapped != EventType.HERMES_RUN_DELTA
 
 
+def _http_client_returning(status_code: int, monkeypatch):
+    app = FastAPI()
+
+    @app.get("/internal/v1/runs/{run_id}")
+    async def missing_run(run_id: str):
+        raise HTTPException(status_code=status_code, detail="not found")
+
+    transport = ASGITransport(app=app)
+    original = httpx.AsyncClient
+
+    def client(*args, **kwargs):
+        kwargs["transport"] = transport
+        kwargs["base_url"] = "http://testserver"
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", client)
+
+
+@pytest.mark.asyncio
+async def test_missing_agent_run_stops_when_dispatch_is_closed(monkeypatch):
+    task = HermesTask(
+        id="task-404",
+        org_id="org-1",
+        user_id="user-1",
+        status=TaskStatus.QUEUED,
+        projection_cursor=0,
+    )
+    db = AsyncMock()
+
+    async def execute(_stmt, *_args, **_kwargs):
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = task
+        result.first.return_value = None
+        return result
+
+    db.execute.side_effect = execute
+    _http_client_returning(404, monkeypatch)
+
+    ok = await RunProjectionUpdaterService(db).sync_task_projection("task-404", "org-1", "user-1")
+
+    assert ok is False
+    assert task.status == TaskStatus.FAILED
+    assert task.error_code == "errors.skill_run.agent_run_not_found"
+    db.commit.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_missing_agent_run_keeps_task_while_dispatch_is_open(monkeypatch):
+    task = HermesTask(
+        id="task-404",
+        org_id="org-1",
+        user_id="user-1",
+        status=TaskStatus.QUEUED,
+        projection_cursor=0,
+    )
+    db = AsyncMock()
+
+    async def execute(_stmt, *_args, **_kwargs):
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = task
+        result.first.return_value = ("pending",)
+        return result
+
+    db.execute.side_effect = execute
+    _http_client_returning(404, monkeypatch)
+
+    ok = await RunProjectionUpdaterService(db).sync_task_projection("task-404", "org-1", "user-1")
+
+    assert ok is False
+    assert task.status == TaskStatus.QUEUED
+    db.commit.assert_not_awaited()
+
+
 @pytest.mark.asyncio
 async def test_sync_task_projection_missing_task_logs_error_code(caplog):
     db = AsyncMock()

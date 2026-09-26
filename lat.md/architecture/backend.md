@@ -72,7 +72,7 @@ P0 实现锚点：Expert 网关 [[nodeskclaw-backend/app/services/expert_gateway
 
 Backend 把 Agent Run 事实增量写入 HermesTask。轮询 worker 先抽出主键再按条打开 session，禁止在 commit 或 rollback 后再访问同一批 ORM 属性。
 
-Agent 是 Event / Result / Artifact 事实源；[[nodeskclaw-backend/app/services/hermes_skill/run_projection_updater_service.py#RunProjectionUpdaterService]] 按 `after_seq` 单调映射状态、事件、结果与工件。[[nodeskclaw-backend/app/services/hermes_skill/run_projection_updater_service.py#RunProjectionWorker]] 对齐 Outbox worker：批查询只收集 `(id, org_id, user_id)`，每条任务独立 session。SQLAlchemy asyncio 对 expired 属性的隐式刷新会触发 MissingGreenlet，中断整批投影。决策见 [[decisions/skill-platform-execution]]。
+Agent 是 Event / Result / Artifact 事实源；[[nodeskclaw-backend/app/services/hermes_skill/run_projection_updater_service.py#RunProjectionUpdaterService]] 按 `after_seq` 单调映射状态、事件、结果与工件。Agent 返回 404 且投递箱已没有 pending 或 delivering 时，任务记为失败并退出轮询。投递仍在进行时保持原状态。[[nodeskclaw-backend/app/services/hermes_skill/run_projection_updater_service.py#RunProjectionWorker]] 对齐 Outbox worker：批查询只收集 `(id, org_id, user_id)`，每条任务独立 session。SQLAlchemy asyncio 对 expired 属性的隐式刷新会触发 MissingGreenlet，中断整批投影。决策见 [[decisions/skill-platform-execution]]。
 
 ### Projection Observability
 
