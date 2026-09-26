@@ -1,0 +1,12 @@
+{
+  "name": "DeskClaw CE (NoDeskClaw)",
+  "install": "bash .cursor/cloud-agent-install.sh",
+  "start": "bash .cursor/cloud-agent-start.sh",
+  "terminals": [
+    {
+      "name": "dev",
+      "command": "export PATH=\"$HOME/.local/bin:$PATH\"; cd /workspace && ./dev.sh ce"
+    }
+  ],
+  "ports": [4510, 4511, 4517]
+}
