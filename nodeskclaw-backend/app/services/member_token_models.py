@@ -52,7 +52,8 @@ def normalize_models_document(payload: dict | None) -> dict:
     cleaned = []
     for item in items:
         cleaned.append(_item(item, seen))
-    if default_model is not None and default_model not in seen:
+    enabled_ids = {item["id"] for item in cleaned if item["enabled"]}
+    if default_model is not None and default_model not in enabled_ids:
         raise _invalid()
     return {
         "schema_version": "1.0",
@@ -119,6 +120,52 @@ def _positive_int(value: object) -> int | None:
 
 def _bounded(value: object) -> bool:
     return isinstance(value, str) and 1 <= len(value) <= 128
+
+
+def build_runtime_models_document(
+    *,
+    selected_ids: list[str],
+    default_model: str,
+    discovered_ids: set[str],
+    existing_items: list,
+) -> dict:
+    if not selected_ids or len(selected_ids) != len(set(selected_ids)):
+        raise MemberTokenError(400, "errors.member_token.default_model_required", "请至少选择一个模型并指定默认模型")
+    if default_model not in selected_ids:
+        raise MemberTokenError(
+            400,
+            "errors.member_token.default_model_not_selected",
+            "默认模型必须是已勾选的模型",
+        )
+    if any(model_id not in discovered_ids for model_id in selected_ids):
+        raise MemberTokenError(
+            400,
+            "errors.member_token.runtime_model_not_available",
+            "所选模型不在该成员当前可见目录中，请刷新后重试",
+        )
+    previous = {}
+    for item in existing_items:
+        if isinstance(item, dict) and isinstance(item.get("id"), str):
+            previous[item["id"]] = item
+    items = []
+    for model_id in selected_ids:
+        source = previous.get(model_id) or {}
+        capabilities = source.get("capabilities")
+        if not isinstance(capabilities, list):
+            capabilities = []
+        items.append(
+            {
+                "id": model_id,
+                "display_name": source.get("display_name") if isinstance(source.get("display_name"), str) else model_id,
+                "context_window": source.get("context_window") if isinstance(source.get("context_window"), int) else None,
+                "max_output_tokens": source.get("max_output_tokens") if isinstance(source.get("max_output_tokens"), int) else None,
+                "enabled": True,
+                "capabilities": capabilities,
+            }
+        )
+    return normalize_models_document(
+        {"schema_version": "1.0", "default_model": default_model, "items": items}
+    )
 
 
 def _invalid() -> MemberTokenError:

@@ -273,6 +273,28 @@ export const useMemberManagementStore = defineStore('memberManagement', () => {
     return res.data.data
   }
 
+  async function refreshMemberTokenModels(membershipId: string, tokenId: string) {
+    const id = orgId()
+    if (!id) return []
+    const res = await api.post(`/orgs/${id}/members/${membershipId}/tokens/${tokenId}/models/refresh`)
+    return res.data.data?.items ?? []
+  }
+
+  async function saveMemberTokenModels(
+    membershipId: string,
+    tokenId: string,
+    selectedModelIds: string[],
+    defaultModel: string,
+  ) {
+    const id = orgId()
+    if (!id) return
+    const res = await api.put(`/orgs/${id}/members/${membershipId}/tokens/${tokenId}/models`, {
+      selected_model_ids: selectedModelIds,
+      default_model: defaultModel,
+    })
+    return res.data.data
+  }
+
   async function fetchPendingCloseTokens() {
     const id = orgId()
     if (!id) return []
@@ -319,6 +341,8 @@ export const useMemberManagementStore = defineStore('memberManagement', () => {
     revealMemberToken,
     retryRevokeMemberToken,
     closeLocalMemberToken,
+    refreshMemberTokenModels,
+    saveMemberTokenModels,
     fetchPendingCloseTokens,
     replaceMemberSkillGrants,
   }

@@ -40,6 +40,10 @@ const { confirm } = useConfirm()
 const store = useMemberManagementStore()
 
 const tokens = ref<TokenItem[]>([])
+const catalogById = ref<Record<string, string[]>>({})
+const selectedById = ref<Record<string, string[]>>({})
+const defaultById = ref<Record<string, string>>({})
+const groupDraft = ref<Record<string, string>>({})
 const groups = ref<Array<{ value: string; label: string; description?: string }>>([])
 const loading = ref(false)
 const saving = ref(false)
@@ -128,6 +132,11 @@ async function reload() {
   revealedById.value = {}
   try {
     tokens.value = await store.fetchMemberTokens(props.member.id)
+    const drafts = { ...groupDraft.value }
+    for (const item of tokens.value) {
+      if (!(item.id in drafts)) drafts[item.id] = item.provider_group || ''
+    }
+    groupDraft.value = drafts
     if (props.canManage && showNewApiAuto.value) {
       await loadGroups()
     }
@@ -173,13 +182,13 @@ async function handleCreate() {
     const payload: Record<string, unknown> = {
       provider: provider.value,
       is_default: tokens.value.length === 0,
-      models: modelsDocument(),
     }
     if (showNewApiAuto.value) {
       payload.provider_group = providerGroup.value
     } else {
       payload.base_url = baseUrl.value.trim()
       payload.token = apiKey.value.trim()
+      payload.models = modelsDocument()
     }
     const created = await store.createMemberToken(props.member.id, payload)
     plaintext.value = created?.plaintext_token || ''
@@ -194,7 +203,7 @@ async function handleCreate() {
 }
 
 async function toggleActive(item: TokenItem) {
-  if (!props.member || !props.canManage) return
+  if (!props.member || !props.canManage || item.sync_status === 'revoke_pending') return
   saving.value = true
   try {
     await store.updateMemberToken(props.member.id, item.id, { is_active: !item.is_active })
@@ -202,7 +211,91 @@ async function toggleActive(item: TokenItem) {
     tokens.value = await store.fetchMemberTokens(props.member.id)
   } catch (error) {
     toast.error(resolveApiErrorMessage(error, t('memberManagement.modelTokenUpdated')))
+  } finally {
+    saving.value = false
+  }
+}
+
+function isAutoToken(item: TokenItem) {
+  return item.provider === 'new-api' && item.source === 'auto'
+}
+
+function selectedModels(item: TokenItem) {
+  return selectedById.value[item.id] || []
+}
+
+function defaultOptions(item: TokenItem) {
+  return selectedModels(item).map(id => ({ value: id, label: id }))
+}
+
+function canSaveModels(item: TokenItem) {
+  const selected = selectedModels(item)
+  const fallback = defaultById.value[item.id]
+  return selected.length > 0 && !!fallback && selected.includes(fallback)
+}
+
+function toggleCatalogModel(item: TokenItem, modelId: string, checked: boolean) {
+  const current = new Set(selectedModels(item))
+  if (checked) current.add(modelId)
+  else current.delete(modelId)
+  selectedById.value = { ...selectedById.value, [item.id]: [...current] }
+  if (!current.has(defaultById.value[item.id] || '')) {
+    defaultById.value = { ...defaultById.value, [item.id]: '' }
+  }
+}
+
+async function refreshModels(item: TokenItem) {
+  if (!props.member) return
+  saving.value = true
+  try {
+    const items = await store.refreshMemberTokenModels(props.member.id, item.id)
+    const ids = items.map(entry => entry.id).filter(Boolean)
+    catalogById.value = { ...catalogById.value, [item.id]: ids }
+    const kept = selectedModels(item).filter(id => ids.includes(id))
+    selectedById.value = { ...selectedById.value, [item.id]: kept }
+    if (!kept.includes(defaultById.value[item.id] || '')) {
+      defaultById.value = { ...defaultById.value, [item.id]: '' }
+    }
+  } catch (error) {
+    toast.error(resolveApiErrorMessage(error, t('memberManagement.modelTokenRefreshFailed')))
+  } finally {
+    saving.value = false
+  }
+}
+
+async function saveModels(item: TokenItem) {
+  if (!props.member || !canSaveModels(item)) return
+  saving.value = true
+  try {
+    await store.saveMemberTokenModels(
+      props.member.id,
+      item.id,
+      selectedModels(item),
+      defaultById.value[item.id],
+    )
+    toast.success(t('memberManagement.modelTokenUpdated'))
     tokens.value = await store.fetchMemberTokens(props.member.id)
+  } catch (error) {
+    toast.error(resolveApiErrorMessage(error, t('memberManagement.modelTokenSaveModelsFailed')))
+  } finally {
+    saving.value = false
+  }
+}
+
+async function saveGroup(item: TokenItem) {
+  if (!props.member) return
+  const nextGroup = groupDraft.value[item.id]
+  if (!nextGroup) return
+  saving.value = true
+  try {
+    await store.updateMemberToken(props.member.id, item.id, { provider_group: nextGroup })
+    catalogById.value = { ...catalogById.value, [item.id]: [] }
+    selectedById.value = { ...selectedById.value, [item.id]: [] }
+    defaultById.value = { ...defaultById.value, [item.id]: '' }
+    toast.success(t('memberManagement.modelTokenModelsCleared'))
+    tokens.value = await store.fetchMemberTokens(props.member.id)
+  } catch (error) {
+    toast.error(resolveApiErrorMessage(error, t('memberManagement.modelTokenGroupSaveFailed')))
   } finally {
     saving.value = false
   }
@@ -356,7 +449,7 @@ function close() {
             <Input v-model="apiKey" type="password" class="mt-1" />
           </div>
         </template>
-        <div>
+        <div v-if="showManualFields">
           <Label>{{ t('memberManagement.modelTokenModels') }}</Label>
           <Input v-model="modelsText" class="mt-1" :placeholder="t('memberManagement.modelTokenModelsHint')" />
         </div>
@@ -394,6 +487,38 @@ function close() {
             </Button>
           </div>
         </div>
+        <div v-if="canManage && isAutoToken(item)" class="space-y-2 pt-2">
+          <Label>{{ t('memberManagement.modelTokenGroup') }}</Label>
+          <CustomSelect
+            :model-value="groupDraft[item.id] || item.provider_group || ''"
+            :options="groupOptions"
+            @update:model-value="groupDraft[item.id] = String($event || '')"
+          />
+          <Button variant="outline" size="sm" :disabled="saving || !(groupDraft[item.id] || item.provider_group)" @click="saveGroup(item)">
+            {{ t('memberManagement.modelTokenSaveGroup') }}
+          </Button>
+          <Button variant="outline" size="sm" :disabled="saving" @click="refreshModels(item)">
+            <Loader2 v-if="saving" class="w-4 h-4 animate-spin mr-1" />
+            {{ t('memberManagement.modelTokenRefresh') }}
+          </Button>
+          <label v-for="modelId in catalogById[item.id] || []" :key="modelId" class="flex items-center gap-2 text-sm cursor-pointer">
+            <input
+              type="checkbox"
+              :checked="selectedModels(item).includes(modelId)"
+              @change="toggleCatalogModel(item, modelId, ($event.target as HTMLInputElement).checked)"
+            />
+            {{ modelId }}
+          </label>
+          <CustomSelect
+            :model-value="defaultById[item.id] || ''"
+            :options="defaultOptions(item)"
+            :disabled="!defaultOptions(item).length"
+            @update:model-value="defaultById[item.id] = String($event || '')"
+          />
+          <Button variant="outline" size="sm" :disabled="saving || !canSaveModels(item)" @click="saveModels(item)">
+            {{ t('memberManagement.modelTokenSaveModels') }}
+          </Button>
+        </div>
         <div>{{ t('memberManagement.modelTokenModelCount') }}: {{ item.model_count }}</div>
         <div>{{ t('memberManagement.modelTokenDefault') }}: {{ item.is_default ? t('common.yes') : t('common.no') }}</div>
         <div>{{ t('memberManagement.modelTokenActive') }}: {{ item.is_active ? t('common.yes') : t('common.no') }}</div>
@@ -424,11 +549,14 @@ function close() {
             <Button
               variant="outline"
               size="sm"
-              :disabled="saving"
+              :disabled="saving || item.sync_status === 'revoke_pending'"
               @click="toggleActive(item)"
             >
               {{ item.is_active ? t('memberManagement.modelTokenDisable') : t('memberManagement.modelTokenEnable') }}
             </Button>
+            <p v-if="item.sync_status === 'revoke_pending'" class="text-xs text-muted-foreground w-full">
+              {{ t('memberManagement.modelTokenClosingHint') }}
+            </p>
             <Button
               variant="outline"
               size="sm"

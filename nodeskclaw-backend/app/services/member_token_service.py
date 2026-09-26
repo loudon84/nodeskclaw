@@ -26,7 +26,8 @@ from app.services.credential_crypto import (
     fingerprint_token,
     load_model_token_key,
 )
-from app.services.member_token_models import EMPTY_MODELS, normalize_models_document
+from app.services.member_token_models import EMPTY_MODELS, build_runtime_models_document, normalize_models_document
+from app.services.model_provider.member_model_discovery import assert_auto_discovery_base, discover_model_ids
 from app.services.model_provider.new_api import NewApiClient, normalize_groups
 
 logger = logging.getLogger(__name__)
@@ -188,6 +189,12 @@ async def update_member_token(
     membership = await _load_membership(db, membership_id)
     assert_membership_org(membership, org_id)
     row = await _get_row(db, membership.id, token_id)
+    if row.provider == "new-api" and row.source == "auto" and fields.get("models") is not None:
+        raise MemberTokenError(
+            400,
+            "errors.member_token.models_managed_by_policy_api",
+            "自动 NEW-API 的模型请使用模型策略保存，不能在这里直接提交模型清单",
+        )
     if "models" in fields and fields["models"] is not None:
         document = normalize_models_document(fields["models"])
     else:
@@ -203,7 +210,11 @@ async def update_member_token(
         row.is_default = True
     elif fields.get("is_default") is False:
         row.is_default = False
-    await db.commit()
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
     await _audit(actor.id, membership.org_id, "member_token.updated", row.id, provider=row.provider)
     return _public(row)
 
@@ -589,9 +600,11 @@ async def _update_new_api(db: AsyncSession, membership: OrgMembership, row: Memb
             await _mark_control_error(db, row, exc)
             raise
         row.provider_group = group
+        row.models = dict(EMPTY_MODELS)
         row.sync_status = "synced"
         row.last_sync_error = None
     if "is_active" in fields and fields["is_active"] is not None and fields["is_active"] != row.is_active:
+        _reject_reenable_while_closing(row, fields["is_active"])
         if not row.external_token_id:
             await _mark_control_error(
                 db,
@@ -623,7 +636,86 @@ async def _update_manual(row: MemberToken, fields: dict) -> None:
         )
         row.token_fingerprint = fingerprint_token(fields["token"])
     if fields.get("is_active") is not None:
+        _reject_reenable_while_closing(row, fields["is_active"])
         row.is_active = bool(fields["is_active"])
+
+
+async def refresh_member_token_models(
+    db: AsyncSession,
+    *,
+    org_id: str,
+    membership_id: str,
+    token_id: str,
+) -> dict:
+    membership = await _load_membership(db, membership_id)
+    assert_membership_org(membership, org_id)
+    row = await _get_row(db, membership.id, token_id)
+    model_ids = await _discover_auto_model_ids(row)
+    return {"items": [{"id": model_id} for model_id in model_ids]}
+
+
+async def save_member_token_runtime_models(
+    db: AsyncSession,
+    *,
+    org_id: str,
+    membership_id: str,
+    token_id: str,
+    actor: User,
+    selected_ids: list[str],
+    default_model: str,
+) -> dict:
+    membership = await _load_membership(db, membership_id)
+    assert_membership_org(membership, org_id)
+    row = await _get_row(db, membership.id, token_id)
+    discovered = set(await _discover_auto_model_ids(row))
+    existing = row.models.get("items") if isinstance(row.models, dict) else []
+    row.models = build_runtime_models_document(
+        selected_ids=selected_ids,
+        default_model=default_model,
+        discovered_ids=discovered,
+        existing_items=existing if isinstance(existing, list) else [],
+    )
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
+    await _audit(
+        actor.id,
+        membership.org_id,
+        "member_token.models_saved",
+        row.id,
+        provider=row.provider,
+        model_count=len(selected_ids),
+        default_model=default_model,
+    )
+    return _public(row)
+
+
+async def _discover_auto_model_ids(row: MemberToken) -> list[str]:
+    if row.provider != "new-api" or row.source != "auto":
+        raise MemberTokenError(
+            400,
+            "errors.member_token.model_refresh_unsupported",
+            "只有自动创建的 NEW-API 凭证可以刷新模型目录",
+        )
+    base_url = assert_auto_discovery_base(row.base_url)
+    plaintext = decrypt_member_token(
+        row.token,
+        token_id=row.id,
+        member_id=row.member_id,
+        provider=row.provider,
+    )
+    return await discover_model_ids(plaintext, base_url)
+
+
+def _reject_reenable_while_closing(row: MemberToken, enabled: object) -> None:
+    if enabled is True and row.sync_status == "revoke_pending":
+        raise MemberTokenError(
+            409,
+            "errors.member_token.credential_closing",
+            "这条凭证正在关闭，不能重新启用。请重试撤销或只关闭本地记录",
+        )
 
 
 async def _insert_local(

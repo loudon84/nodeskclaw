@@ -107,4 +107,18 @@ NEW-API 自动创建只读进程环境变量。每个管理请求同时带 `Auth
 
 密文使用独立的 `MODEL_TOKEN_ENCRYPTION_KEY`（base64 的 32 字节），格式 `enc:v1:`，算法 AES-256-GCM，AAD 含凭证 id、成员 id 与 provider。不复用 KubeConfig 的 `ENCRYPTION_KEY`。加密：[[nodeskclaw-backend/app/services/credential_crypto.py#encrypt_member_token]]。
 
-软删除与活跃行唯一索引见 [[decisions/soft-delete]]。同一成员同一 provider 同时只留一条未删除凭证；NEW-API 的 token 名称在未删除行中也不重复。移除成员时立刻拒绝本地使用，并尝试撤销外部 Token：[[nodeskclaw-backend/app/services/org_service.py#remove_member]] 调用 [[nodeskclaw-backend/app/services/member_token_service.py#revoke_tokens_for_removed_member]]。撤销失败则保留 `external_token_id`，`sync_status=revoke_pending`。`user_llm_configs`、`user_llm_keys`、`org_llm_keys` 都不因这张表改写。[[architecture/llm-proxy]] 与 Agent Runtime 不读它。门户入口见 [[architecture/portal#Page Domains]]。
+软删除与活跃行唯一索引见 [[decisions/soft-delete]]。同一成员同一 provider 同时只留一条未删除凭证；NEW-API 的 token 名称在未删除行中也不重复。移除成员时立刻拒绝本地使用，并尝试撤销外部 Token：[[nodeskclaw-backend/app/services/org_service.py#remove_member]] 调用 [[nodeskclaw-backend/app/services/member_token_service.py#revoke_tokens_for_removed_member]]。撤销失败则保留 `external_token_id`，`sync_status=revoke_pending`，且不能再启用。`user_llm_configs`、`user_llm_keys`、`org_llm_keys` 都不因这张表改写。运行时如何取得这把凭证见 [[architecture/backend#Runtime Provider Bootstrap]]。[[architecture/llm-proxy]] 不读这张表。门户入口见 [[architecture/portal#Page Domains]]。
+
+## Runtime Provider Bootstrap
+
+当前登录用户只用自己的默认模型凭证取得 NEW-API 地址和 Key，Backend 不转发模型请求。
+
+目录发现只对自动创建的 NEW-API 凭证解密成员 Key，请求 `GET {base_url}/models`，请求头只有 `Authorization: Bearer`。不带系统访问令牌，也不带 `New-Api-User`。已保存的地址规范化后必须等于当前 `NEW_API_MODEL_BASE_URL`，否则拒绝且不发请求。实现：[[nodeskclaw-backend/app/services/model_provider/member_model_discovery.py#discover_model_ids]]。管理员刷新 [[nodeskclaw-backend/app/services/member_token_service.py#refresh_member_token_models]] 只返回按 id 排序的目录，不写 `member_tokens`。保存 [[nodeskclaw-backend/app/services/member_token_service.py#save_member_token_runtime_models]] 会再发现一次：所选 id 必须属于这次目录，至少一个，默认模型必须在其中。已有条目的能力和上下文窗口保留，新模型不猜测这些字段。自动 NEW-API 的通用 PATCH 若带 `models` 则拒绝。
+
+改分组仍先调用 NEW-API。成功后同一次本地提交写入新分组，并把 `models` 设为空文档。本地提交失败则回滚本地，不反向修改 NEW-API 分组。`revoke_pending` 不能把 `is_active` 改回 true，也不调用 NEW-API 启用。
+
+引导入口是 `POST /api/v1/runtime/model-bootstrap`：[[nodeskclaw-backend/app/api/runtime_model_bootstrap.py#runtime_model_bootstrap]]，计算在 [[nodeskclaw-backend/app/services/runtime_model_bootstrap_service.py#build_runtime_bootstrap]]。请求体只允许 `consumer` 与 `runtime`。组织来自当前登录用户的当前组织，只取未删除成员关系上 `is_default=true` 的凭证，不接受目标 id，也不改用另一条凭证。此接口不请求 NEW-API。未就绪为 HTTP 200 且没有 `api_key`。只有 `READY` 才返回 `base_url`、成员 Key、分组、默认模型、已启用模型和 `revision`。`revision` 由凭证 id、`updated_at` 与 `token_fingerprint` 哈希得到，不含明文。响应头为 `Cache-Control: no-store` 与 `Pragma: no-cache`。审计只记 provider、成员 id、状态和 revision。
+
+就绪按这个顺序停止：无默认凭证、`revoke_pending`、未启用、不是 new-api、自动凭证尚未同步、地址为空、没有已启用模型、没有默认模型、默认模型无效、解密失败，然后才是 `READY`。
+
+`tests/test_member_token.py` 与 `tests/test_runtime_model_bootstrap.py` 用 httpx mock 覆盖发现请求头、刷新不落库、保存再校验目录、分组清空且提交失败不回滚外部、正在关闭不能启用、未就绪无明文，以及 `READY` 的 `base_url` 是 NEW-API 地址。不访问真实 NEW-API。手工联调集合是 `tools/postman/nodeskclaw-runtime-provider-bootstrap.postman_collection.json`，变量只用占位符，不保存明文 Key。

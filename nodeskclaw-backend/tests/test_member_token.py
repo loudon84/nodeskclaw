@@ -14,17 +14,20 @@ from app.services.credential_crypto import (
     decrypt_member_token,
     encrypt_member_token,
 )
-from app.services.member_token_models import normalize_models_document
 from app.services import member_token_service
+from app.services.member_token_models import EMPTY_MODELS, normalize_models_document
 from app.services.member_token_service import (
     assert_membership_org,
     close_local_member_token,
     create_member_token,
     delete_member_token,
     mask_token,
+    refresh_member_token_models,
     reveal_member_token,
     retry_revoke_member_token,
+    save_member_token_runtime_models,
     token_name_from_email,
+    update_member_token,
     _public,
     _provision_new_api,
 )
@@ -470,3 +473,187 @@ def test_member_token_code_does_not_touch_user_llm_configs():
     assert "user_llm_configs" not in api
     assert "user_llm_configs" not in model
     assert "_compensate_external_token" not in service
+
+
+def _auto_row(**overrides):
+    row = SimpleNamespace(
+        id="t1",
+        member_id="m1",
+        provider="new-api",
+        source="auto",
+        base_url="http://new-api.example/v1",
+        token=encrypt_member_token("member-key-abcdefgh", token_id="t1", member_id="m1", provider="new-api"),
+        token_fingerprint="fp",
+        external_token_id="9",
+        provider_group="default",
+        models=dict(EMPTY_MODELS),
+        is_active=True,
+        is_default=True,
+        sync_status="synced",
+        last_sync_error=None,
+        token_name="alice",
+    )
+    row.__dict__.update(overrides)
+    return row
+
+
+def _bound(row):
+    membership = SimpleNamespace(id="m1", org_id="org-1", deleted_at=None)
+    return (
+        patch.object(member_token_service, "_load_membership", new=AsyncMock(return_value=membership)),
+        patch.object(member_token_service, "_get_row", new=AsyncMock(return_value=row)),
+        patch.object(member_token_service, "_audit", new=AsyncMock()),
+    )
+
+
+@pytest.mark.asyncio
+async def test_discovery_uses_member_bearer_and_refresh_does_not_commit(monkeypatch):
+    calls = []
+
+    class _GetHttp:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def get(self, url, headers=None):
+            calls.append((url, headers))
+            return httpx.Response(
+                200,
+                json={"data": [{"id": "beta"}, {"id": "alpha"}]},
+                request=httpx.Request("GET", url),
+            )
+
+    monkeypatch.setattr(httpx, "AsyncClient", lambda *args, **kwargs: _GetHttp())
+    from app.services.model_provider.member_model_discovery import discover_model_ids
+
+    ids = await discover_model_ids("member-key-abcdefgh", "http://new-api.example/v1")
+    assert ids == ["alpha", "beta"]
+    assert calls[0][1]["Authorization"] == "Bearer member-key-abcdefgh"
+    assert "New-Api-User" not in calls[0][1]
+    row = _auto_row(models={"schema_version": "1.0", "default_model": None, "items": [{"id": "keep"}]})
+    db = AsyncMock()
+    with _bound(row)[0], _bound(row)[1]:
+        data = await refresh_member_token_models(db, org_id="org-1", membership_id="m1", token_id="t1")
+    assert [item["id"] for item in data["items"]] == ["alpha", "beta"]
+    assert row.models["items"] == [{"id": "keep"}]
+    db.commit.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_save_models_rediscovers_and_keeps_known_metadata(monkeypatch):
+    row = _auto_row(
+        models={
+            "schema_version": "1.0",
+            "default_model": "alpha",
+            "items": [{
+                "id": "alpha",
+                "display_name": "Alpha",
+                "context_window": 8192,
+                "max_output_tokens": None,
+                "enabled": True,
+                "capabilities": ["chat"],
+            }],
+        }
+    )
+    db = AsyncMock()
+    discover = AsyncMock(return_value=["alpha", "beta"])
+    patches = _bound(row)
+    with patches[0], patches[1], patches[2], patch.object(member_token_service, "discover_model_ids", discover):
+        await save_member_token_runtime_models(
+            db,
+            org_id="org-1",
+            membership_id="m1",
+            token_id="t1",
+            actor=SimpleNamespace(id="admin"),
+            selected_ids=["alpha", "beta"],
+            default_model="alpha",
+        )
+        saved = {item["id"]: item for item in row.models["items"]}
+        assert saved["alpha"]["context_window"] == 8192
+        assert saved["alpha"]["capabilities"] == ["chat"]
+        assert saved["beta"]["capabilities"] == []
+        assert row.models["default_model"] == "alpha"
+        discover.assert_awaited()
+        with pytest.raises(MemberTokenError) as missing:
+            await save_member_token_runtime_models(
+                db,
+                org_id="org-1",
+                membership_id="m1",
+                token_id="t1",
+                actor=SimpleNamespace(id="admin"),
+                selected_ids=["missing"],
+                default_model="missing",
+            )
+    assert missing.value.message_key == "errors.member_token.runtime_model_not_available"
+
+
+@pytest.mark.asyncio
+async def test_group_success_clears_models_and_commit_failure_does_not_revert():
+    row = _auto_row(
+        models={
+            "schema_version": "1.0",
+            "default_model": "alpha",
+            "items": [{
+                "id": "alpha",
+                "display_name": "Alpha",
+                "enabled": True,
+                "capabilities": ["chat"],
+            }],
+        }
+    )
+    client = MagicMock()
+    client.list_groups = AsyncMock(return_value={"vip": {"desc": "v"}})
+    client.update_group = AsyncMock()
+    client.set_status = AsyncMock()
+    db = AsyncMock()
+    db.commit = AsyncMock(side_effect=RuntimeError("db down"))
+    patches = _bound(row)
+    with patches[0], patches[1], patches[2], patch.object(member_token_service, "NewApiClient", return_value=client):
+        with pytest.raises(RuntimeError, match="db down"):
+            await update_member_token(
+                db,
+                org_id="org-1",
+                membership_id="m1",
+                token_id="t1",
+                actor=SimpleNamespace(id="admin"),
+                fields={"provider_group": "vip"},
+            )
+    assert client.update_group.await_count == 1
+    client.update_group.assert_awaited_once_with("9", "vip")
+    db.rollback.assert_awaited()
+    assert row.models["items"] == []
+
+
+@pytest.mark.asyncio
+async def test_revoke_pending_cannot_enable_and_patch_models_rejected():
+    row = _auto_row(sync_status="revoke_pending", is_active=False)
+    client = MagicMock()
+    client.set_status = AsyncMock()
+    client.list_groups = AsyncMock()
+    db = AsyncMock()
+    patches = _bound(row)
+    with patches[0], patches[1], patch.object(member_token_service, "NewApiClient", return_value=client):
+        with pytest.raises(MemberTokenError) as closing:
+            await update_member_token(
+                db,
+                org_id="org-1",
+                membership_id="m1",
+                token_id="t1",
+                actor=SimpleNamespace(id="admin"),
+                fields={"is_active": True},
+            )
+    assert closing.value.message_key == "errors.member_token.credential_closing"
+    client.set_status.assert_not_called()
+    with patches[0], patches[1]:
+        with pytest.raises(MemberTokenError) as managed:
+            await update_member_token(
+                db,
+                org_id="org-1",
+                membership_id="m1",
+                token_id="t1",
+                actor=SimpleNamespace(id="admin"),
+                fields={"models": {"schema_version": "1.0", "default_model": None, "items": []}},
+            )
+    assert managed.value.message_key == "errors.member_token.models_managed_by_policy_api"

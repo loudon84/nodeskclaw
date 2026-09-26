@@ -3,7 +3,7 @@
 from typing import Literal
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_db, require_org_admin, require_org_member
@@ -22,6 +22,13 @@ class CreateMemberTokenRequest(BaseModel):
     token: str | None = None
     models: dict | None = None
     is_default: bool = False
+
+
+class SaveRuntimeModelsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    selected_model_ids: list[str] = Field(min_length=1, max_length=1000)
+    default_model: str = Field(min_length=1, max_length=128)
 
 
 class UpdateMemberTokenRequest(BaseModel):
@@ -128,6 +135,50 @@ async def update_token(
         token_id=token_id,
         actor=org_ctx[0],
         fields=body.model_dump(exclude_unset=True),
+    )
+    return ApiResponse(data=data)
+
+
+@router.post(
+    "/{org_id}/members/{membership_id}/tokens/{token_id}/models/refresh",
+    response_model=ApiResponse,
+)
+async def refresh_token_models(
+    org_id: str,
+    membership_id: str,
+    token_id: str,
+    db: AsyncSession = Depends(get_db),
+    _org_ctx: tuple = Depends(require_org_admin),
+):
+    data = await member_token_service.refresh_member_token_models(
+        db,
+        org_id=org_id,
+        membership_id=membership_id,
+        token_id=token_id,
+    )
+    return ApiResponse(data=data)
+
+
+@router.put(
+    "/{org_id}/members/{membership_id}/tokens/{token_id}/models",
+    response_model=ApiResponse,
+)
+async def save_token_models(
+    org_id: str,
+    membership_id: str,
+    token_id: str,
+    body: SaveRuntimeModelsRequest,
+    db: AsyncSession = Depends(get_db),
+    org_ctx: tuple = Depends(require_org_admin),
+):
+    data = await member_token_service.save_member_token_runtime_models(
+        db,
+        org_id=org_id,
+        membership_id=membership_id,
+        token_id=token_id,
+        actor=org_ctx[0],
+        selected_ids=body.selected_model_ids,
+        default_model=body.default_model,
     )
     return ApiResponse(data=data)
 
