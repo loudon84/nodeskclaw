@@ -8,5 +8,9 @@
       "command": "export PATH=\"$HOME/.local/bin:$PATH\"; cd /workspace && ./dev.sh ce"
     }
   ],
-  "ports": [4510, 4511, 4517]
+  "ports": [
+    { "name": "backend", "port": 4510 },
+    { "name": "llm-proxy", "port": 4511 },
+    { "name": "portal", "port": 4517 }
+  ]
 }
