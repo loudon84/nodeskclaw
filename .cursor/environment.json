@@ -5,7 +5,7 @@
   "terminals": [
     {
       "name": "dev",
-      "command": "export PATH=\"$HOME/.local/bin:$PATH\"; cd /workspace && ./dev.sh ce"
+      "command": "export PATH=\"$HOME/.local/bin:$PATH\"; cd /workspace && bash .cursor/cloud-agent-start.sh && ./dev.sh ce"
     }
   ],
   "ports": [
