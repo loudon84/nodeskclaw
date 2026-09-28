@@ -1,0 +1,485 @@
+{
+  "info": {
+    "_postman_id": "runtime-provider-bootstrap-v1",
+    "name": "DeskClaw 团队版 Runtime Provider Bootstrap",
+    "description": "成员模型凭证与运行时引导的手工接口用例。默认地址 http://127.0.0.1:4510。先填 admin_email 与 admin_password，按编号发送，不要用 Collection Runner。登录只把 JWT 留在本机集合变量。创建凭证会调用真实 NEW-API，响应里的明文 Key 不要写回仓库。刷新、保存和引导的黄金路径需要该成员已有自动创建且为默认的 NEW-API 凭证。不代理模型调用。",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{backend_access_token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {"key": "backend_base_url", "value": "http://127.0.0.1:4510"},
+    {"key": "admin_email", "value": "user@example.com"},
+    {"key": "admin_password", "value": "REPLACE_WITH_PASSWORD"},
+    {"key": "backend_access_token", "value": ""},
+    {"key": "user_id", "value": ""},
+    {"key": "org_id", "value": ""},
+    {"key": "membership_id", "value": ""},
+    {"key": "member_token_id", "value": ""},
+    {"key": "provider_group", "value": ""},
+    {"key": "selected_model_id", "value": ""},
+    {"key": "model_count_before_refresh", "value": ""}
+  ],
+  "item": [
+    {
+      "name": "01 - 邮箱登录",
+      "request": {
+        "auth": {"type": "noauth"},
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"{{admin_email}}\",\n  \"password\": \"{{admin_password}}\"\n}"
+        },
+        "url": "{{backend_base_url}}/api/v1/auth/login",
+        "description": "用组织管理员账号登录。成功后写入 backend_access_token、user_id 和 org_id。不要把登录响应导出回仓库。"
+      },
+      "event": [{
+        "listen": "test",
+        "script": {
+          "type": "text/javascript",
+          "exec": [
+            "pm.test('login is 200', () => pm.response.to.have.status(200));",
+            "const data = pm.response.json().data;",
+            "pm.expect(data.access_token).to.be.a('string').and.not.empty;",
+            "pm.expect(data.user.id).to.be.a('string');",
+            "pm.expect(data.user.current_org_id).to.be.a('string').and.not.empty;",
+            "pm.collectionVariables.set('backend_access_token', data.access_token);",
+            "pm.collectionVariables.set('user_id', data.user.id);",
+            "pm.collectionVariables.set('org_id', data.user.current_org_id);"
+          ]
+        }
+      }]
+    },
+    {
+      "name": "02 - 列出组织成员",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{backend_base_url}}/api/v1/orgs/{{org_id}}/members",
+        "description": "找到当前登录用户的 membership_id，后续凭证接口用这个 id，不用 user id。"
+      },
+      "event": [{
+        "listen": "test",
+        "script": {
+          "type": "text/javascript",
+          "exec": [
+            "pm.test('members is 200', () => pm.response.to.have.status(200));",
+            "const members = pm.response.json().data;",
+            "pm.expect(members).to.be.an('array');",
+            "const me = members.find((item) => item.user_id === pm.collectionVariables.get('user_id'));",
+            "pm.expect(me, 'current user membership').to.be.an('object');",
+            "pm.collectionVariables.set('membership_id', me.id);"
+          ]
+        }
+      }]
+    },
+    {
+      "name": "03 - 列出 NEW-API 分组",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{backend_base_url}}/api/v1/orgs/{{org_id}}/new-api/groups",
+        "description": "管理端分组列表。成功时写入第一个分组，供一键创建使用。失败说明 backend 的 NEW-API 管理配置不可用，可跳过创建，继续使用已有凭证。"
+      },
+      "event": [{
+        "listen": "test",
+        "script": {
+          "type": "text/javascript",
+          "exec": [
+            "pm.test('groups is 200', () => pm.response.to.have.status(200));",
+            "const items = pm.response.json().data.items;",
+            "pm.expect(items).to.be.an('array').that.is.not.empty;",
+            "pm.expect(items[0].value).to.be.a('string');",
+            "pm.expect(items.map((item) => item.value)).to.not.include('auto');",
+            "if (!pm.collectionVariables.get('provider_group')) {",
+            "  pm.collectionVariables.set('provider_group', items[0].value);",
+            "}"
+          ]
+        }
+      }]
+    },
+    {
+      "name": "04 - 列出成员凭证",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{backend_base_url}}/api/v1/orgs/{{org_id}}/members/{{membership_id}}/tokens",
+        "description": "列表只有掩码。若已有自动 NEW-API 凭证，写入 member_token_id，供后续刷新和保存使用。"
+      },
+      "event": [{
+        "listen": "test",
+        "script": {
+          "type": "text/javascript",
+          "exec": [
+            "pm.test('token list is 200', () => pm.response.to.have.status(200));",
+            "const items = pm.response.json().data.items;",
+            "pm.expect(items).to.be.an('array');",
+            "items.forEach((item) => {",
+            "  pm.expect(item.plaintext_token).to.eql(null);",
+            "  pm.expect(item).to.not.have.property('api_key');",
+            "  pm.expect(item).to.not.have.property('token');",
+            "  pm.expect(item.token_masked).to.be.a('string');",
+            "});",
+            "const raw = pm.response.text();",
+            "pm.expect(raw).to.not.include('\"api_key\"');",
+            "const auto = items.find((item) => item.provider === 'new-api' && item.source === 'auto');",
+            "if (auto) pm.collectionVariables.set('member_token_id', auto.id);"
+          ]
+        }
+      }]
+    },
+    {
+      "name": "05 - 一键创建自动 NEW-API 凭证",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"provider\": \"new-api\",\n  \"provider_group\": \"{{provider_group}}\",\n  \"is_default\": true\n}"
+        },
+        "url": "{{backend_base_url}}/api/v1/orgs/{{org_id}}/members/{{membership_id}}/tokens",
+        "description": "仅当该成员还没有未删除的 NEW-API 凭证时发送。请求不带 models。会调用真实 NEW-API 管理端。成功响应含一次性明文，不要保存到仓库。已存在时返回 409，这是预期，可继续后面的步骤。"
+      },
+      "event": [{
+        "listen": "test",
+        "script": {
+          "type": "text/javascript",
+          "exec": [
+            "const status = pm.response.code;",
+            "pm.test('created or already exists', () => pm.expect([200, 409]).to.include(status));",
+            "const body = pm.response.json();",
+            "if (status === 200) {",
+            "  pm.expect(body.data.provider).to.eql('new-api');",
+            "  pm.expect(body.data.source).to.eql('auto');",
+            "  pm.expect(body.data.plaintext_token).to.be.a('string').and.not.empty;",
+            "  pm.expect(body.data.model_count).to.eql(0);",
+            "  pm.collectionVariables.set('member_token_id', body.data.id);",
+            "} else {",
+            "  pm.expect(body.message_key).to.eql('errors.member_token.provider_exists');",
+            "}"
+          ]
+        }
+      }]
+    },
+    {
+      "name": "06 - 读取单条凭证",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{backend_base_url}}/api/v1/orgs/{{org_id}}/members/{{membership_id}}/tokens/{{member_token_id}}",
+        "description": "刷新前记下 model_count。普通读取不得返回明文。"
+      },
+      "event": [{
+        "listen": "test",
+        "script": {
+          "type": "text/javascript",
+          "exec": [
+            "pm.test('get token is 200', () => pm.response.to.have.status(200));",
+            "const data = pm.response.json().data;",
+            "pm.expect(data.plaintext_token).to.eql(null);",
+            "pm.expect(data).to.not.have.property('api_key');",
+            "pm.expect(data.token_masked).to.be.a('string');",
+            "pm.collectionVariables.set('model_count_before_refresh', String(data.model_count));"
+          ]
+        }
+      }]
+    },
+    {
+      "name": "07 - 刷新成员可见模型目录",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": "{{backend_base_url}}/api/v1/orgs/{{org_id}}/members/{{membership_id}}/tokens/{{member_token_id}}/models/refresh",
+        "description": "用成员自己的 Key 向 NEW-API 拉目录。只返回排序后的 id，不写入凭证。第一个 id 写入 selected_model_id，供保存使用。手工录入的凭证应返回 model_refresh_unsupported。"
+      },
+      "event": [{
+        "listen": "test",
+        "script": {
+          "type": "text/javascript",
+          "exec": [
+            "pm.test('refresh is 200', () => pm.response.to.have.status(200));",
+            "const items = pm.response.json().data.items;",
+            "pm.expect(items).to.be.an('array');",
+            "const ids = items.map((item) => item.id);",
+            "pm.expect(ids).to.eql([...ids].sort());",
+            "pm.expect(new Set(ids).size).to.eql(ids.length);",
+            "if (ids.length) pm.collectionVariables.set('selected_model_id', ids[0]);"
+          ]
+        }
+      }]
+    },
+    {
+      "name": "08 - 刷新后模型数量不变",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{backend_base_url}}/api/v1/orgs/{{org_id}}/members/{{membership_id}}/tokens/{{member_token_id}}",
+        "description": "对照 06 记下的 model_count。刷新成功不得改变已保存模型数量。"
+      },
+      "event": [{
+        "listen": "test",
+        "script": {
+          "type": "text/javascript",
+          "exec": [
+            "pm.test('model count unchanged after refresh', () => pm.response.to.have.status(200));",
+            "const data = pm.response.json().data;",
+            "pm.expect(String(data.model_count)).to.eql(pm.collectionVariables.get('model_count_before_refresh'));",
+            "pm.expect(data.plaintext_token).to.eql(null);"
+          ]
+        }
+      }]
+    },
+    {
+      "name": "09 - 保存运行时模型",
+      "request": {
+        "method": "PUT",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"selected_model_ids\": [\"{{selected_model_id}}\"],\n  \"default_model\": \"{{selected_model_id}}\"\n}"
+        },
+        "url": "{{backend_base_url}}/api/v1/orgs/{{org_id}}/members/{{membership_id}}/tokens/{{member_token_id}}/models",
+        "description": "保存前服务端会再发现一次。默认模型必须在勾选列表中。目录为空时先不要发送这一项。"
+      },
+      "event": [{
+        "listen": "test",
+        "script": {
+          "type": "text/javascript",
+          "exec": [
+            "pm.test('save models is 200', () => pm.response.to.have.status(200));",
+            "const data = pm.response.json().data;",
+            "pm.expect(data.plaintext_token).to.eql(null);",
+            "pm.expect(data.model_count).to.be.at.least(1);",
+            "pm.expect(data.models.default_model).to.eql(pm.collectionVariables.get('selected_model_id'));",
+            "pm.expect(data.models.items[0].enabled).to.eql(true);"
+          ]
+        }
+      }]
+    },
+    {
+      "name": "10 - 保存不在目录中的模型",
+      "request": {
+        "method": "PUT",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"selected_model_ids\": [\"not-in-member-catalog\"],\n  \"default_model\": \"not-in-member-catalog\"\n}"
+        },
+        "url": "{{backend_base_url}}/api/v1/orgs/{{org_id}}/members/{{membership_id}}/tokens/{{member_token_id}}/models",
+        "description": "负向用例。所选 id 不属于这次发现结果时应为 400，已保存清单不变。"
+      },
+      "event": [{
+        "listen": "test",
+        "script": {
+          "type": "text/javascript",
+          "exec": [
+            "pm.test('unknown model is 400', () => pm.response.to.have.status(400));",
+            "pm.expect(pm.response.json().message_key).to.eql('errors.member_token.runtime_model_not_available');"
+          ]
+        }
+      }]
+    },
+    {
+      "name": "11 - 默认模型不在勾选中",
+      "request": {
+        "method": "PUT",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"selected_model_ids\": [\"{{selected_model_id}}\"],\n  \"default_model\": \"not-selected\"\n}"
+        },
+        "url": "{{backend_base_url}}/api/v1/orgs/{{org_id}}/members/{{membership_id}}/tokens/{{member_token_id}}/models",
+        "description": "负向用例。default_model 必须是 selected_model_ids 中的一项。"
+      },
+      "event": [{
+        "listen": "test",
+        "script": {
+          "type": "text/javascript",
+          "exec": [
+            "pm.test('default outside selection is 400', () => pm.response.to.have.status(400));",
+            "pm.expect(pm.response.json().message_key).to.eql('errors.member_token.default_model_not_selected');"
+          ]
+        }
+      }]
+    },
+    {
+      "name": "12 - 空模型清单被拒绝",
+      "request": {
+        "method": "PUT",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"selected_model_ids\": [],\n  \"default_model\": \"x\"\n}"
+        },
+        "url": "{{backend_base_url}}/api/v1/orgs/{{org_id}}/members/{{membership_id}}/tokens/{{member_token_id}}/models",
+        "description": "请求体校验。selected_model_ids 至少一项，否则 422。"
+      },
+      "event": [{
+        "listen": "test",
+        "script": {
+          "type": "text/javascript",
+          "exec": [
+            "pm.test('empty selection is 422', () => pm.response.to.have.status(422));"
+          ]
+        }
+      }]
+    },
+    {
+      "name": "13 - 通用修改不能提交自动凭证的 models",
+      "request": {
+        "method": "PATCH",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"models\": {\n    \"schema_version\": \"1.0\",\n    \"default_model\": null,\n    \"items\": []\n  }\n}"
+        },
+        "url": "{{backend_base_url}}/api/v1/orgs/{{org_id}}/members/{{membership_id}}/tokens/{{member_token_id}}",
+        "description": "自动 NEW-API 凭证的模型只能走 PUT .../models。本请求不应改已保存清单。"
+      },
+      "event": [{
+        "listen": "test",
+        "script": {
+          "type": "text/javascript",
+          "exec": [
+            "pm.test('generic models patch is 400', () => pm.response.to.have.status(400));",
+            "pm.expect(pm.response.json().message_key).to.eql('errors.member_token.models_managed_by_policy_api');"
+          ]
+        }
+      }]
+    },
+    {
+      "name": "14 - 未处于关闭中时重试撤销",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": "{{backend_base_url}}/api/v1/orgs/{{org_id}}/members/{{membership_id}}/tokens/{{member_token_id}}/retry-revoke",
+        "description": "对已同步凭证发送。预期 409，且不会调用 NEW-API 删除。不要对 revoke_pending 的凭证发送这一项。"
+      },
+      "event": [{
+        "listen": "test",
+        "script": {
+          "type": "text/javascript",
+          "exec": [
+            "pm.test('retry revoke on synced token is 409', () => pm.response.to.have.status(409));",
+            "pm.expect(pm.response.json().message_key).to.eql('errors.member_token.close_not_pending');"
+          ]
+        }
+      }]
+    },
+    {
+      "name": "15 - 未处于关闭中时只关闭本地",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": "{{backend_base_url}}/api/v1/orgs/{{org_id}}/members/{{membership_id}}/tokens/{{member_token_id}}/close-local",
+        "description": "对已同步凭证发送。预期 409，凭证保持未删除。"
+      },
+      "event": [{
+        "listen": "test",
+        "script": {
+          "type": "text/javascript",
+          "exec": [
+            "pm.test('close local on synced token is 409', () => pm.response.to.have.status(409));",
+            "pm.expect(pm.response.json().message_key).to.eql('errors.member_token.close_not_pending');"
+          ]
+        }
+      }]
+    },
+    {
+      "name": "16 - 运行时引导",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"consumer\": \"postman\",\n  \"runtime\": \"desktop\"\n}"
+        },
+        "url": "{{backend_base_url}}/api/v1/runtime/model-bootstrap",
+        "description": "使用当前登录用户的当前组织和默认凭证。不接受 org、member 或 token id。未就绪也是 HTTP 200，且没有 api_key。READY 才返回 NEW-API 地址和成员 Key。响应头必须禁止缓存。不要把响应体保存进仓库。"
+      },
+      "event": [{
+        "listen": "test",
+        "script": {
+          "type": "text/javascript",
+          "exec": [
+            "pm.test('bootstrap is 200', () => pm.response.to.have.status(200));",
+            "pm.expect(pm.response.headers.get('Cache-Control')).to.eql('no-store');",
+            "pm.expect(pm.response.headers.get('Pragma')).to.eql('no-cache');",
+            "const data = pm.response.json().data;",
+            "pm.expect(data.ready).to.be.a('boolean');",
+            "pm.expect(data.state).to.be.a('string');",
+            "if (!data.ready) {",
+            "  pm.expect(data).to.not.have.property('api_key');",
+            "  pm.expect(data.revision).to.eql(null);",
+            "} else {",
+            "  pm.expect(data.state).to.eql('READY');",
+            "  pm.expect(data.base_url).to.match(/^https?:\\/\\//);",
+            "  pm.expect(data.api_key).to.be.a('string').and.not.empty;",
+            "  pm.expect(data.default_model).to.eql(pm.collectionVariables.get('selected_model_id'));",
+            "  pm.expect(data.revision).to.match(/^[a-f0-9]{64}$/);",
+            "  pm.expect(data.revision).to.not.include(data.api_key);",
+            "  pm.expect(data.models).to.be.an('array').that.is.not.empty;",
+            "}"
+          ]
+        }
+      }]
+    },
+    {
+      "name": "17 - 引导请求多余字段",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"consumer\": \"postman\",\n  \"runtime\": \"desktop\",\n  \"api_key\": \"must-not-be-accepted\",\n  \"org_id\": \"{{org_id}}\"\n}"
+        },
+        "url": "{{backend_base_url}}/api/v1/runtime/model-bootstrap",
+        "description": "请求体只允许 consumer 和 runtime。多余字段返回 422，且不得据此返回 Key。"
+      },
+      "event": [{
+        "listen": "test",
+        "script": {
+          "type": "text/javascript",
+          "exec": [
+            "pm.test('extra bootstrap fields are 422', () => pm.response.to.have.status(422));",
+            "const body = pm.response.json();",
+            "pm.expect(body.data == null || body.data.api_key == null).to.eql(true);"
+          ]
+        }
+      }]
+    },
+    {
+      "name": "18 - 未登录不能引导",
+      "request": {
+        "auth": {"type": "noauth"},
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"consumer\": \"postman\",\n  \"runtime\": \"desktop\"\n}"
+        },
+        "url": "{{backend_base_url}}/api/v1/runtime/model-bootstrap",
+        "description": "去掉 JWT。预期 401，响应不含 api_key。"
+      },
+      "event": [{
+        "listen": "test",
+        "script": {
+          "type": "text/javascript",
+          "exec": [
+            "pm.test('anonymous bootstrap is 401', () => pm.response.to.have.status(401));",
+            "pm.expect(pm.response.text()).to.not.include('api_key');"
+          ]
+        }
+      }]
+    }
+  ]
+}

@@ -97,6 +97,8 @@ class Settings(BaseSettings):
 
     # ── 登录安全 ─────────────────────────────────────────
     LOGIN_EMAIL_WHITELIST: str = ""  # 逗号分隔的域名列表，为空则不限制
+    # 登录后是否强制要求 must_change_password 用户先改密（40350）。默认关闭。
+    FORCE_PASSWORD_CHANGE_ON_LOGIN: bool = False
 
     # ── CE 超管 ──────────────────────────────────────────
     INIT_ADMIN_ACCOUNT: str = "admin"  # 默认超管 username，留空则跳过自动创建
@@ -108,6 +110,12 @@ class Settings(BaseSettings):
 
     # ── Encryption (AES-256-GCM for KubeConfig) ─────────
     ENCRYPTION_KEY: str = "change-me-32-bytes-base64-key__="
+    MODEL_TOKEN_ENCRYPTION_KEY: str = ""
+    NEW_API_ADMIN_BASE_URL: str = ""
+    NEW_API_MODEL_BASE_URL: str = ""
+    NEW_API_SYSTEM_ACCESS_TOKEN: str = ""
+    NEW_API_USER_ID: str = ""
+    NEW_API_TIMEOUT_SECONDS: float = 15
 
     # ── 飞书 SSO（Portal 应用，可选） ─────────────────────
     FEISHU_APP_ID_PORTAL: str = ""

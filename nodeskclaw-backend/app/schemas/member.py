@@ -17,7 +17,7 @@ class CreateHumanMemberRequest(BaseModel):
     job_title: str | None = Field(default=None, max_length=128)
     employee_no: str | None = Field(default=None, max_length=64)
     supervisor_membership_id: str | None = None
-    must_change_password: bool = True
+    must_change_password: bool = False
     is_task_admin: bool = False
     skill_ids: list[str] = []
 

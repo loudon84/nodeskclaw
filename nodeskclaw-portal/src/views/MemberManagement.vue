@@ -6,6 +6,7 @@ import { useOrgStore } from '@/stores/org'
 import { useAuthStore } from '@/stores/auth'
 import CreateHumanMemberDialog from '@/components/members/CreateHumanMemberDialog.vue'
 import EditMemberProfileDialog from '@/components/members/EditMemberProfileDialog.vue'
+import MemberModelTokenDialog from '@/components/members/MemberModelTokenDialog.vue'
 import MemberSkillGrantDrawer from '@/components/members/MemberSkillGrantDrawer.vue'
 import CustomSelect from '@/components/shared/CustomSelect.vue'
 import { Button } from '@/components/ui/button'
@@ -36,6 +37,7 @@ const actionLoading = ref<string | null>(null)
 const showCreateDialog = ref(false)
 const showEditDialog = ref(false)
 const showSkillDrawer = ref(false)
+const showTokenDialog = ref(false)
 const showInviteDialog = ref(false)
 const showResetDialog = ref(false)
 const selectedMember = ref<MemberInfo | null>(null)
@@ -49,6 +51,20 @@ const roles = ref<Array<{ id: string; name_key: string }>>([])
 const resetResultName = ref('')
 const resetResultPassword = ref('')
 const resetCopied = ref(false)
+
+interface PendingCloseItem {
+  id: string
+  member_id: string
+  provider: string
+  token_masked: string
+  sync_status: string
+  membership_deleted?: boolean
+  user_name?: string | null
+  user_email?: string | null
+}
+
+const pendingCloseTokens = ref<PendingCloseItem[]>([])
+const pendingCloseLoading = ref(false)
 
 const isOrgAdmin = computed(() => authStore.user?.portal_org_role === 'admin')
 
@@ -112,10 +128,60 @@ onMounted(async () => {
       store.fetchMembers(),
       store.fetchPendingInvitations(),
       fetchRoles(),
+      loadPendingClose(),
     ])
   }
   loading.value = false
 })
+
+async function loadPendingClose() {
+  if (!isOrgAdmin.value) {
+    pendingCloseTokens.value = []
+    return
+  }
+  pendingCloseLoading.value = true
+  try {
+    pendingCloseTokens.value = await store.fetchPendingCloseTokens()
+  } catch (e) {
+    pendingCloseTokens.value = []
+    toast.error(resolveApiErrorMessage(e, t('memberManagement.pendingCloseLoadFailed')))
+  } finally {
+    pendingCloseLoading.value = false
+  }
+}
+
+async function handlePendingRetry(item: PendingCloseItem) {
+  actionLoading.value = item.id
+  try {
+    await store.retryRevokeMemberToken(item.member_id, item.id)
+    toast.success(t('memberManagement.modelTokenRevokeRetried'))
+    await loadPendingClose()
+  } catch (e) {
+    toast.error(resolveApiErrorMessage(e, t('memberManagement.modelTokenRetryRevoke')))
+    await loadPendingClose()
+  } finally {
+    actionLoading.value = null
+  }
+}
+
+async function handlePendingCloseLocal(item: PendingCloseItem) {
+  const ok = await confirm({
+    description: t('memberManagement.modelTokenConfirmCloseLocal'),
+    variant: 'danger',
+  })
+  if (!ok) return
+  actionLoading.value = item.id
+  try {
+    await store.closeLocalMemberToken(item.member_id, item.id)
+    toast.success(t('memberManagement.modelTokenClosedLocal'))
+    await loadPendingClose()
+  } catch (e) {
+    toast.error(resolveApiErrorMessage(e, t('memberManagement.modelTokenCloseLocal')))
+    await loadPendingClose()
+  } finally {
+    actionLoading.value = null
+  }
+}
 
 async function fetchRoles() {
   if (!orgStore.currentOrgId) return
@@ -138,6 +204,15 @@ function openEdit(member: MemberInfo) {
 function openSkills(member: MemberInfo) {
   selectedMember.value = member
   showSkillDrawer.value = true
+}
+
+function openTokens(member: MemberInfo) {
+  selectedMember.value = member
+  showTokenDialog.value = true
+}
+
+function canViewModelToken(member: MemberInfo) {
+  return isOrgAdmin.value || member.user_id === authStore.user?.id
 }
 
 async function handleRemove(member: MemberInfo) {
@@ -271,6 +346,49 @@ async function handleInvite() {
         <CustomSelect v-model="skillFilter" :options="skillFilterOptions" class="w-full md:w-44" />
       </div>
 
+      <div v-if="isOrgAdmin" class="rounded-xl border border-border bg-card p-4 mb-4 space-y-3">
+        <div>
+          <h2 class="text-sm font-semibold">{{ t('memberManagement.modelTokenPendingCloseTitle') }}</h2>
+        </div>
+        <div v-if="pendingCloseLoading" class="text-sm text-muted-foreground">{{ t('common.loading') }}</div>
+        <p v-else-if="!pendingCloseTokens.length" class="text-sm text-muted-foreground">
+          {{ t('memberManagement.modelTokenPendingCloseEmpty') }}
+        </p>
+        <div
+          v-for="item in pendingCloseTokens"
+          :key="item.id"
+          class="rounded-lg border border-border p-3 text-sm space-y-2"
+        >
+          <div class="font-medium">
+            {{ item.user_name || item.user_email || '-' }}
+            <span v-if="item.membership_deleted" class="text-xs text-muted-foreground ml-2">
+              {{ t('memberManagement.modelTokenMemberRemoved') }}
+            </span>
+          </div>
+          <div class="text-muted-foreground">{{ item.user_email || '-' }}</div>
+          <div>{{ t('memberManagement.modelTokenMasked') }}: {{ item.token_masked }}</div>
+          <div>{{ t('memberManagement.modelTokenSync') }}: {{ item.sync_status }}</div>
+          <div class="flex flex-wrap gap-2 pt-1">
+            <Button
+              variant="outline"
+              size="sm"
+              :disabled="actionLoading === item.id"
+              @click="handlePendingRetry(item)"
+            >
+              {{ t('memberManagement.modelTokenRetryRevoke') }}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              :disabled="actionLoading === item.id"
+              @click="handlePendingCloseLocal(item)"
+            >
+              {{ t('memberManagement.modelTokenCloseLocal') }}
+            </Button>
+          </div>
+        </div>
+      </div>
+
       <div class="space-y-3">
         <div
           v-for="member in filteredMembers"
@@ -314,7 +432,11 @@ async function handleInvite() {
               </div>
             </div>
 
-            <div v-if="isOrgAdmin && member.user_id !== authStore.user?.id" class="flex flex-wrap gap-2 shrink-0">
+            <div v-if="canViewModelToken(member) || (isOrgAdmin && member.user_id !== authStore.user?.id)" class="flex flex-wrap gap-2 shrink-0">
+              <Button v-if="canViewModelToken(member)" variant="outline" size="sm" @click="openTokens(member)">
+                <KeyRound class="w-3.5 h-3.5 mr-1" />{{ t('memberManagement.modelToken') }}
+              </Button>
+              <template v-if="isOrgAdmin && member.user_id !== authStore.user?.id">
               <Button variant="outline" size="sm" @click="openEdit(member)">
                 <Pencil class="w-3.5 h-3.5 mr-1" />{{ t('memberManagement.editProfile') }}
               </Button>
@@ -327,6 +449,7 @@ async function handleInvite() {
               <Button variant="outline" size="sm" :disabled="actionLoading === member.id" @click="handleRemove(member)">
                 <Trash2 class="w-3.5 h-3.5 mr-1" />{{ t('memberManagement.removeMember') }}
               </Button>
+              </template>
             </div>
           </div>
         </div>
@@ -355,6 +478,12 @@ async function handleInvite() {
       :member="selectedMember"
       @close="showSkillDrawer = false"
       @saved="store.fetchMembers()"
+    />
+    <MemberModelTokenDialog
+      :open="showTokenDialog"
+      :member="selectedMember"
+      :can-manage="isOrgAdmin"
+      @close="showTokenDialog = false"
     />
 
     <div v-if="showInviteDialog" class="fixed inset-0 z-50 flex items-center justify-center">

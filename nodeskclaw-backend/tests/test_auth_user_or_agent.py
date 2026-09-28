@@ -43,7 +43,7 @@ def _credentials(token: str = "token") -> HTTPAuthorizationCredentials:
 
 
 @pytest.mark.asyncio
-async def test_user_or_agent_rejects_password_change_required_user_token(monkeypatch):
+async def test_user_or_agent_allows_password_change_required_when_force_disabled(monkeypatch):
     user = SimpleNamespace(id="user-1", name="Alice", must_change_password=True)
     db = SimpleNamespace()
 
@@ -53,6 +53,27 @@ async def test_user_or_agent_rejects_password_change_required_user_token(monkeyp
         return user
 
     monkeypatch.setattr(security, "_get_user_by_token", fake_get_user_by_token)
+    monkeypatch.setattr(security.settings, "FORCE_PASSWORD_CHANGE_ON_LOGIN", False)
+
+    resolved = await security.get_current_user_or_agent(
+        credentials=_credentials("jwt-token"),
+        db=db,
+    )
+    assert resolved is user
+
+
+@pytest.mark.asyncio
+async def test_user_or_agent_rejects_password_change_required_when_force_enabled(monkeypatch):
+    user = SimpleNamespace(id="user-1", name="Alice", must_change_password=True)
+    db = SimpleNamespace()
+
+    async def fake_get_user_by_token(token, resolved_db):
+        assert token == "jwt-token"
+        assert resolved_db is db
+        return user
+
+    monkeypatch.setattr(security, "_get_user_by_token", fake_get_user_by_token)
+    monkeypatch.setattr(security.settings, "FORCE_PASSWORD_CHANGE_ON_LOGIN", True)
 
     with pytest.raises(HTTPException) as exc:
         await security.get_current_user_or_agent(credentials=_credentials("jwt-token"), db=db)

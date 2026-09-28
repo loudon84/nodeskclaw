@@ -156,7 +156,7 @@ async def get_current_user(
 ) -> User:
     """Extract and validate JWT from Authorization header, return User.
 
-    Raises 403 when user.must_change_password is True.
+    When FORCE_PASSWORD_CHANGE_ON_LOGIN=true, raises 403 if user.must_change_password.
     Auth-whitelist routes should use get_current_user_unchecked instead.
     """
     if credentials is None:
@@ -183,6 +183,8 @@ async def authenticate_bearer_token(token: str, db: AsyncSession) -> User:
 
 
 def _ensure_password_change_allowed(user: User) -> None:
+    if not settings.FORCE_PASSWORD_CHANGE_ON_LOGIN:
+        return
     if user.must_change_password:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

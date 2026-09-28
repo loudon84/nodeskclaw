@@ -26,4 +26,4 @@ Proxy 屏蔽 Provider 差异：OpenAI 兼容路径、Gemini 转换、Codex CLI �
 
 Proxy 可与 Backend 共享 PostgreSQL 中的 Key / 用量表，但进程与部署独立。
 
-不要把业务编排（部署、Gene、黑板）塞进 Proxy；也不要在 Backend 里复制一份完整转发实现绕过额度。
+不要把业务编排（部署、Gene、黑板）塞进 Proxy；也不要在 Backend 里复制一份完整转发实现绕过额度。Proxy 不读取 `member_tokens`（见 [[architecture/backend#Member Model Credential]]）。

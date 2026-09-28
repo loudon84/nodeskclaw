@@ -277,7 +277,7 @@ async def remove_member(
     )).scalar_one_or_none()
     removed_user_id = ms.user_id if ms else None
 
-    await org_service.remove_member(org_id, membership_id, db)
+    await org_service.remove_member(org_id, membership_id, db, actor_id=_org_ctx[0].id)
     await hooks.emit("operation_audit", action="org.member_removed", target_type="org_membership", target_id=membership_id, actor_id=_org_ctx[0].id, org_id=org_id)
 
     if removed_user_id:

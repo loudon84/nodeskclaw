@@ -454,7 +454,13 @@ async def update_member_role(org_id: str, membership_id: str, role: str, db: Asy
     return enriched[0]
 
 
-async def remove_member(org_id: str, membership_id: str, db: AsyncSession) -> None:
+async def remove_member(
+    org_id: str,
+    membership_id: str,
+    db: AsyncSession,
+    *,
+    actor_id: str | None = None,
+) -> None:
     """移除成员（软删除）。"""
     result = await db.execute(
         select(OrgMembership).where(
@@ -488,8 +494,22 @@ async def remove_member(org_id: str, membership_id: str, db: AsyncSession) -> No
     for sub in subordinates.scalars().all():
         sub.supervisor_membership_id = None
 
+    from app.services.member_token_service import revoke_tokens_for_removed_member
+    token_count = await revoke_tokens_for_removed_member(db, membership, actor_id=actor_id)
+
     membership.soft_delete()
     await db.commit()
+    if actor_id and token_count:
+        from app.core import hooks
+        await hooks.emit(
+            "operation_audit",
+            action="member_token.revoked_on_member_remove",
+            target_type="member_token",
+            target_id=membership.id,
+            actor_id=actor_id,
+            org_id=membership.org_id,
+            details={"count": token_count},
+        )
 
 
 async def switch_org(user: User, org_id: str, db: AsyncSession) -> OrgInfo:

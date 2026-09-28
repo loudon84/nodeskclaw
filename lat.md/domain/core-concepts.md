@@ -10,6 +10,8 @@ NoDeskClaw 的核心领域实体是组织、集群、实例、工作区与基因
 
 所有 workspace、instance、usage 数据必须按 `org_id` 隔离。Portal 用 `org_memberships` 鉴权；管理后台用独立的 `admin_memberships`，二者职责分离。
 
+组织级 LLM Key 与成员自己的模型凭证是两套数据。成员凭证挂在 `org_memberships.id` 上，见 [[architecture/backend#Member Model Credential]]。
+
 权威模型：[[nodeskclaw-backend/app/models/organization.py#Organization]]。
 
 快速创建人类成员支持 OA 姓名搜索快选：Portal 点「搜索」调用 `GET /orgs/{org_id}/members/oa-persons?q=`，后端代理 `OA_PERSON_API_URL`（`fd_name`）；未配置或失败不阻断手工填写。映射与代理见 [[nodeskclaw-backend/app/services/org_service.py#search_oa_persons]]。

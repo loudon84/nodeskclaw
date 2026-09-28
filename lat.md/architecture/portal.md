@@ -14,6 +14,8 @@ Hermes Connectors（`/hermes/connectors`）与 Edge 节点（`/hermes/edge-nodes
 
 Hermes Installations（`/hermes/installations`）页选择 remote / edge 安装目标（edge 需选定节点），并展示边缘回报的 `actual_status` 漂移状态。
 
+成员页 `/members` 由 `MemberManagement.vue` 与 store `memberManagement.ts` 管理。组织管理员可以在成员卡片打开「模型凭证」：自动创建，或手工录入只保存在本地的 NEW-API Key。自动凭证可以刷新目录、勾选模型并指定默认模型，也可以改分组；分组保存失败时下拉框留在刚选的值，成功后已选模型清空。正在关闭的凭证不能重新启用。非管理员只能查看自己的掩码和完整 Key。门户没有引导页面，也不展示引导接口返回的 API Key。文案在 `zh-CN` / `en-US` 的 `memberManagement`，失败用 `errors.member_token.*`。后端契约见 [[architecture/backend#Runtime Provider Bootstrap]]。
+
 标准触及链：`router` → `views` → `components` → `services` → `stores` → `i18n` → `types`。跨页状态用 Pinia（`useXxxStore`），局部状态留在组件内。
 
 ## API Client Rules
