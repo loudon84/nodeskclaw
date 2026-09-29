@@ -871,17 +871,21 @@ async def lifespan(app: FastAPI):
 
     # ── Skill Run Projection Worker ───────────────────────
     _projection_worker_task = None
+    _projection_worker = None
     if settings.SKILL_AGENT_ENABLED and settings.SKILL_RUN_PROJECTION_ENABLED:
         from app.services.hermes_skill.run_projection_updater_service import RunProjectionWorker
         _projection_worker = RunProjectionWorker()
         _projection_worker_task = asyncio.create_task(_projection_worker.start())
         logger.info("Skill Run Projection Worker 已启动")
+    elif settings.SKILL_AGENT_ENABLED:
+        logger.info("Skill Run Projection Worker 已停用（SKILL_RUN_PROJECTION_ENABLED=false）")
 
     yield
 
     # ── Skill Run Projection Worker shutdown ──────────────
     if _projection_worker_task and not _projection_worker_task.done():
-        _projection_worker.stop()
+        if _projection_worker is not None:
+            _projection_worker.stop()
         _projection_worker_task.cancel()
 
     # ── Skill Run Dispatch Worker shutdown ─────────────────
