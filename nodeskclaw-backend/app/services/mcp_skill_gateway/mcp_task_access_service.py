@@ -38,7 +38,7 @@ class McpTaskAccessService:
 
         if auth_ctx.allowed_skills:
             allowed = set(auth_ctx.allowed_skills)
-            if task.tool_name and task.tool_name not in allowed:
+            if task.tool_name == "remote_agent" or (task.tool_name and task.tool_name not in allowed):
                 raise ForbiddenError("无权访问该任务", "errors.task.forbidden")
 
         if not self._mcp_token_can_access_task(task, auth_ctx):

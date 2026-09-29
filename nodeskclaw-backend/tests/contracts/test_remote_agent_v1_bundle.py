@@ -1,0 +1,47 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from scripts import contracts as contracts_module
+
+
+BACKEND_ROOT = Path(__file__).resolve().parents[2]
+REMOTE_ROOT = BACKEND_ROOT / "contracts/remote-agent/v1.0.0"
+SKILL_V16_ROOT = BACKEND_ROOT / "contracts/skill-run/v1.6.0"
+
+
+def test_remote_agent_bundle_checksums_match_manifest():
+    contracts_module._validate_skill_run_checksums_exact(REMOTE_ROOT)
+
+
+def test_skill_run_v16_bundle_remains_checksum_closed():
+    contracts_module._validate_skill_run_checksums_exact(SKILL_V16_ROOT)
+
+
+def test_remote_agent_release_marks_acp_unsupported():
+    text = (REMOTE_ROOT / "RELEASE.md").read_text(encoding="utf-8")
+    assert "ACP" in text
+    assert "unsupported" in text.lower()
+
+
+def test_remote_agent_create_schema_has_no_skill_identity():
+    schema = json.loads((REMOTE_ROOT / "schemas/create.request.schema.json").read_text(encoding="utf-8"))
+    assert schema["$id"] == "remote-agent.run.create.v1"
+    assert "skill_id" not in schema["properties"]
+    assert "capability_ref" not in schema["properties"]
+    assert "tool_name" not in schema["properties"]
+
+
+def test_remote_agent_schema_ids_cover_public_operations():
+    manifest = json.loads((REMOTE_ROOT / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["acp"] == "unsupported"
+    assert set(manifest["schemaIds"]) == {
+        "remote-agent.run.create.v1",
+        "remote-agent.run.get.v1",
+        "remote-agent.run.events.v1",
+        "remote-agent.run.result.v1",
+        "remote-agent.run.artifacts.v1",
+        "remote-agent.run.cancel.v1",
+        "remote-agent.run.approval.v1",
+    }

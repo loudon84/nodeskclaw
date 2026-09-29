@@ -42,7 +42,7 @@ Hermes Skill、任务产物、Agent 绑定与 MCP Skill Gateway 是独立能力�
 
 ### Public Skill Run Contract Status
 
-本仓 Provider 最新 Public Skill Run 合同是 `SKILL-RUN-CONTRACT v1.6.0`；仓外 Work consumer pin 不得从本文件推断。
+本仓 Provider 最新 Public Skill Run 合同是 `SKILL-RUN-CONTRACT v1.6.0`；仓外 Work consumer pin 不得从本文件推断。直接专家运行使用独立合同 `contracts/remote-agent/v1.0.0/`，见 [[architecture/skill-agent#Remote Agent Provider]]。
 
 已发布累积版本：v1.2.1 baseline → v1.3.0 Approval Decision（RM-17 `DONE`）→ v1.4.0 Attachment Input（RM-18 `DONE`）→ v1.5.0 Streaming Delta + Assistant Snapshot（RM-19 `DONE`）→ v1.6.0 Rich Runtime Events And Artifacts（tag `skill-run-contract-v1.6.0`；Roadmap RM-20 仍 `IN_PRD`，live 未闭环）。见 [[architecture/skill-agent#RM-20 Public Rich Runtime Events]]。外部 `smc-copilot/apps/work` 的实际 consumer pin 由其 consumer-lock 决定，本仓 LAT 不推断具体版本。
 

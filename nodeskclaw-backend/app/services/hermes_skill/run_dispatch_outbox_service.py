@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.deps import async_session_factory
 from app.models.base import not_deleted
+from app.models.hermes_skill.hermes_task import HermesTask, TaskStatus
 from app.models.hermes_skill.run_dispatch_outbox import RunDispatchOutbox, RunDispatchStatus
 
 logger = logging.getLogger(__name__)
@@ -111,6 +112,7 @@ class RunDispatchOutboxService:
                     # Permanent 4xx client/schema/auth errors (except transient 408 Request Timeout / 429 Too Many Requests) -> Dead Letter directly
                     is_permanent_error = (400 <= res.status_code < 500) and res.status_code not in (408, 429)
                     self._record_failure(entry, err_msg, now, dead_letter_immediately=is_permanent_error)
+                    await self._fail_remote_agent_task_on_dead_letter(entry)
                     return False
         except Exception as exc:
             if entry.lease_generation != target_generation or (entry.lease_until and entry.lease_until < now):
@@ -121,6 +123,7 @@ class RunDispatchOutboxService:
                 return False
             err_msg = f"Connection/Transport error: {str(exc)[:256]}"
             self._record_failure(entry, err_msg, now, dead_letter_immediately=False)
+            await self._fail_remote_agent_task_on_dead_letter(entry)
             return False
 
     def _record_failure(
@@ -156,6 +159,23 @@ class RunDispatchOutboxService:
                 backoff_secs,
                 error_message,
             )
+
+    async def _fail_remote_agent_task_on_dead_letter(self, entry: RunDispatchOutbox) -> None:
+        if entry.status != RunDispatchStatus.DEAD_LETTER.value or entry.tool_name != "remote_agent":
+            return
+        task = await self.db.get(HermesTask, entry.run_id)
+        if task is None or task.tool_name != "remote_agent":
+            return
+        if task.status in (
+            TaskStatus.FAILED,
+            TaskStatus.CANCELLED,
+            TaskStatus.COMPLETED,
+            TaskStatus.TIMEOUT,
+        ):
+            return
+        task.status = TaskStatus.FAILED
+        task.error_code = task.error_code or "errors.remote_agent.dispatch_failed"
+        task.error_message = (entry.last_error or "dispatch failed")[:1024]
 
     async def replay_dead_letter(self, org_id: str, dispatch_id: str) -> RunDispatchOutbox:
         stmt = select(RunDispatchOutbox).where(

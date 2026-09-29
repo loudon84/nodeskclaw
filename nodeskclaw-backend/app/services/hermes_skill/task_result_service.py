@@ -195,7 +195,7 @@ class TaskResultService:
             )
         )
         task = result.scalar_one_or_none()
-        if task is None:
+        if task is None or task.tool_name == "remote_agent":
             raise NotFoundError("任务不存在", "errors.task.not_found")
         return task
 

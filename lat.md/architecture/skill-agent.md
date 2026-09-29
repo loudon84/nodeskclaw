@@ -401,3 +401,14 @@ Stage PRD：[RM-18 Public Attachment Input Contract v1.4.0](../../docs_agent/prd
 - **已实现**：审批与 cancel 南向见 [[architecture/skill-agent#RM-15 Approval Runtime Control]]。live 出口见 [[architecture/skill-agent#RM-15 Live Control V13]]。Public Approval Decision v1.3.0 见 [[architecture/skill-agent#RM-17 Public Approval Decision]]。
 - **已实现**：RM-16 Provider Conformance 已关闭。真实 Hermes `>= v2026.8.31` 已覆盖 PC-01 / PC-02 / PC-03 / PC-04 / PC-06 / PC-07 / PC-09 以及 PC-12 Public Isolation Scan。PC-05 / PC-08 不再作为 live Gate，由既有 fencing / interrupted 自动化证明。生产路径含 `/approval` 接受、cancel 合同终态、Worker gap、最小 `internal.runtime.trace` 与 coalescer 规则，见 [[architecture/skill-agent#RM-16 Provider Conformance Grounding]] 与 [[architecture/skill-agent#Hermes Engine Adapter#Runtime Semantic Event Fidelity]]。Roadmap RM-16 = `DONE`。
 - **已实现**：不得恢复 ChatCompletion parser，不得改写 v1.2.1。v1.3.0 / v1.4.0 / v1.5.0 / v1.6.0 已作为累积增量发布，见 [[architecture/skill-agent#RM-17 Public Approval Decision]]、[[architecture/skill-agent#RM-18 Public Attachment Input]]、[[architecture/skill-agent#RM-19 Public Streaming Delta]] 与 [[architecture/skill-agent#RM-20 Public Rich Runtime Events]]。
+
+## Remote Agent Provider
+
+已发布且已启用的专家可以用 `agent_ref` 与 `prompt` 直接创建运行。该路径不提交 skill，也不改写 Skill Run v1.6 合同。
+
+公开前缀是 `/api/v1/remote-agent/runs`。创建先做权限、提示词、幂等和会话检查，再在同一 Backend 事务写入 HermesTask 与投递 outbox。`tool_name` 固定为 `remote_agent`，快照 `skill_id` 保持空。专家绑定写在 agent 会话 metadata，成功插入 Run 的同一事务里完成。旧的 `/api/v1/runs`、Hermes 任务列表和 MCP 任务查询把这条任务当作不存在。
+
+- **已实现**：创建顺序与错误信封在 [[nodeskclaw-backend/app/services/remote_agent_provider_service.py#RemoteAgentProviderService#create]]，路由在 [[nodeskclaw-backend/app/api/remote_agent_runs.py#create_remote_agent_run]]。`expert:invoke` 只发给已有专家调用权的角色。
+- **已实现**：直接 Agent 快照不回填 skill，见 [[nodeskclaw-agent/app/services/run_service.py#build_snapshot]]。Hermes 请求在工具名为 `remote_agent` 时不把工具名当作 skill，见 [[nodeskclaw-agent/app/services/hermes_engine.py#build_native_run_payload]]。
+- **已实现**：旧查询隐藏依赖 [[nodeskclaw-backend/app/services/hermes_skill/task_service.py#TaskService#get_task]] 与 [[nodeskclaw-backend/app/services/hermes_skill/task_service.py#TaskService#list_tasks]]。只有 `remote_agent` 的 dead letter 会把任务写成失败，见 [[nodeskclaw-backend/app/services/hermes_skill/run_dispatch_outbox_service.py#RunDispatchOutboxService#_fail_remote_agent_task_on_dead_letter]]。
+- **合同**：`nodeskclaw-backend/contracts/remote-agent/v1.0.0/`。ACP 与 Composio 执行不在本版。真实 Hermes 若拒绝无 skill 载荷，记为规格缺口，不得改绑默认 skill。

@@ -402,12 +402,16 @@ def build_native_run_payload(
     user_input = prompt
     if context:
         user_input = f"{prompt}\n\n{json.dumps(context, ensure_ascii=False)}"
-    body: dict[str, Any] = {
-        "input": user_input,
-        "instructions": (
+    if runtime_skill_id:
+        instructions = (
             f"你是 Hermes Agent。本次任务指定 skill: {runtime_skill_id}。"
             f"请优先按照该 skill 的流程完成用户任务。"
-        ),
+        )
+    else:
+        instructions = "你是 Hermes Agent。请直接完成用户任务。"
+    body: dict[str, Any] = {
+        "input": user_input,
+        "instructions": instructions,
     }
     if model_name:
         body["model"] = model_name
@@ -974,7 +978,10 @@ async def execute_hermes_run(
 
     prompt = str(arguments.get("prompt") or "").strip() or str(arguments)
     context = arguments.get("context") if isinstance(arguments.get("context"), dict) else None
-    runtime_skill_id = str(route_snapshot.get("runtime_skill_id") or tool_name)
+    if tool_name == "remote_agent":
+        runtime_skill_id = ""
+    else:
+        runtime_skill_id = str(route_snapshot.get("runtime_skill_id") or tool_name)
     model_name = str(
         (minted_lease.get("model") if minted_lease else None)
         or route_snapshot.get("model")

@@ -227,7 +227,7 @@ class TaskService:
 
     async def get_task(self, task_id: str, org_id: str) -> HermesTask:
         task = await self.db.get(HermesTask, task_id)
-        if not task or task.deleted_at is not None or task.org_id != org_id:
+        if not task or task.deleted_at is not None or task.org_id != org_id or task.tool_name == "remote_agent":
             raise NotFoundError("Task 不存在", "errors.task.not_found")
         return task
 
@@ -358,11 +358,13 @@ class TaskService:
             not_deleted(HermesTask),
             HermesTask.org_id == org_id,
             agent_filter,
+            or_(HermesTask.tool_name.is_(None), HermesTask.tool_name != "remote_agent"),
         )
         count_stmt = select(func.count()).select_from(HermesTask).where(
             not_deleted(HermesTask),
             HermesTask.org_id == org_id,
             agent_filter,
+            or_(HermesTask.tool_name.is_(None), HermesTask.tool_name != "remote_agent"),
         )
         if skill_id:
             stmt = stmt.where(HermesTask.skill_id == skill_id)

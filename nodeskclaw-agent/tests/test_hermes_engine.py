@@ -160,6 +160,17 @@ def test_build_native_run_payload_includes_skill():
     assert "stream" not in payload
 
 
+def test_build_native_run_payload_omits_skill_when_direct_agent():
+    payload = build_native_run_payload(
+        model_name="m1",
+        runtime_skill_id="",
+        prompt="hello",
+    )
+    assert payload["input"] == "hello"
+    assert "skill" not in payload["instructions"].lower()
+    assert "remote_agent" not in payload["instructions"]
+
+
 def test_parse_hermes_version_prefers_calendar_tag():
     assert parse_hermes_version("Hermes Agent v0.21.0 (2026.8.31)") == (2026, 8, 31)
     assert parse_hermes_version("v2026.4.23") == (2026, 4, 23)

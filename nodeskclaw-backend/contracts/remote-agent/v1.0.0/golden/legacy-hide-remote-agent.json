@@ -1,0 +1,10 @@
+{
+  "name": "legacy-hide-remote-agent",
+  "toolName": "remote_agent",
+  "hiddenFrom": [
+    "GET /api/v1/runs/{run_id}",
+    "POST /api/v1/mcp",
+    "GET /api/v1/hermes/tasks"
+  ],
+  "visibleAt": "GET /api/v1/remote-agent/runs/{run_id}"
+}

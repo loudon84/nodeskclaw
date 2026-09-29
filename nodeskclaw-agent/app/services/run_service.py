@@ -25,6 +25,7 @@ SCHEMA = settings.SKILL_AGENT_SCHEMA
 logger = logging.getLogger(__name__)
 
 TERMINAL = {"COMPLETED", "FAILED", "CANCELLED", "TIMED_OUT"}
+REMOTE_AGENT_TOOL_NAME = "remote_agent"
 
 RUNTIME_BINDING_PUBLIC_OMIT_KEYS = frozenset(
     {
@@ -108,7 +109,7 @@ def build_snapshot(request: CreateRunRequest, *, org_id: str, user_id: str) -> d
         else:
             runtime_policy.pop("runtime_capability_ref", None)
     body = {
-        "skill_id": request.skill_id or request.tool_name,
+        "skill_id": None if request.tool_name == REMOTE_AGENT_TOOL_NAME else (request.skill_id or request.tool_name),
         "skill_version": request.skill_version,
         "skill_release_id": request.skill_release_id,
         "skill_release_digest": digest,
@@ -136,6 +137,246 @@ def build_snapshot(request: CreateRunRequest, *, org_id: str, user_id: str) -> d
     ).hexdigest()
     body["snapshot_hash"] = snapshot_hash
     return body
+
+
+def _session_metadata(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return dict(value)
+    if isinstance(value, str) and value.strip():
+        parsed = json.loads(value)
+        if isinstance(parsed, dict):
+            return parsed
+    return {}
+
+
+async def _load_remote_agent_session(
+    db: AsyncSession,
+    *,
+    run_session_id: str,
+    org_id: str,
+    user_id: str,
+) -> dict[str, Any] | None:
+    if not run_session_id or len(run_session_id) > 36:
+        raise ValueError("run session id invalid")
+    row = (
+        await db.execute(
+            text(
+                f"""
+                SELECT id, org_id, user_id, metadata, deleted_at, expires_at
+                FROM "{SCHEMA}".run_sessions
+                WHERE id = :id
+                LIMIT 1
+                FOR UPDATE
+                """
+            ),
+            {"id": run_session_id},
+        )
+    ).mappings().first()
+    if not row:
+        return None
+    if row["org_id"] != org_id:
+        raise ValueError("cross-org run session access rejected")
+    if row["user_id"] != user_id:
+        raise ValueError("run session subject mismatch rejected")
+    if row.get("deleted_at") is not None:
+        raise ValueError("run session unrecoverable: soft deleted")
+    expires_at = row.get("expires_at")
+    if expires_at is not None:
+        exp = expires_at
+        if exp.tzinfo is None:
+            exp = exp.replace(tzinfo=timezone.utc)
+        if exp <= _utcnow():
+            raise ValueError("run session unrecoverable: expired")
+    return dict(row)
+
+
+async def _latest_remote_agent_run_id(
+    db: AsyncSession,
+    *,
+    run_session_id: str,
+    org_id: str,
+    user_id: str,
+    run_id: str,
+) -> str | None:
+    row = (
+        await db.execute(
+            text(
+                f"""
+                SELECT id
+                FROM "{SCHEMA}".runs
+                WHERE run_session_id = :run_session_id
+                  AND org_id = :org_id
+                  AND user_id = :user_id
+                  AND id <> :run_id
+                ORDER BY created_at DESC
+                LIMIT 1
+                """
+            ),
+            {
+                "run_session_id": run_session_id,
+                "org_id": org_id,
+                "user_id": user_id,
+                "run_id": run_id,
+            },
+        )
+    ).mappings().first()
+    if not row:
+        return None
+    return str(row["id"])
+
+
+async def _runtime_session_id_for_run(db: AsyncSession, run_id: str) -> str | None:
+    row = (
+        await db.execute(
+            text(
+                f"""
+                SELECT runtime_session_id
+                FROM "{SCHEMA}".run_attempts
+                WHERE run_id = :run_id AND runtime_session_id IS NOT NULL
+                ORDER BY created_at DESC
+                LIMIT 1
+                """
+            ),
+            {"run_id": run_id},
+        )
+    ).mappings().first()
+    if not row:
+        return None
+    value = str(row.get("runtime_session_id") or "").strip()
+    return value or None
+
+
+async def _remote_agent_session_is_busy(
+    db: AsyncSession,
+    *,
+    run_session_id: str,
+    org_id: str,
+    user_id: str,
+    run_id: str,
+) -> bool:
+    terminal_list = ", ".join(f"'{status}'" for status in sorted(TERMINAL))
+    row = (
+        await db.execute(
+            text(
+                f"""
+                SELECT id
+                FROM "{SCHEMA}".runs
+                WHERE run_session_id = :run_session_id
+                  AND org_id = :org_id
+                  AND user_id = :user_id
+                  AND id <> :run_id
+                  AND status NOT IN ({terminal_list})
+                LIMIT 1
+                """
+            ),
+            {
+                "run_session_id": run_session_id,
+                "org_id": org_id,
+                "user_id": user_id,
+                "run_id": run_id,
+            },
+        )
+    ).mappings().first()
+    return row is not None
+
+
+async def _copy_remote_agent_continuation(
+    db: AsyncSession,
+    request: CreateRunRequest,
+    *,
+    org_id: str,
+    user_id: str,
+) -> CreateRunRequest:
+    if request.tool_name != REMOTE_AGENT_TOOL_NAME or not request.run_session_id:
+        return request
+    latest_id = await _latest_remote_agent_run_id(
+        db,
+        run_session_id=request.run_session_id,
+        org_id=org_id,
+        user_id=user_id,
+        run_id=request.run_id or "",
+    )
+    if not latest_id:
+        return request
+    runtime_session_id = await _runtime_session_id_for_run(db, latest_id)
+    if not runtime_session_id:
+        return request
+    route = dict(request.route_snapshot or {})
+    route["session_id"] = runtime_session_id
+    return request.model_copy(update={"route_snapshot": route})
+
+
+async def _pin_remote_agent_session(
+    db: AsyncSession,
+    request: CreateRunRequest,
+    *,
+    org_id: str,
+    user_id: str,
+) -> None:
+    if request.tool_name != REMOTE_AGENT_TOOL_NAME or not request.run_session_id:
+        return
+    expert_slug = str((request.route_snapshot or {}).get("expert_slug") or "").strip()
+    if not expert_slug:
+        raise ValueError("REMOTE_AGENT_EXPERT_REQUIRED")
+    if await _remote_agent_session_is_busy(
+        db,
+        run_session_id=request.run_session_id,
+        org_id=org_id,
+        user_id=user_id,
+        run_id=request.run_id or "",
+    ):
+        raise ValueError("REMOTE_AGENT_SESSION_BUSY")
+    existing = await _load_remote_agent_session(
+        db,
+        run_session_id=request.run_session_id,
+        org_id=org_id,
+        user_id=user_id,
+    )
+    pinned = ""
+    if existing:
+        pinned = str(_session_metadata(existing.get("metadata")).get("expert_slug") or "").strip()
+    if pinned and pinned != expert_slug:
+        raise ValueError("REMOTE_AGENT_SESSION_AGENT_MISMATCH")
+    if pinned == expert_slug:
+        return
+    now = _utcnow()
+    if existing:
+        await db.execute(
+            text(
+                f"""
+                UPDATE "{SCHEMA}".run_sessions
+                SET metadata = COALESCE(metadata, '{{}}'::jsonb) || CAST(:patch AS jsonb),
+                    updated_at = :now
+                WHERE id = :id AND org_id = :org_id AND user_id = :user_id AND deleted_at IS NULL
+                """
+            ),
+            {
+                "patch": json.dumps({"expert_slug": expert_slug}),
+                "now": now,
+                "id": request.run_session_id,
+                "org_id": org_id,
+                "user_id": user_id,
+            },
+        )
+        return
+    await db.execute(
+        text(
+            f"""
+            INSERT INTO "{SCHEMA}".run_sessions (
+                id, org_id, user_id, metadata, context_version, created_at, updated_at
+            ) VALUES (
+                :id, :org_id, :user_id, CAST(:metadata AS jsonb), 0, :now, :now
+            )
+            """
+        ),
+        {
+            "id": request.run_session_id,
+            "org_id": org_id,
+            "user_id": user_id,
+            "metadata": json.dumps({"expert_slug": expert_slug}),
+            "now": now,
+        },
+    )
 
 
 async def _ensure_run_session(
@@ -278,6 +519,7 @@ async def create_run(
     if not request.run_id:
         raise ValueError("run_id is required")
 
+    request = await _copy_remote_agent_continuation(db, request, org_id=org_id, user_id=user_id)
     snapshot = build_snapshot(request, org_id=org_id, user_id=user_id)
     if request.run_session_id:
         await revalidate_run_session(
@@ -340,6 +582,8 @@ async def create_run(
             org_id=existing.get("org_id") or org_id,
             run_session_id=existing.get("run_session_id") or request.run_session_id,
         )
+
+    await _pin_remote_agent_session(db, request, org_id=org_id, user_id=user_id)
 
     if request.context_version is not None and not request.execution_context:
         raise ValueError("execution context is required when context version is set")

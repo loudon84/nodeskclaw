@@ -161,6 +161,17 @@ def test_build_snapshot_uses_release_fields():
     assert snap["runtime_policy"]["gateway_url"] == "http://example.com"
 
 
+def test_build_snapshot_remote_agent_keeps_skill_id_empty():
+    req = CreateRunRequest(
+        run_id="run-remote",
+        tool_name="remote_agent",
+        route_snapshot={"expert_slug": "sales-agent", "gateway_url": "http://example.com"},
+    )
+    snap = run_service.build_snapshot(req, org_id="org", user_id="user")
+    assert snap["skill_id"] is None
+    assert "remote_agent" != snap["skill_id"]
+
+
 def test_build_snapshot_keeps_connector_refs():
     req = CreateRunRequest(
         run_id="run-2",
