@@ -73,6 +73,7 @@ class ParsedRemoteAgentCreate:
     agent_ref: str
     prompt: str
     knowledge_refs: list[str]
+    connector_binding_refs: list[str]
     session_ref: str | None
 
 
@@ -81,12 +82,14 @@ def request_digest(
     agent_ref: str,
     prompt: str,
     knowledge_refs: list[str],
+    connector_binding_refs: list[str] | None = None,
     session_ref: str | None,
 ) -> str:
     body = {
         "agent_ref": agent_ref,
         "prompt": prompt.strip(),
         "knowledge_refs": sorted(knowledge_refs),
+        "connector_binding_refs": sorted(set(connector_binding_refs or [])),
         "session_ref": session_ref or "",
     }
     return hashlib.sha256(
@@ -121,16 +124,7 @@ def parse_create_body(payload: Any) -> ParsedRemoteAgentCreate:
     unknown = set(payload) - _ALLOWED_BODY_KEYS - {"connector_binding_refs"}
     if unknown:
         raise _context_rejected()
-    if "connector_binding_refs" in payload:
-        refs = payload.get("connector_binding_refs")
-        if refs not in (None, [], ""):
-            raise RemoteAgentRouteError(
-                "REMOTE_AGENT_BINDING_UNSUPPORTED",
-                409,
-                40901,
-                "errors.remote_agent.binding_unsupported",
-                "当前版本不支持连接器绑定",
-            )
+    connector_binding_refs = _parse_binding_refs(payload.get("connector_binding_refs"))
     client_request_id = payload.get("client_request_id")
     if not isinstance(client_request_id, str) or not client_request_id.strip() or len(client_request_id.strip()) > 128:
         raise RemoteAgentRouteError(
@@ -177,6 +171,7 @@ def parse_create_body(payload: Any) -> ParsedRemoteAgentCreate:
         agent_ref=agent_ref.strip(),
         prompt=prompt.strip(),
         knowledge_refs=[item.strip() for item in raw_refs],
+        connector_binding_refs=connector_binding_refs,
         session_ref=session_ref,
     )
 
@@ -217,8 +212,30 @@ class RemoteAgentProviderService:
             agent_ref=parsed.agent_ref,
             prompt=parsed.prompt,
             knowledge_refs=parsed.knowledge_refs,
+            connector_binding_refs=parsed.connector_binding_refs,
             session_ref=parsed.session_ref,
         )
+        tasks = TaskService(self.db)
+        existing = await tasks.find_idempotent_task(
+            org_id,
+            user_id,
+            REMOTE_AGENT_TOOL_NAME,
+            parsed.client_request_id,
+        )
+        digest_matches = bool(
+            existing and (existing.routing_metadata or {}).get("request_digest") == digest
+        )
+        if existing is not None and digest_matches:
+            return existing, True
+        if existing is not None and not digest_matches:
+            raise RemoteAgentRouteError(
+                "RUN_IDEMPOTENCY_CONFLICT",
+                409,
+                40903,
+                "errors.run.idempotency_conflict",
+                "相同 client_request_id 的请求内容不一致",
+            )
+
         catalog = ExpertCatalogService(self.db)
         expert = await catalog.get_by_slug(org_id, parsed.agent_ref)
         if expert is None or not expert.published or not expert.enabled:
@@ -248,6 +265,17 @@ class RemoteAgentProviderService:
                 "专家运行时未就绪",
             ) from exc
 
+        connector_descriptors: list[dict[str, str]] = []
+        if parsed.connector_binding_refs:
+            from app.services.remote_agent_binding_service import authorize_connector_bindings
+
+            connector_descriptors = await authorize_connector_bindings(
+                self.db,
+                org_id=org_id,
+                expert_id=expert.id,
+                binding_ids=parsed.connector_binding_refs,
+            )
+
         skill_runs = RuntimeSkillRunService(self.db)
         run_request = StartRuntimeSkillRunRequest(
             org_id=org_id,
@@ -270,13 +298,7 @@ class RemoteAgentProviderService:
             run_request,
             {"knowledge_refs": parsed.knowledge_refs},
         )
-        tasks = TaskService(self.db)
-        existing = await tasks.find_idempotent_task(
-            org_id,
-            user_id,
-            REMOTE_AGENT_TOOL_NAME,
-            parsed.client_request_id,
-        )
+        execution_context["connector_descriptors"] = connector_descriptors
         other_user = False
         slug_mismatch = False
         session_busy = False
@@ -351,6 +373,8 @@ class RemoteAgentProviderService:
         )
         route_snapshot["expert_slug"] = expert.expert_slug
         route_snapshot.pop("runtime_skill_id", None)
+        if connector_descriptors:
+            route_snapshot["connector_descriptors"] = connector_descriptors
         trace_id = generate_request_trace_id()
         task = HermesTask(
             id=str(uuid.uuid4()),
@@ -380,6 +404,7 @@ class RemoteAgentProviderService:
                 "agent_ref": expert.expert_slug,
                 "prompt": parsed.prompt,
                 "knowledge_refs": parsed.knowledge_refs,
+                "connector_binding_refs": parsed.connector_binding_refs,
                 "session_ref": parsed.session_ref,
                 "request_digest": digest,
             },
@@ -395,7 +420,7 @@ class RemoteAgentProviderService:
             "user_id": user_id,
             "tool_name": REMOTE_AGENT_TOOL_NAME,
             "skill_id": None,
-            "connector_binding_refs": [],
+            "connector_binding_refs": parsed.connector_binding_refs,
             "knowledge_refs": parsed.knowledge_refs,
             "placement": {"role": "central", "engine": "hermes"},
             "delegation_topology": "single_agent",
@@ -452,6 +477,19 @@ class RemoteAgentProviderService:
             if task.status not in _TERMINAL_TASK_STATUSES:
                 session_busy = True
         return other_user, slug_mismatch, session_busy
+
+
+def _parse_binding_refs(raw: Any) -> list[str]:
+    if raw in (None, "", []):
+        return []
+    if not isinstance(raw, list):
+        raise _context_rejected()
+    cleaned: list[str] = []
+    for item in raw:
+        if not isinstance(item, str) or not item.strip() or not _is_uuid(item):
+            raise _context_rejected()
+        cleaned.append(item.strip())
+    return sorted(set(cleaned))
 
 
 def _context_rejected() -> RemoteAgentRouteError:

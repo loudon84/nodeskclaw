@@ -1,0 +1,31 @@
+{
+  "$id": "remote-agent.run.events.v1",
+  "title": "RemoteAgentEvent",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["event_id", "run_id", "event_type", "event_seq"],
+  "properties": {
+    "event_id": {"type": "string"},
+    "run_id": {"type": "string"},
+    "event_type": {
+      "type": "string",
+      "enum": [
+        "assistant.delta",
+        "assistant.message",
+        "reasoning.summary",
+        "tool.call",
+        "tool.result",
+        "clarify.requested",
+        "approval.requested",
+        "artifact.persisted",
+        "run.progress",
+        "run.queued",
+        "run.completed",
+        "run.failed",
+        "run.cancelled"
+      ]
+    },
+    "event_seq": {"type": "integer", "minimum": 0},
+    "payload": {"type": "object"}
+  }
+}

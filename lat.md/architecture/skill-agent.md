@@ -412,3 +412,11 @@ Stage PRD：[RM-18 Public Attachment Input Contract v1.4.0](../../docs_agent/prd
 - **已实现**：直接 Agent 快照不回填 skill，见 [[nodeskclaw-agent/app/services/run_service.py#build_snapshot]]。Hermes 请求在工具名为 `remote_agent` 时不把工具名当作 skill，见 [[nodeskclaw-agent/app/services/hermes_engine.py#build_native_run_payload]]。
 - **已实现**：旧查询隐藏依赖 [[nodeskclaw-backend/app/services/hermes_skill/task_service.py#TaskService#get_task]] 与 [[nodeskclaw-backend/app/services/hermes_skill/task_service.py#TaskService#list_tasks]]。只有 `remote_agent` 的 dead letter 会把任务写成失败，见 [[nodeskclaw-backend/app/services/hermes_skill/run_dispatch_outbox_service.py#RunDispatchOutboxService#_fail_remote_agent_task_on_dead_letter]]。
 - **合同**：`nodeskclaw-backend/contracts/remote-agent/v1.0.0/`。ACP 与 Composio 执行不在本版。真实 Hermes 若拒绝无 skill 载荷，记为规格缺口，不得改绑默认 skill。
+
+## Remote Agent Connector Binding
+
+远程专家运行可以提交现有 `skill_connector_bindings.id`。授权在创建时完成，工具名单在调用时按当前库查询。Hermes 只连接 `/internal/v1/agent-tools/mcp`。没有 MCP 能力时运行记为规格缺口，地址不会写进提示词。
+
+- **已实现**：创建顺序、摘要和 binding 错误在 [[nodeskclaw-backend/app/services/remote_agent_provider_service.py#RemoteAgentProviderService#create]]。行分类在 [[nodeskclaw-backend/app/services/remote_agent_binding_service.py#classify_binding_row]]。
+- **已实现**：唯一工具面是 [[nodeskclaw-agent/app/api/agent_tools_mcp.py#agent_tools_mcp]]。审批通过后才调用现有连接器路由。Hermes 能力缺口在 [[nodeskclaw-agent/app/services/hermes_engine.py#execute_hermes_run]] 返回 `SPEC_SEMANTIC_GAP`。
+- **合同**：`nodeskclaw-backend/contracts/remote-agent/v1.1.0/`。v1.0.0 与 Skill Run v1.6.0 摘要保持不变。

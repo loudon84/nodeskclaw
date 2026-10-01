@@ -14,6 +14,7 @@ from app.models.base import not_deleted
 from app.models.hermes_skill.hermes_agent_instance import HermesAgentInstance
 from app.services.hermes_external.hermes_docker_binding_service import HermesDockerBindingService
 from app.services.hermes_external.hermes_env_parser import parse_env_file
+from app.services.remote_agent_binding_service import list_public_connector_tools, resolve_connector_call_route
 
 router = APIRouter(prefix="/internal/v1/skill-agent", tags=["Internal Skill Agent"])
 
@@ -191,4 +192,40 @@ async def review_attempt_authorization(
         expires_in=ttl,
         reason=None,
     )
+
+
+class RemoteAgentToolCatalogBody(BaseModel):
+    org_id: str
+    binding_ids: list[str] = []
+
+
+class RemoteAgentConnectorRouteBody(BaseModel):
+    org_id: str
+    binding_ids: list[str] = []
+    tool_name: str
+
+
+@router.post("/remote-agent/tools", dependencies=[Depends(_verify_internal_token)])
+async def list_remote_agent_tools(
+    body: RemoteAgentToolCatalogBody,
+    db: AsyncSession = Depends(get_db),
+):
+    tools = await list_public_connector_tools(db, org_id=body.org_id, binding_ids=body.binding_ids)
+    return {"tools": tools}
+
+
+@router.post("/remote-agent/connector-route", dependencies=[Depends(_verify_internal_token)])
+async def remote_agent_connector_route(
+    body: RemoteAgentConnectorRouteBody,
+    db: AsyncSession = Depends(get_db),
+):
+    route = await resolve_connector_call_route(
+        db,
+        org_id=body.org_id,
+        binding_ids=body.binding_ids,
+        tool_name=body.tool_name,
+    )
+    if route is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="connector tool is not in the run catalog")
+    return route
 

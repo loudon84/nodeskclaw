@@ -1058,6 +1058,12 @@ async def approve_run(
 
     choice = normalize_hermes_approval_choice(decision or "approve")
     evidence_dict = evidence or {}
+    if run.tool_name == "remote_agent":
+        from app.api.agent_tools_mcp import complete_connector_approval
+
+        handled = await complete_connector_approval(db, run=run, approval_id=approval_id, choice=choice)
+        if handled:
+            return await get_run(db, run_id, org_id=org_id)
 
     try:
         await db.execute(

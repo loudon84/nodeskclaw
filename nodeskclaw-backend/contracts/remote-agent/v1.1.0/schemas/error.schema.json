@@ -1,0 +1,14 @@
+{
+  "$id": "remote-agent.run.error.v1",
+  "title": "RemoteAgentError",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["code", "error_code", "message_key", "message"],
+  "properties": {
+    "code": {"type": "integer"},
+    "error_code": {"type": ["string", "integer"]},
+    "message_key": {"type": "string"},
+    "message": {"type": "string"},
+    "data": {"type": "null"}
+  }
+}

@@ -195,6 +195,27 @@ async def test_execute_hermes_fails_without_gateway():
 
 
 @pytest.mark.asyncio
+async def test_connector_descriptors_stop_when_hermes_has_no_mcp_surface():
+    client = _native_client()
+    with patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client):
+        events = [
+            event
+            async for event in execute_hermes_run(
+                tool_name="remote_agent",
+                arguments={"prompt": "hi"},
+                run_id="run-1",
+                attempt_id="att-1",
+                route_snapshot={
+                    "gateway_url": "http://hermes:8642",
+                    "connector_descriptors": [{"binding_id": "11111111-1111-4111-8111-111111111111"}],
+                },
+            )
+        ]
+    assert events[-1]["payload"]["error_code"] == "SPEC_SEMANTIC_GAP"
+    assert not any(str(call.args[0]).endswith("/v1/runs") for call in client.post.await_args_list)
+
+
+@pytest.mark.asyncio
 async def test_execute_hermes_uses_minted_credential_lease():
     client = _native_client(assistant_text="ok from minted lease")
     mock_fetch = AsyncMock(

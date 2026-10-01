@@ -9,6 +9,7 @@ from app.services.hermes_skill.permission_checker import _ROLE_PERMISSIONS
 from app.services.hermes_skill.run_dispatch_outbox_service import RunDispatchOutboxService
 from app.services.hermes_skill.task_service import TaskService
 from app.services.remote_agent_provider_service import (
+    RemoteAgentProviderService,
     RemoteAgentRouteError,
     decide_before_insert,
     parse_create_body,
@@ -36,7 +37,23 @@ def test_parse_create_rejects_prompt_binding_and_context():
             "prompt": "hello",
             "connector_binding_refs": ["binding"],
         })
-    assert binding_error.value.symbol == "REMOTE_AGENT_BINDING_UNSUPPORTED"
+    assert binding_error.value.symbol == "REMOTE_AGENT_CONTEXT_REJECTED"
+    assert binding_error.value.code == 40004
+
+    parsed = parse_create_body({
+        "client_request_id": "req-1",
+        "agent_ref": "expert",
+        "prompt": "hello",
+        "connector_binding_refs": [
+            "22222222-2222-4222-8222-222222222222",
+            "11111111-1111-4111-8111-111111111111",
+            "11111111-1111-4111-8111-111111111111",
+        ],
+    })
+    assert parsed.connector_binding_refs == [
+        "11111111-1111-4111-8111-111111111111",
+        "22222222-2222-4222-8222-222222222222",
+    ]
 
     with pytest.raises(RemoteAgentRouteError) as context_error:
         parse_create_body({
@@ -59,6 +76,7 @@ def test_request_digest_changes_with_sorted_refs_and_session():
         agent_ref="expert",
         prompt="hello",
         knowledge_refs=["a", "b"],
+        connector_binding_refs=[],
         session_ref="",
     )
     other = request_digest(
@@ -67,8 +85,30 @@ def test_request_digest_changes_with_sorted_refs_and_session():
         knowledge_refs=["a", "b"],
         session_ref="11111111-1111-1111-1111-111111111111",
     )
+    binding_order = request_digest(
+        agent_ref="expert",
+        prompt="hello",
+        knowledge_refs=["a", "b"],
+        connector_binding_refs=[
+            "22222222-2222-4222-8222-222222222222",
+            "11111111-1111-4111-8111-111111111111",
+        ],
+        session_ref="",
+    )
+    binding_sorted = request_digest(
+        agent_ref="expert",
+        prompt="hello",
+        knowledge_refs=["a", "b"],
+        connector_binding_refs=[
+            "11111111-1111-4111-8111-111111111111",
+            "22222222-2222-4222-8222-222222222222",
+        ],
+        session_ref="",
+    )
     assert left == same
     assert left != other
+    assert binding_order == binding_sorted
+    assert binding_order != left
 
 
 def test_idempotency_replay_wins_before_session_busy():
@@ -176,3 +216,36 @@ async def test_dead_letter_marks_only_remote_agent_task_failed():
 
     await RunDispatchOutboxService(SkillDB())._fail_remote_agent_task_on_dead_letter(skill_entry)
     assert skill_task.status == TaskStatus.QUEUED
+
+
+@pytest.mark.asyncio
+async def test_digest_replay_skips_knowledge_proof(monkeypatch):
+    digest = request_digest(
+        agent_ref="expert",
+        prompt="hello",
+        knowledge_refs=[],
+        session_ref=None,
+    )
+    existing = SimpleNamespace(routing_metadata={"request_digest": digest})
+
+    class Tasks:
+        def __init__(self, db):
+            return None
+
+        async def find_idempotent_task(self, *args, **kwargs):
+            return existing
+
+    class Boom:
+        def __init__(self, db):
+            raise AssertionError("later checks must not run on replay")
+
+    monkeypatch.setattr("app.services.remote_agent_provider_service.TaskService", Tasks)
+    monkeypatch.setattr("app.services.remote_agent_provider_service.ExpertCatalogService", Boom)
+    monkeypatch.setattr("app.services.remote_agent_provider_service.RuntimeSkillRunService", Boom)
+    task, replayed = await RemoteAgentProviderService(SimpleNamespace()).create(
+        org_id="org",
+        user_id="user",
+        payload={"client_request_id": "req-1", "agent_ref": "expert", "prompt": "hello"},
+    )
+    assert replayed is True
+    assert task is existing

@@ -1,0 +1,18 @@
+{
+  "name": "connector-binding-disabled",
+  "request": {
+    "client_request_id": "req-binding-disabled",
+    "agent_ref": "sales-agent",
+    "prompt": "lookup the account",
+    "connector_binding_refs": ["22222222-2222-4222-8222-222222222222"]
+  },
+  "response": {
+    "code": 40906,
+    "error_code": "CONNECTOR_BINDING_DISABLED",
+    "message_key": "errors.remote_agent.binding_disabled",
+    "message": "连接器实例未启用",
+    "data": null
+  },
+  "httpStatus": 409,
+  "enqueued": false
+}

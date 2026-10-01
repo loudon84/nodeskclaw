@@ -1079,6 +1079,26 @@ async def execute_hermes_run(
                 )
                 return
 
+            descriptors = route_snapshot.get("connector_descriptors") or []
+            if tool_name == "remote_agent" and descriptors:
+                from app.api.agent_tools_mcp import mint_attempt_credential
+                from app.services.agent_tool_gateway import hermes_mcp_feature
+
+                feature = hermes_mcp_feature(caps_body)
+                mcp_url = str(settings.SKILL_AGENT_TOOL_MCP_URL or "").rstrip("/")
+                if not feature or not mcp_url:
+                    yield _failed(
+                        "SPEC_SEMANTIC_GAP",
+                        "Hermes capabilities do not expose an MCP tool surface",
+                    )
+                    return
+                token = mint_attempt_credential(str(run_id or ""), int(generation))
+                native_payload = dict(native_payload)
+                native_payload[feature] = {
+                    "url": f"{mcp_url}/internal/v1/agent-tools/mcp",
+                    "headers": {"X-Agent-Tool-Attempt": token},
+                }
+
             submit_headers = dict(auth_headers)
             submit_headers["Idempotency-Key"] = idempotency_key
             start_began = time.monotonic()

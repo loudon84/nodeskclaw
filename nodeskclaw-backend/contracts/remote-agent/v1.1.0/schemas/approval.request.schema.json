@@ -1,0 +1,11 @@
+{
+  "$id": "remote-agent.run.approval.v1",
+  "title": "RemoteAgentApprovalRequest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["decision"],
+  "properties": {
+    "decision": {"type": "string", "enum": ["allow", "deny"]},
+    "comment": {"type": "string", "maxLength": 500}
+  }
+}
