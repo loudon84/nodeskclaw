@@ -1,0 +1,7 @@
+{
+  "code": 40400,
+  "error_code": 40400,
+  "message_key": "errors.integration.account_not_found",
+  "message": "外部账号不存在",
+  "data": null
+}

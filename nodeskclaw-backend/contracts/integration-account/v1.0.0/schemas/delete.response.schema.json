@@ -1,0 +1,39 @@
+{
+  "$id": "integration-account.delete.response.v1",
+  "title": "IntegrationAccountDeleteResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "code",
+    "error_code",
+    "message_key",
+    "message",
+    "data"
+  ],
+  "properties": {
+    "code": {
+      "const": 0
+    },
+    "error_code": {
+      "type": "null"
+    },
+    "message_key": {
+      "type": "null"
+    },
+    "message": {
+      "const": "success"
+    },
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "deleted"
+      ],
+      "properties": {
+        "deleted": {
+          "const": true
+        }
+      }
+    }
+  }
+}

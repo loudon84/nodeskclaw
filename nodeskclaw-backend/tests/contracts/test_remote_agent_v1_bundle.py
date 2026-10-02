@@ -80,3 +80,7 @@ def test_remote_agent_v12_adds_account_refs_without_changing_older_bundles():
     assert "integration_account_refs" not in schema["required"]
     v11 = json.loads((REMOTE_V11_ROOT / "schemas/create.request.schema.json").read_text(encoding="utf-8"))
     assert "integration_account_refs" not in v11["properties"]
+    manifest = json.loads((REMOTE_V12_ROOT / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["implementationHeadSha"] == "9d9085538fd1b0077cbd5a2056c5b07b9df795fa"
+    assert manifest["releaseCommitSha"] != manifest["implementationHeadSha"]
+    assert len(manifest["releaseCommitSha"]) == 40

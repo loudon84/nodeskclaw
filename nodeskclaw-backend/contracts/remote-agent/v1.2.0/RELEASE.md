@@ -11,3 +11,5 @@ connector_binding_refs remains an optional skill_connector_bindings id list. int
 The v1.0.0 and v1.1.0 bundles in the sibling directories stay immutable. Skill runs remain on the frozen SKILL-RUN-CONTRACT v1.6.0 bundle.
 
 The consumer pin for smc-copilot/apps/work is the SHA256SUMS file in this directory. Live changes in that repository are a separate gate.
+
+The closed bundle digest in SHA256SUMS is the consumer pin. releaseCommitSha is the parent commit present when this bundle was sealed. implementationHeadSha is the v1.2 behavior baseline and is not the same commit.

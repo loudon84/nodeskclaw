@@ -4,7 +4,7 @@
   "bundleFormatVersion": "1",
   "provider": "nodeskclaw-backend",
   "consumer": "smc-copilot/apps/work",
-  "implementationHeadSha": "27f5c112563092d67bfee0221d508aa59f945e2e",
+  "implementationHeadSha": "9d9085538fd1b0077cbd5a2056c5b07b9df795fa",
   "acp": "unsupported",
   "composio": "gated",
   "schemaIds": [
@@ -17,7 +17,7 @@
     "remote-agent.run.approval.v1"
   ],
   "artifacts": {
-    "RELEASE.md": "b8611f8bcd2f641475657fe1d2dff7e9ded1cbd2041947c05e0a60ef480ccd4c",
+    "RELEASE.md": "9d88a43f3d8801c8ddf8dd4a30ffdc401e0ec2a803cc2819c56efd2b1f199091",
     "golden/connector-binding-disabled.json": "628019d984df978ac4f6dc1207e748e0f9875fb37d2a652f6e7835ac47d88f8b",
     "golden/connector-binding-not-found.json": "11574eab6b043e0995d1b9d64bb2432eb6254c50bd0ce23d56091c8760f34177",
     "golden/connector-binding-placement-unsupported.json": "2636395fbd6b41a8e63e355cb899f20bdd805e58e82b4c6417b0187eb4b590b9",
@@ -41,5 +41,6 @@
     "schemas/event.schema.json": "f438fc43db7816a43c3aa376b92e872420b3aa5664f978cb89a7e2c676f3f111",
     "schemas/get.response.schema.json": "33eb36d57796f8ddc9d7ae4939bdbef559fe639532ccba1af838c7abc102fc48",
     "schemas/result.response.schema.json": "f7eaa653a03372d024f3af275265b696bc32d8c3f03e80221aec07c36995a0da"
-  }
+  },
+  "releaseCommitSha": "ebe5eece220910495fdf8fd862d790f6a8498fdf"
 }

@@ -427,4 +427,4 @@ Stage PRD：[RM-18 Public Attachment Input Contract v1.4.0](../../docs_agent/prd
 
 - **已实现**：账号授权与公开名冲突在 [[nodeskclaw-backend/app/services/remote_agent_provider_service.py#RemoteAgentProviderService#_authorize_external_accounts]]。描述符字段在 [[nodeskclaw-backend/app/services/integration_account_service.py#external_descriptors]]。
 - **已实现**：审批后的外部调用走现有 [[nodeskclaw-agent/app/api/agent_tools_mcp.py#agent_tools_mcp]]。Hermes 没有 MCP 工具面时，[[nodeskclaw-agent/app/services/hermes_engine.py#execute_hermes_run]] 在调用 Composio 之前失败。
-- **合同**：`nodeskclaw-backend/contracts/remote-agent/v1.2.0/`。v1.0.0 与 v1.1.0 摘要保持不变。
+- **合同**：`nodeskclaw-backend/contracts/remote-agent/v1.2.0/` 的实现基线是 `9d908553`。集成账号公开契约在 `nodeskclaw-backend/contracts/integration-account/v1.0.0/`。v1.0.0 与 v1.1.0 摘要保持不变。

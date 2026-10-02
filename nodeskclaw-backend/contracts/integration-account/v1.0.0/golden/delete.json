@@ -1,0 +1,9 @@
+{
+  "code": 0,
+  "error_code": null,
+  "message_key": null,
+  "message": "success",
+  "data": {
+    "deleted": true
+  }
+}

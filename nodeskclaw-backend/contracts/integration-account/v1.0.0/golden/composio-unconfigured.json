@@ -1,0 +1,7 @@
+{
+  "code": 40000,
+  "error_code": 40000,
+  "message_key": "errors.integration.composio_unconfigured",
+  "message": "管理员尚未配置外部账号连接",
+  "data": null
+}

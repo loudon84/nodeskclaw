@@ -1,0 +1,7 @@
+{
+  "code": 40900,
+  "error_code": 40900,
+  "message_key": "errors.integration.account_not_confirmed",
+  "message": "外部账号尚未完成连接",
+  "data": null
+}

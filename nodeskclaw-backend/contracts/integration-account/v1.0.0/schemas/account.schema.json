@@ -1,0 +1,46 @@
+{
+  "$id": "integration-account.account.v1",
+  "title": "IntegrationAccount",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "provider",
+    "toolkit_slug",
+    "status"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "provider": {
+      "type": "string",
+      "minLength": 1
+    },
+    "toolkit_slug": {
+      "type": "string",
+      "minLength": 1
+    },
+    "alias": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "AUTHORIZING",
+        "ACTIVE",
+        "DISCONNECTED"
+      ]
+    },
+    "connected_account_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  }
+}
