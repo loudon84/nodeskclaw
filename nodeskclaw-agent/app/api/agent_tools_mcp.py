@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import secrets
 import uuid
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import require_internal_token
+from app.config import settings
 from app.db import get_db
 from app.services import run_service
 from app.services.agent_tool_gateway import (
@@ -20,24 +19,12 @@ from app.services.agent_tool_gateway import (
     find_tool_result,
     public_tool_view,
 )
+from app.services.attempt_capability import stable_tool_call_id, verify_capability
 from app.services.connector_router import execute_connector_run
 from app.services.remote_agent_catalog_client import RemoteAgentCatalogClient
 from app.services.secret_store import SecretStore
 
 router = APIRouter(prefix="/internal/v1/agent-tools", tags=["agent-tools"])
-
-_ATTEMPT_CREDENTIALS: dict[tuple[str, int], str] = {}
-
-
-def mint_attempt_credential(run_id: str, generation: int) -> str:
-    token = secrets.token_urlsafe(24)
-    _ATTEMPT_CREDENTIALS[(run_id, generation)] = token
-    return token
-
-
-def credential_matches(run_id: str, generation: int, presented: str | None) -> bool:
-    expected = _ATTEMPT_CREDENTIALS.get((run_id, generation))
-    return bool(expected) and presented == expected
 
 
 def _event_dicts(events) -> list[dict[str, Any]]:
@@ -53,29 +40,43 @@ def _event_dicts(events) -> list[dict[str, Any]]:
     return rows
 
 
-@router.post("/mcp", dependencies=[Depends(require_internal_token)])
+@router.post("/mcp")
 async def agent_tools_mcp(
     body: dict[str, Any],
     db: AsyncSession = Depends(get_db),
-    attempt_token: str | None = Header(default=None, alias="X-Agent-Tool-Attempt"),
+    capability: str | None = Header(default=None, alias="X-Agent-Tool-Capability"),
 ):
-    params = body.get("params") if isinstance(body.get("params"), dict) else {}
-    run_id = str(params.get("run_id") or "")
-    org_id = str(params.get("org_id") or "")
-    if not run_id or not org_id:
-        raise HTTPException(status_code=400, detail="run_id and org_id are required")
+    claims, capability_error = verify_capability(
+        capability,
+        signing_key=settings.AGENT_TOOL_CAPABILITY_SIGNING_KEY,
+    )
+    if claims is None:
+        raise HTTPException(status_code=401, detail=capability_error)
+    run_id = str(claims.get("run_id") or "")
+    org_id = str(claims.get("org_id") or "")
+    attempt_id = str(claims.get("attempt_id") or "")
+    token_generation = int(claims.get("generation") or 0)
     run = await run_service.get_run(db, run_id, org_id=org_id)
-    if not run or run.tool_name != "remote_agent":
-        raise HTTPException(status_code=404, detail="run not found")
-    generation = int(params.get("generation") if params.get("generation") is not None else run.generation)
-    if not credential_matches(run_id, generation, attempt_token):
-        raise HTTPException(status_code=401, detail="attempt credential rejected")
+    if run is None or run.tool_name != "remote_agent" or run.status in run_service.TERMINAL or str(run.attempt_id or "") != attempt_id:
+        raise HTTPException(status_code=401, detail="AGENT_TOOL_CAPABILITY_MISSING")
+    generation = int(run.generation or 0)
+    if generation != token_generation:
+        raise HTTPException(status_code=401, detail="AGENT_TOOL_CAPABILITY_FENCED")
     method = str(body.get("method") or "")
     if method == "tools/list":
         tools = await _catalog_tools(run)
         return {"jsonrpc": "2.0", "id": body.get("id"), "result": {"tools": [public_tool_view(tool) for tool in tools]}}
     if method == "tools/call":
-        result = await _call_tool(db, run, params, generation)
+        if body.get("id") in (None, ""):
+            raise HTTPException(status_code=400, detail="JSON-RPC id is required")
+        result = await _call_tool(
+            db,
+            run,
+            body.get("params") if isinstance(body.get("params"), dict) else {},
+            generation,
+            attempt_id=attempt_id,
+            rpc_id=str(body.get("id")),
+        )
         return {"jsonrpc": "2.0", "id": body.get("id"), "result": result}
     raise HTTPException(status_code=400, detail="unsupported mcp method")
 
@@ -92,10 +93,18 @@ async def _catalog_tools(run) -> list[dict[str, Any]]:
     )
 
 
-async def _call_tool(db: AsyncSession, run, params: dict[str, Any], generation: int) -> dict[str, Any]:
+async def _call_tool(
+    db: AsyncSession,
+    run,
+    params: dict[str, Any],
+    generation: int,
+    *,
+    attempt_id: str,
+    rpc_id: str,
+) -> dict[str, Any]:
     tool_name = str(params.get("name") or "")
     arguments = params.get("arguments") if isinstance(params.get("arguments"), dict) else {}
-    tool_call_id = str(params.get("tool_call_id") or uuid.uuid4())
+    tool_call_id = stable_tool_call_id(attempt_id=attempt_id, generation=generation, rpc_id=rpc_id)
     digest = arguments_digest(arguments)
     events = _event_dicts(await run_service.list_events(db, run.run_id))
     if find_argument_conflict(events, tool_call_id=tool_call_id, digest=digest):
@@ -290,6 +299,11 @@ async def _complete_external_approval(
         run_id=run.run_id,
         tool_name=tool_name,
         arguments=arguments,
+        tool_call_id=tool_call_id,
+        attempt_id=str(run.attempt_id or ""),
+        generation=int(run.generation or 0),
+        approval_id=approval_id,
+        arguments_digest=digest,
     )
     outcome = str((outcome_body or {}).get("outcome") or "fail_run")
     if outcome == "fail_run":
@@ -310,6 +324,10 @@ async def _complete_external_approval(
         recorded = "ok"
         next_status = "RUNNING"
         result = outcome_body.get("result") or {"isError": False, "content": []}
+    elif outcome == "conflict":
+        recorded = "TOOL_CALL_IDEMPOTENCY_CONFLICT"
+        next_status = "RUNNING"
+        result = {"isError": True, "content": [{"type": "text", "text": recorded}]}
     else:
         recorded = "EXTERNAL_TOOL_ERROR"
         next_status = "RUNNING"

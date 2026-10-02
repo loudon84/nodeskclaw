@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import logging
 import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import select
@@ -9,8 +11,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
 from app.models.base import not_deleted
 from app.models.integration.account import IntegrationAccount
+from app.models.integration.connect_attempt import IntegrationConnectAttempt
 from app.services.external_action.composio_client import ComposioCallError, ComposioClient
 from app.services.remote_agent_provider_service import RemoteAgentRouteError
+
+logger = logging.getLogger("integration.account")
+CONNECT_LINK_TTL_SECONDS = 1800
+
+
+def correlation_candidates(baseline: list[str] | None, current: list[str] | None) -> list[str]:
+    known = {item for item in baseline or [] if item}
+    return sorted({item for item in current or [] if item and item not in known})
 
 _DESCRIPTOR_KEYS = (
     "integration_account_id",
@@ -81,11 +92,10 @@ class IntegrationAccountService:
         slug = toolkit_slug.strip()
         if not slug:
             raise BadRequestError("toolkit_slug 不能为空", "errors.integration.toolkit_required")
+        user_ref = provider_user_id(org_id, user_id)
+        baseline = await self._baseline_accounts(user_ref, slug)
         try:
-            url = await self.client.create_connect_link(
-                provider_user_id=provider_user_id(org_id, user_id),
-                toolkit_slug=slug,
-            )
+            url = await self.client.create_connect_link(provider_user_id=user_ref, toolkit_slug=slug)
         except ComposioCallError as exc:
             raise BadRequestError("暂时无法创建连接链接", "errors.integration.connect_unavailable") from exc
         row = IntegrationAccount(
@@ -94,33 +104,60 @@ class IntegrationAccountService:
             user_id=user_id,
             provider="composio",
             toolkit_slug=slug,
-            provider_user_id=provider_user_id(org_id, user_id),
+            provider_user_id=user_ref,
             alias=(alias or "").strip() or None,
             status="AUTHORIZING",
             auth_version=1,
         )
         self.db.add(row)
+        self._add_attempt(row, mode="CONNECT", baseline=baseline)
         await self.db.commit()
         return {"account_id": row.id, "url": url}
 
     async def complete(self, *, org_id: str, user_id: str, account_id: str) -> dict[str, Any]:
         row = await self._owned_or_missing(org_id, user_id, account_id)
         try:
-            connected_id = await self.client.find_connected_account(
+            current = await self.client.list_active_account_ids(
                 provider_user_id=row.provider_user_id,
                 toolkit_slug=row.toolkit_slug,
             )
         except ComposioCallError as exc:
             raise ConflictError("外部账号尚未完成连接", "errors.integration.account_not_confirmed") from exc
-        if not connected_id:
+        if row.status == "ACTIVE" and row.connected_account_id and row.connected_account_id in current:
+            return public_account(row)
+        attempt = await self._latest_attempt(row.id)
+        now = datetime.now(timezone.utc)
+        expires_at = None if attempt is None else attempt.expires_at
+        if expires_at is not None and expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        if attempt is None or expires_at is None or expires_at <= now:
             raise ConflictError("外部账号尚未完成连接", "errors.integration.account_not_confirmed")
-        row.connected_account_id = connected_id
+        if attempt.mode == "REAUTHORIZE":
+            if row.connected_account_id and row.connected_account_id in current:
+                row.status = "ACTIVE"
+                attempt.status = "CONFIRMED"
+                attempt.confirmed_connected_account_id = row.connected_account_id
+                await self.db.commit()
+                return public_account(row)
+            raise ConflictError("外部账号尚未完成连接", "errors.integration.account_not_confirmed")
+        candidates = correlation_candidates(list(attempt.baseline_account_ids or []), current)
+        if len(candidates) != 1:
+            if len(candidates) > 1:
+                logger.warning(
+                    "integration.connect.ambiguous",
+                    extra={"trace": "INTEGRATION_ACCOUNT_CORRELATION_AMBIGUOUS", "candidate_count": len(candidates)},
+                )
+            raise ConflictError("外部账号尚未完成连接", "errors.integration.account_not_confirmed")
+        row.connected_account_id = candidates[0]
         row.status = "ACTIVE"
+        attempt.status = "CONFIRMED"
+        attempt.confirmed_connected_account_id = candidates[0]
         await self.db.commit()
         return public_account(row)
 
     async def reauthorize(self, *, org_id: str, user_id: str, account_id: str) -> dict[str, str]:
         row = await self._owned_or_missing(org_id, user_id, account_id)
+        baseline = await self._baseline_accounts(row.provider_user_id, row.toolkit_slug)
         try:
             url = await self.client.create_connect_link(
                 provider_user_id=row.provider_user_id,
@@ -129,6 +166,7 @@ class IntegrationAccountService:
         except ComposioCallError as exc:
             raise BadRequestError("暂时无法创建连接链接", "errors.integration.connect_unavailable") from exc
         row.status = "AUTHORIZING"
+        self._add_attempt(row, mode="REAUTHORIZE", baseline=baseline)
         await self.db.commit()
         return {"account_id": row.id, "url": url}
 
@@ -157,6 +195,44 @@ class IntegrationAccountService:
             )
         )
         return list(result.scalars().all())
+
+    async def _baseline_accounts(self, provider_user: str, toolkit_slug: str) -> list[str]:
+        try:
+            return await self.client.list_active_account_ids(
+                provider_user_id=provider_user,
+                toolkit_slug=toolkit_slug,
+            )
+        except ComposioCallError as exc:
+            raise BadRequestError("暂时无法创建连接链接", "errors.integration.connect_unavailable") from exc
+
+    def _add_attempt(self, row: IntegrationAccount, *, mode: str, baseline: list[str]) -> None:
+        started = datetime.now(timezone.utc)
+        self.db.add(
+            IntegrationConnectAttempt(
+                id=str(uuid.uuid4()),
+                org_id=row.org_id,
+                user_id=row.user_id,
+                integration_account_id=row.id,
+                provider=row.provider,
+                toolkit_slug=row.toolkit_slug,
+                mode=mode,
+                baseline_account_ids=list(baseline),
+                status="PENDING",
+                started_at=started,
+                expires_at=started + timedelta(seconds=CONNECT_LINK_TTL_SECONDS),
+            )
+        )
+
+    async def _latest_attempt(self, account_id: str) -> IntegrationConnectAttempt | None:
+        result = await self.db.execute(
+            select(IntegrationConnectAttempt)
+            .where(
+                not_deleted(IntegrationConnectAttempt),
+                IntegrationConnectAttempt.integration_account_id == account_id,
+            )
+            .order_by(IntegrationConnectAttempt.started_at.desc())
+        )
+        return result.scalars().first()
 
     async def _owned_or_missing(self, org_id: str, user_id: str, account_id: str) -> IntegrationAccount:
         row = await self.db.get(IntegrationAccount, account_id)

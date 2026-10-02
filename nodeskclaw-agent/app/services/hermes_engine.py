@@ -1082,8 +1082,8 @@ async def execute_hermes_run(
             descriptors = route_snapshot.get("connector_descriptors") or []
             external_descriptors = route_snapshot.get("external_descriptors") or []
             if tool_name == "remote_agent" and (descriptors or external_descriptors):
-                from app.api.agent_tools_mcp import mint_attempt_credential
                 from app.services.agent_tool_gateway import hermes_mcp_feature
+                from app.services.attempt_capability import mint_capability
 
                 feature = hermes_mcp_feature(caps_body)
                 mcp_url = str(settings.SKILL_AGENT_TOOL_MCP_URL or "").rstrip("/")
@@ -1093,11 +1093,24 @@ async def execute_hermes_run(
                         "Hermes capabilities do not expose an MCP tool surface",
                     )
                     return
-                token = mint_attempt_credential(str(run_id or ""), int(generation))
+                token = mint_capability(
+                    org_id=str(org_id or ""),
+                    run_id=str(run_id or ""),
+                    attempt_id=str(attempt_id or ""),
+                    generation=int(generation),
+                    signing_key=settings.AGENT_TOOL_CAPABILITY_SIGNING_KEY,
+                    ttl_seconds=settings.AGENT_TOOL_CAPABILITY_TTL_SECONDS,
+                )
+                if token is None:
+                    yield _failed(
+                        "SPEC_SEMANTIC_GAP",
+                        "Agent tool capability signing key is not configured",
+                    )
+                    return
                 native_payload = dict(native_payload)
                 native_payload[feature] = {
                     "url": f"{mcp_url}/internal/v1/agent-tools/mcp",
-                    "headers": {"X-Agent-Tool-Attempt": token},
+                    "headers": {"X-Agent-Tool-Capability": token},
                 }
 
             submit_headers = dict(auth_headers)

@@ -64,20 +64,63 @@ class ComposioClient:
                 return account_id.strip()
         return None
 
+    async def list_active_account_ids(self, *, provider_user_id: str, toolkit_slug: str) -> list[str]:
+        payload = await self._request(
+            "GET",
+            "/api/v3/connected_accounts",
+            params={
+                "user_ids": provider_user_id,
+                "toolkit_slugs": toolkit_slug,
+                "statuses": "ACTIVE",
+            },
+        )
+        items = payload.get("items") or payload.get("connected_accounts") or []
+        if isinstance(payload, dict) and not items and isinstance(payload.get("id"), str):
+            items = [payload]
+        found: list[str] = []
+        for item in items if isinstance(items, list) else []:
+            if not isinstance(item, dict):
+                continue
+            status = str(item.get("status") or "ACTIVE").upper()
+            if status not in {"ACTIVE", "CONNECTED"}:
+                continue
+            account_id = item.get("id") or item.get("connected_account_id")
+            if isinstance(account_id, str) and account_id.strip() and account_id.strip() not in found:
+                found.append(account_id.strip())
+        return found
+
     async def revoke_connected_account(self, connected_account_id: str) -> None:
         if not connected_account_id:
             return
         await self._request("DELETE", f"/api/v3/connected_accounts/{connected_account_id}")
 
-    async def create_session(self, *, provider_user_id: str, connected_account_id: str, toolkit_slug: str) -> str:
+    async def create_session(
+        self,
+        *,
+        provider_user_id: str,
+        connected_account_id: str = "",
+        toolkit_slug: str = "",
+        connected_account_ids: list[str] | None = None,
+        toolkit_slugs: list[str] | None = None,
+        tool_allowlist: list[str] | None = None,
+    ) -> str:
+        accounts = list(connected_account_ids or [])
+        if not accounts and connected_account_id:
+            accounts = [connected_account_id]
+        toolkits = list(toolkit_slugs or [])
+        if not toolkits and toolkit_slug:
+            toolkits = [toolkit_slug]
+        body: dict[str, Any] = {
+            "user_id": provider_user_id,
+            "toolkits": {"enable": toolkits},
+            "connected_accounts": {"enable": accounts},
+        }
+        if tool_allowlist:
+            body["tools"] = {"enable": list(tool_allowlist)}
         payload = await self._request(
             "POST",
             "/api/v3/tool_router/session",
-            json={
-                "user_id": provider_user_id,
-                "toolkits": {"enable": [toolkit_slug]},
-                "connected_accounts": {"enable": [connected_account_id]},
-            },
+            json=body,
         )
         session_id = payload.get("session_id") or payload.get("id")
         if not isinstance(session_id, str) or not session_id.strip():

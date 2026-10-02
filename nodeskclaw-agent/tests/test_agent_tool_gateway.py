@@ -116,6 +116,8 @@ async def test_tool_call_does_not_execute_connector_before_approval(monkeypatch)
         run,
         {"name": "crm.lookup", "arguments": {"q": "acme"}, "tool_call_id": "call-1"},
         1,
+        attempt_id="att-1",
+        rpc_id="1",
     )
     assert result["isError"] is True
     assert result["approval_id"]

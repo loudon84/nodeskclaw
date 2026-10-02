@@ -212,6 +212,11 @@ class RemoteAgentExternalExecuteBody(BaseModel):
     run_id: str
     tool_name: str
     arguments: dict = {}
+    tool_call_id: str = ""
+    attempt_id: str = ""
+    generation: int = 0
+    approval_id: str = ""
+    arguments_digest: str = ""
 
 
 class RemoteAgentExternalCloseBody(BaseModel):
@@ -260,7 +265,17 @@ async def remote_agent_external_execute(
     body: RemoteAgentExternalExecuteBody,
     db: AsyncSession = Depends(get_db),
 ):
-    return await _execute_external_tool(db, run_id=body.run_id, tool_name=body.tool_name, arguments=body.arguments)
+    return await _execute_external_tool(
+        db,
+        run_id=body.run_id,
+        tool_name=body.tool_name,
+        arguments=body.arguments,
+        tool_call_id=body.tool_call_id,
+        attempt_id=body.attempt_id,
+        generation=body.generation,
+        approval_id=body.approval_id,
+        arguments_digest=body.arguments_digest,
+    )
 
 
 @router.post("/remote-agent/external-close", dependencies=[Depends(_verify_internal_token)])
@@ -285,7 +300,18 @@ async def _current_external_tools(db: AsyncSession, *, org_id: str, user_id: str
     return list_external_tools(rows, policies)
 
 
-async def _execute_external_tool(db: AsyncSession, *, run_id: str, tool_name: str, arguments: dict):
+async def _execute_external_tool(
+    db: AsyncSession,
+    *,
+    run_id: str,
+    tool_name: str,
+    arguments: dict,
+    tool_call_id: str = "",
+    attempt_id: str = "",
+    generation: int = 0,
+    approval_id: str = "",
+    arguments_digest: str = "",
+):
     from app.models.hermes_skill.hermes_task import HermesTask
     from app.services.expert_external_action_policy_service import enabled_approval_policies, list_external_tools, require_toolkit_coverage
     from app.services.external_action.session_broker import ExternalActionBroker
@@ -315,14 +341,70 @@ async def _execute_external_tool(db: AsyncSession, *, run_id: str, tool_name: st
     account = next((row for row in rows if row.toolkit_slug == match["toolkit_slug"] and row.connected_account_id), None)
     if account is None or not account.connected_account_id:
         return {"outcome": "fail_run"}
-    return await ExternalActionBroker(db).execute(
+    tools = list_external_tools(rows, policies)
+    scope = {
+        "provider": "composio",
+        "provider_user_id": provider_user_id(task.org_id, task.user_id),
+        "run_id": task.id,
+        "account_pins": [
+            {
+                "integration_account_id": row.id,
+                "toolkit_slug": row.toolkit_slug,
+                "connected_account_id": row.connected_account_id,
+            }
+            for row in rows
+            if row.connected_account_id
+        ],
+        "toolkit_allowlist": sorted({row.toolkit_slug for row in rows}),
+        "tool_allowlist": sorted(tool["tool_name"] for tool in tools),
+        "sandbox_enabled": False,
+    }
+    from app.services.external_action.execution_ledger import ExternalActionLedger
+    from app.services.external_action.session_broker import SESSION_METADATA_KEY
+
+    ledger = ExternalActionLedger(db)
+    if not tool_call_id:
+        return {"outcome": "fail_run"}
+    arguments_digest = ExternalActionLedger.digest(arguments if isinstance(arguments, dict) else {})
+    replay = await ledger.reserve(
+        org_id=task.org_id,
+        user_id=task.user_id,
+        run_id=task.id,
+        attempt_id=attempt_id,
+        generation=int(generation or 0),
+        tool_call_id=tool_call_id,
+        tool_name=tool_name,
+        integration_account_id=account.id,
+        provider=account.provider,
+        toolkit_slug=account.toolkit_slug,
+        provider_tool_key=match["provider_tool_key"],
+        arguments_digest=arguments_digest,
+        approval_id=approval_id or None,
+    )
+    if replay is not None:
+        return replay
+    result = await ExternalActionBroker(db).execute(
         task=task,
         provider_user_id=provider_user_id(task.org_id, task.user_id),
         connected_account_id=account.connected_account_id or "",
         toolkit_slug=account.toolkit_slug,
         provider_tool_key=match["provider_tool_key"],
         arguments=arguments if isinstance(arguments, dict) else {},
+        scope=scope,
     )
+    await db.refresh(task)
+    session_ref = str((task.routing_metadata or {}).get(SESSION_METADATA_KEY) or "")
+    await ledger.finish(
+        run_id=task.id,
+        generation=int(generation or 0),
+        tool_call_id=tool_call_id,
+        outcome=str(result.get("outcome") or "fail_run"),
+        result=result.get("result") if isinstance(result.get("result"), dict) else None,
+        error_code=None,
+        session_ref=session_ref or None,
+        request_id=result.get("request_id") if isinstance(result.get("request_id"), str) else None,
+    )
+    return result
 
 
 async def _close_external_session(db: AsyncSession, *, run_id: str) -> None:

@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
+from app.config import settings
 from app.services.hermes_engine import (
     REQUIRED_FEATURES,
     EXECUTION_TOPOLOGY_NOT_SUPPORTED,
@@ -208,6 +209,34 @@ async def test_connector_descriptors_stop_when_hermes_has_no_mcp_surface():
                 route_snapshot={
                     "gateway_url": "http://hermes:8642",
                     "connector_descriptors": [{"binding_id": "11111111-1111-4111-8111-111111111111"}],
+                },
+            )
+        ]
+    assert events[-1]["payload"]["error_code"] == "SPEC_SEMANTIC_GAP"
+    assert not any(str(call.args[0]).endswith("/v1/runs") for call in client.post.await_args_list)
+
+
+@pytest.mark.asyncio
+async def test_descriptor_run_stops_before_hermes_when_capability_key_is_empty(monkeypatch):
+    monkeypatch.setattr(settings, "SKILL_AGENT_TOOL_MCP_URL", "http://agent.example")
+    monkeypatch.setattr(settings, "AGENT_TOOL_CAPABILITY_SIGNING_KEY", "")
+    caps = {
+        "version": "v2026.8.31",
+        "features": {name: True for name in REQUIRED_FEATURES} | {"mcp_tool_surface": True},
+    }
+    client = _native_client(caps=caps)
+    with patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client):
+        events = [
+            event
+            async for event in execute_hermes_run(
+                tool_name="remote_agent",
+                arguments={"prompt": "hi"},
+                org_id="org",
+                run_id="run-1",
+                attempt_id="att-1",
+                route_snapshot={
+                    "gateway_url": "http://hermes:8642",
+                    "external_descriptors": [{"integration_account_id": "11111111-1111-4111-8111-111111111111"}],
                 },
             )
         ]

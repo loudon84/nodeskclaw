@@ -331,6 +331,20 @@ def _validate_skill_run_checksums_exact(root: Path) -> None:
             raise SystemExit(f"SHA256SUMS/manifest disagree on {relative}")
 
 
+def bundle_digest_from_checksums(checksum_text: str) -> str:
+    lines: list[tuple[str, str]] = []
+    for raw_line in checksum_text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        digest, _, relative = line.partition("  ")
+        if not relative or relative in {"manifest.json", "SHA256SUMS", "BUNDLE_DIGEST"}:
+            continue
+        lines.append((relative, f"{digest}  {relative}"))
+    body = "\n".join(item for _, item in sorted(lines)) + "\n"
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()
+
+
 def _artifact_files(root: Path) -> list[Path]:
     patterns = [
         "openapi.yaml",

@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     SKILL_AGENT_READINESS_STALE_SECONDS: int = 120
     SKILL_AGENT_TIMEOUT_SECONDS: int = 30
     SKILL_AGENT_TOOL_MCP_URL: str = ""
+    AGENT_TOOL_CAPABILITY_SIGNING_KEY: str = ""
+    AGENT_TOOL_CAPABILITY_TTL_SECONDS: int = 900
 
 
 settings = Settings()

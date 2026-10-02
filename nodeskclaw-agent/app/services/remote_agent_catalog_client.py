@@ -45,10 +45,30 @@ class RemoteAgentCatalogClient:
                 return None
             raise
 
-    async def execute_external(self, *, run_id: str, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    async def execute_external(
+        self,
+        *,
+        run_id: str,
+        tool_name: str,
+        arguments: dict[str, Any],
+        tool_call_id: str = "",
+        attempt_id: str = "",
+        generation: int = 0,
+        approval_id: str = "",
+        arguments_digest: str = "",
+    ) -> dict[str, Any]:
         return await self._post(
             "/api/v1/internal/v1/skill-agent/remote-agent/external-execute",
-            {"run_id": run_id, "tool_name": tool_name, "arguments": arguments},
+            {
+                "run_id": run_id,
+                "tool_name": tool_name,
+                "arguments": arguments,
+                "tool_call_id": tool_call_id,
+                "attempt_id": attempt_id,
+                "generation": generation,
+                "approval_id": approval_id,
+                "arguments_digest": arguments_digest,
+            },
         )
 
     async def close_external_session(self, run_id: str) -> None:
