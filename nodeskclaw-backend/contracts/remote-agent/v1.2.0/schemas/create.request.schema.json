@@ -1,0 +1,57 @@
+{
+  "$id": "remote-agent.run.create.v1.2",
+  "title": "RemoteAgentCreateRequest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "client_request_id",
+    "agent_ref",
+    "prompt"
+  ],
+  "properties": {
+    "client_request_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "agent_ref": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "prompt": {
+      "type": "string",
+      "minLength": 1
+    },
+    "knowledge_refs": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "connector_binding_refs": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 36
+      }
+    },
+    "session_ref": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 36
+    },
+    "integration_account_refs": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 36
+      }
+    }
+  }
+}

@@ -1,0 +1,97 @@
+{
+  "authentication": "Authorization: Bearer <access-token>",
+  "successBody": "bare JSON",
+  "errorBody": {
+    "fields": [
+      "code",
+      "error_code",
+      "message_key",
+      "message"
+    ],
+    "errorCodeType": "string symbol"
+  },
+  "sseReplay": {
+    "header": "Last-Event-ID",
+    "cache": "no-store"
+  },
+  "approvalIdempotency": {
+    "header": "X-Idempotency-Key",
+    "path": "/api/v1/remote-agent/runs/{run_id}/approvals/{approval_id}/decision"
+  },
+  "unsupported": [
+    "acp"
+  ],
+  "connectorBindingRefs": "optional skill_connector_bindings id list",
+  "endpoints": [
+    {
+      "method": "POST",
+      "path": "/api/v1/remote-agent/runs",
+      "schemaId": "remote-agent.run.create.v1.2",
+      "success": [
+        200
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/remote-agent/runs/{run_id}",
+      "schemaId": "remote-agent.run.get.v1",
+      "success": [
+        200
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/remote-agent/runs/{run_id}/events",
+      "schemaId": "remote-agent.run.events.v1",
+      "success": [
+        200
+      ],
+      "retry": "Last-Event-ID"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/remote-agent/runs/{run_id}/result",
+      "schemaId": "remote-agent.run.result.v1",
+      "success": [
+        200
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/remote-agent/runs/{run_id}/artifacts",
+      "schemaId": "remote-agent.run.artifacts.v1",
+      "success": [
+        200
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/remote-agent/runs/{run_id}/artifacts/{artifact_id}",
+      "schemaId": "remote-agent.run.artifacts.v1",
+      "success": [
+        200
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/remote-agent/runs/{run_id}/cancel",
+      "schemaId": "remote-agent.run.cancel.v1",
+      "success": [
+        200
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/remote-agent/runs/{run_id}/approvals/{approval_id}/decision",
+      "schemaId": "remote-agent.run.approval.v1",
+      "headers": [
+        "X-Idempotency-Key"
+      ],
+      "success": [
+        200
+      ]
+    }
+  ],
+  "composioExecution": "gated until Hermes MCP conformance",
+  "integrationAccountRefs": "optional IntegrationAccount id list"
+}

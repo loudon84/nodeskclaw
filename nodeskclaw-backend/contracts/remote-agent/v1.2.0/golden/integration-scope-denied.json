@@ -1,0 +1,20 @@
+{
+  "name": "integration-scope-denied",
+  "request": {
+    "client_request_id": "req-account",
+    "agent_ref": "sales-agent",
+    "prompt": "lookup the account",
+    "integration_account_refs": [
+      "11111111-1111-4111-8111-111111111111"
+    ]
+  },
+  "response": {
+    "code": 40303,
+    "error_code": "INTEGRATION_SCOPE_DENIED",
+    "message_key": "errors.remote_agent.integration_scope_denied",
+    "message": "专家没有可用的外部工具策略",
+    "data": null
+  },
+  "httpStatus": 403,
+  "enqueued": false
+}

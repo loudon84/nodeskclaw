@@ -283,6 +283,8 @@ class CreateRunRequest(BaseModel):
     skill_release_digest: str | None = None
     snapshot_hash: str | None = None
     connector_binding_refs: list[str] = Field(default_factory=list)
+    integration_account_refs: list[str] = Field(default_factory=list)
+    expert_id: str | None = None
     knowledge_refs: list[str] = Field(default_factory=list)
     placement: dict[str, Any] = Field(default_factory=dict)
     arguments: dict[str, Any] = Field(default_factory=dict)

@@ -1080,7 +1080,8 @@ async def execute_hermes_run(
                 return
 
             descriptors = route_snapshot.get("connector_descriptors") or []
-            if tool_name == "remote_agent" and descriptors:
+            external_descriptors = route_snapshot.get("external_descriptors") or []
+            if tool_name == "remote_agent" and (descriptors or external_descriptors):
                 from app.api.agent_tools_mcp import mint_attempt_credential
                 from app.services.agent_tool_gateway import hermes_mcp_feature
 

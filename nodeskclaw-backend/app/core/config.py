@@ -116,6 +116,8 @@ class Settings(BaseSettings):
     NEW_API_SYSTEM_ACCESS_TOKEN: str = ""
     NEW_API_USER_ID: str = ""
     NEW_API_TIMEOUT_SECONDS: float = 15
+    COMPOSIO_API_KEY: str = ""
+    COMPOSIO_BASE_URL: str = "https://backend.composio.dev"
 
     # ── 飞书 SSO（Portal 应用，可选） ─────────────────────
     FEISHU_APP_ID_PORTAL: str = ""

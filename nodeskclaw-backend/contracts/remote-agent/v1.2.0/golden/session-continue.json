@@ -1,0 +1,17 @@
+{
+  "name": "session-continue",
+  "request": {
+    "client_request_id": "req-session-2",
+    "agent_ref": "sales-agent",
+    "prompt": "continue with the next account",
+    "session_ref": "11111111-1111-1111-1111-111111111111"
+  },
+  "response": {
+    "run_id": "run-session-2",
+    "status": "QUEUED",
+    "agent_ref": "sales-agent",
+    "created_at": "2026-09-29T00:01:00Z",
+    "session_ref": "11111111-1111-1111-1111-111111111111"
+  },
+  "hermesSessionIdPublic": false
+}

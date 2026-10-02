@@ -1,0 +1,18 @@
+{
+  "name": "knowledge-denied",
+  "request": {
+    "client_request_id": "req-knowledge-1",
+    "agent_ref": "sales-agent",
+    "prompt": "use the private note",
+    "knowledge_refs": ["kb-secret"]
+  },
+  "response": {
+    "code": 40300,
+    "error_code": 40300,
+    "message_key": "errors.run.knowledge_proof_denied",
+    "message": "Knowledge 引用未授权",
+    "data": null
+  },
+  "httpStatus": 403,
+  "enqueued": false
+}

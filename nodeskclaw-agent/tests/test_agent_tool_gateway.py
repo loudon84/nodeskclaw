@@ -4,6 +4,7 @@ import httpx
 import pytest
 
 from app.services.agent_tool_gateway import (
+    find_argument_conflict,
     arguments_digest,
     classify_connector_exception,
     decide_tool_call,
@@ -126,3 +127,10 @@ async def _empty_events(*args, **kwargs):
 
 async def _ok(*args, **kwargs):
     return True
+
+
+def test_same_tool_call_with_different_arguments_conflicts():
+    digest = arguments_digest({"q": "acme"})
+    events = [{"event_type": "connector.tool.result", "payload": {"tool_call_id": "call-1", "arguments_digest": digest}}]
+    assert find_argument_conflict(events, tool_call_id="call-1", digest=arguments_digest({"q": "other"}))
+    assert not find_argument_conflict(events, tool_call_id="call-1", digest=digest)

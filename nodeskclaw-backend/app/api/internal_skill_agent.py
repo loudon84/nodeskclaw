@@ -197,6 +197,9 @@ async def review_attempt_authorization(
 class RemoteAgentToolCatalogBody(BaseModel):
     org_id: str
     binding_ids: list[str] = []
+    account_ids: list[str] = []
+    expert_id: str = ""
+    user_id: str = ""
 
 
 class RemoteAgentConnectorRouteBody(BaseModel):
@@ -205,12 +208,34 @@ class RemoteAgentConnectorRouteBody(BaseModel):
     tool_name: str
 
 
+class RemoteAgentExternalExecuteBody(BaseModel):
+    run_id: str
+    tool_name: str
+    arguments: dict = {}
+
+
+class RemoteAgentExternalCloseBody(BaseModel):
+    run_id: str
+
+
 @router.post("/remote-agent/tools", dependencies=[Depends(_verify_internal_token)])
 async def list_remote_agent_tools(
     body: RemoteAgentToolCatalogBody,
     db: AsyncSession = Depends(get_db),
 ):
     tools = await list_public_connector_tools(db, org_id=body.org_id, binding_ids=body.binding_ids)
+    for tool in tools:
+        tool["source"] = "connector"
+    if body.account_ids and body.expert_id and body.user_id:
+        tools.extend(
+            await _current_external_tools(
+                db,
+                org_id=body.org_id,
+                user_id=body.user_id,
+                expert_id=body.expert_id,
+                account_ids=body.account_ids,
+            )
+        )
     return {"tools": tools}
 
 
@@ -228,4 +253,84 @@ async def remote_agent_connector_route(
     if route is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="connector tool is not in the run catalog")
     return route
+
+
+@router.post("/remote-agent/external-execute", dependencies=[Depends(_verify_internal_token)])
+async def remote_agent_external_execute(
+    body: RemoteAgentExternalExecuteBody,
+    db: AsyncSession = Depends(get_db),
+):
+    return await _execute_external_tool(db, run_id=body.run_id, tool_name=body.tool_name, arguments=body.arguments)
+
+
+@router.post("/remote-agent/external-close", dependencies=[Depends(_verify_internal_token)])
+async def remote_agent_external_close(
+    body: RemoteAgentExternalCloseBody,
+    db: AsyncSession = Depends(get_db),
+):
+    await _close_external_session(db, run_id=body.run_id)
+    return {"closed": True}
+
+
+async def _current_external_tools(db: AsyncSession, *, org_id: str, user_id: str, expert_id: str, account_ids: list[str]):
+    from app.services.expert_external_action_policy_service import enabled_approval_policies, list_external_tools
+    from app.services.integration_account_service import load_accounts_for_run
+    from app.services.remote_agent_provider_service import RemoteAgentRouteError
+
+    try:
+        rows = await load_accounts_for_run(db, org_id=org_id, user_id=user_id, account_ids=account_ids)
+    except RemoteAgentRouteError:
+        return []
+    policies = await enabled_approval_policies(db, org_id=org_id, expert_id=expert_id)
+    return list_external_tools(rows, policies)
+
+
+async def _execute_external_tool(db: AsyncSession, *, run_id: str, tool_name: str, arguments: dict):
+    from app.models.hermes_skill.hermes_task import HermesTask
+    from app.services.expert_external_action_policy_service import enabled_approval_policies, list_external_tools, require_toolkit_coverage
+    from app.services.external_action.session_broker import ExternalActionBroker
+    from app.services.integration_account_service import load_accounts_for_run, provider_user_id
+    from app.services.remote_agent_provider_service import REMOTE_AGENT_TOOL_NAME, RemoteAgentRouteError
+
+    task = await db.get(HermesTask, run_id)
+    if task is None or task.deleted_at is not None or task.tool_name != REMOTE_AGENT_TOOL_NAME:
+        return {"outcome": "fail_run"}
+    snapshot = task.request_snapshot or {}
+    account_ids = list(snapshot.get("integration_account_refs") or [])
+    expert_id = str(snapshot.get("expert_id") or "")
+    try:
+        rows = await load_accounts_for_run(
+            db,
+            org_id=task.org_id,
+            user_id=task.user_id,
+            account_ids=account_ids,
+        )
+        policies = await enabled_approval_policies(db, org_id=task.org_id, expert_id=expert_id)
+        require_toolkit_coverage(rows, policies)
+    except RemoteAgentRouteError:
+        return {"outcome": "fail_run"}
+    match = next((tool for tool in list_external_tools(rows, policies) if tool["tool_name"] == tool_name), None)
+    if match is None:
+        return {"outcome": "fail_run"}
+    account = next((row for row in rows if row.toolkit_slug == match["toolkit_slug"] and row.connected_account_id), None)
+    if account is None or not account.connected_account_id:
+        return {"outcome": "fail_run"}
+    return await ExternalActionBroker(db).execute(
+        task=task,
+        provider_user_id=provider_user_id(task.org_id, task.user_id),
+        connected_account_id=account.connected_account_id or "",
+        toolkit_slug=account.toolkit_slug,
+        provider_tool_key=match["provider_tool_key"],
+        arguments=arguments if isinstance(arguments, dict) else {},
+    )
+
+
+async def _close_external_session(db: AsyncSession, *, run_id: str) -> None:
+    from app.models.hermes_skill.hermes_task import HermesTask
+    from app.services.external_action.session_broker import ExternalActionBroker
+
+    task = await db.get(HermesTask, run_id)
+    if task is None or task.deleted_at is not None:
+        return
+    await ExternalActionBroker(db).close(task)
 

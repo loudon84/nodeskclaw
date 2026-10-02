@@ -420,3 +420,11 @@ Stage PRD：[RM-18 Public Attachment Input Contract v1.4.0](../../docs_agent/prd
 - **已实现**：创建顺序、摘要和 binding 错误在 [[nodeskclaw-backend/app/services/remote_agent_provider_service.py#RemoteAgentProviderService#create]]。行分类在 [[nodeskclaw-backend/app/services/remote_agent_binding_service.py#classify_binding_row]]。
 - **已实现**：唯一工具面是 [[nodeskclaw-agent/app/api/agent_tools_mcp.py#agent_tools_mcp]]。审批通过后才调用现有连接器路由。Hermes 能力缺口在 [[nodeskclaw-agent/app/services/hermes_engine.py#execute_hermes_run]] 返回 `SPEC_SEMANTIC_GAP`。
 - **合同**：`nodeskclaw-backend/contracts/remote-agent/v1.1.0/`。v1.0.0 与 Skill Run v1.6.0 摘要保持不变。
+
+## Remote Agent External Action
+
+成员连接自己的 Composio 账号，专家策略决定哪些外部工具需要审批。创建运行只读本地账号。审批通过后，backend 才打开 Composio session。
+
+- **已实现**：账号授权与公开名冲突在 [[nodeskclaw-backend/app/services/remote_agent_provider_service.py#RemoteAgentProviderService#_authorize_external_accounts]]。描述符字段在 [[nodeskclaw-backend/app/services/integration_account_service.py#external_descriptors]]。
+- **已实现**：审批后的外部调用走现有 [[nodeskclaw-agent/app/api/agent_tools_mcp.py#agent_tools_mcp]]。Hermes 没有 MCP 工具面时，[[nodeskclaw-agent/app/services/hermes_engine.py#execute_hermes_run]] 在调用 Composio 之前失败。
+- **合同**：`nodeskclaw-backend/contracts/remote-agent/v1.2.0/`。v1.0.0 与 v1.1.0 摘要保持不变。

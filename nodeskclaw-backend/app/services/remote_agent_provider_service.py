@@ -74,6 +74,7 @@ class ParsedRemoteAgentCreate:
     prompt: str
     knowledge_refs: list[str]
     connector_binding_refs: list[str]
+    integration_account_refs: list[str]
     session_ref: str | None
 
 
@@ -83,6 +84,7 @@ def request_digest(
     prompt: str,
     knowledge_refs: list[str],
     connector_binding_refs: list[str] | None = None,
+    integration_account_refs: list[str] | None = None,
     session_ref: str | None,
 ) -> str:
     body = {
@@ -90,6 +92,7 @@ def request_digest(
         "prompt": prompt.strip(),
         "knowledge_refs": sorted(knowledge_refs),
         "connector_binding_refs": sorted(set(connector_binding_refs or [])),
+        "integration_account_refs": sorted(set(integration_account_refs or [])),
         "session_ref": session_ref or "",
     }
     return hashlib.sha256(
@@ -121,10 +124,11 @@ def decide_before_insert(
 def parse_create_body(payload: Any) -> ParsedRemoteAgentCreate:
     if not isinstance(payload, dict):
         raise _context_rejected()
-    unknown = set(payload) - _ALLOWED_BODY_KEYS - {"connector_binding_refs"}
+    unknown = set(payload) - _ALLOWED_BODY_KEYS - {"connector_binding_refs", "integration_account_refs"}
     if unknown:
         raise _context_rejected()
-    connector_binding_refs = _parse_binding_refs(payload.get("connector_binding_refs"))
+    connector_binding_refs = _parse_uuid_refs(payload.get("connector_binding_refs"))
+    integration_account_refs = _parse_uuid_refs(payload.get("integration_account_refs"))
     client_request_id = payload.get("client_request_id")
     if not isinstance(client_request_id, str) or not client_request_id.strip() or len(client_request_id.strip()) > 128:
         raise RemoteAgentRouteError(
@@ -172,6 +176,7 @@ def parse_create_body(payload: Any) -> ParsedRemoteAgentCreate:
         prompt=prompt.strip(),
         knowledge_refs=[item.strip() for item in raw_refs],
         connector_binding_refs=connector_binding_refs,
+        integration_account_refs=integration_account_refs,
         session_ref=session_ref,
     )
 
@@ -213,6 +218,7 @@ class RemoteAgentProviderService:
             prompt=parsed.prompt,
             knowledge_refs=parsed.knowledge_refs,
             connector_binding_refs=parsed.connector_binding_refs,
+            integration_account_refs=parsed.integration_account_refs,
             session_ref=parsed.session_ref,
         )
         tasks = TaskService(self.db)
@@ -276,6 +282,16 @@ class RemoteAgentProviderService:
                 binding_ids=parsed.connector_binding_refs,
             )
 
+        external_descriptors: list[dict[str, str]] = []
+        if parsed.integration_account_refs:
+            external_descriptors = await self._authorize_external_accounts(
+                org_id=org_id,
+                user_id=user_id,
+                expert_id=expert.id,
+                account_ids=parsed.integration_account_refs,
+                binding_ids=parsed.connector_binding_refs,
+            )
+
         skill_runs = RuntimeSkillRunService(self.db)
         run_request = StartRuntimeSkillRunRequest(
             org_id=org_id,
@@ -299,6 +315,7 @@ class RemoteAgentProviderService:
             {"knowledge_refs": parsed.knowledge_refs},
         )
         execution_context["connector_descriptors"] = connector_descriptors
+        execution_context["external_descriptors"] = external_descriptors
         other_user = False
         slug_mismatch = False
         session_busy = False
@@ -375,6 +392,8 @@ class RemoteAgentProviderService:
         route_snapshot.pop("runtime_skill_id", None)
         if connector_descriptors:
             route_snapshot["connector_descriptors"] = connector_descriptors
+        if external_descriptors:
+            route_snapshot["external_descriptors"] = external_descriptors
         trace_id = generate_request_trace_id()
         task = HermesTask(
             id=str(uuid.uuid4()),
@@ -405,6 +424,8 @@ class RemoteAgentProviderService:
                 "prompt": parsed.prompt,
                 "knowledge_refs": parsed.knowledge_refs,
                 "connector_binding_refs": parsed.connector_binding_refs,
+                "integration_account_refs": parsed.integration_account_refs,
+                "expert_id": expert.id,
                 "session_ref": parsed.session_ref,
                 "request_digest": digest,
             },
@@ -421,6 +442,8 @@ class RemoteAgentProviderService:
             "tool_name": REMOTE_AGENT_TOOL_NAME,
             "skill_id": None,
             "connector_binding_refs": parsed.connector_binding_refs,
+            "integration_account_refs": parsed.integration_account_refs,
+            "expert_id": expert.id,
             "knowledge_refs": parsed.knowledge_refs,
             "placement": {"role": "central", "engine": "hermes"},
             "delegation_topology": "single_agent",
@@ -478,8 +501,51 @@ class RemoteAgentProviderService:
                 session_busy = True
         return other_user, slug_mismatch, session_busy
 
+    async def _authorize_external_accounts(
+        self,
+        *,
+        org_id: str,
+        user_id: str,
+        expert_id: str,
+        account_ids: list[str],
+        binding_ids: list[str],
+    ) -> list[dict[str, str]]:
+        from app.services.expert_external_action_policy_service import (
+            enabled_approval_policies,
+            require_toolkit_coverage,
+        )
+        from app.services.external_action.naming import has_surface_collision, surface_names_for_accounts
+        from app.services.integration_account_service import external_descriptors, load_accounts_for_run
+        from app.services.remote_agent_binding_service import list_public_connector_tools
 
-def _parse_binding_refs(raw: Any) -> list[str]:
+        rows = await load_accounts_for_run(
+            self.db,
+            org_id=org_id,
+            user_id=user_id,
+            account_ids=account_ids,
+        )
+        policies = await enabled_approval_policies(self.db, org_id=org_id, expert_id=expert_id)
+        require_toolkit_coverage(rows, policies)
+        connector_names: list[str] = []
+        if binding_ids:
+            tools = await list_public_connector_tools(self.db, org_id=org_id, binding_ids=binding_ids)
+            connector_names = [str(tool["tool_name"]) for tool in tools]
+        names = surface_names_for_accounts(
+            [(row.provider, row.toolkit_slug) for row in rows],
+            [(policy.provider, policy.toolkit_slug, policy.provider_tool_key) for policy in policies],
+        )
+        if has_surface_collision(names, connector_names):
+            raise RemoteAgentRouteError(
+                "TOOL_SURFACE_COLLISION",
+                409,
+                40909,
+                "errors.remote_agent.tool_surface_collision",
+                "外部工具公开名冲突",
+            )
+        return external_descriptors(rows)
+
+
+def _parse_uuid_refs(raw: Any) -> list[str]:
     if raw in (None, "", []):
         return []
     if not isinstance(raw, list):

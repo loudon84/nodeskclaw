@@ -1,0 +1,14 @@
+{
+  "$id": "remote-agent.run.create.v1",
+  "title": "RemoteAgentCreateResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["run_id", "status", "agent_ref", "created_at"],
+  "properties": {
+    "run_id": {"type": "string", "minLength": 1},
+    "status": {"type": "string"},
+    "agent_ref": {"type": "string", "minLength": 1},
+    "created_at": {"type": "string"},
+    "session_ref": {"type": "string", "maxLength": 36}
+  }
+}

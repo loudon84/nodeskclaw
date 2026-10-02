@@ -113,6 +113,7 @@ from app.models.expert_team import ExpertTeam  # noqa: F401
 from app.models.expert_team_skill import ExpertTeamSkill  # noqa: F401
 from app.models.expert_team_member import ExpertTeamMember  # noqa: F401
 from app.models.expert_invocation_log import ExpertInvocationLog  # noqa: F401
+from app.models.integration import ExpertExternalActionPolicy, IntegrationAccount  # noqa: F401
 from app.models.connector import (  # noqa: F401
     ConnectorDefinition,
     ConnectorInstance,

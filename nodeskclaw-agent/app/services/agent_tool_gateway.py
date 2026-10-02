@@ -40,6 +40,17 @@ def find_tool_result(events: list[dict[str, Any]], *, tool_call_id: str, digest:
     return None
 
 
+def find_argument_conflict(events: list[dict[str, Any]], *, tool_call_id: str, digest: str) -> bool:
+    for event in events:
+        payload = event.get("payload") or {}
+        if str(payload.get("tool_call_id") or "") != tool_call_id:
+            continue
+        prior = str(payload.get("arguments_digest") or "")
+        if prior and prior != digest:
+            return True
+    return False
+
+
 def find_pending_approval(events: list[dict[str, Any]]) -> dict[str, Any] | None:
     decided = {
         str((event.get("payload") or {}).get("approval_id"))

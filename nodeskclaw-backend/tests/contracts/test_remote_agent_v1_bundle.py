@@ -9,6 +9,7 @@ from scripts import contracts as contracts_module
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 REMOTE_ROOT = BACKEND_ROOT / "contracts/remote-agent/v1.0.0"
 REMOTE_V11_ROOT = BACKEND_ROOT / "contracts/remote-agent/v1.1.0"
+REMOTE_V12_ROOT = BACKEND_ROOT / "contracts/remote-agent/v1.2.0"
 SKILL_V16_ROOT = BACKEND_ROOT / "contracts/skill-run/v1.6.0"
 
 
@@ -66,3 +67,16 @@ def test_remote_agent_schema_ids_cover_public_operations():
         "remote-agent.run.cancel.v1",
         "remote-agent.run.approval.v1",
     }
+
+
+def test_remote_agent_v12_adds_account_refs_without_changing_older_bundles():
+    contracts_module._validate_skill_run_checksums_exact(REMOTE_V12_ROOT)
+    contracts_module._validate_skill_run_checksums_exact(REMOTE_V11_ROOT)
+    contracts_module._validate_skill_run_checksums_exact(REMOTE_ROOT)
+    schema = json.loads((REMOTE_V12_ROOT / "schemas/create.request.schema.json").read_text(encoding="utf-8"))
+    assert schema["$id"] == "remote-agent.run.create.v1.2"
+    assert schema["additionalProperties"] is False
+    assert "integration_account_refs" in schema["properties"]
+    assert "integration_account_refs" not in schema["required"]
+    v11 = json.loads((REMOTE_V11_ROOT / "schemas/create.request.schema.json").read_text(encoding="utf-8"))
+    assert "integration_account_refs" not in v11["properties"]

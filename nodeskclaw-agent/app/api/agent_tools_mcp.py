@@ -15,6 +15,7 @@ from app.services.agent_tool_gateway import (
     RESULT_EVENT,
     arguments_digest,
     decide_tool_call,
+    find_argument_conflict,
     find_pending_approval,
     find_tool_result,
     public_tool_view,
@@ -82,7 +83,13 @@ async def agent_tools_mcp(
 async def _catalog_tools(run) -> list[dict[str, Any]]:
     snapshot = run.snapshot or {}
     binding_ids = list(snapshot.get("connector_binding_refs") or [])
-    return await RemoteAgentCatalogClient().list_tools(org_id=run.org_id, binding_ids=binding_ids)
+    return await RemoteAgentCatalogClient().list_tools(
+        org_id=run.org_id,
+        binding_ids=binding_ids,
+        account_ids=list(snapshot.get("integration_account_refs") or []),
+        expert_id=str(snapshot.get("expert_id") or ""),
+        user_id=getattr(run, "user_id", None),
+    )
 
 
 async def _call_tool(db: AsyncSession, run, params: dict[str, Any], generation: int) -> dict[str, Any]:
@@ -91,6 +98,8 @@ async def _call_tool(db: AsyncSession, run, params: dict[str, Any], generation: 
     tool_call_id = str(params.get("tool_call_id") or uuid.uuid4())
     digest = arguments_digest(arguments)
     events = _event_dicts(await run_service.list_events(db, run.run_id))
+    if find_argument_conflict(events, tool_call_id=tool_call_id, digest=digest):
+        return {"isError": True, "content": [{"type": "text", "text": "TOOL_CALL_IDEMPOTENCY_CONFLICT"}]}
     stored = find_tool_result(events, tool_call_id=tool_call_id, digest=digest)
     tools = await _catalog_tools(run)
     listed = any(tool.get("tool_name") == tool_name for tool in tools)
@@ -178,7 +187,8 @@ async def complete_connector_approval(
         )
         return True
     tools = await _catalog_tools(run)
-    listed = any(tool.get("tool_name") == tool_name for tool in tools)
+    selected = next((tool for tool in tools if tool.get("tool_name") == tool_name), None)
+    listed = selected is not None
     if not listed:
         await run_service.set_status(db, run.run_id, "FAILED", org_id=run.org_id, expected_status=["WAITING_APPROVAL"])
         await run_service.append_event(
@@ -189,6 +199,16 @@ async def complete_connector_approval(
             org_id=run.org_id,
         )
         return True
+    if selected and selected.get("source") == "external":
+        return await _complete_external_approval(
+            db,
+            run=run,
+            approval_id=approval_id,
+            tool_call_id=tool_call_id,
+            digest=digest,
+            tool_name=tool_name,
+            arguments=arguments,
+        )
     snapshot = run.snapshot or {}
     route = await RemoteAgentCatalogClient().resolve_route(
         org_id=run.org_id,
@@ -253,4 +273,59 @@ async def complete_connector_approval(
             {"approval_id": approval_id, "tool_call_id": tool_call_id, "arguments_digest": digest, "outcome": outcome},
             org_id=run.org_id,
         )
+    return True
+
+
+async def _complete_external_approval(
+    db: AsyncSession,
+    *,
+    run,
+    approval_id: str,
+    tool_call_id: str,
+    digest: str,
+    tool_name: str,
+    arguments: dict[str, Any],
+) -> bool:
+    outcome_body = await RemoteAgentCatalogClient().execute_external(
+        run_id=run.run_id,
+        tool_name=tool_name,
+        arguments=arguments,
+    )
+    outcome = str((outcome_body or {}).get("outcome") or "fail_run")
+    if outcome == "fail_run":
+        await run_service.set_status(db, run.run_id, "FAILED", org_id=run.org_id, expected_status=["WAITING_APPROVAL"])
+        await run_service.append_event(
+            db,
+            run.run_id,
+            RESULT_EVENT,
+            {"approval_id": approval_id, "tool_call_id": tool_call_id, "arguments_digest": digest, "outcome": "EXTERNAL_ACTION_CONTEXT_STALE"},
+            org_id=run.org_id,
+        )
+        return True
+    if outcome == "outcome_unknown":
+        recorded = "EXTERNAL_ACTION_OUTCOME_UNKNOWN"
+        next_status = "RUNNING"
+        result = {"isError": True, "content": [{"type": "text", "text": recorded}]}
+    elif outcome == "ok":
+        recorded = "ok"
+        next_status = "RUNNING"
+        result = outcome_body.get("result") or {"isError": False, "content": []}
+    else:
+        recorded = "EXTERNAL_TOOL_ERROR"
+        next_status = "RUNNING"
+        result = {"isError": True, "content": [{"type": "text", "text": recorded}]}
+    await run_service.set_status(db, run.run_id, next_status, org_id=run.org_id, expected_status=["WAITING_APPROVAL"])
+    await run_service.append_event(
+        db,
+        run.run_id,
+        RESULT_EVENT,
+        {
+            "approval_id": approval_id,
+            "tool_call_id": tool_call_id,
+            "arguments_digest": digest,
+            "outcome": recorded,
+            "result": result,
+        },
+        org_id=run.org_id,
+    )
     return True

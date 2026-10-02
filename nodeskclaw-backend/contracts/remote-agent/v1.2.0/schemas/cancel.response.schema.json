@@ -1,0 +1,14 @@
+{
+  "$id": "remote-agent.run.cancel.v1",
+  "title": "RemoteAgentCancelResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["run_id", "status", "agent_ref"],
+  "properties": {
+    "run_id": {"type": "string"},
+    "status": {"type": "string"},
+    "agent_ref": {"type": "string"},
+    "created_at": {"type": ["string", "null"]},
+    "updated_at": {"type": ["string", "null"]}
+  }
+}

@@ -114,6 +114,8 @@ def build_snapshot(request: CreateRunRequest, *, org_id: str, user_id: str) -> d
         "skill_release_id": request.skill_release_id,
         "skill_release_digest": digest,
         "connector_binding_refs": list(request.connector_binding_refs or []),
+        "integration_account_refs": list(request.integration_account_refs or []),
+        "expert_id": request.expert_id or "",
         "knowledge_refs": list(request.knowledge_refs or []),
         "model_policy": {},
         "runtime_policy": runtime_policy,
@@ -1009,7 +1011,25 @@ async def set_status(
             return False
     elif rowcount is not None and not isinstance(rowcount, (int, float)):
         return True
+    if status in TERMINAL and org_id:
+        await _close_external_session_if_present(db, run_id, org_id)
     return True
+
+
+async def _close_external_session_if_present(db: AsyncSession, run_id: str, org_id: str) -> None:
+    try:
+        run = await get_run(db, run_id, org_id=org_id)
+    except Exception:
+        return
+    refs = (getattr(run, "snapshot", None) or {}).get("integration_account_refs") if run else None
+    if not refs:
+        return
+    try:
+        from app.services.remote_agent_catalog_client import RemoteAgentCatalogClient
+
+        await RemoteAgentCatalogClient().close_external_session(run_id)
+    except Exception:
+        return
 
 
 async def resume_run(
