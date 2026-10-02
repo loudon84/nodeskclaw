@@ -429,3 +429,12 @@ Stage PRD：[RM-18 Public Attachment Input Contract v1.4.0](../../docs_agent/prd
 - **已实现**：Hermes 只携带 [[nodeskclaw-agent/app/services/attempt_capability.py#mint_capability]] 签发的能力令牌。密钥为空时，[[nodeskclaw-agent/app/services/hermes_engine.py#execute_hermes_run]] 在创建运行之前返回 `SPEC_SEMANTIC_GAP`。MCP 路由 [[nodeskclaw-agent/app/api/agent_tools_mcp.py#agent_tools_mcp]] 只接受该令牌。
 - **已实现**：范围摘要写在 Hermes 任务 metadata。没有摘要的旧 session 直接失败。执行账本在 [[nodeskclaw-backend/app/services/external_action/execution_ledger.py#ExternalActionLedger#reserve]]，供应商没有二次查询。
 - **合同**：`nodeskclaw-backend/contracts/remote-agent/v1.2.0/` 的实现基线是 `9d908553`。集成账号公开契约在 `nodeskclaw-backend/contracts/integration-account/v1.0.0/`。v1.0.0 与 v1.1.0 摘要保持不变。
+
+## Remote Agent Attachment
+
+远程专家创建可以提交已上传文件的 `att_` 引用。证明失败沿用既有文案键和整数错误码。没有该次运行自己的目录时，Hermes 不会启动。
+
+- **已实现**：上传权限在 [[nodeskclaw-backend/app/services/hermes_skill/public_attachment_access_policy.py#require_public_attachment_upload]]。创建证明在 [[nodeskclaw-backend/app/services/remote_agent_provider_service.py#RemoteAgentProviderService#_prove_attachments]]。
+- **已实现**：运行目录写入在 [[nodeskclaw-agent/app/services/run_attachment_workspace.py#stage_run_attachments]]。目录或字节读不到时，[[nodeskclaw-agent/app/services/hermes_engine.py#execute_hermes_run]] 在创建 Hermes 运行之前返回 `SPEC_SEMANTIC_GAP`。
+- **合同**：`nodeskclaw-backend/contracts/remote-agent/v1.3.0/`。v1.0.0、v1.1.0 与 v1.2.0 摘要保持不变。Work 界面不在本仓实现。
+

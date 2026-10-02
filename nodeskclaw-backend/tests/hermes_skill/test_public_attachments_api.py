@@ -7,7 +7,11 @@ import pytest
 from fastapi.responses import JSONResponse
 
 from app.api.attachments import upload_attachment
-from app.core.exceptions import BadRequestError
+from app.core.exceptions import BadRequestError, ForbiddenError
+from app.services.hermes_skill.permission_checker import PermissionChecker
+from app.services.hermes_skill.public_attachment_access_policy import (
+    require_public_attachment_upload,
+)
 from app.models.hermes_skill.skill_run_public_attachment import SkillRunPublicAttachment
 from app.services import storage_service
 from app.services.hermes_skill.public_attachment_service import (
@@ -65,7 +69,7 @@ async def test_upload_attachment_returns_bare_receipt_without_workspace():
         "content_type": "application/pdf",
         "expires_at": "2026-09-09T00:00:00Z",
     }
-    with patch("app.api.attachments.PermissionChecker.require_permission", new=AsyncMock()), \
+    with patch("app.api.attachments.require_public_attachment_upload", new=AsyncMock()), \
          patch("app.api.attachments.upload_public_attachment", new=AsyncMock(return_value=receipt)) as upload:
         result = await upload_attachment(file=_file(), user_org=user_org, db=db)
     assert result == receipt
@@ -84,7 +88,7 @@ async def test_upload_attachment_maps_contract_error_to_canonical_envelope():
         "errors.run.attachment_too_large",
         "too large",
     )
-    with patch("app.api.attachments.PermissionChecker.require_permission", new=AsyncMock()), \
+    with patch("app.api.attachments.require_public_attachment_upload", new=AsyncMock()), \
          patch("app.api.attachments.upload_public_attachment", new=AsyncMock(side_effect=exc)):
         result = await upload_attachment(file=_file(), user_org=_mock_user_org(), db=db)
     status, payload = _canonical(result)
@@ -230,3 +234,22 @@ async def test_prove_org_user_attachment_scope_and_expiry():
     with pytest.raises(PublicAttachmentContractError) as exc_info:
         await prove_org_user_attachment(db, org_id="org-1", user_id="user-1", attachment_ref="att_old")
     assert exc_info.value.error_code == "ATTACHMENT_EXPIRED"
+
+
+@pytest.mark.asyncio
+async def test_upload_allows_either_invoke_permission(monkeypatch):
+    async def has_permission(db, user_id, org_id, permission):
+        return permission == "expert:invoke"
+
+    monkeypatch.setattr(PermissionChecker, "has_permission", staticmethod(has_permission))
+    await require_public_attachment_upload(AsyncMock(), "user-1", "org-1")
+
+
+@pytest.mark.asyncio
+async def test_upload_rejects_member_without_invoke(monkeypatch):
+    async def has_permission(db, user_id, org_id, permission):
+        return False
+
+    monkeypatch.setattr(PermissionChecker, "has_permission", staticmethod(has_permission))
+    with pytest.raises(ForbiddenError):
+        await require_public_attachment_upload(AsyncMock(), "user-1", "org-1")

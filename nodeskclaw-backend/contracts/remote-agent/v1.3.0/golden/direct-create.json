@@ -1,0 +1,14 @@
+{
+  "name": "direct-create",
+  "request": {
+    "client_request_id": "req-direct-1",
+    "agent_ref": "sales-agent",
+    "prompt": "summarize the account"
+  },
+  "response": {
+    "run_id": "run-direct-1",
+    "status": "QUEUED",
+    "agent_ref": "sales-agent",
+    "created_at": "2026-09-29T00:00:00Z"
+  }
+}

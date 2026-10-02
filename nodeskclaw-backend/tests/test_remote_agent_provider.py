@@ -16,6 +16,7 @@ from app.services.remote_agent_provider_service import (
     public_run_body,
     request_digest,
 )
+from app.services.hermes_skill.public_attachment_service import PublicAttachmentContractError
 
 
 def test_expert_invoke_matches_existing_invoke_roles():
@@ -249,3 +250,178 @@ async def test_digest_replay_skips_knowledge_proof(monkeypatch):
     )
     assert replayed is True
     assert task is existing
+
+
+def test_attachment_refs_are_trimmed_deduped_and_sorted():
+    parsed = parse_create_body({
+        "client_request_id": "req-1",
+        "agent_ref": "expert",
+        "prompt": "hello",
+        "attachment_refs": [" att_b ", "att_a", "att_b"],
+    })
+    assert parsed.attachment_refs == ["att_a", "att_b"]
+    left = request_digest(
+        agent_ref="expert",
+        prompt="hello",
+        knowledge_refs=[],
+        attachment_refs=["att_b", "att_a"],
+        session_ref=None,
+    )
+    right = request_digest(
+        agent_ref="expert",
+        prompt="hello",
+        knowledge_refs=[],
+        attachment_refs=["att_a", "att_b", "att_a"],
+        session_ref=None,
+    )
+    assert left == right
+    without_session_files = request_digest(
+        agent_ref="expert",
+        prompt="hello",
+        knowledge_refs=[],
+        attachment_refs=[],
+        session_ref="11111111-1111-4111-8111-111111111111",
+    )
+    with_session_files = request_digest(
+        agent_ref="expert",
+        prompt="hello",
+        knowledge_refs=[],
+        attachment_refs=["att_a"],
+        session_ref="11111111-1111-4111-8111-111111111111",
+    )
+    assert without_session_files != with_session_files
+    assert "attachment_refs" not in public_run_body(
+        SimpleNamespace(
+            id="run-1",
+            status=TaskStatus.QUEUED,
+            catalog_slug="expert",
+            created_at=None,
+            updated_at=None,
+            routing_metadata={},
+            tool_name="remote_agent",
+        ),
+        include_updated_at=False,
+    )
+
+
+def test_attachment_extra_field_and_bad_format_use_distinct_codes():
+    with pytest.raises(RemoteAgentRouteError) as extra:
+        parse_create_body({
+            "client_request_id": "req-1",
+            "agent_ref": "expert",
+            "prompt": "hello",
+            "file_path": "/tmp/secret",
+        })
+    assert extra.value.code == 40004
+    parsed = parse_create_body({
+        "client_request_id": "req-1",
+        "agent_ref": "expert",
+        "prompt": "hello",
+        "session_ref": "11111111-1111-4111-8111-111111111111",
+        "attachment_refs": ["not-an-attachment", "att_ok"],
+    })
+    assert parsed.attachment_refs == ["att_ok", "not-an-attachment"]
+    assert parsed.session_ref == "11111111-1111-4111-8111-111111111111"
+
+
+@pytest.mark.asyncio
+async def test_first_sorted_attachment_failure_creates_nothing(monkeypatch):
+    seen = []
+
+    async def prove(db, *, org_id, user_id, attachment_ref):
+        seen.append(attachment_ref)
+        if attachment_ref != "not-an-attachment":
+            return SimpleNamespace(attachment_ref=attachment_ref)
+        raise PublicAttachmentContractError(
+            400,
+            "ATTACHMENT_REF_INVALID",
+            "errors.run.attachment_ref_invalid",
+            "附件引用格式无效",
+        )
+
+    class Tasks:
+        def __init__(self, db):
+            return None
+
+        async def find_idempotent_task(self, *args, **kwargs):
+            return None
+
+    class Catalog:
+        def __init__(self, db):
+            return None
+
+        async def get_by_slug(self, org_id, slug):
+            return SimpleNamespace(id="ex-1", published=True, enabled=True, expert_slug=slug, hermes_agent_id="h1")
+
+        async def runtime_ready(self, org_id, expert):
+            return True
+
+        async def resolve_agent_profile(self, org_id, expert):
+            return "profile"
+
+    class DB:
+        def add(self, obj):
+            raise AssertionError("failure must not create a task")
+
+    monkeypatch.setattr("app.services.remote_agent_provider_service.TaskService", Tasks)
+    monkeypatch.setattr("app.services.remote_agent_provider_service.ExpertCatalogService", Catalog)
+    monkeypatch.setattr("app.services.remote_agent_provider_service.prove_org_user_attachment", prove)
+    with pytest.raises(RemoteAgentRouteError) as exc:
+        await RemoteAgentProviderService(DB()).create(
+            org_id="org",
+            user_id="user",
+            payload={
+                "client_request_id": "req-1",
+                "agent_ref": "expert",
+                "prompt": "hello",
+                "knowledge_refs": ["kb-1"],
+                "attachment_refs": ["att_ok", "not-an-attachment"],
+            },
+        )
+    assert seen == ["att_ok", "not-an-attachment"]
+    assert exc.value.code == 40005
+    assert exc.value.symbol == "ATTACHMENT_REF_INVALID"
+
+
+@pytest.mark.asyncio
+async def test_matching_attachment_digest_skips_proof(monkeypatch):
+    digest = request_digest(
+        agent_ref="expert",
+        prompt="hello",
+        knowledge_refs=[],
+        attachment_refs=["att_a", "att_b"],
+        session_ref=None,
+    )
+    existing = SimpleNamespace(routing_metadata={"request_digest": digest})
+
+    class Tasks:
+        def __init__(self, db):
+            return None
+
+        async def find_idempotent_task(self, *args, **kwargs):
+            return existing
+
+    class Boom:
+        def __init__(self, db):
+            raise AssertionError("replay must not prove attachments")
+
+    async def prove(*args, **kwargs):
+        raise AssertionError("replay must not prove attachments")
+
+    monkeypatch.setattr("app.services.remote_agent_provider_service.TaskService", Tasks)
+    monkeypatch.setattr("app.services.remote_agent_provider_service.ExpertCatalogService", Boom)
+    monkeypatch.setattr("app.services.remote_agent_provider_service.RuntimeSkillRunService", Boom)
+    monkeypatch.setattr("app.services.remote_agent_provider_service.prove_org_user_attachment", prove)
+    task, replayed = await RemoteAgentProviderService(SimpleNamespace()).create(
+        org_id="org",
+        user_id="user",
+        payload={
+            "client_request_id": "req-1",
+            "agent_ref": "expert",
+            "prompt": "hello",
+            "attachment_refs": ["att_b", "att_a"],
+        },
+    )
+    assert replayed is True
+    assert task is existing
+

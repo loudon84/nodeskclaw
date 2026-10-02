@@ -1,0 +1,20 @@
+{
+  "name": "attachment-expired",
+  "request": {
+    "client_request_id": "req-att-expired",
+    "agent_ref": "sales-agent",
+    "prompt": "read the file",
+    "attachment_refs": [
+      "att_expired"
+    ]
+  },
+  "response": {
+    "code": 41000,
+    "error_code": "ATTACHMENT_EXPIRED",
+    "message_key": "errors.run.attachment_expired",
+    "message": "附件引用已过期",
+    "data": null
+  },
+  "httpStatus": 410,
+  "enqueued": false
+}

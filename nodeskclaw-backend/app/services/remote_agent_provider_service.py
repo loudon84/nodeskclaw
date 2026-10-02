@@ -21,6 +21,10 @@ from app.schemas.hermes_skill.runtime_skill_run import (
 )
 from app.services.expert_gateway.expert_catalog_service import ExpertCatalogService
 from app.services.hermes_skill.hermes_queue_policy_service import HermesQueuePolicyService
+from app.services.hermes_skill.public_attachment_service import (
+    PublicAttachmentContractError,
+    prove_org_user_attachment,
+)
 from app.services.hermes_skill.runtime_skill_run_service import RuntimeSkillRunService
 from app.services.hermes_skill.task_service import TaskService
 
@@ -31,7 +35,15 @@ _ALLOWED_BODY_KEYS = frozenset({
     "prompt",
     "knowledge_refs",
     "session_ref",
+    "attachment_refs",
 })
+_ATTACHMENT_ROUTE = {
+    "ATTACHMENT_REF_INVALID": (400, 40005),
+    "ATTACHMENT_NOT_FOUND": (404, 40405),
+    "ATTACHMENT_SCOPE_DENIED": (403, 40304),
+    "ATTACHMENT_EXPIRED": (410, 41000),
+    "ATTACHMENT_SCAN_BLOCKED": (403, 40305),
+}
 _TERMINAL_TASK_STATUSES = frozenset({
     TaskStatus.COMPLETED,
     TaskStatus.FAILED,
@@ -75,6 +87,7 @@ class ParsedRemoteAgentCreate:
     knowledge_refs: list[str]
     connector_binding_refs: list[str]
     integration_account_refs: list[str]
+    attachment_refs: list[str]
     session_ref: str | None
 
 
@@ -85,6 +98,7 @@ def request_digest(
     knowledge_refs: list[str],
     connector_binding_refs: list[str] | None = None,
     integration_account_refs: list[str] | None = None,
+    attachment_refs: list[str] | None = None,
     session_ref: str | None,
 ) -> str:
     body = {
@@ -93,6 +107,7 @@ def request_digest(
         "knowledge_refs": sorted(knowledge_refs),
         "connector_binding_refs": sorted(set(connector_binding_refs or [])),
         "integration_account_refs": sorted(set(integration_account_refs or [])),
+        "attachment_refs": sorted(set(attachment_refs or [])),
         "session_ref": session_ref or "",
     }
     return hashlib.sha256(
@@ -170,6 +185,7 @@ def parse_create_body(payload: Any) -> ParsedRemoteAgentCreate:
                 "session_ref 必须是不超过 36 个字符的 UUID",
             )
         session_ref = session_ref.strip()
+    attachment_refs = _parse_attachment_refs(payload.get("attachment_refs"))
     return ParsedRemoteAgentCreate(
         client_request_id=client_request_id.strip(),
         agent_ref=agent_ref.strip(),
@@ -177,6 +193,7 @@ def parse_create_body(payload: Any) -> ParsedRemoteAgentCreate:
         knowledge_refs=[item.strip() for item in raw_refs],
         connector_binding_refs=connector_binding_refs,
         integration_account_refs=integration_account_refs,
+        attachment_refs=attachment_refs,
         session_ref=session_ref,
     )
 
@@ -219,6 +236,7 @@ class RemoteAgentProviderService:
             knowledge_refs=parsed.knowledge_refs,
             connector_binding_refs=parsed.connector_binding_refs,
             integration_account_refs=parsed.integration_account_refs,
+            attachment_refs=parsed.attachment_refs,
             session_ref=parsed.session_ref,
         )
         tasks = TaskService(self.db)
@@ -292,6 +310,12 @@ class RemoteAgentProviderService:
                 binding_ids=parsed.connector_binding_refs,
             )
 
+        await self._prove_attachments(
+            org_id=org_id,
+            user_id=user_id,
+            attachment_refs=parsed.attachment_refs,
+        )
+
         skill_runs = RuntimeSkillRunService(self.db)
         run_request = StartRuntimeSkillRunRequest(
             org_id=org_id,
@@ -309,6 +333,7 @@ class RemoteAgentProviderService:
             catalog_slug=expert.expert_slug,
             idempotency_key=parsed.client_request_id,
             session_id=parsed.session_ref,
+            attachment_refs=parsed.attachment_refs,
         )
         execution_context = await skill_runs._build_authorized_execution_context(
             run_request,
@@ -394,6 +419,13 @@ class RemoteAgentProviderService:
             route_snapshot["connector_descriptors"] = connector_descriptors
         if external_descriptors:
             route_snapshot["external_descriptors"] = external_descriptors
+        attachment_descriptors = [
+            item
+            for item in execution_context.get("descriptors") or []
+            if item.get("type") == "attachment"
+        ]
+        if attachment_descriptors:
+            route_snapshot["attachment_descriptors"] = attachment_descriptors
         trace_id = generate_request_trace_id()
         task = HermesTask(
             id=str(uuid.uuid4()),
@@ -425,6 +457,7 @@ class RemoteAgentProviderService:
                 "knowledge_refs": parsed.knowledge_refs,
                 "connector_binding_refs": parsed.connector_binding_refs,
                 "integration_account_refs": parsed.integration_account_refs,
+                "attachment_refs": parsed.attachment_refs,
                 "expert_id": expert.id,
                 "session_ref": parsed.session_ref,
                 "request_digest": digest,
@@ -445,6 +478,7 @@ class RemoteAgentProviderService:
             "integration_account_refs": parsed.integration_account_refs,
             "expert_id": expert.id,
             "knowledge_refs": parsed.knowledge_refs,
+            "attachment_refs": parsed.attachment_refs,
             "placement": {"role": "central", "engine": "hermes"},
             "delegation_topology": "single_agent",
             "arguments": {"prompt": parsed.prompt},
@@ -543,6 +577,48 @@ class RemoteAgentProviderService:
                 "外部工具公开名冲突",
             )
         return external_descriptors(rows)
+
+    async def _prove_attachments(
+        self,
+        *,
+        org_id: str,
+        user_id: str,
+        attachment_refs: list[str],
+    ) -> None:
+        for ref in attachment_refs:
+            try:
+                await prove_org_user_attachment(
+                    self.db,
+                    org_id=org_id,
+                    user_id=user_id,
+                    attachment_ref=ref,
+                )
+            except PublicAttachmentContractError as exc:
+                raise _attachment_route_error(exc) from exc
+
+
+def _parse_attachment_refs(raw: Any) -> list[str]:
+    if raw in (None, "", []):
+        return []
+    if not isinstance(raw, list):
+        raise _context_rejected()
+    cleaned: list[str] = []
+    for item in raw:
+        if not isinstance(item, str):
+            raise _context_rejected()
+        cleaned.append(item.strip())
+    return sorted(set(cleaned))
+
+
+def _attachment_route_error(exc: PublicAttachmentContractError) -> RemoteAgentRouteError:
+    http_status, code = _ATTACHMENT_ROUTE.get(exc.error_code, (400, 40005))
+    return RemoteAgentRouteError(
+        exc.error_code,
+        http_status,
+        code,
+        exc.message_key,
+        exc.message,
+    )
 
 
 def _parse_uuid_refs(raw: Any) -> list[str]:

@@ -1113,6 +1113,52 @@ async def execute_hermes_run(
                     "headers": {"X-Agent-Tool-Capability": token},
                 }
 
+            attachment_descriptors = [
+                item
+                for item in (route_snapshot.get("attachment_descriptors") or [])
+                if isinstance(item, dict) and item.get("type") == "attachment"
+            ]
+            if tool_name == "remote_agent" and attachment_descriptors:
+                from app.services.run_attachment_workspace import (
+                    resolve_existing_run_workspace,
+                    stage_run_attachments,
+                )
+
+                workspace = resolve_existing_run_workspace(
+                    route_snapshot,
+                    run_id=str(run_id or ""),
+                )
+                files = route_snapshot.get("attachment_files")
+                if (
+                    workspace is None
+                    or not isinstance(files, list)
+                    or len(files) != len(attachment_descriptors)
+                ):
+                    yield _failed(
+                        "SPEC_SEMANTIC_GAP",
+                        "Hermes native run has no per-run workspace for attachment bytes",
+                    )
+                    return
+                try:
+                    relative_paths = stage_run_attachments(workspace, files)
+                except (OSError, KeyError, TypeError):
+                    yield {
+                        "event_type": "run.failed",
+                        "payload": {"error": "Attachment workspace write failed"},
+                    }
+                    return
+                rebuilt = build_native_run_payload(
+                    model_name=model_name,
+                    runtime_skill_id=runtime_skill_id,
+                    prompt=prompt,
+                    context={"attachment_paths": relative_paths},
+                    session_id=str(session_id) if session_id else None,
+                )
+                for key, value in native_payload.items():
+                    if key not in rebuilt:
+                        rebuilt[key] = value
+                native_payload = rebuilt
+
             submit_headers = dict(auth_headers)
             submit_headers["Idempotency-Key"] = idempotency_key
             start_began = time.monotonic()

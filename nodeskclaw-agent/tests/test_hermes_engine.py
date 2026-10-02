@@ -245,6 +245,91 @@ async def test_descriptor_run_stops_before_hermes_when_capability_key_is_empty(m
 
 
 @pytest.mark.asyncio
+async def test_attachment_descriptors_stop_without_run_workspace():
+    client = _native_client()
+    with patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client):
+        events = [
+            event
+            async for event in execute_hermes_run(
+                tool_name="remote_agent",
+                arguments={"prompt": "keep me"},
+                run_id="run-1",
+                attempt_id="att-1",
+                route_snapshot={
+                    "gateway_url": "http://hermes:8642",
+                    "attachment_descriptors": [{"type": "attachment", "stable_id": "att_a"}],
+                },
+            )
+        ]
+    assert events[-1]["payload"]["error_code"] == "SPEC_SEMANTIC_GAP"
+    assert not any(str(call.args[0]).endswith("/v1/runs") for call in client.post.await_args_list)
+
+
+@pytest.mark.asyncio
+async def test_attachment_paths_are_added_only_after_all_files_exist(tmp_path):
+    run_dir = tmp_path / "run-1"
+    run_dir.mkdir()
+    client = _native_client()
+    arguments = {"prompt": "keep me"}
+    with patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client):
+        events = [
+            event
+            async for event in execute_hermes_run(
+                tool_name="remote_agent",
+                arguments=arguments,
+                run_id="run-1",
+                attempt_id="att-1",
+                route_snapshot={
+                    "gateway_url": "http://hermes:8642",
+                    "hermes_run_workspace": str(run_dir),
+                    "attachment_descriptors": [{"type": "attachment", "stable_id": "att_a"}],
+                    "attachment_files": [
+                        {"attachment_ref": "att_a", "original_name": "dir/report.pdf", "content": b"pdf"},
+                    ],
+                },
+            )
+        ]
+    assert events[-1]["event_type"] == "run.completed"
+    assert arguments["prompt"] == "keep me"
+    posted = client.post.await_args_list[0].kwargs["json"]["input"]
+    assert "attachments/att_a/report.pdf" in posted
+    assert (run_dir / "attachments/att_a/report.pdf").read_bytes() == b"pdf"
+
+
+@pytest.mark.asyncio
+async def test_attachment_write_failure_does_not_start_hermes(tmp_path):
+    run_dir = tmp_path / "run-1"
+    run_dir.mkdir()
+    client = _native_client()
+    with patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client):
+        events = [
+            event
+            async for event in execute_hermes_run(
+                tool_name="remote_agent",
+                arguments={"prompt": "keep me"},
+                run_id="run-1",
+                attempt_id="att-1",
+                route_snapshot={
+                    "gateway_url": "http://hermes:8642",
+                    "hermes_run_workspace": str(run_dir),
+                    "attachment_descriptors": [
+                        {"type": "attachment", "stable_id": "att_a"},
+                        {"type": "attachment", "stable_id": "att_b"},
+                    ],
+                    "attachment_files": [
+                        {"attachment_ref": "att_a", "original_name": "a.txt", "content": b"a"},
+                        {"attachment_ref": "att_b", "original_name": "b.txt", "content": None},
+                    ],
+                },
+            )
+        ]
+    assert events[-1]["event_type"] == "run.failed"
+    assert not any(str(call.args[0]).endswith("/v1/runs") for call in client.post.await_args_list)
+    visible = run_dir / "attachments"
+    assert not visible.exists() or not any(visible.iterdir())
+
+
+@pytest.mark.asyncio
 async def test_external_descriptors_stop_when_hermes_has_no_mcp_surface():
     client = _native_client()
     with patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client):

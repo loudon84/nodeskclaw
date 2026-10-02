@@ -5,7 +5,9 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_db, require_org_member
-from app.services.hermes_skill.permission_checker import PermissionChecker
+from app.services.hermes_skill.public_attachment_access_policy import (
+    require_public_attachment_upload,
+)
 from app.services.hermes_skill.public_attachment_service import (
     PublicAttachmentContractError,
     upload_public_attachment,
@@ -33,7 +35,7 @@ async def upload_attachment(
     db: AsyncSession = Depends(get_db),
 ):
     user, org = user_org
-    await PermissionChecker.require_permission(db, user.id, org.id, "skill:invoke")
+    await require_public_attachment_upload(db, user.id, org.id)
     try:
         return await upload_public_attachment(
             db,
