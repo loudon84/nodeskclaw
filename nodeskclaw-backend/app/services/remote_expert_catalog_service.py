@@ -5,6 +5,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.exceptions import NotFoundError
 from app.models.base import not_deleted
 from app.models.expert import Expert
@@ -20,10 +21,16 @@ CATALOG_CAPABILITIES = {
     "knowledge_context": True,
     "connector_context": True,
     "integration_account_context": True,
+    "permissions": True,
 }
 
 
 def public_catalog_item(expert: Expert, *, ready: bool) -> dict[str, Any]:
+    capabilities = dict(CATALOG_CAPABILITIES)
+    capabilities["acp"] = {
+        "protocol_version": 1,
+        "remote_transport": bool(ready and settings.SKILL_AGENT_ENABLED),
+    }
     return {
         "agent_ref": expert.expert_slug,
         "display_name": expert.display_name,
@@ -32,7 +39,7 @@ def public_catalog_item(expert: Expert, *, ready: bool) -> dict[str, Any]:
         "tags": list(expert.tags or []),
         "avatar": expert.avatar,
         "status": "ready" if ready else "unavailable",
-        "capabilities": dict(CATALOG_CAPABILITIES),
+        "capabilities": capabilities,
     }
 
 

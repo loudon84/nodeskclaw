@@ -10,6 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.internal_runs import router as internal_runs_router
+from app.api.internal_acp import router as internal_acp_router
 from app.api.agent_tools_mcp import router as agent_tools_mcp_router
 from app.config import alembic_version_relation, settings
 from app.db import SessionLocal, get_db
@@ -48,6 +49,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="nodeskclaw-agent", version="0.1.0", lifespan=lifespan)
 app.include_router(internal_runs_router)
+app.include_router(internal_acp_router)
 app.include_router(agent_tools_mcp_router)
 
 

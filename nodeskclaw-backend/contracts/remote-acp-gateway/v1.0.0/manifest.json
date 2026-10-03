@@ -1,0 +1,27 @@
+{
+  "contractName": "REMOTE-ACP-GATEWAY-CONTRACT",
+  "contractVersion": "1.0.0",
+  "bundleFormatVersion": "1",
+  "provider": "nodeskclaw-backend",
+  "consumer": "smc-copilot/apps/work",
+  "implementationHeadSha": "pending",
+  "releaseCommitSha": "pending",
+  "schemaIds": [
+    "remote-acp-gateway.discovery.v1",
+    "remote-acp-gateway.public-ws-handshake.v1",
+    "remote-acp-gateway.jsonrpc-frame.v1"
+  ],
+  "status": "DRAFT",
+  "production_gate": "unpassed",
+  "bundleDigest": "d089d4851477931c95c6eb6ac4dae4ea07876640113736b9bae780b20a96922c",
+  "artifacts": {
+    "RELEASE.md": "07e62b4ff776561421373592bef2ce8506f2af6be34c694c223ddb9b796ea23b",
+    "golden/discovery.json": "aceeff31f0ca48cb0419e01a18f668d29309e41403b6ee13c9c62dc619abccc9",
+    "http/endpoint-matrix.json": "59b8a5f9e424469b120a16ce11ed53692ebd1b7bd6c2d1145cc48a420ffa5aee",
+    "http/error-codes.json": "2639ca5e9a2d91f9e68f92a60428662bdc89ca1b944aee6ce9ea9c5ab8d58943",
+    "schemas/discovery.response.schema.json": "0e8b4b18ed2c4f8049ac76cca51aae0fcf59da7927293adb7dbbdbfc3110f0c1",
+    "schemas/error.schema.json": "563daef42d25ddae0590a9e571d4b3e91c453c58c498f47ad64cbcc2313110c6",
+    "schemas/jsonrpc-frame.schema.json": "063e28b4538d3bde71f8af5ce90c724b314a3699f775096bae3bc2e5b1656fce",
+    "schemas/public-ws-handshake.schema.json": "60d71f2e4374284173bec01027ef3f74a907e50baca1059bdf8a7205d90835d5"
+  }
+}

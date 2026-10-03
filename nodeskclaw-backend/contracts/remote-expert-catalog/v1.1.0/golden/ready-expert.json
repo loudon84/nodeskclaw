@@ -1,0 +1,25 @@
+{
+  "agent_ref": "sales-expert",
+  "display_name": "Sales Expert",
+  "description": "销售询报价与客户跟进",
+  "category": "sales",
+  "tags": ["crm", "rfq"],
+  "avatar": null,
+  "status": "ready",
+  "capabilities": {
+    "acp": {
+      "protocol_version": 1,
+      "remote_transport": true
+    },
+    "acp_protocol_version": 1,
+    "attachments": "resource_link",
+    "approvals": true,
+    "artifacts": "resource_link",
+    "session_resume": true,
+    "session_close": true,
+    "permissions": true,
+    "knowledge_context": true,
+    "connector_context": true,
+    "integration_account_context": true
+  }
+}

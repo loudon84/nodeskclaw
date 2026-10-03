@@ -25,7 +25,10 @@ def test_catalog_item_uses_slug_and_hides_runtime_ids():
     item = public_catalog_item(expert, ready=False)
     assert item["agent_ref"] == "sales-expert"
     assert item["status"] == "unavailable"
-    assert item["capabilities"] == CATALOG_CAPABILITIES
+    assert item["capabilities"]["acp_protocol_version"] == 1
+    assert item["capabilities"]["acp"]["protocol_version"] == 1
+    assert item["capabilities"]["acp"]["remote_transport"] is False
+    assert item["capabilities"]["permissions"] is True
     assert "hermes_agent_id" not in item
     assert "id" not in item
     assert "skillName" not in item

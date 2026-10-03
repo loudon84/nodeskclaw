@@ -1,0 +1,4 @@
+{
+  "$id": "remote-expert-catalog.get.v1.1",
+  "allOf": [{"$ref": "catalog-item.schema.json"}]
+}

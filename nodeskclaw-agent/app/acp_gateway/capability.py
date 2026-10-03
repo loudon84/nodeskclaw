@@ -1,0 +1,115 @@
+from __future__ import annotations
+
+import base64
+import hashlib
+import hmac
+import json
+import uuid
+from typing import Any
+
+from app.acp_gateway import CAPABILITY_CONTEXT, CAPABILITY_TTL_SECONDS
+
+REQUIRED_FIELDS = (
+    "v",
+    "jti",
+    "org_id",
+    "user_id",
+    "agent_ref",
+    "context_version",
+    "issued_at",
+    "expires_at",
+    "trace_id",
+)
+
+
+def _b64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
+
+
+def _b64url_decode(text: str) -> bytes:
+    padding = "=" * (-len(text) % 4)
+    return base64.urlsafe_b64decode(text + padding)
+
+
+def canonical_json(payload: dict[str, Any]) -> str:
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
+
+def derived_key(internal_token: str) -> bytes:
+    return hmac.new(internal_token.encode("utf-8"), CAPABILITY_CONTEXT.encode("utf-8"), hashlib.sha256).digest()
+
+
+def sign_payload_b64(internal_token: str, payload_b64: str) -> str:
+    signature = hmac.new(derived_key(internal_token), payload_b64.encode("ascii"), hashlib.sha256).digest()
+    return _b64url(signature)
+
+
+def mint_execution_capability(
+    *,
+    internal_token: str,
+    org_id: str,
+    user_id: str,
+    agent_ref: str,
+    context_version: int = 1,
+    issued_at: int,
+    expires_at: int,
+    trace_id: str,
+    jti: str | None = None,
+) -> str:
+    if expires_at - issued_at > CAPABILITY_TTL_SECONDS:
+        raise ValueError("capability ttl exceeds 120s")
+    payload = {
+        "v": 1,
+        "jti": jti or str(uuid.uuid4()),
+        "org_id": org_id,
+        "user_id": user_id,
+        "agent_ref": agent_ref,
+        "context_version": int(context_version),
+        "issued_at": int(issued_at),
+        "expires_at": int(expires_at),
+        "trace_id": trace_id,
+    }
+    payload_b64 = _b64url(canonical_json(payload).encode("utf-8"))
+    return f"{payload_b64}.{sign_payload_b64(internal_token, payload_b64)}"
+
+
+def verify_execution_capability(
+    token: str | None,
+    *,
+    current_token: str,
+    previous_token: str = "",
+    now: int,
+) -> tuple[dict[str, Any] | None, str]:
+    if not token or not current_token:
+        return None, "ACP_CAPABILITY_INVALID"
+    parts = token.split(".")
+    if len(parts) != 2 or not parts[0] or not parts[1]:
+        return None, "ACP_CAPABILITY_INVALID"
+    payload_b64, presented_sig = parts
+    keys = [current_token]
+    if previous_token:
+        keys.append(previous_token)
+    matched = False
+    for key in keys:
+        expected = sign_payload_b64(key, payload_b64)
+        if hmac.compare_digest(expected, presented_sig):
+            matched = True
+            break
+    if not matched:
+        return None, "ACP_CAPABILITY_INVALID"
+    try:
+        payload = json.loads(_b64url_decode(payload_b64).decode("utf-8"))
+    except (ValueError, json.JSONDecodeError, UnicodeError):
+        return None, "ACP_CAPABILITY_INVALID"
+    if not isinstance(payload, dict):
+        return None, "ACP_CAPABILITY_INVALID"
+    for field in REQUIRED_FIELDS:
+        if field not in payload:
+            return None, "ACP_CAPABILITY_INVALID"
+    if int(payload.get("v") or 0) != 1:
+        return None, "ACP_CAPABILITY_INVALID"
+    if int(payload.get("expires_at") or 0) <= int(now):
+        return None, "ACP_CAPABILITY_EXPIRED"
+    if int(payload.get("expires_at")) - int(payload.get("issued_at") or 0) > CAPABILITY_TTL_SECONDS:
+        return None, "ACP_CAPABILITY_INVALID"
+    return payload, ""

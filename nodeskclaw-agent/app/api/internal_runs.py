@@ -223,10 +223,20 @@ async def get_internal_artifact_bytes(
     artifact_id: str,
     db: AsyncSession = Depends(get_db),
     x_exec_org_id: str = Header(alias="X-Exec-Org-Id"),
+    x_exec_user_id: str | None = Header(default=None, alias="X-Exec-User-Id"),
+    x_agent_ref: str | None = Header(default=None, alias="X-Agent-Ref"),
 ):
     run = await run_service.get_run(db, run_id, org_id=x_exec_org_id)
     if not run:
         raise HTTPException(status_code=404, detail="run not found")
+    if x_exec_user_id and run.user_id != x_exec_user_id:
+        raise HTTPException(status_code=403, detail="artifact subject mismatch")
+    if x_agent_ref:
+        pinned = str((run.snapshot or {}).get("runtime_policy", {}).get("expert_slug") or "")
+        if not pinned:
+            pinned = str((run.snapshot or {}).get("expert_slug") or "")
+        if pinned and pinned != x_agent_ref:
+            raise HTTPException(status_code=403, detail="artifact agent mismatch")
     packed = await run_service.get_artifact_bytes(db, run_id, artifact_id)
     if not packed:
         raise HTTPException(status_code=404, detail="artifact not found")

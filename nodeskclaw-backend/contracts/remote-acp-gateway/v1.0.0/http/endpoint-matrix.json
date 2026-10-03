@@ -1,0 +1,26 @@
+{
+  "discovery": {
+    "method": "GET",
+    "path": "/api/v1/remote-experts/contracts",
+    "auth": false
+  },
+  "publicWs": {
+    "method": "GET",
+    "path": "/api/v1/remote-experts/{agent_ref}/acp",
+    "upgrade": "websocket",
+    "subprotocol": "nodeskclaw.remote-acp.v1",
+    "permission": "expert:invoke",
+    "preUpgradeFailures": {
+      "401": ["REMOTE_ACP_AUTH_REQUIRED"],
+      "403": ["REMOTE_ACP_ORG_FORBIDDEN", "REMOTE_ACP_EXPERT_FORBIDDEN"],
+      "404": ["REMOTE_ACP_EXPERT_NOT_FOUND"],
+      "503": ["REMOTE_ACP_EXPERT_UNAVAILABLE", "REMOTE_ACP_RUNTIME_UNAVAILABLE"]
+    }
+  },
+  "artifactDownload": {
+    "method": "GET",
+    "path": "/api/v1/remote-experts/{agent_ref}/acp/runs/{run_id}/artifacts/{artifact_id}",
+    "permission": "expert:invoke",
+    "cacheControl": "no-store"
+  }
+}

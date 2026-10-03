@@ -1,0 +1,10 @@
+{
+  "$id": "remote-acp-gateway.error.v1",
+  "type": "object",
+  "required": ["error_code", "message_key", "message"],
+  "properties": {
+    "error_code": {"type": "string"},
+    "message_key": {"type": "string"},
+    "message": {"type": "string"}
+  }
+}

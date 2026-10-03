@@ -1,0 +1,32 @@
+{
+  "$id": "remote-acp-gateway.public-ws-handshake.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "method",
+    "path",
+    "upgrade",
+    "subprotocol",
+    "headers"
+  ],
+  "properties": {
+    "method": {"const": "GET"},
+    "path": {"const": "/api/v1/remote-experts/{agent_ref}/acp"},
+    "upgrade": {"const": "websocket"},
+    "subprotocol": {"const": "nodeskclaw.remote-acp.v1"},
+    "headers": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["Authorization", "X-Org-Id", "X-Trace-Id"],
+      "properties": {
+        "Authorization": {"type": "string", "pattern": "^Bearer "},
+        "X-Org-Id": {"type": "string", "minLength": 1},
+        "X-Trace-Id": {"type": "string", "minLength": 1}
+      }
+    },
+    "forbidden": {
+      "type": "array",
+      "items": {"enum": ["query_credential", "query_token"]}
+    }
+  }
+}

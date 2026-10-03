@@ -95,6 +95,9 @@
 | `mcp.py` | MCP 管理 | `schemas/mcp.py`、`schemas/hermes_mcp.py` |
 | `security_ws.py` | 安全 WebSocket | — |
 | `runtime_admin.py` | Runtime 管理 | — |
+| `remote_experts.py` | 远程专家 Catalog | — |
+| `remote_acp_ws.py` | Remote ACP discovery / WSS / artifact | — |
+| `internal_remote_acp.py` | Agent run-context 内部接口 | — |
 
 ### API 子目录
 

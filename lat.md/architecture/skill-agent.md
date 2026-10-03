@@ -464,4 +464,13 @@ AutoTask 以 `AgentAutomation` 为 SOT，经 Manual / Cron / Webhook / RPA Succe
 - **已实现**：HTTP 客户端 [[nodeskclaw-acp/app/remote_client.py#RemoteAgentHttpClient]] 只调用 Auth 与 Remote Agent Public API。凭证 [[nodeskclaw-acp/app/credentials.py#CredentialStore]] 在 standalone 使用 env 或 OS keyring；`managed` 模式只读进程环境并在内存刷新。
 - **已实现**：员工 Catalog [[nodeskclaw-backend/app/api/remote_experts.py]] 与 Session Proof [[nodeskclaw-backend/app/api/remote_agent_sessions.py]]。Adapter v1.1 提供 session/resume、session/close、attachment ResourceLink。Windows standalone 构建脚本在 [[nodeskclaw-acp/scripts/build_desktop_adapter.py]]，二进制不进 git。
 - **合同**：`nodeskclaw-acp/contracts/acp-v1-adapter/v1.0.0/` 只读；`v1.1.0/` pin `remote-agent/v1.5.0` 与 `remote-expert-catalog/v1.0.0` digest。跨仓冻结入口是 `contracts/remote-expert-frontend/v1.0.0/`，校验 [[tools/contracts/verify_remote_expert_frontend_contract.py#verify]]。符合性标签仅 `ACP_V1_ADAPTER_PROFILE_CONFORMANT`。smc-copilot Work UI 不在本仓。前端契约门可通过、生产门保持未通过；缺环境时 [[tools/acceptance/run_acp_desktop_consumer_v161_live.py#main]] 非 0 退出。
+- **Legacy**：v2 production 不依赖该二进制。Target topology 见 [[architecture/skill-agent#Remote ACP Provider v2]]。
+
+## Remote ACP Provider v2
+
+Backend 是 Public ACP Ingress，Agent 是 ACP Runtime Gateway 与 Run SOT。SMC 只连 Backend WSS，不直连 Agent，也不再依赖本地 ACP sidecar。
+
+- **已实现**：Public discovery 与 WSS 在 [[nodeskclaw-backend/app/api/remote_acp_ws.py#remote_acp_public_ingress]]。Capability 签发 [[nodeskclaw-backend/app/services/remote_acp/capability.py#mint_execution_capability]]。run-context [[nodeskclaw-backend/app/api/internal_remote_acp.py#create_run_context]] 不写 HermesTask。
+- **已实现**：Agent 内部网关 [[nodeskclaw-agent/app/api/internal_acp.py#internal_acp_gateway]]、会话 [[nodeskclaw-agent/app/acp_gateway/session.py#create_session]]、prompt 幂等 [[nodeskclaw-agent/app/acp_gateway/prompt.py#create_or_replay_prompt_run]]。
+- **合同**：catalog `v1.1.0`、`remote-acp-gateway/v1.0.0`、internal `acp-runtime-gateway/v1.0.0`、aggregate `contracts/remote-expert-frontend/v2.0.0/`。校验 [[tools/contracts/verify_remote_expert_frontend_contract_v2.py#verify]]。G4 live [[tools/acceptance/run_remote_acp_v2_live.py#main]] 缺环境非 0。`frontendContractGate` 默认 pending，`productionGate` 保持 unpassed。
 

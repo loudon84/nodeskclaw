@@ -1,0 +1,11 @@
+{
+  "$id": "remote-expert-catalog.error.v1.1",
+  "type": "object",
+  "required": ["error_code", "message_key", "message"],
+  "properties": {
+    "error_code": {"type": ["string", "integer"]},
+    "message_key": {"type": "string"},
+    "message": {"type": "string"},
+    "code": {"type": "integer"}
+  }
+}

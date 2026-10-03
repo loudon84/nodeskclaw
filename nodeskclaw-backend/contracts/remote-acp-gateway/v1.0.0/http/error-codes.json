@@ -1,0 +1,12 @@
+{
+  "REMOTE_ACP_AUTH_REQUIRED": "errors.remote_acp.auth_required",
+  "REMOTE_ACP_ORG_FORBIDDEN": "errors.remote_acp.org_forbidden",
+  "REMOTE_ACP_EXPERT_NOT_FOUND": "errors.remote_acp.expert_not_found",
+  "REMOTE_ACP_EXPERT_FORBIDDEN": "errors.remote_acp.expert_forbidden",
+  "REMOTE_ACP_EXPERT_UNAVAILABLE": "errors.remote_acp.expert_unavailable",
+  "REMOTE_ACP_RUNTIME_UNAVAILABLE": "errors.remote_acp.runtime_unavailable",
+  "REMOTE_ACP_ROUTE_FAILED": "errors.remote_acp.route_failed",
+  "REMOTE_ACP_TRANSPORT_UNSUPPORTED": "errors.remote_acp.transport_unsupported",
+  "REMOTE_ACP_CONTRACT_MISMATCH": "errors.remote_acp.contract_mismatch",
+  "ARTIFACT_ACCESS_DENIED": "errors.remote_acp.artifact_access_denied"
+}

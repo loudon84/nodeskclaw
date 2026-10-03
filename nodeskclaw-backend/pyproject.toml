@@ -15,6 +15,7 @@ dependencies = [
     "passlib[bcrypt]>=1.7.4",
     # HTTP client (飞书 SSO)
     "httpx>=0.28.0",
+    "websockets>=14.0",
     # Config
     "pydantic-settings>=2.7.0",
     # Email validation (for EmailStr)

@@ -1,0 +1,18 @@
+{
+  "ACP_INTERNAL_AUTH_FAILED": "errors.acp.internal_auth_failed",
+  "ACP_CAPABILITY_INVALID": "errors.acp.capability_invalid",
+  "ACP_CAPABILITY_EXPIRED": "errors.acp.capability_expired",
+  "ACP_PROTOCOL_ERROR": "errors.acp.protocol_error",
+  "ACP_SESSION_NOT_FOUND": "errors.acp.session_not_found",
+  "ACP_SESSION_FORBIDDEN": "errors.acp.session_forbidden",
+  "ACP_SESSION_BUSY": "errors.acp.session_busy",
+  "ACP_IDEMPOTENCY_CONFLICT": "errors.acp.idempotency_conflict",
+  "ACP_CONTEXT_REVALIDATION_DENIED": "errors.acp.context_revalidation_denied",
+  "ACP_RESOURCE_DENIED": "errors.acp.resource_denied",
+  "ACP_PERMISSION_FAILED": "errors.acp.permission_failed",
+  "ACP_CANCEL_FAILED": "errors.acp.cancel_failed",
+  "ACP_STALE_ATTEMPT": "errors.acp.stale_attempt",
+  "ACP_STREAM_INTERRUPTED": "errors.acp.stream_interrupted",
+  "ACP_REMOTE_RUN_FAILED": "errors.acp.remote_run_failed",
+  "ACP_RUNTIME_UNAVAILABLE": "errors.acp.runtime_unavailable"
+}

@@ -1,0 +1,41 @@
+{
+  "$id": "remote-expert-catalog.item.v1.1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["agent_ref", "display_name", "status", "capabilities"],
+  "properties": {
+    "agent_ref": {"type": "string", "minLength": 1},
+    "display_name": {"type": "string"},
+    "description": {"type": ["string", "null"]},
+    "category": {"type": ["string", "null"]},
+    "tags": {"type": "array", "items": {"type": "string"}},
+    "avatar": {"type": ["string", "null"]},
+    "status": {"enum": ["ready", "unavailable"]},
+    "capabilities": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "acp",
+        "session_resume",
+        "attachments",
+        "artifacts",
+        "permissions"
+      ],
+      "properties": {
+        "acp": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["protocol_version", "remote_transport"],
+          "properties": {
+            "protocol_version": {"const": 1},
+            "remote_transport": {"type": "boolean"}
+          }
+        },
+        "session_resume": {"type": "boolean"},
+        "attachments": {"type": "string"},
+        "artifacts": {"type": "string"},
+        "permissions": {"type": "boolean"}
+      }
+    }
+  }
+}

@@ -44,6 +44,8 @@ from app.api.runs import router as runs_router
 from app.api.remote_agent_runs import router as remote_agent_runs_router
 from app.api.remote_agent_sessions import router as remote_agent_sessions_router
 from app.api.remote_experts import router as remote_experts_router
+from app.api.remote_acp_ws import router as remote_acp_ws_router
+from app.api.internal_remote_acp import router as internal_remote_acp_router
 from app.api.integration_accounts import router as integration_accounts_router
 from app.api.external_action_policies import router as external_action_policies_router
 from app.api.attachments import router as attachments_router
@@ -226,7 +228,9 @@ api_router.include_router(expert_router, prefix="/expert", tags=["Expert MCP Gat
 api_router.include_router(runs_router, tags=["Runs"])
 api_router.include_router(remote_agent_runs_router)
 api_router.include_router(remote_agent_sessions_router)
+api_router.include_router(remote_acp_ws_router)
 api_router.include_router(remote_experts_router)
+api_router.include_router(internal_remote_acp_router)
 api_router.include_router(integration_accounts_router)
 api_router.include_router(external_action_policies_router)
 api_router.include_router(attachments_router, tags=["Attachments"])
