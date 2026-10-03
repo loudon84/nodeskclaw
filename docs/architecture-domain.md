@@ -37,16 +37,62 @@
 
 | 组件 | 形态 | 定位 |
 |---|---|---|
-| `nodeskclaw-acp` | 被 ACP 客户端 spawn 的本地 stdio adapter 进程，无端口、无数据库 | ACP v1 客户端侧接入点。session 纯进程内存，重启不存活。Target 中的去留未决，见 §8 的 D-08 |
+| `nodeskclaw-acp` | 被 ACP 客户端 spawn 的本地 stdio adapter 进程，无端口、无数据库 | **Current**：ACP v1 在此终止，南向调 Backend Remote Agent REST/SSE。**Target**：SMC Production 不依赖该 sidecar；可保留为 Zed / 第三方 stdio 兼容与 ACP 测试。**MUST NOT** 持有任何 SOT。见 D-08 |
 
-**【约束】** Backend 与 Agent 的职责分界是本文档最容易被 PRD 越界的一条，必须按下面这句话理解：
+**【约束】** Backend / Agent / Hermes 必须能用下面四组问题回答，PRD 写不出来就是越界：
 
 ```text
-nodeskclaw-backend = Authority + Router
-nodeskclaw-agent   = Runtime Owner
+Backend：
+  能不能执行？
+  找谁执行？
+  去哪里执行？
+  带什么授权执行？
+
+Agent：
+  怎么执行？
+  当前执行到哪里？
+  调用了什么 Tool？
+  产生了什么 Event / Artifact？
+
+Hermes：
+  真正运行 Agent Loop。
 ```
 
-Backend 回答"能不能执行、去哪里执行、带什么 scope"；Agent 回答"怎么跑、到哪一步、产出什么"。**同一次执行不得在 Backend 与 Agent 各有一份 Run 模型。**
+对应的所有权一句话：
+
+```text
+nodeskclaw-backend = ACP Public Ingress + Authority + Router
+nodeskclaw-agent   = ACP Runtime Gateway + Execution Plane
+Remote Hermes      = Agent Engine
+nodeskclaw-acp     = 无 SOT（可选第三方 stdio 兼容，不是 SMC 生产必经依赖）
+```
+
+**同一次执行不得在 Backend 与 Agent 各有一份 Run 模型。**
+
+**【约束】SMC Production Target 拓扑**（已冻结，不是未决）：
+
+```text
+SMC Copilot
+     │ ACP
+     ▼
+nodeskclaw-backend
+     │ Auth / Expert ACL / Runtime Routing
+     │ Scoped Execution Capability
+     ▼
+nodeskclaw-agent
+     │ ACP Runtime Gateway
+     │ Run / Attempt / Event
+     │ Tool / Approval / Artifact
+     │ Hermes Runtime Bridge
+     ▼
+Remote Hermes
+```
+
+```text
+smc-copilot MUST NOT require local nodeskclaw-acp.exe
+```
+
+当前 `SMC → local nodeskclaw-acp → Backend REST/SSE` 是 Current Implementation，不是目标生产拓扑。见 D-08。
 
 **【事实】** 端口依据：backend `nodeskclaw-backend/app/core/config.py`；task `nodeskclaw-task/Dockerfile`、`.env.example`（`PORT=4520`）；agent `nodeskclaw-agent/Dockerfile`（`EXPOSE 4580`）；knowledge `nodeskclaw-knowledge/app/core/config.py`。
 
@@ -276,9 +322,8 @@ Hermes : Native Run（引擎语义：模型侧实际执行）
 - backend：`/api/v1`、`/api/v1/admin`
 - task：`/api/v1/autotask`
 - knowledge：`/api/v1`、`/api/v2`（独立服务，不经 backend 转发）
-- agent：**无公共表面**。agent 的用户可见投影由 backend `/runs`、`/remote-agent/runs` 提供。
-
-**【约束】** backend 的 `/runs`、`/remote-agent/runs` 只能做鉴权代理与投影，不得在其中加入编排决策或流程状态机。
+- agent：**无面向最终用户的公共表面**。Target 下用户侧 ACP 走 backend 的 ACP Public Ingress；agent 持有 ACP Runtime Gateway 与 Run SOT。
+- Current / Legacy：backend `/runs`、`/remote-agent/runs` 仍是现有投影与转译面（D-09），只接受缺陷修复，不得扩张执行域语义。
 
 ---
 
@@ -290,8 +335,8 @@ Hermes : Native Run（引擎语义：模型侧实际执行）
 
 - 不得成为流程引擎。不得新增流程定义、流程实例、节点运行、人工任务、触发器、cron、事件订阅类模型。
 - 不得成为 Agent 执行引擎。不得直接调用 Hermes runtime 执行 run；执行必须经 agent。
-- **不得成为 Run Control Plane。** 不得新增属于 backend 的 Run / Attempt / 执行事件模型，不得扩张现有 `HermesTask` / `RunDispatchOutbox` 的语义。
-- **不得把 ACP 转译成另一套执行域模型。** backend 作为 ACP 公共入口，职责是鉴权、解析 Expert、选址、签发 capability，然后移交一次已授权的执行；不得把 ACP session / prompt / cancel / permission 重新编码成 backend 自有的 Run REST 再交给 agent。
+- **不得成为 ACP Runtime Engine / Run Control Plane。** Target 下不得新增或扩张：attempt semantics、runtime tool state、runtime event ownership、Hermes execution state、agent artifact ownership。不得扩张现有 `HermesTask` / `RunDispatchOutbox` 的语义。
+- **不得把 ACP 转译成另一套执行域模型。** backend 作为 ACP Public Ingress，职责是鉴权、解析 Expert、选址、签发 scoped capability，然后移交一次已授权的执行；不得把 ACP session / prompt / cancel / permission 重新编码成 backend 自有的 Run REST 再交给 agent。
 - 不得持有 ACP session 到 Hermes 的映射关系。
 - 不得成为知识检索引擎。不得直连 RAGFlow，不得自建 chunk / embedding / 检索逻辑。
 - 不得持有知识对象 ACL 结论。只能回答"这个人是谁、属于哪个组织、什么角色"。
@@ -462,15 +507,30 @@ Hermes : Native Run（引擎语义：模型侧实际执行）
 
 **处置原则**：严格执行第 6.2 节。任何改动不得引入跨 schema 查询。
 
-### D-08：`nodeskclaw-acp` 在 Target 拓扑中的位置未决
+### D-08：ACP Adapter Current / Target Deviation
 
-**证据**：`nodeskclaw-acp` 是被 ACP 客户端 spawn 的本地 stdio adapter（`app/cli.py` 的 `serve`、`app/jsonrpc.py` 读 stdin 写 stdout，工程内无 `uvicorn` / `FastAPI` / `EXPOSE` / Dockerfile / 数据库）。session 状态纯进程内存（`app/session_registry.py` 的 `SessionRegistry._sessions`），README 写明重启不存活。契约 `contracts/acp-v1-adapter/v1.1.0/manifest.json` 的 `provider = nodeskclaw-acp`、`consumer = smc-copilot/apps/work`。
+**Current**：`nodeskclaw-acp` 是本地 stdio ACP adapter，通过 Backend Remote Agent REST/SSE 驱动远端运行。证据：`app/cli.py` 的 `serve`、`app/jsonrpc.py` 读 stdin 写 stdout，工程内无 `uvicorn` / `FastAPI` / `EXPOSE` / Dockerfile / 数据库；session 纯进程内存（`app/session_registry.py` 的 `SessionRegistry._sessions`），README 写明重启不存活；南向只调 backend `/api/v1/auth/*` 与 `/api/v1/remote-agent/*`（`app/remote_client.py`）。契约 `contracts/acp-v1-adapter/v1.1.0/manifest.json` 的 `provider = nodeskclaw-acp`、`consumer = smc-copilot/apps/work`。agent 源码中无 ACP 实现。这是 **Current State / Architecture Gap**。
 
-**影响**：Target 拓扑中 ACP 入口画在 backend，而当前 ACP 协议实际终止在这个本地进程。两者的衔接方式决定了该组件是保留为纯传输 shim 还是退场。
+**Target**（已冻结，不是位置未决）：
 
-**处置原则**：该组件**不持有任何 SOT**，这一点现在就成立且不得改变——禁止在 adapter 内新增持久化状态、禁止让它成为 session 权威。去留需要独立 Architecture Decision，本文档不预设结论。
+```text
+SMC Production 不依赖本地 ACP sidecar。
+smc-copilot MUST NOT require local nodeskclaw-acp.exe
 
-### D-09：backend 当前是 Remote Agent Run Control Plane（迁移债务）
+Backend 提供 ACP Public Ingress / Auth / Expert ACL / Runtime Routing / Scoped Execution Capability。
+nodeskclaw-agent 持有 ACP Runtime Gateway，以及 Agent Run / Attempt / Runtime Event / Agent Artifact SOT。
+Remote Hermes 保持 Agent Engine。
+```
+
+`nodeskclaw-acp` **MAY** 保留为 Zed / 第三方 stdio ACP Client 的 compatibility adapter，以及 ACP compatibility testing。**MUST NOT** 持有业务或运行状态 SOT。是否最终保留该工程、如何复用其中代码，属于实现层事项，不影响上述 Target。
+
+**处置原则**：
+
+- 禁止把 `nodeskclaw-acp.exe` 写成 SMC Production Remote Expert 的必经运行依赖。
+- 禁止在 adapter 内新增持久化状态、禁止让它成为 session / run 权威。
+- 禁止以"现有 Desktop 必须 spawn adapter"为理由，把 ACP Runtime 继续钉在本地进程或 Backend REST 转译层。
+
+### D-09：backend 当前是 Remote Agent Run Control Plane（Current Implementation，不是 Target Runtime Ownership）
 
 **证据**：`app/services/remote_agent_provider_service.py` 创建 `HermesTask` + `RunDispatchOutbox`；`app/services/hermes_skill/run_dispatch_outbox_service.py` 把 run 投递给 agent；`app/api/remote_agent_runs.py`、`app/api/remote_agent_sessions.py`、`app/api/runs.py` 对外暴露 Remote Agent REST + SSE。完整当前链路：
 
@@ -487,11 +547,11 @@ smc-copilot/apps/work（或 Zed）
 
 **处置原则**：
 
-- 这是 **current migration debt，不是 Target**。禁止任何 PRD 以"现有链路就是这样"为理由在 backend 侧扩张 Run / Attempt / 执行事件语义。
-- **禁止**新增 backend 侧的 Remote Agent Run 字段、状态值、事件类型。
-- 现有公开面（`/api/v1/remote-agent/*`）出于兼容性保留，只接受缺陷修复。
-- 收敛方向已定：ACP Runtime 语义移入 agent，backend 收敛为 ACP ingress + 授权 + 路由 + capability。但**迁移方案、废弃节奏、`RunDispatchOutbox` 拆除方式均未决**，需要独立 Architecture Decision。
-- 注意区分：Task → Agent 的网络路径是否经过 backend proxy 是 transport / security 部署问题，**不是**领域问题。流量过 backend 可以接受；backend 在该路径上持有执行域模型不可以接受。
+- 这是 **Current Implementation，不是 Target Runtime Ownership**。禁止任何 PRD 以"现有链路就是这样"为理由在 backend 侧扩张执行域语义。
+- Target 下 Backend **MUST NOT** 新增：attempt semantics、runtime tool state、runtime event ownership、Hermes execution state、agent artifact ownership。
+- **禁止**新增 backend 侧的 Remote Agent Run 字段、状态值、事件类型。现有公开面（`/api/v1/remote-agent/*`）出于兼容性保留，只接受缺陷修复。
+- 本文档**不决定**（留给后续实施 PRD）：Remote Agent REST API 何时废弃、`RunDispatchOutbox` 如何迁移/拆除、`HermesTask` 如何迁移、数据怎么迁、兼容期多长。
+- 注意区分：Task → Agent 的网络路径是否经过 backend proxy，是 transport / security 部署问题，**不是**领域问题。流量过 backend 可以接受；backend 在该路径上持有执行域模型不可以接受。
 
 ---
 
@@ -507,11 +567,12 @@ smc-copilot/apps/work（或 Zed）
 
 **Runtime / ACP 专项**（涉及 Remote Expert、Remote Agent、ACP、Hermes 的改动必答）
 
-- [ ] 这个改动是在回答"能不能 / 去哪里 / 带什么 scope"（backend），还是"怎么跑 / 到哪一步 / 产出什么"（agent）？写出来。
-- [ ] 有没有在 backend 侧新增或扩张 Run / Attempt / 执行事件语义？（禁止，见 D-09）
+- [ ] 这个改动是在回答 Backend 四问（能不能 / 找谁 / 去哪里 / 带什么授权），还是 Agent 四问（怎么执行 / 到哪里 / 什么 Tool / 什么 Event 与 Artifact），还是 Hermes 的 Agent Loop？写出来。
+- [ ] 有没有在 backend 侧新增或扩张 attempt / runtime tool state / runtime event / Hermes execution state / agent artifact？（禁止，见 D-09）
 - [ ] 有没有把 ACP 的 session / prompt / cancel / permission 在 backend 转译成另一套执行域模型？（禁止）
 - [ ] 同一次执行会不会产生两份 Run 权威？三层 Run（task NodeRun / agent Run / Hermes Native Run）各自语义是否清晰且不互为镜像？
-- [ ] 如果改动涉及 `nodeskclaw-acp`：有没有在 adapter 内新增持久化状态或让它成为 session 权威？（禁止，见 D-08）
+- [ ] 是否把 `nodeskclaw-acp.exe` 写成 SMC Production 必经依赖？（禁止，见 D-08）
+- [ ] 如果改动涉及 `nodeskclaw-acp`：有没有在 adapter 内新增持久化状态或让它成为 session / run 权威？（禁止，见 D-08）
 
 **模型**
 

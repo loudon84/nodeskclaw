@@ -22,11 +22,21 @@
 
 **本次修正的核心一句话**：
 
-> Backend 从 "Remote Agent Run Control Plane" 收敛为"平台授权 + Expert 路由 + ACP 公共入口"；`nodeskclaw-agent` 升级为真正的 ACP Runtime Gateway + Agent Execution Plane；Remote Hermes 保持最终 Agent Engine。
+> Backend 从 "Remote Agent Run Control Plane" 收敛为"平台授权 + Expert 路由 + ACP 公共入口"；`nodeskclaw-agent` 升级为真正的 ACP Runtime Gateway + Agent Execution Plane；Remote Hermes 保持最终 Agent Engine。**SMC Production MUST NOT require local `nodeskclaw-acp.exe`。**
 
-**被修订的章节**：§2.1、§2.3、§4.1、§4.3、§5、§8、§28、§32、§37、§49、§50。
+**被修订的章节**：§2.1、§2.3、§4.1、§4.3、§5、§8、§28、§32、§37、§49、§50、Appendix B。
 
-**阅读规则**：§2.x 描述的是**当前代码事实（Current / Legacy Implementation）**，不代表 Target；§4.x 之后描述的是 **Target Architecture**。两者在 Remote Agent 这条链上**已经不一致**，这种不一致是有意记录的迁移债务，不是文档错误。
+**已冻结（不再未决）**：
+
+```text
+SMC 不依赖 nodeskclaw-acp.exe
+Backend owns Auth / Expert ACL / Routing / Scoped Execution Capability
+Agent owns ACP Runtime Gateway / Run / Attempt / Event / Artifact
+Hermes remains Agent Engine
+nodeskclaw-acp owns no SOT
+```
+
+**阅读规则**：§2.x 描述的是**当前代码事实（Current / Legacy Implementation）**，不代表 Target；§4.x 之后描述的是 **Target Architecture**。两者在 Remote Agent 这条链上**已经不一致**，这种不一致是有意记录的迁移债务，不是文档错误。`nodeskclaw-acp` 作为本地 stdio adapter、`nodeskclaw-agent` 当前没有 ACP 实现，一律保留在 Current State / Architecture Gap，不得写成 Target。
 
 ---
 
@@ -209,7 +219,7 @@ nodeskclaw-agent
 Hermes
 ```
 
-**这条链的问题正是本次修订的起因**：ACP 语义在 `nodeskclaw-acp` 终止后，被 Backend 二次编码成另一套 Remote Agent REST Run 模型，再交给 Agent，于是同一次执行在 Backend 与 Agent 各有一份 Run 概念。Target 要求 ACP 的 Runtime 语义直达 Agent，Backend 不再承担第二套 Run 模型。见 §4.1、§8、§28、§49。
+**这条链是 Current State / Architecture Gap，不是 Target。** ACP 语义在 `nodeskclaw-acp` 终止后，被 Backend 二次编码成另一套 Remote Agent REST Run 模型，再交给 Agent，于是同一次执行在 Backend 与 Agent 各有一份 Run 概念。Target 要求：SMC Production 不经本地 sidecar；ACP Public Ingress 在 Backend；ACP Runtime 语义在 Agent。见 §4.1、§8、§28、§49。
 
 此外，这一事实也不自动意味着 Backend 应成为 Automation Workflow Engine。
 
@@ -2755,15 +2765,15 @@ Backend 继续是 Identity / Org / Platform Resource Authority，
 
 Backend 与 Task 两条线汇聚到 Agent 的那条边，语义是 **authorized execution**（一次已授权的执行移交），不是 run control（持续控制）。
 
-**未决问题 —— `nodeskclaw-acp` 在 Target 中的位置**：
-
-当前 `nodeskclaw-acp` 是被 ACP 客户端 spawn 的本地 stdio adapter 进程（证据见 §2.1 当前链路图）。本图的 `smc-copilot --ACP--> nodeskclaw-backend` 这条边，在实现上既可以是"客户端内直连 Backend 的 ACP ingress"，也可以是"本地 adapter 仍然存在、但退化为纯传输层"。本次修订**不决定**这一项，它需要一个专项 Architecture Decision，范围包括：
+**Target 已冻结 `nodeskclaw-acp` 的生产角色**（不再把"位置"整体标为未决）：
 
 ```text
-ACP 是否由 Backend 原生暴露（而非仅经本地 adapter）
-nodeskclaw-acp 是保留为传输 shim、还是随 Backend ACP ingress 落地后退场
-Desktop managed credential 模式在新拓扑下如何保持
+smc-copilot MUST NOT require local nodeskclaw-acp.exe
 ```
+
+当前 `SMC → local nodeskclaw-acp → Backend REST/SSE` 是 Current Implementation（见 §2.1），不是目标生产拓扑。`nodeskclaw-acp` MAY 保留为 Zed / 第三方 stdio ACP Client 的 compatibility adapter 以及 ACP compatibility testing；MUST NOT 持有业务或运行状态 SOT。工程是否保留、代码如何复用，属于实现层事项。
+
+本图 `smc-copilot --ACP--> nodeskclaw-backend` 表示 SMC Production 走 Backend ACP Public Ingress，不经本地 sidecar。ingress 的具体 network transport 仍属实现未决（Appendix B）。
 
 ---
 
@@ -2801,9 +2811,15 @@ Desktop managed credential 模式在新拓扑下如何保持
 
 第八（rev.1 新增），Remote Expert 这条运行链的 Target 可以压缩成一句话：
 
-> **Backend 从 "Remote Agent Run Control Plane" 收敛为"平台授权 + Expert 路由 + ACP 公共入口"；`nodeskclaw-agent` 升级为真正的 ACP Runtime Gateway + Agent Execution Plane；Remote Hermes 保持最终 Agent Engine。**
+> **Backend 从 "Remote Agent Run Control Plane" 收敛为"平台授权 + Expert 路由 + ACP 公共入口"；`nodeskclaw-agent` 升级为真正的 ACP Runtime Gateway + Agent Execution Plane；Remote Hermes 保持最终 Agent Engine。SMC Production MUST NOT require local `nodeskclaw-acp.exe`。**
 
-其直接推论是：同一次执行不得在 Backend 与 Agent 各有一份 Run 模型。Backend 回答"能不能、去哪里、带什么 scope"，Agent 回答"怎么跑、到哪一步、产出什么"。
+其直接推论是：同一次执行不得在 Backend 与 Agent 各有一份 Run 模型。
+
+```text
+Backend：能不能执行？找谁执行？去哪里执行？带什么授权执行？
+Agent  ：怎么执行？当前执行到哪里？调用了什么 Tool？产生了什么 Event / Artifact？
+Hermes ：真正运行 Agent Loop。
+```
 
 ---
 
@@ -2882,16 +2898,25 @@ nodeskclaw-acp   源码中检索 nodeskclaw-agent / skill-agent / 4580 / hermes�
 不生成 Implementation Todo。
 ```
 
-rev.1 另外明确不决定：
+rev.1 另外明确不决定（仅实现机制，所有权方向已冻结）：
 
 ```text
-不决定 nodeskclaw-acp 是保留为传输 shim 还是退场。
-不决定 Backend ACP ingress 的具体协议形态（原生 ACP over HTTP / WebSocket / 其他）。
-不决定 Agent ACP Runtime Gateway 的实现路径与时间点。
-不决定 Backend Remote Agent REST 现有公开面的废弃节奏。
-不决定 RunDispatchOutbox 的拆除方式。
+不决定 Backend ACP ingress 最终使用何种 network transport。
+不决定 Backend → Agent 是透明 stream proxy 还是 capability 后直连。
+不决定 Agent ACP Gateway 如何复用现有 nodeskclaw-acp 代码。
+不决定 Remote Agent REST/SSE 的兼容退役节奏。
+不决定 RunDispatchOutbox / HermesTask 的迁移方式。
+不决定 nodeskclaw-acp 工程是否最终保留为第三方 stdio 兼容适配器（它已确定不是 SMC Production 必经依赖，且不得持有 SOT）。
 ```
 
-这五项都需要独立 Architecture Decision。rev.1 只固定**方向与所有权**，不固定迁移方案。
+以下**不再未决**：
+
+```text
+SMC 不依赖 nodeskclaw-acp.exe
+Backend owns Auth / Expert ACL / Routing / Scoped Execution Capability
+Agent owns ACP Runtime Gateway / Run execution
+Hermes remains Agent Engine
+nodeskclaw-acp owns no SOT
+```
 
 这些应在 Domain Architecture 被接受后分别进入专项 Architecture Decision。
