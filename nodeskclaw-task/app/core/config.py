@@ -46,6 +46,17 @@ class Settings(BaseSettings):
     SEED_DATA_ENABLED: bool = True
     SEED_DATA_DIR: str = "app/data/seed"
 
+    AUTOTASK_INTERNAL_TOKEN: str = ""
+    MISFIRE_GRACE_SECONDS: int = 300
+    CRON_POLL_INTERVAL_SECONDS: int = 15
+    DISPATCH_JOB_ENABLED: bool = True
+    DISPATCH_JOB_POLL_INTERVAL_SECONDS: int = 2
+    DISPATCH_JOB_BATCH_SIZE: int = 10
+    SUCCESSOR_JOB_ENABLED: bool = False
+    SUCCESSOR_JOB_POLL_INTERVAL_SECONDS: int = 2
+    SUCCESSOR_JOB_BATCH_SIZE: int = 10
+    SUCCESSOR_JOB_MAX_ATTEMPTS: int = 10
+
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod
     def parse_cors_origins(cls, value):

@@ -1,0 +1,17 @@
+{
+  "dispatch_id": "job_demo",
+  "invocation_id": "inv_demo",
+  "org_id": "org_demo",
+  "owner_user_id": "user_demo",
+  "client_request_id": "autotask:inv_demo",
+  "agent_ref": "expert_demo",
+  "prompt": "Summarize the order",
+  "knowledge_refs": [],
+  "connector_binding_refs": [],
+  "integration_account_refs": [],
+  "automation_context": {
+    "automation_id": "auto_demo",
+    "automation_generation": 1,
+    "trigger_type": "MANUAL"
+  }
+}

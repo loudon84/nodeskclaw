@@ -111,7 +111,11 @@ class TaskSuccessorJobResponse(CamelModel):
     tenant_id: str = Field(serialization_alias="tenantId")
     source_task_id: str = Field(serialization_alias="sourceTaskId")
     source_run_id: str = Field(serialization_alias="sourceRunId")
-    target_workflow_binding_id: str = Field(serialization_alias="targetWorkflowBindingId")
+    target_kind: str = Field(default="WORKFLOW_BINDING", serialization_alias="targetKind")
+    target_workflow_binding_id: str | None = Field(
+        None, serialization_alias="targetWorkflowBindingId"
+    )
+    target_automation_id: str | None = Field(None, serialization_alias="targetAutomationId")
     input_mapper: str = Field(serialization_alias="inputMapper")
     status: str
     attempt_count: int = Field(serialization_alias="attemptCount")

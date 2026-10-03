@@ -3,6 +3,7 @@
 from fastapi import APIRouter
 
 from app.api import (
+    agent_automations,
     artifacts,
     dashboard,
     human_actions,
@@ -31,6 +32,8 @@ api_router.include_router(portal_accounts.router, prefix="/portal-accounts", tag
 api_router.include_router(workflow_templates.router, prefix="/workflow-templates", tags=["Workflow Template"])
 api_router.include_router(workflow_bindings.router, prefix="/workflow-bindings", tags=["Workflow Binding"])
 api_router.include_router(tasks.router, prefix="/tasks", tags=["Automation Task"])
+api_router.include_router(agent_automations.router, prefix="/agent-automations", tags=["Agent Automation"])
+api_router.include_router(agent_automations.hooks_router, tags=["Agent Automation Hooks"])
 api_router.include_router(rpa_runs.router, prefix="/runs", tags=["RPA Run"])
 api_router.include_router(human_actions.router, prefix="/human-actions", tags=["Human Action"])
 api_router.include_router(artifacts.router, prefix="/artifacts", tags=["Artifact"])

@@ -1,0 +1,13 @@
+{
+  "$id": "remote-agent-automation.error.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["code", "error_code", "message_key", "message"],
+  "properties": {
+    "code": { "type": "integer" },
+    "error_code": { "type": "string" },
+    "message_key": { "type": "string" },
+    "message": { "type": "string" },
+    "data": {}
+  }
+}

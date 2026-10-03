@@ -27,6 +27,7 @@ _ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
         "skill:authorize", "skill:bulk_authorize",
         "expert:manage", "expert_skill:manage", "expert_log:view", "expert_log:detail",
         "expert:view", "expert_skill:view", "expert_skill:invoke", "expert:invoke",
+        "automation:view", "automation:manage", "automation:run",
     }),
     "operator": frozenset({
         "skill:view", "skill:scan", "skill:install", "skill:uninstall",
@@ -44,6 +45,7 @@ _ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
         "skill:authorize", "skill:bulk_authorize",
         "expert:manage", "expert_skill:manage", "expert_log:view", "expert_log:detail",
         "expert:view", "expert_skill:view", "expert_skill:invoke", "expert:invoke",
+        "automation:view", "automation:manage", "automation:run",
     }),
     "workspace_manager": frozenset({
         "skill:view", "skill:install", "skill:invoke",
@@ -51,16 +53,19 @@ _ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
         "hermes_artifact:view", "hermes_artifact:download",
         "hermes_artifact:share",
         "expert:view", "expert_skill:view", "expert_skill:invoke", "expert:invoke",
+        "automation:view", "automation:run",
     }),
     "member": frozenset({
         "skill:view", "skill:invoke",
         "hermes_task:view", "hermes_task:create",
         "hermes_artifact:view", "hermes_artifact:download",
         "expert:view", "expert_skill:view", "expert_skill:invoke", "expert:invoke",
+        "automation:view", "automation:run",
     }),
     "viewer": frozenset({
         "skill:view", "hermes_task:view", "hermes_artifact:view",
         "expert:view", "expert_skill:view",
+        "automation:view",
     }),
 }
 

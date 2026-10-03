@@ -68,6 +68,7 @@ from app.api.engine_versions import (
 )
 from app.api.invitations import invite_router, invite_public_router
 from app.api.internal_edge import router as internal_edge_router
+from app.api.internal_automation import router as internal_automation_router
 from app.api.internal_skill_agent import router as internal_skill_agent_router
 from app.api.portal.instances import router as portal_instance_router
 from app.api.portal.instance_members import router as portal_instance_members_router
@@ -227,6 +228,7 @@ api_router.include_router(external_action_policies_router)
 api_router.include_router(attachments_router, tags=["Attachments"])
 api_router.include_router(internal_edge_router, tags=["Internal Edge"])
 api_router.include_router(internal_skill_agent_router, tags=["Internal Skill Agent"])
+api_router.include_router(internal_automation_router, tags=["Internal Automation"])
 api_router.include_router(desktop_genehub_router, tags=["Desktop GeneHub"])
 
 # ── 管理平台 Admin API（/api/v1/admin）─────────────────────

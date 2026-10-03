@@ -69,8 +69,9 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("SKIP_AUTO_MIGRATE=1，跳过自动迁移")
 
+    from app.core.deps import async_session_factory
+
     if settings.SEED_DATA_ENABLED:
-        from app.core.deps import async_session_factory
         from app.startup.seed import run_seed
 
         try:
@@ -80,7 +81,35 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("SEED_DATA_ENABLED=false，跳过种子数据")
 
+    dispatch_processor = None
+    cron_processor = None
+    successor_processor = None
+    if settings.DISPATCH_JOB_ENABLED:
+        from app.services.remote_agent_dispatch_service import (
+            CronFireProcessor,
+            RemoteAgentDispatchProcessor,
+        )
+
+        dispatch_processor = RemoteAgentDispatchProcessor(async_session_factory, settings)
+        cron_processor = CronFireProcessor(async_session_factory, settings)
+        await dispatch_processor.start()
+        await cron_processor.start()
+        app.state.dispatch_processor = dispatch_processor
+        app.state.cron_processor = cron_processor
+    if settings.SUCCESSOR_JOB_ENABLED:
+        from app.services.task_successor_service import SuccessorJobProcessor
+
+        successor_processor = SuccessorJobProcessor(async_session_factory, settings)
+        await successor_processor.start()
+        app.state.successor_processor = successor_processor
+
     yield
+    if dispatch_processor is not None:
+        await dispatch_processor.stop()
+    if cron_processor is not None:
+        await cron_processor.stop()
+    if successor_processor is not None:
+        await successor_processor.stop()
     await engine.dispose()
 
 

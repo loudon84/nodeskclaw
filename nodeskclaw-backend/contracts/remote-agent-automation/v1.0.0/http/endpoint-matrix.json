@@ -1,0 +1,44 @@
+{
+  "authentication": "X-Autotask-Internal-Token",
+  "successBody": "bare JSON",
+  "errorBody": {
+    "fields": [
+      "code",
+      "error_code",
+      "message_key",
+      "message"
+    ],
+    "errorCodeType": "string symbol"
+  },
+  "unsupported": [
+    "acp",
+    "work-ui",
+    "mcp-automation-tools"
+  ],
+  "endpoints": [
+    {
+      "method": "POST",
+      "path": "/api/v1/internal/v1/automation/remote-agent/runs",
+      "schemaId": "remote-agent-automation.dispatch.create.v1",
+      "success": [
+        200
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/internal/v1/automation/remote-agent/runs/{run_id}",
+      "schemaId": "remote-agent-automation.dispatch.get.v1",
+      "success": [
+        200
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/internal/v1/automation/remote-agent/runs/{run_id}/cancel",
+      "schemaId": "remote-agent-automation.dispatch.cancel.v1",
+      "success": [
+        200
+      ]
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "contractName": "AGENT-AUTOMATION-CONTRACT",
+  "contractVersion": "1.0.0",
+  "bundleFormatVersion": "1",
+  "provider": "nodeskclaw-task",
+  "consumer": "smc-copilot/apps/work",
+  "implementationHeadSha": "28a0eedcff966217e80447f0a61fc907843c3795",
+  "releaseCommitSha": "28a0eedcff966217e80447f0a61fc907843c3795",
+  "acp": "unsupported",
+  "production_gate": "unpassed",
+  "schemaIds": [
+    "agent-automation.create.v1",
+    "agent-automation.manual-run.v1",
+    "agent-automation.webhook.v1"
+  ],
+  "artifacts": {
+    "RELEASE.md": "13350533bcd6603f205ce9866d28cc8fba6fac5f3d5dc5fd51af9003cd131280",
+    "golden/manual-run.json": "36712655a2ba9c719b026b11ffaafe36f61ce818000a9a5da477ec453392c427",
+    "http/endpoint-matrix.json": "38f2e6e710fc0555d260b6896baa933c2d45d1a1da924d68fd7fc156a062e205",
+    "schemas/create.request.schema.json": "40b399437f7684178ea12554053170035892697b57cdbfa64c40f3be6feeb9e6",
+    "schemas/manual-run.request.schema.json": "6813616f0ef9b7741ced0d31db7def421eb13fb3d29a007fc94a5902f42b815a",
+    "schemas/webhook.request.schema.json": "9a4af9c2cf5b07b1920d60874c8b892043d51b3c2c2eacb4ac3e49a52b3670ca"
+  },
+  "bundleDigest": "8ce013c8344dac5f3873928523e14e82f2035e5a17a07048338316f51106b158"
+}

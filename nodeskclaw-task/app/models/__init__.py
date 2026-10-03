@@ -1,5 +1,12 @@
 """Import all models for Alembic metadata discovery."""
 
+from app.models.agent_automation import (  # noqa: F401
+    AgentAutomation,
+    AutomationInvocation,
+    AutomationTrigger,
+    AutomationWebhookNonce,
+    RemoteAgentDispatchJob,
+)
 from app.models.artifact import Artifact  # noqa: F401
 from app.models.audit_log import AuditLog  # noqa: F401
 from app.models.automation_task import AutomationTask  # noqa: F401

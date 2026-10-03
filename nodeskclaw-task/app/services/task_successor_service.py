@@ -34,10 +34,13 @@ logger = logging.getLogger(__name__)
 
 SUCCESSOR_INPUT_MAPPER = "ORDER_DELIVERY_CONFIRMATION_V1"
 ATTACHMENT_UPLOAD_INPUT_MAPPER = "ORDER_ATTACHMENT_UPLOAD_V1"
+REMOTE_AGENT_INPUT_MAPPER = "RPA_OUTPUT_TO_REMOTE_AGENT_INPUT_V1"
 SOURCE_OUTPUT_SCHEMA = "ORDER_DOWNLOAD_PUSH_OUTPUT_V1"
 ATTACHMENT_SOURCE_OUTPUT_SCHEMA = "ORDER_DELIVERY_CONFIRMATION_OUTPUT_V1"
 TARGET_WORKFLOW_CODE = "srm_update_expected_delivery_dates"
 ATTACHMENT_TARGET_WORKFLOW_CODE = "srm_upload_order_attachment"
+TARGET_KIND_WORKFLOW_BINDING = "WORKFLOW_BINDING"
+TARGET_KIND_REMOTE_AGENT = "REMOTE_AGENT_AUTOMATION"
 _SUPPORTED_SUCCESSORS = {
     SUCCESSOR_INPUT_MAPPER: (SOURCE_OUTPUT_SCHEMA, TARGET_WORKFLOW_CODE),
     ATTACHMENT_UPLOAD_INPUT_MAPPER: (
@@ -45,6 +48,7 @@ _SUPPORTED_SUCCESSORS = {
         ATTACHMENT_TARGET_WORKFLOW_CODE,
     ),
 }
+_SUPPORTED_REMOTE_MAPPERS = frozenset({REMOTE_AGENT_INPUT_MAPPER})
 _DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _RETRY_DELAYS_SECONDS = (5, 30, 120, 600, 1800, 3600)
 
@@ -57,7 +61,7 @@ class SuccessorJobError(Exception):
         self.retryable = retryable
 
 
-def _successor_spec(config: Mapping[str, Any]) -> tuple[str, str] | None:
+def _successor_spec(config: Mapping[str, Any]) -> dict[str, str] | None:
     raw = config.get("successor")
     if raw is None:
         return None
@@ -65,13 +69,31 @@ def _successor_spec(config: Mapping[str, Any]) -> tuple[str, str] | None:
         raise ValueError("successor must be an object")
     if raw.get("on") != "SUCCESS":
         raise ValueError("successor.on must be SUCCESS")
-    target_binding_id = raw.get("targetWorkflowBindingId")
     input_mapper = raw.get("inputMapper")
+    target_kind = raw.get("targetKind") or TARGET_KIND_WORKFLOW_BINDING
+    if target_kind == TARGET_KIND_REMOTE_AGENT:
+        target_automation_id = raw.get("targetAutomationId")
+        if not isinstance(target_automation_id, str) or not target_automation_id.strip():
+            raise ValueError("successor.targetAutomationId is required")
+        if not isinstance(input_mapper, str) or input_mapper not in _SUPPORTED_REMOTE_MAPPERS:
+            raise ValueError(
+                f"successor.inputMapper must be one of {', '.join(sorted(_SUPPORTED_REMOTE_MAPPERS))}"
+            )
+        return {
+            "target_kind": TARGET_KIND_REMOTE_AGENT,
+            "target_automation_id": target_automation_id.strip(),
+            "input_mapper": input_mapper,
+        }
+    target_binding_id = raw.get("targetWorkflowBindingId")
     if not isinstance(target_binding_id, str) or not target_binding_id.strip():
         raise ValueError("successor.targetWorkflowBindingId is required")
     if not isinstance(input_mapper, str) or input_mapper not in _SUPPORTED_SUCCESSORS:
         raise ValueError(f"successor.inputMapper must be one of {', '.join(sorted(_SUPPORTED_SUCCESSORS))}")
-    return target_binding_id.strip(), input_mapper
+    return {
+        "target_kind": TARGET_KIND_WORKFLOW_BINDING,
+        "target_workflow_binding_id": target_binding_id.strip(),
+        "input_mapper": input_mapper,
+    }
 
 
 async def validate_successor_binding_config(
@@ -91,7 +113,27 @@ async def validate_successor_binding_config(
         ) from exc
     if spec is None:
         return
-    target_binding_id, input_mapper = spec
+    if spec["target_kind"] == TARGET_KIND_REMOTE_AGENT:
+        from app.models.agent_automation import AgentAutomation
+
+        automation = (
+            await db.execute(
+                select(AgentAutomation).where(
+                    AgentAutomation.id == spec["target_automation_id"],
+                    AgentAutomation.tenant_id == tenant_id,
+                    not_deleted(AgentAutomation),
+                )
+            )
+        ).scalar_one_or_none()
+        if automation is None:
+            raise BadRequestError(
+                message="后继 Agent Automation 不存在",
+                message_key="errors.automation.not_found",
+            )
+        return
+
+    target_binding_id = spec["target_workflow_binding_id"]
+    input_mapper = spec["input_mapper"]
     if source_binding_id is not None and target_binding_id == source_binding_id:
         raise BadRequestError(
             message="后继 Binding 不能指向自身",
@@ -171,8 +213,35 @@ async def enqueue_successor_job(
         return None
     if spec is None:
         return None
-    target_binding_id, input_mapper = spec
+    input_mapper = spec["input_mapper"]
+    if spec["target_kind"] == TARGET_KIND_REMOTE_AGENT:
+        existing = (
+            await db.execute(
+                select(TaskSuccessorJob).where(
+                    TaskSuccessorJob.source_run_id == source_run.id,
+                    TaskSuccessorJob.target_automation_id == spec["target_automation_id"],
+                    not_deleted(TaskSuccessorJob),
+                )
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            return existing
+        job = TaskSuccessorJob(
+            tenant_id=source_task.tenant_id,
+            source_task_id=source_task.id,
+            source_run_id=source_run.id,
+            target_kind=TARGET_KIND_REMOTE_AGENT,
+            target_workflow_binding_id=None,
+            target_automation_id=spec["target_automation_id"],
+            input_mapper=input_mapper,
+            status=SuccessorJobStatus.PENDING,
+            attempt_count=0,
+            next_attempt_at=datetime.now(UTC),
+        )
+        db.add(job)
+        return job
 
+    target_binding_id = spec["target_workflow_binding_id"]
     existing = (
         await db.execute(
             select(TaskSuccessorJob).where(
@@ -189,7 +258,9 @@ async def enqueue_successor_job(
         tenant_id=source_task.tenant_id,
         source_task_id=source_task.id,
         source_run_id=source_run.id,
+        target_kind=TARGET_KIND_WORKFLOW_BINDING,
         target_workflow_binding_id=target_binding_id,
+        target_automation_id=None,
         input_mapper=input_mapper,
         status=SuccessorJobStatus.PENDING,
         attempt_count=0,
@@ -553,6 +624,55 @@ class SuccessorJobProcessor:
                 )
             )
         ).scalar_one_or_none()
+        if source_task is None or source_run is None:
+            raise SuccessorJobError(
+                "SUCCESSOR_SOURCE_NOT_FOUND",
+                "来源 Task 或 Run 不存在",
+            )
+        if source_run.status != RunStatus.SUCCESS or source_task.status != TaskStatus.SUCCESS:
+            raise SuccessorJobError(
+                "SUCCESSOR_SOURCE_NOT_SUCCESS",
+                "仅成功的来源 Task 和 Run 可以创建后继任务",
+            )
+        if (job.target_kind or TARGET_KIND_WORKFLOW_BINDING) == TARGET_KIND_REMOTE_AGENT:
+            from app.services.agent_automation_service import create_successor_invocation
+            from app.services.json_utils import loads_json as _loads
+
+            output = source_run.output
+            if isinstance(output, str):
+                output = _loads(output, {})
+            if not isinstance(output, dict):
+                output = {}
+            try:
+                invocation = await create_successor_invocation(
+                    db,
+                    tenant_id=job.tenant_id,
+                    target_automation_id=str(job.target_automation_id or ""),
+                    source_run_id=source_run.id,
+                    input_mapper=job.input_mapper,
+                    source_output=output,
+                    commit=False,
+                )
+            except (BadRequestError, NotFoundError) as exc:
+                raise SuccessorJobError(
+                    "SUCCESSOR_REMOTE_AUTOMATION_REJECTED",
+                    exc.message,
+                ) from exc
+            job.successor_task_id = invocation.id
+            job.status = SuccessorJobStatus.SUCCEEDED
+            job.next_attempt_at = None
+            job.last_error_code = None
+            job.last_error_message = None
+            db.add(
+                TaskMessage(
+                    task_id=source_task.id,
+                    role="system",
+                    content=f"已创建 Remote Agent Automation 调用：{invocation.id}",
+                    created_by=source_task.created_by,
+                )
+            )
+            return
+
         target_row = (
             await db.execute(
                 select(WorkflowBinding, PortalAccount, WorkflowTemplate)
@@ -574,16 +694,6 @@ class SuccessorJobProcessor:
                 )
             )
         ).one_or_none()
-        if source_task is None or source_run is None:
-            raise SuccessorJobError(
-                "SUCCESSOR_SOURCE_NOT_FOUND",
-                "来源 Task 或 Run 不存在",
-            )
-        if source_run.status != RunStatus.SUCCESS or source_task.status != TaskStatus.SUCCESS:
-            raise SuccessorJobError(
-                "SUCCESSOR_SOURCE_NOT_SUCCESS",
-                "仅成功的来源 Task 和 Run 可以创建后继任务",
-            )
         if target_row is None:
             raise SuccessorJobError(
                 "SUCCESSOR_BINDING_NOT_FOUND",

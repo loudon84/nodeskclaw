@@ -11,11 +11,18 @@ class TaskSuccessorJob(BaseModel):
     __tablename__ = "task_successor_jobs"
     __table_args__ = (
         Index(
-            "uq_task_successor_jobs_source_run_target",
+            "uq_task_successor_jobs_source_run_binding",
             "source_run_id",
             "target_workflow_binding_id",
             unique=True,
-            postgresql_where=text("deleted_at IS NULL"),
+            postgresql_where=text("deleted_at IS NULL AND target_workflow_binding_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_task_successor_jobs_source_run_automation",
+            "source_run_id",
+            "target_automation_id",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL AND target_automation_id IS NOT NULL"),
         ),
         Index(
             "ix_task_successor_jobs_ready",
@@ -32,7 +39,9 @@ class TaskSuccessorJob(BaseModel):
     tenant_id: Mapped[str] = mapped_column(String(36), nullable=False)
     source_task_id: Mapped[str] = mapped_column(String(36), nullable=False)
     source_run_id: Mapped[str] = mapped_column(String(36), nullable=False)
-    target_workflow_binding_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    target_kind: Mapped[str] = mapped_column(String(64), default="WORKFLOW_BINDING", nullable=False)
+    target_workflow_binding_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    target_automation_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     input_mapper: Mapped[str] = mapped_column(String(128), nullable=False)
     status: Mapped[str] = mapped_column(String(32), default="PENDING", nullable=False)
     attempt_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)

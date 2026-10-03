@@ -1,0 +1,23 @@
+{
+  "contractName": "REMOTE-AGENT-AUTOMATION-CONTRACT",
+  "contractVersion": "1.0.0",
+  "bundleFormatVersion": "1",
+  "provider": "nodeskclaw-backend",
+  "consumer": "nodeskclaw-task",
+  "implementationHeadSha": "28a0eedcff966217e80447f0a61fc907843c3795",
+  "releaseCommitSha": "28a0eedcff966217e80447f0a61fc907843c3795",
+  "acp": "unsupported",
+  "production_gate": "unpassed",
+  "schemaIds": [
+    "remote-agent-automation.dispatch.create.v1",
+    "remote-agent-automation.error.v1"
+  ],
+  "artifacts": {
+    "RELEASE.md": "02775b41ae0e8efb76894c712b6b679d3861d77693240bcf829d95ff4043f25a",
+    "golden/dispatch-create.json": "552ab99ade4b1c65c26f1c1f7dc5dbeaff0e86f7caf02171828280759019ee7b",
+    "http/endpoint-matrix.json": "fa58fb1cf16f22bc279f6919a3b88abc023fb3ac9b91783d5c29a8353913a870",
+    "schemas/dispatch.create.request.schema.json": "7865e26aff67c66b8e156c0f6b0fa0c29db6aaa6999dc7e044b7dd2731a3a7b6",
+    "schemas/error.schema.json": "c3b7c17fdc895020e3e096e438a314509cf36bb5b63101467c608bd9815ff7f5"
+  },
+  "bundleDigest": "67920b39498a83fab5ae4055d9a9c387b3ad9d543bbaa339b5899c00c8cc3208"
+}

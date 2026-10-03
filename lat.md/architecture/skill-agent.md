@@ -438,3 +438,12 @@ Stage PRD：[RM-18 Public Attachment Input Contract v1.4.0](../../docs_agent/prd
 - **已实现**：运行目录写入在 [[nodeskclaw-agent/app/services/run_attachment_workspace.py#stage_run_attachments]]。目录或字节读不到时，[[nodeskclaw-agent/app/services/hermes_engine.py#execute_hermes_run]] 在创建 Hermes 运行之前返回 `SPEC_SEMANTIC_GAP`。
 - **合同**：`nodeskclaw-backend/contracts/remote-agent/v1.3.0/`。v1.0.0、v1.1.0 与 v1.2.0 摘要保持不变。Work 界面不在本仓实现。
 
+## Remote Agent Automation Trigger
+
+AutoTask 以 `AgentAutomation` 为 SOT，经 Manual / Cron / Webhook / RPA Successor 创建 Invocation，再由可靠 DispatchJob 调用 Backend 内部 Remote Agent 入口。Work UI 与 MCP 自动化工具不在本版。
+
+- **已实现**：域模型与迁移在 [[nodeskclaw-task/app/models/agent_automation.py#AgentAutomation]]；公开 API 在 [[nodeskclaw-task/app/api/agent_automations.py]]；Webhook HMAC 在 [[nodeskclaw-task/app/services/webhook_hmac.py]]。
+- **已实现**：Backend 内部派发在 [[nodeskclaw-backend/app/api/internal_automation.py]]，请求头 `X-Autotask-Internal-Token`，复用 [[nodeskclaw-backend/app/services/remote_agent_provider_service.py#RemoteAgentProviderService#create]]；权限码 `automation:view|manage|run` 在 [[nodeskclaw-backend/app/services/hermes_skill/permission_checker.py]]。
+- **已实现**：可靠派发与状态投影在 [[nodeskclaw-task/app/services/remote_agent_dispatch_service.py#RemoteAgentDispatchProcessor]]；Successor 白名单 mapper `RPA_OUTPUT_TO_REMOTE_AGENT_INPUT_V1` 在 [[nodeskclaw-task/app/services/task_successor_service.py]]。
+- **合同**：`nodeskclaw-backend/contracts/remote-agent-automation/v1.0.0/` 与 `nodeskclaw-task/contracts/agent-automation/v1.0.0/`。`remote-agent/v1.3.0` 字节不变。生产门保持未通过；缺真实环境时 [[tools/acceptance/run_remote_agent_automation_v14_live.py#main]] 非 0 退出。
+

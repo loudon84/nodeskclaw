@@ -1,0 +1,14 @@
+{
+  "$id": "agent-automation.manual-run.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["client_request_id"],
+  "properties": {
+    "client_request_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "input": { "type": "object" }
+  }
+}

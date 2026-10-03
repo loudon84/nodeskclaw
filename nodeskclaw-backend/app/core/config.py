@@ -291,6 +291,8 @@ class Settings(BaseSettings):
     SKILL_AGENT_BASE_URL: str = "http://127.0.0.1:4580"
     SKILL_AGENT_INTERNAL_TOKEN: str = "change-me-skill-agent-token"
     SKILL_AGENT_INTERNAL_TOKEN_PREVIOUS: str = ""
+    AUTOTASK_INTERNAL_TOKEN: str = ""
+    AUTOTASK_INTERNAL_TOKEN_PREVIOUS: str = ""
     SKILL_AGENT_ENABLED: bool = True
     SKILL_AGENT_CREDENTIAL_LEASE_TTL_SECONDS: int = 900
     KNOWLEDGE_SERVICE_BASE_URL: str = "http://127.0.0.1:4530"
