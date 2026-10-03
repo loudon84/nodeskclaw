@@ -12,4 +12,6 @@
 - [[runtime]] — 计算 Provider、实例生命周期、Channel 与外部运行时
 - [[hermes-output-artifacts]] — Native Hermes Run 的候选 MinIO 输出工件插件与 finalizer 前置契约
 
+`nodeskclaw-backend` / `nodeskclaw-task` / `nodeskclaw-agent` / `nodeskclaw-knowledge` 四域的 SOT 归属、跨服务调用白名单、各域 MUST NOT 与已登记架构偏差（含 backend `app/modules/task_orchestrator/` 这套第三方 Workflow 模型）见 `docs/architecture-domain.md`，PRD 实施前须过该文档的边界检查清单。
+
 Skill Run 执行平面（`nodeskclaw-agent`）的架构与设计决策详见 [[skill-agent]] 与 [[decisions/skill-platform-execution]]；Connector Runtime 的冻结快照、单次 Edge 派发、SecretRef 与网络/数据库/取消门禁由该执行平面统一拥有；RM-07 Edge Control Channel 的 Body/Query 摘要证明、命令封套与本地加密身份见 [[backend#Edge Control Channel]] 与 [[skill-agent#Edge Worker And Spooling]]；RM-10 Trace/Metrics 见 [[skill-agent#Execution Observability Trace And Metrics]]。
