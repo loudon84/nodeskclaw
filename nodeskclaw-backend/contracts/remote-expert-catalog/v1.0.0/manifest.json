@@ -4,19 +4,19 @@
   "bundleFormatVersion": "1",
   "provider": "nodeskclaw-backend",
   "consumer": "smc-copilot/apps/work",
-  "implementationHeadSha": "557a3b0f17677db911a42b36f1ad16855ef93c2e",
-  "releaseCommitSha": "557a3b0f17677db911a42b36f1ad16855ef93c2e",
+  "implementationHeadSha": "896450ad479033afc2428852a2d02f70f77ab19e",
+  "releaseCommitSha": "896450ad479033afc2428852a2d02f70f77ab19e",
   "schemaIds": [
     "remote-expert-catalog.item.v1",
     "remote-expert-catalog.list.v1",
     "remote-expert-catalog.get.v1"
   ],
   "artifacts": {
+    "RELEASE.md": "9f54fa7e99348441948eb87b2eddfa31400af5f246f7c64ff2f4f64a59872214",
     "golden/forbidden.json": "397d29dfe86e9a696940bb9bce91588e573175fd47ae06cd3b6cb1ff7d92d53e",
     "golden/ready-expert.json": "56e4f06b1cf15858d644fd0f6ff192cccdbff77b3528b5a6102f1a878c8f34bb",
     "golden/unavailable-expert.json": "bef587be23826773ec85d79a32896588342fb378c2f5308c34e97aab56a90c00",
     "http/endpoint-matrix.json": "e09f459375e848b214cf2ce949c560830fb2fca72c9913044acc21fe7aa44973",
-    "RELEASE.md": "9f54fa7e99348441948eb87b2eddfa31400af5f246f7c64ff2f4f64a59872214",
     "schemas/catalog-get.response.schema.json": "f192772a7b299d59c31f92a105b546970722f3c1d2da970a08b86779cb5a6622",
     "schemas/catalog-item.schema.json": "2023229769400d78bbeaa82a150f6c85152f4238e1046bc4f78d1b7c5e9a0bcc",
     "schemas/catalog-list.response.schema.json": "5c0dcb22c47628de6a40661229b8d55ba4dd43570faab7103feecc9dbf138cb7",

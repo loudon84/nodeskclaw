@@ -1,0 +1,21 @@
+{
+  "repository": "loudon84/smc-copilot",
+  "branchBaseline": "work/prd-v6.3",
+  "integrationMode": "original-chat-compose-acp",
+  "forbiddenDependencies": [
+    "WORK-EXPERT-CONTRACT",
+    "ExpertProjectionStore",
+    "expert.start",
+    "skillName",
+    "SkillRunStore"
+  ],
+  "requiredCapabilities": [
+    "remote-expert-catalog",
+    "acp-v1",
+    "session-resume",
+    "managed-credential",
+    "attachment-resource-link",
+    "artifact-resource-link",
+    "permission-bridge"
+  ]
+}
