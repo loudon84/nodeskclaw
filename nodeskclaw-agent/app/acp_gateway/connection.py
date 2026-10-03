@@ -161,8 +161,6 @@ class AcpConnection:
 
     async def _session_prompt(self, request_id: Any, params: dict[str, Any]) -> dict[str, Any]:
         session_id, _row = await self._require_session(params)
-        if self.active_prompt and not self.active_prompt.done():
-            raise AcpGatewayError("ACP_SESSION_BUSY", "prompt already running")
         self.cancel_event = asyncio.Event()
         created = await create_or_replay_prompt_run(
             self.db,
