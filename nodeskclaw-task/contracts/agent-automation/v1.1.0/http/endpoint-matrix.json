@@ -1,0 +1,33 @@
+{
+  "authentication": {
+    "user": "Authorization: Bearer <access-token>",
+    "webhook": "X-Automation-Timestamp + X-Automation-Nonce + X-Automation-Signature"
+  },
+  "successBody": "ApiResponse envelope",
+  "unsupported": [
+    "work-ui",
+    "mcp-automation-tools"
+  ],
+  "endpoints": [
+    {
+      "method": "POST",
+      "path": "/api/v1/autotask/agent-automations",
+      "schemaId": "agent-automation.create.v1"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/autotask/agent-automations/{automation_id}/runs",
+      "schemaId": "agent-automation.manual-run.v1"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/autotask/automation-hooks/{hook_id}",
+      "schemaId": "agent-automation.webhook.v1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/autotask/agent-automations/invocations/{invocation_id}",
+      "schemaId": "agent-automation.invocation.get.v1"
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "$id": "integration-account.grants.request.v1.1",
+  "title": "IntegrationAccountGrantsRequest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "grants"
+  ],
+  "properties": {
+    "grants": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "subject_type",
+          "subject_id"
+        ],
+        "properties": {
+          "subject_type": {
+            "type": "string",
+            "enum": [
+              "USER",
+              "ORG_ROLE"
+            ]
+          },
+          "subject_id": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  }
+}

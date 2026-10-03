@@ -250,6 +250,24 @@ class RemoteAgentProviderService:
             existing and (existing.routing_metadata or {}).get("request_digest") == digest
         )
         if existing is not None and digest_matches:
+            if parsed.integration_account_refs:
+                catalog = ExpertCatalogService(self.db)
+                expert = await catalog.get_by_slug(org_id, parsed.agent_ref)
+                if expert is None:
+                    raise RemoteAgentRouteError(
+                        "REMOTE_AGENT_TARGET_NOT_FOUND",
+                        404,
+                        40401,
+                        "errors.remote_agent.target_not_found",
+                        "专家不存在或未发布",
+                    )
+                await self._authorize_external_accounts(
+                    org_id=org_id,
+                    user_id=user_id,
+                    expert_id=expert.id,
+                    account_ids=parsed.integration_account_refs,
+                    binding_ids=parsed.connector_binding_refs,
+                )
             return existing, True
         if existing is not None and not digest_matches:
             raise RemoteAgentRouteError(

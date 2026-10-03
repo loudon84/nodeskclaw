@@ -1,0 +1,30 @@
+{
+  "$id": "integration-account.get.response.v1",
+  "title": "IntegrationAccountGetResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "code",
+    "error_code",
+    "message_key",
+    "message",
+    "data"
+  ],
+  "properties": {
+    "code": {
+      "const": 0
+    },
+    "error_code": {
+      "type": "null"
+    },
+    "message_key": {
+      "type": "null"
+    },
+    "message": {
+      "const": "success"
+    },
+    "data": {
+      "$ref": "account.schema.json"
+    }
+  }
+}

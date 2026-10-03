@@ -84,17 +84,27 @@ def _row(**overrides):
         deleted_at=None,
         org_id="org",
         user_id="user",
+        owner_type="USER",
+        owner_id="user",
         status="ACTIVE",
         provider="composio",
         toolkit_slug="gmail",
         connected_account_id="ca_1",
+        provider_user_id="nodeskclaw:org:user",
     )
     base.update(overrides)
     return SimpleNamespace(**base)
 
 
 @pytest.mark.asyncio
-async def test_inactive_and_deleted_accounts_use_distinct_codes():
+async def test_inactive_and_deleted_accounts_use_distinct_codes(monkeypatch):
+    async def fake_role(db, user_id, org_id):
+        return "member"
+
+    monkeypatch.setattr(
+        "app.services.integration_account_access_resolver.PermissionChecker.get_user_role",
+        fake_role,
+    )
     with pytest.raises(RemoteAgentRouteError) as inactive:
         await load_accounts_for_run(
             _AccountDB(_row(status="DISCONNECTED")),
@@ -113,7 +123,7 @@ async def test_inactive_and_deleted_accounts_use_distinct_codes():
     assert missing.value.code == 40404
     with pytest.raises(RemoteAgentRouteError) as other_user:
         await load_accounts_for_run(
-            _AccountDB(_row(user_id="other")),
+            _AccountDB(_row(user_id="other", owner_id="other")),
             org_id="org",
             user_id="user",
             account_ids=["11111111-1111-4111-8111-111111111111"],
@@ -164,7 +174,7 @@ async def test_session_create_failure_does_not_execute(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_digest_replay_skips_account_checks(monkeypatch):
+async def test_digest_replay_revalidates_shared_use(monkeypatch):
     digest = request_digest(
         agent_ref="expert",
         prompt="hello",
@@ -173,6 +183,7 @@ async def test_digest_replay_skips_account_checks(monkeypatch):
         session_ref=None,
     )
     existing = SimpleNamespace(routing_metadata={"request_digest": digest})
+    calls = {"authorize": 0}
 
     class Tasks:
         def __init__(self, db):
@@ -181,13 +192,29 @@ async def test_digest_replay_skips_account_checks(monkeypatch):
         async def find_idempotent_task(self, *args, **kwargs):
             return existing
 
+    class Catalog:
+        def __init__(self, db):
+            return None
+
+        async def get_by_slug(self, org_id, slug):
+            return SimpleNamespace(id="expert-1")
+
     class Boom:
         def __init__(self, db):
             raise AssertionError("later checks must not run on replay")
 
+    async def authorize(self, **kwargs):
+        calls["authorize"] += 1
+        return []
+
     monkeypatch.setattr("app.services.remote_agent_provider_service.TaskService", Tasks)
-    monkeypatch.setattr("app.services.remote_agent_provider_service.ExpertCatalogService", Boom)
+    monkeypatch.setattr("app.services.remote_agent_provider_service.ExpertCatalogService", Catalog)
     monkeypatch.setattr("app.services.remote_agent_provider_service.RuntimeSkillRunService", Boom)
+    monkeypatch.setattr(
+        RemoteAgentProviderService,
+        "_authorize_external_accounts",
+        authorize,
+    )
     task, replayed = await RemoteAgentProviderService(SimpleNamespace()).create(
         org_id="org",
         user_id="user",
@@ -200,3 +227,4 @@ async def test_digest_replay_skips_account_checks(monkeypatch):
     )
     assert replayed is True
     assert task is existing
+    assert calls["authorize"] == 1

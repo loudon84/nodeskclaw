@@ -117,6 +117,7 @@ from app.models.integration import (  # noqa: F401
     ExpertExternalActionPolicy,
     ExternalActionExecution,
     IntegrationAccount,
+    IntegrationAccountGrant,
     IntegrationConnectAttempt,
 )
 from app.models.connector import (  # noqa: F401

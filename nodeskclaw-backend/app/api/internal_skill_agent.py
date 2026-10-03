@@ -315,7 +315,7 @@ async def _execute_external_tool(
     from app.models.hermes_skill.hermes_task import HermesTask
     from app.services.expert_external_action_policy_service import enabled_approval_policies, list_external_tools, require_toolkit_coverage
     from app.services.external_action.session_broker import ExternalActionBroker
-    from app.services.integration_account_service import load_accounts_for_run, provider_user_id
+    from app.services.integration_account_service import load_accounts_for_run
     from app.services.remote_agent_provider_service import REMOTE_AGENT_TOOL_NAME, RemoteAgentRouteError
 
     task = await db.get(HermesTask, run_id)
@@ -342,25 +342,31 @@ async def _execute_external_tool(
     if account is None or not account.connected_account_id:
         return {"outcome": "fail_run"}
     tools = list_external_tools(rows, policies)
+    principal = account.provider_user_id
+    principal_rows = [row for row in rows if row.provider_user_id == principal and row.connected_account_id]
     scope = {
         "provider": "composio",
-        "provider_user_id": provider_user_id(task.org_id, task.user_id),
+        "provider_user_id": principal,
         "run_id": task.id,
         "account_pins": [
             {
                 "integration_account_id": row.id,
                 "toolkit_slug": row.toolkit_slug,
                 "connected_account_id": row.connected_account_id,
+                "provider_user_id": row.provider_user_id,
             }
-            for row in rows
-            if row.connected_account_id
+            for row in principal_rows
         ],
-        "toolkit_allowlist": sorted({row.toolkit_slug for row in rows}),
-        "tool_allowlist": sorted(tool["tool_name"] for tool in tools),
+        "toolkit_allowlist": sorted({row.toolkit_slug for row in principal_rows}),
+        "tool_allowlist": sorted(
+            tool["tool_name"]
+            for tool in tools
+            if any(row.toolkit_slug == tool["toolkit_slug"] for row in principal_rows)
+        ),
         "sandbox_enabled": False,
     }
     from app.services.external_action.execution_ledger import ExternalActionLedger
-    from app.services.external_action.session_broker import SESSION_METADATA_KEY
+    from app.services.external_action.session_broker import SESSION_METADATA_KEY, SESSION_SET_METADATA_KEY
 
     ledger = ExternalActionLedger(db)
     if not tool_call_id:
@@ -385,7 +391,7 @@ async def _execute_external_tool(
         return replay
     result = await ExternalActionBroker(db).execute(
         task=task,
-        provider_user_id=provider_user_id(task.org_id, task.user_id),
+        provider_user_id=principal,
         connected_account_id=account.connected_account_id or "",
         toolkit_slug=account.toolkit_slug,
         provider_tool_key=match["provider_tool_key"],
@@ -393,7 +399,10 @@ async def _execute_external_tool(
         scope=scope,
     )
     await db.refresh(task)
-    session_ref = str((task.routing_metadata or {}).get(SESSION_METADATA_KEY) or "")
+    metadata = task.routing_metadata or {}
+    session_set = metadata.get(SESSION_SET_METADATA_KEY) if isinstance(metadata.get(SESSION_SET_METADATA_KEY), dict) else {}
+    principal_entry = session_set.get(principal) if isinstance(session_set.get(principal), dict) else {}
+    session_ref = str(principal_entry.get("session_ref") or metadata.get(SESSION_METADATA_KEY) or "")
     await ledger.finish(
         run_id=task.id,
         generation=int(generation or 0),

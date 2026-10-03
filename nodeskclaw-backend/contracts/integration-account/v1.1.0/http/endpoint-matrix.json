@@ -1,0 +1,99 @@
+{
+  "authentication": "Authorization: Bearer <access-token>",
+  "successBody": "ApiResponse envelope",
+  "errorBody": {
+    "fields": [
+      "code",
+      "error_code",
+      "message_key",
+      "message",
+      "data"
+    ],
+    "errorCodeType": "integer",
+    "data": null
+  },
+  "providerNetwork": {
+    "list": "none",
+    "get": "none",
+    "disconnect": "revoke best-effort; local status DISCONNECTED",
+    "delete": "none",
+    "grants": "none"
+  },
+  "endpoints": [
+    {
+      "method": "GET",
+      "path": "/api/v1/integrations/accounts",
+      "query": [
+        "scope=all|personal|shared"
+      ],
+      "schemaId": "integration-account.list.response.v1",
+      "success": [
+        200
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/integrations/accounts/{account_id}",
+      "schemaId": "integration-account.get.response.v1",
+      "success": [
+        200
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/integrations/composio/connect",
+      "schemaId": "integration-account.connect.response.v1",
+      "success": [
+        200
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/integrations/accounts/{account_id}/complete",
+      "schemaId": "integration-account.complete.response.v1",
+      "success": [
+        200
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/integrations/accounts/{account_id}/reauthorize",
+      "schemaId": "integration-account.reauthorize.response.v1",
+      "success": [
+        200
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/integrations/accounts/{account_id}/disconnect",
+      "schemaId": "integration-account.disconnect.response.v1",
+      "success": [
+        200
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/integrations/accounts/{account_id}",
+      "schemaId": "integration-account.delete.response.v1",
+      "success": [
+        200
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/integrations/accounts/{account_id}/grants",
+      "schemaId": "integration-account.grants.response.v1.1",
+      "success": [
+        200
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/integrations/accounts/{account_id}/grants",
+      "schemaId": "integration-account.grants.response.v1.1",
+      "success": [
+        200
+      ]
+    }
+  ]
+}

@@ -28,6 +28,7 @@ _ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
         "expert:manage", "expert_skill:manage", "expert_log:view", "expert_log:detail",
         "expert:view", "expert_skill:view", "expert_skill:invoke", "expert:invoke",
         "automation:view", "automation:manage", "automation:run",
+        "integration:shared:view", "integration:shared:manage",
     }),
     "operator": frozenset({
         "skill:view", "skill:scan", "skill:install", "skill:uninstall",
@@ -46,6 +47,7 @@ _ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
         "expert:manage", "expert_skill:manage", "expert_log:view", "expert_log:detail",
         "expert:view", "expert_skill:view", "expert_skill:invoke", "expert:invoke",
         "automation:view", "automation:manage", "automation:run",
+        "integration:shared:view", "integration:shared:manage",
     }),
     "workspace_manager": frozenset({
         "skill:view", "skill:install", "skill:invoke",
@@ -54,6 +56,7 @@ _ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
         "hermes_artifact:share",
         "expert:view", "expert_skill:view", "expert_skill:invoke", "expert:invoke",
         "automation:view", "automation:run",
+        "integration:shared:view",
     }),
     "member": frozenset({
         "skill:view", "skill:invoke",

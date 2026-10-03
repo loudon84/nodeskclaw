@@ -11,6 +11,7 @@ from app.services.external_action.provider_port import ComposioExternalActionPro
 from app.services.external_action.scope import scope_digest
 
 SESSION_METADATA_KEY = "provider_execution_session_ref"
+SESSION_SET_METADATA_KEY = "provider_execution_session_set"
 SCOPE_DIGEST_KEY = "provider_execution_scope_digest"
 CLOSE_WARNING_KEY = "provider_execution_session_close"
 
@@ -38,25 +39,46 @@ class ExternalActionBroker:
         scope: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         metadata = dict(task.routing_metadata or {})
-        session_id = str(metadata.get(SESSION_METADATA_KEY) or "")
-        stored_digest = str(metadata.get(SCOPE_DIGEST_KEY) or "")
+        session_set = self._session_set(metadata)
+        principal = str((scope or {}).get("provider_user_id") or provider_user_id)
+        entry = session_set.get(principal) if isinstance(session_set.get(principal), dict) else {}
+        session_id = str(entry.get("session_ref") or "")
+        stored_digest = str(entry.get("scope_digest") or "")
+        if not session_id:
+            session_id = str(metadata.get(SESSION_METADATA_KEY) or "")
+            stored_digest = str(metadata.get(SCOPE_DIGEST_KEY) or "")
+            if session_id and str(metadata.get("provider_user_id") or principal) != principal:
+                session_id = ""
+                stored_digest = ""
         required = scope_digest(scope) if scope is not None else ""
         if session_id and scope is not None and not stored_digest:
             return {"outcome": "fail_run"}
         if session_id and required and stored_digest and stored_digest != required:
-            await self._drop_session(task, metadata, session_id, warning=False)
+            await self._drop_principal_session(task, metadata, principal, session_id, warning=False)
             metadata = dict(task.routing_metadata or {})
+            session_set = self._session_set(metadata)
             session_id = ""
         if not session_id:
             if scope is not None and not list(scope.get("tool_allowlist") or []):
                 return {"outcome": "fail_run"}
             try:
                 if scope is not None:
-                    pins = list(scope.get("account_pins") or [])
+                    pins = [
+                        pin
+                        for pin in list(scope.get("account_pins") or [])
+                        if str(pin.get("provider_user_id") or principal) == principal
+                    ]
+                    if not pins:
+                        pins = list(scope.get("account_pins") or [])
                     session_id = await self.provider.create_session(
-                        provider_user_id=str(scope.get("provider_user_id") or provider_user_id),
-                        connected_account_ids=[str(pin.get("connected_account_id") or "") for pin in pins if pin.get("connected_account_id")],
-                        toolkit_slugs=list(scope.get("toolkit_allowlist") or []),
+                        provider_user_id=principal,
+                        connected_account_ids=[
+                            str(pin.get("connected_account_id") or "")
+                            for pin in pins
+                            if pin.get("connected_account_id")
+                        ],
+                        toolkit_slugs=sorted({str(pin.get("toolkit_slug") or "") for pin in pins if pin.get("toolkit_slug")})
+                        or list(scope.get("toolkit_allowlist") or []),
                         tool_allowlist=list(scope.get("tool_allowlist") or []),
                     )
                 else:
@@ -67,9 +89,16 @@ class ExternalActionBroker:
                     )
             except ComposioCallError:
                 return {"outcome": "tool_error"}
+            session_set[principal] = {
+                "session_ref": session_id,
+                "provider_user_id": principal,
+                "scope_digest": required,
+            }
+            metadata[SESSION_SET_METADATA_KEY] = session_set
             metadata[SESSION_METADATA_KEY] = session_id
             if required:
                 metadata[SCOPE_DIGEST_KEY] = required
+            metadata["provider_user_id"] = principal
             task.routing_metadata = metadata
             flag_modified(task, "routing_metadata")
             await self.db.commit()
@@ -90,30 +119,63 @@ class ExternalActionBroker:
 
     async def close(self, task: HermesTask) -> None:
         metadata = dict(task.routing_metadata or {})
-        session_id = str(metadata.get(SESSION_METADATA_KEY) or "")
-        if not session_id:
-            return
+        session_set = self._session_set(metadata)
         warning = False
-        try:
-            await self.provider.close_session(session_id)
-        except ComposioCallError:
-            warning = True
-        self._clear_session(metadata, warning=warning)
+        principals = list(session_set.keys())
+        if not principals:
+            legacy = str(metadata.get(SESSION_METADATA_KEY) or "")
+            if legacy:
+                principals = ["__legacy__"]
+                session_set["__legacy__"] = {"session_ref": legacy}
+        for principal in principals:
+            entry = session_set.get(principal) if isinstance(session_set.get(principal), dict) else {}
+            session_id = str(entry.get("session_ref") or "")
+            if not session_id:
+                continue
+            try:
+                await self.provider.close_session(session_id)
+            except ComposioCallError:
+                warning = True
+        self._clear_session_set(metadata, warning=warning)
         task.routing_metadata = metadata
         flag_modified(task, "routing_metadata")
         await self.db.commit()
 
-    async def _drop_session(self, task: HermesTask, metadata: dict[str, Any], session_id: str, *, warning: bool) -> None:
+    async def _drop_principal_session(
+        self,
+        task: HermesTask,
+        metadata: dict[str, Any],
+        principal: str,
+        session_id: str,
+        *,
+        warning: bool,
+    ) -> None:
         try:
             await self.provider.close_session(session_id)
         except ComposioCallError:
             warning = True
-        self._clear_session(metadata, warning=warning)
+        session_set = self._session_set(metadata)
+        session_set.pop(principal, None)
+        metadata[SESSION_SET_METADATA_KEY] = session_set
+        if str(metadata.get(SESSION_METADATA_KEY) or "") == session_id:
+            metadata.pop(SESSION_METADATA_KEY, None)
+            metadata.pop(SCOPE_DIGEST_KEY, None)
+        if warning:
+            metadata[CLOSE_WARNING_KEY] = "CLOSED_WITH_WARNING"
         task.routing_metadata = metadata
         flag_modified(task, "routing_metadata")
         await self.db.commit()
 
-    def _clear_session(self, metadata: dict[str, Any], *, warning: bool) -> None:
+    def _session_set(self, metadata: dict[str, Any]) -> dict[str, Any]:
+        raw = metadata.get(SESSION_SET_METADATA_KEY)
+        if isinstance(raw, dict):
+            return dict(raw)
+        return {}
+
+    def _clear_session_set(self, metadata: dict[str, Any], *, warning: bool) -> None:
+        metadata.pop(SESSION_SET_METADATA_KEY, None)
         metadata.pop(SESSION_METADATA_KEY, None)
+        metadata.pop(SCOPE_DIGEST_KEY, None)
+        metadata.pop("provider_user_id", None)
         if warning:
             metadata[CLOSE_WARNING_KEY] = "CLOSED_WITH_WARNING"

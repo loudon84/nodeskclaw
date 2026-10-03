@@ -1,0 +1,18 @@
+{
+  "name": "connector-binding-scope-denied",
+  "request": {
+    "client_request_id": "req-binding-scope",
+    "agent_ref": "sales-agent",
+    "prompt": "lookup the account",
+    "connector_binding_refs": ["44444444-4444-4444-8444-444444444444"]
+  },
+  "response": {
+    "code": 40302,
+    "error_code": "CONNECTOR_SCOPE_DENIED",
+    "message_key": "errors.remote_agent.binding_scope_denied",
+    "message": "连接器绑定不属于当前专家的已发布技能",
+    "data": null
+  },
+  "httpStatus": 403,
+  "enqueued": false
+}

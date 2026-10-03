@@ -75,6 +75,12 @@ class AutomationDispatchBody(BaseModel):
     automation_context: dict = Field(default_factory=dict)
 
 
+class AutomationValidateAccountsBody(BaseModel):
+    org_id: str
+    owner_user_id: str
+    integration_account_refs: list[str] = Field(default_factory=list)
+
+
 async def _assert_owner_active(db: AsyncSession, *, org_id: str, owner_user_id: str) -> None:
     user = await db.get(User, owner_user_id)
     if user is None or not user.is_active or getattr(user, "deleted_at", None) is not None:
@@ -102,6 +108,38 @@ async def _assert_owner_active(db: AsyncSession, *, org_id: str, owner_user_id: 
         )
     if not await PermissionChecker.has_permission(db, owner_user_id, org_id, "expert:invoke"):
         raise ForbiddenError("缺少权限: expert:invoke", "errors.skill.permission_denied")
+
+
+@router.post("/integration-accounts/validate", dependencies=[Depends(_verify_autotask_token)])
+async def validate_automation_integration_accounts(
+    body: AutomationValidateAccountsBody,
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        await _assert_owner_active(db, org_id=body.org_id, owner_user_id=body.owner_user_id)
+        from app.services.integration_account_service import load_accounts_for_run
+
+        if body.integration_account_refs:
+            await load_accounts_for_run(
+                db,
+                org_id=body.org_id,
+                user_id=body.owner_user_id,
+                account_ids=body.integration_account_refs,
+            )
+        return {"valid": True, "account_count": len(body.integration_account_refs)}
+    except RemoteAgentRouteError as exc:
+        return _error_response(exc)
+    except ForbiddenError as exc:
+        return JSONResponse(
+            status_code=403,
+            content={
+                "code": 40300,
+                "error_code": "AUTOMATION_DISPATCH_FORBIDDEN",
+                "message_key": exc.message_key,
+                "message": exc.message,
+                "data": None,
+            },
+        )
 
 
 @router.post("/runs", dependencies=[Depends(_verify_autotask_token)])

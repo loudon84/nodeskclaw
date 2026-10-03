@@ -2,17 +2,21 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import httpx
 from croniter import croniter
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.exceptions import BadRequestError, ForbiddenError, NotFoundError
+
+logger = logging.getLogger("automation.integration_validate")
 from app.models.agent_automation import (
     AgentAutomation,
     AutomationInvocation,
@@ -190,6 +194,12 @@ async def update_automation(
         row.owner_user_id = str(body["owner_user_id"])
     if bumped:
         row.generation = int(row.generation) + 1
+    if "integration_account_refs" in body:
+        await validate_owner_integration_accounts(
+            org_id=tenant_id,
+            owner_user_id=row.owner_user_id,
+            integration_account_refs=list(row.integration_account_refs or []),
+        )
     await db.commit()
     await db.refresh(row)
     return row
@@ -219,10 +229,62 @@ async def set_automation_status(
             message="非法状态",
             message_key="errors.automation.input_invalid",
         )
+    if status == "ENABLED":
+        await validate_owner_integration_accounts(
+            org_id=tenant_id,
+            owner_user_id=row.owner_user_id,
+            integration_account_refs=list(row.integration_account_refs or []),
+        )
     row.status = status
     await db.commit()
     await db.refresh(row)
     return row
+
+
+async def validate_owner_integration_accounts(
+    *,
+    org_id: str,
+    owner_user_id: str,
+    integration_account_refs: list[str],
+) -> None:
+    if not integration_account_refs:
+        return
+    if not settings.AUTOTASK_INTERNAL_TOKEN:
+        raise BadRequestError(
+            message="缺少内部校验令牌，无法验证共享账号",
+            message_key="errors.automation.integration_validate_unavailable",
+        )
+    url = (
+        f"{settings.NODESKCLAW_BACKEND_URL.rstrip('/')}"
+        "/api/v1/internal/v1/automation/remote-agent/integration-accounts/validate"
+    )
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as http:
+            response = await http.post(
+                url,
+                headers={"X-Autotask-Internal-Token": settings.AUTOTASK_INTERNAL_TOKEN},
+                json={
+                    "org_id": org_id,
+                    "owner_user_id": owner_user_id,
+                    "integration_account_refs": integration_account_refs,
+                },
+            )
+    except httpx.HTTPError as exc:
+        logger.warning("automation.integration_validate.transport_failed", exc_info=exc)
+        raise BadRequestError(
+            message="无法验证共享账号可用性",
+            message_key="errors.automation.integration_validate_unavailable",
+        ) from exc
+    if response.status_code >= 400:
+        body: dict[str, Any] = {}
+        try:
+            body = response.json()
+        except Exception:
+            body = {}
+        raise BadRequestError(
+            message=str(body.get("message") or "共享账号不可用"),
+            message_key=str(body.get("message_key") or "errors.automation.integration_account_invalid"),
+        )
 
 
 async def upsert_cron_trigger(

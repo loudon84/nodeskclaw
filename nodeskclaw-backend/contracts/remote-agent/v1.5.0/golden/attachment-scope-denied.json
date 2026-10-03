@@ -1,0 +1,20 @@
+{
+  "name": "attachment-scope-denied",
+  "request": {
+    "client_request_id": "req-att-scope",
+    "agent_ref": "sales-agent",
+    "prompt": "read the file",
+    "attachment_refs": [
+      "att_other"
+    ]
+  },
+  "response": {
+    "code": 40304,
+    "error_code": "ATTACHMENT_SCOPE_DENIED",
+    "message_key": "errors.run.attachment_scope_denied",
+    "message": "附件引用不属于当前用户",
+    "data": null
+  },
+  "httpStatus": 403,
+  "enqueued": false
+}

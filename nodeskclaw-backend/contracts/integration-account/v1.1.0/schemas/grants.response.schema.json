@@ -1,0 +1,42 @@
+{
+  "$id": "integration-account.grants.response.v1.1",
+  "title": "IntegrationAccountGrantsResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "data"
+  ],
+  "properties": {
+    "data": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "subject_type",
+          "subject_id",
+          "permission"
+        ],
+        "properties": {
+          "subject_type": {
+            "type": "string",
+            "enum": [
+              "USER",
+              "ORG_ROLE"
+            ]
+          },
+          "subject_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "permission": {
+            "type": "string",
+            "enum": [
+              "USE"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

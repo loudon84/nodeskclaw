@@ -447,3 +447,12 @@ AutoTask 以 `AgentAutomation` 为 SOT，经 Manual / Cron / Webhook / RPA Succe
 - **已实现**：可靠派发与状态投影在 [[nodeskclaw-task/app/services/remote_agent_dispatch_service.py#RemoteAgentDispatchProcessor]]；Successor 白名单 mapper `RPA_OUTPUT_TO_REMOTE_AGENT_INPUT_V1` 在 [[nodeskclaw-task/app/services/task_successor_service.py]]。
 - **合同**：`nodeskclaw-backend/contracts/remote-agent-automation/v1.0.0/` 与 `nodeskclaw-task/contracts/agent-automation/v1.0.0/`。`remote-agent/v1.3.0` 字节不变。生产门保持未通过；缺真实环境时 [[tools/acceptance/run_remote_agent_automation_v14_live.py#main]] 非 0 退出。
 
+## Shared IntegrationAccount Access
+
+组织共享外部账号由 NodeSkClaw Grant 授权 USE，与 Personal 账号并存。创建与执行都走 AccessResolver；混用个人与共享时按 principal 拆分 Provider Session Set。
+
+- **已实现**：所有权字段与 Grant 模型在 [[nodeskclaw-backend/app/models/integration/account.py#IntegrationAccount]]、[[nodeskclaw-backend/app/models/integration/account_grant.py#IntegrationAccountGrant]]。权限码 `integration:shared:view|manage` 在 [[nodeskclaw-backend/app/services/hermes_skill/permission_checker.py]]。
+- **已实现**：解析与生命周期在 [[nodeskclaw-backend/app/services/integration_account_access_resolver.py#IntegrationAccountAccessResolver]]、[[nodeskclaw-backend/app/services/integration_account_service.py#IntegrationAccountService]]。Session Set 在 [[nodeskclaw-backend/app/services/external_action/session_broker.py#ExternalActionBroker]]。
+- **已实现**：AutoTask enable / 改 refs 内部校验在 [[nodeskclaw-backend/app/api/internal_automation.py#validate_automation_integration_accounts]] 与 [[nodeskclaw-task/app/services/agent_automation_service.py#validate_owner_integration_accounts]]。
+- **合同**：`nodeskclaw-backend/contracts/integration-account/v1.1.0/`、`remote-agent/v1.5.0/`、`nodeskclaw-task/contracts/agent-automation/v1.1.0/`。旧 bundle 字节不变。Work UI 不在本仓。生产门保持未通过；缺真实环境时 [[tools/acceptance/run_shared_integration_account_v15_live.py#main]] 非 0 退出。
+

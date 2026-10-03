@@ -1,0 +1,45 @@
+{
+  "$id": "integration-account.reauthorize.response.v1",
+  "title": "IntegrationAccountReauthorizeResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "code",
+    "error_code",
+    "message_key",
+    "message",
+    "data"
+  ],
+  "properties": {
+    "code": {
+      "const": 0
+    },
+    "error_code": {
+      "type": "null"
+    },
+    "message_key": {
+      "type": "null"
+    },
+    "message": {
+      "const": "success"
+    },
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "account_id",
+        "url"
+      ],
+      "properties": {
+        "account_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "url": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

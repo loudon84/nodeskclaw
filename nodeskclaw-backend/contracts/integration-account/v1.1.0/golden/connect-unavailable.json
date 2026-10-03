@@ -1,0 +1,7 @@
+{
+  "code": 40000,
+  "error_code": 40000,
+  "message_key": "errors.integration.connect_unavailable",
+  "message": "暂时无法创建连接链接",
+  "data": null
+}

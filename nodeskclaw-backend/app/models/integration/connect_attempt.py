@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, text
+from sqlalchemy import DateTime, ForeignKey, Index, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -18,9 +18,13 @@ class IntegrationConnectAttempt(BaseModel):
     org_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False
     )
-    user_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    user_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=True
     )
+    initiated_by_user_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    owner_type: Mapped[str] = mapped_column(String(32), nullable=False, default="USER")
+    owner_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    provider_user_id: Mapped[str] = mapped_column(String(160), nullable=False, default="")
     integration_account_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("integration_accounts.id", ondelete="CASCADE"), nullable=False
     )
