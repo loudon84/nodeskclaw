@@ -125,8 +125,8 @@ async def remote_acp_public_ingress(websocket: WebSocket, agent_ref: str) -> Non
                 actor_type="user",
                 actor_id=user.id,
                 org_id=org.id,
-                resource_type="remote_expert",
-                resource_id=agent_ref,
+                target_type="remote_expert",
+                target_id=agent_ref,
             )
         import websockets
 
