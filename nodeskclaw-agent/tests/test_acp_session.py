@@ -1,3 +1,7 @@
+from unittest.mock import AsyncMock
+
+import pytest
+
 from app.acp_gateway.errors import AcpGatewayError
 from app.acp_gateway.jsonrpc import parse_frame
 from app.acp_gateway.session import assert_session_scope
@@ -36,6 +40,24 @@ def test_cross_scope_resume_denied():
         assert False
     except AcpGatewayError as exc:
         assert exc.error_code == "ACP_SESSION_FORBIDDEN"
+
+
+@pytest.mark.asyncio
+async def test_session_new_commits_before_return(monkeypatch):
+    from app.acp_gateway.connection import AcpConnection
+
+    db = AsyncMock()
+    db.commit = AsyncMock()
+    conn = AcpConnection(AsyncMock(), db, {"org_id": "o", "user_id": "u", "agent_ref": "a"}, "cap")
+    conn.initialized = True
+
+    async def fake_create(*args, **kwargs):
+        return "sess-1"
+
+    monkeypatch.setattr("app.acp_gateway.connection.create_session", fake_create)
+    result = await conn._session_new({"cwd": "/", "mcpServers": []})
+    assert result == {"sessionId": "sess-1"}
+    db.commit.assert_awaited()
 
 
 def test_parse_frame_requires_jsonrpc():

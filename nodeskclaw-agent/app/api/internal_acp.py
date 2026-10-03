@@ -55,6 +55,9 @@ async def internal_acp_gateway(websocket: WebSocket) -> None:
             await connection.serve()
             await db.commit()
         except WebSocketDisconnect:
+            if connection.active_prompt and not connection.active_prompt.done():
+                connection.cancel_event.set()
+                connection.active_prompt.cancel()
             await db.commit()
         except Exception:
             await db.rollback()

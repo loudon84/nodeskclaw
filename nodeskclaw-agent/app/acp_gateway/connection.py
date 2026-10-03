@@ -35,6 +35,10 @@ class AcpConnection:
         self.active_prompt: asyncio.Task[Any] | None = None
         self.cancel_event = asyncio.Event()
         self.after_seq = 0
+        self._db_lock = asyncio.Lock()
+
+    async def _persist(self) -> None:
+        await self.db.commit()
 
     async def send(self, payload: dict[str, Any]) -> None:
         await self.websocket.send_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
@@ -61,8 +65,9 @@ class AcpConnection:
                     await self._session_close(params)
                     await self.send(result_frame(request_id, {}))
                 elif method == "session/prompt":
-                    result = await self._session_prompt(request_id, params)
-                    await self.send(result_frame(request_id, result))
+                    if self.active_prompt and not self.active_prompt.done():
+                        raise AcpGatewayError("ACP_SESSION_BUSY", "prompt already running")
+                    self.active_prompt = asyncio.create_task(self._run_prompt_and_reply(request_id, params))
                 elif method == "session/cancel":
                     await self._session_cancel(params)
                     await self.send(result_frame(request_id, {}))
@@ -75,6 +80,13 @@ class AcpConnection:
                     await self.send(error_frame(request_id, "ACP_PROTOCOL_ERROR", f"unknown method {method}"))
             except AcpGatewayError as exc:
                 await self.send(exc.to_jsonrpc(request_id))
+
+    async def _run_prompt_and_reply(self, request_id: Any, params: dict[str, Any]) -> None:
+        try:
+            result = await self._session_prompt(request_id, params)
+            await self.send(result_frame(request_id, result))
+        except AcpGatewayError as exc:
+            await self.send(exc.to_jsonrpc(request_id))
 
     def _initialize(self, params: dict[str, Any]) -> dict[str, Any]:
         requested = params.get("protocolVersion")
@@ -125,6 +137,7 @@ class AcpConnection:
             agent_ref=str(self.claims["agent_ref"]),
             cwd=str(params.get("cwd") or "") or None,
         )
+        await self._persist()
         return {"sessionId": session_id}
 
     async def _session_resume(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -144,6 +157,7 @@ class AcpConnection:
         if await session_has_nonterminal_run(self.db, session_id):
             raise AcpGatewayError("ACP_SESSION_BUSY", "session has active run")
         await close_session(self.db, session_id)
+        await self._persist()
 
     async def _session_prompt(self, request_id: Any, params: dict[str, Any]) -> dict[str, Any]:
         session_id, _row = await self._require_session(params)
@@ -158,6 +172,7 @@ class AcpConnection:
             capability_token=self.capability_token,
             claims=self.claims,
         )
+        await self._persist()
         stop_reason = await pump_run_events(
             self.db,
             run_id=created["run_id"],
@@ -178,6 +193,7 @@ class AcpConnection:
             return
         try:
             await run_service.cancel_run(self.db, latest["id"], org_id=str(self.claims["org_id"]))
+            await self._persist()
         except Exception as exc:
             raise AcpGatewayError("ACP_CANCEL_FAILED", str(exc)) from exc
 

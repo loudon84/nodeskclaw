@@ -471,6 +471,6 @@ AutoTask 以 `AgentAutomation` 为 SOT，经 Manual / Cron / Webhook / RPA Succe
 Backend 是 Public ACP Ingress，Agent 是 ACP Runtime Gateway 与 Run SOT。SMC 只连 Backend WSS，不直连 Agent，也不再依赖本地 ACP sidecar。
 
 - **已实现**：Public discovery 与 WSS 在 [[nodeskclaw-backend/app/api/remote_acp_ws.py#remote_acp_public_ingress]]。Capability 签发 [[nodeskclaw-backend/app/services/remote_acp/capability.py#mint_execution_capability]]。run-context [[nodeskclaw-backend/app/api/internal_remote_acp.py#create_run_context]] 不写 HermesTask。
-- **已实现**：Agent 内部网关 [[nodeskclaw-agent/app/api/internal_acp.py#internal_acp_gateway]]、会话 [[nodeskclaw-agent/app/acp_gateway/session.py#create_session]]、prompt 幂等 [[nodeskclaw-agent/app/acp_gateway/prompt.py#create_or_replay_prompt_run]]。
+- **已实现**：Agent 内部网关 [[nodeskclaw-agent/app/api/internal_acp.py#internal_acp_gateway]]、会话 [[nodeskclaw-agent/app/acp_gateway/session.py#create_session]]、prompt 幂等 [[nodeskclaw-agent/app/acp_gateway/prompt.py#create_or_replay_prompt_run]]。`session/new` 与 `create_run` 在泵事件前 `commit`，Worker 才能认领 QUEUED；`session/prompt` 在独立 task 中运行以便收取 `session/cancel`。
 - **合同**：catalog `v1.1.0`、`remote-acp-gateway/v1.0.0`、internal `acp-runtime-gateway/v1.0.0`、aggregate `contracts/remote-expert-frontend/v2.0.0/`。校验 [[tools/contracts/verify_remote_expert_frontend_contract_v2.py#verify]]。G4 live [[tools/acceptance/run_remote_acp_v2_live.py#main]] 缺环境非 0。`frontendContractGate` 默认 pending，`productionGate` 保持 unpassed。
 
