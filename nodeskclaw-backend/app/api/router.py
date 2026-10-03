@@ -42,6 +42,8 @@ from app.api.blackboard import router as blackboard_router
 from app.api.performance import router as performance_router
 from app.api.runs import router as runs_router
 from app.api.remote_agent_runs import router as remote_agent_runs_router
+from app.api.remote_agent_sessions import router as remote_agent_sessions_router
+from app.api.remote_experts import router as remote_experts_router
 from app.api.integration_accounts import router as integration_accounts_router
 from app.api.external_action_policies import router as external_action_policies_router
 from app.api.attachments import router as attachments_router
@@ -223,6 +225,8 @@ api_router.include_router(hermes_experts_router, prefix="/hermes-experts", tags=
 api_router.include_router(expert_router, prefix="/expert", tags=["Expert MCP Gateway"])
 api_router.include_router(runs_router, tags=["Runs"])
 api_router.include_router(remote_agent_runs_router)
+api_router.include_router(remote_agent_sessions_router)
+api_router.include_router(remote_experts_router)
 api_router.include_router(integration_accounts_router)
 api_router.include_router(external_action_policies_router)
 api_router.include_router(attachments_router, tags=["Attachments"])

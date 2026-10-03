@@ -1,0 +1,17 @@
+{
+  "$id": "acp-adapter.desktop.manifest.v1",
+  "type": "object",
+  "required": ["name", "version", "platform", "arch", "acp_protocol_version", "adapter_contract_version", "sha256"],
+  "properties": {
+    "name": { "type": "string" },
+    "version": { "type": "string" },
+    "platform": { "enum": ["windows"] },
+    "arch": { "enum": ["amd64"] },
+    "acp_protocol_version": { "type": "integer", "const": 1 },
+    "adapter_contract_version": { "type": "string" },
+    "adapter_contract_digest": { "type": "string" },
+    "remote_agent_contract_version": { "type": "string" },
+    "remote_agent_contract_digest": { "type": "string" },
+    "sha256": { "type": "string" }
+  }
+}

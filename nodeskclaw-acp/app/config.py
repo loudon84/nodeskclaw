@@ -9,5 +9,7 @@ class Settings(BaseSettings):
 
     NODESKCLAW_BASE_URL: str = ""
     NODESKCLAW_ACCESS_TOKEN: str = ""
+    NODESKCLAW_REFRESH_TOKEN: str = ""
+    NODESKCLAW_CREDENTIAL_MODE: str = "standalone"
     NODESKCLAW_ACP_MAX_SESSIONS: int = 16
     NODESKCLAW_ACP_ARTIFACT_HINTS: bool = True

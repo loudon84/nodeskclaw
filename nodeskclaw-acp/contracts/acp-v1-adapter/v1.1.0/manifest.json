@@ -1,0 +1,39 @@
+{
+  "contractName": "ACP-V1-ADAPTER-CONTRACT",
+  "contractVersion": "1.1.0",
+  "bundleFormatVersion": "1",
+  "provider": "nodeskclaw-acp",
+  "consumer": "smc-copilot/apps/work",
+  "implementationHeadSha": "557a3b0f17677db911a42b36f1ad16855ef93c2e",
+  "releaseCommitSha": "557a3b0f17677db911a42b36f1ad16855ef93c2e",
+  "acpProtocolVersion": 1,
+  "remoteAgentContractVersion": "1.5.0",
+  "remoteAgentContractDigest": "c8bc0ed8a1cf5b21fcbfb743a59a2d24480ff4dc90a651e8a0b5c057ca27b18c",
+  "catalogContractVersion": "1.0.0",
+  "catalogContractDigest": "cd38f8fbed0b41632fb0e7bbb7d6218ce6330d2cb2797555e9e6e62e14c38dba",
+  "conformance": "ACP_V1_ADAPTER_PROFILE_CONFORMANT",
+  "production_gate": "unpassed",
+  "schemaIds": [
+    "acp-adapter.profile.v1",
+    "acp-adapter.desktop.manifest.v1"
+  ],
+  "artifacts": {
+    "desktop/distribution-manifest.schema.json": "c733b5457ed5ab0f1bf4f16abc4018b41ae837e7272d4346b83e82333aa7eb42",
+    "desktop/managed-credential.md": "ebc49326d3f7737385c46e9243c5fb4dcb829dee509a99944d4f075b4688b03f",
+    "desktop/version-output.schema.json": "cda169c1075432a631fe9ed6f2d48c321d6e62ea399a38e59151e4d9f3caa95f",
+    "golden/approval-presentation.json": "1a54165219941a8f6231034ac6c03e659c7234d65df5884ce3c40c3b6925d2ef",
+    "golden/artifact-resource-link.json": "1f055d98f19fa4980c9f25d14d6a2c0773924e73879dfd9fd40fcfaf39a411ff",
+    "golden/initialize-desktop.json": "feefc26b44db0f94cb5e26d42c981f7c2e4735b78a7cd23182a6dc2592be9b4c",
+    "golden/prompt-attachment-resource-link.json": "6e55515a150d5609368d8632ebdf49b6ccf79300102a3bbc9f81caf4f2942b9a",
+    "golden/prompt-text.json": "e85d2bb522fc809838d6e4cf22e4c2cfbab38d12e3cc5b5171380e33cf576d6e",
+    "golden/session-close.json": "553e1dd9c522d5224c55f4e1257072036782dd7e8e04dec71e041fbe4fd93b2c",
+    "golden/session-new.json": "5ab99bb4b77a6b7d29d8e8298e457dff22f5e6ffbf176223f6d0dadf0f35b532",
+    "golden/session-resume.json": "3bb26e318c19cab1cbdfe88dc2de334b63431edfa408ae3668ed3d97706a4d92",
+    "mapping/permission-mapping.json": "988d16385af2ac282ea7bc9a4b796e74bd9c13da19146e483fdecbb494e9e12e",
+    "mapping/remote-event-to-acp.json": "446675c07cd5dda0a6a7c8e0ceebce52b87402308ef06c9679c63b6428d471cc",
+    "mapping/resource-link-mapping.json": "f505c3280f1b324faed9b12b69c498d4c36290aeff49a127dfb17fd804348102",
+    "profile/acp-profile.schema.json": "40db47682cee09086453168c3143dd0958817406c3673f8b677ea43db269869f",
+    "RELEASE.md": "7247e2d2426cc8195105f2e7ee26b8e24472fb2943c083cea0e144f8e35c810b"
+  },
+  "bundleDigest": "6d47582a25d88cbaa9445e3403a5482bafa3ed3dea5318573dc22d31218b18ca"
+}

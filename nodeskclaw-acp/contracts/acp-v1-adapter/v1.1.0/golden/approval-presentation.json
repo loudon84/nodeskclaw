@@ -1,0 +1,5 @@
+{
+  "toolCallId": "t1",
+  "options": ["allow_once", "reject_once"],
+  "omitMissingAlias": true
+}

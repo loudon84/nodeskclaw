@@ -1,0 +1,1 @@
+{ "method": "session/resume", "loadSession": false, "busy": "adopt then prompt ACP_SESSION_BUSY" }

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nodeskclaw-acp"
-version = "1.0.0"
+version = "1.6.1"
 description = "NodeSkClaw ACP v1 Remote Expert Adapter"
 requires-python = ">=3.12"
 dependencies = [

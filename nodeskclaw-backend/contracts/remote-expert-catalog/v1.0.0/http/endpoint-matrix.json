@@ -1,0 +1,13 @@
+{
+  "list": {
+    "method": "GET",
+    "path": "/api/v1/remote-experts",
+    "permission": "expert:invoke"
+  },
+  "get": {
+    "method": "GET",
+    "path": "/api/v1/remote-experts/{agent_ref}",
+    "permission": "expert:invoke",
+    "unknown": 404
+  }
+}

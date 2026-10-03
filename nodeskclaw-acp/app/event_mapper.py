@@ -8,18 +8,10 @@ IGNORED_EVENTS = frozenset({"run.queued", "run.progress", "run.created"})
 
 
 def join_text_blocks(blocks: list[Any]) -> str:
-    texts: list[str] = []
-    for block in blocks:
-        if not isinstance(block, dict):
-            raise AdapterError("ACP_PROMPT_UNSUPPORTED_CONTENT", "仅支持文本 Prompt")
-        kind = str(block.get("type") or block.get("kind") or "")
-        if kind and kind not in {"text", "Text"}:
-            raise AdapterError("ACP_PROMPT_UNSUPPORTED_CONTENT", "仅支持文本 Prompt")
-        text = block.get("text")
-        if text is None:
-            raise AdapterError("ACP_PROMPT_UNSUPPORTED_CONTENT", "仅支持文本 Prompt")
-        texts.append(str(text))
-    return "\n\n".join(texts).strip()
+    from app.resource_links import parse_prompt_blocks
+
+    text, _refs = parse_prompt_blocks(blocks)
+    return text
 
 
 def reconcile_final(accumulated: str, final: str, delta_emitted: bool) -> str | None:

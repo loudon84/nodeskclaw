@@ -1,0 +1,6 @@
+{
+  "prompt": [
+    { "type": "text", "text": "see" },
+    { "type": "resource_link", "uri": "nodeskclaw://attachment/att_xxx", "name": "quotation.xlsx" }
+  ]
+}

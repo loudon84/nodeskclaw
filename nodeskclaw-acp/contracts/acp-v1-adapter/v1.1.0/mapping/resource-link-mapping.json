@@ -1,0 +1,5 @@
+{
+  "inputScheme": "nodeskclaw://attachment/{attachment_ref}",
+  "artifactScheme": "nodeskclaw://artifact/{run_id}/{artifact_id}",
+  "rejected": ["file", "http", "https", "ftp", "smb"]
+}

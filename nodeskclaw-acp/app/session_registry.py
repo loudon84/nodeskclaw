@@ -19,6 +19,7 @@ class SessionState:
     cancel_requested: bool = False
     accumulated_text: str = ""
     delta_emitted: bool = False
+    remote_busy: bool = False
     seen_event_ids: set[str] = field(default_factory=set)
 
 
@@ -43,7 +44,7 @@ class SessionRegistry:
 
     def begin_turn(self, session_id: str) -> SessionState:
         state = self.get(session_id)
-        if state.active_run_id or state.active_prompt_id:
+        if state.active_run_id or state.active_prompt_id or state.remote_busy:
             raise session_busy()
         state.turn_seq += 1
         state.cancel_requested = False
@@ -56,3 +57,26 @@ class SessionRegistry:
         state.active_run_id = None
         state.active_prompt_id = None
         state.cancel_requested = False
+
+    def drop(self, session_id: str) -> None:
+        self._sessions.pop(session_id, None)
+
+    def adopt(
+        self,
+        session_id: str,
+        cwd: str,
+        *,
+        next_turn_seq: int,
+        remote_busy: bool,
+    ) -> SessionState:
+        if session_id not in self._sessions and len(self._sessions) >= self.max_sessions:
+            raise AdapterError("ACP_SESSION_NOT_FOUND", f"超过 max_sessions={self.max_sessions}")
+        state = SessionState(
+            session_id=session_id,
+            cwd=cwd,
+            agent_ref=self.agent_ref,
+            turn_seq=max(int(next_turn_seq) - 1, 0),
+            remote_busy=remote_busy,
+        )
+        self._sessions[session_id] = state
+        return state

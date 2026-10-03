@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from typing import Any, Callable, Awaitable
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 from app.errors import AdapterError, unsupported_content
 from app.event_mapper import (
     IGNORED_EVENTS,
-    join_text_blocks,
     map_tool_result_status,
     reconcile_final,
     safe_artifact_text,
@@ -13,6 +13,7 @@ from app.event_mapper import (
 from app.permission_bridge import PermissionBridge
 from app.profile import Profile
 from app.remote_client import RemoteAgentHttpClient
+from app.resource_links import artifact_resource_link, parse_prompt_blocks
 from app.session_registry import SessionRegistry, SessionState
 
 
@@ -40,12 +41,16 @@ class PromptTurnController:
         return f"acp:{state.session_id}:{state.turn_seq}"
 
     async def run_prompt(self, session_id: str, prompt_id: str, blocks: list[Any]) -> dict[str, Any]:
-        try:
-            text = join_text_blocks(blocks)
-        except AdapterError:
-            raise unsupported_content()
+        text, attachment_refs = parse_prompt_blocks(blocks)
         if not text:
             raise unsupported_content()
+        state = self.registry.get(session_id)
+        if state.remote_busy:
+            status, payload = await self.client.get_session_proof_raw(session_id)
+            if status == 200 and str(payload.get("status") or "") == "idle":
+                state.remote_busy = False
+            else:
+                raise AdapterError("ACP_SESSION_BUSY", "当前 Session 已有进行中的 Prompt")
         state = self.registry.begin_turn(session_id)
         state.active_prompt_id = prompt_id
         body = {
@@ -55,7 +60,7 @@ class PromptTurnController:
             "knowledge_refs": list(self.profile.knowledge_refs),
             "connector_binding_refs": list(self.profile.connector_binding_refs),
             "integration_account_refs": list(self.profile.integration_account_refs),
-            "attachment_refs": [],
+            "attachment_refs": attachment_refs,
             "session_ref": state.session_id,
         }
         try:
@@ -163,7 +168,23 @@ class PromptTurnController:
             option = await self.request_permission(
                 {
                     "sessionId": state.session_id,
-                    "toolCall": {"toolCallId": str(data.get("tool_call_id") or "")},
+                    "toolCall": {
+                        "toolCallId": str(data.get("tool_call_id") or ""),
+                        "title": str(data.get("title") or data.get("tool_name") or ""),
+                    },
+                    "toolName": str(data.get("tool_name") or ""),
+                    "title": str(data.get("title") or data.get("tool_name") or ""),
+                    "summary": str(data.get("summary") or data.get("title") or ""),
+                    **(
+                        {"accountAlias": data["account_alias"]}
+                        if data.get("account_alias")
+                        else {}
+                    ),
+                    **(
+                        {"ownership": data["ownership"]}
+                        if data.get("ownership")
+                        else {}
+                    ),
                     "options": self.permissions.options(),
                 }
             )
@@ -181,13 +202,21 @@ class PromptTurnController:
             if question:
                 await self._emit({"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": question}})
             return "end_turn"
-        if event_type == "artifact.persisted" and self.artifact_hints:
+        if event_type == "artifact.persisted":
+            run_id = state.active_run_id or ""
             await self._emit(
                 {
                     "sessionUpdate": "agent_message_chunk",
-                    "content": {"type": "text", "text": safe_artifact_text(data)},
+                    "content": artifact_resource_link(run_id, data),
                 }
             )
+            if self.artifact_hints:
+                await self._emit(
+                    {
+                        "sessionUpdate": "agent_message_chunk",
+                        "content": {"type": "text", "text": safe_artifact_text(data)},
+                    }
+                )
             return None
         if event_type == "run.completed":
             return "end_turn"

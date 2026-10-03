@@ -7,11 +7,19 @@ import json
 import os
 import sys
 
+from app.agent import AcpV1Agent
 from app.config import Settings
-from app.constants import ACP_PROTOCOL_VERSION, ACP_SDK_PIN, CONFORMANCE_LABEL, REMOTE_AGENT_CONTRACT_DIGEST
+from app.constants import (
+    ACP_PROTOCOL_VERSION,
+    ACP_SDK_PIN,
+    ADAPTER_CONTRACT_VERSION,
+    ADAPTER_VERSION,
+    CONFORMANCE_LABEL,
+    REMOTE_AGENT_CONTRACT_DIGEST,
+    REMOTE_AGENT_CONTRACT_VERSION,
+)
 from app.credentials import CredentialStore
 from app.errors import AdapterError
-from app.agent import AcpV1Agent
 from app.jsonrpc import JsonRpcServer
 from app.permission_bridge import PermissionBridge
 from app.profile import load_profile
@@ -52,6 +60,8 @@ async def _serve(profile_path: str) -> None:
 
 def _login() -> None:
     settings = _settings()
+    if (settings.NODESKCLAW_CREDENTIAL_MODE or "").strip().lower() == "managed":
+        raise SystemExit("ACP_DESKTOP_CREDENTIAL_INVALID")
     account = os.environ.get("NODESKCLAW_LOGIN_ACCOUNT") or input("account: ")
     password = os.environ.get("NODESKCLAW_LOGIN_PASSWORD") or getpass.getpass("password: ")
 
@@ -108,6 +118,24 @@ def _doctor(profile_path: str | None) -> None:
     asyncio.run(run())
 
 
+def _version() -> None:
+    from app.constants import ADAPTER_CONTRACT_DIGEST
+
+    print(
+        json.dumps(
+            {
+                "adapterVersion": ADAPTER_VERSION,
+                "protocolVersion": ACP_PROTOCOL_VERSION,
+                "adapterContractVersion": ADAPTER_CONTRACT_VERSION,
+                "adapterContractDigest": ADAPTER_CONTRACT_DIGEST,
+                "remoteAgentContractVersion": REMOTE_AGENT_CONTRACT_VERSION,
+                "remoteAgentContractDigest": REMOTE_AGENT_CONTRACT_DIGEST,
+            },
+            ensure_ascii=False,
+        )
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="nodeskclaw-acp")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -117,6 +145,8 @@ def main() -> None:
     sub.add_parser("logout")
     doctor = sub.add_parser("doctor")
     doctor.add_argument("--profile")
+    version = sub.add_parser("version")
+    version.add_argument("--json", action="store_true", default=True)
     args = parser.parse_args()
     if args.command == "serve":
         asyncio.run(_serve(args.profile))
@@ -126,6 +156,8 @@ def main() -> None:
         _logout()
     elif args.command == "doctor":
         _doctor(args.profile)
+    elif args.command == "version":
+        _version()
 
 
 if __name__ == "__main__":

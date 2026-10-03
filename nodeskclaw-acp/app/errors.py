@@ -39,7 +39,27 @@ def session_busy() -> AdapterError:
 
 
 def unsupported_content() -> AdapterError:
-    return AdapterError("ACP_PROMPT_UNSUPPORTED_CONTENT", "仅支持文本 Prompt")
+    return AdapterError("ACP_PROMPT_UNSUPPORTED_CONTENT", "仅支持文本与附件 ResourceLink")
+
+
+def resource_link_unsupported() -> AdapterError:
+    return AdapterError("ACP_RESOURCE_LINK_UNSUPPORTED", "不支持的 ResourceLink")
+
+
+def attachment_ref_invalid() -> AdapterError:
+    return AdapterError("ACP_ATTACHMENT_REF_INVALID", "附件引用无效")
+
+
+def desktop_credential_invalid() -> AdapterError:
+    return AdapterError("ACP_DESKTOP_CREDENTIAL_INVALID", "托管凭证无效")
+
+
+def session_resume_forbidden() -> AdapterError:
+    return AdapterError("ACP_SESSION_RESUME_FORBIDDEN", "无法恢复该 ACP Session")
+
+
+def session_agent_mismatch() -> AdapterError:
+    return AdapterError("ACP_SESSION_AGENT_MISMATCH", "Session 与当前 Expert Profile 不一致")
 
 
 def client_mcp_unsupported() -> AdapterError:

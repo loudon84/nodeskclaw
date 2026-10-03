@@ -1,0 +1,12 @@
+{
+  "$id": "acp-adapter.version.output.v1",
+  "type": "object",
+  "required": [
+    "adapterVersion",
+    "protocolVersion",
+    "adapterContractVersion",
+    "adapterContractDigest",
+    "remoteAgentContractVersion",
+    "remoteAgentContractDigest"
+  ]
+}

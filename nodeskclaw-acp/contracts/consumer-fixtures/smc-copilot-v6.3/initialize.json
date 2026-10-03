@@ -1,0 +1,6 @@
+{
+  "method": "initialize",
+  "protocolVersion": 1,
+  "loadSession": false,
+  "sessionCapabilities": { "resume": {}, "close": {} }
+}

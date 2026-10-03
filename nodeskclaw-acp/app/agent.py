@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-import json
-import os
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -44,11 +41,12 @@ class AcpV1Agent:
                 "loadSession": False,
                 "promptCapabilities": {"image": False, "audio": False, "embeddedContext": False},
                 "mcpCapabilities": {"http": False, "sse": False},
+                "sessionCapabilities": {"resume": {}, "close": {}},
             },
             "implementation": {
                 "name": "nodeskclaw-acp",
                 "title": "NodeSkClaw Remote Expert ACP Adapter",
-                "version": "1.0.0",
+                "version": "1.6.1",
                 "sdk": ACP_SDK_PIN,
                 "conformance": CONFORMANCE_LABEL,
             },
@@ -72,6 +70,46 @@ class AcpV1Agent:
             raise client_mcp_unsupported()
         state = self.registry.create(cwd)
         return {"sessionId": state.session_id}
+
+    async def session_resume(self, params: dict[str, Any]) -> dict[str, Any]:
+        cwd = str(params.get("cwd") or "")
+        if not cwd or not Path(cwd).is_absolute() or not Path(cwd).exists():
+            raise AdapterError("ACP_PROFILE_INVALID", "cwd 必须是存在的绝对路径")
+        mcp = params.get("mcpServers")
+        if mcp is None:
+            mcp = []
+        if mcp:
+            raise client_mcp_unsupported()
+        session_id = str(params.get("sessionId") or "")
+        if not session_id:
+            raise session_not_found()
+        proof = await self.client.get_session_proof(session_id, self.profile)
+        next_seq = int(proof.get("next_turn_seq") or 1)
+        busy = str(proof.get("status") or "") == "busy"
+        self.registry.adopt(session_id, cwd, next_turn_seq=next_seq, remote_busy=busy)
+        return {}
+
+    async def session_close(self, params: dict[str, Any]) -> dict[str, Any]:
+        session_id = str(params.get("sessionId") or "")
+        if not session_id:
+            raise session_not_found()
+        status, payload = await self.client.get_session_proof_raw(session_id)
+        run_ids: list[str] = []
+        if status == 200:
+            last_run_id = payload.get("last_run_id")
+            if payload.get("status") == "busy" and last_run_id:
+                run_ids.append(str(last_run_id))
+        elif status == 409:
+            data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+            extra = data.get("non_terminal_run_ids") or []
+            run_ids.extend(str(item) for item in extra)
+        for run_id in run_ids:
+            try:
+                await self.client.cancel_run(run_id)
+            except AdapterError:
+                pass
+        self.registry.drop(session_id)
+        return {}
 
     async def session_prompt(self, params: dict[str, Any], request_id: Any) -> dict[str, Any]:
         session_id = str(params.get("sessionId") or "")

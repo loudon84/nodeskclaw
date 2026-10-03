@@ -1,0 +1,1 @@
+{ "method": "session/request_permission", "options": ["allow_once", "reject_once"] }

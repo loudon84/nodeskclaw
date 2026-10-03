@@ -458,9 +458,10 @@ AutoTask 以 `AgentAutomation` 为 SOT，经 Manual / Cron / Webhook / RPA Succe
 
 ## ACP Remote Expert Adapter
 
-独立本地 stdio 进程把一个固定 Expert 暴露为 ACP v1 Agent。只走 Remote Agent 公开 REST/SSE，不改 Backend / Agent / Hermes。
+独立本地 stdio 进程把一个固定 Expert 暴露为 ACP v1 Agent。只走 Remote Agent 公开 REST/SSE，不改 Hermes 请求信封。
 
 - **已实现**：包与 CLI 在 [[nodeskclaw-acp/app/cli.py#main]]。会话与 Turn 在 [[nodeskclaw-acp/app/session_registry.py#SessionRegistry]]、[[nodeskclaw-acp/app/prompt_turn.py#PromptTurnController]]。事件与审批在 [[nodeskclaw-acp/app/event_mapper.py]]、[[nodeskclaw-acp/app/permission_bridge.py#PermissionBridge]]。
-- **已实现**：HTTP 客户端 [[nodeskclaw-acp/app/remote_client.py#RemoteAgentHttpClient]] 只调用 Auth 与 Remote Agent Public API。凭证 [[nodeskclaw-acp/app/credentials.py#CredentialStore]] 使用 env 或 OS keyring，禁止明文文件。
-- **合同**：`nodeskclaw-acp/contracts/acp-v1-adapter/v1.0.0/` pin `remote-agent/v1.5.0` digest。符合性标签仅 `ACP_V1_ADAPTER_PROFILE_CONFORMANT`。Work UI 与 Zed live 不在本版执行。生产门保持未通过；缺环境时 [[tools/acceptance/run_acp_remote_expert_v16_live.py#main]] 非 0 退出。
+- **已实现**：HTTP 客户端 [[nodeskclaw-acp/app/remote_client.py#RemoteAgentHttpClient]] 只调用 Auth 与 Remote Agent Public API。凭证 [[nodeskclaw-acp/app/credentials.py#CredentialStore]] 在 standalone 使用 env 或 OS keyring；`managed` 模式只读进程环境并在内存刷新。
+- **已实现**：员工 Catalog [[nodeskclaw-backend/app/api/remote_experts.py]] 与 Session Proof [[nodeskclaw-backend/app/api/remote_agent_sessions.py]]。Adapter v1.1 提供 session/resume、session/close、attachment ResourceLink。Windows standalone 构建脚本在 [[nodeskclaw-acp/scripts/build_desktop_adapter.py]]，二进制不进 git。
+- **合同**：`nodeskclaw-acp/contracts/acp-v1-adapter/v1.0.0/` 只读；`v1.1.0/` pin `remote-agent/v1.5.0` 与 `remote-expert-catalog/v1.0.0` digest。符合性标签仅 `ACP_V1_ADAPTER_PROFILE_CONFORMANT`。smc-copilot Work UI 不在本仓。生产门保持未通过；缺环境时 [[tools/acceptance/run_acp_desktop_consumer_v161_live.py#main]] 非 0 退出。
 

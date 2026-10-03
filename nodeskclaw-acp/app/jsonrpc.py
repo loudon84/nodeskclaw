@@ -77,6 +77,10 @@ class JsonRpcServer:
                 result = self.agent.initialize_result(params)
             elif method == "session/new":
                 result = self.agent.session_new(params)
+            elif method == "session/resume":
+                result = await self.agent.session_resume(params)
+            elif method == "session/close":
+                result = await self.agent.session_close(params)
             elif method == "session/prompt":
                 async def _notify(update: dict[str, Any]) -> None:
                     await self.notify(session_id, update)

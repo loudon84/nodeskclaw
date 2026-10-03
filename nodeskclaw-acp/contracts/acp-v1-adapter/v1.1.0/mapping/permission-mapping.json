@@ -1,0 +1,6 @@
+{
+  "allow_once": "approve",
+  "reject_once": "deny",
+  "cancelled": "remote cancel, approve count 0",
+  "presentation": "tool_call_id tool_name title summary optional alias ownership"
+}

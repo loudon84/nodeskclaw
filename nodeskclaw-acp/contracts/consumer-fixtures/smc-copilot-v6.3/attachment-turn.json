@@ -1,0 +1,6 @@
+{
+  "prompt": [
+    { "type": "text", "text": "attach" },
+    { "type": "resource_link", "uri": "nodeskclaw://attachment/att_xxx" }
+  ]
+}

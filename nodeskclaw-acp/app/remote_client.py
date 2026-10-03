@@ -38,7 +38,7 @@ class RemoteAgentHttpClient:
             response = await self._client.request(method, url, headers=headers, **kwargs)
             if response.status_code != 401 or retries >= AUTH_REFRESH_MAX:
                 return response
-            if not self.store.keyring_get("refresh_token"):
+            if not self.store.current_refresh():
                 raise auth_refresh_failed()
             await self.store.refresh_once()
             retries += 1
@@ -157,6 +157,47 @@ class RemoteAgentHttpClient:
             return "ACP_EXPERT_UNAVAILABLE"
         if symbol == "REMOTE_AGENT_SESSION_BUSY":
             return "ACP_SESSION_BUSY"
+        if symbol in {
+            "REMOTE_AGENT_SESSION_NOT_FOUND",
+            "REMOTE_AGENT_SESSION_AMBIGUOUS",
+            "REMOTE_AGENT_SESSION_SEQ_AMBIGUOUS",
+        }:
+            return "ACP_SESSION_RESUME_FORBIDDEN"
+        if symbol == "REMOTE_AGENT_SESSION_AGENT_MISMATCH":
+            return "ACP_SESSION_AGENT_MISMATCH"
         if create or symbol.endswith("_NOT_FOUND") or "DENIED" in symbol or "REJECTED" in symbol:
             return "ACP_REMOTE_CREATE_FAILED"
         return "ACP_REMOTE_RUN_FAILED"
+
+    async def get_session_proof(self, session_ref: str, profile) -> dict[str, Any]:
+        params = {
+            "expect_agent_ref": profile.agent_ref,
+            "expect_knowledge_ref": list(profile.knowledge_refs),
+            "expect_connector_binding_ref": list(profile.connector_binding_refs),
+            "expect_integration_account_ref": list(profile.integration_account_refs),
+        }
+        response = await self._request(
+            "GET",
+            f"/api/v1/remote-agent/sessions/{session_ref}",
+            params=params,
+        )
+        try:
+            return self._parse(response)
+        except AdapterError as exc:
+            if response.status_code == 404 or exc.remote_error_code in {
+                "REMOTE_AGENT_SESSION_NOT_FOUND",
+                "REMOTE_AGENT_SESSION_AMBIGUOUS",
+                "REMOTE_AGENT_SESSION_SEQ_AMBIGUOUS",
+            }:
+                raise AdapterError("ACP_SESSION_RESUME_FORBIDDEN", exc.message, remote_error_code=exc.remote_error_code)
+            if exc.remote_error_code == "REMOTE_AGENT_SESSION_AGENT_MISMATCH":
+                raise AdapterError("ACP_SESSION_AGENT_MISMATCH", exc.message, remote_error_code=exc.remote_error_code)
+            raise
+
+    async def get_session_proof_raw(self, session_ref: str) -> tuple[int, dict[str, Any]]:
+        response = await self._request("GET", f"/api/v1/remote-agent/sessions/{session_ref}")
+        try:
+            payload = response.json()
+        except Exception:
+            payload = {}
+        return response.status_code, payload if isinstance(payload, dict) else {}

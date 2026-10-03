@@ -1,0 +1,15 @@
+{
+  "$id": "acp-adapter.profile.v1",
+  "title": "AcpExpertProfile",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["profile_version", "name", "agent_ref"],
+  "properties": {
+    "profile_version": { "type": "integer", "const": 1 },
+    "name": { "type": "string", "minLength": 1 },
+    "agent_ref": { "type": "string", "minLength": 1 },
+    "knowledge_refs": { "type": "array", "items": { "type": "string" } },
+    "connector_binding_refs": { "type": "array", "items": { "type": "string" } },
+    "integration_account_refs": { "type": "array", "items": { "type": "string" } }
+  }
+}

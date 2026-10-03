@@ -1,0 +1,5 @@
+{
+  "type": "resource_link",
+  "uri": "nodeskclaw://artifact/run-id/artifact-id",
+  "name": "report.xlsx"
+}

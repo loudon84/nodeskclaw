@@ -1,11 +1,10 @@
-from pathlib import Path
+
+import pytest
 
 from app.agent import AcpV1Agent
 from app.errors import AdapterError
 from app.profile import Profile
 from app.session_registry import SessionRegistry
-
-import pytest
 
 
 def test_initialize_rejects_v2():
@@ -23,6 +22,7 @@ def test_initialize_rejects_v2():
     result = agent.initialize_result({"protocolVersion": 1})
     assert result["protocolVersion"] == 1
     assert result["agentCapabilities"]["loadSession"] is False
+    assert "resume" in result["agentCapabilities"]["sessionCapabilities"]
 
 
 def test_session_new_rejects_mcp(tmp_path):

@@ -1,0 +1,8 @@
+{
+  "items": [
+    {
+      "agent_ref": "sales-expert",
+      "status": "ready"
+    }
+  ]
+}
