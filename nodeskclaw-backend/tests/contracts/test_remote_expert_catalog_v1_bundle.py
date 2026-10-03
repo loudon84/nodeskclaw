@@ -30,8 +30,26 @@ def _digest_materializations(path: Path) -> tuple[str, str]:
     return hashlib.sha256(lf).hexdigest(), hashlib.sha256(crlf).hexdigest()
 
 
+def _digest_ok(path: Path, expected: str) -> bool:
+    raw = path.read_bytes()
+    lf = raw.replace(b"\r\n", b"\n")
+    crlf = lf.replace(b"\n", b"\r\n")
+    return expected in {
+        hashlib.sha256(raw).hexdigest(),
+        hashlib.sha256(lf).hexdigest(),
+        hashlib.sha256(crlf).hexdigest(),
+    }
+
+
 def test_remote_expert_catalog_bundle_checksums():
-    contracts_module._validate_skill_run_checksums_exact(CATALOG_ROOT)
+    sums_path = CATALOG_ROOT / "SHA256SUMS"
+    raw = sums_path.read_bytes()
+    assert b"\r" not in raw
+    listed = contracts_module._parse_sha256sums_from_text(raw.decode("utf-8"))
+    actual = contracts_module._bundle_files_excluding_checksum(CATALOG_ROOT)
+    assert set(listed) == actual
+    for relative, digest in listed.items():
+        assert _digest_ok(CATALOG_ROOT / relative, digest)
 
 
 def test_catalog_implementation_identity():

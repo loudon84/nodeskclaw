@@ -121,14 +121,17 @@ def verify_component_checksums(root: Path) -> str:
         )
     for relative, digest in listed.items():
         got = sha256_file(root / relative)
-        if got != digest:
+        lf_digest, crlf_digest = digest_materializations(root / relative)
+        if digest not in {got, lf_digest, crlf_digest}:
             raise SystemExit(f"SHA256 mismatch for {relative} under {root}")
     manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
     artifacts = manifest.get("artifacts") or {}
     for relative, digest in artifacts.items():
         if relative == "manifest.json":
             continue
-        if sha256_file(root / relative) != digest:
+        lf_digest, crlf_digest = digest_materializations(root / relative)
+        actual = sha256_file(root / relative)
+        if digest not in {actual, lf_digest, crlf_digest}:
             raise SystemExit(f"manifest.artifacts mismatch for {relative}")
         if listed.get(relative) != digest:
             raise SystemExit(f"SHA256SUMS/manifest disagree on {relative}")

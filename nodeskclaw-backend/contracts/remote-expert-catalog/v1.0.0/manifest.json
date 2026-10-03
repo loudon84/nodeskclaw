@@ -12,16 +12,16 @@
     "remote-expert-catalog.get.v1"
   ],
   "artifacts": {
-    "RELEASE.md": "9f54fa7e99348441948eb87b2eddfa31400af5f246f7c64ff2f4f64a59872214",
-    "golden/forbidden.json": "397d29dfe86e9a696940bb9bce91588e573175fd47ae06cd3b6cb1ff7d92d53e",
-    "golden/ready-expert.json": "56e4f06b1cf15858d644fd0f6ff192cccdbff77b3528b5a6102f1a878c8f34bb",
-    "golden/unavailable-expert.json": "bef587be23826773ec85d79a32896588342fb378c2f5308c34e97aab56a90c00",
-    "http/endpoint-matrix.json": "e09f459375e848b214cf2ce949c560830fb2fca72c9913044acc21fe7aa44973",
-    "schemas/catalog-get.response.schema.json": "f192772a7b299d59c31f92a105b546970722f3c1d2da970a08b86779cb5a6622",
-    "schemas/catalog-item.schema.json": "2023229769400d78bbeaa82a150f6c85152f4238e1046bc4f78d1b7c5e9a0bcc",
-    "schemas/catalog-list.response.schema.json": "5c0dcb22c47628de6a40661229b8d55ba4dd43570faab7103feecc9dbf138cb7",
-    "schemas/error.schema.json": "13b70a26563aa736ff9d51f7af9ca3cb5ee7fedf9574748e3d1a86dee5117e82"
+    "RELEASE.md": "ffe5db8f3ad76bd50b32a0d8163b74b915927a61b932fd541a9eda5620efb255",
+    "golden/forbidden.json": "57a946b514059f1bea07fe20a5659197d994845d2790e5598eb99f1e43348226",
+    "golden/ready-expert.json": "9b129c4ca7eac15531ccd189715863d1d5031528658680774a9128c67faf76ab",
+    "golden/unavailable-expert.json": "86beab42989b24889d14e6fcbbcf50f2cccc19c46acfbd51134a1399f5fc691b",
+    "http/endpoint-matrix.json": "e28518d12993fea1873d3bdda00d093f7272d0f1284b402251d50bac2afe1e4b",
+    "schemas/catalog-get.response.schema.json": "ad00e93dcf6a785723f62766e2005bc8840c5aabd58f372cca36408f2129e56a",
+    "schemas/catalog-item.schema.json": "10f97f3ccae533f952ea47828adb01a4c002d1ae0dba162137b3ff803a65e148",
+    "schemas/catalog-list.response.schema.json": "cd0cf0c9928ca8e700d9801cc1215a28a9ef151b901dffa34c21865f0ff2d3e0",
+    "schemas/error.schema.json": "201ae5f2bf8385194e431346116d6ca312b6140a0b4d6fdfb00c33a4fd4a7183"
   },
-  "bundleDigest": "d99bef48a829c32e735803ed92d3ce49d358784a7435c53244970de0e8ec6df9",
+  "bundleDigest": "d7081b8e100e974ecb2e97b4653d2b6a05f7e4d9805dc4bba4b4ffcaba0a0879",
   "production_gate": "unpassed"
 }

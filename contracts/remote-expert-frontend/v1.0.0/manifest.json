@@ -9,11 +9,11 @@
   "components": {
     "remoteExpertCatalog": {
       "version": "1.0.0",
-      "consumerDigest": "ff6c6831d6e6044e0735d7dcc96a7f9a9b553b7a9c2330e3583d11913ed9a60d"
+      "consumerDigest": "e5bd3f364e40ec05abb3dcb6724b11c34162175f407adbe073cf4ff0932f4d6f"
     },
     "acpAdapter": {
       "version": "1.1.0",
-      "consumerDigest": "5b6e876b03225474649b5486007548890d88f5673a84880aa1ce3d871f326bc4"
+      "consumerDigest": "29acb865bf90f0a3a9b51d50d93e195f76bac401e4d33217d45a738e281b2397"
     },
     "remoteAgent": {
       "version": "1.5.0",
@@ -25,9 +25,9 @@
   "productionGate": "unpassed",
   "frontendContractGate": "passed",
   "artifacts": {
-    "RELEASE.md": "6e141cc68b2eb82b443e6e5e1e68ad27cacb8622933ca573cf320044dffaae11",
-    "component-pins.json": "7fef792af2eaaba236c07ec9258822a046201b439f15761fa7be6a4784451bff",
-    "consumer/smc-copilot-v6.3.json": "28089f865e94dc37e989fc838ad6f382c98fd9f5235707ae77c16a9b4bec27c3"
+    "RELEASE.md": "42e739fe0842f44dd21085b9d5f891ffda64f30f340363bbd60179d32bc32997",
+    "component-pins.json": "f44328b706862c1c1c694227ffde0d5d88681e4ea977321c8dad8f21fcb7ecd7",
+    "consumer/smc-copilot-v6.3.json": "99d37d11e55b1cc24d7073cdf1ccdd93bccb35b9c8d94374867434d4653c32a4"
   },
-  "bundleDigest": "fd507032a10d2fc414ef6af97fd09a9bbcfe31974addc2f76a5f5b585afc35e7"
+  "bundleDigest": "598ae09bb681049b42dbca509ff32394aaed81b1b826fab243de78cd3ff090cd"
 }

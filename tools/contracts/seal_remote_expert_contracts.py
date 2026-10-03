@@ -24,8 +24,14 @@ def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def file_bytes_canonical_lf(path: Path) -> bytes:
+    return path.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+
+
 def sha256_file(path: Path) -> str:
-    return sha256_bytes(path.read_bytes())
+    if path.name == "SHA256SUMS":
+        return sha256_bytes(path.read_bytes())
+    return sha256_bytes(file_bytes_canonical_lf(path))
 
 
 def write_text_lf(path: Path, text: str) -> None:

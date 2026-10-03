@@ -10,7 +10,7 @@
   "remoteAgentContractVersion": "1.5.0",
   "remoteAgentContractDigest": "c8bc0ed8a1cf5b21fcbfb743a59a2d24480ff4dc90a651e8a0b5c057ca27b18c",
   "catalogContractVersion": "1.0.0",
-  "catalogContractDigest": "ff6c6831d6e6044e0735d7dcc96a7f9a9b553b7a9c2330e3583d11913ed9a60d",
+  "catalogContractDigest": "e5bd3f364e40ec05abb3dcb6724b11c34162175f407adbe073cf4ff0932f4d6f",
   "conformance": "ACP_V1_ADAPTER_PROFILE_CONFORMANT",
   "production_gate": "unpassed",
   "schemaIds": [
@@ -18,22 +18,22 @@
     "acp-adapter.desktop.manifest.v1"
   ],
   "artifacts": {
-    "RELEASE.md": "7247e2d2426cc8195105f2e7ee26b8e24472fb2943c083cea0e144f8e35c810b",
-    "desktop/distribution-manifest.schema.json": "c733b5457ed5ab0f1bf4f16abc4018b41ae837e7272d4346b83e82333aa7eb42",
-    "desktop/managed-credential.md": "ebc49326d3f7737385c46e9243c5fb4dcb829dee509a99944d4f075b4688b03f",
-    "desktop/version-output.schema.json": "cda169c1075432a631fe9ed6f2d48c321d6e62ea399a38e59151e4d9f3caa95f",
-    "golden/approval-presentation.json": "1a54165219941a8f6231034ac6c03e659c7234d65df5884ce3c40c3b6925d2ef",
-    "golden/artifact-resource-link.json": "1f055d98f19fa4980c9f25d14d6a2c0773924e73879dfd9fd40fcfaf39a411ff",
-    "golden/initialize-desktop.json": "feefc26b44db0f94cb5e26d42c981f7c2e4735b78a7cd23182a6dc2592be9b4c",
-    "golden/prompt-attachment-resource-link.json": "6e55515a150d5609368d8632ebdf49b6ccf79300102a3bbc9f81caf4f2942b9a",
-    "golden/prompt-text.json": "e85d2bb522fc809838d6e4cf22e4c2cfbab38d12e3cc5b5171380e33cf576d6e",
-    "golden/session-close.json": "553e1dd9c522d5224c55f4e1257072036782dd7e8e04dec71e041fbe4fd93b2c",
-    "golden/session-new.json": "5ab99bb4b77a6b7d29d8e8298e457dff22f5e6ffbf176223f6d0dadf0f35b532",
-    "golden/session-resume.json": "3bb26e318c19cab1cbdfe88dc2de334b63431edfa408ae3668ed3d97706a4d92",
-    "mapping/permission-mapping.json": "988d16385af2ac282ea7bc9a4b796e74bd9c13da19146e483fdecbb494e9e12e",
-    "mapping/remote-event-to-acp.json": "446675c07cd5dda0a6a7c8e0ceebce52b87402308ef06c9679c63b6428d471cc",
-    "mapping/resource-link-mapping.json": "f505c3280f1b324faed9b12b69c498d4c36290aeff49a127dfb17fd804348102",
-    "profile/acp-profile.schema.json": "40db47682cee09086453168c3143dd0958817406c3673f8b677ea43db269869f"
+    "RELEASE.md": "029dadd4e2d2f3454fa2acd407fb016f34aaf7d9858a30e898e067d353fa787f",
+    "desktop/distribution-manifest.schema.json": "fa1e832497e65395e27df9dab7483983099f078c9d834e5cfc0ab4289b9b5c63",
+    "desktop/managed-credential.md": "e709a72798280198f02c930836ac707fea117b6c06eba084461585cf672413d1",
+    "desktop/version-output.schema.json": "b4c259a40c179e14f9ec3b16de45c6fa2517c0a0a825361b7cb4badf0f1f6f0c",
+    "golden/approval-presentation.json": "079ef1a4644569cc91f5bd4349994446a05982a58075739f125f0d3ce3726da8",
+    "golden/artifact-resource-link.json": "469a551d7054821ab19208babc7f63fb5be693f9a192bb1bf3b59d3c1e95f19a",
+    "golden/initialize-desktop.json": "73fe7f0780a49484d171c3a4f21166cae86288f65e5499aae85a9560e1816ee7",
+    "golden/prompt-attachment-resource-link.json": "254b69e32fa00bca4dd5f913343d8e0cb9e5fbb14225fa201f2d009d4d5cf749",
+    "golden/prompt-text.json": "6dd8c0c88e043c8b441f5f4c6eba2430f43ab7b97389e7ac1c83c48af2b0f9f2",
+    "golden/session-close.json": "7dba49d3d130fa620fc6479b0bf6538c54abfed185e62b94cae4fb3ba6da014f",
+    "golden/session-new.json": "53feb2dd67f39391b8e0b81a4573fa09a1c8117c73c9990fd4071971b297dffb",
+    "golden/session-resume.json": "bc10653acfcb421af6e279300dd23ebc9ff23babfa21a793035f48c6d2542ecf",
+    "mapping/permission-mapping.json": "132a2bd51f9c55bf76c2ea6d289a701effd4cfe01a66fa11d029576c8a2f6341",
+    "mapping/remote-event-to-acp.json": "bcff4472e34cfcb0ed5997ac71e04b3462086cb7557b389380f9946c012dd914",
+    "mapping/resource-link-mapping.json": "f41723ae0f00869f39614d9d07f58d2caf410b379f3193e99b58baaccc5dfae0",
+    "profile/acp-profile.schema.json": "65e09c454a0ef3b40f11fd1fda7ae47da2b1d9b5ed7c4da1408eea528646dd32"
   },
-  "bundleDigest": "6d47582a25d88cbaa9445e3403a5482bafa3ed3dea5318573dc22d31218b18ca"
+  "bundleDigest": "6bd8ba14c65c346cad53882332a387e96bb31bbb9e44395ea5bd52e5706599ff"
 }
