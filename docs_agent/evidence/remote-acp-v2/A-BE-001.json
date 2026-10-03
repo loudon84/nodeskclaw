@@ -1,0 +1,28 @@
+{
+  "acceptance_id": "A-BE-001",
+  "status": "PASS",
+  "requirement_ids": [
+    "REQ-BE-001"
+  ],
+  "test_ids": [
+    "TEST-A-BE-001"
+  ],
+  "repository": "loudon84/nodeskclaw",
+  "commit_sha": "8f1995214850c190f9f6e44b1e9587605a21add6",
+  "consumer_repository": "loudon84/smc-copilot",
+  "consumer_commit_sha": null,
+  "timestamp": "2026-10-05T01:15:07.769129+00:00",
+  "command": "uv run pytest tests/test_remote_acp_ws_ingress.py",
+  "exit_code": 0,
+  "oracle": {
+    "type": "upgrade",
+    "expected": "auth-required",
+    "actual": "auth-required"
+  },
+  "contract_versions": {
+    "frontend": "2.0.0",
+    "catalog": "1.1.0",
+    "remote_acp": "1.0.0"
+  },
+  "evidence_files": []
+}

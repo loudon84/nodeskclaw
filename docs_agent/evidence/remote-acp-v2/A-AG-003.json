@@ -1,0 +1,28 @@
+{
+  "acceptance_id": "A-AG-003",
+  "status": "PASS",
+  "requirement_ids": [
+    "REQ-AG-002"
+  ],
+  "test_ids": [
+    "TEST-A-AG-003"
+  ],
+  "repository": "loudon84/nodeskclaw",
+  "commit_sha": "8f1995214850c190f9f6e44b1e9587605a21add6",
+  "consumer_repository": "loudon84/smc-copilot",
+  "consumer_commit_sha": null,
+  "timestamp": "2026-10-05T01:15:07.765440+00:00",
+  "command": "uv run pytest tests/test_acp_session.py",
+  "exit_code": 0,
+  "oracle": {
+    "type": "session",
+    "expected": "new-resume",
+    "actual": "new-resume"
+  },
+  "contract_versions": {
+    "frontend": "2.0.0",
+    "catalog": "1.1.0",
+    "remote_acp": "1.0.0"
+  },
+  "evidence_files": []
+}

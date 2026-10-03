@@ -5,26 +5,26 @@
   "providerRepository": "loudon84/nodeskclaw",
   "consumer": "loudon84/smc-copilot/apps/work",
   "consumerBranchBaseline": "work/prd-v6.3",
-  "implementationCommit": "pending",
+  "implementationCommit": "8f1995214850c190f9f6e44b1e9587605a21add6",
   "components": {
     "remoteExpertCatalog": {
       "version": "1.1.0",
-      "consumerDigest": "1fd20c61c0e7f1487b98a2ee1b20775051775af6b97bcdba31a5dd9082745376"
+      "consumerDigest": "d51d27a33e6776be780bf3556ffa4ef4f6dab7f731c0a48421683708364efd2c"
     },
     "remoteAcpGateway": {
       "version": "1.0.0",
-      "consumerDigest": "835463841498f9fca4d214a25c35bdeb81edd1e073751a5702e017f72f552190"
+      "consumerDigest": "8a48e74e363c71875739c33b2bcdcb6f6f2ea7ee15897ae9fb9b8e9407ee9d06"
     }
   },
   "acpProtocolVersion": 1,
   "transportProfile": "nodeskclaw.remote-acp.v1",
   "productionGate": "unpassed",
   "frontendContractGate": "pending",
-  "status": "DRAFT",
-  "bundleDigest": "51740edd8eb426443c4979bbe317d0741e0e4c7b9d36deb1498146d9d6a9de50",
+  "status": "VERIFIED",
+  "bundleDigest": "f551b7b18a0b6a0987036dc737348d1dde6f583f872610fc11a09430a119d122",
   "artifacts": {
     "RELEASE.md": "9ca66a88600c1b540299781398cd7e3054d8c5683f802cb14de703a9c73f5ddd",
-    "component-pins.json": "f204429376d04a71238636883f167770f0e3c2b91fe1ce575fd4e65ef3a8aab8",
+    "component-pins.json": "4ed019a5d5373ad01cf72a4f277231c59062bba90e258b0ef0bae863f014e64b",
     "consumer/smc-copilot-v6.3.json": "de27a3dd79f8f410036b3c0d664e36f8009e1239f9b4a54eba7e6720132030ca"
   }
 }
