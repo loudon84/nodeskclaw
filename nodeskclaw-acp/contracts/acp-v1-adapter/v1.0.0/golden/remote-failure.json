@@ -1,0 +1,6 @@
+{
+  "remote": "run.failed",
+  "acp": "jsonrpc_error",
+  "symbol": "ACP_REMOTE_RUN_FAILED",
+  "notEndTurn": true
+}

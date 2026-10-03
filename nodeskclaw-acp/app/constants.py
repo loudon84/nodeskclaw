@@ -1,0 +1,8 @@
+ACP_PROTOCOL_VERSION = 1
+ACP_SDK_PIN = "acp-v1-jsonrpc-stdio (official Python SDK wire-compatible; PyPI agent-client-protocol not published at freeze)"
+REMOTE_AGENT_CONTRACT_VERSION = "1.5.0"
+REMOTE_AGENT_CONTRACT_DIGEST = "c8bc0ed8a1cf5b21fcbfb743a59a2d24480ff4dc90a651e8a0b5c057ca27b18c"
+CONFORMANCE_LABEL = "ACP_V1_ADAPTER_PROFILE_CONFORMANT"
+KEYRING_SERVICE = "nodeskclaw-acp"
+DEFAULT_MAX_SESSIONS = 16
+AUTH_REFRESH_MAX = 1

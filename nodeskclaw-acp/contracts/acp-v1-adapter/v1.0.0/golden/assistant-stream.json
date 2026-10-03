@@ -1,0 +1,5 @@
+{
+  "remote": ["assistant.delta", "assistant.message"],
+  "acp": ["agent_message_chunk"],
+  "noDuplicateFinal": true
+}

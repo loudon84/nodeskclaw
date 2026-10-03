@@ -1,0 +1,35 @@
+{
+  "contractName": "ACP-V1-ADAPTER-CONTRACT",
+  "contractVersion": "1.0.0",
+  "bundleFormatVersion": "1",
+  "provider": "nodeskclaw-acp",
+  "consumer": "zed / agentclientprotocol/acp-tck",
+  "implementationHeadSha": "3a9b4f5fc2ac611009f15de4d6dcada14768adbc",
+  "releaseCommitSha": "3a9b4f5fc2ac611009f15de4d6dcada14768adbc",
+  "acpProtocolVersion": 1,
+  "acpSdkPin": "acp-v1-jsonrpc-stdio",
+  "remoteAgentContractVersion": "1.5.0",
+  "remoteAgentContractDigest": "c8bc0ed8a1cf5b21fcbfb743a59a2d24480ff4dc90a651e8a0b5c057ca27b18c",
+  "conformance": "ACP_V1_ADAPTER_PROFILE_CONFORMANT",
+  "production_gate": "unpassed",
+  "schemaIds": [
+    "acp-adapter.profile.v1"
+  ],
+  "artifacts": {
+    "golden/approval-allow.json": "9e5c53a79f829a952e9b4b558be5c47d0f0a1146b099ca7d2f66b95594fc36d7",
+    "golden/approval-deny.json": "a9841a4b446f62c1d18e195da16ac25a96cf52724364ce56408780dcdf8defa9",
+    "golden/assistant-stream.json": "61196bb09c599eeb01f8314f39ec0ace0e24e694e9aabbced867205d1482fdce",
+    "golden/cancellation.json": "a3be5eb7534ac3cdb2c73c28f0af1f8922bf1b0c6a1bcd73207a69d5ee4cf1dc",
+    "golden/initialize.json": "fe247b4eca8053e78f5821f577146dc498524cd7b88860709e73b7d8d9b20aef",
+    "golden/prompt-text.json": "5cd2ebe8fa8c6f4e52d398b4ea0bcc7faa791893bfd691a432e4242cc40a9827",
+    "golden/remote-failure.json": "ee8d5f8668ddf49f095a6644f91d3da9052a380feffd52ff8f69efa4096729cc",
+    "golden/session-new.json": "17e4752e3935c0dbbdea61e58fcdf4026c36b2854a92c6497567683197ca03f8",
+    "golden/tool-call.json": "2a1c0c2db023395c91e8a63631aa9f06b1d3e5ab444ac043eddde79f650bb995",
+    "mapping/permission-mapping.json": "2e8fcbc8c66ac21d61c4c72fed01f7d11699f850ed6414c1821b612999af2ea8",
+    "mapping/remote-error-to-acp.json": "02f818e012c3961aba16a0e7a46732a45ad22eebe9faf66ca30c776b873bde1d",
+    "mapping/remote-event-to-acp.json": "3d4f4997ddd39a38fcc47c9e30783c5945246022ce847beb0c833d06d2dcf857",
+    "profile/acp-profile.schema.json": "40db47682cee09086453168c3143dd0958817406c3673f8b677ea43db269869f",
+    "RELEASE.md": "2e5591c2803ac9a506015d8414a81e09364e68b76852955aada43d1ae02fb17f"
+  },
+  "bundleDigest": "7b9118e4745dd5f08c3039fe58f35edc44fc0113d81f5fc0b203f889e78a9e0e"
+}

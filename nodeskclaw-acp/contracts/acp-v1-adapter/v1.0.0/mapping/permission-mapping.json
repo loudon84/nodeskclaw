@@ -1,0 +1,6 @@
+{
+  "allow_once": "approve",
+  "reject_once": "deny",
+  "cancelled": "cancel_run",
+  "forbiddenOptions": ["always_allow", "allow_for_session"]
+}

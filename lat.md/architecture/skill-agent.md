@@ -456,3 +456,11 @@ AutoTask 以 `AgentAutomation` 为 SOT，经 Manual / Cron / Webhook / RPA Succe
 - **已实现**：AutoTask enable / 改 refs 内部校验在 [[nodeskclaw-backend/app/api/internal_automation.py#validate_automation_integration_accounts]] 与 [[nodeskclaw-task/app/services/agent_automation_service.py#validate_owner_integration_accounts]]。
 - **合同**：`nodeskclaw-backend/contracts/integration-account/v1.1.0/`、`remote-agent/v1.5.0/`、`nodeskclaw-task/contracts/agent-automation/v1.1.0/`。旧 bundle 字节不变。Work UI 不在本仓。生产门保持未通过；缺真实环境时 [[tools/acceptance/run_shared_integration_account_v15_live.py#main]] 非 0 退出。
 
+## ACP Remote Expert Adapter
+
+独立本地 stdio 进程把一个固定 Expert 暴露为 ACP v1 Agent。只走 Remote Agent 公开 REST/SSE，不改 Backend / Agent / Hermes。
+
+- **已实现**：包与 CLI 在 [[nodeskclaw-acp/app/cli.py#main]]。会话与 Turn 在 [[nodeskclaw-acp/app/session_registry.py#SessionRegistry]]、[[nodeskclaw-acp/app/prompt_turn.py#PromptTurnController]]。事件与审批在 [[nodeskclaw-acp/app/event_mapper.py]]、[[nodeskclaw-acp/app/permission_bridge.py#PermissionBridge]]。
+- **已实现**：HTTP 客户端 [[nodeskclaw-acp/app/remote_client.py#RemoteAgentHttpClient]] 只调用 Auth 与 Remote Agent Public API。凭证 [[nodeskclaw-acp/app/credentials.py#CredentialStore]] 使用 env 或 OS keyring，禁止明文文件。
+- **合同**：`nodeskclaw-acp/contracts/acp-v1-adapter/v1.0.0/` pin `remote-agent/v1.5.0` digest。符合性标签仅 `ACP_V1_ADAPTER_PROFILE_CONFORMANT`。Work UI 与 Zed live 不在本版执行。生产门保持未通过；缺环境时 [[tools/acceptance/run_acp_remote_expert_v16_live.py#main]] 非 0 退出。
+

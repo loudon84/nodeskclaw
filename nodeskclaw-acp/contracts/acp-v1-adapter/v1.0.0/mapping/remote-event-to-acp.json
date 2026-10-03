@@ -1,0 +1,16 @@
+{
+  "assistant.delta": "session/update agent_message_chunk",
+  "assistant.message": "final reconciliation suffix or once",
+  "reasoning.summary": "agent_thought_chunk",
+  "tool.call": "tool_call",
+  "tool.result": "tool_call_update",
+  "approval.requested": "session/request_permission",
+  "clarify.requested": "agent_message_chunk + end_turn",
+  "artifact.persisted": "safe text meta",
+  "run.progress": "drop",
+  "run.queued": "drop",
+  "run.completed": "end_turn",
+  "run.cancelled": "cancelled",
+  "run.failed": "ACP_REMOTE_RUN_FAILED",
+  "run.timed_out": "ACP_REMOTE_RUN_FAILED"
+}

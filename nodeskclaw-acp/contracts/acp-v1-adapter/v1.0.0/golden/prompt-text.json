@@ -1,0 +1,7 @@
+{
+  "prompt": [{ "type": "text", "text": "hello" }],
+  "remoteCreate": {
+    "attachment_refs": [],
+    "client_request_id": "acp:<session_id>:<turn_seq>"
+  }
+}

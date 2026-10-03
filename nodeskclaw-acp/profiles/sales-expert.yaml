@@ -1,0 +1,6 @@
+profile_version: 1
+name: sales-expert
+agent_ref: sales-expert
+knowledge_refs: []
+connector_binding_refs: []
+integration_account_refs: []
