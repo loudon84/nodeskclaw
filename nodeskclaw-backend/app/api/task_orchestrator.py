@@ -1,4 +1,8 @@
-"""Task Orchestrator API Router - User-facing endpoints."""
+"""Task Orchestrator API Router - User-facing endpoints.
+
+DEPRECATED / FROZEN，见 docs/architecture-domain.md 的 D-01。
+禁止新增端点，禁止新增调用方；自动化需求一律落 nodeskclaw-task。
+"""
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,7 +24,7 @@ from app.modules.task_orchestrator.schemas.intervention import (
 from app.modules.task_orchestrator.schemas.common import PaginatedResponse
 from app.modules.task_orchestrator.services.facade_service import TaskOrchestratorFacadeService
 
-router = APIRouter(prefix="/task-orchestrator", tags=["task-orchestrator"])
+router = APIRouter(prefix="/task-orchestrator", tags=["task-orchestrator"], deprecated=True)
 
 
 @router.post("/workflow-instances", response_model=WorkflowCreateResponse)

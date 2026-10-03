@@ -1,4 +1,8 @@
-"""Task Orchestrator Admin API Router - Admin-only endpoints."""
+"""Task Orchestrator Admin API Router - Admin-only endpoints.
+
+DEPRECATED / FROZEN，见 docs/architecture-domain.md 的 D-01。
+禁止新增端点，禁止新增调用方；自动化需求一律落 nodeskclaw-task。
+"""
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,7 +18,9 @@ from app.modules.task_orchestrator.schemas.template import (
 from app.modules.task_orchestrator.schemas.common import PaginatedResponse
 from app.modules.task_orchestrator.services.template_service import TemplateService
 
-router = APIRouter(prefix="/task-orchestrator", tags=["admin-task-orchestrator"])
+router = APIRouter(
+    prefix="/task-orchestrator", tags=["admin-task-orchestrator"], deprecated=True
+)
 
 
 @router.post("/templates", response_model=WorkflowTemplateResponse)
