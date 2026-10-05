@@ -12,4 +12,4 @@
 
 ## Core Integration Prerequisite
 
-[[reports/hermes-agent/hermes-output-artifacts-0.3.0/hermes_output_artifacts/plugin.py#register]] 在 v0.21 包装 `APIServerAdapter._set_run_status`；若存在则同时注册 `register_native_run_finalizer`。两者都缺失时拒绝启用。`post_tool_call` 可回退 `session_id`/`task_id`。契约见 [NATIVE-FINALIZER-CONTRACT.md](../../reports/hermes-agent/hermes-output-artifacts-0.3.0/NATIVE-FINALIZER-CONTRACT.md)。
+[[reports/hermes-agent/hermes-output-artifacts-0.3.0/hermes_output_artifacts/plugin.py#register]] 在 v0.21 包装 `APIServerAdapter._set_run_status`；若存在则同时注册 `register_native_run_finalizer`。两者都缺失时拒绝启用。`post_tool_call` 回退 `session_id`/`session`，工作区回退 hook `cwd` 或 `/data/hermes/workspace`；register/skip/track/upload 打 INFO。契约见 [NATIVE-FINALIZER-CONTRACT.md](../../reports/hermes-agent/hermes-output-artifacts-0.3.0/NATIVE-FINALIZER-CONTRACT.md)。

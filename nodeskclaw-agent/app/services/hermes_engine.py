@@ -190,6 +190,10 @@ async def _output_url_access(url: str, gateway_url: str | None) -> str:
     gateway_origin = _http_origin(gateway_url)
     if gateway_origin is not None and origin == gateway_origin:
         return "gateway"
+    if origin in _configured_fetch_origins():
+        return "allowlist"
+    if host in _configured_fetch_hosts():
+        return "allowlist"
     if _looks_non_public_hostname(host):
         return "blocked"
     ips = await _resolve_output_host_ips(host, port)
@@ -200,6 +204,31 @@ async def _output_url_access(url: str, gateway_url: str | None) -> str:
         if parsed_ip is None or _is_metadata_host(addr) or _ip_is_non_public(parsed_ip):
             return "blocked"
     return "public"
+
+
+def _configured_fetch_origins() -> set[tuple[str, str, int]]:
+    allowed: set[tuple[str, str, int]] = set()
+    raw = str(getattr(settings, "ARTIFACT_FETCH_ORIGIN_ALLOWLIST", "") or "")
+    for part in raw.split(","):
+        origin = _http_origin(part.strip().rstrip("/"))
+        if origin is None:
+            continue
+        _scheme, host, _port = origin
+        if _is_metadata_host(host):
+            continue
+        allowed.add(origin)
+    return allowed
+
+
+def _configured_fetch_hosts() -> set[str]:
+    allowed: set[str] = set()
+    raw = str(getattr(settings, "ARTIFACT_FETCH_HOST_ALLOWLIST", "") or "")
+    for part in raw.split(","):
+        host = part.strip().lower().rstrip(".")
+        if not host or _is_metadata_host(host) or host in {"localhost"}:
+            continue
+        allowed.add(host)
+    return allowed
 
 
 def _collect_output_refs(data: dict[str, Any] | None) -> list[dict[str, Any]]:

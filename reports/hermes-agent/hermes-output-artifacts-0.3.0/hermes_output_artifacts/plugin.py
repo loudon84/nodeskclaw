@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import logging
 import os
 from collections.abc import Mapping
 from pathlib import Path
@@ -11,6 +12,8 @@ from typing import Any
 from .config import ArtifactSettings
 from .refs import REGISTRY, ArtifactRegistry
 from .upload import HttpUploader, MinioUploader
+
+logger = logging.getLogger("hermes_plugins.output_artifacts")
 
 _PATH_KEYS = (
     "path",
@@ -26,6 +29,7 @@ _IMPORT_PATHS = (
     "gateway.platforms.api_server",
     "hermes_agent.gateway.platforms.api_server",
 )
+_DEFAULT_WORKSPACE = Path("/data/hermes/workspace")
 
 
 def _extract_paths(tool_name: str, args: Any, result: Any) -> tuple[str, ...]:
@@ -33,7 +37,10 @@ def _extract_paths(tool_name: str, args: Any, result: Any) -> tuple[str, ...]:
 
     def append(value: Any) -> None:
         if isinstance(value, str) and value.strip():
-            values.append(value.strip())
+            text = value.strip()
+            if "\n" in text and len(text) > 512:
+                return
+            values.append(text)
         elif isinstance(value, (list, tuple)):
             for item in value:
                 append(item)
@@ -48,7 +55,7 @@ def _extract_paths(tool_name: str, args: Any, result: Any) -> tuple[str, ...]:
 
 
 def _run_id_from_payload(**payload: Any) -> str:
-    for key in ("native_run_id", "run_id", "task_id", "session_id"):
+    for key in ("native_run_id", "run_id", "task_id", "session_id", "session"):
         value = payload.get(key)
         if isinstance(value, str) and value.strip():
             return value.strip()
@@ -63,6 +70,18 @@ def _workspace_from_payload(**payload: Any) -> Path | None:
     return None
 
 
+def _resolve_workspace(explicit: str | Path | None, **payload: Any) -> Path:
+    if explicit:
+        return Path(explicit)
+    from_payload = _workspace_from_payload(**payload)
+    if from_payload is not None:
+        return from_payload
+    cwd = Path.cwd()
+    if _DEFAULT_WORKSPACE.is_dir():
+        return _DEFAULT_WORKSPACE
+    return cwd
+
+
 def _apply_terminal_gate(run_id: str, status: Any, fields: Mapping[str, Any]):
     status_text = str(status or "")
     payload = dict(fields)
@@ -74,12 +93,20 @@ def _apply_terminal_gate(run_id: str, status: Any, fields: Mapping[str, Any]):
         )
         ok, error = REGISTRY.can_complete(str(run_id))
         payload["output_refs"] = refs
+        logger.info(
+            "output-artifacts flush run_id=%s ok=%s ref_count=%s",
+            run_id,
+            ok,
+            len(refs),
+        )
         if not ok:
             payload["error"] = error or "artifact upload gate failed"
+            logger.warning("output-artifacts gate failed run_id=%s error=%s", run_id, error)
             return "failed", payload
         return status, payload
     except Exception as exc:
         payload["error"] = f"output_artifacts gate error: {exc}"
+        logger.exception("output-artifacts gate error run_id=%s", run_id)
         return "failed", payload
 
 
@@ -132,6 +159,7 @@ def register(
         ctx, os.environ if environment is None else environment
     )
     if not settings.enabled:
+        logger.info("output-artifacts skipped because enabled=false")
         return
     register_hook = getattr(ctx, "register_hook", None)
     register_finalizer = getattr(ctx, "register_native_run_finalizer", None)
@@ -161,17 +189,44 @@ def register(
         workspace_root: str | Path | None = None,
         **payload: Any,
     ) -> None:
+        if isinstance(tool_name, dict) and args is None:
+            payload = {**tool_name, **payload}
+            tool_name = str(payload.get("tool_name") or "")
+            args = payload.get("args")
+            result = payload.get("result") if result is None else result
+            native_run_id = payload.get("native_run_id", native_run_id)
+            workspace_root = payload.get("workspace_root", workspace_root)
         run_id = _run_id_from_payload(
             native_run_id=native_run_id,
             run_id=payload.get("run_id"),
             task_id=payload.get("task_id"),
             session_id=payload.get("session_id"),
+            session=payload.get("session"),
         )
-        root = workspace_root or _workspace_from_payload(**payload)
-        if not run_id or root is None:
+        if not run_id:
+            logger.info(
+                "output-artifacts skip tool=%s reason=missing_run_id",
+                tool_name or payload.get("tool_name") or "",
+            )
             return
-        for path in _extract_paths(tool_name, args, result):
+        root = _resolve_workspace(workspace_root, **payload)
+        paths = _extract_paths(str(tool_name or ""), args, result)
+        if not paths:
+            logger.info(
+                "output-artifacts skip run_id=%s tool=%s reason=no_output_path",
+                run_id,
+                tool_name,
+            )
+            return
+        for path in paths:
             registry.track_path(run_id, path, root)
+            logger.info(
+                "output-artifacts track run_id=%s tool=%s path=%s workspace=%s",
+                run_id,
+                tool_name,
+                path,
+                root,
+            )
 
     def finalize(request: Any) -> Any:
         return registry.finalize(request)
@@ -179,3 +234,11 @@ def register(
     register_hook("post_tool_call", post_tool_call)
     if has_finalizer:
         register_finalizer(finalize)
+    logger.info(
+        "output-artifacts registered mode=%s endpoint=%s bucket=%s gate=%s finalizer=%s",
+        settings.upload_mode,
+        settings.endpoint,
+        settings.bucket,
+        has_gate,
+        has_finalizer,
+    )

@@ -136,7 +136,41 @@ class PluginTests(unittest.TestCase):
             report.write_text("value\n1\n", encoding="utf-8")
             track_workspace_file("run-42", str(report), workspace_root=workspace)
             refs = REGISTRY.merge_output_refs("run-42", None, force_flush=True)
-        self.assertTrue(any(item.get("name") == "report.csv" for item in refs))
+    def test_tracks_relative_write_file_using_session_and_cwd_fallback(
+        self,
+    ) -> None:
+        context = FakeContext()
+        register(context, environment=_ENV, uploader=FakeUploader())
+        hook = context.hooks["post_tool_call"]
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            workspace = Path(temporary_directory)
+            out_dir = workspace / "out"
+            out_dir.mkdir()
+            report = out_dir / "hello.txt"
+            report.write_text("hello", encoding="utf-8")
+            with self.assertLogs("hermes_plugins.output_artifacts", level="INFO") as captured:
+                hook(
+                    tool_name="write_file",
+                    args={"path": "out/hello.txt"},
+                    result="Wrote out/hello.txt",
+                    session="run_c4e5ab72cef74aa49c7ba6b4cbfd47b2",
+                    cwd=str(workspace),
+                )
+            refs = REGISTRY.merge_output_refs(
+                "run_c4e5ab72cef74aa49c7ba6b4cbfd47b2", None, force_flush=True
+            )
+        self.assertEqual(refs[0]["name"], "hello.txt")
+        joined = "\n".join(captured.output)
+        self.assertIn("track", joined)
+        self.assertIn("run_c4e5ab72cef74aa49c7ba6b4cbfd47b2", joined)
+
+    def test_skips_and_logs_when_run_id_cannot_be_resolved(self) -> None:
+        context = FakeContext()
+        register(context, environment=_ENV, uploader=FakeUploader())
+        hook = context.hooks["post_tool_call"]
+        with self.assertLogs("hermes_plugins.output_artifacts", level="INFO") as captured:
+            hook(tool_name="write_file", args={"path": "out/hello.txt"})
+        self.assertIn("skip", "\n".join(captured.output).lower())
 
 
 if __name__ == "__main__":

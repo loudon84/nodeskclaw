@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -15,6 +16,8 @@ from .contracts import (
     NativeRunFinalizeResult,
 )
 from .upload import MinioUploader, UploadResult
+
+logger = logging.getLogger("hermes_plugins.output_artifacts")
 
 
 class ArtifactUploader(Protocol):
@@ -144,6 +147,13 @@ class ArtifactRegistry:
                     "artifact_upload_failed", str(exc), tuple(output_refs)
                 )
             if not result.ok:
+                logger.warning(
+                    "output-artifacts upload failed run_id=%s name=%s required=%s error=%s",
+                    request.run_id,
+                    result.name,
+                    result.required,
+                    result.error,
+                )
                 if result.required:
                     return NativeRunFinalizeResult.failed(
                         "artifact_upload_failed",
@@ -151,6 +161,12 @@ class ArtifactRegistry:
                         tuple(output_refs),
                     )
                 continue
+            logger.info(
+                "output-artifacts upload ok run_id=%s name=%s bytes=%s",
+                request.run_id,
+                result.name,
+                result.size_bytes,
+            )
             output_refs.append(
                 NativeOutputRef(
                     name=result.name,

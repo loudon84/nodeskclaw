@@ -109,18 +109,23 @@ async def _run_scenarios() -> dict[str, Any]:
         client.updates = []
         client.permissions = []
         prompt_id = str(uuid.uuid4())
+        pptx_prompt = (
+            "Use the powerpoint or pptx skill right now. Generate a real two-slide .pptx file "
+            "titled 'Q3 Marketing Plan' with slides 'Goals' and 'Next Actions'. "
+            "Persist the .pptx as an output file. Do not answer with markdown only."
+        )
         sent = await client.send_rpc(
             "session/prompt",
             {
                 "sessionId": session_id,
-                "prompt": [{"type": "text", "text": "Reply with exactly: ok"}],
+                "prompt": [{"type": "text", "text": pptx_prompt}],
             },
             request_id=prompt_id,
         )
         try:
-            prompt = await client.wait_response(sent, timeout=45)
+            prompt = await client.wait_response(sent, timeout=180)
         except TimeoutError:
-            prompt = {"error": {"message": "no prompt frames within 45s"}}
+            prompt = {"error": {"message": "no prompt frames within 180s"}}
         streamed = any(frame.get("method") == "session/update" for frame in client.updates)
         stop = (prompt.get("result") or {}).get("stopReason")
         results["prompt streaming"] = {

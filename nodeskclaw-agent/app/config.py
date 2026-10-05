@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     SKILL_AGENT_TOOL_MCP_URL: str = ""
     AGENT_TOOL_CAPABILITY_SIGNING_KEY: str = ""
     AGENT_TOOL_CAPABILITY_TTL_SECONDS: int = 900
+    ARTIFACT_FETCH_ORIGIN_ALLOWLIST: str = ""
+    ARTIFACT_FETCH_HOST_ALLOWLIST: str = ""
 
 
 settings = Settings()

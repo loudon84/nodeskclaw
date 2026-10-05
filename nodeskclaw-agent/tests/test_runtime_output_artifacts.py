@@ -191,6 +191,72 @@ async def test_output_url_access_blocks_metadata_and_private_non_gateway():
 
 
 @pytest.mark.asyncio
+async def test_output_url_access_allows_configured_private_origin(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.hermes_engine.settings.ARTIFACT_FETCH_ORIGIN_ALLOWLIST",
+        "http://192.168.102.247:9010",
+    )
+    assert (
+        await _output_url_access(
+            "http://192.168.102.247:9010/agent-runtime-export/hello.txt",
+            "http://192.168.102.247:29401",
+        )
+        == "allowlist"
+    )
+    assert await _output_url_access("http://192.168.1.10/secret", "http://hermes:8642") == "blocked"
+    monkeypatch.setattr(
+        "app.services.hermes_engine.settings.ARTIFACT_FETCH_ORIGIN_ALLOWLIST",
+        "http://192.168.102.247:9010",
+    )
+    assert await _output_url_access("http://169.254.169.254/latest", "http://hermes:8642") == "blocked"
+
+
+@pytest.mark.asyncio
+async def test_persist_allowlisted_origin_strips_runtime_authorization(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.hermes_engine.settings.ARTIFACT_FETCH_ORIGIN_ALLOWLIST",
+        "http://192.168.102.247:9010",
+    )
+    descriptor = ArtifactDescriptor(
+        artifact_id="art-minio",
+        name="hello.txt",
+        content_type="text/plain",
+        size_bytes=5,
+        checksum_sha256="abc",
+        storage_state="persisted",
+    )
+    store = AsyncMock(return_value=descriptor)
+    monkeypatch.setattr("app.services.run_service.store_artifact_bytes", store)
+    _mock_session(monkeypatch)
+    client = MagicMock()
+    response = MagicMock()
+    response.content = b"hello"
+    response.raise_for_status = MagicMock()
+    client.get = AsyncMock(return_value=response)
+    events, failed = await _persist_declared_outputs(
+        client,
+        data={
+            "output_refs": [
+                {
+                    "url": "http://192.168.102.247:9010/agent-runtime-export/hello.txt",
+                    "name": "hello.txt",
+                    "required": True,
+                }
+            ]
+        },
+        headers={"Authorization": "Bearer lease-token"},
+        org_id="org-1",
+        run_id="run-1",
+        attempt_id="att-1",
+        gateway_url="http://192.168.102.247:29401",
+    )
+    assert failed is False
+    assert events[0]["payload"]["artifact_id"] == "art-minio"
+    headers = client.get.await_args.kwargs["headers"]
+    assert "Authorization" not in headers
+
+
+@pytest.mark.asyncio
 async def test_output_url_access_public_hostname_without_private_resolution(monkeypatch):
     monkeypatch.setattr("app.services.hermes_engine._resolve_output_host_ips", _public_example_ips)
     assert await _output_url_access("https://example.com/out.pdf", "http://hermes:8642") == "public"
