@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import contextvars
 import inspect
 import logging
 import os
+import re
+import threading
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -30,6 +33,13 @@ _IMPORT_PATHS = (
     "hermes_agent.gateway.platforms.api_server",
 )
 _DEFAULT_WORKSPACE = Path("/data/hermes/workspace")
+_NATIVE_RUN_RE = re.compile(r"^run_[0-9a-f]{32}$", re.I)
+_UUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    re.I,
+)
+_AUX_RUN_ID = contextvars.ContextVar("output_artifacts_aux_run_id", default="")
+_TLS = threading.local()
 
 
 def _extract_paths(tool_name: str, args: Any, result: Any) -> tuple[str, ...]:
@@ -54,12 +64,69 @@ def _extract_paths(tool_name: str, args: Any, result: Any) -> tuple[str, ...]:
     return tuple(dict.fromkeys(values))
 
 
-def _run_id_from_payload(**payload: Any) -> str:
-    for key in ("native_run_id", "run_id", "task_id", "session_id", "session"):
-        value = payload.get(key)
+def _usable_paths(paths: tuple[str, ...], root: Path) -> tuple[str, ...]:
+    usable: list[str] = []
+    for path in paths:
+        candidate = Path(path)
+        if not candidate.is_absolute():
+            candidate = root / candidate
+        try:
+            if candidate.is_file() and not candidate.is_symlink():
+                usable.append(path)
+        except OSError:
+            continue
+    return tuple(usable)
+
+
+def _is_native_run_id(value: str) -> bool:
+    return bool(_NATIVE_RUN_RE.match(value))
+
+
+def _remember_aux_run_id(auxiliary_id: str) -> None:
+    text = auxiliary_id.strip()
+    if not text:
+        return
+    _AUX_RUN_ID.set(text)
+    _TLS.aux_run_id = text
+
+
+def _current_aux_run_id() -> str:
+    value = _AUX_RUN_ID.get()
+    if value:
+        return value
+    return str(getattr(_TLS, "aux_run_id", "") or "")
+
+
+def _ids_from_payload(native_run_id: Any = None, **payload: Any) -> tuple[str, str]:
+    ordered: list[str] = []
+    for value in (
+        native_run_id,
+        payload.get("native_run_id"),
+        payload.get("run_id"),
+        payload.get("task_id"),
+        payload.get("session_id"),
+        payload.get("session"),
+    ):
         if isinstance(value, str) and value.strip():
-            return value.strip()
-    return ""
+            text = value.strip()
+            if text not in ordered:
+                ordered.append(text)
+    native = next((item for item in ordered if _is_native_run_id(item)), "")
+    auxiliary = next(
+        (item for item in ordered if _UUID_RE.match(item) or (item and not _is_native_run_id(item))),
+        "",
+    )
+    if native and auxiliary == native:
+        auxiliary = next(
+            (item for item in ordered if item != native),
+            "",
+        )
+    return native, auxiliary
+
+
+def _run_id_from_payload(**payload: Any) -> str:
+    native, auxiliary = _ids_from_payload(**payload)
+    return native or auxiliary
 
 
 def _workspace_from_payload(**payload: Any) -> Path | None:
@@ -88,6 +155,16 @@ def _apply_terminal_gate(run_id: str, status: Any, fields: Mapping[str, Any]):
     if status_text.lower() not in _SUCCESS_STATUSES:
         return status, payload
     try:
+        aux = _current_aux_run_id()
+        if aux:
+            REGISTRY.bind_alias(aux, str(run_id))
+            logger.info(
+                "output-artifacts alias aux=%s native=%s",
+                aux,
+                run_id,
+            )
+        _AUX_RUN_ID.set("")
+        _TLS.aux_run_id = ""
         refs = REGISTRY.merge_output_refs(
             str(run_id), payload.get("output_refs"), force_flush=True
         )
@@ -196,13 +273,18 @@ def register(
             result = payload.get("result") if result is None else result
             native_run_id = payload.get("native_run_id", native_run_id)
             workspace_root = payload.get("workspace_root", workspace_root)
-        run_id = _run_id_from_payload(
-            native_run_id=native_run_id,
+        native, auxiliary = _ids_from_payload(
+            native_run_id,
             run_id=payload.get("run_id"),
             task_id=payload.get("task_id"),
             session_id=payload.get("session_id"),
             session=payload.get("session"),
         )
+        if auxiliary:
+            _remember_aux_run_id(auxiliary)
+        run_id = native or auxiliary
+        if native and auxiliary:
+            REGISTRY.bind_alias(auxiliary, native)
         if not run_id:
             logger.info(
                 "output-artifacts skip tool=%s reason=missing_run_id",
@@ -210,7 +292,10 @@ def register(
             )
             return
         root = _resolve_workspace(workspace_root, **payload)
-        paths = _extract_paths(str(tool_name or ""), args, result)
+        paths = _usable_paths(
+            _extract_paths(str(tool_name or ""), args, result),
+            root,
+        )
         if not paths:
             logger.info(
                 "output-artifacts skip run_id=%s tool=%s reason=no_output_path",

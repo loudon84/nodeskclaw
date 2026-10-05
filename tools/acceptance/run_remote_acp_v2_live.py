@@ -58,6 +58,72 @@ def _error_code(frame: dict[str, Any]) -> str:
     return str(data.get("error_code") or err.get("code") or "")
 
 
+def _frame_error(frame: dict[str, Any]) -> dict[str, Any] | None:
+    err = frame.get("error")
+    if not isinstance(err, dict):
+        return None
+    data = err.get("data") if isinstance(err.get("data"), dict) else {}
+    return {
+        "message": err.get("message"),
+        "code": err.get("code"),
+        "error_code": data.get("error_code"),
+        "message_key": data.get("message_key"),
+        "data": data or None,
+    }
+
+
+def _extract_run_ids(frames: list[dict[str, Any]]) -> list[str]:
+    found: list[str] = []
+    blob = json.dumps(frames, ensure_ascii=False)
+    for token in (
+        "/acp/runs/",
+        "nodeskclaw://artifact/",
+        '"run_id":',
+        '"runId":',
+    ):
+        start = 0
+        while True:
+            idx = blob.find(token, start)
+            if idx < 0:
+                break
+            if token in {"/acp/runs/", "nodeskclaw://artifact/"}:
+                end = idx + len(token)
+                while end < len(blob) and blob[end] not in '"\\/ ?,}':
+                    end += 1
+                piece = blob[idx:end]
+            else:
+                piece = blob[idx : idx + 80]
+            if piece not in found:
+                found.append(piece)
+            start = idx + len(token)
+    return found[:8]
+
+
+def _diag(
+    *,
+    session_id: str | None,
+    request_id: str | None,
+    frame: dict[str, Any],
+    client: RemoteAcpTestClient,
+    updates_limit: int = 8,
+) -> dict[str, Any]:
+    updates = client.updates[-updates_limit:]
+    permissions = client.permissions[-5:]
+    return {
+        "session_id": session_id,
+        "request_id": request_id,
+        "last_seq": client.last_seq,
+        "stopReason": (frame.get("result") or {}).get("stopReason"),
+        "result": frame.get("result"),
+        "error": _frame_error(frame),
+        "update_count": len(client.updates),
+        "permission_count": len(client.permissions),
+        "run_id_hints": _extract_run_ids(client.updates + client.permissions),
+        "last_updates": updates,
+        "last_permissions": permissions,
+    }
+
+
 async def _run_scenarios() -> dict[str, Any]:
     base = os.environ["NODESKCLAW_BACKEND_URL"].rstrip("/")
     token = os.environ["NODESKCLAW_ACCESS_TOKEN"]
@@ -109,16 +175,17 @@ async def _run_scenarios() -> dict[str, Any]:
         client.updates = []
         client.permissions = []
         prompt_id = str(uuid.uuid4())
-        pptx_prompt = (
-            "Use the powerpoint or pptx skill right now. Generate a real two-slide .pptx file "
-            "titled 'Q3 Marketing Plan' with slides 'Goals' and 'Next Actions'. "
-            "Persist the .pptx as an output file. Do not answer with markdown only."
+        prompt_text = (
+            "Call write_file now. Create workspace file g4-live-artifact.txt "
+            "whose entire contents are exactly g4-live-ok. "
+            "Do not call skills_list, skill_view, skill_manage, or memory. "
+            "Do not answer with markdown only."
         )
         sent = await client.send_rpc(
             "session/prompt",
             {
                 "sessionId": session_id,
-                "prompt": [{"type": "text", "text": pptx_prompt}],
+                "prompt": [{"type": "text", "text": prompt_text}],
             },
             request_id=prompt_id,
         )
@@ -128,24 +195,77 @@ async def _run_scenarios() -> dict[str, Any]:
             prompt = {"error": {"message": "no prompt frames within 180s"}}
         streamed = any(frame.get("method") == "session/update" for frame in client.updates)
         stop = (prompt.get("result") or {}).get("stopReason")
+        prompt_diag = _diag(
+            session_id=session_id,
+            request_id=prompt_id,
+            frame=prompt,
+            client=client,
+        )
         results["prompt streaming"] = {
             "status": "PASS" if streamed and "error" not in prompt else "FAIL",
-            "actual": {"updates": len(client.updates), "stopReason": stop, "error": prompt.get("error")},
+            "actual": {
+                "updates": len(client.updates),
+                "stopReason": stop,
+                "error": prompt.get("error"),
+                "diag": prompt_diag,
+            },
         }
         results["terminal"] = {
             "status": "PASS" if stop and stop != "ACP_REMOTE_RUN_FAILED" else "FAIL",
-            "actual": stop or prompt.get("error"),
+            "actual": {"stopReason": stop, "error": _frame_error(prompt), "diag": prompt_diag},
         }
         artifact_hit = json.dumps(client.updates).find("/acp/runs/") >= 0 or json.dumps(client.updates).find("nodeskclaw://artifact/") >= 0
         results["artifact"] = {
             "status": "PASS" if artifact_hit else "FAIL",
-            "actual": "resource_link" if artifact_hit else "missing",
+            "actual": {
+                "resource": "resource_link" if artifact_hit else "missing",
+                "run_id_hints": prompt_diag["run_id_hints"],
+                "diag": prompt_diag,
+            },
         }
+
+        client.updates = []
+        client.permissions = []
+        approval_prompt = (
+            "park-waiting-approval now. "
+            "Use the park-waiting-approval skill immediately. "
+            "Do not call write_file, skills_list, skill_view, skill_manage, or memory. "
+            "Park this Native Run in waiting_for_approval."
+        )
+        approval_id = str(uuid.uuid4())
+        approval_sent = await client.send_rpc(
+            "session/prompt",
+            {
+                "sessionId": session_id,
+                "prompt": [{"type": "text", "text": approval_prompt}],
+            },
+            request_id=approval_id,
+        )
+        try:
+            approval_frame = await client.wait_response(approval_sent, timeout=180)
+        except TimeoutError:
+            approval_frame = {"error": {"message": "no approval frames within 180s"}}
+        approval_diag = _diag(
+            session_id=session_id,
+            request_id=approval_id,
+            frame=approval_frame,
+            client=client,
+        )
         results["approval"] = {
             "status": "PASS" if client.permissions else "FAIL",
-            "actual": len(client.permissions),
+            "actual": {
+                "permissions": len(client.permissions),
+                "stopReason": (approval_frame.get("result") or {}).get("stopReason"),
+                "error": _frame_error(approval_frame),
+                "diag": approval_diag,
+            },
         }
         after_seq = client.last_seq
+        results["_session"] = {
+            "session_id": session_id,
+            "after_seq": after_seq,
+            "trace_id": client.trace_id,
+        }
     finally:
         await client.close()
 
@@ -174,23 +294,45 @@ async def _run_scenarios() -> dict[str, Any]:
             "session/prompt",
             {
                 "sessionId": cancel_session,
-                "prompt": [{"type": "text", "text": "Count slowly from 1 to 100."}],
+                "prompt": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "Start a long-running task now. Call the terminal tool and run: "
+                            "python -c \"import time; [print(i, flush=True) or time.sleep(2) "
+                            "for i in range(1, 61)]\". "
+                            "Do not summarize early. Do not finish until the command completes. "
+                            "Do not call write_file, skills_list, skill_view, skill_manage, or memory."
+                        ),
+                    }
+                ],
             },
             request_id=str(uuid.uuid4()),
         )
         try:
             cancelled = await cancel_client.wait_response(
                 rid,
-                timeout=20,
-                cancel_after=1.0,
+                timeout=45,
+                cancel_after=3.0,
                 cancel_session_id=cancel_session,
             )
         except TimeoutError:
-            cancelled = {"error": {"message": "cancel did not complete within 20s"}}
+            cancelled = {"error": {"message": "cancel did not complete within 45s"}}
         stop = (cancelled.get("result") or {}).get("stopReason")
+        cancel_diag = _diag(
+            session_id=cancel_session,
+            request_id=rid,
+            frame=cancelled,
+            client=cancel_client,
+        )
         results["cancel"] = {
             "status": "PASS" if stop == "cancelled" else "FAIL",
-            "actual": cancelled.get("result") or cancelled.get("error"),
+            "actual": {
+                "stopReason": stop,
+                "result": cancelled.get("result"),
+                "error": _frame_error(cancelled) or cancelled.get("error"),
+                "diag": cancel_diag,
+            },
         }
     finally:
         await cancel_client.close()

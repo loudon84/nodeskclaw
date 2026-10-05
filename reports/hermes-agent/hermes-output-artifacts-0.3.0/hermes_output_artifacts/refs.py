@@ -41,6 +41,24 @@ class ArtifactRegistry:
         self._uploader = uploader or MinioUploader(settings)
         self._lock = threading.RLock()
         self._by_run: dict[str, RunArtifactState] = {}
+        self._alias: dict[str, str] = {}
+
+    def bind_alias(self, auxiliary_id: str, native_run_id: str) -> None:
+        aux = (auxiliary_id or "").strip()
+        native = (native_run_id or "").strip()
+        if not aux or not native or aux == native:
+            return
+        with self._lock:
+            self._alias[aux] = native
+            source = self._by_run.pop(aux, None)
+            if source is None:
+                return
+            dest = self._by_run.setdefault(native, RunArtifactState())
+            if dest.workspace_root is None:
+                dest.workspace_root = source.workspace_root
+            for path in source.paths:
+                if path not in dest.paths:
+                    dest.paths.append(path)
 
     def track_path(
         self, run_id: str, path: str | Path, workspace_root: str | Path
@@ -192,12 +210,13 @@ class ArtifactRegistry:
             merged.extend(item for item in existing if isinstance(item, dict))
         if force_flush:
             with self._lock:
-                state = self._by_run.get(run_id)
+                resolved = self._alias.get(run_id, run_id)
+                state = self._by_run.get(resolved)
                 workspace_root = state.workspace_root if state else None
             result = self.finalize(
                 NativeRunFinalizeRequest(
                     schema_version=1,
-                    run_id=run_id,
+                    run_id=resolved,
                     session_id=None,
                     proposed_status="completed",
                     workspace_root=workspace_root,
@@ -208,7 +227,8 @@ class ArtifactRegistry:
 
     def can_complete(self, run_id: str) -> tuple[bool, str | None]:
         with self._lock:
-            state = self._by_run.get(run_id)
+            resolved = self._alias.get(run_id, run_id)
+            state = self._by_run.get(resolved)
             if state is None or not state.paths:
                 return True, None
             result = state.result
@@ -225,6 +245,9 @@ class RegistryFacade:
 
     def bind(self, registry: ArtifactRegistry | None) -> None:
         self._inner = registry
+
+    def bind_alias(self, auxiliary_id: str, native_run_id: str) -> None:
+        self._require().bind_alias(auxiliary_id, native_run_id)
 
     def _require(self) -> ArtifactRegistry:
         if self._inner is None:

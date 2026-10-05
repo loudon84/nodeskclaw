@@ -136,6 +136,8 @@ class PluginTests(unittest.TestCase):
             report.write_text("value\n1\n", encoding="utf-8")
             track_workspace_file("run-42", str(report), workspace_root=workspace)
             refs = REGISTRY.merge_output_refs("run-42", None, force_flush=True)
+        self.assertEqual(refs[0]["name"], "report.csv")
+
     def test_tracks_relative_write_file_using_session_and_cwd_fallback(
         self,
     ) -> None:
@@ -171,6 +173,52 @@ class PluginTests(unittest.TestCase):
         with self.assertLogs("hermes_plugins.output_artifacts", level="INFO") as captured:
             hook(tool_name="write_file", args={"path": "out/hello.txt"})
         self.assertIn("skip", "\n".join(captured.output).lower())
+
+    def test_prefers_native_run_id_when_session_uuid_also_present(self) -> None:
+        adapter_cls = _install_fake_api_server()
+        context = FakeContext(finalizer=False)
+        register(context, environment=_ENV, uploader=FakeUploader())
+        hook = context.hooks["post_tool_call"]
+        native = "run_19f48aa241924d418a05762e3f88511f"
+        session = "ccaafbaa-78bb-48a8-99d5-1f971d8c6bde"
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            workspace = Path(temporary_directory)
+            report = workspace / "hello.txt"
+            report.write_text("hello", encoding="utf-8")
+            hook(
+                tool_name="write_file",
+                args={"path": str(report)},
+                result={"written": str(report)},
+                native_run_id=native,
+                session_id=session,
+                workspace_root=workspace,
+            )
+            adapter = adapter_cls()
+            adapter._set_run_status(native, "completed")
+        self.assertEqual(adapter.last[2]["output_refs"][0]["name"], "hello.txt")
+
+    def test_flush_native_run_merges_tracks_keyed_by_session_uuid(self) -> None:
+        adapter_cls = _install_fake_api_server()
+        context = FakeContext(finalizer=False)
+        register(context, environment=_ENV, uploader=FakeUploader())
+        hook = context.hooks["post_tool_call"]
+        native = "run_19f48aa241924d418a05762e3f88511f"
+        session = "ccaafbaa-78bb-48a8-99d5-1f971d8c6bde"
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            workspace = Path(temporary_directory)
+            report = workspace / "g4-live-artifact.txt"
+            report.write_text("g4-live-ok", encoding="utf-8")
+            hook(
+                tool_name="write_file",
+                args={"path": "g4-live-artifact.txt"},
+                result="Wrote g4-live-artifact.txt",
+                session_id=session,
+                cwd=str(workspace),
+            )
+            adapter = adapter_cls()
+            adapter._set_run_status(native, "completed")
+        refs = adapter.last[2]["output_refs"]
+        self.assertEqual(refs[0]["name"], "g4-live-artifact.txt")
 
 
 if __name__ == "__main__":
