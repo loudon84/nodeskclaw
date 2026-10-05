@@ -79,6 +79,21 @@ class ArtifactSettingsTests(unittest.TestCase):
                 },
             )
 
+    def test_reads_endpoint_and_enabled_from_artifact_environment(self) -> None:
+        context = FakeContext({})
+        settings = ArtifactSettings.from_context(
+            context,
+            {
+                "HERMES_OUTPUT_ARTIFACTS_ENABLED": "true",
+                "HERMES_ARTIFACT_S3_ENDPOINT": "http://127.0.0.1:9010",
+                "HERMES_ARTIFACT_S3_BUCKET": "agent-runtime-export",
+                "HERMES_ARTIFACT_S3_ACCESS_KEY": "access",
+                "HERMES_ARTIFACT_S3_SECRET_KEY": "secret",
+            },
+        )
+        self.assertTrue(settings.enabled)
+        self.assertEqual(settings.endpoint, "http://127.0.0.1:9010")
+
 
 if __name__ == "__main__":
     unittest.main()

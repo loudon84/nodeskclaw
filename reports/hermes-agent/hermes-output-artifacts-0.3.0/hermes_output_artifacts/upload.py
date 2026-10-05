@@ -163,6 +163,10 @@ class MinioUploader:
                 Params={"Bucket": self._settings.bucket, "Key": object_key},
                 ExpiresIn=self._settings.presign_expires_seconds,
             )
+            if not self._settings.presign:
+                if not self._settings.public_base_url:
+                    raise ValueError("public_base_url is required when s3_presign is false")
+                url = f"{self._settings.public_base_url.rstrip('/')}/{object_key}"
             if not isinstance(url, str) or not url.startswith(("http://", "https://")):
                 raise ValueError("MinIO did not return an absolute presigned URL")
             return UploadResult(
@@ -177,6 +181,86 @@ class MinioUploader:
                 True,
             )
         except (BotoCoreError, ClientError, OSError, ValueError, RuntimeError) as exc:
+            return UploadResult(
+                name,
+                content_type,
+                object_key,
+                "",
+                size_bytes,
+                checksum_sha256,
+                "",
+                required,
+                False,
+                str(exc),
+            )
+
+
+class HttpUploader:
+    def __init__(self, settings: ArtifactSettings) -> None:
+        self._settings = settings
+
+    def upload(self, run_id: str, path: Path, required: bool) -> UploadResult:
+        path = Path(path)
+        name = sanitize_name(path.name)
+        content_type = _content_type(path)
+        if not path.is_file():
+            return UploadResult(
+                name, content_type, "", "", 0, "", "", required, False, "not a regular file"
+            )
+        size_bytes = path.stat().st_size
+        checksum_sha256 = _sha256(path)
+        object_key = f"{run_id}/{name}"
+        url = (
+            f"{self._settings.public_base_url.rstrip('/')}/{object_key}"
+            if self._settings.public_base_url
+            else ""
+        )
+        expires_at = (
+            datetime.now(UTC)
+            + timedelta(seconds=self._settings.presign_expires_seconds)
+        ).isoformat()
+        try:
+            import json
+            import urllib.request
+            from email.mime.multipart import MIMEMultipart
+            from email.mime.application import MIMEApplication
+
+            body = MIMEMultipart()
+            part = MIMEApplication(path.read_bytes(), Name=name)
+            part.add_header("Content-Disposition", "form-data", name="file", filename=name)
+            body.attach(part)
+            request = urllib.request.Request(
+                self._settings.upload_url,
+                data=body.as_bytes(),
+                method="POST",
+                headers={"Content-Type": body.get_content_type()},
+            )
+            if self._settings.upload_token:
+                request.add_header("Authorization", f"Bearer {self._settings.upload_token}")
+            with urllib.request.urlopen(request, timeout=60) as response:
+                raw = response.read().decode("utf-8", errors="replace")
+            try:
+                payload = json.loads(raw)
+            except json.JSONDecodeError:
+                payload = {}
+            if isinstance(payload, dict):
+                returned = payload.get("url") or payload.get("uri")
+                if isinstance(returned, str) and returned.startswith(("http://", "https://")):
+                    url = returned
+            if not url.startswith(("http://", "https://")):
+                raise ValueError("HTTP upload did not return an absolute URL")
+            return UploadResult(
+                name,
+                content_type,
+                object_key,
+                url,
+                size_bytes,
+                checksum_sha256,
+                expires_at,
+                required,
+                True,
+            )
+        except (OSError, ValueError, RuntimeError) as exc:
             return UploadResult(
                 name,
                 content_type,

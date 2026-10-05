@@ -163,3 +163,79 @@ class ArtifactRegistry:
                 )
             )
         return NativeRunFinalizeResult.ready(tuple(output_refs))
+
+    def merge_output_refs(
+        self,
+        run_id: str,
+        existing: object = None,
+        *,
+        force_flush: bool = False,
+    ) -> list[dict[str, object]]:
+        merged: list[dict[str, object]] = []
+        if isinstance(existing, list):
+            merged.extend(item for item in existing if isinstance(item, dict))
+        if force_flush:
+            with self._lock:
+                state = self._by_run.get(run_id)
+                workspace_root = state.workspace_root if state else None
+            result = self.finalize(
+                NativeRunFinalizeRequest(
+                    schema_version=1,
+                    run_id=run_id,
+                    session_id=None,
+                    proposed_status="completed",
+                    workspace_root=workspace_root,
+                )
+            )
+            merged.extend(ref.as_dict() for ref in result.output_refs)
+        return merged
+
+    def can_complete(self, run_id: str) -> tuple[bool, str | None]:
+        with self._lock:
+            state = self._by_run.get(run_id)
+            if state is None or not state.paths:
+                return True, None
+            result = state.result
+        if result is None:
+            return False, "artifact upload not flushed"
+        if result.outcome == "failed":
+            return False, result.error_message or "artifact upload gate failed"
+        return True, None
+
+
+class RegistryFacade:
+    def __init__(self) -> None:
+        self._inner: ArtifactRegistry | None = None
+
+    def bind(self, registry: ArtifactRegistry | None) -> None:
+        self._inner = registry
+
+    def _require(self) -> ArtifactRegistry:
+        if self._inner is None:
+            raise RuntimeError("output artifacts registry is not bound")
+        return self._inner
+
+    def track_path(
+        self, run_id: str, path: str | Path, workspace_root: str | Path
+    ) -> None:
+        self._require().track_path(run_id, path, workspace_root)
+
+    def finalize(self, request: NativeRunFinalizeRequest) -> NativeRunFinalizeResult:
+        return self._require().finalize(request)
+
+    def merge_output_refs(
+        self,
+        run_id: str,
+        existing: object = None,
+        *,
+        force_flush: bool = False,
+    ) -> list[dict[str, object]]:
+        return self._require().merge_output_refs(
+            run_id, existing, force_flush=force_flush
+        )
+
+    def can_complete(self, run_id: str) -> tuple[bool, str | None]:
+        return self._require().can_complete(run_id)
+
+
+REGISTRY = RegistryFacade()
