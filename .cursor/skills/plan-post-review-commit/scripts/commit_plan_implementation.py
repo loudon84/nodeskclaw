@@ -140,6 +140,8 @@ def create_commit(git: str, root: Path, message: str) -> str:
         parents = ["-p", head.stdout.strip()]
 
     env = os.environ.copy()
+    env.pop("GIT_AUTHOR_DATE", None)
+    env.pop("GIT_COMMITTER_DATE", None)
     env["GIT_AUTHOR_NAME"] = AUTHOR_NAME
     env["GIT_AUTHOR_EMAIL"] = AUTHOR_EMAIL
     env["GIT_COMMITTER_NAME"] = AUTHOR_NAME
