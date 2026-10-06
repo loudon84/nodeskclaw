@@ -63,43 +63,50 @@ class RemoteAcpTestClient:
         cancel_session_id: str | None = None,
     ) -> dict[str, Any]:
         deadline = asyncio.get_event_loop().time() + timeout
-        cancelled = False
-        while True:
-            remaining = deadline - asyncio.get_event_loop().time()
-            if remaining <= 0:
-                raise TimeoutError(f"timed out waiting for {request_id}")
-            if cancel_after is not None and not cancelled and (timeout - remaining) >= cancel_after:
-                cancelled = True
+        cancel_task: asyncio.Task[None] | None = None
+        if cancel_after is not None:
+            async def _send_cancel() -> None:
+                await asyncio.sleep(cancel_after)
                 await self.send_rpc("session/cancel", {"sessionId": cancel_session_id or self.session_id})
-            raw = await asyncio.wait_for(self._ws.recv(), timeout=remaining)
-            frame = json.loads(raw)
-            method = frame.get("method")
-            if method == "session/update":
-                self.updates.append(frame)
-                seq = ((frame.get("params") or {}).get("seq") or (frame.get("params") or {}).get("event_seq") or 0)
-                try:
-                    self.last_seq = max(self.last_seq, int(seq))
-                except (TypeError, ValueError):
-                    pass
-                continue
-            if method == "session/request_permission":
-                self.permissions.append(frame)
-                if auto_permission:
-                    params = frame.get("params") or {}
-                    meta = (params.get("_meta") or {}).get("nodeskclaw") or {}
-                    await self._ws.send(
-                        json.dumps(
-                            {
-                                "jsonrpc": "2.0",
-                                "id": frame.get("id"),
-                                "result": {"outcome": "selected", "optionId": "allow_once"},
-                                "_meta": {"nodeskclaw": meta},
-                            }
+
+            cancel_task = asyncio.create_task(_send_cancel())
+        try:
+            while True:
+                remaining = deadline - asyncio.get_event_loop().time()
+                if remaining <= 0:
+                    raise TimeoutError(f"timed out waiting for {request_id}")
+                raw = await asyncio.wait_for(self._ws.recv(), timeout=remaining)
+                frame = json.loads(raw)
+                method = frame.get("method")
+                if method == "session/update":
+                    self.updates.append(frame)
+                    seq = ((frame.get("params") or {}).get("seq") or (frame.get("params") or {}).get("event_seq") or 0)
+                    try:
+                        self.last_seq = max(self.last_seq, int(seq))
+                    except (TypeError, ValueError):
+                        pass
+                    continue
+                if method == "session/request_permission":
+                    self.permissions.append(frame)
+                    if auto_permission:
+                        params = frame.get("params") or {}
+                        meta = (params.get("_meta") or {}).get("nodeskclaw") or {}
+                        await self._ws.send(
+                            json.dumps(
+                                {
+                                    "jsonrpc": "2.0",
+                                    "id": frame.get("id"),
+                                    "result": {"outcome": "selected", "optionId": "allow_once"},
+                                    "_meta": {"nodeskclaw": meta},
+                                }
+                            )
                         )
-                    )
-                continue
-            if frame.get("id") == request_id:
-                return frame
+                    continue
+                if frame.get("id") == request_id:
+                    return frame
+        finally:
+            if cancel_task is not None:
+                cancel_task.cancel()
 
     async def rpc(self, method: str, params: dict[str, Any] | None = None, *, request_id: str | None = None, timeout: float = 30) -> dict[str, Any]:
         rid = await self.send_rpc(method, params, request_id=request_id)

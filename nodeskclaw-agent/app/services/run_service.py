@@ -1139,7 +1139,7 @@ async def approve_run(
 
     if choice == "deny":
         await set_status(db, run_id, "FAILED", org_id=org_id, expected_status=["WAITING_APPROVAL"])
-        await append_event(
+        await _append_terminal_event(
             db,
             run_id,
             "run.failed",
@@ -1279,7 +1279,7 @@ async def cancel_run(db: AsyncSession, run_id: str, *, org_id: str) -> RunView |
         expected_status=["QUEUED", "WAITING_APPROVAL", "PAUSED", "SUSPENDED", "CANCELLING"],
     )
     if ok:
-        await append_event(db, run_id, "run.cancelled", {"status": "CANCELLED"}, org_id=org_id)
+        await _append_terminal_event(db, run_id, "run.cancelled", {"status": "CANCELLED"}, org_id=org_id)
     return await get_run(db, run_id, org_id=org_id)
 
 
