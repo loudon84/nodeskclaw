@@ -4,4 +4,4 @@ Public aggregate for SMC Copilot Remote ACP v2. Pins only `remoteExpertCatalog` 
 
 SMC production MUST connect through Backend WSS. `nodeskclaw-acp.exe` is not a v2 dependency.
 
-`frontendContractGate` stays pending until G4 Provider Live PASS. `productionGate` stays unpassed until golden consumer E2E.
+G4 Provider Live PASS. `frontendContractGate` is passed. `productionGate` stays unpassed until golden consumer E2E.

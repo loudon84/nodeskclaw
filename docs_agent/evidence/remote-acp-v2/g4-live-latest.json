@@ -1,0 +1,551 @@
+{
+  "SMC_ACCEPTANCE_RESULT": "PASS",
+  "status": "PASS",
+  "production_gate": "unpassed",
+  "frontendContractGate": "passed",
+  "reason": "all_scenarios_passed",
+  "failed": [],
+  "scenario_results": {
+    "initialize": {
+      "status": "PASS",
+      "actual": 1
+    },
+    "session/new": {
+      "status": "PASS",
+      "actual": "uuid"
+    },
+    "attachment": {
+      "status": "PASS",
+      "actual": "ACP_RESOURCE_DENIED"
+    },
+    "prompt streaming": {
+      "status": "PASS",
+      "actual": {
+        "updates": 6,
+        "stopReason": "end_turn",
+        "error": null,
+        "diag": {
+          "session_id": "86225580-7fbe-4636-8e38-53f0829ffeb3",
+          "request_id": "c65d2d90-0e8d-46d6-bced-5064a7bb8c51",
+          "last_seq": 16,
+          "stopReason": "end_turn",
+          "result": {
+            "stopReason": "end_turn"
+          },
+          "error": null,
+          "update_count": 6,
+          "permission_count": 0,
+          "run_id_hints": [
+            "/acp/runs/e18456b3-714c-4004-aa8f-e2d410e97d6d",
+            "nodeskclaw://artifact/e18456b3-714c-4004-aa8f-e2d410e97d6d"
+          ],
+          "last_updates": [
+            {
+              "jsonrpc": "2.0",
+              "method": "session/update",
+              "params": {
+                "sessionId": "86225580-7fbe-4636-8e38-53f0829ffeb3",
+                "sessionUpdate": "tool_call",
+                "toolCallId": "f5e3b54a-5aef-458b-b804-7305e96fe558:write_file:1",
+                "title": "write_file",
+                "status": "started",
+                "seq": 8
+              }
+            },
+            {
+              "jsonrpc": "2.0",
+              "method": "session/update",
+              "params": {
+                "sessionId": "86225580-7fbe-4636-8e38-53f0829ffeb3",
+                "sessionUpdate": "tool_call",
+                "toolCallId": "f5e3b54a-5aef-458b-b804-7305e96fe558:write_file:1",
+                "title": "write_file",
+                "status": "completed",
+                "seq": 9
+              }
+            },
+            {
+              "jsonrpc": "2.0",
+              "method": "session/update",
+              "params": {
+                "sessionId": "86225580-7fbe-4636-8e38-53f0829ffeb3",
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "f5e3b54a-5aef-458b-b804-7305e96fe558:write_file:1",
+                "status": "completed",
+                "seq": 10
+              }
+            },
+            {
+              "jsonrpc": "2.0",
+              "method": "session/update",
+              "params": {
+                "sessionId": "86225580-7fbe-4636-8e38-53f0829ffeb3",
+                "sessionUpdate": "agent_message_chunk",
+                "content": {
+                  "type": "text",
+                  "text": "\n\nDone — wrote the file and it verified.\n\nPath: /data/hermes/workspace/g4-live-artifact.txt\nContents: g4-live-ok (10 bytes, verified)\n\nOne thing worth flagging honestly: the write result carried a warning that this file had been modified by a sibling subagent and I hadn't read it first, so the write may have overwritten that sibling's content. I proceeded because your instruction was explicit about the exact required contents. If that sibling's version mattered, it's gone — say the word and I can check whether any copy remains elsewhere."
+                },
+                "seq": 11
+              }
+            },
+            {
+              "jsonrpc": "2.0",
+              "method": "session/update",
+              "params": {
+                "sessionId": "86225580-7fbe-4636-8e38-53f0829ffeb3",
+                "sessionUpdate": "agent_message_chunk",
+                "content": {
+                  "type": "text",
+                  "text": "\n\nDone — wrote the file and it verified.\n\nPath: /data/hermes/workspace/g4-live-artifact.txt\nContents: g4-live-ok (10 bytes, verified)\n\nOne thing worth flagging honestly: the write result carried a warning that this file had been modified by a sibling subagent and I hadn't read it first, so the write may have overwritten that sibling's content. I proceeded because your instruction was explicit about the exact required contents. If that sibling's version mattered, it's gone — say the word and I can check whether any copy remains elsewhere."
+                },
+                "seq": 12
+              }
+            },
+            {
+              "jsonrpc": "2.0",
+              "method": "session/update",
+              "params": {
+                "sessionId": "86225580-7fbe-4636-8e38-53f0829ffeb3",
+                "sessionUpdate": "agent_message_chunk",
+                "content": {
+                  "type": "resource_link",
+                  "uri": "nodeskclaw://artifact/e18456b3-714c-4004-aa8f-e2d410e97d6d/6697fb43-a96b-4403-9f11-48e1277200e6",
+                  "name": "g4-live-artifact.txt",
+                  "downloadPath": "/api/v1/remote-experts/marketing/acp/runs/e18456b3-714c-4004-aa8f-e2d410e97d6d/artifacts/6697fb43-a96b-4403-9f11-48e1277200e6"
+                },
+                "seq": 16
+              }
+            }
+          ],
+          "last_permissions": []
+        }
+      }
+    },
+    "terminal": {
+      "status": "PASS",
+      "actual": {
+        "stopReason": "end_turn",
+        "error": null,
+        "diag": {
+          "session_id": "86225580-7fbe-4636-8e38-53f0829ffeb3",
+          "request_id": "c65d2d90-0e8d-46d6-bced-5064a7bb8c51",
+          "last_seq": 16,
+          "stopReason": "end_turn",
+          "result": {
+            "stopReason": "end_turn"
+          },
+          "error": null,
+          "update_count": 6,
+          "permission_count": 0,
+          "run_id_hints": [
+            "/acp/runs/e18456b3-714c-4004-aa8f-e2d410e97d6d",
+            "nodeskclaw://artifact/e18456b3-714c-4004-aa8f-e2d410e97d6d"
+          ],
+          "last_updates": [
+            {
+              "jsonrpc": "2.0",
+              "method": "session/update",
+              "params": {
+                "sessionId": "86225580-7fbe-4636-8e38-53f0829ffeb3",
+                "sessionUpdate": "tool_call",
+                "toolCallId": "f5e3b54a-5aef-458b-b804-7305e96fe558:write_file:1",
+                "title": "write_file",
+                "status": "started",
+                "seq": 8
+              }
+            },
+            {
+              "jsonrpc": "2.0",
+              "method": "session/update",
+              "params": {
+                "sessionId": "86225580-7fbe-4636-8e38-53f0829ffeb3",
+                "sessionUpdate": "tool_call",
+                "toolCallId": "f5e3b54a-5aef-458b-b804-7305e96fe558:write_file:1",
+                "title": "write_file",
+                "status": "completed",
+                "seq": 9
+              }
+            },
+            {
+              "jsonrpc": "2.0",
+              "method": "session/update",
+              "params": {
+                "sessionId": "86225580-7fbe-4636-8e38-53f0829ffeb3",
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "f5e3b54a-5aef-458b-b804-7305e96fe558:write_file:1",
+                "status": "completed",
+                "seq": 10
+              }
+            },
+            {
+              "jsonrpc": "2.0",
+              "method": "session/update",
+              "params": {
+                "sessionId": "86225580-7fbe-4636-8e38-53f0829ffeb3",
+                "sessionUpdate": "agent_message_chunk",
+                "content": {
+                  "type": "text",
+                  "text": "\n\nDone — wrote the file and it verified.\n\nPath: /data/hermes/workspace/g4-live-artifact.txt\nContents: g4-live-ok (10 bytes, verified)\n\nOne thing worth flagging honestly: the write result carried a warning that this file had been modified by a sibling subagent and I hadn't read it first, so the write may have overwritten that sibling's content. I proceeded because your instruction was explicit about the exact required contents. If that sibling's version mattered, it's gone — say the word and I can check whether any copy remains elsewhere."
+                },
+                "seq": 11
+              }
+            },
+            {
+              "jsonrpc": "2.0",
+              "method": "session/update",
+              "params": {
+                "sessionId": "86225580-7fbe-4636-8e38-53f0829ffeb3",
+                "sessionUpdate": "agent_message_chunk",
+                "content": {
+                  "type": "text",
+                  "text": "\n\nDone — wrote the file and it verified.\n\nPath: /data/hermes/workspace/g4-live-artifact.txt\nContents: g4-live-ok (10 bytes, verified)\n\nOne thing worth flagging honestly: the write result carried a warning that this file had been modified by a sibling subagent and I hadn't read it first, so the write may have overwritten that sibling's content. I proceeded because your instruction was explicit about the exact required contents. If that sibling's version mattered, it's gone — say the word and I can check whether any copy remains elsewhere."
+                },
+                "seq": 12
+              }
+            },
+            {
+              "jsonrpc": "2.0",
+              "method": "session/update",
+              "params": {
+                "sessionId": "86225580-7fbe-4636-8e38-53f0829ffeb3",
+                "sessionUpdate": "agent_message_chunk",
+                "content": {
+                  "type": "resource_link",
+                  "uri": "nodeskclaw://artifact/e18456b3-714c-4004-aa8f-e2d410e97d6d/6697fb43-a96b-4403-9f11-48e1277200e6",
+                  "name": "g4-live-artifact.txt",
+                  "downloadPath": "/api/v1/remote-experts/marketing/acp/runs/e18456b3-714c-4004-aa8f-e2d410e97d6d/artifacts/6697fb43-a96b-4403-9f11-48e1277200e6"
+                },
+                "seq": 16
+              }
+            }
+          ],
+          "last_permissions": []
+        }
+      }
+    },
+    "artifact": {
+      "status": "PASS",
+      "actual": {
+        "resource": "resource_link",
+        "run_id_hints": [
+          "/acp/runs/e18456b3-714c-4004-aa8f-e2d410e97d6d",
+          "nodeskclaw://artifact/e18456b3-714c-4004-aa8f-e2d410e97d6d"
+        ],
+        "diag": {
+          "session_id": "86225580-7fbe-4636-8e38-53f0829ffeb3",
+          "request_id": "c65d2d90-0e8d-46d6-bced-5064a7bb8c51",
+          "last_seq": 16,
+          "stopReason": "end_turn",
+          "result": {
+            "stopReason": "end_turn"
+          },
+          "error": null,
+          "update_count": 6,
+          "permission_count": 0,
+          "run_id_hints": [
+            "/acp/runs/e18456b3-714c-4004-aa8f-e2d410e97d6d",
+            "nodeskclaw://artifact/e18456b3-714c-4004-aa8f-e2d410e97d6d"
+          ],
+          "last_updates": [
+            {
+              "jsonrpc": "2.0",
+              "method": "session/update",
+              "params": {
+                "sessionId": "86225580-7fbe-4636-8e38-53f0829ffeb3",
+                "sessionUpdate": "tool_call",
+                "toolCallId": "f5e3b54a-5aef-458b-b804-7305e96fe558:write_file:1",
+                "title": "write_file",
+                "status": "started",
+                "seq": 8
+              }
+            },
+            {
+              "jsonrpc": "2.0",
+              "method": "session/update",
+              "params": {
+                "sessionId": "86225580-7fbe-4636-8e38-53f0829ffeb3",
+                "sessionUpdate": "tool_call",
+                "toolCallId": "f5e3b54a-5aef-458b-b804-7305e96fe558:write_file:1",
+                "title": "write_file",
+                "status": "completed",
+                "seq": 9
+              }
+            },
+            {
+              "jsonrpc": "2.0",
+              "method": "session/update",
+              "params": {
+                "sessionId": "86225580-7fbe-4636-8e38-53f0829ffeb3",
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "f5e3b54a-5aef-458b-b804-7305e96fe558:write_file:1",
+                "status": "completed",
+                "seq": 10
+              }
+            },
+            {
+              "jsonrpc": "2.0",
+              "method": "session/update",
+              "params": {
+                "sessionId": "86225580-7fbe-4636-8e38-53f0829ffeb3",
+                "sessionUpdate": "agent_message_chunk",
+                "content": {
+                  "type": "text",
+                  "text": "\n\nDone — wrote the file and it verified.\n\nPath: /data/hermes/workspace/g4-live-artifact.txt\nContents: g4-live-ok (10 bytes, verified)\n\nOne thing worth flagging honestly: the write result carried a warning that this file had been modified by a sibling subagent and I hadn't read it first, so the write may have overwritten that sibling's content. I proceeded because your instruction was explicit about the exact required contents. If that sibling's version mattered, it's gone — say the word and I can check whether any copy remains elsewhere."
+                },
+                "seq": 11
+              }
+            },
+            {
+              "jsonrpc": "2.0",
+              "method": "session/update",
+              "params": {
+                "sessionId": "86225580-7fbe-4636-8e38-53f0829ffeb3",
+                "sessionUpdate": "agent_message_chunk",
+                "content": {
+                  "type": "text",
+                  "text": "\n\nDone — wrote the file and it verified.\n\nPath: /data/hermes/workspace/g4-live-artifact.txt\nContents: g4-live-ok (10 bytes, verified)\n\nOne thing worth flagging honestly: the write result carried a warning that this file had been modified by a sibling subagent and I hadn't read it first, so the write may have overwritten that sibling's content. I proceeded because your instruction was explicit about the exact required contents. If that sibling's version mattered, it's gone — say the word and I can check whether any copy remains elsewhere."
+                },
+                "seq": 12
+              }
+            },
+            {
+              "jsonrpc": "2.0",
+              "method": "session/update",
+              "params": {
+                "sessionId": "86225580-7fbe-4636-8e38-53f0829ffeb3",
+                "sessionUpdate": "agent_message_chunk",
+                "content": {
+                  "type": "resource_link",
+                  "uri": "nodeskclaw://artifact/e18456b3-714c-4004-aa8f-e2d410e97d6d/6697fb43-a96b-4403-9f11-48e1277200e6",
+                  "name": "g4-live-artifact.txt",
+                  "downloadPath": "/api/v1/remote-experts/marketing/acp/runs/e18456b3-714c-4004-aa8f-e2d410e97d6d/artifacts/6697fb43-a96b-4403-9f11-48e1277200e6"
+                },
+                "seq": 16
+              }
+            }
+          ],
+          "last_permissions": []
+        }
+      }
+    },
+    "approval": {
+      "status": "PASS",
+      "actual": {
+        "permissions": 1,
+        "stopReason": "cancelled",
+        "error": null,
+        "diag": {
+          "session_id": "86225580-7fbe-4636-8e38-53f0829ffeb3",
+          "request_id": "725b165b-05bd-4d7f-97b4-24d01713b194",
+          "last_seq": 52,
+          "stopReason": "cancelled",
+          "result": {
+            "stopReason": "cancelled"
+          },
+          "error": null,
+          "update_count": 35,
+          "permission_count": 1,
+          "run_id_hints": [
+            "\"run_id\": \"e571f80b-14d7-48b6-933b-738b1f714b20\"}}}}]"
+          ],
+          "last_updates": [
+            {
+              "jsonrpc": "2.0",
+              "method": "session/update",
+              "params": {
+                "sessionId": "86225580-7fbe-4636-8e38-53f0829ffeb3",
+                "sessionUpdate": "tool_call",
+                "toolCallId": "85e02bc3-5e21-4b4d-b8d2-45e4167d2656:terminal:10",
+                "title": "terminal",
+                "status": "started",
+                "seq": 35
+              }
+            },
+            {
+              "jsonrpc": "2.0",
+              "method": "session/update",
+              "params": {
+                "sessionId": "86225580-7fbe-4636-8e38-53f0829ffeb3",
+                "sessionUpdate": "tool_call",
+                "toolCallId": "85e02bc3-5e21-4b4d-b8d2-45e4167d2656:terminal:10",
+                "title": "terminal",
+                "status": "completed",
+                "seq": 36
+              }
+            },
+            {
+              "jsonrpc": "2.0",
+              "method": "session/update",
+              "params": {
+                "sessionId": "86225580-7fbe-4636-8e38-53f0829ffeb3",
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "85e02bc3-5e21-4b4d-b8d2-45e4167d2656:terminal:10",
+                "status": "completed",
+                "seq": 37
+              }
+            },
+            {
+              "jsonrpc": "2.0",
+              "method": "session/update",
+              "params": {
+                "sessionId": "86225580-7fbe-4636-8e38-53f0829ffeb3",
+                "sessionUpdate": "agent_message_chunk",
+                "content": {
+                  "type": "text",
+                  "text": "\n\nThe fixture's prescribed command slipped through: the serving processes (gateway pid 18 @ 23:11:52, agent pid 130 @ 23:12:04 on Oct 5) both predate the 23:23:16 config edit, so their in-memory allowlist still carries `script execution via -e/-c flag` and `python -c` was silently auto-approved — no gate, no park. That's exactly the stale-allowlist defect documented in yesterday's report. Parking needs a pattern key that is in neither the old nor the new allowlist."
+                },
+                "seq": 38
+              }
+            },
+            {
+              "jsonrpc": "2.0",
+              "method": "session/update",
+              "params": {
+                "sessionId": "86225580-7fbe-4636-8e38-53f0829ffeb3",
+                "sessionUpdate": "agent_message_chunk",
+                "content": {
+                  "type": "text",
+                  "text": "\n\nThe fixture's prescribed command slipped through: the serving processes (gateway pid 18 @ 23:11:52, agent pid 130 @ 23:12:04 on Oct 5) both predate the 23:23:16 config edit, so their in-memory allowlist still carries `script execution via -e/-c flag` and `python -c` was silently auto-approved — no gate, no park. That's exactly the stale-allowlist defect documented in yesterday's report. Parking needs a pattern key that is in neither the old nor the new allowlist."
+                },
+                "seq": 39
+              }
+            },
+            {
+              "jsonrpc": "2.0",
+              "method": "session/update",
+              "params": {
+                "sessionId": "86225580-7fbe-4636-8e38-53f0829ffeb3",
+                "sessionUpdate": "tool_call",
+                "toolCallId": "85e02bc3-5e21-4b4d-b8d2-45e4167d2656:terminal:11",
+                "title": "terminal",
+                "status": "started",
+                "seq": 40
+              }
+            },
+            {
+              "jsonrpc": "2.0",
+              "method": "session/update",
+              "params": {
+                "sessionId": "86225580-7fbe-4636-8e38-53f0829ffeb3",
+                "sessionUpdate": "tool_call",
+                "toolCallId": "85e02bc3-5e21-4b4d-b8d2-45e4167d2656:terminal:11",
+                "title": "terminal",
+                "status": "failed",
+                "seq": 51
+              }
+            },
+            {
+              "jsonrpc": "2.0",
+              "method": "session/update",
+              "params": {
+                "sessionId": "86225580-7fbe-4636-8e38-53f0829ffeb3",
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "85e02bc3-5e21-4b4d-b8d2-45e4167d2656:terminal:11",
+                "status": "failed",
+                "seq": 52
+              }
+            }
+          ],
+          "last_permissions": [
+            {
+              "jsonrpc": "2.0",
+              "id": "perm-85e02bc3-5e21-4b4d-b8d2-45e4167d2656:approval:approval:34",
+              "method": "session/request_permission",
+              "params": {
+                "sessionId": "86225580-7fbe-4636-8e38-53f0829ffeb3",
+                "toolCall": {
+                  "toolCallId": "85e02bc3-5e21-4b4d-b8d2-45e4167d2656:approval:approval:34",
+                  "title": "approval requested"
+                },
+                "options": [
+                  {
+                    "optionId": "allow_once",
+                    "name": "Allow once",
+                    "kind": "allow_once"
+                  },
+                  {
+                    "optionId": "reject_once",
+                    "name": "Reject",
+                    "kind": "reject_once"
+                  }
+                ],
+                "_meta": {
+                  "nodeskclaw": {
+                    "approval_id": "85e02bc3-5e21-4b4d-b8d2-45e4167d2656:approval:approval:34",
+                    "event_type": "approval.requested",
+                    "run_id": "e571f80b-14d7-48b6-933b-738b1f714b20"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "_session": {
+      "session_id": "86225580-7fbe-4636-8e38-53f0829ffeb3",
+      "after_seq": 52,
+      "trace_id": "8cb62b25-e282-4bdc-9bb8-c82c6b3b7d35"
+    },
+    "session/resume": {
+      "status": "PASS",
+      "actual": {
+        "sessionId": "86225580-7fbe-4636-8e38-53f0829ffeb3"
+      }
+    },
+    "disconnect/reconnect": {
+      "status": "PASS",
+      "actual": "resumed_after_close"
+    },
+    "cancel": {
+      "status": "PASS",
+      "actual": {
+        "stopReason": "cancelled",
+        "result": {
+          "stopReason": "cancelled"
+        },
+        "error": null,
+        "diag": {
+          "session_id": "113e2160-7f61-411e-85bb-c5d53d397a3b",
+          "request_id": "001321ee-4ff0-4666-9955-e7853a0bd3c1",
+          "last_seq": 8,
+          "stopReason": "cancelled",
+          "result": {
+            "stopReason": "cancelled"
+          },
+          "error": null,
+          "update_count": 1,
+          "permission_count": 0,
+          "run_id_hints": [],
+          "last_updates": [
+            {
+              "jsonrpc": "2.0",
+              "method": "session/update",
+              "params": {
+                "sessionId": "113e2160-7f61-411e-85bb-c5d53d397a3b",
+                "sessionUpdate": "tool_call",
+                "toolCallId": "30c40d0a-743f-452a-87a4-59123b23fc04:terminal:1",
+                "title": "terminal",
+                "status": "started",
+                "seq": 8
+              }
+            }
+          ],
+          "last_permissions": []
+        }
+      }
+    }
+  },
+  "contracts": {
+    "frontendContractVersion": "2.0.0",
+    "frontendContractDigest": "b0d4018c2b064224e45ff81024dabf9f21fff77dc85dffd4a8fa018f5362faa2",
+    "catalogContractVersion": "1.1.0",
+    "catalogContractDigest": "d51d27a33e6776be780bf3556ffa4ef4f6dab7f731c0a48421683708364efd2c",
+    "remoteAcpContractVersion": "1.0.0",
+    "remoteAcpContractDigest": "8a48e74e363c71875739c33b2bcdcb6f6f2ea7ee15897ae9fb9b8e9407ee9d06",
+    "acpProtocolVersion": 1,
+    "transportProfile": "nodeskclaw.remote-acp.v1"
+  },
+  "agent_ref": "marketing",
+  "evidence_dir": "docs_agent/evidence/remote-acp-v2"
+}
