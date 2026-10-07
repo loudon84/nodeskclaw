@@ -4,15 +4,15 @@
   "bundleFormatVersion": "1",
   "provider": "nodeskclaw-backend",
   "consumer": "smc-copilot/apps/work",
-  "implementationHeadSha": "PENDING_IMPLEMENTATION",
-  "releaseCommitSha": "PENDING_IMPLEMENTATION",
+  "implementationHeadSha": "3205fdcac003fc91d5a04349c2813b815bc0342b",
+  "releaseCommitSha": "3205fdcac003fc91d5a04349c2813b815bc0342b",
   "schemaIds": [
     "remote-acp-gateway.discovery.v1",
     "remote-acp-gateway.public-ws-handshake.v1",
     "remote-acp-gateway.jsonrpc-frame.v1",
     "remote-acp-gateway.session-update.v1"
   ],
-  "status": "VERIFIED",
+  "status": "FROZEN",
   "production_gate": "unpassed",
   "bundleDigest": "83e4e62dacfdc38a67907924f1aa0e6051860d563dd9beb2446e8f463e73c7e2",
   "artifacts": {

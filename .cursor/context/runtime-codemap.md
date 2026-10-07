@@ -259,8 +259,10 @@ Agent 侧 ACP 投影与 Hermes 连续性不在 `nodeskclaw-backend/app/services/
 | `nodeskclaw-agent/app/services/run_service.py` | `_remote_acp_continuity_binding` / continuation |
 | `nodeskclaw-agent/app/services/hermes_engine.py` | Hermes start + binding_missing fail-closed |
 | `nodeskclaw-backend/app/api/remote_acp_ws.py` | Public WSS Ingress |
-| `contracts/remote-expert-frontend/v2.1.0/` | Consumer aggregate pin（v2.1） |
+| `contracts/remote-expert-frontend/v2.1.0/` | Consumer aggregate pin（v2.1，`FROZEN`） |
+| `nodeskclaw-backend/app/contracts/remote_acp/constants.py` | Discovery pin：frontend `2.1.0` / remote-acp `1.1.0` |
 | `tools/acceptance/run_remote_acp_v21_live.py` | Provider Live G3 |
+| `tools/contracts/freeze_remote_acp_v21.py` | G4 freeze + reseal + 常量切换 |
 
 Gene / Skill 模板不承载 ACP 投影语义，v2.1 无需更新 gene_templates。
 

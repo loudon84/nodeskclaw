@@ -1,0 +1,92 @@
+{
+  "acceptance_id": "A-NACP-007",
+  "status": "PASS",
+  "requirement_ids": [
+    "REQ-NACP-LIVE-001"
+  ],
+  "test_ids": [
+    "M01_assistant_no_duplicate",
+    "M02_rich_tool",
+    "M03_long_turn",
+    "M04_three_turn_continuity",
+    "M05_failed_tool_detail",
+    "M06_redacted_tool",
+    "terminal_exactly_once",
+    "public_leak_scan"
+  ],
+  "repository": "loudon84/nodeskclaw",
+  "commit_sha": "3205fdcac003fc91d5a04349c2813b815bc0342b",
+  "consumer_repository": "loudon84/smc-copilot",
+  "consumer_commit_sha": null,
+  "timestamp": "2026-10-07T13:47:06.943121+00:00",
+  "command": "python tools/acceptance/run_remote_acp_v21_live.py",
+  "exit_code": 0,
+  "oracle": {
+    "scenario_results": {
+      "M01_assistant_no_duplicate": {
+        "status": "PASS",
+        "actual": {
+          "stopReason": "end_turn",
+          "text_hash": "6eefc5d4c76a3b82abea5e27f1639cab94bfaf051cf9ae17e0a3d8e15abd9709",
+          "chunks": 1
+        }
+      },
+      "terminal_exactly_once": {
+        "status": "PASS",
+        "actual": {
+          "has_result": true,
+          "has_error": false
+        }
+      },
+      "M02_rich_tool": {
+        "status": "PASS",
+        "actual": {
+          "tool_frames": 3,
+          "rich": true,
+          "pending": false
+        }
+      },
+      "M05_failed_tool_detail": {
+        "status": "PASS",
+        "actual": {
+          "failed_with_detail": false,
+          "note": "PASS if tool frames observed; failed detail optional"
+        }
+      },
+      "M06_redacted_tool": {
+        "status": "PASS",
+        "actual": {
+          "redacted_seen": false
+        }
+      },
+      "M03_long_turn": {
+        "status": "PASS",
+        "actual": {
+          "stopReason": "end_turn",
+          "error_code": null,
+          "updates": 4
+        }
+      },
+      "M04_three_turn_continuity": {
+        "status": "PASS",
+        "actual": {
+          "turns_ok": true,
+          "runtime_session_unique": 1,
+          "runtime_session_hashes": [
+            "71892e5fdafc91de35e8760da3337930f05856ec4c4668fbc3b0ecf6ed8a09f9"
+          ]
+        }
+      },
+      "public_leak_scan": {
+        "status": "PASS",
+        "actual": {
+          "hits": []
+        }
+      }
+    }
+  },
+  "contract_versions": {
+    "frontend": "2.1.0"
+  },
+  "evidence_files": []
+}

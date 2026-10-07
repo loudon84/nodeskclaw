@@ -7,6 +7,6 @@
   "remoteAcpGateway": {
     "version": "1.1.0",
     "path": "nodeskclaw-backend/contracts/remote-acp-gateway/v1.1.0",
-    "consumerDigest": "01e784a6402ce5664b09d3cc323b89a9b644befc27de1a3d06979a5aee375641"
+    "consumerDigest": "86668a0a013ca3aef08f11611c6c32cb7643918caf21f5d530049b0d0a1a28be"
   }
 }

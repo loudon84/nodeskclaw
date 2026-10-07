@@ -4,15 +4,15 @@
   "bundleFormatVersion": "1",
   "provider": "nodeskclaw-agent",
   "consumer": "nodeskclaw-backend",
-  "implementationHeadSha": "PENDING_IMPLEMENTATION",
-  "releaseCommitSha": "PENDING_IMPLEMENTATION",
+  "implementationHeadSha": "3205fdcac003fc91d5a04349c2813b815bc0342b",
+  "releaseCommitSha": "3205fdcac003fc91d5a04349c2813b815bc0342b",
   "schemaIds": [
     "acp-runtime-gateway.internal-ws-handshake.v1",
     "acp-runtime-gateway.capability.payload.v1",
     "acp-runtime-gateway.run-context.request.v1",
     "acp-runtime-gateway.session-update.v1"
   ],
-  "status": "VERIFIED",
+  "status": "FROZEN",
   "production_gate": "unpassed",
   "bundleDigest": "6891d6f1387a4aaabe40215cadd854f0509bd182280bb25c8edf5e7d5cf944d7",
   "artifacts": {

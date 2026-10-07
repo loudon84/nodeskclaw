@@ -1,4 +1,5 @@
 from app.api.remote_acp_ws import discovery_payload
+from app.contracts.remote_acp import constants as remote_acp_constants
 from app.contracts.remote_acp.constants import TRANSPORT_PROFILE
 from app.services.remote_acp.capability import mint_execution_capability, verify_execution_capability
 from app.services.remote_acp.errors import AUTH_REQUIRED
@@ -11,15 +12,14 @@ def test_discovery_payload_shape():
     payload = discovery_payload()
     assert payload["acpProtocolVersion"] == 1
     assert payload["transportProfile"] == TRANSPORT_PROFILE
-    assert payload["frontendContractVersion"] == "2.0.0"
-    assert payload["catalogContractVersion"] == "1.1.0"
-    assert payload["remoteAcpContractVersion"] == "1.0.0"
-    for key in (
-        "frontendContractDigest",
-        "catalogContractDigest",
-        "remoteAcpContractDigest",
-    ):
-        assert key in payload
+    assert payload["frontendContractVersion"] == remote_acp_constants.FRONTEND_CONTRACT_VERSION
+    assert payload["frontendContractDigest"] == remote_acp_constants.FRONTEND_CONTRACT_DIGEST
+    assert payload["catalogContractVersion"] == remote_acp_constants.CATALOG_CONTRACT_VERSION
+    assert payload["catalogContractDigest"] == remote_acp_constants.CATALOG_CONTRACT_DIGEST
+    assert payload["remoteAcpContractVersion"] == remote_acp_constants.REMOTE_ACP_CONTRACT_VERSION
+    assert payload["remoteAcpContractDigest"] == remote_acp_constants.REMOTE_ACP_CONTRACT_DIGEST
+    assert payload["frontendContractVersion"] == "2.1.0"
+    assert payload["remoteAcpContractVersion"] == "1.1.0"
 
 
 def test_capability_round_trip():
