@@ -1,0 +1,20 @@
+"""Pinned digests for REMOTE-EXPERT-FRONTEND-CONTRACT v2.1.0 (evidence-only gate)."""
+
+FRONTEND_CONTRACT_VERSION = "2.1.0"
+FRONTEND_CONTRACT_DIGEST = (
+    "b25a9edbf2fa5afd6f15cb1cc1f8b17d6cb63b613bf18a2212e75002c61b4aba"
+)
+CATALOG_CONTRACT_DIGEST = (
+    "d51d27a33e6776be780bf3556ffa4ef4f6dab7f731c0a48421683708364efd2c"
+)
+REMOTE_ACP_CONTRACT_DIGEST = (
+    "86668a0a013ca3aef08f11611c6c32cb7643918caf21f5d530049b0d0a1a28be"
+)
+
+L2_ENV_ID = "nodeskclaw-prod"
+L2_K8S_CONTEXT = "nodesk-infra-vke-dev-dmz-01"
+L2_K8S_NAMESPACE = "nodeskclaw-system"
+
+CLAIM_WINDOW_DAYS = 14
+FULL_LIVE_IDS = [f"A-G7-LIVE-{i:03d}" for i in range(1, 17)]
+PRERUN_LIVE_IDS = ["A-G7-LIVE-001", "A-G7-LIVE-002", "A-G7-LIVE-003"]

@@ -1,0 +1,34 @@
+{
+  "gate": "EXT-G5",
+  "sourceGate": "G6",
+  "overall": "PASS",
+  "productionGate": "unpassed",
+  "pin": "2.1.0",
+  "extG5": "mapped",
+  "repo": "loudon84/smc-copilot",
+  "commitSha": "1d0eb5b223f583afc45bd1d3bb460254a7ee22ce",
+  "dirty": false,
+  "generatedAt": "2026-10-07T15:03:22.384Z",
+  "sourcePath": "smc-copilot/apps/work/test-results/remote-expert-g6.json",
+  "sourceSha256": "e0288fc8e2566565232847bbc86f635027d3b208f6caa59aab600e9337a3ca3d",
+  "requiredCases": {
+    "A-SMC-2101": "PASS",
+    "A-SMC-2102": "PASS",
+    "A-SMC-2103": "PASS",
+    "A-SMC-2104": "PASS",
+    "A-SMC-2105": "PASS",
+    "A-SMC-2106": "PASS",
+    "A-MIG-2101": "PASS",
+    "A-MIG-2102": "PASS",
+    "A-G5-ALL": "PASS"
+  },
+  "localIsolationSurrogates": {
+    "A-SMC-2107": "not keyed; covered by Local Chat regression / A-ROUTE-LOCAL-001 / A-SMC-004",
+    "Local Chat regression": "PASS",
+    "A-ROUTE-LOCAL-001": "PASS",
+    "A-SMC-004": "PASS"
+  },
+  "pinCutoverCommit": "e68554a84a16414b96da50118fb867120c868966",
+  "regexFixCommit": "1d0eb5b223f583afc45bd1d3bb460254a7ee22ce",
+  "desktopProductionClaim": "FORBIDDEN until separate production-gate PRD/Plan"
+}

@@ -1,0 +1,40 @@
+{
+  "gate": "EXT-PG / Production Gate v2.1",
+  "codeBatch": "READY",
+  "smcBaselineExpected": "work/prd-v6.3 with G7 evidence-fields + --prerun + pg-claim",
+  "contractTreeProductionGate": "unpassed",
+  "ops": {
+    "pg-l1-prerun-exec": {
+      "status": "BLOCKED_ENV",
+      "reason": "SMC_REMOTE_EXPERT_G7_* / JWT not injected in agent process; live requires explicit user credentials (plan Global Constraints).",
+      "runbook": "docs_agent/evidence/remote-acp-v2.1/production-gate/RUNBOOK.md"
+    },
+    "pg-l2-g7-exec": {
+      "status": "BLOCKED_ENV",
+      "reason": "Depends on L1 PASS + L2 credentials; not executed.",
+      "runbook": "docs_agent/evidence/remote-acp-v2.1/production-gate/RUNBOOK.md"
+    },
+    "pg-obs-join": {
+      "status": "BLOCKED_ENV",
+      "reason": "Depends on L2 G7 PASS evidence.",
+      "runbook": "docs_agent/evidence/remote-acp-v2.1/production-gate/RUNBOOK.md"
+    },
+    "pg-claim-exec": {
+      "status": "BLOCKED_ENV",
+      "reason": "Depends on PG-SUMMARY + provenance + dual signoff.",
+      "runbook": "docs_agent/evidence/remote-acp-v2.1/production-gate/RUNBOOK.md"
+    }
+  },
+  "tools": {
+    "check_remote_acp_v21_discovery_drift.py": "present",
+    "validate_pg_summary.py": "present",
+    "build_pg_summary_from_g7.py": "present",
+    "remote-expert-g7.mjs --prerun": "present",
+    "remote-expert-pg-claim.mjs": "present"
+  },
+  "unitTests": {
+    "smc_g7_evidence_claim": "8 passed",
+    "nodeskclaw_pg_tools": "10 passed"
+  },
+  "generatedAt": "2026-10-07T15:35:00.000Z"
+}

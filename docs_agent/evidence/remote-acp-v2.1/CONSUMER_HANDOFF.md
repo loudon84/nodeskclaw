@@ -23,7 +23,23 @@
 
 ## EXT-G5
 
-SMC Golden Consumer remains external. Provider READY is G1-G4 only.
+Provider READY remains G1-G4 only. EXT-G5 is the external SMC Golden Consumer gate.
+
+### Consumer progress (verified 2026-10-07)
+
+- Repo: `loudon84/smc-copilot`
+- Pin cutover: `e68554a84a16414b96da50118fb867120c868966`
+- G6 / EXT-G5 evidence commit: `1d0eb5b223f583afc45bd1d3bb460254a7ee22ce`
+- Source oracle: `smc-copilot/apps/work/test-results/remote-expert-g6.json`
+- Pointer: `docs_agent/evidence/remote-acp-v2.1/ext-g5/G6-SUMMARY.json`
+- Result: `overall=PASS`, `pin=2.1.0`, `extG5=mapped`, `productionGate=unpassed`
+- Required cases PASS: `A-SMC-2101`…`2106`, `A-MIG-2101`, `A-MIG-2102`, `A-G5-ALL`
+- Local isolation surrogates PASS: `Local Chat regression`, `A-ROUTE-LOCAL-001`, `A-SMC-004`（无独立 `A-SMC-2107` 键）
+- Desktop production claim: **FORBIDDEN** until Production Gate PRD PASS
+- Production Gate PRD (`APPROVED_FOR_PLAN`, grilling locked): `docs_agent/PRD-NODESKCLAW-Remote-ACP-Desktop-Production-Gate-v2.1.md`（evidence-only；契约树不 flip）
+- Production Gate tools: `tools/acceptance/check_remote_acp_v21_discovery_drift.py`、`validate_pg_summary.py`、`build_pg_summary_from_g7.py`
+- Production Gate ops: `docs_agent/evidence/remote-acp-v2.1/production-gate/RUNBOOK.md` + `OPS-STATUS.json`（live 待凭证）
+- Tracking PRD: `docs_agent/PRD-NODESKCLAW-SMC-Copilot-Remote-ACP-Consumer-EXT-G5-v2.1.md`
 
 ## Deploy train (Provider)
 

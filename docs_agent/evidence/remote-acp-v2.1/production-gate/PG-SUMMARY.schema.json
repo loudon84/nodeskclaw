@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nodeskclaw.local/schemas/remote-acp-v2.1-pg-summary.json",
+  "title": "Remote ACP Desktop Production Gate SUMMARY",
+  "type": "object",
+  "required": [
+    "envId",
+    "k8sContext",
+    "namespace",
+    "pin",
+    "g7CommitSha",
+    "g7SourceSha256",
+    "cases",
+    "productionGate",
+    "claimAuthorized"
+  ],
+  "properties": {
+    "envId": { "type": "string" },
+    "k8sContext": { "type": "string" },
+    "namespace": { "type": "string" },
+    "pin": { "const": "2.1.0" },
+    "g7CommitSha": { "type": "string", "minLength": 7 },
+    "g7SourceSha256": { "type": "string", "minLength": 64, "maxLength": 64 },
+    "cases": {
+      "type": "object",
+      "additionalProperties": { "enum": ["PASS", "FAIL", "BLOCKED", "SKIPPED"] }
+    },
+    "productionGate": { "enum": ["passed", "unpassed"] },
+    "claimAuthorized": { "type": "boolean" },
+    "passedAt": { "type": ["string", "null"] },
+    "expiresAt": { "type": ["string", "null"] },
+    "obsJoin": {
+      "type": "object",
+      "properties": {
+        "traceId": { "type": "string" },
+        "operationId": { "type": "string" },
+        "backendLogPointer": { "type": "string" },
+        "agentLogPointer": { "type": "string" },
+        "smcEvidencePointer": { "type": "string" }
+      }
+    },
+    "desktopVersion": { "type": "string" },
+    "desktopCommit": { "type": "string" },
+    "engineeringSignoff": { "type": "string" },
+    "productSignoff": { "type": "string" },
+    "driftCheck": { "type": "object" }
+  },
+  "additionalProperties": true
+}

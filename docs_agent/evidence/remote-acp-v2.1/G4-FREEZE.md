@@ -10,4 +10,4 @@
 - v2.0.0 aggregate digest unchanged: `22ad68dd1132a073f6df5d2bf9f219b683c73ebb7ea1fa48933c9b92a744ecd5`
 - Verifier: `tools/contracts/verify_remote_expert_frontend_contract_v21.py` → ok / status FROZEN / frontendContractGate=passed
 - Live evidence: `A-NACP-007.json`, `g3-live-latest.json`
-- EXT-G5: still external (SMC Golden)
+- EXT-G5: external SMC Golden **PASS**（`smc-copilot@1d0eb5b2` / `remote-expert-g6.json`；`productionGate=unpassed`；指针 `docs_agent/evidence/remote-acp-v2.1/ext-g5/`）
