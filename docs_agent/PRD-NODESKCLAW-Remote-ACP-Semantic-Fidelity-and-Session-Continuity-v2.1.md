@@ -326,6 +326,7 @@ Rules:
 
 - `rawInput` MUST 只来自 Event SoT `tool.call.arguments`。
 - terminal `tool.call` 没有 arguments 时 `rawInput` MAY 省略；MUST NOT 回填历史 raw secret。
+- Runtime 限制（Hermes v0.21.0 `/v1/runs`）：SSE `tool.started` 只提供 `preview` 摘要字符串，`tool.completed` 不含结果。Agent MUST 把脱敏、截断后的 `preview` 写入 SoT `arguments.preview`，因此 `rawInput` 为参数摘要而非完整参数；该 transport 上 `tool_call_update.content` / `structuredContent` 恒为空。完整参数与结果需 Runtime 侧补齐（另立项）。
 - SoT `started` MUST 映射为 ACP `in_progress`；`completed`/`failed` 原样；MUST NOT 输出 `pending`。
 - `redacted/truncated` MUST 原样继承安全投影。
 - `seq` MUST 等于该 Agent Run 的 `event_seq`，其 scope MUST 在合同中明确为 **Turn/Run scoped**。
