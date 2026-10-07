@@ -1584,3 +1584,121 @@ async def test_execute_hermes_records_runtime_disconnect_on_stream_end():
         counters[item["name"]] = counters.get(item["name"], 0.0) + float(item["value"])
     assert counters.get("runtime_disconnect_total", 0) >= 1
 
+
+@pytest.mark.asyncio
+async def test_acp_continuity_binds_session_id_from_status_when_start_omits_it():
+    persisted: dict = {}
+
+    async def _persist(**kwargs):
+        persisted.update(kwargs)
+        return {
+            "runtime_run_id": kwargs["runtime_run_id"],
+            "generation": kwargs["generation"],
+            "runtime_session_id": kwargs.get("runtime_session_id"),
+            "runtime_capability_snapshot": kwargs.get("runtime_capability_snapshot"),
+            "runtime_idempotency_key": kwargs.get("runtime_idempotency_key"),
+        }
+
+    client = _native_client(
+        start={"run_id": "rr-1", "status": "started", "replayed": False},
+        status=[
+            {
+                "object": "hermes.run",
+                "run_id": "rr-1",
+                "session_id": "sess-from-status",
+                "status": "running",
+            },
+            {
+                "run_id": "rr-1",
+                "session_id": "sess-from-status",
+                "status": "completed",
+                "output": "ok",
+            },
+        ],
+    )
+    with (
+        patch("app.services.hermes_engine.persist_native_binding", _persist),
+        patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client),
+    ):
+        events = [
+            event
+            async for event in execute_hermes_run(
+                tool_name="foo",
+                arguments={"prompt": "hi"},
+                route_snapshot={
+                    "gateway_url": "http://hermes:8642",
+                    "session_continuity_required": True,
+                },
+                run_id="run-bind-status",
+                attempt_id="att-bind-status",
+            )
+        ]
+    assert events[-1]["event_type"] == "run.completed"
+    assert persisted.get("runtime_session_id") == "sess-from-status"
+    assert not any(
+        e["event_type"] == "run.failed"
+        and e.get("payload", {}).get("error_code") == "ACP_RUNTIME_SESSION_BINDING_MISSING"
+        for e in events
+    )
+
+
+@pytest.mark.asyncio
+async def test_acp_continuity_binding_missing_when_status_also_omits_session_id():
+    client = _native_client(
+        start={"run_id": "rr-1", "status": "started", "replayed": False},
+        status={"run_id": "rr-1", "status": "running"},
+    )
+    with patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client):
+        events = [
+            event
+            async for event in execute_hermes_run(
+                tool_name="foo",
+                arguments={"prompt": "hi"},
+                route_snapshot={
+                    "gateway_url": "http://hermes:8642",
+                    "session_continuity_required": True,
+                },
+                run_id="run-bind-missing",
+                attempt_id="att-bind-missing",
+            )
+        ]
+    assert events[-1]["event_type"] == "run.failed"
+    assert events[-1]["payload"]["error_code"] == "ACP_RUNTIME_SESSION_BINDING_MISSING"
+    assert any(str(c.args[0]).endswith("/stop") for c in client.post.await_args_list)
+
+
+@pytest.mark.asyncio
+async def test_http_path_without_continuity_still_allows_missing_session_id():
+    persisted: dict = {}
+
+    async def _persist(**kwargs):
+        persisted.update(kwargs)
+        return {
+            "runtime_run_id": kwargs["runtime_run_id"],
+            "generation": kwargs["generation"],
+            "runtime_session_id": kwargs.get("runtime_session_id"),
+            "runtime_capability_snapshot": kwargs.get("runtime_capability_snapshot"),
+            "runtime_idempotency_key": kwargs.get("runtime_idempotency_key"),
+        }
+
+    client = _native_client(
+        start={"run_id": "rr-1", "status": "started", "replayed": False},
+        status={"run_id": "rr-1", "status": "completed", "output": "ok"},
+    )
+    with (
+        patch("app.services.hermes_engine.persist_native_binding", _persist),
+        patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client),
+    ):
+        events = [
+            event
+            async for event in execute_hermes_run(
+                tool_name="foo",
+                arguments={"prompt": "hi"},
+                route_snapshot={"gateway_url": "http://hermes:8642"},
+                run_id="run-http-no-sess",
+                attempt_id="att-http-no-sess",
+            )
+        ]
+    assert events[-1]["event_type"] == "run.completed"
+    assert persisted.get("runtime_session_id") in (None, "")
+

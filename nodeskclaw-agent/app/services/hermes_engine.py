@@ -1244,6 +1244,20 @@ async def execute_hermes_run(
             )
             continuity_required = bool(route_snapshot.get("session_continuity_required"))
             if continuity_required and not str(runtime_session_id or "").strip():
+                _status_name, status_data, _status_err = await _reconcile_status(
+                    client,
+                    gateway_url=gateway_url,
+                    runtime_run_id=str(runtime_run_id),
+                    headers=auth_headers,
+                )
+                if isinstance(status_data, dict):
+                    status_nested = (
+                        status_data.get("data") if isinstance(status_data.get("data"), dict) else {}
+                    )
+                    runtime_session_id = status_data.get("session_id") or status_nested.get(
+                        "session_id"
+                    )
+            if continuity_required and not str(runtime_session_id or "").strip():
                 record_metric(
                     "runtime_start_seconds",
                     labels={"outcome": "binding_missing"},
@@ -1263,7 +1277,7 @@ async def execute_hermes_run(
                 )
                 yield _failed(
                     "ACP_RUNTIME_SESSION_BINDING_MISSING",
-                    "Hermes start response omitted runtime session id",
+                    "Hermes run omitted runtime session id",
                 )
                 return
 
