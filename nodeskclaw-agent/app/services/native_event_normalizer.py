@@ -94,6 +94,23 @@ _SENSITIVE_QUERY = frozenset(
 _ABS_UNIX_RE = re.compile(r"^/(?:home|Users|root|var|opt|tmp|etc|usr|mnt|data)(?:/|$)")
 _ABS_WIN_RE = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\)")
 _ARGUMENT_KEYS = ("arguments", "input", "params", "args")
+MAX_TOOL_PREVIEW_UTF8_BYTES = 512
+_PREVIEW_BEARER_RE = re.compile(r"(?i)\bbearer\s+[^\s'\"]+")
+_PREVIEW_KEY_VALUE_RE = re.compile(
+    r"(?i)((?:authorization|cookie|api[_-]?key|token|password|passwd|secret|private[_-]?key|"
+    r"credential|access[_-]?key|refresh[_-]?token|signature)[\w-]*\s*[:=]\s*)"
+    r"(\"[^\"]*\"|'[^']*'|[^\s'\"&]+)"
+)
+_PREVIEW_TOKEN_RE = re.compile(
+    r"\b(?:sk-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9]{16,}|xox[abprs]-[A-Za-z0-9-]{8,}|"
+    r"AKIA[0-9A-Z]{16}|[A-Za-z0-9_\-]{40,})\b"
+)
+_PREVIEW_URL_RE = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://[^\s'\"]+")
+_PREVIEW_ABS_PATH_RE = re.compile(
+    r"(?<![\w:/.])(?:/(?:home|Users|root|var|opt|tmp|etc|usr|mnt|data)(?:/[^\s'\"]*)?"
+    r"|[A-Za-z]:[\\/][^\s'\"]*)"
+)
+_REDACTED = "[REDACTED]"
 
 
 @dataclass
@@ -155,6 +172,27 @@ def _sanitize_string(value: str, flags: _SanitizeFlags) -> str:
         flags.redacted = True
         return _safe_basename(value)
     return value
+
+
+def _sanitize_preview(value: str, flags: _SanitizeFlags) -> str:
+    text = value
+
+    def _mark(new: str) -> None:
+        nonlocal text
+        if new != text:
+            flags.redacted = True
+            text = new
+
+    _mark(_PREVIEW_BEARER_RE.sub(_REDACTED, text))
+    _mark(_PREVIEW_KEY_VALUE_RE.sub(lambda m: m.group(1) + _REDACTED, text))
+    _mark(_PREVIEW_URL_RE.sub(lambda m: _strip_sensitive_query(m.group(0), flags), text))
+    _mark(_PREVIEW_TOKEN_RE.sub(_REDACTED, text))
+    _mark(_PREVIEW_ABS_PATH_RE.sub(lambda m: _safe_basename(m.group(0)), text))
+    encoded = text.encode("utf-8")
+    if len(encoded) > MAX_TOOL_PREVIEW_UTF8_BYTES:
+        flags.truncated = True
+        text = encoded[:MAX_TOOL_PREVIEW_UTF8_BYTES].decode("utf-8", errors="ignore")
+    return text
 
 
 def _json_depth(value: Any, depth: int = 1) -> int:
@@ -606,8 +644,11 @@ class NativeEventNormalizer:
     def _started_tool_payload(self, tool_name: str, call_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         flags = _SanitizeFlags()
         raw_arguments = _extract_structured_arguments(payload)
-        if raw_arguments is None:
-            arguments: dict[str, Any] | None = None
+        preview = payload.get("preview")
+        if raw_arguments is None and isinstance(preview, str) and preview.strip():
+            arguments: dict[str, Any] | None = {"preview": _sanitize_preview(preview.strip(), flags)}
+        elif raw_arguments is None:
+            arguments = None
         else:
             cleaned = _sanitize_node(raw_arguments, depth=2, flags=flags)
             arguments = cleaned if isinstance(cleaned, dict) else None

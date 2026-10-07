@@ -134,6 +134,63 @@ def test_truncate_oversize_payload_sets_truncated_and_size_limit():
     assert validate_semantic_event_payload("tool.call", payload) is None
 
 
+def test_hermes_runs_preview_projects_as_sanitized_arguments():
+    n = _norm("att-preview")
+    started = n.ingest({"event": "tool.started", "tool": "terminal", "preview": "ls -la /data/hermes/workspace"})
+    payload = started[0]["payload"]
+    assert payload["arguments"] == {"preview": "ls -la workspace"}
+    assert "preview" not in payload
+    assert payload["redacted"] is True
+    assert validate_semantic_event_payload("tool.call", payload) is None
+
+    plain = _norm("att-plain").ingest({"event": "tool.started", "tool": "search_files", "preview": "*"})
+    assert plain[0]["payload"]["arguments"] == {"preview": "*"}
+    assert plain[0]["payload"]["redacted"] is False
+
+
+def test_hermes_runs_preview_masks_secrets():
+    preview = (
+        "curl -H 'Authorization: Bearer abc.def.ghi' "
+        "https://example.com/api?token=xyz&q=ok --api-key sk-live1234567890 PASSWORD=hunter2"
+    )
+    started = _norm("att-secret").ingest({"event": "tool.started", "tool": "terminal", "preview": preview})
+    payload = started[0]["payload"]
+    text = payload["arguments"]["preview"]
+    for leaked in ("abc.def.ghi", "token=xyz", "sk-live1234567890", "hunter2"):
+        assert leaked not in text
+    assert "q=ok" in text
+    assert payload["redacted"] is True
+
+
+def test_hermes_runs_preview_truncated_and_structured_arguments_win():
+    from app.services.native_event_normalizer import MAX_TOOL_PREVIEW_UTF8_BYTES
+
+    long_preview = "echo " + "a b " * 400
+    started = _norm("att-long").ingest({"event": "tool.started", "tool": "terminal", "preview": long_preview})
+    payload = started[0]["payload"]
+    assert len(payload["arguments"]["preview"].encode("utf-8")) <= MAX_TOOL_PREVIEW_UTF8_BYTES
+    assert payload["truncated"] is True
+
+    both = _norm("att-both").ingest(
+        {"type": "tool.started", "tool": "search", "call_id": "c-1", "arguments": {"q": "keep"}, "preview": "keep"}
+    )
+    assert both[0]["payload"]["arguments"] == {"q": "keep"}
+
+
+def test_hermes_runs_preview_reaches_acp_raw_input():
+    from app.acp_gateway.event_mapping import map_event
+
+    started = _norm("att-acp").ingest({"event": "tool.started", "tool": "terminal", "preview": "pwd"})
+    sot = started[0]
+    updates, _stop, _perm = map_event(
+        {"event_type": sot["event_type"], "payload": sot["payload"], "run_id": "r-1", "event_seq": 1},
+        agent_ref="marketing",
+    )
+    assert updates[0]["sessionUpdate"] == "tool_call"
+    assert updates[0]["rawInput"] == {"preview": "pwd"}
+    assert updates[0]["status"] == "in_progress"
+
+
 def test_depth_over_limit_sets_truncated():
     n = _norm()
     nested: dict = {"leaf": "ok"}
