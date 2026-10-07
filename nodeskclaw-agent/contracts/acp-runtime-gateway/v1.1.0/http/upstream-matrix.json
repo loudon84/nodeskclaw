@@ -1,0 +1,13 @@
+{
+  "runContext": {
+    "method": "POST",
+    "path": "/api/v1/internal/remote-acp/run-context",
+    "headers": [
+      "X-Skill-Agent-Token",
+      "X-NodeSkClaw-Execution-Capability",
+      "X-Trace-Id"
+    ],
+    "sideEffects": "generated_only",
+    "forbidden": ["HermesTask", "RunDispatchOutbox"]
+  }
+}

@@ -1242,6 +1242,30 @@ async def execute_hermes_run(
                 or nested.get("profile")
                 or route_snapshot.get("agent_profile")
             )
+            continuity_required = bool(route_snapshot.get("session_continuity_required"))
+            if continuity_required and not str(runtime_session_id or "").strip():
+                record_metric(
+                    "runtime_start_seconds",
+                    labels={"outcome": "binding_missing"},
+                    observe_seconds=time.monotonic() - start_began,
+                )
+                record_metric(
+                    "remote_acp_session_continuity_total",
+                    labels={"outcome": "binding_missing"},
+                )
+                await _stop_runtime(
+                    client,
+                    gateway_url=gateway_url,
+                    runtime_run_id=str(runtime_run_id),
+                    headers=auth_headers,
+                    attempt_id=attempt_id,
+                    generation=generation,
+                )
+                yield _failed(
+                    "ACP_RUNTIME_SESSION_BINDING_MISSING",
+                    "Hermes start response omitted runtime session id",
+                )
+                return
 
             events_url = f"{gateway_url}/v1/runs/{runtime_run_id}/events"
             saw_approval = False

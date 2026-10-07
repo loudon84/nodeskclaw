@@ -87,6 +87,9 @@ METRIC_DEFINITIONS: dict[str, dict[str, Any]] = {
     "runtime_disconnect_total": {"type": "counter", "unit": "1", "labels": ["outcome"]},
     "runtime_reconcile_total": {"type": "counter", "unit": "1", "labels": ["outcome"]},
     "runtime_interrupted_total": {"type": "counter", "unit": "1", "labels": ["outcome"]},
+    "remote_acp_reconciliation_total": {"type": "counter", "unit": "1", "labels": ["outcome"]},
+    "remote_acp_session_continuity_total": {"type": "counter", "unit": "1", "labels": ["outcome"]},
+    "remote_acp_projection_total": {"type": "counter", "unit": "1", "labels": ["kind", "outcome"]},
 }
 
 _current_trace: ContextVar[ExecutionTrace | None] = ContextVar("execution_trace", default=None)

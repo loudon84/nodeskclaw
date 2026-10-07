@@ -1,0 +1,27 @@
+{
+  "$id": "acp-runtime-gateway.capability.payload.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "v",
+    "jti",
+    "org_id",
+    "user_id",
+    "agent_ref",
+    "context_version",
+    "issued_at",
+    "expires_at",
+    "trace_id"
+  ],
+  "properties": {
+    "v": {"const": 1},
+    "jti": {"type": "string", "minLength": 1},
+    "org_id": {"type": "string", "minLength": 1},
+    "user_id": {"type": "string", "minLength": 1},
+    "agent_ref": {"type": "string", "minLength": 1},
+    "context_version": {"type": "integer", "minimum": 1},
+    "issued_at": {"type": "integer"},
+    "expires_at": {"type": "integer"},
+    "trace_id": {"type": "string", "minLength": 1}
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "frontendContractVersion": "2.1.0",
+  "frontendContractDigest": "0000000000000000000000000000000000000000000000000000000000000000",
+  "catalogContractVersion": "1.1.0",
+  "catalogContractDigest": "0000000000000000000000000000000000000000000000000000000000000000",
+  "remoteAcpContractVersion": "1.1.0",
+  "remoteAcpContractDigest": "0000000000000000000000000000000000000000000000000000000000000000",
+  "acpProtocolVersion": 1,
+  "transportProfile": "nodeskclaw.remote-acp.v1"
+}

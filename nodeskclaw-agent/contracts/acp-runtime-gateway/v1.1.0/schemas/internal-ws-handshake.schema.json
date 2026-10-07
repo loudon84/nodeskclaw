@@ -1,0 +1,26 @@
+{
+  "$id": "acp-runtime-gateway.internal-ws-handshake.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["method", "path", "upgrade", "subprotocol", "headers"],
+  "properties": {
+    "method": {"const": "GET"},
+    "path": {"const": "/internal/v1/acp"},
+    "upgrade": {"const": "websocket"},
+    "subprotocol": {"const": "nodeskclaw.acp-runtime.v1"},
+    "headers": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "X-Skill-Agent-Token",
+        "X-NodeSkClaw-Execution-Capability",
+        "X-Trace-Id"
+      ],
+      "properties": {
+        "X-Skill-Agent-Token": {"type": "string", "minLength": 1},
+        "X-NodeSkClaw-Execution-Capability": {"type": "string", "minLength": 1},
+        "X-Trace-Id": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

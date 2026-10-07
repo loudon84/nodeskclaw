@@ -1,0 +1,27 @@
+{
+  "repository": "loudon84/smc-copilot",
+  "branchBaseline": "work/prd-v6.3",
+  "integrationMode": "remote-acp-wss",
+  "forbiddenDependencies": [
+    "WORK-EXPERT-CONTRACT",
+    "ExpertProjectionStore",
+    "expert.start",
+    "skillName",
+    "SkillRunStore",
+    "nodeskclaw-acp.exe",
+    "acpAdapter",
+    "remoteAgent",
+    "acpRuntimeGateway"
+  ],
+  "requiredCapabilities": [
+    "remote-expert-catalog",
+    "remote-acp-gateway",
+    "session-resume",
+    "attachment-resource-link",
+    "artifact-resource-link",
+    "permission-bridge",
+    "assistant-reconciliation",
+    "rich-tool-projection",
+    "session-continuity-fail-closed"
+  ]
+}

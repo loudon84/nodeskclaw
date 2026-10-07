@@ -1,0 +1,21 @@
+{
+  "$id": "acp-runtime-gateway.run-context.request.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["org_id", "user_id", "agent_ref", "session_id"],
+  "properties": {
+    "org_id": {"type": "string"},
+    "user_id": {"type": "string"},
+    "agent_ref": {"type": "string"},
+    "session_id": {"type": "string"},
+    "attachment_refs": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "knowledge_refs": {
+      "type": "array",
+      "items": {}
+    },
+    "prompt_digest": {"type": "string"}
+  }
+}

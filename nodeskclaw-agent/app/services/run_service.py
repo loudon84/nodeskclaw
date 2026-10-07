@@ -282,6 +282,52 @@ async def _remote_agent_session_is_busy(
     return row is not None
 
 
+async def _remote_acp_continuity_binding(
+    db: AsyncSession,
+    *,
+    run_session_id: str,
+    org_id: str,
+    user_id: str,
+    run_id: str,
+) -> dict[str, Any]:
+    rows = (
+        await db.execute(
+            text(
+                f"""
+                SELECT r.id AS run_id,
+                       a.runtime_session_id AS runtime_session_id,
+                       a.runtime_run_id AS runtime_run_id,
+                       r.created_at AS run_created_at,
+                       a.created_at AS attempt_created_at
+                FROM "{SCHEMA}".runs r
+                LEFT JOIN "{SCHEMA}".run_attempts a ON a.run_id = r.id
+                WHERE r.run_session_id = :run_session_id
+                  AND r.org_id = :org_id
+                  AND r.user_id = :user_id
+                  AND r.id <> :run_id
+                ORDER BY r.created_at DESC, a.created_at DESC NULLS LAST
+                """
+            ),
+            {
+                "run_session_id": run_session_id,
+                "org_id": org_id,
+                "user_id": user_id,
+                "run_id": run_id,
+            },
+        )
+    ).mappings().all()
+    binding: str | None = None
+    ever_started = False
+    for row in rows:
+        runtime_run_id = str(row.get("runtime_run_id") or "").strip()
+        if runtime_run_id:
+            ever_started = True
+        runtime_session_id = str(row.get("runtime_session_id") or "").strip()
+        if binding is None and runtime_session_id:
+            binding = runtime_session_id
+    return {"binding": binding, "ever_started": ever_started}
+
+
 async def _copy_remote_agent_continuation(
     db: AsyncSession,
     request: CreateRunRequest,
@@ -291,6 +337,37 @@ async def _copy_remote_agent_continuation(
 ) -> CreateRunRequest:
     if request.tool_name != REMOTE_AGENT_TOOL_NAME or not request.run_session_id:
         return request
+    route = dict(request.route_snapshot or {})
+    continuity_required = bool(route.get("session_continuity_required"))
+    if continuity_required:
+        resolved = await _remote_acp_continuity_binding(
+            db,
+            run_session_id=request.run_session_id,
+            org_id=org_id,
+            user_id=user_id,
+            run_id=request.run_id or "",
+        )
+        binding = resolved.get("binding")
+        ever_started = bool(resolved.get("ever_started"))
+        if binding:
+            route["session_id"] = binding
+            record_metric(
+                "remote_acp_session_continuity_total",
+                labels={"outcome": "continued"},
+            )
+            return request.model_copy(update={"route_snapshot": route})
+        if ever_started:
+            record_metric(
+                "remote_acp_session_continuity_total",
+                labels={"outcome": "lost"},
+            )
+            raise ValueError("ACP_RUNTIME_SESSION_CONTINUITY_LOST")
+        record_metric(
+            "remote_acp_session_continuity_total",
+            labels={"outcome": "first_turn"},
+        )
+        return request
+
     latest_id = await _latest_remote_agent_run_id(
         db,
         run_session_id=request.run_session_id,
@@ -303,7 +380,6 @@ async def _copy_remote_agent_continuation(
     runtime_session_id = await _runtime_session_id_for_run(db, latest_id)
     if not runtime_session_id:
         return request
-    route = dict(request.route_snapshot or {})
     route["session_id"] = runtime_session_id
     return request.model_copy(update={"route_snapshot": route})
 

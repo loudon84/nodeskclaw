@@ -102,6 +102,7 @@ async def create_or_replay_prompt_run(
     )
     route_snapshot = dict(context.get("route_snapshot") or {})
     route_snapshot.setdefault("expert_slug", claims["agent_ref"])
+    route_snapshot["session_continuity_required"] = True
     run_id = str(uuid.uuid4())
     request = CreateRunRequest(
         run_id=run_id,
@@ -128,6 +129,11 @@ async def create_or_replay_prompt_run(
         )
     except ValueError as exc:
         text = str(exc)
+        if "ACP_RUNTIME_SESSION_CONTINUITY_LOST" in text:
+            raise AcpGatewayError(
+                "ACP_RUNTIME_SESSION_CONTINUITY_LOST",
+                "prior runtime session binding missing",
+            ) from exc
         if "BUSY" in text:
             raise AcpGatewayError("ACP_SESSION_BUSY", "session has an active run") from exc
         if "mismatch" in text or "cross-org" in text:

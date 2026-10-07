@@ -1,0 +1,38 @@
+{
+  "$id": "acp-runtime-gateway.session-update.v1",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["sessionUpdate", "seq"],
+  "properties": {
+    "sessionUpdate": {
+      "type": "string",
+      "enum": [
+        "agent_message_chunk",
+        "agent_thought_chunk",
+        "tool_call",
+        "tool_call_update"
+      ]
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Turn/Run scoped Agent event_seq. Resets for each new session/prompt Turn."
+    },
+    "content": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "toolCallId": {"type": "string"},
+    "title": {"type": "string"},
+    "status": {
+      "type": "string",
+      "enum": ["in_progress", "completed", "failed"]
+    },
+    "rawInput": {"type": "object"},
+    "structuredContent": {},
+    "errorCode": {"type": "string"},
+    "errorMessage": {"type": "string"},
+    "redacted": {"type": "boolean"},
+    "truncated": {"type": "boolean"}
+  }
+}

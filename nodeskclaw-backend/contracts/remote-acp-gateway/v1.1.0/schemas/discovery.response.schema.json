@@ -1,0 +1,25 @@
+{
+  "$id": "remote-acp-gateway.discovery.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "frontendContractVersion",
+    "frontendContractDigest",
+    "catalogContractVersion",
+    "catalogContractDigest",
+    "remoteAcpContractVersion",
+    "remoteAcpContractDigest",
+    "acpProtocolVersion",
+    "transportProfile"
+  ],
+  "properties": {
+    "frontendContractVersion": {"const": "2.0.0"},
+    "frontendContractDigest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "catalogContractVersion": {"const": "1.1.0"},
+    "catalogContractDigest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "remoteAcpContractVersion": {"const": "1.0.0"},
+    "remoteAcpContractDigest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "acpProtocolVersion": {"const": 1},
+    "transportProfile": {"const": "nodeskclaw.remote-acp.v1"}
+  }
+}

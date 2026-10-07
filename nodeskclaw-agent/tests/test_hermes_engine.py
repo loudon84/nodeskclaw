@@ -545,8 +545,13 @@ async def test_execute_hermes_maps_structured_semantic_fields_only():
     assert "approval.requested" in types
     assert "artifact.persisted" not in types
     tool_evt = next(e for e in events if e["event_type"] == "tool.call")
-    assert tool_evt["payload"] == {"tool_name": "search", "call_id": "call-1", "status": "started"}
-    assert "arguments" not in tool_evt["payload"]
+    assert tool_evt["payload"]["tool_name"] == "search"
+    assert tool_evt["payload"]["call_id"] == "call-1"
+    assert tool_evt["payload"]["status"] == "started"
+    assert tool_evt["payload"]["arguments"] == {"q": "secret"}
+    assert tool_evt["payload"]["redacted"] is False
+    assert tool_evt["payload"]["truncated"] is False
+    assert "runtime_run_id" not in tool_evt["payload"]
     progress_payloads = [e["payload"] for e in events if e["event_type"] == "run.progress"]
     assert all("delta" not in p for p in progress_payloads)
     assert all("runtime_run_id" not in (e.get("payload") or {}) for e in events)

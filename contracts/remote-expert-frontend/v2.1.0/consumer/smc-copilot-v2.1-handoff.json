@@ -1,0 +1,58 @@
+{
+  "repository": "loudon84/smc-copilot",
+  "branchBaseline": "work/prd-v6.3",
+  "integrationMode": "remote-acp-wss",
+  "requiredPin": {
+    "frontendContractVersion": "2.1.0",
+    "note": "Additive wire fields do not exempt pin changes. Discovery exact-match fail-closed remains."
+  },
+  "seqScope": "Turn/Run scoped. New Prompt after terminal must use after_seq=0. Dedupe key is (turn identity, seq).",
+  "errorCatalog": [
+    "ACP_STREAM_RECONCILIATION_MISMATCH",
+    "ACP_RUNTIME_SESSION_BINDING_MISSING",
+    "ACP_RUNTIME_SESSION_CONTINUITY_LOST",
+    "ACP_REMOTE_RUN_FAILED"
+  ],
+  "continuity": {
+    "sameFormalSessionReusesHermesRuntimeSession": true,
+    "neverBoundAllowsFirstTurnRetry": true,
+    "onceBoundThenMissing": "ACP_RUNTIME_SESSION_CONTINUITY_LOST",
+    "firstTurnMissingSessionId": "ACP_RUNTIME_SESSION_BINDING_MISSING"
+  },
+  "terminal": {
+    "failedRunsAreJsonRpcErrors": true,
+    "clarifyRequestedIsUniqueEndTurn": true,
+    "exactlyOneReplyPerAcceptedPrompt": true
+  },
+  "assistant": {
+    "snapshotIsReconciliationNotSecondAppend": true
+  },
+  "tools": {
+    "richSafeDetails": true,
+    "statusStartedMapsToInProgress": true,
+    "pendingForbidden": true
+  },
+  "forbiddenDependencies": [
+    "WORK-EXPERT-CONTRACT",
+    "ExpertProjectionStore",
+    "expert.start",
+    "skillName",
+    "SkillRunStore",
+    "nodeskclaw-acp.exe",
+    "acpAdapter",
+    "remoteAgent",
+    "acpRuntimeGateway"
+  ],
+  "requiredCapabilities": [
+    "remote-expert-catalog",
+    "remote-acp-gateway",
+    "session-resume",
+    "attachment-resource-link",
+    "artifact-resource-link",
+    "permission-bridge",
+    "assistant-reconciliation",
+    "rich-tool-projection",
+    "session-continuity-fail-closed"
+  ],
+  "extG5": "SMC Golden Consumer remains an external gate; Provider READY is G1-G4 only."
+}

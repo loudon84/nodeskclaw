@@ -1,0 +1,31 @@
+{
+  "contractName": "REMOTE-EXPERT-FRONTEND-CONTRACT",
+  "contractVersion": "2.1.0",
+  "bundleFormatVersion": "1",
+  "providerRepository": "loudon84/nodeskclaw",
+  "consumer": "loudon84/smc-copilot/apps/work",
+  "consumerBranchBaseline": "work/prd-v6.3",
+  "implementationCommit": "PENDING_IMPLEMENTATION",
+  "components": {
+    "remoteExpertCatalog": {
+      "version": "1.1.0",
+      "consumerDigest": "d51d27a33e6776be780bf3556ffa4ef4f6dab7f731c0a48421683708364efd2c"
+    },
+    "remoteAcpGateway": {
+      "version": "1.1.0",
+      "consumerDigest": "01e784a6402ce5664b09d3cc323b89a9b644befc27de1a3d06979a5aee375641"
+    }
+  },
+  "acpProtocolVersion": 1,
+  "transportProfile": "nodeskclaw.remote-acp.v1",
+  "productionGate": "unpassed",
+  "frontendContractGate": "pending",
+  "status": "VERIFIED",
+  "bundleDigest": "bc8c5ae3b69ec8ba6f1c85f0b81392a29b21dcb2836507c9f98884bd43c5d735",
+  "artifacts": {
+    "RELEASE.md": "ae3493366b62593492bff7a2dc0095cdf311174b6dc92a4b3625758c89065167",
+    "component-pins.json": "ebf4abfd5c99e92c8434aa50024ef5e254a9df82d220a098c8b788669175223a",
+    "consumer/smc-copilot-v2.1-handoff.json": "e0a5e883034d54ed941a0fc808b0b8c2056b0d320a974f0c41bb67c8e50a91f7",
+    "consumer/smc-copilot-v6.3.json": "ed772c07ada8d873e56b35b509321d7ea3b0758a8ae18be82cda96da761a0cb9"
+  }
+}

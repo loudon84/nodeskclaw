@@ -475,3 +475,11 @@ Backend 是 Public ACP Ingress，Agent 是 ACP Runtime Gateway 与 Run SOT。SMC
 - **已实现**：Agent 内部网关 [[nodeskclaw-agent/app/api/internal_acp.py#internal_acp_gateway]]、会话 [[nodeskclaw-agent/app/acp_gateway/session.py#create_session]]、prompt 幂等 [[nodeskclaw-agent/app/acp_gateway/prompt.py#create_or_replay_prompt_run]]。`session/new` 与 `create_run` 在泵事件前 `commit`，Worker 才能认领 QUEUED；`session/prompt` 在独立 task 中运行以便收取 `session/cancel`。
 - **合同**：catalog `v1.1.0`、`remote-acp-gateway/v1.0.0`、internal `acp-runtime-gateway/v1.0.0`、aggregate `contracts/remote-expert-frontend/v2.0.0/`。校验 [[tools/contracts/verify_remote_expert_frontend_contract_v2.py#verify]]。G4 live [[tools/acceptance/run_remote_acp_v2_live.py#main]] 缺环境非 0。`frontendContractGate` 默认 pending，`productionGate` 保持 unpassed。
 
+## Remote ACP v2.1 Fidelity
+
+在 v2 Provider 之上补齐 Assistant 对账、富工具投影、Turn 作用域 seq、Hermes 会话连续性 fail-closed，以及失败 Prompt 的 JSON-RPC error 终态。
+
+- **已实现**：Assistant 对账 [[nodeskclaw-agent/app/acp_gateway/assistant_reconciler.py#AssistantReconciler]]；投影 [[nodeskclaw-agent/app/acp_gateway/event_mapping.py#map_event]]；泵事件 [[nodeskclaw-agent/app/acp_gateway/event_pump.py#pump_run_events]]。
+- **已实现**：Remote ACP 连续性标记由 [[nodeskclaw-agent/app/acp_gateway/prompt.py#create_or_replay_prompt_run]] 写入；绑定解析 [[nodeskclaw-agent/app/services/run_service.py#_remote_acp_continuity_binding]]；首轮缺 `session_id` 在 [[nodeskclaw-agent/app/services/hermes_engine.py]] 失败关闭。HTTP Remote Agent 路径不收紧。
+- **合同**：`remote-acp-gateway/v1.1.0`、`acp-runtime-gateway/v1.1.0`、aggregate `contracts/remote-expert-frontend/v2.1.0/`。校验 [[tools/contracts/verify_remote_expert_frontend_contract_v21.py#verify]]。Live [[tools/acceptance/run_remote_acp_v21_live.py#main]]。Provider READY 为 G1-G4；EXT-G5 SMC Golden 在 Consumer 仓关门。Gene / Skill 模板不涉及 ACP 投影层，无需更新。
+

@@ -247,6 +247,23 @@ Gene/Skill 安装到实例的标准流程：
 ## 常用命令
 
 ```bash
+## Agent Remote ACP Runtime Gateway（v2 / v2.1）
+
+Agent 侧 ACP 投影与 Hermes 连续性不在 `nodeskclaw-backend/app/services/runtime/`，而在：
+
+| 路径 | 用途 |
+|------|------|
+| `nodeskclaw-agent/app/acp_gateway/` | JSON-RPC 会话、prompt、事件泵、对账、权限 |
+| `nodeskclaw-agent/app/acp_gateway/assistant_reconciler.py` | Assistant snapshot 对账（v2.1） |
+| `nodeskclaw-agent/app/acp_gateway/event_mapping.py` | Event SoT → session/update |
+| `nodeskclaw-agent/app/services/run_service.py` | `_remote_acp_continuity_binding` / continuation |
+| `nodeskclaw-agent/app/services/hermes_engine.py` | Hermes start + binding_missing fail-closed |
+| `nodeskclaw-backend/app/api/remote_acp_ws.py` | Public WSS Ingress |
+| `contracts/remote-expert-frontend/v2.1.0/` | Consumer aggregate pin（v2.1） |
+| `tools/acceptance/run_remote_acp_v21_live.py` | Provider Live G3 |
+
+Gene / Skill 模板不承载 ACP 投影语义，v2.1 无需更新 gene_templates。
+
 # 后端测试（Runtime 相关测试在后端）
 cd nodeskclaw-backend && uv run pytest
 

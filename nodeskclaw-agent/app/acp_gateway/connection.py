@@ -86,6 +86,16 @@ class AcpConnection:
             result = await self._session_prompt(request_id, params)
             await self.send(result_frame(request_id, result))
         except AcpGatewayError as exc:
+            if exc.error_code == "ACP_STREAM_RECONCILIATION_MISMATCH":
+                try:
+                    latest = await latest_run_for_session(self.db, str((params or {}).get("sessionId") or ""))
+                    if latest:
+                        await run_service.cancel_run(
+                            self.db, latest["id"], org_id=str(self.claims["org_id"])
+                        )
+                        await self._persist()
+                except Exception:
+                    pass
             await self.send(exc.to_jsonrpc(request_id))
 
     def _initialize(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -104,7 +114,7 @@ class AcpConnection:
             "implementation": {
                 "name": "nodeskclaw-agent",
                 "title": "NodeSkClaw ACP Runtime Gateway",
-                "version": "2.0.0",
+                "version": "2.1.0",
             },
             "authMethods": [],
         }
@@ -171,16 +181,20 @@ class AcpConnection:
             claims=self.claims,
         )
         await self._persist()
-        stop_reason = await pump_run_events(
-            self.db,
-            run_id=created["run_id"],
-            session_id=session_id,
-            agent_ref=str(self.claims["agent_ref"]),
-            org_id=str(self.claims["org_id"]),
-            after_seq=self.after_seq,
-            send=self.send,
-            cancel_event=self.cancel_event,
-        )
+        after_seq = self.after_seq if created.get("replay") else 0
+        try:
+            stop_reason = await pump_run_events(
+                self.db,
+                run_id=created["run_id"],
+                session_id=session_id,
+                agent_ref=str(self.claims["agent_ref"]),
+                org_id=str(self.claims["org_id"]),
+                after_seq=after_seq,
+                send=self.send,
+                cancel_event=self.cancel_event,
+            )
+        finally:
+            self.after_seq = 0
         return {"stopReason": stop_reason}
 
     async def _session_cancel(self, params: dict[str, Any]) -> None:

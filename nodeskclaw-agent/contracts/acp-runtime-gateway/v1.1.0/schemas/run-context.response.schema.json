@@ -1,0 +1,11 @@
+{
+  "$id": "acp-runtime-gateway.run-context.response.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["route_snapshot", "execution_context", "context_version"],
+  "properties": {
+    "route_snapshot": {"type": "object"},
+    "execution_context": {"type": "object"},
+    "context_version": {"type": "integer", "minimum": 1}
+  }
+}

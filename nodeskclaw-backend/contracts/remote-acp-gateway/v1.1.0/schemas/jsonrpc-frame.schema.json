@@ -1,0 +1,43 @@
+{
+  "$id": "remote-acp-gateway.jsonrpc-frame.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["jsonrpc"],
+  "properties": {
+    "jsonrpc": {"const": "2.0"},
+    "id": {
+      "type": ["string", "number", "null"]
+    },
+    "method": {"type": "string"},
+    "params": {"type": "object"},
+    "result": {},
+    "error": {
+      "type": "object",
+      "required": ["code", "message"],
+      "properties": {
+        "code": {"type": "integer"},
+        "message": {"type": "string"},
+        "data": {
+          "type": "object",
+          "properties": {
+            "error_code": {"type": "string"},
+            "message_key": {"type": "string"}
+          }
+        }
+      }
+    },
+    "_meta": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "nodeskclaw": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "after_seq": {"type": "integer", "minimum": 0}
+          }
+        }
+      }
+    }
+  }
+}
