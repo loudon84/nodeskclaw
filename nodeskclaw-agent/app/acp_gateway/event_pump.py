@@ -115,6 +115,11 @@ async def pump_run_events(
             if event.event_type in TERMINAL_EVENTS or (
                 event.event_type == "clarify.requested" and mapped_stop == "end_turn"
             ):
+                if stop_reason == "ACP_RUNTIME_UNAVAILABLE":
+                    raise AcpGatewayError(
+                        stop_reason,
+                        "Runtime lacks rich-tool capability. Contact an administrator.",
+                    )
                 if stop_reason in {
                     "ACP_REMOTE_RUN_FAILED",
                     "ACP_RUNTIME_SESSION_BINDING_MISSING",

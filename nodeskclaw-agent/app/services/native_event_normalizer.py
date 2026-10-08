@@ -119,6 +119,13 @@ class _SanitizeFlags:
     truncated: bool = False
 
 
+def _apply_upstream_flags(flags: _SanitizeFlags, payload: dict[str, Any]) -> None:
+    if payload.get("redacted") is True:
+        flags.redacted = True
+    if payload.get("truncated") is True:
+        flags.truncated = True
+
+
 def _is_sensitive_key(key: str) -> bool:
     if key in SENSITIVE_KEYS:
         return True
@@ -643,6 +650,7 @@ class NativeEventNormalizer:
 
     def _started_tool_payload(self, tool_name: str, call_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         flags = _SanitizeFlags()
+        _apply_upstream_flags(flags, payload)
         raw_arguments = _extract_structured_arguments(payload)
         preview = payload.get("preview")
         if raw_arguments is None and isinstance(preview, str) and preview.strip():
@@ -666,6 +674,7 @@ class NativeEventNormalizer:
 
     def _tool_result_payload(self, opened: dict[str, Any], payload: dict[str, Any], status: str) -> dict[str, Any]:
         flags = _SanitizeFlags()
+        _apply_upstream_flags(flags, payload)
         content, structured = _extract_result_content(payload)
         if isinstance(content, str):
             content = _sanitize_string(content, flags)

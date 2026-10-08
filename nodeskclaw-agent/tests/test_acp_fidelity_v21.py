@@ -216,6 +216,58 @@ async def test_pump_binding_missing_code_passthrough(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_pump_rich_tool_capability_maps_to_runtime_unavailable(monkeypatch):
+    from app.acp_gateway import event_pump
+    from app.services import run_service
+
+    events = [
+        SimpleNamespace(
+            event_type="run.failed",
+            payload={
+                "error_code": "RUNTIME_CAPABILITY_MISSING",
+                "capability": "run_tool_event_details_v1",
+                "error": "Hermes runtime lacks rich-tool capability",
+            },
+            run_id="run-1",
+            event_seq=1,
+            source_event_id="s1",
+        )
+    ]
+
+    async def fake_list(db, run_id, *, after_seq):
+        return events if after_seq < 1 else []
+
+    monkeypatch.setattr(run_service, "list_events", fake_list)
+    monkeypatch.setattr(run_service, "get_run", AsyncMock(return_value=None))
+
+    with pytest.raises(AcpGatewayError) as exc:
+        await event_pump.pump_run_events(
+            AsyncMock(),
+            run_id="run-1",
+            session_id="sess",
+            agent_ref="a",
+            org_id="o",
+            after_seq=0,
+            send=AsyncMock(),
+        )
+    assert exc.value.error_code == "ACP_RUNTIME_UNAVAILABLE"
+    assert "rich-tool" in exc.value.message
+
+
+def test_map_event_keeps_generic_capability_miss_as_remote_run_failed():
+    _updates, stop, _perm = map_event(
+        {
+            "event_type": "run.failed",
+            "payload": {"error_code": "RUNTIME_CAPABILITY_MISSING", "error": "missing run_stop"},
+            "run_id": "run-1",
+            "event_seq": 1,
+        },
+        agent_ref="a",
+    )
+    assert stop == "ACP_REMOTE_RUN_FAILED"
+
+
+@pytest.mark.asyncio
 async def test_new_prompt_resets_after_seq(monkeypatch):
     from app.acp_gateway.connection import AcpConnection
 

@@ -730,6 +730,110 @@ async def test_execute_hermes_missing_capability_fail_closed():
     client.stream.assert_not_called()
 
 
+def _posts_native_run(client) -> list:
+    return [call for call in client.post.await_args_list if str(call.args[0]).endswith("/v1/runs")]
+
+
+@pytest.mark.asyncio
+async def test_rich_tool_gate_blocks_remote_acp_without_post(monkeypatch):
+    monkeypatch.setattr(settings, "REMOTE_ACP_RICH_TOOL_GATE_ENABLED", True)
+    client = _native_client(caps=FLOOR_CAPS)
+    with patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client):
+        events = [
+            event
+            async for event in execute_hermes_run(
+                tool_name="remote_agent",
+                arguments={"prompt": "hi"},
+                route_snapshot={
+                    "gateway_url": "http://hermes:8642",
+                    "session_continuity_required": True,
+                },
+                run_id="run-rich-miss",
+                attempt_id="att-rich-miss",
+            )
+        ]
+    failed = events[-1]
+    assert failed["event_type"] == "run.failed"
+    assert failed["payload"]["error_code"] == RUNTIME_CAPABILITY_MISSING
+    assert failed["payload"]["capability"] == "run_tool_event_details_v1"
+    assert _posts_native_run(client) == []
+    client.stream.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_rich_tool_gate_allows_post_when_feature_present(monkeypatch):
+    monkeypatch.setattr(settings, "REMOTE_ACP_RICH_TOOL_GATE_ENABLED", True)
+    caps = {
+        "version": "v2026.8.31",
+        "features": {name: True for name in REQUIRED_FEATURES} | {"run_tool_event_details_v1": True},
+    }
+    client = _native_client(
+        caps=caps,
+        start={"id": "rr-1", "status": "running", "session_id": "sess-1"},
+    )
+    with patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client):
+        events = [
+            event
+            async for event in execute_hermes_run(
+                tool_name="remote_agent",
+                arguments={"prompt": "hi"},
+                route_snapshot={
+                    "gateway_url": "http://hermes:8642",
+                    "session_continuity_required": True,
+                },
+                run_id="run-rich-ok",
+                attempt_id="att-rich-ok",
+            )
+        ]
+    assert events[-1]["event_type"] == "run.completed"
+    assert len(_posts_native_run(client)) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool_name", ["foo", "remote_agent"])
+async def test_rich_tool_gate_does_not_apply_without_acp_continuity(monkeypatch, tool_name):
+    monkeypatch.setattr(settings, "REMOTE_ACP_RICH_TOOL_GATE_ENABLED", True)
+    client = _native_client(caps=FLOOR_CAPS)
+    with patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client):
+        events = [
+            event
+            async for event in execute_hermes_run(
+                tool_name=tool_name,
+                arguments={"prompt": "hi"},
+                route_snapshot={"gateway_url": "http://hermes:8642"},
+                run_id=f"run-open-{tool_name}",
+                attempt_id=f"att-open-{tool_name}",
+            )
+        ]
+    assert events[-1]["event_type"] == "run.completed"
+    assert len(_posts_native_run(client)) == 1
+
+
+@pytest.mark.asyncio
+async def test_rich_tool_gate_off_still_posts_remote_acp(monkeypatch):
+    monkeypatch.setattr(settings, "REMOTE_ACP_RICH_TOOL_GATE_ENABLED", False)
+    client = _native_client(
+        caps=FLOOR_CAPS,
+        start={"id": "rr-1", "status": "running", "session_id": "sess-1"},
+    )
+    with patch("app.services.hermes_engine.httpx.AsyncClient", return_value=client):
+        events = [
+            event
+            async for event in execute_hermes_run(
+                tool_name="remote_agent",
+                arguments={"prompt": "hi"},
+                route_snapshot={
+                    "gateway_url": "http://hermes:8642",
+                    "session_continuity_required": True,
+                },
+                run_id="run-gate-off",
+                attempt_id="att-gate-off",
+            )
+        ]
+    assert events[-1]["event_type"] == "run.completed"
+    assert len(_posts_native_run(client)) == 1
+
+
 @pytest.mark.asyncio
 async def test_execute_hermes_runtime_delegated_unavailable_without_capability():
     client = _native_client(caps=FLOOR_CAPS)

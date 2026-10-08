@@ -196,6 +196,11 @@ def map_event(
         error_code = str(payload.get("error_code") or "")
         if error_code == "ACP_RUNTIME_SESSION_BINDING_MISSING":
             stop_reason = "ACP_RUNTIME_SESSION_BINDING_MISSING"
+        elif (
+            error_code == "RUNTIME_CAPABILITY_MISSING"
+            and payload.get("capability") == "run_tool_event_details_v1"
+        ):
+            stop_reason = "ACP_RUNTIME_UNAVAILABLE"
         else:
             stop_reason = "ACP_REMOTE_RUN_FAILED"
     return updates, stop_reason, permission

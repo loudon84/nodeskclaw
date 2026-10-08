@@ -1107,6 +1107,19 @@ async def execute_hermes_run(
                     "Hermes runtime is missing required capabilities",
                 )
                 return
+            continuity_required = bool(route_snapshot.get("session_continuity_required"))
+            if (
+                settings.REMOTE_ACP_RICH_TOOL_GATE_ENABLED
+                and continuity_required
+                and "run_tool_event_details_v1" not in present
+            ):
+                failed = _failed(
+                    RUNTIME_CAPABILITY_MISSING,
+                    "Hermes runtime lacks rich-tool capability",
+                )
+                failed["payload"]["capability"] = "run_tool_event_details_v1"
+                yield failed
+                return
 
             descriptors = route_snapshot.get("connector_descriptors") or []
             external_descriptors = route_snapshot.get("external_descriptors") or []

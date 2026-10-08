@@ -177,6 +177,57 @@ def test_hermes_runs_preview_truncated_and_structured_arguments_win():
     assert both[0]["payload"]["arguments"] == {"q": "keep"}
 
 
+def test_upstream_flags_or_merge_and_keep_stable_call_id():
+    from app.acp_gateway.event_mapping import map_event
+    started = _norm("att-upstream").ingest(
+        {
+            "type": "tool.started",
+            "tool": "read_file",
+            "tool_call_id": "call-stable",
+            "arguments": {"path": "notes.txt"},
+            "redacted": True,
+            "truncated": True,
+        }
+    )
+    payload = started[0]["payload"]
+    assert payload["call_id"] == "call-stable"
+    assert payload["arguments"] == {"path": "notes.txt"}
+    assert payload["redacted"] is True
+    assert payload["truncated"] is True
+    updates, _stop, _perm = map_event(
+        {"event_type": started[0]["event_type"], "payload": payload, "run_id": "r-1", "event_seq": 1},
+        agent_ref="marketing",
+    )
+    assert updates[0]["rawInput"] == {"path": "notes.txt"}
+    assert updates[0]["toolCallId"] == "call-stable"
+    assert updates[0]["redacted"] is True
+    assert updates[0]["truncated"] is True
+
+    normalizer = _norm("att-upstream-result")
+    normalizer.ingest(
+        {
+            "type": "tool.started",
+            "tool": "read_file",
+            "tool_call_id": "call-stable",
+            "arguments": {"path": "notes.txt"},
+        }
+    )
+    completed = normalizer.ingest(
+        {
+            "type": "tool.completed",
+            "tool": "read_file",
+            "tool_call_id": "call-stable",
+            "content": "plain text",
+            "redacted": True,
+        }
+    )
+    result = next(item for item in completed if item["event_type"] == "tool.result")
+    assert result["payload"]["call_id"] == "call-stable"
+    assert result["payload"]["content"] == "plain text"
+    assert result["payload"]["redacted"] is True
+    assert result["payload"]["truncated"] is False
+
+
 def test_hermes_runs_preview_reaches_acp_raw_input():
     from app.acp_gateway.event_mapping import map_event
 
