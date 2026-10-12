@@ -122,3 +122,9 @@ NEW-API 自动创建使用管理员提交的 Token 名称；省略时仍取邮�
 就绪按这个顺序停止：无默认凭证、`revoke_pending`、未启用、不是 new-api、自动凭证尚未同步、地址为空、没有已启用模型、没有默认模型、默认模型无效、解密失败，然后才是 `READY`。
 
 `tests/test_member_token.py` 与 `tests/test_runtime_model_bootstrap.py` 用 httpx mock 覆盖发现请求头、刷新不落库、保存再校验目录、分组清空且提交失败不回滚外部、正在关闭不能启用、未就绪无明文，以及 `READY` 的 `base_url` 是 NEW-API 地址。不访问真实 NEW-API。手工联调集合是 `tools/postman/nodeskclaw-runtime-provider-bootstrap.postman_collection.json`，变量只用占位符，不保存明文 Key。
+
+## Casdoor Desktop Login
+
+桌面端用系统浏览器走 Casdoor，本机回跳只带回一次性兑换码，JWT 仍由现有发牌函数签发。
+
+Casdoor 不是用户中心。`identity_binding` 把外部主体绑到已有 `users` 行，不创建用户。登录事务 `oauth_login_transaction` 保存可回读的 PKCE verifier，换票结束后清空；库里只存兑换码哈希。callback 只 302，`POST /api/v1/auth/casdoor/exchange` 才返回与邮箱登录相同的 `LoginResponse`。这组路由只挂在 `/api/v1/auth`，不挂管理端。配置 `CASDOOR_ISSUER`、`CASDOOR_CLIENT_ID`、`CASDOOR_CLIENT_SECRET`、`CASDOOR_REDIRECT_URI` 缺一则不访问 Casdoor。实现：[[nodeskclaw-backend/app/services/identity/binding_service.py#finish_callback]]、[[nodeskclaw-backend/app/services/identity/casdoor_client.py#CasdoorClient]]。模型：[[nodeskclaw-backend/app/models/identity_binding.py#IdentityBinding]]、[[nodeskclaw-backend/app/models/oauth_login_transaction.py#OAuthLoginTransaction]]。回归：[[nodeskclaw-backend/tests/test_casdoor_auth.py#test_callback_binds_and_exchange_issues_existing_login_shape]]。

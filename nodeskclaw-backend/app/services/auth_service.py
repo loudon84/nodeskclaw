@@ -115,6 +115,10 @@ async def _issue_tokens(user: User, db: AsyncSession) -> LoginResponse:
     )
 
 
+async def issue_login_response(user: User, db: AsyncSession) -> LoginResponse:
+    return await _issue_tokens(user, db)
+
+
 # ── 账号规范化 ────────────────────────────────────────────
 
 def _normalize_email(email: str) -> str:
@@ -127,23 +131,28 @@ def _normalize_account(account: str) -> str:
 
 # ── 邮箱域名白名单 ────────────────────────────────────────
 
-def _check_email_domain_allowed(email: str) -> None:
+def is_email_domain_allowed(email: str) -> bool:
     raw = settings.LOGIN_EMAIL_WHITELIST.strip()
     if not raw:
-        return
+        return True
     allowed = [d.strip().lower() for d in raw.split(",") if d.strip()]
     if not allowed:
-        return
+        return True
     domain = email.rsplit("@", 1)[-1].lower()
-    if domain not in allowed:
-        raise HTTPException(
-            status_code=403,
-            detail={
-                "error_code": 40330,
-                "message_key": "errors.auth.email_domain_not_allowed",
-                "message": "当前邮箱域名不在允许范围内",
-            },
-        )
+    return domain in allowed
+
+
+def _check_email_domain_allowed(email: str) -> None:
+    if is_email_domain_allowed(email):
+        return
+    raise HTTPException(
+        status_code=403,
+        detail={
+            "error_code": 40330,
+            "message_key": "errors.auth.email_domain_not_allowed",
+            "message": "当前邮箱域名不在允许范围内",
+        },
+    )
 
 
 # ── 邮箱密码登录 ──────────────────────────────────────────

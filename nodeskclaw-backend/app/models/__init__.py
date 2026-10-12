@@ -38,6 +38,8 @@ from app.models.gene import (  # noqa: F401
 )
 from app.models.genehub_entitlement import GeneHubEntitlement  # noqa: F401
 from app.models.idempotency_cache import IdempotencyCache  # noqa: F401
+from app.models.identity_binding import IdentityBinding  # noqa: F401
+from app.models.oauth_login_transaction import OAuthLoginTransaction  # noqa: F401
 from app.models.instance import Instance  # noqa: F401
 from app.models.invitation import Invitation  # noqa: F401
 from app.models.instance_template import InstanceTemplate, TemplateItem  # noqa: F401

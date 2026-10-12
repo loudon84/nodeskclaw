@@ -6,6 +6,7 @@ from app.api.expert import router as expert_router
 from app.api.audit import router as audit_router
 from app.api.agent_file_grants import router as agent_file_grants_router
 from app.api.auth import router as auth_router
+from app.api.casdoor_auth import router as casdoor_auth_router
 from app.api.genes import router as gene_router
 from app.api.clusters import router as cluster_router
 from app.api.deploy import router as deploy_router
@@ -169,6 +170,7 @@ async def serve_local_file(file_key: str, request: Request, expires: str = "", s
 
 
 api_router.include_router(auth_router, prefix="/auth", tags=["认证"])
+api_router.include_router(casdoor_auth_router, prefix="/auth", tags=["认证"])
 api_router.include_router(agent_file_grants_router, tags=["文件授权"])
 api_router.include_router(org_router, prefix="/orgs", tags=["组织"])
 api_router.include_router(member_token_router, prefix="/orgs", tags=["成员模型凭证"])

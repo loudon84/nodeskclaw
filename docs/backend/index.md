@@ -73,7 +73,7 @@ DeskClaw 团队版（NoDeskClaw）后端是 **人与 AI 共同经营** 的 API �
 
 ### 1. 身份、组织与治理
 
-- **认证**：统一账号 / 验证码登录、Token 刷新、OAuth 关联（`auth_service`）；`UserInfo` 含 `is_task_admin`（任务管理员标记，默认 `false`）
+- **认证**：统一账号 / 验证码登录、Token 刷新、OAuth 关联（`auth_service`）；桌面 Casdoor 登录（`app/api/casdoor_auth.py`，只挂 `/api/v1/auth`）把已有 `users` 与外部主体记在 `identity_binding`，浏览器 callback 只回本机兑换码，`POST /api/v1/auth/casdoor/exchange` 才签发与邮箱登录相同的 JWT；`UserInfo` 含 `is_task_admin`（任务管理员标记，默认 `false`）
 - **组织**：成员、邀请、组织设置（SMTP、网络策略等）；创建人类成员与更新成员资料可读写 `users.is_task_admin`
 - **RBAC**：Portal（`org_memberships`）与管理后台（`admin_memberships`）双表独立
 - **操作审计**：组织级审计日志查询与导出
@@ -294,7 +294,7 @@ MCP 写工具（`hermes.instance.restart` 等）额外经 **Grant 审批**；受
 ```bash
 cd nodeskclaw-backend
 uv sync
-cp .env.example .env   # 配置 DATABASE_URL、JWT_SECRET、ENCRYPTION_KEY
+cp .env.example .env   # 配置 DATABASE_URL、JWT_SECRET、ENCRYPTION_KEY；Casdoor 桌面登录另需 CASDOOR_ISSUER、CASDOOR_CLIENT_ID、CASDOOR_CLIENT_SECRET、CASDOOR_REDIRECT_URI，留空则不启用
 uv run uvicorn app.main:app --reload --port 4510
 ```
 
