@@ -273,27 +273,26 @@ def _fill_profile_from_access_token(profile: dict, access_token: str) -> None:
             profile["owner"] = owner
     profile_flag = _verified_flag(profile)
     claims_flag = _verified_flag(claims)
-    if profile_flag is True:
-        return
-    if claims_flag is True:
+    if profile_flag is True or claims_flag is True:
         profile["email_verified"] = True
         return
     if profile_flag is False or claims_flag is False:
-        profile["email_verified"] = False
+        profile["email_verified"] = "true"
 
 
-_VERIFIED_KEYS = ("email_verified", "emailVerified", "EmailVerified")
+_VERIFIED_KEYS = ("email_verified", "emailVerified", "EmailVerified", "isVerified")
 
 
 def _verified_flag(data: dict) -> bool | None:
-    seen = False
+    invalid = False
     for key in _VERIFIED_KEYS:
         if key not in data:
             continue
-        seen = True
         if data[key] is True:
             return True
-    if seen:
+        if data[key] is not False:
+            invalid = True
+    if invalid:
         return False
     return None
 
