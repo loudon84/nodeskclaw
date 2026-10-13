@@ -147,7 +147,7 @@ async def finish_callback(
         discovered = await client.discover()
         access_token = await client.exchange_code(discovered["token_endpoint"], code, verifier)
         profile = await client.userinfo(discovered["userinfo_endpoint"], access_token)
-        _fill_owner_from_access_token(profile, access_token)
+        _fill_profile_from_access_token(profile, access_token)
     except CasdoorUnavailable:
         await _clear_verifier(db, row)
         return CallbackResult(location=_error_location(return_to, IDP_FAILED))
@@ -237,7 +237,7 @@ async def _bind(
     email = email.strip() if isinstance(email, str) else ""
     if not email:
         return EMAIL_MISSING
-    if profile.get("email_verified") is not True:
+    if _verified_flag(profile) is False:
         return EMAIL_UNVERIFIED
     user = await _match_user(db, email.strip().lower())
     if user is None:
@@ -265,12 +265,37 @@ async def _bind(
     return None
 
 
-def _fill_owner_from_access_token(profile: dict, access_token: str) -> None:
-    if _owner_text(profile):
+def _fill_profile_from_access_token(profile: dict, access_token: str) -> None:
+    claims = jwt_payload(access_token)
+    if not _owner_text(profile):
+        owner = _owner_text(claims)
+        if owner:
+            profile["owner"] = owner
+    profile_flag = _verified_flag(profile)
+    claims_flag = _verified_flag(claims)
+    if profile_flag is True:
         return
-    owner = _owner_text(jwt_payload(access_token))
-    if owner:
-        profile["owner"] = owner
+    if claims_flag is True:
+        profile["email_verified"] = True
+        return
+    if profile_flag is False or claims_flag is False:
+        profile["email_verified"] = False
+
+
+_VERIFIED_KEYS = ("email_verified", "emailVerified", "EmailVerified")
+
+
+def _verified_flag(data: dict) -> bool | None:
+    seen = False
+    for key in _VERIFIED_KEYS:
+        if key not in data:
+            continue
+        seen = True
+        if data[key] is True:
+            return True
+    if seen:
+        return False
+    return None
 
 
 def _owner_text(data: dict) -> str:

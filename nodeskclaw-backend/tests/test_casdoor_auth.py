@@ -290,11 +290,45 @@ async def test_owner_comes_from_access_token_when_userinfo_omits_it(session, con
 
 
 @pytest.mark.asyncio
+async def test_email_verified_comes_from_access_token_when_userinfo_omits_it(session, configured):
+    user = await _add_user(session)
+    idp = _Idp()
+    idp.profile = {"sub": "user-1", "owner": "built-in", "email": "member@example.com"}
+    idp.access_token = _jwt({"emailVerified": True})
+    async with await _client(session, idp) as client:
+        started = await _login(client)
+        callback = await client.get(
+            "/api/v1/auth/casdoor/callback",
+            params={"state": _state(started.headers["location"]), "code": "auth-code"},
+        )
+    assert callback.status_code == 302
+    assert "error=" not in callback.headers["location"]
+    binding = (await session.execute(IdentityBinding.__table__.select())).one()
+    assert binding.member_user_id == user.id
+
+
+@pytest.mark.asyncio
+async def test_missing_email_verified_claim_still_binds(session, configured):
+    await _add_user(session)
+    idp = _Idp()
+    idp.profile = {"sub": "user-1", "owner": "built-in", "email": "member@example.com"}
+    async with await _client(session, idp) as client:
+        started = await _login(client)
+        callback = await client.get(
+            "/api/v1/auth/casdoor/callback",
+            params={"state": _state(started.headers["location"]), "code": "auth-code"},
+        )
+    assert callback.status_code == 302
+    assert "error=" not in callback.headers["location"]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("profile", "machine_code"),
     [
         ({"sub": "user-1", "owner": "built-in", "email_verified": True}, EMAIL_MISSING),
         ({"sub": "user-1", "owner": "built-in", "email": "member@example.com", "email_verified": "true"}, EMAIL_UNVERIFIED),
+        ({"sub": "user-1", "owner": "built-in", "email": "member@example.com", "emailVerified": False}, EMAIL_UNVERIFIED),
         ({"sub": "user-1", "owner": "  ", "email": "member@example.com", "email_verified": True}, ORG_MISSING),
         ({"sub": "built-in/user", "owner": "built-in", "email": "member@example.com", "email_verified": True}, IDP_FAILED),
         ({"sub": "user-1", "owner": "built-in", "email": "missing@example.com", "email_verified": True}, MEMBER_NOT_FOUND),
