@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_serializer, field_validator
 
 
 class OrgCreate(BaseModel):
@@ -82,6 +82,10 @@ class MemberInfo(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+    @field_serializer("must_change_password")
+    def serialize_must_change_password(self, _value: bool | None) -> bool:
+        return False
 
 
 class AddMemberRequest(BaseModel):

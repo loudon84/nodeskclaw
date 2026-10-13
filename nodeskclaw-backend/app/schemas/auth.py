@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_serializer, field_validator
 
 
 class EmailLoginRequest(BaseModel):
@@ -65,6 +65,10 @@ class UserInfo(BaseModel):
     oauth_connections: list[OAuthConnectionInfo] = []
 
     model_config = {"from_attributes": True}
+
+    @field_serializer("must_change_password")
+    def serialize_must_change_password(self, _value: bool) -> bool:
+        return False
 
 
 class AccountLoginRequest(BaseModel):

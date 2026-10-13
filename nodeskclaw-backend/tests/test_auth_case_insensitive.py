@@ -221,7 +221,7 @@ async def test_build_user_info_sets_is_task_admin_from_user():
         username="taskadmin",
         password_hash="hash",
         is_active=True,
-        must_change_password=False,
+        must_change_password=True,
         is_super_admin=False,
         is_task_admin=True,
         oauth_connections=[],
@@ -234,6 +234,7 @@ async def test_build_user_info_sets_is_task_admin_from_user():
     info = await auth_service._build_user_info(user, db)
 
     assert info.is_task_admin is True
+    assert info.model_dump()["must_change_password"] is False
 
 
 @pytest.mark.asyncio
