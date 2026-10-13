@@ -17,7 +17,7 @@ from app.models.identity_binding import IdentityBinding
 from app.models.oauth_login_transaction import OAuthLoginTransaction
 from app.models.user import User
 from app.services import auth_service
-from app.services.identity.casdoor_client import CasdoorClient, CasdoorUnavailable
+from app.services.identity.casdoor_client import CasdoorClient, CasdoorUnavailable, jwt_payload
 
 logger = logging.getLogger(__name__)
 
@@ -147,6 +147,7 @@ async def finish_callback(
         discovered = await client.discover()
         access_token = await client.exchange_code(discovered["token_endpoint"], code, verifier)
         profile = await client.userinfo(discovered["userinfo_endpoint"], access_token)
+        _fill_owner_from_access_token(profile, access_token)
     except CasdoorUnavailable:
         await _clear_verifier(db, row)
         return CallbackResult(location=_error_location(return_to, IDP_FAILED))
@@ -215,8 +216,7 @@ async def _bind(
     row: OAuthLoginTransaction,
     profile: dict,
 ) -> str | None:
-    org = profile.get("owner")
-    org = org.strip() if isinstance(org, str) else ""
+    org = _owner_text(profile)
     if not org:
         return ORG_MISSING
     subject = profile.get("sub")
@@ -263,6 +263,22 @@ async def _bind(
         logger.info("casdoor binding conflict")
         return BINDING_CONFLICT
     return None
+
+
+def _fill_owner_from_access_token(profile: dict, access_token: str) -> None:
+    if _owner_text(profile):
+        return
+    owner = _owner_text(jwt_payload(access_token))
+    if owner:
+        profile["owner"] = owner
+
+
+def _owner_text(data: dict) -> str:
+    for key in ("owner", "Owner"):
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
 
 
 def _snapshot_email(profile: dict) -> str:

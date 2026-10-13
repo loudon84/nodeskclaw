@@ -1,5 +1,7 @@
 """Casdoor OIDC calls. Tokens from Casdoor are returned to the caller and never stored."""
 
+import base64
+import json
 import logging
 from typing import Any
 
@@ -12,6 +14,20 @@ logger = logging.getLogger(__name__)
 
 class CasdoorUnavailable(Exception):
     """Discovery, token exchange, or userinfo failed. Callers map this to idp_failed."""
+
+
+def jwt_payload(token: str) -> dict[str, Any]:
+    """Read claims from a JWT access token just returned by the token endpoint. Signature is not checked."""
+    parts = token.split(".")
+    if len(parts) != 3 or not parts[1]:
+        return {}
+    padded = parts[1] + "=" * (-len(parts[1]) % 4)
+    try:
+        raw = base64.urlsafe_b64decode(padded.encode())
+        payload = json.loads(raw)
+    except (ValueError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 class CasdoorClient:

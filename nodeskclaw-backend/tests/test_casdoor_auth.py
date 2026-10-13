@@ -2,6 +2,9 @@
 
 from datetime import datetime, timedelta, timezone
 
+import base64
+import json
+
 import httpx
 import pytest
 from fastapi import FastAPI
@@ -44,6 +47,7 @@ class _Idp:
         }
         self.calls: list[str] = []
         self.fail_token = False
+        self.access_token = "casdoor-access"
 
     def transport(self) -> httpx.MockTransport:
         def handler(request: httpx.Request) -> httpx.Response:
@@ -67,9 +71,9 @@ class _Idp:
                 assert "code_verifier=" in body
                 assert "redirect_uri=" in body
                 assert "authorization" not in {key.lower() for key in request.headers}
-                return httpx.Response(200, json={"access_token": "casdoor-access"})
+                return httpx.Response(200, json={"access_token": self.access_token})
             if path.endswith("/userinfo"):
-                assert request.headers["authorization"] == "Bearer casdoor-access"
+                assert request.headers["authorization"] == f"Bearer {self.access_token}"
                 return httpx.Response(200, json=self.profile)
             return httpx.Response(404)
         return httpx.MockTransport(handler)
@@ -259,6 +263,30 @@ async def test_callback_binds_and_exchange_issues_existing_login_shape(session, 
     await session.refresh(user)
     assert user.last_login_at is not None
     assert user.must_change_password is True
+
+
+def _jwt(payload: dict) -> str:
+    body = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
+    return f"header.{body}.sig"
+
+
+@pytest.mark.asyncio
+async def test_owner_comes_from_access_token_when_userinfo_omits_it(session, configured):
+    user = await _add_user(session)
+    idp = _Idp()
+    idp.profile = {"sub": "user-1", "email": "member@example.com", "email_verified": True}
+    idp.access_token = _jwt({"Owner": "built-in"})
+    async with await _client(session, idp) as client:
+        started = await _login(client)
+        callback = await client.get(
+            "/api/v1/auth/casdoor/callback",
+            params={"state": _state(started.headers["location"]), "code": "auth-code"},
+        )
+    assert callback.status_code == 302
+    assert "error=" not in callback.headers["location"]
+    binding = (await session.execute(IdentityBinding.__table__.select())).one()
+    assert binding.member_user_id == user.id
+    assert binding.provider_org == "built-in"
 
 
 @pytest.mark.asyncio
