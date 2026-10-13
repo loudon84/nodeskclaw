@@ -11,6 +11,7 @@ from urllib.parse import urlencode, urlsplit
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.models.identity_binding import IdentityBinding
@@ -327,7 +328,9 @@ async def _match_user(db: AsyncSession, email: str) -> User | None:
 
 async def _load_user(db: AsyncSession, user_id: str) -> User | None:
     result = await db.execute(
-        select(User).where(User.id == user_id, User.deleted_at.is_(None))
+        select(User)
+        .options(selectinload(User.oauth_connections))
+        .where(User.id == user_id, User.deleted_at.is_(None))
     )
     return result.scalar_one_or_none()
 

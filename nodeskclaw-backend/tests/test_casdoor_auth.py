@@ -18,6 +18,7 @@ from app.core.deps import get_db
 from app.core.exceptions import register_exception_handlers
 from app.core.security import get_current_user
 from app.models.identity_binding import IdentityBinding
+from app.models.oauth_connection import UserOAuthConnection
 from app.models.oauth_login_transaction import OAuthLoginTransaction
 from app.models.user import User
 from app.schemas.auth import LoginResponse, UserInfo
@@ -84,6 +85,7 @@ async def session():
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as conn:
         await conn.run_sync(User.__table__.create)
+        await conn.run_sync(UserOAuthConnection.__table__.create)
         await conn.run_sync(IdentityBinding.__table__.create)
         await conn.run_sync(OAuthLoginTransaction.__table__.create)
     factory = async_sessionmaker(engine, expire_on_commit=False)
@@ -263,6 +265,25 @@ async def test_callback_binds_and_exchange_issues_existing_login_shape(session, 
     await session.refresh(user)
     assert user.last_login_at is not None
     assert user.must_change_password is True
+
+
+@pytest.mark.asyncio
+async def test_exchange_serializes_user_without_lazy_oauth_load(session, configured, audits):
+    await _add_user(session)
+    idp = _Idp()
+    async with await _client(session, idp) as client:
+        started = await _login(client)
+        callback = await client.get(
+            "/api/v1/auth/casdoor/callback",
+            params={"state": _state(started.headers["location"]), "code": "auth-code"},
+        )
+        code = callback.headers["location"].split("code=", 1)[1]
+        exchanged = await client.post("/api/v1/auth/casdoor/exchange", json={"code": code})
+    assert exchanged.status_code == 200
+    user = exchanged.json()["data"]["user"]
+    assert user["email"] == "member@example.com"
+    assert user["oauth_connections"] == []
+    assert user["must_change_password"] is False
 
 
 def _jwt(payload: dict) -> str:
