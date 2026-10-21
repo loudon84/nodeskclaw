@@ -3630,6 +3630,7 @@ const enUS = {
     modelTokenClosedLocal: "Local record closed",
     modelTokenRevokeRetried: "Revoke retried",
     resetPassword: "Reset Password",
+    savePasswordUpdate: "Save Update",
     removeMember: "Remove Member",
     noMembers: "No members yet",
     createDialogTitle: "Quick Create Human Member",

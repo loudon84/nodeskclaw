@@ -97,6 +97,10 @@ class UpdateMemberRoleRequest(BaseModel):
     role: str
 
 
+class ResetPasswordRequest(BaseModel):
+    password: str | None = Field(default=None, min_length=6, max_length=128)
+
+
 class ResetPasswordResponse(BaseModel):
     password: str
 

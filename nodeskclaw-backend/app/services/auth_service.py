@@ -504,8 +504,8 @@ async def login_with_verification_code(
     return await _issue_tokens(user, db)
 
 
-async def admin_reset_password(user_id: str, db: AsyncSession) -> str:
-    """管理员重置用户密码，返回随机明文密码。"""
+async def admin_reset_password(user_id: str, db: AsyncSession, password: str | None = None) -> str:
+    """管理员重置用户密码，返回明文密码。传入 password 则使用该值，否则生成随机密码。"""
     result = await db.execute(
         select(User).where(User.id == user_id, User.deleted_at.is_(None))
     )
@@ -529,7 +529,16 @@ async def admin_reset_password(user_id: str, db: AsyncSession) -> str:
             },
         )
 
-    plain = secrets.token_urlsafe(9)
+    plain = password.strip() if password else secrets.token_urlsafe(9)
+    if len(plain) < 6:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error_code": 40026,
+                "message_key": "errors.auth.password_too_short",
+                "message": "密码至少 6 位",
+            },
+        )
     user.password_hash = _hash_password(plain)
     await db.commit()
     logger.info("管理员重置密码: user_id=%s", user_id)

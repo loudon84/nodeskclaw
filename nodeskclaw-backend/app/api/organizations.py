@@ -38,6 +38,7 @@ from app.schemas.organization import (
     OrgInfo,
     OrgNameUpdate,
     OrgUpdate,
+    ResetPasswordRequest,
     ResetPasswordResponse,
     UpdateMemberRoleRequest,
 )
@@ -293,6 +294,7 @@ async def remove_member(
 async def reset_member_password(
     org_id: str,
     user_id: str,
+    body: ResetPasswordRequest | None = None,
     db: AsyncSession = Depends(get_db),
     _org_ctx: tuple = Depends(require_org_admin),
 ):
@@ -339,7 +341,9 @@ async def reset_member_password(
             },
         )
 
-    plain = await auth_service.admin_reset_password(user_id, db)
+    plain = await auth_service.admin_reset_password(
+        user_id, db, password=body.password if body else None
+    )
     target_user = (await db.execute(
         select(User).where(User.id == user_id, User.deleted_at.is_(None))
     )).scalar_one_or_none()

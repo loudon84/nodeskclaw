@@ -3630,6 +3630,7 @@ const zhCN = {
     modelTokenClosedLocal: "已只关闭本地记录",
     modelTokenRevokeRetried: "已重新发起撤销",
     resetPassword: "重置密码",
+    savePasswordUpdate: "保存更新",
     removeMember: "移除成员",
     noMembers: "暂无成员",
     createDialogTitle: "快速创建人类成员",

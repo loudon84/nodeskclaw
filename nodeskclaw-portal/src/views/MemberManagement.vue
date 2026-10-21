@@ -50,7 +50,18 @@ const roles = ref<Array<{ id: string; name_key: string }>>([])
 
 const resetResultName = ref('')
 const resetResultPassword = ref('')
+const resetTargetUserId = ref('')
 const resetCopied = ref(false)
+const resetSaving = ref(false)
+
+function generateResetPassword() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$'
+  let pwd = ''
+  for (let i = 0; i < 12; i++) {
+    pwd += chars.charAt(Math.floor(Math.random() * chars.length))
+  }
+  return pwd
+}
 
 interface PendingCloseItem {
   id: string
@@ -232,25 +243,29 @@ async function handleRemove(member: MemberInfo) {
   }
 }
 
-async function handleResetPassword(member: MemberInfo) {
-  const name = member.user_name || member.user_email || member.user_id
-  const ok = await confirm({
-    title: t('memberManagement.resetPassword'),
-    description: t('orgMembers.resetPasswordConfirm', { name }),
-    variant: 'danger',
-  })
-  if (!ok) return
-  actionLoading.value = member.id
+function handleResetPassword(member: MemberInfo) {
+  resetResultName.value = member.user_name || member.user_email || member.user_id
+  resetTargetUserId.value = member.user_id
+  resetResultPassword.value = generateResetPassword()
+  resetCopied.value = false
+  showResetDialog.value = true
+}
+
+async function saveResetPassword() {
+  const password = resetResultPassword.value.trim()
+  if (password.length < 6) {
+    toast.error(t('memberManagement.passwordTooShort'))
+    return
+  }
+  resetSaving.value = true
   try {
-    const password = await store.resetMemberPassword(member.user_id)
-    resetResultName.value = name
-    resetResultPassword.value = password || ''
-    resetCopied.value = false
-    showResetDialog.value = true
+    const saved = await store.resetMemberPassword(resetTargetUserId.value, password)
+    resetResultPassword.value = saved || password
+    toast.success(t('orgMembers.resetPasswordSuccess'))
   } catch (e) {
     toast.error(resolveApiErrorMessage(e, t('orgMembers.resetPasswordFailed')))
   } finally {
-    actionLoading.value = null
+    resetSaving.value = false
   }
 }
 
@@ -504,7 +519,7 @@ async function handleInvite() {
     <div v-if="showResetDialog" class="fixed inset-0 z-50 flex items-center justify-center">
       <div class="absolute inset-0 bg-black/50" @click="showResetDialog = false" />
       <div class="relative bg-card border border-border rounded-xl w-full max-w-md mx-4 p-6 space-y-4">
-        <h3 class="font-semibold">{{ t('orgMembers.resetPasswordResultTitle') }}</h3>
+        <h3 class="font-semibold">{{ t('memberManagement.resetPassword') }}</h3>
         <p class="text-sm text-muted-foreground">{{ resetResultName }}</p>
         <div class="flex items-center gap-2">
           <Input v-model="resetResultPassword" />
@@ -514,7 +529,13 @@ async function handleInvite() {
           </Button>
         </div>
         <p class="text-xs text-muted-foreground">{{ t('orgMembers.passwordShownOnce') }}</p>
-        <Button class="w-full" @click="showResetDialog = false">{{ t('common.close') }}</Button>
+        <div class="flex gap-2">
+          <Button variant="outline" class="flex-1" @click="showResetDialog = false">{{ t('common.close') }}</Button>
+          <Button class="flex-1" :disabled="resetSaving || resetResultPassword.trim().length < 6" @click="saveResetPassword">
+            <Loader2 v-if="resetSaving" class="w-4 h-4 mr-1 animate-spin" />
+            {{ t('memberManagement.savePasswordUpdate') }}
+          </Button>
+        </div>
       </div>
     </div>
   </div>

@@ -163,10 +163,13 @@ export const useMemberManagementStore = defineStore('memberManagement', () => {
     return updated
   }
 
-  async function resetMemberPassword(userId: string) {
+  async function resetMemberPassword(userId: string, password?: string) {
     const id = orgId()
     if (!id) return
-    const res = await api.post(`/orgs/${id}/members/${userId}/reset-password`)
+    const res = await api.post(
+      `/orgs/${id}/members/${userId}/reset-password`,
+      password ? { password } : {},
+    )
     return res.data.data.password as string
   }
 

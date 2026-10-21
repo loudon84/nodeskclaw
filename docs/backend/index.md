@@ -74,7 +74,7 @@ DeskClaw 团队版（NoDeskClaw）后端是 **人与 AI 共同经营** 的 API �
 ### 1. 身份、组织与治理
 
 - **认证**：统一账号 / 验证码登录、Token 刷新、OAuth 关联（`auth_service`）；桌面 Casdoor 登录（`app/api/casdoor_auth.py`，只挂 `/api/v1/auth`）把已有 `users` 与外部主体记在 `identity_binding`，浏览器 callback 只回本机兑换码，`POST /api/v1/auth/casdoor/exchange` 才签发与邮箱登录相同的 JWT；`UserInfo` 含 `is_task_admin`（任务管理员标记，默认 `false`）
-- **组织**：成员、邀请、组织设置（SMTP、网络策略等）；创建人类成员与更新成员资料可读写 `users.is_task_admin`
+- **组织**：成员、邀请、组织设置（SMTP、网络策略等）；创建人类成员与更新成员资料可读写 `users.is_task_admin`；`POST /orgs/{org_id}/members/{user_id}/reset-password` 可带可选 `password`（6–128 位），未传则服务端生成随机密码
 - **RBAC**：Portal（`org_memberships`）与管理后台（`admin_memberships`）双表独立
 - **操作审计**：组织级审计日志查询与导出
 - **成员下属**：`GET /api/v1/members/{member_id}/subordinate`（`member_id` 为 `users.id`）返回查询对象本人 + 直属下属（`id, name, email, username, is_active`）；若该用户为 `is_task_admin` 或 `is_super_admin`，返回全部未软删除用户
