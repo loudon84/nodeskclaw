@@ -507,7 +507,7 @@ async function handleInvite() {
         <h3 class="font-semibold">{{ t('orgMembers.resetPasswordResultTitle') }}</h3>
         <p class="text-sm text-muted-foreground">{{ resetResultName }}</p>
         <div class="flex items-center gap-2">
-          <Input :model-value="resetResultPassword" readonly />
+          <Input v-model="resetResultPassword" />
           <Button variant="outline" size="icon" @click="copyPassword">
             <Check v-if="resetCopied" class="w-4 h-4" />
             <Copy v-else class="w-4 h-4" />
