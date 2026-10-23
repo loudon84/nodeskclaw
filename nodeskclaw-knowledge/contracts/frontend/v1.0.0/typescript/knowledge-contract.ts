@@ -132,6 +132,10 @@ export interface SourceFile {
   last_synced_at?: unknown;
   sync_state?: string | null;
   archive_reason?: string | null;
+  created_at?: unknown;
+  updated_at?: unknown;
+  activated_at?: unknown;
+  process_duration?: number | null;
 }
 
 export interface SourceFileVersion {

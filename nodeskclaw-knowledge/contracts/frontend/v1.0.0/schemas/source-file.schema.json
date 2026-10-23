@@ -134,6 +134,15 @@
         "string",
         "null"
       ]
+    },
+    "created_at": true,
+    "updated_at": true,
+    "activated_at": true,
+    "process_duration": {
+      "type": [
+        "number",
+        "null"
+      ]
     }
   },
   "additionalProperties": false,

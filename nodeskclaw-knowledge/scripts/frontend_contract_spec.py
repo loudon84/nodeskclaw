@@ -320,6 +320,10 @@ SCHEMAS: dict[str, dict] = {
                 "last_synced_at": True,
                 "sync_state": NULLABLE_STRING,
                 "archive_reason": NULLABLE_STRING,
+                "created_at": True,
+                "updated_at": True,
+                "activated_at": True,
+                "process_duration": NULLABLE_NUMBER,
             },
             [
                 "id",

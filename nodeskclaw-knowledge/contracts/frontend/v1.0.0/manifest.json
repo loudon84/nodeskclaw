@@ -6,7 +6,7 @@
   "source": {
     "repository": "loudon84/nodeskclaw",
     "branch": "feat/knowledge-v2.0",
-    "commit": "74ebfeb3b33e2f817a90a107d2c6ffbbc04d3a9f",
+    "commit": "802b3318b35e42238f81c47e90e6c2b5df4db83d",
     "runtime": "RAGFlow v0.27.0"
   },
   "auth": {
@@ -66,8 +66,8 @@
     "fixtures/retrieval-success.json": "760411da1ab20bc37ae4b859342bed40a83e6fe3af2dfa14cf5cc4e61526d941",
     "fixtures/upload-accepted.json": "b314bf087b6b08359dc7f03c9e72b9876bbf2fa5cfa681eebe16800dd7bd3945",
     "http/endpoint-matrix.json": "80ff0df57912a61e7dcca2f820bc1f76621dcbb43cd2fcbaf7b30941d3dc76c8",
-    "manifest.json": "32d677a42e9c7db478a045243c10437507448d2635b86cad4c8a598c5bcb4a17",
-    "openapi.frontend.yaml": "daa2c7fc02535378dd18e1f3ef9d0cdca2a4ab60d5451eb2f1bea2e23c94ab26",
+    "manifest.json": "9b20ad13601079160f889fe7e679f4d62b02306eeea0a4da1f60e55453931c5e",
+    "openapi.frontend.yaml": "b5961fc8157806e6ea1ebfe6597e7a547b5d481030d05515b62b45ec808e3368",
     "schemas/acl-create.schema.json": "00f1b410d318ef21ff7e15fa98040b8844bc8cf90e84c2508cd9efa3af720b04",
     "schemas/acl.schema.json": "3dd53951fda55a689a9e1f187ce781c4d52e0add0fc5b2cecbafd26355ea766d",
     "schemas/api-response.schema.json": "f5963c11918c342a6c114d9f4104f1885a568078b2fea462277010178837530b",
@@ -122,9 +122,9 @@
     "schemas/source-file-chunk-page.schema.json": "721aecd900238c7c712705abdae6f90d8f3917ba4e80b8157a61813cca94a307",
     "schemas/source-file-chunk.schema.json": "9671bab8f4e11987f2d21f14ad6198cbd4d9adb7dacb782bdfff3ddaa7ae084b",
     "schemas/source-file-version.schema.json": "2609a89d9134c7be3a616123f5f797a610a803497bd8b3bf169a9be7c0ea558f",
-    "schemas/source-file.schema.json": "aa8b26d9ade316cbdea39bde06e7d8073a49fd45613a124e70e0614d3e635b8e",
+    "schemas/source-file.schema.json": "231a6702d9c68a6e284a6992cfea20e75cd39c166d65eb6ca5d2b4552a98b259",
     "schemas/trigger-builds.schema.json": "2fecb0fc49ea1256ae64ffe3e87e1da0d4fbc32b72b00af3706fba15b116c281",
     "schemas/upload-accepted.schema.json": "1ea6849c7c994519fff494595601a4c685c765761cff609aab05865dfd34a508",
-    "typescript/knowledge-contract.ts": "f043cf5431c150304798db3dcbcf123d16d536ae94685879d06cf55a40fa342a"
+    "typescript/knowledge-contract.ts": "47a5fdc0a29e52d233e85b2704aa9a04f3455453ce040dcff1aec637fa895acc"
   }
 }

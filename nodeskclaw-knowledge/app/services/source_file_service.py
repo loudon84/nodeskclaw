@@ -241,9 +241,29 @@ async def enrich_source_file(sf: SourceFile, db: AsyncSession) -> dict:
         "active_version_id": sf.active_version_id,
         "status": sf.status,
         "acl_version": sf.acl_version,
+        "last_error": sf.last_error,
+        "metadata": sf.metadata_ or {},
+        "metadata_revision": sf.metadata_revision,
+        "archived_at": sf.archived_at,
         "parse_status": None,
         "chunk_count": None,
         "version_no": None,
+        "source_kind": sf.source_kind,
+        "connector_id": sf.connector_id,
+        "external_object_id": sf.external_object_id,
+        "source_uri": sf.source_uri,
+        "source_path": sf.source_path,
+        "source_revision": sf.source_revision,
+        "source_etag": sf.source_etag,
+        "source_modified_at": sf.source_modified_at,
+        "source_metadata": sf.source_metadata or {},
+        "last_synced_at": sf.last_synced_at,
+        "sync_state": sf.sync_state,
+        "archive_reason": sf.archive_reason,
+        "created_at": sf.created_at,
+        "updated_at": sf.updated_at,
+        "activated_at": None,
+        "process_duration": None,
     }
     if sf.active_version_id:
         version = await db.get(SourceFileVersion, sf.active_version_id)
@@ -251,6 +271,8 @@ async def enrich_source_file(sf: SourceFile, db: AsyncSession) -> dict:
             data["parse_status"] = version.parse_status
             data["chunk_count"] = version.chunk_count
             data["version_no"] = version.version_no
+            data["activated_at"] = version.activated_at
+            data["process_duration"] = version.process_duration
     return data
 
 

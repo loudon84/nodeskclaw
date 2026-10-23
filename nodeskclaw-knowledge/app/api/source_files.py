@@ -57,9 +57,10 @@ async def list_files(
         sort_by=sort_by,
         sort_order=sort_order,
     )
+    enriched = [await source_file_service.enrich_source_file(i, db) for i in items]
     return ApiResponse(
         data=PageData(
-            items=[SourceFileOut.model_validate(i) for i in items],
+            items=[SourceFileOut.model_validate(i) for i in enriched],
             total=total,
             page=page,
             page_size=page_size,
@@ -100,9 +101,10 @@ async def list_global_files(
         sort_by=sort_by,
         sort_order=sort_order,
     )
+    enriched = [await source_file_service.enrich_source_file(i, db) for i in items]
     return ApiResponse(
         data=PageData(
-            items=[SourceFileOut.model_validate(i) for i in items],
+            items=[SourceFileOut.model_validate(i) for i in enriched],
             total=total,
             page=page,
             page_size=page_size,
@@ -136,10 +138,11 @@ async def upload_file(
         )
     finally:
         spool.close()
+    enriched = await source_file_service.enrich_source_file(sf, db)
     return ApiResponse(
         message="upload accepted, parsing in background",
         data={
-            "source_file": SourceFileOut.model_validate(sf).model_dump(),
+            "source_file": SourceFileOut.model_validate(enriched).model_dump(),
             "file_version_id": version.id,
             "job": IngestionJobOut.model_validate(job).model_dump(),
         },
@@ -265,7 +268,8 @@ async def activate_version(
     sf = await source_lifecycle_service.activate_source_file_version(
         db, member, ragflow, source_file_id, version_id
     )
-    return ApiResponse(data=SourceFileOut.model_validate(sf))
+    enriched = await source_file_service.enrich_source_file(sf, db)
+    return ApiResponse(data=SourceFileOut.model_validate(enriched))
 
 
 @router.post("/{source_file_id}/archive", response_model=ApiResponse[SourceFileOut])
@@ -276,7 +280,8 @@ async def archive_file(
     ragflow: RagflowRuntimeAdapter = Depends(get_runtime_adapter),
 ):
     sf = await source_lifecycle_service.archive_source_file(db, member, ragflow, source_file_id)
-    return ApiResponse(data=SourceFileOut.model_validate(sf))
+    enriched = await source_file_service.enrich_source_file(sf, db)
+    return ApiResponse(data=SourceFileOut.model_validate(enriched))
 
 
 @router.post("/{source_file_id}/unarchive", response_model=ApiResponse[SourceFileOut])
@@ -287,7 +292,8 @@ async def unarchive_file(
     ragflow: RagflowRuntimeAdapter = Depends(get_runtime_adapter),
 ):
     sf = await source_lifecycle_service.unarchive_source_file(db, member, ragflow, source_file_id)
-    return ApiResponse(data=SourceFileOut.model_validate(sf))
+    enriched = await source_file_service.enrich_source_file(sf, db)
+    return ApiResponse(data=SourceFileOut.model_validate(enriched))
 
 
 @router.get("/{source_file_id}/versions/{version_id}", response_model=ApiResponse[SourceFileVersionOut])
@@ -351,10 +357,11 @@ async def upload_version(
         )
     finally:
         spool.close()
+    enriched = await source_file_service.enrich_source_file(sf2, db)
     return ApiResponse(
         message="upload accepted, parsing in background",
         data={
-            "source_file": SourceFileOut.model_validate(sf2).model_dump(),
+            "source_file": SourceFileOut.model_validate(enriched).model_dump(),
             "file_version_id": version.id,
             "job": IngestionJobOut.model_validate(job).model_dump(),
         },
@@ -368,7 +375,8 @@ async def detach_file(
     db: AsyncSession = Depends(get_db),
 ):
     sf = await ingestion_facade.detach_source_file(db, member, source_file_id)
-    return ApiResponse(data=SourceFileOut.model_validate(sf))
+    enriched = await source_file_service.enrich_source_file(sf, db)
+    return ApiResponse(data=SourceFileOut.model_validate(enriched))
 
 
 @router.post("/{source_file_id}/reparse", response_model=ApiResponse[IngestionJobOut])

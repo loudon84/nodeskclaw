@@ -224,6 +224,10 @@ class SourceFileOut(BaseModel):
     last_synced_at: Any = None
     sync_state: str | None = None
     archive_reason: str | None = None
+    created_at: Any = None
+    updated_at: Any = None
+    activated_at: Any = None
+    process_duration: float | None = None
 
     model_config = {"from_attributes": True, "populate_by_name": True}
 
