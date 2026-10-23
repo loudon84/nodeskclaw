@@ -41,6 +41,7 @@ from app.services import (
 )
 from app.services.permission_service import (
     build_access_plan,
+    build_access_plan_for_set,
     has_application_permission,
     has_set_permission,
 )
@@ -734,7 +735,7 @@ async def _retrieve_for_set(
         if options.highlight is not None:
             effective_highlight = options.highlight
 
-    plan_access = await build_access_plan(db, member, kbs)
+    plan_access = await build_access_plan_for_set(db, member, kbs)
     if plan_access.kind == AccessPlanKind.no_access or not plan_access.dataset_ids:
         audit = RetrievalAudit(
             member_id=member.member_id,
@@ -1207,7 +1208,7 @@ async def playground_retrieve(
     effective_highlight = bool(config.get("highlight", False))
 
     acl_started = time.perf_counter()
-    plan_access = await build_access_plan(db, member, kbs)
+    plan_access = await build_access_plan_for_set(db, member, kbs)
     if normalized_filters and plan_access.kind != AccessPlanKind.no_access and plan_access.dataset_ids:
         plan_access = await metadata_service.apply_metadata_filters_to_access_plan(
             db,

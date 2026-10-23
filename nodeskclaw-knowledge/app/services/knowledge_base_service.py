@@ -21,6 +21,10 @@ def _bump_kb_acl_version(kb: KnowledgeBase) -> None:
     kb.acl_version = (kb.acl_version or 1) + 1
 
 
+_VISIBILITY_SEED_PERMISSIONS = (KbPermission.read.value, KbPermission.upload.value)
+_VISIBILITY_SEED_SUBJECT_TYPES = {SubjectType.organization.value, SubjectType.department.value}
+
+
 def _seed_visibility_acl(
     db: AsyncSession,
     *,
@@ -32,7 +36,7 @@ def _seed_visibility_acl(
         visibility,
         org_id=member.org_id,
         department=member.department,
-        permissions=[KbPermission.read.value],
+        permissions=list(_VISIBILITY_SEED_PERMISSIONS),
     )
     for subject_type, subject_id, permission in specs:
         db.add(
@@ -45,6 +49,33 @@ def _seed_visibility_acl(
                 created_by_member_id=member.member_id,
             )
         )
+
+
+async def _replace_visibility_seed_acl(
+    db: AsyncSession,
+    *,
+    kb: KnowledgeBase,
+    visibility: str,
+    member: KnowledgePrincipal,
+) -> None:
+    result = await db.execute(
+        select(KnowledgeBaseAcl).where(
+            KnowledgeBaseAcl.knowledge_base_id == kb.id,
+            not_deleted(KnowledgeBaseAcl),
+            KnowledgeBaseAcl.subject_type.in_(tuple(_VISIBILITY_SEED_SUBJECT_TYPES)),
+            KnowledgeBaseAcl.permission.in_(tuple(_VISIBILITY_SEED_PERMISSIONS)),
+            KnowledgeBaseAcl.effect == AclEffect.allow.value,
+        )
+    )
+    for acl in result.scalars().all():
+        acl.soft_delete()
+    _seed_visibility_acl(
+        db,
+        knowledge_base_id=kb.id,
+        visibility=visibility,
+        member=member,
+    )
+    _bump_kb_acl_version(kb)
 
 
 def expand_kb_role_permissions(role: str) -> list[str]:
@@ -232,12 +263,24 @@ async def update_knowledge_base(
     name: str | None = None,
     description: str | None = None,
     embedding_model: str | None = None,
+    visibility: str | None = None,
+    tags: list[str] | None = None,
 ) -> KnowledgeBase:
     kb = await get_knowledge_base(db, member, kb_id)
     if not await has_kb_permission(db, member, kb.id, KbPermission.update.value) and not await has_kb_permission(
         db, member, kb.id, KbPermission.manage.value
     ):
         raise ForbiddenError()
+    if visibility is not None and visibility != kb.visibility:
+        if (
+            not await has_kb_permission(db, member, kb.id, KbPermission.manage_acl.value)
+            and not await has_kb_permission(db, member, kb.id, KbPermission.manage.value)
+            and kb.owner_member_id != member.member_id
+        ):
+            raise ForbiddenError(
+                message="无权修改知识库可见性",
+                message_key="errors.knowledge.visibility_forbidden",
+            )
     if embedding_model is not None and embedding_model != kb.embedding_model:
         from app.models.source_file import SourceFile
 
@@ -265,6 +308,17 @@ async def update_knowledge_base(
         kb.description = description
         changes["description"] = description
         ragflow_fields["description"] = description
+    if tags is not None:
+        kb.tags = tags
+        changes["tags"] = tags
+    visibility_old: str | None = None
+    if visibility is not None and visibility != kb.visibility:
+        visibility_old = kb.visibility
+        kb.visibility = visibility
+        await _replace_visibility_seed_acl(db, kb=kb, visibility=visibility, member=member)
+        changes["visibility"] = visibility
+        changes["visibility_old"] = visibility_old
+        changes["seed_acl_replaced"] = True
     from app.services import runtime_binding_service
 
     dataset_id = await runtime_binding_service.get_dataset_id(db, kb)

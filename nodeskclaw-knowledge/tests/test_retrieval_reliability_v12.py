@@ -1,4 +1,4 @@
-"""Retrieval fail_closed / degraded and usage_count (PRD §71)."""
+﻿"""Retrieval fail_closed / degraded and usage_count (PRD 搂71)."""
 
 from contextlib import ExitStack
 from types import SimpleNamespace
@@ -113,7 +113,7 @@ def _enter_retrieve_patches(stack: ExitStack, *, ks, profile, plan, merge_result
         )
     )
     stack.enter_context(
-        patch("app.services.retrieval_service.build_access_plan", new=AsyncMock(return_value=plan_access))
+        patch("app.services.retrieval_service.build_access_plan_for_set", new=AsyncMock(return_value=plan_access))
     )
     stack.enter_context(
         patch(

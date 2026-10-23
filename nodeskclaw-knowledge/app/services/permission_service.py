@@ -231,10 +231,12 @@ async def has_application_permission(
     return False
 
 
-async def build_access_plan(
+async def _build_access_plan_from_kbs(
     db: AsyncSession,
     member: KnowledgePrincipal,
     knowledge_bases: list[KnowledgeBase],
+    *,
+    require_kb_read: bool,
 ) -> AccessPlan:
     from app.services.permission_snapshot_service import load_permission_snapshot
 
@@ -244,9 +246,12 @@ async def build_access_plan(
         member,
         knowledge_base_ids=[kb.id for kb in candidate_kbs],
     )
-    readable_kbs = [kb for kb in candidate_kbs if snapshot.has_kb_permission(kb.id, KbPermission.read.value)]
+    if require_kb_read:
+        selected_kbs = [kb for kb in candidate_kbs if snapshot.has_kb_permission(kb.id, KbPermission.read.value)]
+    else:
+        selected_kbs = candidate_kbs
 
-    if not readable_kbs:
+    if not selected_kbs:
         return AccessPlan(kind=AccessPlanKind.no_access)
 
     full_dataset_ids: list[str] = []
@@ -255,7 +260,7 @@ async def build_access_plan(
     partial_slices: list[dict] = []
     any_filtered = False
 
-    for kb in readable_kbs:
+    for kb in selected_kbs:
         from app.services import runtime_binding_service
 
         dataset_id = await runtime_binding_service.get_dataset_id(db, kb)
@@ -274,7 +279,17 @@ async def build_access_plan(
         denied_or_partial = False
         kb_allowed_files: list[SourceFile] = []
         for sf in files:
-            if snapshot.has_file_permission(sf.id, FilePermission.read.value):
+            if require_kb_read:
+                allowed = snapshot.has_file_permission(sf.id, FilePermission.read.value)
+            else:
+                # Set retrieval: File ACL only. Empty ACL does not fall back to KB read.
+                if member.is_super_admin or snapshot.file_owners.get(sf.id) == member.member_id:
+                    allowed = True
+                else:
+                    file_acls = snapshot.file_acls.get(sf.id, [])
+                    decided = _resolve_permission(file_acls, member, FilePermission.read.value)
+                    allowed = True if decided is None else decided
+            if allowed:
                 kb_allowed_files.append(sf)
             else:
                 denied_or_partial = True
@@ -319,7 +334,24 @@ async def build_access_plan(
         dataset_ids=dataset_ids,
         document_ids=list(dict.fromkeys(filtered_document_ids)) if any_filtered else [],
         source_file_ids=list(dict.fromkeys(allowed_source_file_ids)),
-        knowledge_base_ids=[kb.id for kb in readable_kbs],
+        knowledge_base_ids=[kb.id for kb in selected_kbs],
         full_dataset_ids=list(dict.fromkeys(full_dataset_ids)),
         partial_slices=partial_slices,
     )
+
+
+async def build_access_plan(
+    db: AsyncSession,
+    member: KnowledgePrincipal,
+    knowledge_bases: list[KnowledgeBase],
+) -> AccessPlan:
+    return await _build_access_plan_from_kbs(db, member, knowledge_bases, require_kb_read=True)
+
+
+async def build_access_plan_for_set(
+    db: AsyncSession,
+    member: KnowledgePrincipal,
+    knowledge_bases: list[KnowledgeBase],
+) -> AccessPlan:
+    """Set retrieval bypasses KB read; File ACL still applies."""
+    return await _build_access_plan_from_kbs(db, member, knowledge_bases, require_kb_read=False)

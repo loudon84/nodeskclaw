@@ -10,6 +10,8 @@ KnowledgeBase 是企业知识资产容器（权限、模型、Build Profile）�
 
 托管库在 RAGFlow 侧统一 `permission = me`，由 Knowledge Service Account 管理；企业 ACL 不映射为 RAGFlow `team`。状态含 provisioning / active / updating / degraded / error / deleting；`degraded` 表示核心 Chunk Build 终态失败。v1.1 增加 `acl_version`、`visibility`、`tags`、`last_synced_at`、`last_error`；v1.2 增加 `metadata_schema`；v2 增加 `active_build_profile_id` / `knowledge_model_id` / `build_version`：[[nodeskclaw-knowledge/app/models/knowledge_base.py#KnowledgeBase]]。Binding：[[nodeskclaw-knowledge/app/models/runtime_binding.py#KnowledgeRuntimeBinding]]。
 
+`visibility` 种子 ACL（[[nodeskclaw-knowledge/app/services/knowledge_base_service.py#_seed_visibility_acl]]）：`organization` / `department` 同步发放 `read`+`upload`；`private` 不发可见性种子（仅 owner）。修改 `visibility` 时经 [[nodeskclaw-knowledge/app/services/knowledge_base_service.py#_replace_visibility_seed_acl]] 软删旧 org/dept 的 read/upload 种子并重种，保留手工 ACL；需 `manage`/`manage_acl`（owner 天然具备）。
+
 ## Source File
 
 SourceFile 是稳定逻辑源文件；权限挂在 SourceFile 上，不挂在 Chunk 上。
@@ -42,7 +44,9 @@ v1.2 将企业业务 Metadata 与系统 `nk_*` 分离：KB 持有 `metadata_sche
 
 KnowledgeSet 是多 KnowledgeBase 的逻辑检索集合，不是 RAGFlow 物理对象。
 
-绑定关系仅存 Knowledge 库；检索时展开为多个 Slice 调用 RAGFlow。禁止为聚合检索在 RAGFlow 复制文档。v1.1 拥有独立 Set ACL（READ/USE/UPDATE/DELETE/MANAGE/MANAGE_ACL）与 `retrieval_config` JSONB；Set USE 不得提升底层 KB/File 权限：[[nodeskclaw-knowledge/app/models/knowledge_set.py#KnowledgeSet]]、[[nodeskclaw-knowledge/app/models/knowledge_set_acl.py#KnowledgeSetAcl]]。v2 去掉 Set 绑定 KB 的 embedding 强制对齐闸。
+绑定关系仅存 Knowledge 库；检索时展开为多个 Slice 调用 RAGFlow。禁止为聚合检索在 RAGFlow 复制文档。v1.1 拥有独立 Set ACL（READ/USE/UPDATE/DELETE/MANAGE/MANAGE_ACL）与 `retrieval_config` JSONB：[[nodeskclaw-knowledge/app/models/knowledge_set.py#KnowledgeSet]]、[[nodeskclaw-knowledge/app/models/knowledge_set_acl.py#KnowledgeSetAcl]]。v2 去掉 Set 绑定 KB 的 embedding 强制对齐闸。
+
+Set 检索经 [[nodeskclaw-knowledge/app/services/permission_service.py#build_access_plan_for_set]]：在已通过 Set `use` 后**穿透 KB `read`**（绑定库即可参与检索），**File ACL 仍生效**（显式 deny 过滤；无 File ACL 不回落到 KB read）。直接 KB 访问与 Agent 单库路径仍走 [[nodeskclaw-knowledge/app/services/permission_service.py#build_access_plan]]（要求 KB read）。
 
 v1.2 强制闸：`status=disabled` 时用户 Retrieval、Chat 发消息与新建 Session 返回 403（`errors.knowledge.set_disabled`）；MANAGE、历史 Chat 查看、配置编辑、Evaluation 仍放行。
 

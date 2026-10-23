@@ -1,4 +1,4 @@
-from contextlib import ExitStack
+﻿from contextlib import ExitStack
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -122,7 +122,7 @@ async def test_fail_closed_retrieve_triggers_indexstate_writeback():
                 new=AsyncMock(return_value=profile),
             )
         )
-        stack.enter_context(patch("app.services.retrieval_service.build_access_plan", new=AsyncMock(return_value=plan_access)))
+        stack.enter_context(patch("app.services.retrieval_service.build_access_plan_for_set", new=AsyncMock(return_value=plan_access)))
         stack.enter_context(
             patch(
                 "app.services.retrieval_service.knowledge_set_service.list_set_items",

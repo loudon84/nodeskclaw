@@ -1,4 +1,4 @@
-"""Retrieve wiring regression: planner receives set_items."""
+﻿"""Retrieve wiring regression: planner receives set_items."""
 
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -57,7 +57,7 @@ async def test_retrieve_passes_set_items_to_planner():
             "app.services.retrieval_service.retrieval_profile_service.get_active_profile",
             new=AsyncMock(return_value=profile),
         ),
-        patch("app.services.retrieval_service.build_access_plan", new=AsyncMock(return_value=plan_access)),
+        patch("app.services.retrieval_service.build_access_plan_for_set", new=AsyncMock(return_value=plan_access)),
         patch(
             "app.services.retrieval_service.knowledge_set_service.list_set_items",
             new=AsyncMock(return_value=set_items),
@@ -249,7 +249,7 @@ async def test_retrieve_for_set_skips_profile_when_compiled_policy_provided(monk
             "app.services.retrieval_service.retrieval_profile_service.get_active_profile",
             new=AsyncMock(),
         ) as get_profile,
-        patch("app.services.retrieval_service.build_access_plan", new=AsyncMock(return_value=plan_access)),
+        patch("app.services.retrieval_service.build_access_plan_for_set", new=AsyncMock(return_value=plan_access)),
         patch(
             "app.services.retrieval_service.knowledge_set_service.list_set_items",
             new=AsyncMock(return_value=set_items),

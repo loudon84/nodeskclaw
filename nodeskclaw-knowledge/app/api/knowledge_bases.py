@@ -99,6 +99,8 @@ async def patch_kb(
         kb_id,
         name=body.name,
         description=body.description,
+        visibility=body.visibility.value if body.visibility is not None else None,
+        tags=body.tags,
     )
     return ApiResponse(data=KnowledgeBaseOut.model_validate(kb))
 

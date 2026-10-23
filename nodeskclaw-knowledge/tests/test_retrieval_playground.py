@@ -1,4 +1,4 @@
-"""Retrieval Playground + Trace unit tests."""
+﻿"""Retrieval Playground + Trace unit tests."""
 
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -154,7 +154,7 @@ async def test_playground_allows_draft_profile_and_returns_timing():
             "app.services.retrieval_service.knowledge_set_service.list_bound_knowledge_bases",
             new=AsyncMock(return_value=kbs),
         ),
-        patch("app.services.retrieval_service.build_access_plan", new=AsyncMock(return_value=plan_access)),
+        patch("app.services.retrieval_service.build_access_plan_for_set", new=AsyncMock(return_value=plan_access)),
         patch(
             "app.services.retrieval_service.knowledge_set_service.list_set_items",
             new=AsyncMock(return_value=[]),
